@@ -1,6 +1,22 @@
 import Foundation
 import Observation
 
+/// UI fixtures have their own local identity; HTTP ownership always comes from the token.
+struct ReviewAccountScope {
+    let uiOwner: String
+    let transportOwner: String
+
+    init?(uiOwner: String?, transportOwner: String?) {
+        guard let uiOwner, !uiOwner.isEmpty, let transportOwner, !transportOwner.isEmpty else { return nil }
+        self.uiOwner = uiOwner
+        self.transportOwner = transportOwner
+    }
+
+    func matches(uiOwner: String?, transportOwner: String?) -> Bool {
+        self.uiOwner == uiOwner && self.transportOwner == transportOwner
+    }
+}
+
 /// The state machine behind `ReviewPlanView`: loads the plan snapshot, holds the creator's flags and edits, sends
 /// the scoped turn, and follows its authoritative plan until the decisions are ready. The workspace owns the thread revision, the
 /// delta feed and the approval and reaches them through `ReviewPlanActions`.
@@ -29,6 +45,12 @@ final class ReviewPlanModel {
 
     private let actions: ReviewPlanActions
     private var followTask: Task<Void, Never>?
+    private var followID: UUID?
+    private var followExpectation: Bool?
+    private var snapshotReadTask: Task<PlanSnapshot, Error>?
+    private var snapshotReadID: UUID?
+    private var readNotBefore: ContinuousClock.Instant?
+    private var excessiveServerPause = false
     /// A scoped update can render into the same job. Its turn and event cursor distinguish its
     /// ready plan from an old ready projection that arrives before the update is visible.
     private var baselineJobID: String?
@@ -41,15 +63,29 @@ final class ReviewPlanModel {
     private var dismissed = false
     private let pollInterval: Duration
     private let giveUpAfter: Duration
+    private let recoveryInterval: Duration
+    private let readNow: () -> ContinuousClock.Instant
+    private let readSleep: (Duration) async throws -> Void
+    private let expectedThreadID: String?
+    private let isCurrentScope: @MainActor () -> Bool
 
     init(seed: [PlanBlock], initialFlag: PlanSectionID?, actions: ReviewPlanActions,
-         pollInterval: Duration = ReviewPlanModel.defaultPollInterval, giveUpAfter: Duration = .seconds(600)) {
+         pollInterval: Duration = ReviewPlanModel.defaultPollInterval, giveUpAfter: Duration = .seconds(600),
+         recoveryInterval: Duration = .seconds(30), expectedThreadID: String? = nil,
+         isCurrentScope: @escaping @MainActor () -> Bool = { true },
+         readNow: @escaping () -> ContinuousClock.Instant = { ContinuousClock.now },
+         readSleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
         self.blocks = seed
         self.isLoading = seed.isEmpty
         self.initialFlag = initialFlag
         self.actions = actions
         self.pollInterval = pollInterval
         self.giveUpAfter = giveUpAfter
+        self.recoveryInterval = recoveryInterval
+        self.expectedThreadID = expectedThreadID
+        self.isCurrentScope = isCurrentScope
+        self.readNow = readNow
+        self.readSleep = readSleep
         if let initialFlag { draft.setFlagged([initialFlag]) }
     }
 
@@ -117,34 +153,114 @@ final class ReviewPlanModel {
     }
 
     func refresh(initial: Bool = false) async {
-        guard !dismissed, !Task.isCancelled else { return }
+        guard !dismissed, !Task.isCancelled, isCurrentScope(), phase != .submitting else { return }
         readSequence += 1
         let sequence = readSequence
+        var failedRead = false
         do {
-            let fresh = try await actions.loadSnapshot()
-            guard !dismissed, !Task.isCancelled, sequence == readSequence else { return }
-            guard apply(fresh) else { return }
-            loadFailed = false
+            let fresh = try await readSnapshot(sequence: sequence)
+            guard !dismissed, !Task.isCancelled, isCurrentScope(), sequence == readSequence else { return }
+            if apply(fresh) {
+                loadFailed = false
+                settleIfCurrent(fresh)
+            } else { failedRead = true }
         } catch {
-            guard !dismissed, !Task.isCancelled, sequence == readSequence else { return }
+            guard !dismissed, !Task.isCancelled, isCurrentScope(), sequence == readSequence else { return }
             if error is CancellationError { return }
+            failedRead = true
             if blocks.isEmpty { loadFailed = true }
         }
         isLoading = false
-        if initial { resumeIfUpdating() }
+        resumeIfUpdating()
+        if initial, failedRead, followTask == nil { startFollowing(awaitNewResult: false) }
     }
 
     /// The sheet opened while a plan was already updating: follow its decisions to the end.
     /// This snapshot does not establish rendered video or Photos output readiness.
     private func resumeIfUpdating() {
-        guard phase == .reviewing, followTask == nil, snapshot?.status == .updating else { return }
-        followTask = Task { [weak self] in await self?.follow(awaitNewResult: false) }
+        guard followTask == nil, snapshot?.status == .updating else { return }
+        phase = .updating
+        startFollowing(awaitNewResult: followExpectation ?? false)
+    }
+
+    private func startFollowing(awaitNewResult: Bool) {
+        guard !dismissed, followTask == nil else { return }
+        let id = UUID()
+        followID = id
+        followExpectation = awaitNewResult
+        followTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.releaseFollower(id) }
+            await self.follow()
+        }
+    }
+
+    private func releaseFollower(_ id: UUID) {
+        guard followID == id else { return }
+        followID = nil
+        followTask = nil
+    }
+
+    /// One transport reader owns the GET. Later refreshes wait and supersede its
+    /// application, while even a cancelled response retains its server pacing.
+    private func readSnapshot(sequence: Int) async throws -> PlanSnapshot {
+        while let active = snapshotReadTask {
+            _ = try? await active.value
+            guard !dismissed, !Task.isCancelled, isCurrentScope(), sequence == readSequence else { throw CancellationError() }
+        }
+        guard !excessiveServerPause else { throw ReviewReadPaused() }
+        while let deadline = readNotBefore, deadline > readNow() {
+            try await readSleep(readNow().duration(to: deadline))
+            guard !dismissed, !Task.isCancelled, isCurrentScope(), sequence == readSequence else { throw CancellationError() }
+        }
+        guard !dismissed, !Task.isCancelled, isCurrentScope(), sequence == readSequence else { throw CancellationError() }
+        // A different waiter can acquire the reader while this one sleeps.
+        if snapshotReadTask != nil { return try await readSnapshot(sequence: sequence) }
+        let id = UUID()
+        snapshotReadID = id
+        let task = Task<PlanSnapshot, Error> { [weak self, actions] in
+            defer {
+                if self?.snapshotReadID == id {
+                    self?.snapshotReadTask = nil
+                    self?.snapshotReadID = nil
+                }
+            }
+            do { return try await actions.loadSnapshot() }
+            catch {
+                self?.recordRetryAfter(error)
+                throw error
+            }
+        }
+        snapshotReadTask = task
+        return try await task.value
+    }
+
+    private struct ReviewReadPaused: Error {}
+
+    private func recordRetryAfter(_ error: Error) {
+        guard case let APIError.requestFailed(_, detail) = error,
+              let hint = detail.retryAfter, hint.isFinite, hint > 0 else { return }
+        // Reject an unusable interval rather than overflow a clock deadline or
+        // silently retry early. Ordinary long hints retain automatic recovery.
+        guard hint <= Double(Int32.max) else { excessiveServerPause = true; return }
+        let deadline = readNow().advanced(by: .seconds(hint))
+        if readNotBefore == nil || deadline > readNotBefore! { readNotBefore = deadline }
+    }
+
+    private func settleIfCurrent(_ fresh: PlanSnapshot) {
+        guard let awaitNewResult = followExpectation else { return }
+        let newResult = fresh.jobID != nil && fresh.jobID != baselineJobID
+            || fresh.turnID != nil && fresh.turnID != baselineTurnID && fresh.nextAfterSequence > baselineSequence
+        guard !awaitNewResult || newResult else { return }
+        if fresh.status == .cancelled { finish(notice: "The update was stopped.") }
+        if fresh.status == .ready { finish(notice: nil) }
     }
 
     @discardableResult
     private func apply(_ fresh: PlanSnapshot) -> Bool {
+        if let expectedThreadID, !sameThread(fresh.threadID, expectedThreadID) { return false }
         if let current = snapshot {
-            guard fresh.threadID == current.threadID,
+            guard sameThread(fresh.threadID, current.threadID),
                   fresh.threadRevision >= current.threadRevision,
                   fresh.nextAfterSequence >= current.nextAfterSequence else { return false }
         }
@@ -157,6 +273,11 @@ final class ReviewPlanModel {
         }
         draft.prune(keeping: editable)
         return true
+    }
+
+    private func sameThread(_ lhs: String, _ rhs: String) -> Bool {
+        if let left = UUID(uuidString: lhs), let right = UUID(uuidString: rhs) { return left == right }
+        return lhs == rhs
     }
 
     // MARK: Actions
@@ -200,9 +321,11 @@ final class ReviewPlanModel {
     func cancelFollowing() {
         dismissed = true
         readSequence += 1
+        snapshotReadTask?.cancel()
         if phase != .submitting {
             followTask?.cancel()
             followTask = nil
+            followID = nil
         }
     }
 
@@ -218,6 +341,7 @@ final class ReviewPlanModel {
 
     /// `send` returns whether it queued a re-render (see `ReviewPlanActions.undoSection`).
     private func begin(scope: [PlanSectionID], send: @escaping @MainActor () async throws -> Bool) {
+        guard !dismissed, !Task.isCancelled, isCurrentScope() else { return }
         notice = nil
         phase = .submitting
         updatingScope = scope
@@ -225,26 +349,34 @@ final class ReviewPlanModel {
         baselineTurnID = snapshot?.turnID
         baselineSequence = snapshot?.nextAfterSequence ?? -1
         readSequence += 1
+        snapshotReadTask?.cancel()
         followTask?.cancel()
+        let id = UUID()
+        followID = id
+        followExpectation = nil
         followTask = Task { [weak self] in
+            defer { self?.releaseFollower(id) }
             let rendering: Bool
             do {
                 rendering = try await send()
             } catch is CancellationError {
                 return
             } catch {
-                await self?.failed(error)
+                guard let self, !self.dismissed, self.isCurrentScope() else { return }
+                await self.failed(error)
                 return
             }
-            guard let self, !Task.isCancelled else { return }
+            guard let self, !Task.isCancelled, self.isCurrentScope() else { return }
             self.draft = ReviewPlanDraft()
             if self.dismissed {
                 self.finish(notice: nil)
             } else if rendering {
                 self.phase = .updating
-                await self.follow(awaitNewResult: true)
+                self.followExpectation = true
+                await self.follow()
             } else {
                 // Nothing was queued (a restore that only changed the draft): show what the server has now.
+                self.phase = .reviewing
                 await self.refresh()
                 self.finish(notice: nil)
             }
@@ -269,48 +401,51 @@ final class ReviewPlanModel {
 
     /// A new job or a newer turn on the same job can finish this update. An unchanged old ready
     /// projection cannot. Reopened sheets can follow the update they already observed.
-    private func follow(awaitNewResult: Bool) async {
-        let started = ContinuousClock.now
+    private func follow() async {
+        let started = readNow()
         var failures = 0
-        while !Task.isCancelled {
+        var recovering = false
+        while !Task.isCancelled, !dismissed, isCurrentScope() {
             readSequence += 1
             let sequence = readSequence
             do {
-                let fresh = try await actions.loadSnapshot()
-                guard !dismissed, !Task.isCancelled else { return }
+                let fresh = try await readSnapshot(sequence: sequence)
+                guard !dismissed, !Task.isCancelled, isCurrentScope() else { return }
                 if sequence == readSequence, apply(fresh) {
                     failures = 0
-                    let newResult = fresh.jobID != nil && fresh.jobID != baselineJobID
-                        || fresh.turnID != nil && fresh.turnID != baselineTurnID && fresh.nextAfterSequence > baselineSequence
-                    if fresh.status == .cancelled, !awaitNewResult || newResult {
-                        finish(notice: "The update was stopped.")
-                        return
-                    }
-                    if fresh.status == .ready, !awaitNewResult || newResult {
-                        finish(notice: nil)
-                        return
-                    }
+                    loadFailed = false
+                    isLoading = false
+                    settleIfCurrent(fresh)
+                    if followExpectation == nil { return }
                 }
             } catch is CancellationError {
-                return
+                if dismissed || Task.isCancelled || !isCurrentScope() { return }
+                // A visible refresh owns the newer read; it can settle this
+                // update, otherwise this follower remains its slow fallback.
+                if followExpectation == nil { return }
             } catch {
-                guard !dismissed, !Task.isCancelled else { return }
+                guard !dismissed, !Task.isCancelled, isCurrentScope() else { return }
                 if sequence == readSequence { failures += 1 }
-                if failures >= 6 {
-                    finish(notice: "Kria lost the connection. Your update keeps going; reopen Review to see it.")
+                if excessiveServerPause {
+                    notice = "Kria asked us to pause checking this plan. Your update remains saved."
                     return
                 }
             }
-            if ContinuousClock.now - started > giveUpAfter {
-                finish(notice: "This is taking longer than usual. It keeps going in the background.")
-                return
+            if failures >= 6 || readNow() - started >= giveUpAfter {
+                recovering = true
+                notice = phase == .updating ? "Your update keeps going. Review will check again automatically."
+                    : "Review will check the plan again automatically."
             }
-            let delay = min(pollInterval * (1 << min(failures, 4)), .seconds(30))
-            do { try await Task.sleep(for: delay) } catch { return }
+            let delay = recovering ? recoveryInterval : min(pollInterval * (1 << min(failures, 4)), .seconds(30))
+            do { try await readSleep(delay) } catch { return }
         }
     }
 
     private func finish(notice: String?) {
+        followExpectation = nil
+        followTask?.cancel()
+        followTask = nil
+        followID = nil
         phase = .reviewing
         updatingScope = []
         self.notice = notice

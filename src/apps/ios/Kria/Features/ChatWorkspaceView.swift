@@ -821,69 +821,105 @@ private struct CreationWorkspaceView: View {
     private func reviewActions() -> ReviewPlanActions {
         let api = model.api
         let threadID = project.id
+        let account = ReviewAccountScope(uiOwner: auth.localStorageIdentity, transportOwner: api.mediaLibraryOwner)
+        let environment = (api as? KriaAPI)?.baseURL
+        let checkScope: @MainActor () throws -> Void = {
+            guard let account, reviewScopeIsCurrent(threadID: threadID, account: account, environment: environment) else { throw CancellationError() }
+        }
         return ReviewPlanActions(
-            loadSnapshot: { try await api.planSnapshot(threadID: threadID) },
-            update: { scope, edits, message in try await submitReviewTurn(scope: scope, edits: edits, message: message) },
-            undoSection: { section, blockRevision, draftRevision in
-                try await undoReviewSection(section, blockRevision: blockRevision, draftRevision: draftRevision)
+            loadSnapshot: {
+                guard let account, reviewScopeIsCurrent(threadID: threadID, account: account, environment: environment) else { throw CancellationError() }
+                let snapshot = try await api.planSnapshot(threadID: threadID, expectedOwner: account.transportOwner)
+                guard reviewScopeIsCurrent(threadID: threadID, account: account, environment: environment) else { throw CancellationError() }
+                return snapshot
             },
-            undoAll: { draftRevision in try await undoAllReview(draftRevision: draftRevision) }
+            update: { scope, edits, message in
+                guard let account, reviewScopeIsCurrent(threadID: threadID, account: account, environment: environment) else { throw CancellationError() }
+                try await submitReviewTurn(scope: scope, edits: edits, message: message, expectedOwner: account.transportOwner, checkScope: checkScope)
+            },
+            undoSection: { section, blockRevision, draftRevision in
+                guard let account, reviewScopeIsCurrent(threadID: threadID, account: account, environment: environment) else { throw CancellationError() }
+                return try await undoReviewSection(section, blockRevision: blockRevision, draftRevision: draftRevision, expectedOwner: account.transportOwner, checkScope: checkScope)
+            },
+            undoAll: { draftRevision in
+                guard let account, reviewScopeIsCurrent(threadID: threadID, account: account, environment: environment) else { throw CancellationError() }
+                try await undoAllReview(draftRevision: draftRevision, expectedOwner: account.transportOwner, checkScope: checkScope)
+            }
         )
+    }
+
+    private func reviewScopeIsCurrent(threadID: UUID, account: ReviewAccountScope?, environment: URL?) -> Bool {
+        model.selectedProject?.id == threadID && project.id == threadID && account?.matches(uiOwner: auth.localStorageIdentity, transportOwner: model.api.mediaLibraryOwner) == true && (model.api as? KriaAPI)?.baseURL == environment
+    }
+
+    private var reviewScopeToken: String {
+        "\(project.id):\(auth.localStorageIdentity ?? "signed-out"):\(model.api.mediaLibraryOwner ?? "no-token"):\((model.api as? KriaAPI)?.baseURL.absoluteString ?? "fixture")"
     }
 
     /// "Update video": a turn scoped to the flagged sections (planned as editor operations only), then the
     /// approval it produces is approved at once. Tapping Update video is the consent.
-    private func submitReviewTurn(scope: [PlanSectionID], edits: [ManualPlanEdit], message: String) async throws {
+    private func submitReviewTurn(scope: [PlanSectionID], edits: [ManualPlanEdit], message: String, expectedOwner: String, checkScope: @escaping @MainActor () throws -> Void) async throws {
         let threadID = project.id
+        try checkScope()
         _ = try? await refreshDelta()
+        try checkScope()
         let startSequence = afterSequence
         let accepted = try await model.api.submitScopedTurn(
             threadID: threadID, message: message, expectedRevision: threadRevision,
-            clientEventID: UUID().uuidString, scope: scope, manualEdits: edits
+            clientEventID: UUID().uuidString, scope: scope, manualEdits: edits, expectedOwner: expectedOwner
         )
+        try checkScope()
         guard project.id == threadID, let identity = ReviewApprovalIdentity(threadID: threadID, turnID: accepted.turnID) else { throw ReviewPlanError.timedOut }
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
-        try await approveReviewDraft(identity: identity, afterSequence: startSequence)
+        try await approveReviewDraft(identity: identity, afterSequence: startSequence, expectedOwner: expectedOwner, checkScope: checkScope)
     }
 
-    private func undoReviewSection(_ section: PlanSectionID, blockRevision: Int, draftRevision: Int) async throws -> Bool {
+    private func undoReviewSection(_ section: PlanSectionID, blockRevision: Int, draftRevision: Int, expectedOwner: String, checkScope: @escaping @MainActor () throws -> Void) async throws -> Bool {
         let threadID = project.id
+        try checkScope()
         _ = try? await refreshDelta()
+        try checkScope()
         let startSequence = afterSequence
         let result = try await model.api.undoPlanSection(
             threadID: threadID, sectionID: section, expectedThreadRevision: threadRevision,
-            expectedBlockRevision: blockRevision, expectedDraftRevision: draftRevision
+            expectedBlockRevision: blockRevision, expectedDraftRevision: draftRevision, expectedOwner: expectedOwner
         )
+        try checkScope()
         guard project.id == threadID else { throw ReviewPlanError.timedOut }
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: result.threadRevision)
         // A null successor turn means nothing was queued to render: there is no approval to wait for.
         guard let turnID = result.turnID else { return false }
         guard let identity = ReviewApprovalIdentity(threadID: threadID, turnID: turnID) else { throw ReviewPlanError.timedOut }
-        try await approveReviewDraft(identity: identity, afterSequence: startSequence)
+        try await approveReviewDraft(identity: identity, afterSequence: startSequence, expectedOwner: expectedOwner, checkScope: checkScope)
         return true
     }
 
-    private func undoAllReview(draftRevision: Int) async throws {
+    private func undoAllReview(draftRevision: Int, expectedOwner: String, checkScope: @escaping @MainActor () throws -> Void) async throws {
         let threadID = project.id
+        try checkScope()
         _ = try? await refreshDelta()
+        try checkScope()
         let startSequence = afterSequence
-        let restored = try await model.api.undoDraft(threadID: threadID, expectedRevision: draftRevision, render: true)
+        let restored = try await model.api.undoDraft(threadID: threadID, expectedRevision: draftRevision, render: true, expectedOwner: expectedOwner)
+        try checkScope()
         guard project.id == threadID,
               let identity = ReviewApprovalIdentity(threadID: threadID, draftID: restored.draftID, draftRevision: restored.draftRevision) else { throw ReviewPlanError.timedOut }
-        try await approveReviewDraft(identity: identity, afterSequence: startSequence)
+        try await approveReviewDraft(identity: identity, afterSequence: startSequence, expectedOwner: expectedOwner, checkScope: checkScope)
     }
 
     /// Waits for the exact review turn or restored draft's approval after `startSequence`.
     /// A reply that is not an approval (Kria declined or found nothing to
     /// change) ends the wait with its text.
-    private func approveReviewDraft(identity: ReviewApprovalIdentity, afterSequence startSequence: Int) async throws {
+    private func approveReviewDraft(identity: ReviewApprovalIdentity, afterSequence startSequence: Int, expectedOwner: String, checkScope: @escaping @MainActor () throws -> Void) async throws {
         var repliesWithoutApproval = 0
         for _ in 0..<150 {
+            try checkScope()
             _ = try? await refreshDelta()
+            try checkScope()
             guard project.id == identity.threadID else { throw ReviewPlanError.timedOut }
             let fresh = events.filter { $0.sequence > startSequence }
             if let selected = fresh.compactMap({ identity.select($0, threadID: project.id) }).last {
-                try await approveReviewApproval(selected)
+                try await approveReviewApproval(selected, expectedOwner: expectedOwner, checkScope: checkScope)
                 return
             }
             let reply = fresh.last {
@@ -899,33 +935,41 @@ private struct CreationWorkspaceView: View {
         throw ReviewPlanError.timedOut
     }
 
-    private func approveReviewApproval(_ selected: ReviewApprovalIdentity.Selection) async throws {
+    private func approveReviewApproval(_ selected: ReviewApprovalIdentity.Selection, expectedOwner: String, checkScope: @escaping @MainActor () throws -> Void) async throws {
+        try checkScope()
         let approvalID = selected.approvalID
-        let snapshot = try await model.api.approval(threadID: selected.threadID, approvalID: approvalID)
+        let snapshot = try await model.api.approval(threadID: selected.threadID, approvalID: approvalID, expectedOwner: expectedOwner)
+        try checkScope()
         guard selected.matches(snapshot, threadID: project.id), snapshot.status == "pending", let draftRevision = snapshot.draftRevision else { throw ReviewPlanError.timedOut }
         func decide() async throws {
+            try checkScope()
             guard selected.matches(snapshot, threadID: project.id) else { throw ReviewPlanError.timedOut }
-            try await model.api.decideApproval(
-                threadID: project.id, approvalID: approvalID, decision: "approve",
+            try await model.api.decideReviewApproval(
+                threadID: project.id, approvalID: approvalID,
                 expectedThreadRevision: threadRevision, expectedDraftRevision: draftRevision,
-                fingerprint: snapshot.approvalFingerprint, speechCleanupAware: true,
-                speechCleanupAnalysisID: nil, speechCleanupChoice: nil
+                fingerprint: snapshot.approvalFingerprint, expectedOwner: expectedOwner
             )
         }
         do {
             try await decide()
         } catch let error as APIError where error.isConflict {
             // The revision moved (every plan_block event bumps it): take the newest and try once more.
+            try checkScope()
             _ = try? await refreshDelta()
+            try checkScope()
             try await decide()
         }
+        try checkScope()
         approval = nil
         thinkingAnchor = afterSequence
         thinkingTurnID = snapshot.turnID
         thinkingSettlesOnJobStatus = true
         isThinking = true
+        try checkScope()
         _ = try? await refreshDelta()
+        try checkScope()
     }
+
 
     /// Cancels the render behind the feed. Always sends the newest thread revision: every `plan_block`
     /// event bumps it, so the revision the feed was drawn with is usually stale.
@@ -1925,9 +1969,15 @@ private struct CreationWorkspaceView: View {
             ReviewPlanView(
                 seed: presentation.seed, initialFlag: presentation.initialFlag,
                 actions: reviewActions(),
+                refreshToken: "\(afterSequence):\(threadRevision):\(currentProject.activeJobID?.uuidString ?? ""):\(currentProject.status):\(failure == nil)",
+                expectedThreadID: project.id.uuidString,
+                isCurrentScope: { [threadID = project.id, account = ReviewAccountScope(uiOwner: auth.localStorageIdentity, transportOwner: model.api.mediaLibraryOwner), environment = (model.api as? KriaAPI)?.baseURL] in
+                    reviewScopeIsCurrent(threadID: threadID, account: account, environment: environment)
+                },
                 dictation: dictationForComposer, dictationTerms: dictationContextTerms,
                 close: { reviewPresentation = nil }
             )
+            .id(reviewScopeToken)
             .presentationDetents([.large])
             .presentationDragIndicator(.hidden)
             .presentationBackground(KriaColor.paper)

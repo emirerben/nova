@@ -6,15 +6,21 @@ Reviewed result recovery, saved-version catch-up, atomic AI journals and saved-s
 
 Its component evidence is recorded in backend-evidence.md and slide-post-ai-evidence.md. Final combined native, aggregate and model gates have not run. Contract metadata follow-up: `/tmp/slide-ai-contract-metadata-green.log` records 26 passing contract tests; `/tmp/slide-ai-combined-contract-check.log` records successful combined generation verification. The metadata change intentionally supersedes earlier CLI/OpenAPI fingerprints.
 
-## In-progress read recovery
+## Read recovery source checkpoints
 
-Review must keep a slow, read-only follower after the fast read budget expires, with one transport reader, response ownership, server pacing and dismissal cancellation. An unchanged old ready plan cannot complete a newer request.
+Device read recovery and nine new regression methods are committed at `86e1afb04c2b1104ad52eee4ab9d5d78a0c2885c`, tree `2aafa93d10cf5bc70a451984ff0e290395dceca2`. Independent static review approved the scoped two-file delta. No native test has executed on this checkpoint.
+
+Review source keeps a slow, read-only follower after the fast read budget expires, with one transport reader, response ownership, server pacing and dismissal cancellation. An unchanged old ready plan cannot complete a newer request. Seeded initial failures also recover. UUID comparison is semantic, so native uppercase and server lowercase forms name the same thread. Foreground and cursor/project signals can rearm paced reads.
 
 Gallery/device status must retain one coalesced five-minute read after twelve fast retries. A failed read cannot permanently strand an otherwise relevant result. Stop, owner replacement, settlement and shutdown cancel or fence pending work. Retry-After must survive foreground and competing readers.
 
-Explicit Resume authorization needs a stronger fence than a status-read key: a delayed action must remain tied to its original account, operation, request identity and generation. A newer Stop or changed target must not inherit it. Root review identified loss of Resume across a server wait; the first correction retained its action, and subsequent review required exact identity/generation binding before acceptance.
+Explicit Resume authorization is tied to its original account, key operation, durable intent operation, request identity and generation. A newer Stop or changed target cannot inherit it. Stop retains server pacing while cancelling authorization. A separate transport reader remains owned until its underlying GET exits, even after a UI ticket is cancelled; this prevents overlapping reads and preserves late Retry-After responses. Valid long hints are retained; invalid or nonrepresentable hints use a finite slow wait.
 
-These changes introduce no new generation, upload or export dispatch route. Existing execution authority checks still apply after reads. Regression controls are being written but remain unexecuted under the coordinated native/package/model hold. Static review is not runtime proof.
+Review mutation/approval helpers carry a captured scope check through each await, retaining distinct UI-storage and token-derived transport account identities. Six owner-required API methods also forward captured identity to the actual request refresh/send validator; a UI-only precheck cannot prevent replacement-token dispatch. Unsupported clients fail closed. Static search found no existing custom planSnapshot fixture override; the chat UI fixture uses concrete KriaAPI.
+
+These changes introduce no new generation, upload or export dispatch route. Existing execution authority checks still apply after reads. Ten new Review and nine new Device regression methods are written but remain unexecuted under the coordinated native/package/model hold. Run all 20 ReviewPlanTests and all 48 DeviceRenderTransientTests because their shared reader/clock setup and sequencing changed, in addition to the preceding native selection and AI/song cases. This is source selection, not discovery or execution proof. Static review is not runtime proof.
+
+Written controls cover exhaustion followed by readiness without another lifecycle event; unchanged old same-job readiness; wall-time slowdown; seeded recovery; sole-reader sequencing; foreground and cross-call pacing; UUID case/wrong thread; account replacement; dismissal/shutdown; follower reuse; exact Resume after 429; changed identity/generation; later Stop; late 429 from a stopped read; long and invalid hints; and token replacement at the six Review transport boundaries. Scoped `git diff --check` passed.
 
 ## Controlled main integration
 
