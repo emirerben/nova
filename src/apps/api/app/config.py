@@ -1062,6 +1062,12 @@ class Settings(BaseSettings):
     # the mic. Audio is never stored. Apply: `fly secrets set VOICE_DICTATION_ENABLED=false`
     # (api) + restart.
     voice_dictation_enabled: bool = True
+    # Qendresa item 24: the iPhone Add media sheet hints that a screen recording placed in
+    # Footage next to a talking take belongs in Overlays, with a one-tap move. iPhone-only; the
+    # server only advertises the `upload_place_hint` capability. Default off; off = the Add media
+    # sheet is unchanged. Apply: `fly secrets set UPLOAD_PLACE_HINT_ENABLED=true` (api) + restart;
+    # no worker use.
+    upload_place_hint_enabled: bool = False
     # One word at a time for caption `Display: Word` (`karaoke.single_word`, capability
     # `singleWordText`): the layer's runs are standalone-centred words and only the active one
     # is drawn. Emitted only when `singleWordText` is in PHONE_RENDER_VERIFIED_FEATURES (fly
