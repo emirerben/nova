@@ -460,7 +460,7 @@ def _green3_job(monkeypatch, background):
 
     rows = {row["id"]: row for row in _pool_rows()}
 
-    def bind(_open, *, job_id, pins):  # noqa: ARG001
+    def bind(_open, *, job_id, pins, measure_text=False):  # noqa: ARG001
         out = []
         for media in pins:
             row = rows[media]

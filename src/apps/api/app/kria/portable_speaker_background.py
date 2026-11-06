@@ -25,6 +25,13 @@ Qendresa item 16 (the speaker full screen in their own take, then the corner): o
 take is drawn full-frame and untouched -- no person mask, no background, no ``speaker_frame``.
 Outside them the layer renders exactly as before. Capability ``speakerFrameWindows``; pinned by
 `tests/fixtures/speaker-background-parity/v4.json`.
+
+Qendresa item 18 (aim a screen recording at its readable text): optional ``focus`` on the FILL
+(photo/video only) and on every window (absent while unused, never null in output) places the
+picture like ``VisualMediaPlacement``: ``{x, y, zoom}`` where the base scale is cover, the drawn
+scale is ``max(cover * zoom, contain)`` and ``x`` / ``y`` align the picture (0 = left / top edge,
+0.5 = centre, 1 = right / bottom edge). Capability ``backgroundFocus``; pinned by
+`tests/fixtures/speaker-background-parity/v5.json`.
 """
 
 from __future__ import annotations
@@ -42,6 +49,9 @@ MAX_TIMELINE_S = 1800.0
 MIN_SPEAKER_FRAME_WIDTH_FRACTION = 0.2
 # Qendresa item 16: an opening and (later) a closing full-frame span; a few, never a timeline.
 MAX_FULL_SCREEN_WINDOWS = 4
+# Qendresa item 18: wire bounds of a background focus zoom.
+MIN_FOCUS_ZOOM = 0.2
+MAX_FOCUS_ZOOM = 4.0
 # KRI-1173: exactly ``#`` + six UPPERCASE hex digits on the recipe wire. Case and names are
 # normalised at the editor Save, the lane and the chat boundary, never here.
 BACKGROUND_COLOR_PATTERN = r"^#[0-9A-F]{6}$"
@@ -77,6 +87,18 @@ def speaker_frame_for_preset(preset: str | None) -> SpeakerFrame | None:
     return SpeakerFrame(**values) if values else None
 
 
+class SpeakerBackgroundFocus(BaseModel):
+    """Qendresa item 18: where a background picture is aimed. ``x`` / ``y`` align the drawn
+    picture in the frame (0 left/top, 0.5 centre, 1 right/bottom); ``zoom`` multiplies the cover
+    scale (never drawn smaller than the whole picture)."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    x: float = Field(ge=0.0, le=1.0)
+    y: float = Field(ge=0.0, le=1.0)
+    zoom: float = Field(ge=MIN_FOCUS_ZOOM, le=MAX_FOCUS_ZOOM)
+
+
 class SpeakerBackgroundWindow(BaseModel):
     """One timed background: ``asset_id`` shows from ``start`` to ``end`` (output seconds).
     A video plays from ``source_start`` and loops inside the window; a photo is held."""
@@ -88,6 +110,8 @@ class SpeakerBackgroundWindow(BaseModel):
     source_start: float = Field(default=0.0, ge=0, le=MAX_SOURCE_START_S)
     start: float = Field(ge=0.0, le=MAX_TIMELINE_S)
     end: float = Field(gt=0.0, le=MAX_TIMELINE_S)
+    # Qendresa item 18, omitted from the wire while unused (never ``null``).
+    focus: SpeakerBackgroundFocus | None = None
 
     @model_validator(mode="after")
     def _well_formed(self) -> SpeakerBackgroundWindow:
@@ -96,6 +120,13 @@ class SpeakerBackgroundWindow(BaseModel):
         if self.end - self.start < MIN_BACKGROUND_WINDOW_S:
             raise ValueError("a background window must last at least 0.5 seconds")
         return self
+
+    @model_serializer(mode="wrap")
+    def _omit_unused(self, handler):  # noqa: ANN001, ANN202
+        data = handler(self)
+        if data.get("focus") is None:
+            data.pop("focus", None)
+        return data
 
 
 class SpeakerFullScreenWindow(BaseModel):
@@ -134,6 +165,8 @@ class SpeakerBackgroundLayer(BaseModel):
     full_screen_windows: list[SpeakerFullScreenWindow] | None = Field(
         default=None, min_length=1, max_length=MAX_FULL_SCREEN_WINDOWS
     )
+    # Qendresa item 18: aims the FILL picture (photo/video only); omitted while unused.
+    focus: SpeakerBackgroundFocus | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -155,6 +188,8 @@ class SpeakerBackgroundLayer(BaseModel):
                 raise ValueError("a photo or video background needs an asset_id")
             if self.color is not None:
                 raise ValueError("only a colour background carries a color")
+        if self.media_kind == "color" and self.focus is not None:
+            raise ValueError("a colour background has no focus")
         return self
 
     @model_validator(mode="after")
@@ -195,6 +230,11 @@ class SpeakerBackgroundLayer(BaseModel):
         return bool(self.full_screen_windows)
 
     @property
+    def uses_focus(self) -> bool:
+        """True when the fill or any window is aimed (needs ``backgroundFocus``, item 18)."""
+        return self.focus is not None or any(w.focus is not None for w in self.windows or ())
+
+    @property
     def uses_color(self) -> bool:
         """True when the fill is a flat colour (needs the ``speakerBackgroundColor`` capability)."""
         return self.media_kind == "color"
@@ -212,4 +252,6 @@ class SpeakerBackgroundLayer(BaseModel):
             data.pop("speaker_frame", None)
         if not data.get("full_screen_windows"):
             data.pop("full_screen_windows", None)
+        if data.get("focus") is None:
+            data.pop("focus", None)
         return data

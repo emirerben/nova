@@ -31,6 +31,14 @@ KRI-1173 (a plain colour behind the speaker), same family as ``set_background``:
   snapshot says ``color_available: false`` it answers as an unmet request with the section's
   ``color_reason`` (S59), never the generic "can't change that" sentence.
 
+Qendresa item 18 (family ``background_focus``, open only while the snapshot says
+``focus_available``):
+
+* ``set_background_focus {position?, zoom?, zoom_delta?, asset_id?}``: aim the photo / video
+  fill and the timed backgrounds (or only those showing ``asset_id``) at the left, centre or
+  right of the picture and/or zoom them. It is about the RECORDING; the corner the speaker sits
+  in is ``set_speaker_frame``'s.
+
 All of them compile into the editor Save's ``speaker_background`` section. The Save
 (`generative_jobs._validate_speaker_background_section`, after
 `phone_speaker_background.pin_pool_visual_for_background`) stays the authority on what the
@@ -58,6 +66,17 @@ MAX_SOURCE_START_S = 1800.0
 DEFAULT_CADENCE_S = 4.0
 MIN_CADENCE_S = 2.0
 MAX_CADENCE_S = 10.0
+# Qendresa item 18: what chat may set (the wire allows 0.2..4; the editor slider and chat 0.3..3).
+MIN_CHAT_FOCUS_ZOOM = 0.3
+MAX_CHAT_FOCUS_ZOOM = 3.0
+_FOCUS_POSITIONS = {
+    "left": 0.0,
+    "center": 0.5,
+    "centre": 0.5,
+    "middle": 0.5,
+    "right": 1.0,
+}
+DEFAULT_FOCUS = {"x": 0.5, "y": 0.5, "zoom": 1.0}
 
 
 def _pool_row(snapshot: dict, asset_id: object) -> dict | None:
@@ -131,6 +150,69 @@ def _coerce_set_background_color(
         state.invalid_value(detail)
         return None
     return {"op": name, "color": color}
+
+
+def _finite_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if number == number and abs(number) != float("inf") else None
+
+
+def _coerce_set_background_focus(
+    name: str, payload: dict, snapshot: dict, state: Any
+) -> dict | None:
+    section = snapshot.get("background") if isinstance(snapshot, dict) else None
+    if isinstance(section, dict) and section.get("focus_available") is not True:
+        detail = say(
+            en="I can't aim or zoom the recordings behind you on this edit.",
+            tr="Arkandaki kayıtları bu düzenlemede hizalayamıyor ya da yakınlaştıramıyorum.",
+        )
+        state.reject(op=name, reason="capability_unavailable", detail=detail)
+        state.reply_notes.append(detail)
+        return None
+    cleaned: dict[str, Any] = {"op": name}
+    position = payload.get("position")
+    if position is not None:
+        key = position.strip().lower() if isinstance(position, str) else None
+        if key not in _FOCUS_POSITIONS:
+            state.invalid_value()
+            return None
+        cleaned["position"] = "center" if key in ("centre", "middle") else key
+    zoom = payload.get("zoom")
+    if zoom is not None:
+        number = _finite_number(zoom)
+        if number is None:
+            state.invalid_value()
+            return None
+        clamped = min(max(number, MIN_CHAT_FOCUS_ZOOM), MAX_CHAT_FOCUS_ZOOM)
+        if clamped != number:
+            state.reply_notes.append(
+                say(
+                    en=f"I kept the zoom between {MIN_CHAT_FOCUS_ZOOM:g}x and "
+                    f"{MAX_CHAT_FOCUS_ZOOM:g}x.",
+                    tr=f"Yakınlaştırmayı {MIN_CHAT_FOCUS_ZOOM:g}x ile "
+                    f"{MAX_CHAT_FOCUS_ZOOM:g}x arasında tuttum.",
+                )
+            )
+        cleaned["zoom"] = clamped
+    delta = payload.get("zoom_delta")
+    if delta is not None:
+        number = _finite_number(delta)
+        if number is None or not -2.0 <= number <= 2.0:
+            state.invalid_value()
+            return None
+        cleaned["zoom_delta"] = number
+    if not ({"position", "zoom", "zoom_delta"} & cleaned.keys()):
+        state.invalid_value()
+        return None
+    asset_id = payload.get("asset_id")
+    if asset_id is not None:
+        if _pool_row(snapshot, asset_id) is None:
+            state.invalid_value()
+            return None
+        cleaned["asset_id"] = asset_id
+    return cleaned
 
 
 def _coerce_set_background_sequence(
@@ -217,6 +299,14 @@ SPECS: list[OpSpec] = [
         family=frozenset({"background", "speaker_background"}),
         coerce=_coerce_remove_background,
     ),
+    # Qendresa item 18: own family, in `allowed_op_families` only while the focus gate is open.
+    OpSpec(
+        name="set_background_focus",
+        required=frozenset(),
+        fields=frozenset({"position", "zoom", "zoom_delta", "asset_id"}),
+        family=frozenset({"background_focus"}),
+        coerce=_coerce_set_background_focus,
+    ),
     # KRI-1162: their own family, only in `allowed_op_families` while the windows gate is open.
     OpSpec(
         name="set_background_sequence",
@@ -258,6 +348,80 @@ def _keep_full_screen(document: dict, working: object) -> None:
         document["full_screen_windows"] = [dict(span) for span in working["full_screen_windows"]]
 
 
+def _focus_of(entry: object) -> dict[str, float]:
+    focus = entry.get("focus") if isinstance(entry, dict) else None
+    return {**DEFAULT_FOCUS, **focus} if isinstance(focus, dict) else dict(DEFAULT_FOCUS)
+
+
+def _focus_by_media(working: object) -> dict[str, dict]:
+    """The focus each picture has in ``working`` (the first window or the fill showing it)."""
+    found: dict[str, dict] = {}
+    if not isinstance(working, dict):
+        return found
+    for window in working.get("windows") or ():
+        if isinstance(window, dict) and window.get("focus") and window.get("media_id"):
+            found.setdefault(window["media_id"], dict(window["focus"]))
+    if working.get("focus") and working.get("media_id"):
+        found.setdefault(working["media_id"], dict(working["focus"]))
+    return found
+
+
+def _op_set_background_focus(state: Any, op: dict[str, Any]) -> None:
+    from app.services.kria_editor_ops import KriaEditorOpError  # noqa: PLC0415
+
+    working = _working_document(state)
+    if not isinstance(working, dict):
+        raise KriaEditorOpError("Put a photo or video behind you first")
+    asset_id = op.get("asset_id")
+    document: dict[str, Any] = dict(working)
+    if working.get("windows"):
+        document["windows"] = [dict(window) for window in working["windows"]]
+    targets: list[dict[str, Any]] = []
+    if document.get("media_id") and asset_id in (None, document["media_id"]):
+        targets.append(document)
+    targets.extend(
+        window
+        for window in document.get("windows") or ()
+        if isinstance(window, dict) and asset_id in (None, window.get("media_id"))
+    )
+    if not targets:
+        raise KriaEditorOpError("Put a photo or video behind you first")
+    changed = False
+    for entry in targets:
+        current = _focus_of(entry)
+        new = dict(current)
+        if "position" in op:
+            new["x"] = _FOCUS_POSITIONS[op["position"]]
+        if "zoom" in op:
+            new["zoom"] = float(op["zoom"])
+        if "zoom_delta" in op:
+            new["zoom"] = min(
+                max(current["zoom"] + float(op["zoom_delta"]), MIN_CHAT_FOCUS_ZOOM),
+                MAX_CHAT_FOCUS_ZOOM,
+            )
+        new["zoom"] = round(new["zoom"], 4)
+        if new == current:
+            continue
+        if new == DEFAULT_FOCUS:
+            entry.pop("focus", None)  # today's drawing is never written
+        else:
+            entry["focus"] = new
+        changed = True
+    if not changed:
+        raise KriaEditorOpError("That's already how they're aimed")
+    state.speaker_background = document
+    state.changed.add("speaker_background")
+    delta = op.get("zoom_delta")
+    if "position" in op:
+        state.summary = "Aimed the recordings at their " + (
+            "centre" if op["position"] == "center" else f"{op['position']} side"
+        )
+    elif isinstance(delta, (int, float)):
+        state.summary = "Zoomed the recordings " + ("out" if delta < 0 else "in")
+    else:
+        state.summary = "Changed how far the recordings are zoomed"
+
+
 def _op_set_background(state: Any, op: dict[str, Any]) -> None:
     from app.services.kria_editor_ops import (  # noqa: PLC0415
         KriaEditorOpError,
@@ -270,6 +434,13 @@ def _op_set_background(state: Any, op: dict[str, Any]) -> None:
         "source_start_s": float(op.get("source_start_s") or 0.0),
     }
     working = _working_document(state)
+    # Qendresa item 18: the same picture stays aimed; another one starts from its own default.
+    if (
+        isinstance(working, dict)
+        and working.get("focus")
+        and working.get("media_id") == document["media_id"]
+    ):
+        document["focus"] = dict(working["focus"])
     # KRI-1162: one fill replaces the timed backgrounds; the corner the speaker sits in stays.
     if isinstance(working, dict) and working.get("speaker_frame"):
         document["speaker_frame"] = dict(working["speaker_frame"])
@@ -295,6 +466,7 @@ def _op_set_background_color(state: Any, op: dict[str, Any]) -> None:
     # speaker sits in stays (KRI-1173).
     if isinstance(working, dict):
         if working.get("windows"):
+            # Windows are copied whole, so each keeps its focus (Qendresa item 18).
             document["windows"] = [dict(window) for window in working["windows"]]
         if working.get("speaker_frame"):
             document["speaker_frame"] = dict(working["speaker_frame"])
@@ -333,6 +505,8 @@ def _op_set_background_sequence(state: Any, op: dict[str, Any]) -> None:
             "kind": working["kind"],
             "source_start_s": working.get("source_start_s", 0.0),
         }
+        if working.get("focus"):
+            fill["focus"] = dict(working["focus"])
     else:
         fill = {"media_id": ids[0], "kind": kinds[0], "source_start_s": 0.0}
     # S57: the same rule as the render worker -- every photo once, the fill never repeating one.
@@ -346,6 +520,7 @@ def _op_set_background_sequence(state: Any, op: dict[str, Any]) -> None:
     )
     if not layout.windows:
         raise KriaEditorOpError("This video is too short to change backgrounds")
+    known_focus = _focus_by_media(working)
     document: dict[str, Any] = {
         **fill,
         "windows": [
@@ -355,6 +530,12 @@ def _op_set_background_sequence(state: Any, op: dict[str, Any]) -> None:
                 "source_start_s": 0.0,
                 "start_s": round(window.start_s, 3),
                 "end_s": round(window.end_s, 3),
+                # Qendresa item 18: a picture the creator already aimed stays aimed.
+                **(
+                    {"focus": dict(known_focus[ids[window.index]])}
+                    if ids[window.index] in known_focus
+                    else {}
+                ),
             }
             for window in layout.windows
         ],
@@ -423,5 +604,6 @@ def register_handlers() -> None:
     kria_editor_ops.register_handler("set_background_color", _op_set_background_color)
     kria_editor_ops.register_handler("remove_background", _op_remove_background)
     kria_editor_ops.register_handler("set_background_sequence", _op_set_background_sequence)
+    kria_editor_ops.register_handler("set_background_focus", _op_set_background_focus)
     kria_editor_ops.register_handler("set_speaker_frame", _op_set_speaker_frame)
     kria_editor_ops.register_handler("clear_speaker_frame", _op_clear_speaker_frame)

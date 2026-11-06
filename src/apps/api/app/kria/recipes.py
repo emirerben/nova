@@ -283,6 +283,9 @@ MediaCapability = Literal[
     # full-frame and untouched for the opening span(s) (no mask, no background, no corner).
     # Derived from the layer; gated by its own verified token and protocol 41.
     "speakerFrameWindows",
+    # Qendresa item 18: `speaker_background.focus` / `.windows[].focus` -- a background picture
+    # aimed at its readable text ({x, y, zoom}). Derived from the layer; own verified token.
+    "backgroundFocus",
     # A tilted clip (`transform.rotation_degrees != 0`) and/or a `backdrop` under a main-track
     # clip, drawn on device by `KriaMediaEngine`'s compositor (KRI-1134).
     "clipTilt",

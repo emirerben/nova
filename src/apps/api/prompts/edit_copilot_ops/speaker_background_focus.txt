@@ -1,0 +1,11 @@
+AIMING THE RECORDINGS BEHIND THE SPEAKER (Kria editor, iPhone Talking edits)
+
+BACKGROUND also says "focus_available": the photos and videos behind the speaker can be aimed at one side and zoomed. A screen recording is already aimed at its text when the server could measure it; a window or the current photo / video that is aimed is listed with "aim=left|center|right|x0.24 zoom=1.6x".
+- "show the left side of the recording", "kaydın sol tarafı görünsün" -> {"op":"set_background_focus","position":"left"}. position is left, center or right and is about the RECORDING (which part of it shows). Where the speaker sits is never this op: that is set_speaker_frame.
+- "zoom in a bit" -> {"op":"set_background_focus","zoom_delta":0.25}; "zoom out" -> {"op":"set_background_focus","zoom_delta":-0.25}; "zoom in 2x" -> {"op":"set_background_focus","zoom":2}. zoom is a multiple (0.3 to 3, 1 = filled); zoom_delta is added to the current zoom. Without a side, the side stays.
+- Add "asset_id" (a pool id exactly as shown) only when the creator names one picture; otherwise every photo and video behind the speaker is aimed.
+- Needs a photo or video behind the speaker. A plain colour cannot be aimed.
+
+Examples:
+"show the left part of the readme" -> {"op":"set_background_focus","position":"left"}
+"zoom into the screen recording a little" -> {"op":"set_background_focus","zoom_delta":0.25}

@@ -55,6 +55,7 @@ from app.pipeline.phone_subtitled_lanes import (
     PhoneSubtitledLanes,
     ResolvedSoundEffect,
     SubtitledBackground,
+    SubtitledBackgroundFocus,
     SubtitledBackgroundWindow,
     SubtitledFullScreenWindow,
     SubtitledSpeakerFrame,
@@ -89,6 +90,7 @@ from app.services.phone_editor_sources import (
 )
 from app.services.phone_rollout import (
     SINGLE_WORD_CAPTIONS_STAMP,
+    background_focus_client_supported,
     card_tilt_supported,
     freehand_drawing_client_supported,
     freeze_frame_client_supported,
@@ -126,7 +128,9 @@ from app.services.phone_subtitled_editor import (
     is_phone_subtitled_editor_variant,
     lanes_from_editor_sections,
     lanes_from_recipe,
+    lanes_with_recipe_focus,
     sections_from_lanes,
+    variant_carries_background_focus,
     variant_carries_speaker_background,
     variant_carries_speaker_background_color,
     variant_carries_speaker_background_windows,
@@ -909,6 +913,21 @@ def prepare_phone_editor_commit(
         )
     if (
         stored_variant is not None
+        and not background_focus_client_supported()
+        and variant_carries_background_focus(job.assembly_plan or {}, stored_variant)
+    ):
+        # Qendresa item 18 (F1): a recompile would pin a `focus` this app build cannot decode,
+        # or (compile strips it for such a build) silently un-aim the recordings.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "background_focus",
+                "minimum_client_protocol": settings.background_focus_min_client_protocol,
+            },
+        )
+    if (
+        stored_variant is not None
         and not speaker_background_color_client_supported()
         and variant_carries_speaker_background_color(job.assembly_plan or {}, stored_variant)
     ):
@@ -1049,6 +1068,20 @@ def prepare_phone_editor_commit(
                 "code": "client_update_required",
                 "feature": "speaker_full_opening",
                 "minimum_client_protocol": settings.speaker_full_opening_min_client_protocol,
+            },
+        )
+    if (
+        staged_background is not None
+        and staged_background.uses_focus
+        and not background_focus_client_supported()
+    ):
+        # Qendresa item 18: the belt for a recompile that pinned a focus this build cannot decode.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "background_focus",
+                "minimum_client_protocol": settings.background_focus_min_client_protocol,
             },
         )
     if (
@@ -1226,6 +1259,10 @@ def _previous_lane_state(
         previous_lanes = lanes_from_recipe(
             previous.recipe, visuals=visuals, duck_receipt=variant.get(SFX_DUCK_RECEIPT_FIELD)
         )
+    elif isinstance(previous.recipe, EditRecipeV2):
+        # Qendresa item 18 (F12/F14): a focus only the pinned recipe holds (the measured one)
+        # must travel on through a Save that leaves the background alone.
+        previous_lanes = lanes_with_recipe_focus(previous_lanes, previous.recipe, visuals=visuals)
     return previous_lanes, labels, paths
 
 
@@ -1279,6 +1316,13 @@ def _settle_lane_labels_and_paths(
     return labels, paths
 
 
+def _focus_from_document(value: object) -> SubtitledBackgroundFocus | None:
+    """A document ``focus`` ({x, y, zoom}, already validated by the route) as a lane focus."""
+    if not isinstance(value, dict):
+        return None
+    return SubtitledBackgroundFocus(x=value.get("x"), y=value.get("y", 0.5), zoom=value.get("zoom"))
+
+
 def _background_lane(
     document: dict | None, visuals: tuple[PhoneVisualBinding, ...]
 ) -> SubtitledBackground | None:
@@ -1310,6 +1354,7 @@ def _background_lane(
                 source_start_s=entry.get("source_start_s", 0.0),
                 start_s=entry["start_s"],
                 end_s=entry["end_s"],
+                focus=_focus_from_document(entry.get("focus")),
             )
         )
     frame = document.get("speaker_frame")
@@ -1333,6 +1378,7 @@ def _background_lane(
         generation=binding.generation,
         kind=binding.kind,
         source_start_s=document.get("source_start_s", 0.0),
+        focus=_focus_from_document(document.get("focus")),
         windows=tuple(windows),
         speaker_frame=SubtitledSpeakerFrame(**frame) if frame else None,
         full_screen_windows=full_screen,

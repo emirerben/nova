@@ -85,6 +85,9 @@ MAX_BACKGROUND_TIMELINE_S = 1800.0
 MIN_SPEAKER_FRAME_WIDTH_FRACTION = 0.2
 # Qendresa item 16: mirrors `kria.portable_speaker_background.MAX_FULL_SCREEN_WINDOWS`.
 MAX_FULL_SCREEN_WINDOWS = 4
+# Qendresa item 18: mirrors `kria.portable_speaker_background.{MIN,MAX}_FOCUS_ZOOM`.
+MIN_FOCUS_ZOOM = 0.2
+MAX_FOCUS_ZOOM = 4.0
 # KRI-1173: the colour is stored exactly as the recipe wire spells it.
 _COLOR_PATTERN = r"^#[0-9A-F]{6}$"
 
@@ -213,6 +216,31 @@ class SubtitledEndingClip(_LaneModel):
         return payload
 
 
+class SubtitledBackgroundFocus(_LaneModel):
+    """Qendresa item 18: where a background picture is aimed. ``x`` (0 = left edge, 1 = right
+    edge) and ``zoom`` (a multiple of the cover scale) may each be left unset: the compile fills
+    an unset part from the measured text column of the recording, else from today's drawing
+    (0.5 / 1.0). ``y`` is 0.5 unless set. At least one of ``x`` / ``zoom`` is given."""
+
+    x: float | None = Field(default=None, ge=0, le=1)
+    y: float = Field(default=0.5, ge=0, le=1)
+    zoom: float | None = Field(default=None, ge=MIN_FOCUS_ZOOM, le=MAX_FOCUS_ZOOM)
+
+    @model_validator(mode="after")
+    def _says_something(self) -> SubtitledBackgroundFocus:
+        if self.x is None and self.zoom is None:
+            raise ValueError("a background focus sets an x position or a zoom")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _omit_unset(self, handler: SerializerFunctionWrapHandler) -> dict:
+        payload = handler(self)
+        for key in ("x", "zoom"):
+            if payload.get(key) is None:
+                payload.pop(key, None)
+        return payload
+
+
 class SubtitledBackgroundWindow(_LaneModel):
     """One timed background behind the speaker (KRI-1162): a Visuals-pool photo or muted
     looping video shown from ``start_s`` to ``end_s`` of the take's ORIGINAL timeline
@@ -226,6 +254,8 @@ class SubtitledBackgroundWindow(_LaneModel):
     source_start_s: float = Field(default=0.0, ge=0, le=MAX_BACKGROUND_SOURCE_START_S)
     start_s: float = Field(ge=0, le=MAX_BACKGROUND_TIMELINE_S)
     end_s: float = Field(gt=0, le=MAX_BACKGROUND_TIMELINE_S)
+    # Qendresa item 18: omitted from every dump while None.
+    focus: SubtitledBackgroundFocus | None = None
 
     @model_validator(mode="after")
     def _well_formed(self) -> SubtitledBackgroundWindow:
@@ -234,6 +264,13 @@ class SubtitledBackgroundWindow(_LaneModel):
         if self.end_s - self.start_s < MIN_BACKGROUND_WINDOW_S:
             raise ValueError("a background window must last at least 0.5 seconds")
         return self
+
+    @model_serializer(mode="wrap")
+    def _omit_unused(self, handler: SerializerFunctionWrapHandler) -> dict:
+        payload = handler(self)
+        if payload.get("focus") is None:
+            payload.pop("focus", None)
+        return payload
 
 
 class SubtitledSpeakerFrame(_LaneModel):
@@ -297,6 +334,8 @@ class SubtitledBackground(_LaneModel):
     full_screen_windows: tuple[SubtitledFullScreenWindow, ...] = Field(
         default=(), max_length=MAX_FULL_SCREEN_WINDOWS
     )
+    # Qendresa item 18: aims the FILL picture (photo/video); None while unused, omitted.
+    focus: SubtitledBackgroundFocus | None = None
 
     @field_validator("color", mode="before")
     @classmethod
@@ -317,6 +356,8 @@ class SubtitledBackground(_LaneModel):
                 raise ValueError("only a colour background carries a color")
             if self.media_id is None or self.gcs_path is None or self.generation is None:
                 raise ValueError("a photo or video background needs its pinned pool media")
+        if self.kind == "color" and self.focus is not None:
+            raise ValueError("a colour background has no focus")
         return self
 
     @model_validator(mode="after")
@@ -355,6 +396,11 @@ class SubtitledBackground(_LaneModel):
         """True when the lane needs the ``speakerFrameWindows`` gate (Qendresa item 16)."""
         return bool(self.full_screen_windows)
 
+    @property
+    def uses_focus(self) -> bool:
+        """True when the fill or any window is aimed (the ``backgroundFocus`` gate, item 18)."""
+        return self.focus is not None or any(w.focus is not None for w in self.windows)
+
     @model_serializer(mode="wrap")
     def _omit_unused(self, handler):  # noqa: ANN001, ANN202
         data = handler(self)
@@ -367,6 +413,8 @@ class SubtitledBackground(_LaneModel):
             data.pop("speaker_frame", None)
         if not data.get("full_screen_windows"):
             data.pop("full_screen_windows", None)
+        if data.get("focus") is None:
+            data.pop("focus", None)
         return data
 
 
@@ -610,7 +658,48 @@ SPEAKER_BACKGROUND_WINDOWS_FALLBACK_EVENT = "speaker_background_windows_phone_fa
 SPEAKER_BACKGROUND_COLOR_FALLBACK_EVENT = "speaker_background_color_phone_fallback"
 
 
+BACKGROUND_FOCUS_FALLBACK_EVENT = "background_focus_phone_fallback"
+
+
 def strip_unsupported_background(lanes: _BackgroundCarrier | None) -> _BackgroundCarrier | None:
+    """``lanes`` without what the phone cannot draw yet: see `_strip_background_gates`, then
+    (Qendresa item 18) every focus when `phone_rollout.background_focus_unavailable_reason` is
+    not None -- the fill and each window that is still there keep their picture, drawn as today,
+    and `BACKGROUND_FOCUS_FALLBACK_EVENT` is traced with ``reason``, ``window_count`` (windows that
+    carried a focus) and ``had_fill_focus``. Checked after the other gates, so a window the windows
+    gate already removed takes its focus with it and a fill focus is still judged on its own."""
+    lanes = _strip_background_gates(lanes)
+    if lanes is None or lanes.background is None or not lanes.background.uses_focus:
+        return lanes
+    from app.services import phone_rollout  # noqa: PLC0415
+
+    reason = phone_rollout.background_focus_unavailable_reason()
+    if reason is None:
+        return lanes
+    background = lanes.background
+    detail = {
+        "reason": reason,
+        "window_count": sum(1 for window in background.windows if window.focus is not None),
+        "had_fill_focus": background.focus is not None,
+    }
+    if background.media_id is not None:
+        detail = {"media_id": background.media_id, **detail}
+    _trace_background_fallback(BACKGROUND_FOCUS_FALLBACK_EVENT, detail)
+    return lanes.model_copy(
+        update={
+            "background": background.model_copy(
+                update={
+                    "focus": None,
+                    "windows": tuple(
+                        window.model_copy(update={"focus": None}) for window in background.windows
+                    ),
+                }
+            )
+        }
+    )
+
+
+def _strip_background_gates(lanes: _BackgroundCarrier | None) -> _BackgroundCarrier | None:
     """``lanes`` without its background while the phone gate is closed (KRI-1117).
 
     Closed = `phone_rollout.speaker_background_unavailable_reason`: kill switch off,

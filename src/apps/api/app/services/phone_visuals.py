@@ -16,13 +16,16 @@ from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any
 
+from celery.exceptions import SoftTimeLimitExceeded
 from google.api_core.exceptions import NotFound
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import storage
+from app.config import settings
 from app.models import Job, MediaAssetSource, PlanItemAsset
 from app.pipeline.probe import ProbeError, probe_video
+from app.services.background_text_focus import measure_text_column
 from app.services.phone_sources import PhoneVisualBinding
 
 # Mirror the pool upload caps (routes.plan_items._MAX_POOL_IMAGE_BYTES and
@@ -129,6 +132,17 @@ def _probed_video(local: Path) -> dict[str, Any]:
     }
 
 
+def _upright_size(probed: dict[str, Any]) -> dict[str, int | None]:
+    """The display size of a probed video (coded size, swapped for a quarter turn), else None
+    for an image (the measure reads its own)."""
+    width, height = probed.get("width"), probed.get("height")
+    if not width or not height:
+        return {"width": None, "height": None}
+    if probed.get("orientation_degrees") in (90, 270):
+        width, height = height, width
+    return {"width": width, "height": height}
+
+
 def bind_phone_visuals(
     open_session: Callable[[], AbstractContextManager[Session]],
     *,
@@ -152,12 +166,17 @@ def bind_phone_visual_assets(
     *,
     job_id: str,
     pins: dict[str, tuple[str, str, str]],
+    measure_text: bool = False,
 ) -> tuple[PhoneVisualBinding, ...]:
     """Bind selected ready pool assets without requiring a story timeline.
 
     Admission uses this same receipt path for editor-added photos and videos.
     Callers pass only server-derived rows; it still rechecks owner, item, exact
     generation, and the pool namespace before downloading any bytes.
+
+    ``measure_text`` (Qendresa item 18, with ``BACKGROUND_FOCUS_ENABLED``) also measures where
+    the text sits in each picture while its bytes are on disk. Only the callers that keep the
+    result (the background pins) ask for it; every other bind skips the work.
     """
     if not pins:
         return ()
@@ -241,6 +260,20 @@ def bind_phone_visual_assets(
                 if not expected_hash or digest != expected_hash.lower() or size != expected_bytes:
                     raise ValueError("library original bytes do not match their verified identity")
             probed = _probed_video(local) if kind == "video" else {}
+            text_column = None
+            if measure_text and settings.background_focus_enabled:
+                # Qendresa item 18: the only moment the bytes are on disk. `measure_text_column`
+                # is best-effort (never raises); a missing measure just means no auto focus.
+                try:
+                    text_column = measure_text_column(
+                        str(local),
+                        kind=kind,
+                        **_upright_size(probed),
+                    )
+                except SoftTimeLimitExceeded:
+                    raise
+                except Exception:  # noqa: BLE001 -- a measure never fails a bind
+                    text_column = None
             # One visual on disk at a time keeps worker temp space bounded.
             local.unlink()
             visuals.append(
@@ -251,6 +284,7 @@ def bind_phone_visual_assets(
                     sha256=digest,
                     byte_count=size,
                     kind=kind,
+                    text_column=text_column,
                     **probed,
                 )
             )

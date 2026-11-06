@@ -1283,7 +1283,12 @@ enum KriaClientProtocolContract {
     /// round-trips them in the editor. The server offers `editor_capabilities.speaker_full_opening` only to this protocol (and
     /// only with `speakerFrameWindows` verified) and answers 426 `client_update_required` (`speaker_full_opening`) to an
     /// older build polling or saving a recipe that already carries them.
-    static let version = 41
+    /// 42 (Qendresa item 18): decodes and draws `speaker_background.focus` and `windows[i].focus` (`{x, y, zoom}`: a photo or
+    /// video background aimed at its text, below cover with black bands) and the `backgroundFocus` capability, and round-trips
+    /// them in the editor. The server offers `editor_capabilities.background_focus` only to this protocol (and only with
+    /// `backgroundFocus` verified) and answers 426 `client_update_required` (`background_focus`) to an older build polling or
+    /// saving a recipe that already carries them.
+    static let version = 42
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -2192,6 +2197,8 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "speaker_background_windows_disabled": "Timed backgrounds aren’t available right now. Remove them and save again. Your edits are still here.",
             "speaker_full_opening_disabled": "Starting full screen isn’t available right now. Remove it and save again. Your edits are still here.",
             "speaker_full_opening_invalid": "The full-screen opening doesn’t fit this video. Remove it and save again. Your edits are still here.",
+            "background_focus_disabled": "Aiming the background isn’t available for this video yet. Your edits are still here.",
+            "background_focus_invalid": "That background aim isn’t valid. Pick left, centre or right and a zoom between 0.3x and 3x, then save again. Your edits are still here.",
             "speaker_background_window_invalid": "The timed backgrounds overlap or one is too short. Give each at least half a second without overlap, then save again. Your edits are still here.",
             // 426 from the editor-commit route: this build is older than the feature the edit uses (see the call site).
             "client_update_required": "Update Kria to save this edit. Your edits are still here.",

@@ -248,6 +248,11 @@ log = structlog.get_logger()
 # `background_media.full_screen_opening` (+ `full_screen_opening_s` for a named length). Brief: the
 # shared section records `speaker_full_opening` / `speaker_full_opening_s` on the requirement it
 # belongs to (brief_extractor v60 shares it). Every other prompt keeps its bytes.
+# v126 (Qendresa item 18; v124 is reserved for item 15; shipped as v136, below): one paragraph
+# after the full-opening section, shown only with BACKGROUND_FOCUS_ENABLED and the
+# `background_focus` capability. The recordings behind the speaker are aimed at their readable
+# text by the compile; the planner sets `background_media.focus` (a named side) / `focus_zoom`
+# (a named amount) only when the creator names one. Every other prompt keeps its bytes.
 # v128 (Qendresa item 21), on top of v120 (Qendresa 12 caption shape): behind
 # `settings.clip_text_tiktok_look_enabled`, `_CLIP_TEXT_LOOK_PROMPT_SECTION` teaches one line
 # pinned in the MIDDLE for the whole video (`corner: "middle_center"`) and TikTok's own text look
@@ -263,7 +268,10 @@ log = structlog.get_logger()
 # is a beat with `anchor: "title"`; the title stays in `opening_title`, " / " included. Flag off:
 # every prompt keeps its bytes. On top of v133 (#2111). Reserved as v129, renumbered once main
 # passed it; v132 and v134 are held by items 24 and 18.
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-06-v135"
+# v136 (Qendresa item 18; was v126, then v132, then v134 until item 20 merged as v135):
+# v126's background-focus paragraph on top of v133 (item 16) and v135 (item 20). Every other
+# prompt keeps its bytes.
+MAIN_CREATOR_PROMPT_VERSION = "2026-11-06-v136"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -816,6 +824,32 @@ def with_full_opening_brief(section: str) -> str:
         _BRIEF_FULL_OPENING_ANCHOR,
         '"arkam düz yeşil olsun").' + _BRIEF_FULL_OPENING_SENTENCE + " Sound that merely",
     )
+
+
+# Qendresa item 18: appended after the full-opening section ONLY with BACKGROUND_FOCUS_ENABLED and
+# the `background_focus` capability. The repair
+# (`creator_capabilities.repair_creator_speaker_background`) drops both fields where the build
+# cannot decode them.
+_BACKGROUND_FOCUS_PROMPT_SECTION = """
+AIMING THE RECORDINGS BEHIND THE SPEAKER (iPhone Talking only)
+Screen recordings and screenshots behind the speaker are already aimed at their readable text,
+and zoomed to read it, automatically. So "zoom in so the text is readable" needs NOTHING from you:
+set neither field below for it. Set `background_media.focus` ("left", "center" or "right") only
+when the creator names a side of the recordings ("show the left part of my recordings"). Set
+`background_media.focus_zoom` (1 = fills the frame's height, bigger = closer, smaller = more of
+the screen, from 0.3 to 3) only when they ask to zoom in or out by a named amount, or say "closer"
+or "wider". "Left" or "right" about where THEY sit is `speaker_frame`, never `focus`.
+""".strip("\n")
+
+
+def background_focus_taught(manifest: ResolvedCreatorManifest) -> bool:
+    """True when the aiming teaching belongs in the prompt: the flag is on AND the manifest
+    advertises the capability (`background_focus`, on top of the background)."""
+    if not settings.background_focus_enabled:
+        return False
+    from app.services import creator_capabilities  # noqa: PLC0415
+
+    return bool(creator_capabilities.background_focus_open(manifest))
 
 
 def speaker_full_opening_taught(manifest: ResolvedCreatorManifest) -> bool:
@@ -1660,6 +1694,12 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 + (
                     "\n" + _FULL_OPENING_PROMPT_SECTION
                     if speaker_full_opening_taught(input.capability_manifest)
+                    else ""
+                )
+                # Qendresa item 18: "" unless the flag is on AND the capability is advertised.
+                + (
+                    "\n" + _BACKGROUND_FOCUS_PROMPT_SECTION
+                    if background_focus_taught(input.capability_manifest)
                     else ""
                 )
             ),

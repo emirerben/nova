@@ -28,6 +28,12 @@ usage:
 feeds each name's words exactly as whisper wrote them in words.json (what the planner is taught
 to copy from the take's own transcript).
 
+Qendresa item 18: ``--focus on`` turns on ``BACKGROUND_FOCUS_ENABLED`` with ``backgroundFocus``
+verified for an app build at ``--client-protocol`` (default 42 with ``--focus on``): each
+recording's text column is measured from its file the way ``bind_phone_visual_assets`` does
+(free, ``app.services.background_text_focus``) and the compile aims every window at it.
+``--focus off`` (default) is today's centre crop. The recordings' real size is probed.
+
 Qendresa item 16: ``--opening on`` asks to start full screen (``background_media
 .full_screen_opening``) with ``SPEAKER_FULL_OPENING_ENABLED`` and ``speakerFrameWindows``
 verified, for the app build ``--client-protocol`` (default 41); ``off`` is today's corner from
@@ -231,8 +237,11 @@ def main() -> None:
     parser.add_argument("--phrases", choices=("labels", "spoken"), default="labels")
     parser.add_argument("--opening", choices=("on", "off"), default="off")
     parser.add_argument("--title", default=None)
-    parser.add_argument("--client-protocol", type=int, default=41)
+    parser.add_argument("--focus", choices=("on", "off"), default="off")
+    parser.add_argument("--client-protocol", type=int, default=None)
     args = parser.parse_args()
+    if args.client_protocol is None:
+        args.client_protocol = 42 if args.focus == "on" else 41
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -262,12 +271,14 @@ def main() -> None:
     settings.speaker_background_enabled = True
     settings.background_follows_talk_enabled = args.flag == "on"
     settings.speaker_full_opening_enabled = args.opening == "on"
+    settings.background_focus_enabled = args.focus == "on"
     settings.phone_render_verified_features = sorted(
         {
             *settings.phone_render_verified_features,
             "speakerBackground",
             "speakerBackgroundWindows",
             *(("speakerFrameWindows",) if args.opening == "on" else ()),
+            *(("backgroundFocus",) if args.focus == "on" else ()),
         }
     )
 
@@ -348,8 +359,26 @@ def main() -> None:
         ),
     )
     visuals = []
+    measured: dict[str, object] = {}
     for file, pool_id, _label, _tok, _occ in RECORDINGS:
         v_sha, v_size = _sha(out / file)
+        width, height = (
+            int(v)
+            for v in subprocess.check_output(
+                ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                 "stream=width,height", "-of", "csv=p=0", str(out / file)]
+            ).decode().strip().split(",")
+        )  # fmt: skip
+        extra: dict = {}
+        if args.focus == "on":
+            # What bind_phone_visual_assets does while the file is on disk (flag on).
+            from app.services.background_text_focus import measure_text_column
+
+            column = measure_text_column(
+                str(out / file), kind="video", width=width, height=height
+            )
+            measured[pool_id] = column.model_dump(mode="json") if column else None
+            extra["text_column"] = column
         visuals.append(
             PhoneVisualBinding(
                 media_id=pool_id,
@@ -359,12 +388,15 @@ def main() -> None:
                 byte_count=v_size,
                 kind="video",
                 duration_s=REC_S,
-                width=1080,
-                height=1920,
+                width=width,
+                height=height,
+                **extra,
             )
         )
 
     from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes
+
+    from app.services.phone_rollout import background_focus_planned_for
 
     recipe = compile_phone_subtitled_plan(
         (speaker,),
@@ -372,6 +404,8 @@ def main() -> None:
         visuals=tuple(visuals),
         lanes=PhoneSubtitledLanes(background=background),
         text_elements=(title_row,) if title_row else (),
+        # As `_run_phone_subtitled_job` does: the approving build decides whether a focus is drawn.
+        background_focus_open=background_focus_planned_for(args.client_protocol),
     )
     layer = recipe.speaker_background
     assert layer is not None and layer.windows, (
@@ -382,6 +416,7 @@ def main() -> None:
         set(recipe.required_capabilities)
         | {"speakerBackground", "speakerBackgroundWindows"}
         | ({"speakerFrameWindows"} if args.opening == "on" else set())
+        | ({"backgroundFocus"} if args.focus == "on" else set())
     )
     settings.phone_render_verified_features = verified
     validate_phone_pilot_recipe(recipe, allow_editor_media=True)
@@ -414,6 +449,12 @@ def main() -> None:
                 "start_s": round(window.start, 3),
                 "end_s": round(window.end, 3),
                 "name_word_s": _name_time(words, tok, occ),
+                "focus": (
+                    window.focus.model_dump(mode="json")
+                    if getattr(window, "focus", None) is not None
+                    else None
+                ),
+                "text_column": measured.get(pool_id),
             }
         )
     (out / "windows.json").write_text(
@@ -422,6 +463,8 @@ def main() -> None:
                 "flag": args.flag,
                 "phrases": phrases,
                 "opening": args.opening,
+                "focus": args.focus,
+                "client_protocol": args.client_protocol,
                 "full_screen_windows": [
                     [round(w.start, 3), round(w.end, 3)]
                     for w in layer.full_screen_windows or []
@@ -460,12 +503,15 @@ def main() -> None:
     }
     (out / "e2e.json").write_text(json.dumps(e2e, indent=2))
 
-    print(f"Wrote {out} (flag={args.flag}); duration={recipe.duration:.3f}s")
+    print(
+        f"Wrote {out} (flag={args.flag}, focus={args.focus}, protocol={args.client_protocol}); "
+        f"duration={recipe.duration:.3f}s"
+    )
     print(f"required_capabilities={sorted(recipe.required_capabilities)}")
     for row in windows_report:
         print(
             f"  rec{row['recording']} {row['label']!r}: {row['start_s']:.2f}-{row['end_s']:.2f} "
-            f"(name at {row['name_word_s']})"
+            f"(name at {row['name_word_s']}) focus={row['focus']}"
         )
 
 

@@ -493,5 +493,41 @@ final class SpeakerBackgroundCompositionTests: XCTestCase {
         // Unmasked, so the room around the person inside the box is drawn too.
         XCTAssertTrue(isColor(frame.rgb(fx: 0.76 - 0.42 * 0.4, fy: personInCorner.1), SpeakerColor.room, tolerance: 90), "the plain take, not a cut-out: \(frame.rgb(fx: 0.76 - 0.42 * 0.4, fy: personInCorner.1))")
     }
+
+    // MARK: - Qendresa item 18: an aimed background. F15 in `docs/reviews/background-focus-failure-modes.md`.
+
+    /// F15: a looping video window aimed at its left edge draws the same picture in the preview composition and in the
+    /// exported file (one placement function feeds both), and the unaimed neighbour stays the centre crop.
+    @MainActor func testAimedVideoWindowMatchesInPreviewAndExport() async throws {
+        useSpeakerSegmenter(self, GreenPersonSegmenter())
+        let directory = try speakerTestDirectory(self)
+        let blue = CGColor(red: 0, green: 0, blue: 1, alpha: 1), red = CGColor(red: 1, green: 0, blue: 0, alpha: 1), white = CGColor(red: 1, green: 1, blue: 1, alpha: 1)
+        let recording = try await writeSpeakerTestVideo(directory: directory, name: "thirds", size: (320, 180), seconds: 1) { context, _ in
+            for (index, color) in [blue, red, white].enumerated() {
+                context.setFillColor(color)
+                context.fill(CGRect(x: Double(index) * 320 / 3, y: 0, width: 320 / 3 + 1, height: 180))
+            }
+        }
+        let room = try await writeEmptyRoomClip(directory: directory, size: (canvas.width, canvas.height), seconds: 3)
+        let scene = try speakerRecipe(canvas: canvas, speaker: room, duration: 3, background: SpeakerTestBackground(url: try solidSpeakerTestImage(directory: directory)),
+                                      windows: [SpeakerTestWindow(url: recording, kind: .video, start: 0, end: 1.5,
+                                                                  focus: SpeakerBackgroundFocus(x: 0, y: 0.5, zoom: 1)),
+                                                SpeakerTestWindow(url: recording, kind: .video, start: 1.5, end: 3)])
+        XCTAssertTrue(scene.recipe.effectiveCapabilities.contains(.backgroundFocus))
+        let preview = try await previewFrame(scene.recipe, urls: scene.urls, at: 0.75)
+        let exportedFile = try await exportSpeakerRecipe(scene.recipe, urls: scene.urls, directory: directory)
+        let exported = try await fileFrame(exportedFile, at: 0.75)
+        for (name, frame) in [("preview", preview), ("export", exported)] {
+            for (fx, fy) in [(0.1, 0.1), (0.5, 0.5), (0.9, 0.9)] {
+                XCTAssertTrue(isColor(frame.rgb(fx: fx, fy: fy), blue), "\(name) aimed left at (\(fx), \(fy)): \(frame.rgb(fx: fx, fy: fy))")
+            }
+        }
+        let unaimedPreview = try await previewFrame(scene.recipe, urls: scene.urls, at: 2.25)
+        let unaimedExport = try await fileFrame(exportedFile, at: 2.25)
+        for (name, frame) in [("preview", unaimedPreview), ("export", unaimedExport)] {
+            XCTAssertTrue(isColor(frame.rgb(fx: 0.5, fy: 0.5), red), "\(name) unaimed window keeps the centre crop: \(frame.rgb(fx: 0.5, fy: 0.5))")
+            XCTAssertTrue(isColor(frame.rgb(fx: 0.05, fy: 0.5), red), "\(name) unaimed left edge is still red: \(frame.rgb(fx: 0.05, fy: 0.5))")
+        }
+    }
 }
 #endif

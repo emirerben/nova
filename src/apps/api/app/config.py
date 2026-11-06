@@ -996,6 +996,19 @@ class Settings(BaseSettings):
     # (S70-S82).
     speaker_full_opening_enabled: bool = False
     speaker_full_opening_min_client_protocol: int = 41
+    # Qendresa item 18: aim each speaker-background screen recording at its readable text. A
+    # landscape recording (a README or terminal) is cover-cropped to the 9:16 canvas, which cuts
+    # most of the page away; with the flag on the worker measures where the text column sits
+    # (free numpy pass at bind time) and writes a `focus` ({x, y, zoom}) on the background fill /
+    # window. Recipe fields `speaker_background.focus` and `speaker_background.windows[i].focus`
+    # (capability `backgroundFocus`, app builds >= `background_focus_min_client_protocol`).
+    # Default FALSE: off = no measure, no focus, every recipe, prompt and receipt byte-identical.
+    # Apply: verify `backgroundFocus` on a device, add it to PHONE_RENDER_VERIFIED_FEATURES, then
+    # `fly secrets set BACKGROUND_FOCUS_ENABLED=true --app nova-video` + restart (api + worker);
+    # rollback = `...=false` + restart (recipes already pinned with a focus keep it and still
+    # need a build >= the minimum). Design: docs/reviews/background-focus-failure-modes.md.
+    background_focus_enabled: bool = False
+    background_focus_min_client_protocol: int = 42
     # Qendresa item 19: numbered list labels on a phone Talking edit. A brief text ("1. Spec-kit")
     # with no spoken trigger is shown when its item's part of the talk starts (where its
     # background recording is introduced, else the take's own words), as an ordinary text row on

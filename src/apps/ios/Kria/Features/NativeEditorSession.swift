@@ -5474,7 +5474,7 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     /// Puts one photo or video from the item's Visuals pool behind the speaker, replacing any current fill.
     /// `sourceStart` is where a video begins playing; a photo ignores it. The timed windows and the speaker frame
-    /// (KRI-1162) stay as they are. One undo step.
+    /// (KRI-1162) stay as they are. The fill's aim (Qendresa item 18) stays only when it is the same photo or video. One undo step.
     @discardableResult
     func setSpeakerBackground(mediaID: String, kind: VisualMediaKind, sourceStart: Double = 0) -> Bool {
         let current = document.speakerBackground
@@ -5483,7 +5483,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         else { return false }
         let value = EditorSpeakerBackground(mediaID: mediaID, kind: kind, sourceStartS: sourceStart,
                                             windows: current?.windows ?? [], speakerFrame: current?.speakerFrame,
-                                            fullScreenWindows: current?.fullScreenWindows ?? [])
+                                            fullScreenWindows: current?.fullScreenWindows ?? [],
+                                            focus: current?.mediaID == mediaID && current?.kind == kind ? current?.focus : nil)
         transactDocument(section: .speakerBackground) { $0.speakerBackground = value }
         return true
     }
@@ -5500,7 +5501,8 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     /// Puts a plain colour behind the speaker, replacing any current fill (photo, video or another colour). The
     /// timed windows and the speaker frame (KRI-1162) stay as they are. `hex` is `#RRGGBB` in either case; anything
-    /// else changes nothing and returns false. Picking the colour that is already there is not an edit. One undo step.
+    /// else changes nothing and returns false. Picking the colour that is already there is not an edit. A colour has no
+    /// picture to aim, so the fill's aim goes (the windows keep theirs). One undo step.
     @discardableResult
     func setSpeakerBackgroundColor(hex: String) -> Bool {
         guard canEditSpeakerBackgroundColor, let color = EditorSpeakerBackground.normalizedColor(hex) else { return false }
@@ -5544,6 +5546,15 @@ struct NativeEditorTemporaryVideo: Sendable {
             }
         }
         if !normalized.isEmpty { guard EditorSpeakerBackground.windowsAreOrdered(normalized) else { return false } }
+        // Qendresa item 18: a window that is new (or now shows other media) takes the aim an existing window or the fill
+        // already has for the same media, so adding a second shot of the same recording keeps it aimed at its text.
+        let before = document.speakerBackground
+        for index in normalized.indices where normalized[index].focus == nil {
+            let window = normalized[index]
+            if before?.windows.contains(where: { $0.localID == window.localID && $0.mediaID == window.mediaID }) == true { continue }
+            normalized[index].focus = before?.windows.first(where: { $0.mediaID == window.mediaID && $0.focus != nil })?.focus
+                ?? (before?.mediaID == window.mediaID && before?.kind == window.kind ? before?.focus : nil)
+        }
         var background = document.speakerBackground
         if background == nil {
             guard let first = normalized.first else { return false }
@@ -5629,6 +5640,54 @@ struct NativeEditorTemporaryVideo: Sendable {
         transactDocument(section: .speakerBackground) { $0.speakerBackground = background }
         // A full-frame speaker is not a preview object any more (SF2).
         if selection?.kind == .speaker { select(nil) }
+        return true
+    }
+
+    // MARK: Aim the background (Qendresa item 18)
+
+    /// The Aim and Zoom controls exist only while the server advertises `background_focus` (gate open, this build speaks
+    /// protocol 42) and the background itself is editable. A variant that carries an aim without the capability is
+    /// read-only here, never silently edited.
+    var canEditSpeakerBackgroundFocus: Bool {
+        canEditSpeakerBackground && document.capabilities["background_focus"]?.editable == true
+    }
+
+    /// The editor's bounds on a focus (the wire allows 0.2...4; chat and these controls stay inside 0.3...3).
+    static let backgroundFocusZoomRange: ClosedRange<Double> = 0.3...3.0
+
+    /// The current aim of the fill (`windowIndex` nil) or of one window; nil = never aimed (the centre cover-fit).
+    func speakerBackgroundFocus(windowIndex: Int?) -> SpeakerBackgroundFocus? {
+        guard let background = document.speakerBackground else { return nil }
+        guard let windowIndex else { return background.focus }
+        return background.windows.indices.contains(windowIndex) ? background.windows[windowIndex].focus : nil
+    }
+
+    /// Aims the fill (`windowIndex` nil, a photo or video) or one timed background at its text. `x` is 0 (left edge) to 1
+    /// (right edge), clamped; `zoom` is a multiple of the whole-frame fit, clamped to 0.3...3. A nil part keeps what is
+    /// there, starting from the centre at 1x. The centre at 1x is today's drawing and clears the aim (key absent). False,
+    /// with no change, when the controls are closed, the target does not exist (a colour fill has nothing to aim) or
+    /// nothing would change. One undo step (a drag wraps it in `beginTransaction()` / `endTransaction()`).
+    @discardableResult
+    func setSpeakerBackgroundFocus(x: Double? = nil, zoom: Double? = nil, windowIndex: Int? = nil) -> Bool {
+        guard canEditSpeakerBackgroundFocus, var background = document.speakerBackground, x != nil || zoom != nil else { return false }
+        if let x { guard x.isFinite else { return false } }
+        if let zoom { guard zoom.isFinite else { return false } }
+        let current = speakerBackgroundFocus(windowIndex: windowIndex)
+        let next = SpeakerBackgroundFocus(
+            x: min(1, max(0, x ?? current?.x ?? 0.5)),
+            y: current?.y ?? 0.5,
+            zoom: min(Self.backgroundFocusZoomRange.upperBound, max(Self.backgroundFocusZoomRange.lowerBound, zoom ?? current?.zoom ?? 1)))
+        // Exactly today's drawing is never stored.
+        let stored: SpeakerBackgroundFocus? = next == SpeakerBackgroundFocus(x: 0.5, y: 0.5, zoom: 1) ? nil : next
+        guard stored != current else { return false }
+        if let windowIndex {
+            guard background.windows.indices.contains(windowIndex) else { return false }
+            background.windows[windowIndex].focus = stored
+        } else {
+            guard background.mediaID != nil else { return false }
+            background.focus = stored
+        }
+        transactDocument(section: .speakerBackground) { $0.speakerBackground = background }
         return true
     }
 

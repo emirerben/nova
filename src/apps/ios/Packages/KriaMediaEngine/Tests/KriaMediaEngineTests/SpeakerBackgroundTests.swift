@@ -101,6 +101,59 @@ final class SpeakerBackgroundTests: XCTestCase {
         }
     }
 
+    func testSharedFixtureV5() throws {
+        let valid = try cases("valid", file: "v5")
+        XCTAssertGreaterThanOrEqual(valid.count, 3)
+        for item in valid {
+            let layer = try RecipeJSON.decoder().decode(SpeakerBackgroundLayer.self, from: item.layer)
+            XCTAssertEqual(layer, try RecipeJSON.decoder().decode(SpeakerBackgroundLayer.self, from: XCTUnwrap(item.normalized)), item.name)
+            try layer.validate()
+            let rewritten = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(layer)) as? NSDictionary)
+            XCTAssertEqual(rewritten, try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(item.normalized)) as? NSDictionary), item.name)
+        }
+        let invalid = try cases("invalid", file: "v5")
+        XCTAssertGreaterThanOrEqual(invalid.count, 5)
+        for item in invalid {
+            XCTAssertThrowsError(try RecipeJSON.decoder().decode(SpeakerBackgroundLayer.self, from: item.layer), item.name)
+        }
+    }
+
+    /// Qendresa item 18: focus bounds, strict keys, colour rejection, capability, omitted while nil.
+    func testFocusValidationAndCapability() throws {
+        XCTAssertNoThrow(try SpeakerBackgroundFocus(x: 0, y: 1, zoom: 0.2).validate())
+        XCTAssertNoThrow(try SpeakerBackgroundFocus(x: 0.5, y: 0.5, zoom: 4).validate())
+        for bad in [SpeakerBackgroundFocus(x: -0.01, y: 0.5, zoom: 1), SpeakerBackgroundFocus(x: 0.5, y: 1.01, zoom: 1),
+                    SpeakerBackgroundFocus(x: 0.5, y: 0.5, zoom: 0.19), SpeakerBackgroundFocus(x: 0.5, y: 0.5, zoom: 4.01),
+                    SpeakerBackgroundFocus(x: .nan, y: 0.5, zoom: 1), SpeakerBackgroundFocus(x: 0.5, y: 0.5, zoom: .infinity)] {
+            XCTAssertThrowsError(try bad.validate(), "\(bad)")
+        }
+        let decoder = RecipeJSON.decoder()
+        XCTAssertThrowsError(try decoder.decode(SpeakerBackgroundFocus.self, from: Data(#"{"x":0.5,"y":0.5,"zoom":1,"extra":1}"#.utf8)))
+        XCTAssertThrowsError(try decoder.decode(SpeakerBackgroundFocus.self, from: Data(#"{"x":0.5,"y":0.5}"#.utf8)))
+        let colour = SpeakerBackgroundLayer.color("#112233", focus: SpeakerBackgroundFocus(x: 0, y: 0.5, zoom: 1))
+        XCTAssertThrowsError(try colour.validate())
+        let aimed = SpeakerBackgroundFocus(x: 0, y: 0.5, zoom: 1.5)
+        let window = SpeakerBackgroundWindow(assetID: "w", mediaKind: .image, start: 0, end: 1, focus: aimed)
+        let layer = SpeakerBackgroundLayer(assetID: "a", mediaKind: .image, windows: [window])
+        try layer.validate()
+        let wire = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(layer)) as? [String: Any])
+        let wireWindow = try XCTUnwrap((wire["windows"] as? [[String: Any]])?.first)
+        XCTAssertEqual((wireWindow["focus"] as? [String: Double])?["zoom"], 1.5)
+        XCTAssertNil(wire["focus"], "a fill without focus omits the key")
+        let plain = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(SpeakerBackgroundLayer(assetID: "a", mediaKind: .image))) as? [String: Any])
+        XCTAssertNil(plain["focus"])
+        XCTAssertEqual(try decoder.decode(SpeakerBackgroundLayer.self, from: RecipeJSON.encoder().encode(layer)), layer)
+        var object = try recipeObject()
+        object["speaker_background"] = ["asset_id": "media-1", "media_kind": "image", "focus": ["x": 0, "y": 0.5, "zoom": 1.5]]
+        let recipe = try decode(object)
+        try recipe.validate()
+        XCTAssertTrue(recipe.effectiveCapabilities.contains(.backgroundFocus))
+        XCTAssertEqual(CapabilityNegotiator().decide(for: recipe).route, .cloud)
+        var bare = try recipeObject()
+        bare["speaker_background"] = ["asset_id": "media-1", "media_kind": "image"]
+        XCTAssertFalse(try decode(bare).effectiveCapabilities.contains(.backgroundFocus))
+    }
+
     func testFullScreenWindowsDeriveTheirCapabilityAndAreHitByTime() throws {
         let plain = SpeakerBackgroundLayer(assetID: "a", mediaKind: .image)
         XCTAssertFalse(plain.showsSpeakerFullScreen(at: 0))
@@ -432,6 +485,82 @@ final class SpeakerBackgroundTests: XCTestCase {
         for (fx, fy) in [(0.02, 0.01), (0.98, 0.01), (0.02, 0.99), (0.98, 0.99), (0.5, 0.01), (0.5, 0.99), (0.5, 0.5)] {
             XCTAssertTrue(isColor(frame.rgb(fx: fx, fy: fy), CGColor(red: 1, green: 0, blue: 0, alpha: 1)), "cover-fit red at (\(fx), \(fy)): \(frame.rgb(fx: fx, fy: fy))")
         }
+    }
+
+    // MARK: - Qendresa item 18: aim the background (rows F10, F11, F15 in `docs/reviews/background-focus-failure-modes.md`)
+
+    private func thirdsPhoto(in directory: URL) throws -> URL {
+        try writeSpeakerTestImage(directory: directory, name: "thirds", size: (320, 180)) { context in
+            for (index, color) in [CGColor(red: 0, green: 0, blue: 1, alpha: 1), CGColor(red: 1, green: 0, blue: 0, alpha: 1),
+                                   CGColor(red: 1, green: 1, blue: 1, alpha: 1)].enumerated() {
+                context.setFillColor(color)
+                context.fill(CGRect(x: Double(index) * 320 / 3, y: 0, width: 320 / 3 + 1, height: 180))
+            }
+        }
+    }
+
+    @MainActor private func focusFrame(_ focus: SpeakerBackgroundFocus?, directory: URL) async throws -> SpeakerTestFrame {
+        try await backgroundFrames(SpeakerTestBackground(url: try thirdsPhoto(in: directory), focus: focus), at: [1], directory: directory)[0]
+    }
+
+    /// F11: a fill focus. x 0 shows the blue left third, x 1 the white right third.
+    @MainActor func testFocusAimsTheFillAtEitherSide() async throws {
+        let directory = try speakerTestDirectory(self)
+        let blue = CGColor(red: 0, green: 0, blue: 1, alpha: 1), white = CGColor(red: 1, green: 1, blue: 1, alpha: 1)
+        let left = try await focusFrame(SpeakerBackgroundFocus(x: 0, y: 0.5, zoom: 1), directory: directory)
+        let right = try await focusFrame(SpeakerBackgroundFocus(x: 1, y: 0.5, zoom: 1), directory: directory)
+        for (fx, fy) in [(0.1, 0.1), (0.9, 0.9), (0.5, 0.5)] {
+            XCTAssertTrue(isColor(left.rgb(fx: fx, fy: fy), blue), "left aim at (\(fx), \(fy)): \(left.rgb(fx: fx, fy: fy))")
+            XCTAssertTrue(isColor(right.rgb(fx: fx, fy: fy), white), "right aim at (\(fx), \(fy)): \(right.rgb(fx: fx, fy: fy))")
+        }
+    }
+
+    /// A window focus aims only that window's picture.
+    @MainActor func testFocusAimsATimedWindow() async throws {
+        useSpeakerSegmenter(self, GreenPersonSegmenter())
+        let directory = try speakerTestDirectory(self)
+        let room = try await writeEmptyRoomClip(directory: directory, size: (canvas.width, canvas.height), seconds: 3)
+        let scene = try speakerRecipe(canvas: canvas, speaker: room, duration: 3, background: SpeakerTestBackground(url: try solidSpeakerTestImage(directory: directory)),
+                                      windows: [SpeakerTestWindow(url: try thirdsPhoto(in: directory), start: 0, end: 3,
+                                                                  focus: SpeakerBackgroundFocus(x: 0, y: 0.5, zoom: 1))])
+        XCTAssertTrue(scene.recipe.effectiveCapabilities.contains(.backgroundFocus))
+        let frame = try await previewFrame(scene.recipe, urls: scene.urls, at: 1)
+        XCTAssertTrue(isColor(frame.rgb(fx: 0.5, fy: 0.5), CGColor(red: 0, green: 0, blue: 1, alpha: 1)), "\(frame.rgb(fx: 0.5, fy: 0.5))")
+    }
+
+    /// F10: zoom below cover leaves black bands above and below, and all three colours are visible.
+    @MainActor func testZoomBelowCoverLeavesBlackBands() async throws {
+        let directory = try speakerTestDirectory(self)
+        // Canvas 120x200, 16:9 picture: contain/cover = 0.30, so 0.6 is between: the picture is wider than the frame but only
+        // 120 px tall, leaving a black band of 20% at the top and the bottom.
+        let frame = try await focusFrame(SpeakerBackgroundFocus(x: 0.5, y: 0.5, zoom: 0.6), directory: directory)
+        let black = CGColor(red: 0, green: 0, blue: 0, alpha: 1)
+        for (fx, fy) in [(0.1, 0.02), (0.9, 0.02), (0.1, 0.98), (0.9, 0.98), (0.5, 0.02), (0.5, 0.98)] {
+            XCTAssertTrue(isColor(frame.rgb(fx: fx, fy: fy), black, tolerance: 20), "black band at (\(fx), \(fy)): \(frame.rgb(fx: fx, fy: fy))")
+        }
+        XCTAssertTrue(isColor(frame.rgb(fx: 0.03, fy: 0.5), CGColor(red: 0, green: 0, blue: 1, alpha: 1)), "blue at the left: \(frame.rgb(fx: 0.03, fy: 0.5))")
+        XCTAssertTrue(isColor(frame.rgb(fx: 0.5, fy: 0.5), CGColor(red: 1, green: 0, blue: 0, alpha: 1)), "red in the middle: \(frame.rgb(fx: 0.5, fy: 0.5))")
+        XCTAssertTrue(isColor(frame.rgb(fx: 0.97, fy: 0.5), CGColor(red: 1, green: 1, blue: 1, alpha: 1)), "white at the right: \(frame.rgb(fx: 0.97, fy: 0.5))")
+    }
+
+    /// Zoom 0.2 on a 16:9 picture is clamped to contain: the picture is never drawn smaller than the whole picture,
+    /// so the left and right edges have no gap.
+    @MainActor func testZoomIsClampedToContain() async throws {
+        let directory = try speakerTestDirectory(self)
+        let frame = try await focusFrame(SpeakerBackgroundFocus(x: 0.5, y: 0.5, zoom: 0.2), directory: directory)
+        XCTAssertTrue(isColor(frame.rgb(fx: 0.01, fy: 0.5), CGColor(red: 0, green: 0, blue: 1, alpha: 1)), "blue touches the left edge: \(frame.rgb(fx: 0.01, fy: 0.5))")
+        XCTAssertTrue(isColor(frame.rgb(fx: 0.99, fy: 0.5), CGColor(red: 1, green: 1, blue: 1, alpha: 1)), "white touches the right edge: \(frame.rgb(fx: 0.99, fy: 0.5))")
+    }
+
+    /// No focus, {0.5, 0.5, 1} and today's drawing are the same pixels.
+    @MainActor func testNilFocusIsTodaysPixels() async throws {
+        let directory = try speakerTestDirectory(self)
+        let today = try await focusFrame(nil, directory: directory)
+        let centred = try await focusFrame(SpeakerBackgroundFocus(x: 0.5, y: 0.5, zoom: 1), directory: directory)
+        for fy in stride(from: 0.02, to: 1, by: 0.12) { for fx in [0.02, 0.3, 0.5, 0.7, 0.98] {
+            XCTAssertEqual(today.rgb(fx: fx, fy: fy), centred.rgb(fx: fx, fy: fy), "(\(fx), \(fy))")
+        } }
+        XCTAssertTrue(isColor(today.rgb(fx: 0.5, fy: 0.5), CGColor(red: 1, green: 0, blue: 0, alpha: 1)))
     }
 
     /// S10: the photo's EXIF orientation is applied. Stored landscape with orientation 6 (rotate 90 degrees
