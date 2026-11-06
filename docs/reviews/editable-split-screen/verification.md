@@ -90,3 +90,13 @@ xcodebuild -project src/apps/ios/Kria.xcodeproj -scheme Kria -configuration Debu
   -only-testing:KriaUITests/SpeakerFrameDirectManipulationUITests/testRepeatedSpeakerPanelsSelectAndDragTheChosenOccurrence \
   test CODE_SIGNING_ALLOWED=NO
 ```
+
+## Post-checkpoint native attempts and tracking resolution
+
+The single approved Linear retry after the user reported capacity succeeded. [KRI-1231](https://linear.app/kria/issue/KRI-1231/build-editable-split-screen-videos), “Build editable split-screen videos,” was independently read back in Kria's existing iOS editor polish project (P-KRI-10), In Progress. It records the approved scope and honest test status. The earlier quota failure remains historical evidence; issue availability is no longer a blocker. No publication occurred.
+
+At clean `af9b736e36d3d17b3121b191acdd7e5e4ff8a6ba`, the consolidated Python/persistence selection passed **467 tests**; generated contracts, Ruff and 156-journey mapping passed. Evidence: `.dev/split-screen/applicability-af9b736e3.log`, `contracts-af9b736e3.log`, `journey-applicability-final.log`.
+
+Two separately cleared native attempts ran on that exact head. The first exited70 before compilation because the dedicated simulator had disappeared; zero tests executed. The second used available iPhone17 `4E5516D0-28B5-4F96-9973-01CCEC8FBF91`, iOS26.5 build23F77, matching the previous test model/runtime. Xcodebuild PID9860 ran12:57:14–12:58:26 UTC and exited65 during test-target compilation: four calls in two new transition regressions passed `String?` fixture IDs to `String` parameters. **Zero tests executed**, so previous runtime failures remain open. The result bundle and complete diagnostics are `.dev/split-screen/native-af9b736e3-iphone17-r2-results.xcresult` and its sibling log.
+
+After result collection, owned PIDs9822/9841/9860 were absent and this task released the lane;277GiB was free. A separate build PID10428 in `/Users/emirerben/Projects/nova-talk-rerecord/src/apps/ios`, started12:57:26, was observed and left untouched. No subsequent native/package/formal command was launched here. The source correction after this run explicitly unwraps fixture IDs with `XCTUnwrap` and makes the two tests throwing; existing behavioral assertions and test names/count are unchanged. This later correction has not been compiled or executed. No product source or shared formal file changed in that correction.
