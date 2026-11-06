@@ -690,6 +690,121 @@ final class SavedEditorRecoveryTests: XCTestCase {
         XCTAssertEqual(session.document, before)
     }
 
+    func testPromptRefreshCannotClearOrAdoptReplacementState() async throws {
+        for outcome in ["success", "failure", "adoption"] {
+            let (session, old, _) = try await conflictingRetryFixture()
+            if outcome == "adoption" {
+                old.draftSnapshot = DraftSnapshot(draftID: draftID, itemID: itemID, variantKey: "guided_story",
+                    draftRevision: 5, snapshotHash: "other", etag: "other", baseJobID: UUID().uuidString,
+                    baseGenerationID: "other", snapshot: [:], canUndo: false, createdAt: .now)
+            }
+            old.draftError = nil
+            old.suspendNextEditorVariant = true
+            let refresh = Task { await session.synchronizePromptRevision() }
+            for _ in 0..<200 {
+                if old.editorVariantIsSuspended { break }
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            XCTAssertTrue(old.editorVariantIsSuspended)
+            let replacement = EditorCommitSpy(draftSnapshot: snapshot(), authoritativeVariant: variant())
+            await session.load(api: replacement, threadID: threadID, variantID: "guided_story")
+            session.updateTextContent(id: "saved-title", content: "Replacement edit")
+            session.refreshRetryDelays = [.seconds(3600)]
+            replacement.draftError = .offline
+            for _ in 0..<NativeEditorSession.reconnectingHintAfterFailures { await session.synchronizePromptRevision() }
+            XCTAssertEqual(session.refreshSync, .reconnecting)
+            let before = session.document
+            let projectReads = old.projectCallCount
+            if outcome == "failure" { old.editorVariantError = .conflict }
+            old.resumeEditorVariant(); await refresh.value
+            XCTAssertEqual(session.refreshSync, .reconnecting)
+            XCTAssertEqual(session.document, before)
+            XCTAssertTrue(session.hasUnsavedChanges)
+            XCTAssertEqual(old.projectCallCount, projectReads, "old refresh must not adopt its thread into replacement")
+        }
+    }
+
+    func testReopenPreservesEditsMadeDuringReadAndNeverAuthorizesStaleFallback() async throws {
+        for replacement in [false, true] {
+            for outcome in ["success", "failure", "conflict"] {
+                let (session, old, _) = try await conflictingRetryFixture()
+                let t = try thread()
+                old.suspendNextEditorVariant = true
+                var newer = variant(); newer["render_generation_id"] = .string("newer")
+                old.authoritativeVariant = newer
+                let initiatingLifetime = session.editorLifetimeID
+                let open = Task { await session.reconcileOnOpen(project: t.summary, api: old) }
+                for _ in 0..<200 {
+                    if old.editorVariantIsSuspended { break }
+                    try await Task.sleep(for: .milliseconds(5))
+                }
+                XCTAssertTrue(old.editorVariantIsSuspended)
+                if replacement {
+                    let next = EditorCommitSpy(draftSnapshot: snapshot(), authoritativeVariant: variant())
+                    await session.load(api: next, threadID: threadID, variantID: "guided_story")
+                }
+                session.updateTextContent(id: "saved-title", content: "Keep my new edit")
+                let before = session.document
+                if outcome != "success" { old.editorVariantError = outcome == "conflict" ? .conflict : .unsupported }
+                old.resumeEditorVariant()
+                let handled = await open.value
+                XCTAssertTrue(handled, "false would authorize the view to discard edits with fallback load")
+                XCTAssertEqual(session.document, before)
+                XCTAssertTrue(session.hasUnsavedChanges)
+                if replacement {
+                    XCTAssertNil(session.newerJobPrompt)
+                    let fallback = await session.loadForEditorOpen(project: t.summary, libraryJobID: nil,
+                        api: old, expectedLifetime: initiatingLifetime)
+                    XCTAssertNil(fallback, "even a delayed caller must not load over a replacement")
+                    XCTAssertEqual(session.document, before)
+                }
+                else if outcome == "success" { XCTAssertNotNil(session.newerJobPrompt) }
+                session.undo()
+                XCTAssertFalse(session.hasUnsavedChanges)
+            }
+        }
+    }
+
+    func testResetClearsAppliedBadgeAndReplacementAnnouncementDismisses() async throws {
+        let (session, old, _) = try await conflictingRetryFixture()
+                let t = try thread()
+        old.commitErrorQueue = []
+        session.previewPollInterval = .seconds(3600)
+        await session.retryRender()
+        var ready = variant()
+        ready["render_generation_id"] = .string("next")
+        ready["render_status"] = .string("ready")
+        ready["output_url"] = .string("file:///tmp/cunda-badge-fixture.mp4")
+        XCTAssertTrue(session.applyPreviewVariant(ready, generation: "next"))
+        XCTAssertTrue(session.showsEditApplied)
+        var saved = variant()
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        saved["editor_draft"] = try JSONDecoder().decode(JSONValue.self, from: encoder.encode(snapshot()))
+        let next = EditorCommitSpy(draftSnapshot: snapshot(), draftError: .unsupported, authoritativeVariant: saved)
+        await session.load(project: t.summary, api: next)
+        XCTAssertFalse(session.showsEditApplied)
+        await session.retryRender()
+        XCTAssertTrue(session.applyPreviewVariant(ready, generation: "next"))
+        XCTAssertTrue(session.showsEditApplied)
+        try await Task.sleep(for: .milliseconds(3200))
+        XCTAssertFalse(session.showsEditApplied)
+    }
+
+    func testFallbackLoadRechecksEditsAfterReconcileReturns() async throws {
+        let (session, old, _) = try await conflictingRetryFixture()
+        let t = try thread()
+        let lifetime = session.editorLifetimeID
+        let handled = await session.reconcileOnOpen(project: t.summary, api: old)
+        XCTAssertFalse(handled, "a clean editor may normally reload a newer generation")
+        session.updateTextContent(id: "saved-title", content: "Typed before caller resumed")
+        let before = session.document
+        let loaded = await session.loadForEditorOpen(project: t.summary, libraryJobID: nil,
+            api: old, expectedLifetime: lifetime)
+        XCTAssertNil(loaded)
+        XCTAssertEqual(session.document, before)
+        XCTAssertTrue(session.hasUnsavedChanges)
+    }
+
     func testGenuineTimelineSaveRetainsExistingConflictRebaseContract() async throws {
         let (session, fake, _) = try await conflictingRetryFixture()
         session.transactDocument(section: .timeline) { $0.clips[0].durationS = 1.5 }

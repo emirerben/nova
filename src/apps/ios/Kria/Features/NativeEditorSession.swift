@@ -1174,6 +1174,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         let threadID: UUID?
     }
     private var editorLoadEpoch: UInt64 = 0
+    var editorLifetimeID: UInt64 { editorLoadEpoch }
     private var activeSaveAttemptID: UUID?
     private var editorOperationIdentity: EditorOperationIdentity {
         EditorOperationIdentity(loadEpoch: editorLoadEpoch, itemID: itemID, jobID: jobID,
@@ -1184,7 +1185,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         resetBackgroundRefresh()
         previewRefreshTask?.cancel(); previewRefreshTask = nil; pendingPreviewGeneration = nil
         sourcePreviewTask?.cancel(); sourcePreviewQuietRetryTask?.cancel()
-        editAppliedTask?.cancel()
+        editAppliedTask?.cancel(); showsEditApplied = false
         promptRefreshSequence &+= 1; sourcePreviewSequence &+= 1
         pendingDeviceRenderIdentity = nil
         activeSaveAttemptID = nil
@@ -2047,13 +2048,14 @@ struct NativeEditorTemporaryVideo: Sendable {
         let identity = editorOperationIdentity
         for attempt in 0..<3 {
             syncNeedsRetry = false
-            await runPromptRevisionSync()
+            await runPromptRevisionSync(identity: identity)
             guard editorOperationIdentity == identity, syncNeedsRetry, !Task.isCancelled else { return }
             Self.stagingLog.debug("sync retry attempt=\(attempt + 1, privacy: .public)")
         }
     }
 
-    private func runPromptRevisionSync() async {
+    private func runPromptRevisionSync(identity: EditorOperationIdentity) async {
+        guard editorOperationIdentity == identity else { return }
         if isSaving, loadState == .loaded, !promptSyncStopped,
            refreshSync == .reconnecting || isRunningRefreshRetry {
             // A retry that lands mid-save would otherwise be dropped and leave the
@@ -2072,6 +2074,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 // Legacy conversations have no runtime-v2 draft endpoint.
                 // Read the same rendered authority used when opening this editor.
                 let latest = try? await api.project(threadID: threadID)
+                guard editorOperationIdentity == identity, sequence == promptRefreshSequence, !Task.isCancelled else { return }
                 let targetJob: UUID
                 let targetVariant: String
                 let targetItem: String
@@ -2095,6 +2098,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                     targetJob = jobID; targetVariant = variantKey; targetItem = itemID
                 }
                 let current = try await api.editorVariant(jobID: targetJob, variantID: targetVariant)
+                guard editorOperationIdentity == identity, sequence == promptRefreshSequence, !Task.isCancelled else { return }
                 noteRefreshReadSucceeded()
                 variant = current
                 snapshot = DraftSnapshot(
@@ -2105,11 +2109,13 @@ struct NativeEditorTemporaryVideo: Sendable {
                     snapshot: [:], canUndo: false, createdAt: .now)
             } else {
                 snapshot = try await api.draft(threadID: threadID)
+                guard editorOperationIdentity == identity, sequence == promptRefreshSequence, !Task.isCancelled else { return }
                 if let targetJob = snapshot.baseJobID.flatMap(UUID.init) {
                     variant = try await api.editorVariant(jobID: targetJob, variantID: snapshot.variantKey)
                 } else { variant = nil }
                 // Only a complete read proves the path works: a draft read followed by a failing
                 // variant read must not reset the streak, or a persistent conflict retries forever.
+                guard editorOperationIdentity == identity, sequence == promptRefreshSequence, !Task.isCancelled else { return }
                 noteRefreshReadSucceeded()
             }
             let nextJobID = snapshot.baseJobID.flatMap(UUID.init)
@@ -2130,7 +2136,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             // (never rendered); show it as unsaved edits instead of ignoring it.
             let staged = conversationRuntimeVersion == 2 && sameTarget
                 ? stagedChatDocument(snapshot: snapshot, draft: nextDraft, variant: variant) : nil
-            guard sequence == promptRefreshSequence, !Task.isCancelled else { return }
+            guard editorOperationIdentity == identity, sequence == promptRefreshSequence, !Task.isCancelled else { return }
             // A save/load completed while this request was suspended. Its newer
             // authority wins, even when the local document is now clean.
             guard cleanDocument == baseline else { syncNeedsRetry = true; return }
@@ -2221,7 +2227,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             currentTime = min(time, duration)
             await prepareSourcePreview()
         } catch {
-            guard sequence == promptRefreshSequence, cleanDocument == baseline, !Task.isCancelled else { return }
+            guard editorOperationIdentity == identity, sequence == promptRefreshSequence, cleanDocument == baseline, !Task.isCancelled else { return }
             let failure = Self.refreshFailure(error)
             // The loaded job was superseded by a re-plan render (its editor
             // routes now answer "content plan unavailable"/409): follow the
@@ -2229,6 +2235,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             if conversationRuntimeVersion == 2, failure == .readConflict {
                 let before = jobID
                 await adoptActiveJobFromThread(api: api, threadID: threadID)
+                guard editorOperationIdentity == identity, sequence == promptRefreshSequence, !Task.isCancelled else { return }
                 if jobID != before || newerJobPrompt != nil || refreshSync == .newVersionRendering { return }
             }
             handleRefreshFailure(failure)
@@ -2323,9 +2330,10 @@ struct NativeEditorTemporaryVideo: Sendable {
         var delay = refreshRetryDelays[min(max(refreshFailureStreak - 1, 0), refreshRetryDelays.count - 1)]
         // Honour the server's Retry-After, capped so a bad header cannot park the editor.
         if let retryAfter { delay = max(delay, .seconds(min(retryAfter, 120))) }
+        let identity = editorOperationIdentity
         refreshRetryTask = Task { [weak self] in
             try? await Task.sleep(for: delay)
-            guard !Task.isCancelled, let self else { return }
+            guard !Task.isCancelled, let self, self.editorOperationIdentity == identity else { return }
             self.refreshRetryTask = nil
             await self.runRefreshRetry()
         }
@@ -2335,8 +2343,9 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var isRunningRefreshRetry = false
 
     private func runRefreshRetry() async {
+        let epoch = editorLoadEpoch
         isRunningRefreshRetry = true
-        defer { isRunningRefreshRetry = false }
+        defer { if editorLoadEpoch == epoch { isRunningRefreshRetry = false } }
         await synchronizePromptRevision()
     }
 
@@ -2389,16 +2398,23 @@ struct NativeEditorTemporaryVideo: Sendable {
               let jobID, let variantKey,
               project.activeJobID.map({ $0 == jobID }) ?? true,
               project.outputVariantID.map({ $0 == variantKey }) ?? true else { return false }
-        let hasOwnEdits = hasUnsavedChanges && !hasOnlyChatStagedChanges
+        let identity = editorOperationIdentity
         let current: [String: JSONValue]
         do {
             current = try await api.editorVariant(jobID: jobID, variantID: variantKey)
         } catch {
+            // An obsolete open is handled: it must never authorize caller reload.
+            guard editorOperationIdentity == identity else { return true }
+            let hasOwnEdits = hasUnsavedChanges && !hasOnlyChatStagedChanges
             // Superseded (re-plan) keeps the full path, which follows the thread to its new job.
             // Anything else (a dropped connection) must not wipe local edits or error the editor.
             switch Self.refreshFailure(error) {
             case .readConflict:
-                return false
+                guard hasOwnEdits || isSaving else { return false }
+                // Follow a real replacement job through the existing dirty-edit
+                // decision, never through a destructive fallback load.
+                if !isSaving { await adoptActiveJobFromThread(api: api, threadID: project.id) }
+                return true
             case .transient:
                 // Keep the editor that works, clean or not, and look again quietly. A full reload
                 // here would replace it with "The editor couldn't open" while offline.
@@ -2407,9 +2423,12 @@ struct NativeEditorTemporaryVideo: Sendable {
             case .cancelled, .appGate:
                 return true
             case .targetLost, .runtimeUnavailable, .other:
-                return hasOwnEdits
+                return hasOwnEdits || isSaving
             }
         }
+        guard editorOperationIdentity == identity else { return true }
+        let hasOwnEdits = hasUnsavedChanges && !hasOnlyChatStagedChanges
+        guard !isSaving else { return true }
         if variantUnchanged(current) {
             loadedServerRevision = project.serverRevision
             await synchronizePromptRevision()
@@ -2420,6 +2439,27 @@ struct NativeEditorTemporaryVideo: Sendable {
         // `loadedServerRevision` stays put, so the next open asks again until they decide.
         newerJobPrompt = project
         return true
+    }
+
+    func loadForEditorOpen(project: ProjectSummary, libraryJobID: UUID?, api: any KriaAPIClient,
+                           expectedLifetime: UInt64) async -> UInt64? {
+        guard editorLoadEpoch == expectedLifetime, !isSaving else { return nil }
+        // The caller may resume after another local edit, even when its read
+        // legitimately recommended a reload while the editor was clean.
+        guard !hasUnsavedChanges || hasOnlyChatStagedChanges else {
+            newerJobPrompt = project
+            return nil
+        }
+        let epoch = beginEditorLoad()
+        if let libraryJobID {
+            await load(editorJobID: libraryJobID, planItemID: nil, preferredVariantID: nil,
+                       threadID: nil, api: api, loadEpoch: epoch)
+        } else {
+            await load(project: project, api: api, loadEpoch: epoch)
+        }
+        guard editorLoadEpoch == epoch else { return nil }
+        await refreshDeviceRender()
+        return editorLoadEpoch == epoch ? epoch : nil
     }
 
     func load(project: ProjectSummary, api: any KriaAPIClient, loadEpoch: UInt64? = nil) async {
@@ -2579,6 +2619,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         loadRetryTask?.cancel(); loadRetryTask = nil
         refreshFailureStreak = 0
         promptSyncStopped = false
+        isRunningRefreshRetry = false
         refreshSync = .idle
     }
 

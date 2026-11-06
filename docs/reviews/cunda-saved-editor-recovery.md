@@ -348,3 +348,50 @@ Comprehensive green: **562 tests, zero failures** in
 neighbors. No source or test change followed this run. The original private
 project, immutable incident receipt, database Save/reopen, physical iPhone/Photos,
 hosted CI and rollout remain unverified. Speed integration remains separate.
+
+## Open, prompt refresh and transient UI correction
+
+The bounded follow-up carries the initiating lifetime into prompt refresh before
+any success/retry/adoption mutation, including after catch-path adoption. Retry
+scheduling captures ownership and running-flag cleanup is epoch-owned. Reopening
+checks identity on success and error, recomputes local dirtiness after suspension,
+and returns handled for superseded results. Dirty conflict reads use the existing
+new-job decision (preserve/prompt), not a full-load fallback. The view passes its
+initiating lifetime into a single fallback-load/device-refresh helper; that helper
+also rechecks saving and dirty state before starting. Its returned lifetime fences
+the view's final output installation. Reset clears the cancelled lifetime's visible
+Edit applied badge; a replacement's later announcement retains normal dismissal.
+
+Red evidence: `/tmp/cunda-open-red` ran 33 tests with nine failures (five reopen,
+three refresh/adoption, one badge); normal active-job adoption and the targeted
+device-retry/reset control passed. `/tmp/cunda-open-conflict-red` ran 31 tests with
+three failures for dirty conflict reads. `/tmp/cunda-open-fallback-red` ran one
+test with three failures for edits made after reconciliation returned but before
+caller fallback. All earlier red/green artifacts remain preserved.
+
+The first comprehensive attempt `/tmp/cunda-open-green` was NOT green: xcresult
+records 524 passes and one test-host SIGKILL in
+`NativeEditorRenderCompilerTests/testLivePreviewStillDecodesAfterTrimAndUndo`.
+Verification is split into smaller serial selections; no cause for the kill is
+claimed. This is local fixture evidence only, not private-project or device recovery.
+# Bounded open / refresh / reconcile ownership inventory
+
+Scope: the parent-narrowed Cunda correction and direct caller fallbacks; no new automatic propagation behavior. Prior load/save/poll/device inventory remains in the tracked review report.
+
+| Entry or continuation | Post-await mutations | Ownership |
+| --- | --- | --- |
+| NativeEditorView open task | fallback load, device refresh and output installation | initiating lifetime is passed into loadForEditorOpen; returned lifetime checked before output UI |
+| reconcileOnOpen | loaded revision, newer-job prompt, transient refresh failure; Bool permits fallback | captures identity before read; superseded success/error returns handled; dirtiness recomputed after read; caller fallback separately fenced |
+| synchronizePromptRevision | retry-loop flag and delegation | initiating identity passed to runPromptRevisionSync; checked after delegation |
+| runPromptRevisionSync | refresh-success/retry cancellation, readiness adoption, permissions, draft/baseline/undo/dirty/preview; failure retry/banner | identity + sequence checked immediately after project/draft/variant reads before writes/adoption; baseline checked before authoring; after catch adoption check again |
+| scheduleRefreshRetry / runRefreshRetry / resumeRefreshSync | retry task, running flag and cleanup | scheduling identity captured; retry cleanup epoch-owned; resume has no post-await writes; load reset clears owned running flag |
+| loadForEditorOpen | starts fallback lifetime, load and device refresh, caller token | expected initiating lifetime checked before start; one new epoch passed into nested loader; guards before refresh and return |
+| load(api), load(project), load(editorJobID), load(libraryJobID) | authoring, clean baseline/history, permission/readiness, playback and loading cleanup | previous propagated epoch guards retained; library is terminal delegation |
+| adoptLatestJob / adoptActiveJobFromThread / switchToLatestJob / watchNewVersion | readiness hints, prompt, new load, device refresh and watch cleanup | prior initiating identity / propagated epoch guards; normal same-editor adoption covered |
+| refreshDeviceRender / retryDeviceRender | capability/pending flags, renderer dispatch, retry banner/poll | prior identity + key/generation guards; app-owned renderer retains its own keyed durable intent |
+| reloadLatestKeepingLocalEdits / deferred conflict | rebase baseline/undo/local edits, source preview and cleanup | captured initiating identity before scheduling/read; superseded result cannot touch replacement |
+| startPreviewRefresh / retryPreviewRefresh / retryPreview | generation/readiness/output/text/dirty/history and timeout banner | prior identity + generation/cancellation, source-preview sequence; synchronous retry entry or terminal delegation |
+| announceEditApplied / beginEditorLoad | applied badge clearing | scheduling identity; reset explicitly clears cancelled lifetime's visible badge |
+| prepareSourcePreview and nested source/audio/media compilation | preview, sources, duration and failure state | existing source sequence invalidated at every load; no new propagation behavior |
+
+Not applicable to this narrowed correction: media-gallery refresh/import/paste/export operations and chat submission orchestration are separate user actions, not reopening or fallback reloads. No new behavior is added to those paths. This inventory does not claim a whole-session or automatic-update redesign.
