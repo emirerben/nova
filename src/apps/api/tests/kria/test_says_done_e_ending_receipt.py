@@ -23,8 +23,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.pipeline.guided_story import compile_execution_plan
 from app.pipeline.unified_montage import brief_view, plan_unified_montage
@@ -115,12 +113,12 @@ def test_her_q1_title_and_ending_brief_is_judged_by_the_ending_time() -> None:
     assert receipt.status == "met" or "arrow" in reason, (receipt.status, receipt.reason)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="group B's _whole_video_title_pin ignores the typed closing fact when no title is "
-    "asked; follow-up, not this PR",
-)
-def test_known_gap_ending_only_brief_is_pinned_whole_video() -> None:
+def test_ending_only_brief_is_never_pinned_for_the_whole_video() -> None:
+    """An ending asked without any title keeps its own closing time (fixed by #2138).
+
+    Group B's `_whole_video_title_pin` used to ignore the typed `closing` fact when no title was
+    asked; #2138 fixed that, so this is now a normal regression.
+    """
     req = _thank_you({"closing": "THANK YOU"})
     _receipt, spans, _total = _shown_receipt({**BASE, "closing_title": "THANK YOU"}, req)
     assert spans and all(start > 0 for _i, start, _e in spans), spans
