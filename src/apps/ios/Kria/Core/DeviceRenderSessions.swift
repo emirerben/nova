@@ -403,7 +403,7 @@ enum DeviceRenderGate: Equatable {
         let owner = ownerIdentity().flatMap { $0.isEmpty ? nil : $0 }
         if activeOwner != owner {
             await stopAll()
-            guard ownerIdentity() == owner else { return false }
+            guard resetOperation == nil, ownerIdentity() == owner else { return false }
             activeOwner = owner
         }
         return owner != nil
@@ -1277,7 +1277,11 @@ enum DeviceRenderGate: Equatable {
         retryTasks.removeAll(); retryAttempts.removeAll()
         for report in declines.values { report.task?.cancel() }
         declines.removeAll()
-        for coordinator in entries.values { try? await coordinator.cancel() }
+        for coordinator in entries.values {
+            try? await coordinator.cancel()
+            guard resetOperation == operation else { return }
+        }
+        guard resetOperation == operation else { return }
         entries.removeAll(); requests.removeAll(); presentations.removeAll(); retryApprovalKeys.removeAll()
         verificationKeys.removeAll(); inactiveKeys.removeAll(); capabilities.removeAll(); followedSuperseded.removeAll()
     }
