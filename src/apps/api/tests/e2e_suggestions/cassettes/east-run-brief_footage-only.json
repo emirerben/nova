@@ -1,0 +1,70 @@
+{
+  "description": "Preference order of the suggestion agent for this footage; the call's response_schema decides which of these are possible answers.",
+  "prefs": [
+    {
+      "kind": "mute_clip",
+      "targets": [
+        "c3"
+      ],
+      "why": "3. klipte rüzgar sesi var",
+      "copy": null
+    },
+    {
+      "kind": "filler_words",
+      "targets": [
+        "all"
+      ],
+      "why": "Konuşmada dört dolgu sesi var",
+      "copy": null
+    },
+    {
+      "kind": "duplicates",
+      "targets": [
+        "c1",
+        "c2"
+      ],
+      "why": "2. klip daha net",
+      "copy": null
+    },
+    {
+      "kind": "hook",
+      "targets": [
+        "all"
+      ],
+      "why": "Açılışta henüz başlık yok",
+      "copy": "Köprüden denize tek nefeste"
+    },
+    {
+      "kind": "captions",
+      "targets": [
+        "all"
+      ],
+      "why": "Bir klip konuşuyor, altyazı yok",
+      "copy": null
+    },
+    {
+      "kind": "music",
+      "targets": [
+        "all"
+      ],
+      "why": "Konuşma müzikle yarışıyor",
+      "copy": null
+    },
+    {
+      "kind": "transition",
+      "targets": [
+        "all"
+      ],
+      "why": "Tüm geçişler sert kesme",
+      "copy": null
+    },
+    {
+      "kind": "sfx",
+      "targets": [
+        "all"
+      ],
+      "why": "Sessiz klipler biraz hareket ister",
+      "copy": null
+    }
+  ]
+}

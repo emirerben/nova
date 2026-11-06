@@ -225,6 +225,8 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgro
     func creationBrief(threadID: UUID) async throws -> CreativeBrief
     /// KRI-756: footage-aware suggestion chips. Nil = the server has none to offer (no endpoint, or unreadable).
     func creationSuggestions(threadID: UUID) async throws -> SuggestionSet?
+    /// AI suggestion blocks: tells the server a card was dismissed so it is never offered again. Never throws.
+    func dismissSuggestion(threadID: UUID, setID: String, suggestionID: String) async
     func sendCreationMessage(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
     func creationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int, clientActionID: String) async throws -> CreationThread
     func reserveVisualUpload(itemID: String, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> VisualUploadTarget
@@ -424,6 +426,7 @@ extension KriaAPIClient {
     func steerNow(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
     func removeWaitingMessage(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
     func creationSuggestions(threadID: UUID) async throws -> SuggestionSet? { nil }
+    func dismissSuggestion(threadID: UUID, setID: String, suggestionID: String) async {}
     func transcribeDictation(audio: Data, contextTerms: [String]) async throws -> DictationTranscriptResponse { throw APIError.unsupported }
     func planSnapshot(threadID: UUID) async throws -> PlanSnapshot { throw APIError.unsupported }
     func submitScopedTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, scope: [PlanSectionID], manualEdits: [ManualPlanEdit]) async throws -> TurnAccepted { throw APIError.unsupported }
@@ -715,6 +718,21 @@ struct CreationThread: Codable, Identifiable, Sendable {
         )
     }
 
+    /// Reference-only list projections and failed first renders cannot grant recovery.
+    var savedEditorVariant: CreationVariant? {
+        guard runtimeVersion == 2, let activeJobID, let activePlanItemID,
+              let job, job.id == activeJobID,
+              let format = state?["format"]?.stringValue ?? state?["edit_format"]?.stringValue,
+              ["montage", "lipsync", "narrated", "talking_to_camera"].contains(format),
+              !job.variants.contains(where: { $0.variantID == "slides" }) else { return nil }
+        let selectedID = state?["selected_variant_id"]?.stringValue ?? selectedVariantID
+        let selected: CreationVariant?
+        if let selectedID { selected = job.variants.first { $0.variantID == selectedID } }
+        else { selected = job.variants.count == 1 ? job.variants.first : nil }
+        guard let selected, selected.matchesSavedEditor(jobID: activeJobID, itemID: activePlanItemID) else { return nil }
+        return selected
+    }
+
     /// List projections intentionally omit media URLs, but their state and
     /// variant lifecycle still identify the edit the user selected.
     private var selectedVariantID: String? {
@@ -806,6 +824,32 @@ struct CreationVariant: Codable, Sendable {
     /// (`awaiting_device|syncing|published|needs_attention`), or nil for a
     /// cloud job, an older generation, or an older server (KRI-823).
     var deliveryPhase: String? = nil
+    var editorStateVersion: Int? = nil
+    var editorDraftAvailable: Bool? = nil
+    var editorDraft: [String: JSONValue]? = nil
+
+    func matchesSavedEditor(jobID: String, itemID: String) -> Bool {
+        guard editorStateVersion == 2, let variantID, let renderGenerationID, !renderGenerationID.isEmpty,
+              let draft = editorDraft,
+              draft["draft_id"]?.stringValue.flatMap(UUID.init(uuidString:)) != nil,
+              draft["etag"]?.stringValue?.isEmpty == false,
+              draft["created_at"]?.stringValue?.isEmpty == false,
+              draft["can_undo"]?.boolValue != nil,
+              draft["item_id"]?.stringValue == itemID,
+              draft["variant_key"]?.stringValue == variantID,
+              draft["base_job_id"]?.stringValue.flatMap(UUID.init(uuidString:)) == UUID(uuidString: jobID),
+              UUID(uuidString: jobID) != nil,
+              let savedGeneration = draft["base_generation_id"]?.stringValue, !savedGeneration.isEmpty,
+              savedGeneration == renderGenerationID || editorDraftAvailable == true,
+              draft["snapshot_hash"]?.stringValue?.isEmpty == false,
+              let revision = draft["draft_revision"]?.numberValue, revision.isFinite, revision >= 0, revision.rounded() == revision,
+              let snapshot = draft["snapshot"]?.objectValue, snapshot["kind"] == .string("editor"),
+              let payload = snapshot["editor_payload"]?.objectValue,
+              payload["editor_state_version"] == .number(2),
+              payload["base_generation"] == .string(savedGeneration),
+              payload["sections"]?.objectValue != nil else { return false }
+        return true
+    }
 
     var needsDeliveryAttention: Bool {
         deliveryPhase == "needs_attention" || renderStatus?.lowercased() == "needs_attention"
@@ -828,6 +872,9 @@ struct CreationVariant: Codable, Sendable {
         case failureReason = "failure_reason"
         case renderDestination = "render_destination"
         case deliveryPhase = "delivery_phase"
+        case editorStateVersion = "editor_state_version"
+        case editorDraftAvailable = "editor_draft_available"
+        case editorDraft = "editor_draft"
     }
 }
 

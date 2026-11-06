@@ -197,6 +197,9 @@ final class CreationChatFixture: @unchecked Sendable {
     private var answeredCapabilitiesRead = false
     /// KRI-756: how many times each thread asked for its first-prompt chips (the first answer is `pending`).
     private var suggestionAsks: [String: Int] = [:]
+    /// Threads whose stale suggestion was answered with "no longer fits" (`KRIA_SUGGESTION_CARDS=stale`); the next set they get is the refreshed one.
+    private var staleSuggestionThreads: Set<String> = []
+    private var dismissedSuggestions: [String: Set<String>] = [:]
     /// `KRIA_CHAT_SLOW_READS` (KRI-640): GETs of one chat (or anything under it) and every capabilities read but the
     /// first. The project list and the create call stay fast.
     func isSlowRead(_ request: URLRequest) -> Bool {
@@ -316,6 +319,17 @@ final class CreationChatFixture: @unchecked Sendable {
         let events = thread["events"] as? [[String: Any]] ?? []
         let media = (thread["state"] as? [String: Any])?["media"] as? [[String: Any]] ?? []
         if (thread["job"] as? [String: Any])?["status"] as? String == "ready" {
+            // `KRIA_SUGGESTION_CARDS` (AI suggestion blocks): the ready set carries v2 `suggestions`. The value names the
+            // mock (`SuggestionCardsMocks`); `stale` answers a fresh set once its first card was refused.
+            if let mode = ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CARDS"] {
+                switch mode {
+                case "turkish": return SuggestionCardsMocks.turkish()
+                case "unknown": return SuggestionCardsMocks.unknown()
+                case "empty": return SuggestionCardsMocks.empty()
+                case "stale": return staleSuggestionThreads.contains(id) ? SuggestionCardsMocks.refreshed() : SuggestionCardsMocks.stale()
+                default: return SuggestionCardsMocks.ready()
+                }
+            }
             return set("ready", [chip(1, "hook", "Add a hook", "Add a hook that matches the video"),
                                  chip(2, "captions", "Add captions", "Add captions"),
                                  chip(3, "music", "Turn the music down", "Turn the music down"),
@@ -675,7 +689,17 @@ final class CreationChatFixture: @unchecked Sendable {
         // KRI-756 (`KRIA_SUGGESTION_CHIPS=1`): the server's chip sets, shaped like `SuggestionSetOut`. Unset = a server without the route.
         if parts.count == 3, parts[2] == "suggestions" {
             guard ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS"] == "1" else { return response(["detail": "Not Found"], status: 404) }
-            return response(fixtureSuggestions(id: id, thread: thread))
+            var served = fixtureSuggestions(id: id, thread: thread)
+            // A dismissed card is never offered again (the server keeps them in the thread's ring).
+            if let cards = served["suggestions"] as? [[String: Any]], let gone = dismissedSuggestions[id] {
+                served["suggestions"] = cards.filter { !gone.contains($0["id"] as? String ?? "") }
+            }
+            return response(served)
+        }
+        if parts.count == 4, parts[2] == "suggestions", parts[3] == "dismiss", request.httpMethod == "POST" {
+            guard ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS"] == "1" else { return response(["detail": "Not Found"], status: 404) }
+            if let card = body["chip_id"] as? String { dismissedSuggestions[id, default: []].insert(card) }
+            return response([String: Any]())
         }
         // KRI-561: the signed song URL. The fixture hands out a generated tone as a file URL (no network).
         if parts.count == 3, parts[2] == "song-audio", ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] == "1" {
@@ -1076,6 +1100,12 @@ final class CreationChatFixture: @unchecked Sendable {
                 append("assistant_response", text: "Your draft is ready for review.", payload: ["turn_id": turnID, "turn_value": "response"])
                 append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
                 append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])
+            } else if ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CARDS"] == "stale",
+                      (body["suggestion"] as? [String: Any])?["chip_id"] as? String == SuggestionCardsMocks.staleCardID {
+                // The real pinned-tap refusal (`plan_pinned_suggestion_turn`): an ordinary accepted turn whose reply says the
+                // card no longer fits, then a new set. No 409 and no error code, so the phone has to cope with a plain reply.
+                staleSuggestionThreads.insert(id)
+                append("assistant_response", text: SuggestionCardsMocks.noLongerFitsReply, payload: ["turn_id": turnID, "turn_value": "recovery"])
             } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS_ECHO"] == "1" {
                 let tap = body["suggestion"] as? [String: Any]
                 append("assistant_response", text: "Got it. suggestion[\(tap?["set_id"] as? String ?? "none")/\(tap?["chip_id"] as? String ?? "none")]",
