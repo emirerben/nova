@@ -466,16 +466,66 @@ final class SavedEditorRecoveryTests: XCTestCase {
             let replacement = EditorCommitSpy(draftSnapshot: snapshot(), authoritativeVariant: variant())
             await session.load(api: replacement, threadID: threadID, variantID: "guided_story")
             session.updateTextContent(id: "saved-title", content: "Replacement local work")
+            session.refreshRetryDelays = [.seconds(3600)]
+            replacement.draftError = .requestFailed(status: 503)
+            for _ in 0..<NativeEditorSession.reconnectingHintAfterFailures { await session.synchronizePromptRevision() }
+            XCTAssertEqual(session.refreshSync, .reconnecting)
             let before = session.document
             let state = session.saveState
             if cancelled { old.commitThrow = CancellationError() }
             old.resumeCommit(); await retry.value
+            XCTAssertEqual(session.refreshSync, .reconnecting)
             XCTAssertEqual(session.document, before)
             XCTAssertEqual(session.saveState, state)
             XCTAssertTrue(session.hasUnsavedChanges)
             XCTAssertFalse(session.isSaving)
             XCTAssertEqual(old.commitCount, 1)
             XCTAssertEqual(replacement.commitCount, 0)
+        }
+    }
+
+    func testOldPostCommitReadCannotReconcileSameGenerationReplacement() async throws {
+        for dirty in [false, true] {
+            let (session, old, _) = try await conflictingRetryFixture()
+            old.commitErrorQueue = []
+            old.suspendNextEditorVariant = true
+            var committed = variant()
+            committed["render_generation_id"] = .string("next")
+            committed["text_elements"] = .array([.object(["id": .string("saved-title"), "text": .string("Old response text"), "start_s": .number(0), "end_s": .number(2)])])
+            old.authoritativeVariant = committed
+            let retry = Task { await session.retryRender() }
+            for _ in 0..<200 {
+                if old.editorVariantIsSuspended { break }
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            XCTAssertTrue(old.editorVariantIsSuspended)
+            var replacementVariant = committed
+            replacementVariant["text_elements"] = variant()["text_elements"]
+            let replacementDraft = DraftSnapshot(draftID: draftID, itemID: itemID, variantKey: "guided_story",
+                draftRevision: 5, snapshotHash: "next", etag: "next", baseJobID: jobID.uuidString,
+                baseGenerationID: "next", snapshot: [:], canUndo: false, createdAt: .now)
+            let replacement = EditorCommitSpy(draftSnapshot: replacementDraft, authoritativeVariant: replacementVariant)
+            await session.load(api: replacement, threadID: threadID, variantID: "guided_story")
+            XCTAssertEqual(session.document.revision.baseGeneration, "next")
+            if dirty { session.updateTextContent(id: "saved-title", content: "Replacement local work") }
+            let before = session.document
+            let state = session.saveState
+            let refresh = session.refreshSync
+            let undo = session.canUndo
+            old.resumeEditorVariant(); await retry.value
+            XCTAssertEqual(session.document, before)
+            XCTAssertEqual(session.saveState, state)
+            XCTAssertEqual(session.refreshSync, refresh)
+            XCTAssertEqual(session.canUndo, undo)
+            XCTAssertEqual(session.hasUnsavedChanges, dirty)
+            XCTAssertFalse(session.isSaving)
+            XCTAssertEqual(old.commitCount, 1)
+            XCTAssertEqual(replacement.commitCount, 0)
+            if dirty {
+                session.undo()
+                XCTAssertEqual(session.document.textElements.first?.text, "My saved edit")
+                XCTAssertFalse(session.hasUnsavedChanges, "replacement clean baseline must survive")
+            }
         }
     }
 

@@ -252,3 +252,52 @@ unchanged. Physical-device/private-project and rollout limits still apply.
 tests/fixtures `3913a19389542c30c3d541bcc8f6fdd87ed7682b`, packages
 `a8ae4da503f219d9e6d1573556d68dcd7eb64af5`. Native bytes were unchanged after
 execution; only this evidence document was updated before the local commit.
+
+## Post-commit async ownership audit (integrated main 05d9720d8)
+
+The corrected pre-fix suite ran 22 tests with three failures in
+`/tmp/cunda-boundaries-red2.{log,xcresult}`: stale commit cleared replacement
+reconnecting state; post-commit read replaced clean text and a dirty replacement's
+undo baseline. Earlier exploratory runs in `/tmp/cunda-postread-red` and
+`/tmp/cunda-boundaries-red` used a fixture without armed retry and did not establish
+the post-read race; their logs remain preserved.
+
+Ownership inventory for Save/retry and its render continuation:
+
+- `save` awaits `saveOnce`, conflict reload, and ordinary Save's second submission:
+  attempt ID and complete operation identity precede subsequent state changes.
+  The final song-removal submission has no following writes. Owned terminal cleanup
+  is fenced by attempt ID and load identity.
+- `saveOnce` awaits commit: epoch, target IDs and submitted generation now precede
+  refresh-streak/sync writes as well as acknowledgement, revision, baseline,
+  undo/redo, duration, gesture and pending-render mutations. All commit catches
+  use the same fence before conflict, song-removal or failure state changes.
+- Its authoritative post-commit read now checks epoch/IDs/committed generation
+  immediately before text reconciliation (including clean baseline and undo
+  rebasing). Read failure changes no state; the common fence still precedes
+  render state changes. Same-editor reconciliation retains existing behavior.
+- Its device refresh await is followed by the same committed-generation fence
+  before pending identity and polling writes. `refreshDeviceRender` itself now
+  fences capability success/failure before cached capabilities or pending flags
+  and before dispatch to the app-owned, keyed renderer. The renderer owns its
+  asynchronous keyed operation; no editor writes follow its reconcile await.
+- Conflict reload fences success and catch before document/baseline/undo/preview
+  mutation. Its cleanup is identity-owned. `saveOnce` cleanup is epoch-owned.
+- Explicit device retry captures operation identity before renderer retry/resume;
+  both continuation boundaries check identity, key, generation and cancellation
+  before refresh or UI/poll mutations. Renderer state remains app-owned/keyed.
+- Preview polling captures load identity. After status and device-refresh awaits,
+  identity/generation/cancellation precede reconciliation and failure UI. Sleep
+  and read-error paths only update task-local counters; terminal UI is fenced.
+- `retryRender` sets its intent synchronously, awaits the owned Save, and performs
+  no subsequent mutations. Ordinary Save, duplicate/generation checks and all
+  existing cancellation controls remain unchanged.
+
+New regression suspends the actual post-commit read, then resets the same target
+at the committed generation, with clean text and genuine local text edits. It
+asserts document, dirty state, undo availability, save/refresh UI and dispatch
+counts, then undoes local work to verify the replacement baseline survives.
+The existing stale-commit reset test now also establishes reconnecting state.
+Private-project, original receipt, DB, physical-device/export, CI and rollout
+acceptance remain pending. This audit does not claim a global review of unrelated
+editor loaders or app-owned renderer internals.

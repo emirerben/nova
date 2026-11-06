@@ -930,12 +930,15 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     func refreshDeviceRender(retry: Bool = false) async {
         guard let key = deviceRenderKey, let api, let deviceRenders else { return }
+        let identity = editorOperationIdentity
         let capabilities: PhoneRenderingCapabilities
         do {
             let response = try await api.creationCapabilities()
+            guard editorOperationIdentity == identity else { return }
             capabilities = response.phoneRendering ?? .disabled
             lastPhoneRenderingCapabilities = capabilities
         } catch {
+            guard editorOperationIdentity == identity else { return }
             // Substituting `.disabled` for a failed read routed the edit to "Rendering on iPhone is
             // not available for this edit yet" and stopped it, offline or on a 5xx. Keep the last
             // real answer; without one, wait and try again rather than guess.
@@ -7200,11 +7203,11 @@ struct NativeEditorTemporaryVideo: Sendable {
         let request = commitRequest(sections: sections, submittedSections: submittedSections, baseGeneration: payload?["base_generation"]?.stringValue ?? document.revision.baseGeneration)
         do {
             let response = try await api.editorCommit(itemID: itemID, variantID: variantKey, request: request)
+            guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             // A committed save proves the connection works: drop the offline hint. Any pending
             // retry stays scheduled so the catch-up read still runs.
             refreshFailureStreak = 0
             if refreshSync == .reconnecting { refreshSync = .idle }
-            guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             let acknowledged = acknowledgedSections(response.sections, submittedSections: submittedSections)
             let postSubmitUndo = Array(undoStack.dropFirst(submittedUndoCount))
             let hasPostSubmitEdits = document != submittedDocument
@@ -7310,6 +7313,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                response.generation == document.revision.baseGeneration {
                 do {
                     let committedVariant = try await api.editorVariant(jobID: saveJobID, variantID: saveVariantKey)
+                    guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
                     _ = reconcileAuthoritativeText(
                         from: committedVariant,
                         generation: response.generation,
@@ -9081,6 +9085,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             saveState = .previewFailed("Your edit is saved, but this device cannot check the new preview yet.")
             return
         }
+        let identity = editorOperationIdentity
         let savedFrom = previewSupersededGeneration
         let interval = previewPollInterval
         let budget = previewPollBudget
@@ -9116,7 +9121,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 unreachable = 0
                 answered += 1
                 guard !Task.isCancelled else { return }
-                guard let self, self.pendingPreviewGeneration == generation else { return }
+                guard let self, self.editorOperationIdentity == identity, self.pendingPreviewGeneration == generation else { return }
                 // Device failures are reported on the authoritative variant;
                 // only reconcile the local renderer for that terminal status.
                 // Save-time reconciliation already covers the normal path,
@@ -9132,7 +9137,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 )
                 if refreshDevice {
                     await self.refreshDeviceRender()
-                    guard !Task.isCancelled, self.pendingPreviewGeneration == generation else { return }
+                    guard !Task.isCancelled, self.editorOperationIdentity == identity, self.pendingPreviewGeneration == generation else { return }
                 }
                 if self.applyPreviewVariant(variant, generation: generation) { return }
                 // The server moved past this save: another device saved on top of it, or this
@@ -9152,7 +9157,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 if self.applyPreviewVariant(variant, generation: current) { return }
                 self.pendingPreviewGeneration = generation
             }
-            guard !Task.isCancelled, let self, self.pendingPreviewGeneration == generation else { return }
+            guard !Task.isCancelled, let self, self.editorOperationIdentity == identity, self.pendingPreviewGeneration == generation else { return }
             // Never reuse a read error's copy here: "This edit changed elsewhere" is a save conflict.
             self.saveState = .previewFailed("Your edit is saved, but the preview is taking longer than expected. Try checking again.")
         }
@@ -9318,6 +9323,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     func retryDeviceRender() async {
         guard !isSaving, let key = deviceRenderKey, let deviceRenders,
               let generation = pendingPreviewGeneration else { return }
+        let identity = editorOperationIdentity
         // A change-required or outdated-app reason: a retry re-pins the same recipe and
         // this iPhone declines it again. The banner offers chat or Update Kria instead.
         guard [.retry, .resume, .renderNow].contains(deviceRenderNextStep) else { return }
@@ -9331,9 +9337,9 @@ struct NativeEditorTemporaryVideo: Sendable {
             let retried = await deviceRenders.retryNeedsAttention(key)
             guard retried else { return }
         }
-        guard !Task.isCancelled, pendingPreviewGeneration == generation, deviceRenderKey == key else { return }
+        guard editorOperationIdentity == identity, !Task.isCancelled, pendingPreviewGeneration == generation, deviceRenderKey == key else { return }
         await refreshDeviceRender(retry: true)
-        guard !Task.isCancelled, pendingPreviewGeneration == generation, deviceRenderKey == key else { return }
+        guard editorOperationIdentity == identity, !Task.isCancelled, pendingPreviewGeneration == generation, deviceRenderKey == key else { return }
         pendingDeviceRenderIdentity = deviceRenders.request(for: key)?.identity
         saveState = .previewPending
         startPreviewRefresh(generation: generation)
