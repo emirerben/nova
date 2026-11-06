@@ -2665,7 +2665,8 @@
       "xctests": [
         "KriaTests/RenderedOriginalClockTests/testRenderedPhotoWindowBuildsAndExportsAfterHydration",
         "KriaTests/RenderedOriginalClockTests/testRenderedVideoWindowBuildsAndExportsAfterHydration",
-        "KriaTests/RenderedOriginalClockTests/testProxyRoundedVideoOverrunIsStillRejected",
+        "KriaTests/RenderedOriginalClockTests/testProxyRoundedVideoUsesOnlyBoundedFinalFrameHold",
+        "KriaTests/RenderedOriginalClockTests/testGenuineVideoOverrunIsStillRejected",
         "KriaTests/NativeEditorInteractionTests/testRenderedOriginalWindowDoesNotExpandOntoProxyFrameClock",
         "KriaTests/NativeEditorInteractionTests/testRenderedSpeedWindowRetainsExactSourceConsumption"
       ],
