@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.30.0] - 2026-11-06
+
+### Changed
+- ci: warm Xcode cache for PRs and queue the iPhone job right after selection (KRI-1232) (#2136) <!-- release-pr: 2136 -->
+
 ## [0.88.29.0] - 2026-11-06
 
 ### Changed
