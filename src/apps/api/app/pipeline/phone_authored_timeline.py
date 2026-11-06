@@ -233,6 +233,7 @@ def compile_phone_authored_timeline(
             transform.pop("scale", None)
         clips.append(
             TimelineClip(
+                speaker_frame_override=row.get("speaker_frame_override"),
                 split_screen=(
                     SplitScreenMembership(
                         section_id=row["split_section_id"], panel_index=row["split_panel_index"]

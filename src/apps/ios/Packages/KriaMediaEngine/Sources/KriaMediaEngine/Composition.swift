@@ -173,6 +173,11 @@ public struct PreviewComposition: @unchecked Sendable {
                 let videoSource: AVAssetTrack?
                 if stillImage == nil { videoSource = try await asset.loadTracks(withMediaType: .video).first }
                 else { videoSource = nil }
+                if let policy = clip.speakerFrameOverride, policy.mode != .inherit, videoSource == nil {
+                    // Original manifest receipts can name uploaded photos. Framing a person
+                    // requires an actual video stream, not only a video timeline track.
+                    throw RecipeError.invalidTimeline
+                }
                 if let source = videoSource {
                     guard clip.stillLayout == nil else { throw NativePreviewFeatureError("Composition-still-layout") }
                     let track: AVMutableCompositionTrack
@@ -348,7 +353,10 @@ public struct PreviewComposition: @unchecked Sendable {
                 if let seed = clip.overlayDissolveSeed {
                     layers[layers.count - 1].overlayDissolve = try NativeDissolveRenderer(width: recipe.canvas.width, height: recipe.canvas.height, seed: seed, maxBitmapBytes: 64 * 1024 * 1024, preset: .media)
                 }
-                if speakerClipIDs.contains(clip.id) { layers[layers.count - 1].speakerRole = .speaker }
+                if speakerClipIDs.contains(clip.id) {
+                    layers[layers.count - 1].speakerRole = .speaker
+                    layers[layers.count - 1].speakerFrameOverride = clip.speakerFrameOverride
+                }
                 if let text = clip.text { textLayers.append(try RecipeTextLayer.make(text, start: clip.timelineStart, end: end, canvas: canvas)) }
             }
         }

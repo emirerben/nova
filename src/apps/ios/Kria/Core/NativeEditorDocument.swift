@@ -14,7 +14,7 @@ enum EditorSelectionKind: String, Codable, CaseIterable, Hashable, Sendable {
     /// is never encoded to the server, and the id is the window's local `bg-<n>` block id.
     case speakerBackgroundWindow = "speaker_background_window"
     /// The Talk-to-camera speaker drawn small in a frame (`speaker_background.speaker_frame`), moved and resized by hand
-    /// on the preview. Client-only like the windows; the id is always `EditorSelection.speakerID`.
+    /// on the preview. The id is `speakerID` globally or a slot id for one occurrence.
     case speaker
 }
 
@@ -22,7 +22,7 @@ struct EditorSelection: Codable, Equatable, Hashable, Sendable {
     let kind: EditorSelectionKind
     let id: String
 
-    /// There is one speaker per Talk-to-camera edit.
+    /// The shared speaker controls use this id; occurrence controls use their slot id.
     static let speakerID = "speaker"
     static let speaker = EditorSelection(kind: .speaker, id: speakerID)
 }
@@ -512,6 +512,38 @@ struct EditorSpeakerFrame: Equatable, Sendable {
     }
 
     var layerFrame: SpeakerFrame { SpeakerFrame(widthFraction: widthFraction, xFraction: xFraction, yFraction: yFraction) }
+}
+
+enum EditorSpeakerFrameOverride: Equatable, Sendable {
+    case inherit, full, custom(EditorSpeakerFrame)
+
+    init?(json: JSONValue) {
+        guard let fields = json.objectValue, let mode = fields["mode"]?.stringValue else { return nil }
+        switch mode {
+        case "inherit" where Set(fields.keys) == ["mode"]: self = .inherit
+        case "full" where Set(fields.keys) == ["mode"]: self = .full
+        case "custom" where Set(fields.keys) == ["mode", "frame"]:
+            guard let raw = fields["frame"], let frame = EditorSpeakerFrame(json: raw) else { return nil }
+            self = .custom(frame)
+        default: return nil
+        }
+    }
+
+    var json: JSONValue {
+        switch self {
+        case .inherit: .object(["mode": .string("inherit")])
+        case .full: .object(["mode": .string("full")])
+        case .custom(let frame): .object(["mode": .string("custom"), "frame": frame.json])
+        }
+    }
+
+    func resolved(defaultFrame: EditorSpeakerFrame?) -> EditorSpeakerFrame? {
+        switch self {
+        case .inherit: defaultFrame
+        case .full: nil
+        case .custom(let frame): frame
+        }
+    }
 }
 
 struct EditorTimelineSlot: Codable, Equatable, Sendable {

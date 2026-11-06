@@ -109,7 +109,8 @@ log = structlog.get_logger()
 # Taught in speaker_background_focus.txt only where the snapshot offers the `background_focus`
 # family (flag + verified token + protocol 42), so every other prompt is byte-identical.
 # v117: editable split-screen sections and per-clip audio gain on top of v116.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-06-v117"
+# v118: occurrence speaker framing (custom/full/inherit) on verified split-origin edits.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-06-v118"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).

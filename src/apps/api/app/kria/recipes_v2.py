@@ -129,6 +129,29 @@ class EditRecipeV2(EditRecipeV1):
         ):
             self.required_capabilities |= {"singleWordText"}
         manifest = {asset.id: asset for asset in self.asset_manifest.assets}
+        for track in self.tracks:
+            for clip in track.clips:
+                if clip.speaker_frame_override is None:
+                    continue
+                self.required_capabilities |= {"splitScreen"}
+                if clip.speaker_frame_override.mode == "inherit":
+                    continue
+                background = self.speaker_background
+                subject = background is not None and (
+                    clip.id in background.subject_clip_ids
+                    if background.subject_clip_ids is not None
+                    else track.id == background.subject_track_id
+                )
+                if (
+                    not subject
+                    or track.kind != "video"
+                    or getattr(manifest.get(clip.source_asset_id), "kind", None) != "original"
+                ):
+                    raise ValueError(
+                        "speaker frame override requires an original video speaker "
+                        "subject and background; reset the occurrence frame to inherit first"
+                    )
+                self.required_capabilities |= {"splitScreen"}
         if self.speaker_background is not None:
             if self.speaker_background.subject_clip_ids is not None:
                 eligible = {

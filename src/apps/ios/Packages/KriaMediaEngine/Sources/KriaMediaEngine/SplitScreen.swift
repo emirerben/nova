@@ -89,13 +89,25 @@ extension EditRecipe {
 
 extension EditRecipe {
     func validateSpeakerOwnership() throws {
-        guard let ids = speakerBackground?.subjectClipIDs else { return }
+        let overriddenTracks = tracks.filter { $0.clips.contains { $0.speakerFrameOverride != nil } }
+        guard overriddenTracks.isEmpty || (schemaVersion == 2 && overriddenTracks.allSatisfy { $0.kind == .video }) else {
+            throw RecipeError.invalidTimeline
+        }
+        // An explicit inherited policy is the durable reset value; it remains inert after
+        // removing a background or replacing a subject with a different source.
+        let overrides = overriddenTracks.flatMap(\.clips).filter {
+            $0.speakerFrameOverride != nil && $0.speakerFrameOverride?.mode != .inherit
+        }
+        guard speakerBackground != nil || overrides.isEmpty else { throw RecipeError.invalidTimeline }
+        let ids = speakerBackground?.subjectClipIDs
         let originalAssets = Set((assetManifest?.assets ?? []).compactMap { asset -> String? in
             if case .original = asset.source { return asset.id }
             return nil
         })
         let eligible = Set(tracks.filter { $0.kind == .video }.flatMap(\.clips)
             .filter { originalAssets.contains($0.sourceAssetID) }.map(\.id))
-        guard Set(ids).isSubset(of: eligible) else { throw RecipeError.invalidTimeline }
+        if let ids { guard Set(ids).isSubset(of: eligible) else { throw RecipeError.invalidTimeline } }
+        let subjects = Set(ids ?? tracks.filter { $0.id == speakerBackground?.subjectTrackID }.flatMap(\.clips).map(\.id))
+        guard overrides.allSatisfy({ eligible.contains($0.id) && subjects.contains($0.id) }) else { throw RecipeError.invalidTimeline }
     }
 }

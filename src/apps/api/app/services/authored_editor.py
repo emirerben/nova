@@ -185,6 +185,35 @@ def sync_talking_source_lanes(
     return payload, unresolved
 
 
+def reset_removed_background_frames(payload, baseline):
+    """Removing the whole background explicitly resets occurrence policies in the same Save."""
+    if (
+        "speaker_background" not in payload.model_fields_set
+        or payload.speaker_background is not None
+    ):
+        return payload
+    from app.kria.portable_speaker_background import SpeakerFrameOverride
+    from app.routes.generative_jobs import TimelineSlotEdit
+
+    old = {row.get("slot_id"): row for row in baseline}
+    slots = payload.timeline_slots
+    if slots is None:
+        if not any(row.get("speaker_frame_override") is not None for row in baseline):
+            return payload
+        slots = [TimelineSlotEdit.model_validate(row) for row in baseline]
+    reset = []
+    for slot in slots:
+        if (
+            slot.speaker_frame_override is not None
+            or old.get(slot.slot_id, {}).get("speaker_frame_override") is not None
+        ):
+            slot = slot.model_copy(
+                update={"speaker_frame_override": SpeakerFrameOverride(mode="inherit")}
+            )
+        reset.append(slot)
+    return payload.model_copy(update={"timeline_slots": reset})
+
+
 def prepare_authored_editor_commit(
     job: Any,
     variant_id: str,
@@ -244,6 +273,7 @@ def prepare_authored_editor_commit(
     from app.routes.generative_jobs import editor_deletion_timeline
 
     canonical = {row.get("slot_id"): row for row in editor_deletion_timeline(job, variant)}
+    payload = reset_removed_background_frames(payload, list(canonical.values()))
     for row in payload.timeline_slots or []:
         if row.removed or not row.slot_id:
             continue
@@ -283,6 +313,15 @@ def prepare_authored_editor_commit(
             job, variant, payload, resolved, old_slots, old_sections=old_sections
         )
     variant["editor_timeline_mode"] = AUTHORED_TIMELINE_MODE
+    if new_sections:
+        # Establish origin only after source and grouped-clock validation succeeds.
+        from app.routes.generative_jobs import TimelineSlotEdit
+
+        origin_slots = payload.timeline_slots
+        if origin_slots is None:
+            origin_slots = [TimelineSlotEdit.model_validate(row) for row in canonical.values()]
+        resolve_authored_phone_slots(job, variant, origin_slots)
+        variant["editor_split_screen_origin"] = True
     if variant.get("render_destination") == "device":
         from app.services.phone_editor import prepare_phone_editor_commit
 
@@ -524,6 +563,36 @@ def resolve_authored_phone_slots(
         }
         if inherited_freeze:
             slot = slot.model_copy(update=inherited_freeze)
+        if (
+            "speaker_frame_override" not in slot.model_fields_set
+            and old.get("speaker_frame_override") is not None
+        ):
+            from app.kria.portable_speaker_background import SpeakerFrameOverride
+
+            slot = slot.model_copy(
+                update={
+                    "speaker_frame_override": SpeakerFrameOverride.model_validate(
+                        old["speaker_frame_override"]
+                    )
+                }
+            )
+        if slot.speaker_frame_override is not None:
+            from app.services.phone_rollout import (
+                split_screen_client_supported,
+                split_screen_supported,
+            )
+
+            if not split_screen_client_supported(require_client=True):
+                raise HTTPException(
+                    426,
+                    detail={
+                        "code": "client_update_required",
+                        "feature": "split_screen",
+                        "minimum_client_protocol": 43,
+                    },
+                )
+            if not split_screen_supported(require_client=False):
+                raise HTTPException(422, detail={"code": "split_screen_unavailable"})
         duration = slot.duration_s
         # A partial stale Save may omit newer speed fields. Preserve a saved
         # authored rate in that case; explicit null remains the creator's 1x

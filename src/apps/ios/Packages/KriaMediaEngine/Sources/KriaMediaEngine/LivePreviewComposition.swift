@@ -72,11 +72,14 @@ public struct LivePreviewExportSnapshot: Sendable {
     }
 
     /// The instruction drawing `time` when it shows a framed Talk-to-camera speaker (SF2), with that frame.
-    private func framedSpeakerInstruction(at time: Double, timescale: Int32 = 60_000) -> (composition: AVVideoComposition, instructions: [RecipeVideoInstruction], instruction: RecipeVideoInstruction, frame: SpeakerFrame)? {
+    private func framedSpeakerInstruction(at time: Double, clipID: String? = nil, timescale: Int32 = 60_000) -> (composition: AVVideoComposition, instructions: [RecipeVideoInstruction], instruction: RecipeVideoInstruction, frame: SpeakerFrame)? {
         guard let composition = preview.playerItem.videoComposition,
               let instructions = composition.instructions as? [RecipeVideoInstruction],
               let instruction = instructions.first(where: { CMTimeRangeContainsTime($0.timeRange, time: CMTime(seconds: time, preferredTimescale: timescale)) }),
-              instruction.showsFramedSpeaker(at: time), let frame = instruction.speakerFrame else { return nil }
+              instruction.showsFramedSpeaker(at: time),
+              let layer = instruction.layers.first(where: { $0.speakerRole == .speaker && $0.start <= time && time < $0.end
+                  && (clipID == nil || $0.clipID == clipID) && $0.effectiveSpeakerFrame(instruction.speakerFrame) != nil }),
+              let frame = layer.effectiveSpeakerFrame(instruction.speakerFrame) else { return nil }
         return (composition, instructions, instruction, frame)
     }
 
@@ -85,13 +88,14 @@ public struct LivePreviewExportSnapshot: Sendable {
     /// speaker picture, the same box `RecipeVideoCompositor.framed` draws into.
     public func activeSpeakerClipIDs(time: Double) -> [String] {
         guard let found = framedSpeakerInstruction(at: time) else { return [] }
-        return found.instruction.layers.filter { $0.speakerRole == .speaker && $0.start <= time && time < $0.end }.compactMap(\.clipID)
+        return found.instruction.layers.filter { $0.speakerRole == .speaker && $0.start <= time && time < $0.end && $0.effectiveSpeakerFrame(found.instruction.speakerFrame) != nil }.compactMap(\.clipID)
     }
 
     public func speakerViewport(time: Double, clipID: String? = nil) -> CGRect? {
-        guard let found = framedSpeakerInstruction(at: time),
+        guard let found = framedSpeakerInstruction(at: time, clipID: clipID),
               let layer = found.instruction.layers.first(where: {
                   $0.speakerRole == .speaker && $0.start <= time && time < $0.end && (clipID == nil || $0.clipID == clipID)
+                      && $0.effectiveSpeakerFrame(found.instruction.speakerFrame) != nil
               }) else { return nil }
         guard let viewport = layer.panelViewport else { return CGRect(x: 0, y: 0, width: 1, height: 1) }
         let canvas = found.instruction.canvas
@@ -100,7 +104,7 @@ public struct LivePreviewExportSnapshot: Sendable {
     }
 
     public func speakerSelectionBounds(time: Double, clipID: String? = nil) -> TextSelectionBounds? {
-        guard let found = framedSpeakerInstruction(at: time), let viewport = speakerViewport(time: time, clipID: clipID) else { return nil }
+        guard let found = framedSpeakerInstruction(at: time, clipID: clipID), let viewport = speakerViewport(time: time, clipID: clipID) else { return nil }
         let local = found.frame.canvasRect.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
         let rect = CGRect(x: viewport.minX + local.minX * viewport.width, y: viewport.minY + local.minY * viewport.height,
             width: local.width * viewport.width, height: local.height * viewport.height)
@@ -113,8 +117,17 @@ public struct LivePreviewExportSnapshot: Sendable {
     /// `time`, so the three stills composited back are the frame the player shows. `rect` is the whole scaled speaker
     /// picture in canvas fractions (top-left origin), NOT clipped: the editor scales the speaker still about its centre.
     public func speakerInteractionLayers(time: Double, clipID: String? = nil) throws -> (below: AVVideoComposition, above: AVVideoComposition, speaker: AVVideoComposition, rect: CGRect) {
-        guard let found = framedSpeakerInstruction(at: time, timescale: 600), let viewport = speakerViewport(time: time, clipID: clipID) else { throw MediaEngineError.exportFailed }
+        guard let found = framedSpeakerInstruction(at: time, clipID: clipID, timescale: 600), let viewport = speakerViewport(time: time, clipID: clipID) else { throw MediaEngineError.exportFailed }
         let selectedID = clipID ?? activeSpeakerClipIDs(time: time).first
+        if let selected = found.instruction.layers.first(where: { $0.clipID == selectedID }),
+           clipID != nil || found.instruction.layers.contains(where: { $0.speakerFrameOverride != nil && $0.speakerFrameOverride?.mode != .inherit }) {
+            let overlapping = found.instruction.layers.filter {
+                $0.speakerRole == .speaker && $0.start <= time && time < $0.end && $0.panelViewport == selected.panelViewport
+            }
+            // A gesture's single cutout cannot retain both sides of a same-panel
+            // transition. Keep the live composition instead of reordering its subjects.
+            guard overlapping.count <= 1 else { throw NativePreviewFeatureError("speaker-interaction-overlap") }
+        }
         func slice(_ part: SpeakerSlice) -> AVVideoComposition {
             let copy = found.composition.mutableCopy() as! AVMutableVideoComposition
             copy.instructions = found.instructions.map { original in

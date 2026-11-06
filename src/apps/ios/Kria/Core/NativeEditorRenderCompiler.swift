@@ -277,6 +277,10 @@ enum NativeEditorRenderError: Error, Equatable {
                 volume: audioSources[Self.songSourceKey] != nil && !creatorHearsCameraWithSong ? 0 : cameraLevel, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil,
                 holdDuration: holdDuration > 0 ? holdDuration : nil,
                 sourceCrop: try Self.sourceCrop(authoredSlot?.raw["source_crop"])))
+            if let raw = authoredSlot?.raw["speaker_frame_override"], raw != .null {
+                video[video.count - 1].speakerFrameOverride = try RecipeJSON.decoder().decode(SpeakerFrameOverride.self,
+                    from: JSONEncoder().encode(raw))
+            }
             if authoredSlot?.raw["layout"]?.stringValue == "supporting_card" {
                 video[video.count - 1].stillLayout = .supportingCard
             }

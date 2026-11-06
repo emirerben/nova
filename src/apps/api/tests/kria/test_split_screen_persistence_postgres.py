@@ -23,13 +23,36 @@ from tests.routes.test_authored_playback_speed import _authored_phone_job
 
 
 @pytest.mark.asyncio
-async def test_manual_ai_manual_saves_reopen_independent_panels(monkeypatch):
+@pytest.mark.parametrize("with_frames", [False, True], ids=["panels", "occurrence-frames"])
+async def test_manual_ai_manual_saves_reopen_independent_panels(monkeypatch, request, with_frames):
     user_id, _, session_id = _seed_runtime_project()
     fixture, _ = _authored_phone_job(monkeypatch)
+    if with_frames:
+        from app.services.client_protocol import clear_request_context, set_client_protocol
+
+        set_client_protocol(43)
+        monkeypatch.setattr(settings, "speaker_background_enabled", True)
+        fixture.assembly_plan["variants"][0]["resolved_archetype"] = "subtitled"
+        request.addfinalizer(clear_request_context)
+        fixture.assembly_plan["variants"][0]["speaker_background"] = {
+            "kind": "color",
+            "color": "#000000",
+            "speaker_frame": {"width_fraction": 0.4, "x_fraction": 0.75, "y_fraction": 0.75},
+        }
     monkeypatch.setattr(
         settings,
         "phone_render_verified_features",
-        [*settings.phone_render_verified_features, "splitScreen", "sourceCrop", "clipTilt"],
+        [
+            *settings.phone_render_verified_features,
+            "splitScreen",
+            "sourceCrop",
+            "clipTilt",
+            *(
+                ["speakerBackground", "speakerBackgroundColor", "speakerBackgroundWindows"]
+                if with_frames
+                else []
+            ),
+        ],
     )
     with sync_session() as db:
         session = db.get(CreatorAgentSession, session_id)
@@ -115,6 +138,19 @@ async def test_manual_ai_manual_saves_reopen_independent_panels(monkeypatch):
             "split_screen_sections": [{"id": "s", "duration_s": 4, "panel_count": 2}],
         }
     )
+    custom_frame = {
+        "mode": "custom",
+        "frame": {"width_fraction": 0.3, "x_fraction": 0.25, "y_fraction": 0.75},
+    }
+    if with_frames:
+        from app.kria.portable_speaker_background import SpeakerFrameOverride
+
+        payload.timeline_slots[0].speaker_subject = True
+        payload.timeline_slots[0].speaker_frame_override = SpeakerFrameOverride.model_validate(
+            custom_frame
+        )
+        payload.timeline_slots[1].speaker_subject = True
+        payload.timeline_slots[1].speaker_frame_override = SpeakerFrameOverride(mode="full")
     first_id = await save(payload)
     job, variant = await reopen()
     assert variant["user_timeline"]["split_screen_sections"][0]["duration_s"] == 4
@@ -170,3 +206,54 @@ async def test_manual_ai_manual_saves_reopen_independent_panels(monkeypatch):
     assert members[0].transform.position_x == 12
     assert members[0].transform.position_y == -3
     assert members[0].transform.scale == 1.1
+    if with_frames:
+        assert [row["speaker_frame_override"] for row in variant["user_timeline"]["slots"]] == [
+            custom_frame,
+            {"mode": "full"},
+        ]
+        assert [clip.speaker_frame_override.mode for clip in members] == ["custom", "full"]
+        assert recipe.speaker_background.speaker_frame.width_fraction == 0.4
+        snapshot = build_editor_snapshot(job, variant)
+        assert snapshot["slots"][0]["speaker_frame_override"] == custom_frame
+        rows = [
+            gj.TimelineSlotEdit.model_validate(row) for row in variant["user_timeline"]["slots"]
+        ]
+        rows[0].speaker_frame_override = SpeakerFrameOverride(mode="inherit")
+        await save(
+            gj.EditorCommitRequest(
+                base_generation=variant["render_generation_id"],
+                editor_state_version=2,
+                timeline_slots=rows,
+            )
+        )
+        job, variant = await reopen()
+        assert [
+            row["speaker_frame_override"]["mode"] for row in variant["user_timeline"]["slots"]
+        ] == ["inherit", "full"]
+        recipe = device_status(job, "original_text").request.recipe
+        members = [clip for track in recipe.tracks for clip in track.clips if clip.split_screen]
+        assert [clip.speaker_frame_override.mode for clip in members] == ["inherit", "full"]
+        assert recipe.speaker_background.speaker_frame.width_fraction == 0.4
+        assert [
+            (row["in_s"], row["split_offset_s"]) for row in variant["user_timeline"]["slots"]
+        ] == [(2, 0), (7, 1)]
+
+        assert variant["editor_split_screen_origin"] is True
+        assert gj._editor_capabilities(job, variant)["speaker_background_windows"] is True
+        snapshot = build_editor_snapshot(job, variant)
+        snapshot["editor_ops_version"] = 2
+        unstack = parse_editor_operation(
+            {"op": "remove_split_screen", "section_id": "s", "keep_panel": 0},
+            snapshot,
+            _ParseState(0.99),
+        )
+        assert unstack is not None
+        unstack_payload = compile_editor_ops(job, variant, [unstack]).payload
+        unstack_payload.base_generation = variant["render_generation_id"]
+        unstack_payload.editor_state_version = 2
+        await save(unstack_payload)
+        job, variant = await reopen()
+        assert not variant["user_timeline"].get("split_screen_sections")
+        assert variant["editor_split_screen_origin"] is True
+        assert gj._editor_capabilities(job, variant)["speaker_background_windows"] is True
+        assert "background_windows" in build_editor_snapshot(job, variant)["allowed_op_families"]

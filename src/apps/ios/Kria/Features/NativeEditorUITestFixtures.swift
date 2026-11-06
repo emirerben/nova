@@ -227,6 +227,7 @@ enum NativeEditorUITestFixtures {
 
     /// The `speaker_background` value the stub commit transport last saved (UserDefaults; JSON `null` = cleared).
     static let savedSpeakerBackgroundKey = "kria.ui-test.saved-speaker-background.v1"
+    static let savedSplitSpeakerTimelineKey = "kria.ui-test.saved-split-speaker-timeline.v1"
 
     /// The two pool visuals the Background fixture offers; no URLs, so the tiles show their placeholders offline.
     static let speakerBackgroundVisuals: [CreationVisual] = [
@@ -800,6 +801,9 @@ enum NativeEditorUITestFixtures {
 
     static var splitSpeaker: EditorDraft {
         var value = speakerBackground
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background-reset") {
+            UserDefaults.standard.removeObject(forKey: savedSplitSpeakerTimelineKey)
+        }
         var document = EditorDocument(snapshot: value.serverSnapshot)
         guard var top = document.clips.first else { return value }
         top.id = "split-speaker-top"
@@ -811,13 +815,22 @@ enum NativeEditorUITestFixtures {
         bottom.setSplitMembership(sectionID: "speaker-panels", panelIndex: 1, offset: 0)
         document.clips = [top, bottom]
         document.splitScreenSections = [EditorSplitScreenSection(id: "speaker-panels", durationS: 4, panelCount: 2)]
-        document.speakerBackground = EditorSpeakerBackground(json: seededSpeakerFrame)
         document.captionCues = []
         document.textElements = []
         document.captionMeta["enabled"] = .bool(false)
         document.capabilities["split_screen"] = EditorCapability(editable: true)
+        if let data = UserDefaults.standard.data(forKey: savedSplitSpeakerTimelineKey),
+           let saved = try? JSONDecoder().decode([String: JSONValue].self, from: data) {
+            var snapshot = document.encodeSnapshot()
+            var payload = snapshot["editor_payload"]?.objectValue ?? [:]
+            var sections = payload["sections"]?.objectValue ?? [:]
+            for (key, lane) in saved { sections[key] = lane }
+            payload["sections"] = .object(sections)
+            snapshot["editor_payload"] = .object(payload)
+            document = EditorDocument(snapshot: snapshot)
+        }
         if let original = value.clips.first {
-            value.clips = [top, bottom].enumerated().map { index, slot in
+            value.clips = document.clips.enumerated().map { index, slot in
                 EditorClip(id: id(1100 + index), assetID: original.assetID, sourceClipIndex: slot.clipIndex,
                            start: 0, end: 4, trimIn: 0, trimOut: 4, sourceDuration: original.sourceDuration,
                            muted: false, slotID: slot.id)
@@ -1088,6 +1101,18 @@ enum NativeEditorUITestCommitTransport {
                    slots.contains(where: { $0.objectValue?["slot_id"]?.stringValue?.hasPrefix("native-phone-talking-source") == true }),
                    let saved = try? JSONEncoder().encode(JSONValue.object(["timeline_slots": .array(slots), "caption_cues": fields["caption_cues"] ?? .null])) {
                     UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedTalkingRangeKey)
+                }
+                if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-speaker"), fields["timeline_slots"] != nil {
+                    var saved: [String: JSONValue] = [:]
+                    if let previous = UserDefaults.standard.data(forKey: NativeEditorUITestFixtures.savedSplitSpeakerTimelineKey) {
+                        saved = (try? JSONDecoder().decode([String: JSONValue].self, from: previous)) ?? [:]
+                    }
+                    for key in ["timeline_slots", "split_screen_sections"] {
+                        if let lane = fields[key] { saved[key] = lane }
+                    }
+                    if let encoded = try? JSONEncoder().encode(saved) {
+                        UserDefaults.standard.set(encoded, forKey: NativeEditorUITestFixtures.savedSplitSpeakerTimelineKey)
+                    }
                 }
                 if let lane = fields["speaker_background"], let saved = try? JSONEncoder().encode(lane) {
                     UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedSpeakerBackgroundKey)

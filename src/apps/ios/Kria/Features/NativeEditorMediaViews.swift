@@ -151,9 +151,9 @@ struct NativeVideoPreview: View {
     /// The framed Talk-to-camera speaker: the LOWEST object, so every caption, title and card over it wins a tap
     /// (SF1). Whole-edit; where no speaker clip is drawn its box is empty (`frame(for:)`, SF2).
     private func speakerObjects() -> [NativeEditorPreviewObject] {
-        guard session.canMoveSpeakerOnPreview, let frame = session.speakerFrame else { return [] }
-        return session.previewSpeakerItems.map { item in
-            NativeEditorPreviewObject(item: item, text: nil,
+        return session.previewSpeakerItems.compactMap { item in
+            guard let frame = session.speakerFrame(for: item.selection) else { return nil }
+            return NativeEditorPreviewObject(item: item, text: nil,
                 position: CGPoint(x: frame.xFraction, y: frame.yFraction), style: nil, title: "You",
                 render: .speaker, scale: CGFloat(frame.widthFraction))
         }
@@ -344,7 +344,7 @@ struct NativeVideoPreview: View {
     /// The prepared stills, when they show the speaker exactly where the document has it now. A still prepared for
     /// an older frame (a second gesture before the preview caught up) is not used: it would jump (SF4).
     private func preparedSpeakerFrame() -> NativeEditorSession.MediaInteractionFrame? {
-        guard session.document.splitScreenSections.isEmpty,
+        guard session.selection == .speaker, session.document.splitScreenSections.isEmpty,
               let prepared = session.mediaInteractionFrame, prepared.selection == .speaker,
               abs(prepared.time - clock.currentTime) < 0.01,
               let rect = session.speakerFrame?.layerFrame.canvasRect,
@@ -375,7 +375,7 @@ struct NativeVideoPreview: View {
     private func beginSpeakerGesture(_ selection: EditorSelection) {
         guard speakerGestureBaseline == nil else { return }
         releaseSpeakerStill()
-        speakerGestureBaseline = session.speakerFrame
+        speakerGestureBaseline = session.speakerFrame(for: selection)
         speakerGestureSelection = selection
         if liveMediaFrame == nil { liveMediaFrame = preparedSpeakerFrame() }
         textAlignmentHaptic.prepare()
@@ -384,7 +384,8 @@ struct NativeVideoPreview: View {
     /// The live still follows the STORED (clamped, snapped) frame, never the raw finger, so what is shown at release is
     /// what Save sends (SF3, SF4).
     private func followSpeakerFrame() {
-        guard let baseline = speakerGestureBaseline, let frame = session.speakerFrame else { return }
+        guard let baseline = speakerGestureBaseline, let target = speakerGestureSelection,
+              let frame = session.speakerFrame(for: target) else { return }
         liveMediaScale = CGFloat(frame.widthFraction / max(0.0001, baseline.widthFraction))
         liveMediaTranslation = CGPoint(x: frame.xFraction - baseline.xFraction, y: frame.yFraction - baseline.yFraction)
     }
@@ -394,19 +395,21 @@ struct NativeVideoPreview: View {
         let x = NativeSpeakerFrameGesture.snappedToCenter(point.x), y = NativeSpeakerFrameGesture.snappedToCenter(point.y)
         if (x.snapped && !speakerSnapX) || (y.snapped && !speakerSnapY) { textAlignmentHaptic.selectionChanged() }
         speakerSnapX = x.snapped; speakerSnapY = y.snapped
-        session.setSpeakerFrameCenter(x: x.value, y: y.value)
+        guard let target = speakerGestureSelection else { return }
+        session.setSpeakerFrameCenter(x: x.value, y: y.value, for: target)
         followSpeakerFrame()
     }
 
     private func resizeSpeaker(to width: Double) {
-        session.setSpeakerFrameWidth(width)
+        guard let target = speakerGestureSelection else { return }
+        session.setSpeakerFrameWidth(width, for: target)
         followSpeakerFrame()
     }
 
     /// SF9: the safe-zone guide tests the speaker's FACE (found on the prepared still) moved with the frame; without a
     /// face, the visible speaker box.
     private func speakerDangerFootprint(in canvas: CGSize) -> (footprint: NativePreviewFootprint, face: Bool)? {
-        guard let frame = session.speakerFrame else { return nil }
+        guard let target = speakerGestureSelection, let frame = session.speakerFrame(for: target) else { return nil }
         if let baseline = speakerGestureBaseline, let face = liveMediaFrame?.face {
             let k = frame.widthFraction / max(0.0001, baseline.widthFraction)
             let moved = CGRect(x: frame.xFraction + (face.minX - baseline.xFraction) * k,
@@ -544,7 +547,7 @@ struct NativeVideoPreview: View {
         // The framed speaker: any corner resizes about the centre (no rotation; the wire has none).
         if directMoveObjectID == nil, let selection = session.selection, selection.kind == .speaker,
            let speaker = objects.first(where: { $0.item.selection == selection }), canDirectlyPosition(speaker),
-           let frame = session.speakerFrame,
+           let frame = session.speakerFrame(for: selection),
            speakerCorners(for: selection, in: size).contains(where: { hypot(value.startLocation.x - $0.x, value.startLocation.y - $0.y) <= NativeTextTransformMath.cornerGrabRadius }) {
             beginDangerGuide(for: speaker, in: size)
             directMoveObjectID = speaker.id
@@ -645,7 +648,8 @@ struct NativeVideoPreview: View {
         visualTransformBaseline = nil
         transformCenter = nil
         transformStartVector = nil
-        if speakerGestureBaseline != nil, liveMediaFrame != nil, session.speakerFrame != speakerGestureBaseline {
+        if let target = speakerGestureSelection, speakerGestureBaseline != nil, liveMediaFrame != nil,
+           session.speakerFrame(for: target) != speakerGestureBaseline {
             holdSpeakerStill()
         } else {
             liveMediaFrame = nil
@@ -731,7 +735,8 @@ struct NativeVideoPreview: View {
                   let block = session.document.visualBlocks.first(where: { $0.id == object.item.id }) else { return false }
             return block.kind == "media" && block.raw["display_mode"]?.stringValue == "overlay"
         case .speaker:
-            return session.canMoveSpeakerOnPreview && session.hasSourcePreview
+            return session.canEditSpeakerFrame(for: object.item.selection)
+                && session.speakerFrame(for: object.item.selection) != nil && session.hasSourcePreview
         default:
             return false
         }

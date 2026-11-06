@@ -1,6 +1,6 @@
 # Verification and rollout record
 
-This is a local feature implementation, not a deployed or published release. The isolated branch is `codex/editable-split-screen`, rebased onto `05d9720d8`. A read-only remote lookup on 2026-11-06 still returned that main commit. The configured origin fetch and push destination is `https://github.com/emirerben/nova.git`. Draft publication and eventual merge are now authorized, conditional on the required acceptance and gates; no rollout is authorized. The final commit and working-tree status are reported in the handoff. User media and the live project were not used or changed.
+This is a local feature implementation, not a deployed or published release. The isolated branch is `codex/editable-split-screen`, based on `05d9720d8`. The latest read-only main comparison observed `dbb260e47`; integration is still pending. The configured origin fetch and push destination is `https://github.com/emirerben/nova.git`. Draft publication and eventual merge are now authorized, conditional on the required acceptance and gates; no rollout is authorized. The final commit and working-tree status are reported in the handoff. User media and the live project were not used or changed.
 
 ## Executed evidence
 
@@ -61,35 +61,11 @@ The protocol is 43 because background focus landed on 42 during this work. A qua
 
 Before draft publication: test the corrective changes, obtain the feature's tracking issue, bind honest evidence to the reviewed final head, and run preship. Keep the PR draft while acceptance or review is incomplete. Required checks, source/model alignment and full acceptance must be satisfied before merge. No push, PR, merge, deployment or rollout was performed.
 
-## Resume after native resource clearance
+## Historical continuation commands
 
-The following command is a continuation recipe, not executed evidence. It rebuilds the follow-up corrections, repeats the failing UI cases, and broadens native model/session regression coverage. Inspect the mixed-media recording and confirm the preview contains both the video and photo after replacement. Further physical-device, live-provider and lifecycle acceptance remains separate.
+The earlier 432-unit/four-UI batch is complete at `117a4f7b5`, as recorded below. Its prepared scripts and initial unavailable simulator are historical evidence, not the next command. Use the separately prepared occurrence-framing commands only after fresh parent allocation.
 
-The prepared `.dev/split-screen/native-next-command.sh` runs this same selection only at the supplied clean commit, records source hashes, and refuses to overwrite an earlier result. It remains unexecuted pending explicit lane clearance. The selection is nine unit classes (expected 432 cases after the nine added regressions) plus four UI journeys. It includes all four previously failing unit cases, the failed scroll-clearance journey, source replacement and narrated indicator/job-reset checks. Resources: two compiler jobs, one dedicated simulator, existing 2.4 GiB derived data; prior selected test execution took 318 seconds and its result bundle is 104 MiB. Allow approximately 8–12 minutes including incremental compilation and finalization; recheck processes and free disk before starting. No package or formal job belongs in this batch.
-
-Read-only integration at remote main `05d9720d8` found no new-main changes. Speed merges textually cleanly. Cunda has compiler-media-guard and Save-preflight conflicts requiring both recovery fences and split/source behavior. Auto-update has adjacent state declarations plus a semantic merge obligation: its authored-key list must include `split_screen_sections` and couple layout changes with timeline ownership, or local layout edits can be lost. Exact observed heads and reports are in `.dev/split-screen/integration-coordination.md`; no integration or other worktree edits were performed.
-
-```sh
-xcodebuild -project src/apps/ios/Kria.xcodeproj -scheme Kria -configuration Debug \
-  -destination 'platform=iOS Simulator,id=4B3ACE87-16A1-4E38-B37F-36B9C1AE4EF0' \
-  -derivedDataPath /tmp/kria-split-native-derived \
-  -resultBundlePath .dev/split-screen/resumed-native-results.xcresult \
-  -jobs 2 -parallel-testing-enabled NO -disableAutomaticPackageResolution \
-  -only-testing:KriaTests/NativeSplitScreenTests \
-  -only-testing:KriaTests/NativeSplitScreenRowsTests \
-  -only-testing:KriaTests/NativeSpeakerPanelGeometryTests \
-  -only-testing:KriaTests/NativeEditorSessionTests \
-  -only-testing:KriaTests/NativeEditorRenderCompilerTests \
-  -only-testing:KriaTests/NativeEditorInteractionTests \
-  -only-testing:KriaTests/NativeSpeechTimelineTests \
-  -only-testing:KriaTests/GuidedLabelRebaseVectorTests \
-  -only-testing:KriaTests/EditorDocumentTests \
-  -only-testing:KriaUITests/NativeEditorInspectorUITests/testSplitScreenCreationKeepsOrdinaryClipControlsAndPanelRows \
-  -only-testing:KriaUITests/NativeEditorInspectorUITests/testSplitPanelReplacesVideoWithUnusedPhotoAndKeepsCrop \
-  -only-testing:KriaUITests/NativeEditorInspectorUITests/testOrdinaryFootageCanDuplicateBeforeCreatingSplitScreen \
-  -only-testing:KriaUITests/SpeakerFrameDirectManipulationUITests/testRepeatedSpeakerPanelsSelectAndDragTheChosenOccurrence \
-  test CODE_SIGNING_ALLOWED=NO
-```
+Read-only integration against main `dbb260e47` found two Cunda conflicts: preserve both the compiler's valid source-endpoint guard and split photo-card support; combine Save retry/owner fences with split-layout preflight. The auto-update workstream must also preserve atomic ownership of timeline slots plus `split_screen_sections`. No merge/rebase was performed. Reports: `.dev/split-screen/integration-main-dbb260e47.json`, sibling merge-tree output and `integration-coordination.md`. This comparison used committed `117a4f7b5`; the later framing changes need their own integration review.
 
 ## Post-checkpoint native attempts and tracking resolution
 
@@ -100,3 +76,23 @@ At clean `af9b736e36d3d17b3121b191acdd7e5e4ff8a6ba`, the consolidated Python/per
 Two separately cleared native attempts ran on that exact head. The first exited70 before compilation because the dedicated simulator had disappeared; zero tests executed. The second used available iPhone17 `4E5516D0-28B5-4F96-9973-01CCEC8FBF91`, iOS26.5 build23F77, matching the previous test model/runtime. Xcodebuild PID9860 ran12:57:14–12:58:26 UTC and exited65 during test-target compilation: four calls in two new transition regressions passed `String?` fixture IDs to `String` parameters. **Zero tests executed**, so previous runtime failures remain open. The result bundle and complete diagnostics are `.dev/split-screen/native-af9b736e3-iphone17-r2-results.xcresult` and its sibling log.
 
 After result collection, owned PIDs9822/9841/9860 were absent and this task released the lane;277GiB was free. A separate build PID10428 in `/Users/emirerben/Projects/nova-talk-rerecord/src/apps/ios`, started12:57:26, was observed and left untouched. No subsequent native/package/formal command was launched here. The source correction after this run explicitly unwraps fixture IDs with `XCTUnwrap` and makes the two tests throwing; existing behavioral assertions and test names/count are unchanged. This later correction has not been compiled or executed. No product source or shared formal file changed in that correction.
+
+## Successful bounded native batch at 117a4f7b5
+
+The unchanged corrected selection executed on clean `117a4f7b501753d12856c018c8bdaa09e4acdcfd`: **432 unit cases and all four UI journeys passed, zero failures or skips**, exit0. Xcodebuild PID76676 ran13:45:49–13:50:37 UTC using existing iPhone17 `4E5516D0-28B5-4F96-9973-01CCEC8FBF91`, iOS26.5 build23F77. Result collection finished and the lane released13:51:23 UTC; no owned or competing matching heavy process remained and320GiB was free. No subsequent heavy run was launched.
+
+Evidence: `.dev/split-screen/native-117a4f7b5-iphone17-r3-outcome.md`, sibling `.log`, `-results.xcresult`, `-summary.json`, `-tests.json`, `-verified-counts.json`, `-release.json`, and `-attachments/manifest.json`. All four prior unit failures, the vertical-scroll clearance failure, and all six new mutation regressions now pass. Inspected screenshots show the video/photo composite and the selected lower speaker. The three-panel controls fixture does not assert rendered pixels.
+
+Subsequent static review identified shared speaker-frame writes despite occurrence selection; the passing repeated-speaker test lacked peer-invariance assertions. Source work now addresses this independently, as documented in `speaker-occurrence-failure-modes.md`. All subsequent changes and new tests must be labeled unrun until separately verified. This successful batch is not evidence for those changes, shared formal alignment, final integration or unexecuted product/device/provider journeys.
+
+## Subsequent occurrence-framing correction — source complete, unrun
+
+The persistent override now crosses API/recipe schemas, native compilation, timeline snapshots, AI targeting, session gestures and preview/export. Custom and Full remain distinct from inherited global framing. Explicit inherit resets survive omission-based Save merging; eligible video replacement preserves framing, and replacing an active framed speaker with a photo requires an explicit reset. Removing the global background resets policies atomically and preserves an explicit clear through authored compilation.
+
+Production capability review found that authored split Saves hid existing background/window/color/focus controls. Admission now requires a valid current split layout or a server-derived durable split-origin marker, plus a receipt-backed video subject and all existing feature/protocol gates. An arbitrary override is not evidence of origin. The marker survives saved draft projection and unstacking. Initial Talking splits retain speaker provenance even before a background is added. The AI prompt version is `2026-11-06-v118`; shared contracts were regenerated.
+
+New evidence is source-only: eight native session regressions, four engine regressions, new API/admission cases, a parameterized real-Postgres round trip, strengthened peer-invariance UI assertions and one additional Save/reopen UI journey are authored but **unrun**. The UI fixture stores actual `/editor-commit` timeline fields; it does not seed expected overrides. Independent review caught old-client, inactive-reset, original-photo, overlapping gesture-slice and authored-admission issues; corrections were reviewed without claiming runtime success. Root review also corrected the fixture persistence endpoint before execution. Ruff and whitespace checks pass. No covered lifecycle function changed relative to `117a4f7b5`, and no formal/model/coverage file was edited; existing formal alignment remains unresolved.
+
+Prepared, unexecuted commands in `.dev/split-screen/` are `native-speaker-frames-command.sh` (expected 440 units plus nine UI journeys) and `engine-speaker-frames-command.sh` (81 source-counted cases including split and existing speaker/background neighbors). Each takes the exact clean reviewed commit, uses two compiler jobs and refuses artifact overwrite. They require separate serial heavy-slot allocations. The engine selection retains the known untouched-baseline white-fill assertion; it has not been weakened or excluded. Backend tests, the real database round trip, prompt replay, generated-contract checks and affected broader acceptance also need execution on the corrected revision.
+
+All heavy execution remains held under the parent's queue. No subsequent test, compiler, simulator, device or formal execution occurred. Required final integration, first-class UI acceptance, device/provider acceptance and preship checks remain before publication/merge.

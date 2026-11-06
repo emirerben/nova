@@ -922,3 +922,247 @@ extension NativeSplitScreenTests {
         XCTAssertFalse(session.canUndo)
     }
 }
+
+extension NativeSplitScreenTests {
+    @MainActor
+    private func speakerOccurrenceSession() -> (NativeEditorSession, EditorSelection, EditorSelection) {
+        let first = UUID().uuidString, second = UUID().uuidString
+        var slots = [first, second].enumerated().map { index, id -> EditorTimelineSlot in
+            var slot = EditorTimelineSlot(id: id, clipIndex: 0, inS: 0, durationS: 4,
+                raw: ["speaker_subject": .bool(true), "source_duration_s": .number(20),
+                      "media_transform": .object(["scale": .number(1.2), "rotation_deg": .number(12)])])
+            slot.setSplitMembership(sectionID: "s", panelIndex: index, offset: 0)
+            return slot
+        }
+        slots[0].raw["source_crop"] = .object(["x": .number(0.1), "y": .number(0.1), "width": .number(0.8), "height": .number(0.8)])
+        var document = EditorDocument(clips: slots, capabilities: ["timeline": .init(editable: true), "split_screen": .init(editable: true),
+            "speaker_background": .init(editable: true), "speaker_background_windows": .init(editable: true)])
+        document.splitScreenSections = [.init(id: "s", durationS: 8, panelCount: 2)]
+        document.speakerBackground = .init(color: "#223344", speakerFrame: .preset("small_bottom_right"))
+        return (mutationSession(document), .init(kind: .speaker, id: first), .init(kind: .speaker, id: second))
+    }
+
+    @MainActor
+    func testSpeakerOccurrenceDragResizePresetsAndFullKeepPeerAndGlobalFrame() throws {
+        let (session, top, bottom) = speakerOccurrenceSession()
+        let before = session.document
+        session.select(bottom, seekToStart: false)
+        session.beginTransaction()
+        session.setSpeakerFrameCenter(x: 0.4, y: 0.5, for: bottom)
+        session.setSpeakerFrameCenter(x: 0.3, y: 0.6, for: bottom)
+        session.endTransaction()
+        XCTAssertEqual(session.speakerFrame(for: bottom)?.xFraction, 0.3)
+        XCTAssertEqual(session.speakerFrame(for: top), before.speakerBackground?.speakerFrame)
+        XCTAssertEqual(session.document.clips[0], before.clips[0])
+        XCTAssertEqual(session.document.speakerBackground, before.speakerBackground)
+        XCTAssertEqual(session.document.clips[1].raw["media_transform"], before.clips[1].raw["media_transform"])
+        let dragged = session.document
+        session.undo(); XCTAssertEqual(session.document, before)
+        session.redo(); XCTAssertEqual(session.document, dragged)
+        session.setSpeakerFrameWidth(0.65, for: bottom)
+        XCTAssertEqual(session.speakerFrame(for: bottom)?.widthFraction, 0.65)
+        XCTAssertEqual(session.speakerFrame(for: top), before.speakerBackground?.speakerFrame)
+        XCTAssertTrue(session.setSpeakerFrame(preset: "small_top_left", for: bottom))
+        XCTAssertEqual(session.speakerFrame(for: bottom), .preset("small_top_left"))
+        XCTAssertTrue(session.setSpeakerFrame(preset: "full", for: bottom))
+        XCTAssertNil(session.speakerFrame(for: bottom))
+        XCTAssertNotNil(session.speakerFrame(for: top))
+        XCTAssertEqual(session.selection, bottom, "Keep local full-panel controls reachable")
+        XCTAssertEqual(session.previewSpeakerItems.map(\.selection), [top])
+        session.undo(); XCTAssertEqual(session.speakerFrame(for: bottom), .preset("small_top_left"))
+        session.redo(); XCTAssertNil(session.speakerFrame(for: bottom))
+        XCTAssertEqual(session.document.clips[0], before.clips[0])
+        XCTAssertEqual(session.document.speakerBackground, before.speakerBackground)
+    }
+
+    @MainActor
+    func testSpeakerOccurrenceSelectionSyncGlobalInheritanceAndReopenAreIndependent() throws {
+        let (session, top, bottom) = speakerOccurrenceSession()
+        XCTAssertTrue(session.setSpeakerFrame(preset: "small_top_left", for: bottom))
+        let local = session.speakerFrame(for: bottom)
+        XCTAssertTrue(session.setSpeakerFrame(preset: "small_bottom_left"))
+        XCTAssertEqual(session.speakerFrame(for: bottom), local)
+        XCTAssertEqual(session.speakerFrame(for: top), .preset("small_bottom_left"))
+        let beforeSelection = session.document
+        session.select(bottom, seekToStart: false)
+        session.select(top, seekToStart: false)
+        XCTAssertEqual(session.document, beforeSelection)
+        XCTAssertTrue(session.clearSpeakerFrame())
+        XCTAssertNil(session.speakerFrame(for: top))
+        XCTAssertEqual(session.speakerFrame(for: bottom), local)
+        XCTAssertEqual(session.previewSpeakerItems.map(\.selection), [bottom])
+        let reopened = mutationSession(EditorDocument(snapshot: session.document.encodeSnapshot()))
+        XCTAssertEqual(reopened.speakerFrame(for: bottom), local)
+        XCTAssertNil(reopened.speakerFrame(for: top))
+        reopened.select(top, seekToStart: false)
+        reopened.setSpeakerFrameWidth(0.7, for: bottom)
+        XCTAssertEqual(reopened.speakerFrame(for: bottom)?.widthFraction, 0.7, "Gesture target is captured, not read from current selection")
+        XCTAssertNil(reopened.speakerFrame(for: top))
+    }
+
+    @MainActor
+    func testSpeakerOverrideSurvivesCutDuplicateUnstackAndSourceReplacement() throws {
+        let (session, top, _) = speakerOccurrenceSession()
+        XCTAssertTrue(session.setSpeakerFrame(preset: "small_top_left", for: top))
+        let stored = try XCTUnwrap(session.document.clips[0].raw["speaker_frame_override"])
+        session.select(.init(kind: .clip, id: top.id), seekToStart: false)
+        session.currentTime = 2
+        session.splitSelectedClip()
+        XCTAssertEqual(session.document.clips.filter { $0.splitPanelIndex == 0 }.map { $0.raw["speaker_frame_override"] }, [stored, stored])
+        let tail = try XCTUnwrap(session.document.clips.first { $0.splitPanelIndex == 0 && $0.splitOffsetS == 2 }?.id)
+        session.select(.init(kind: .clip, id: tail), seekToStart: false)
+        session.duplicateSelectedClip()
+        XCTAssertEqual(session.document.clips.filter { $0.splitPanelIndex == 0 }.count, 3)
+        XCTAssertTrue(session.document.clips.filter { $0.splitPanelIndex == 0 }.allSatisfy { $0.raw["speaker_frame_override"] == stored })
+        session.removeSelectedSplitScreen()
+        XCTAssertTrue(session.document.splitScreenSections.isEmpty)
+        XCTAssertTrue(session.document.clips.allSatisfy { $0.raw["speaker_frame_override"] == stored })
+        let scoped = EditorSelection(kind: .speaker, id: tail)
+        session.setSpeakerFrameWidth(0.6, for: scoped)
+        XCTAssertEqual(session.speakerFrame(for: scoped)?.widthFraction, 0.6)
+        XCTAssertEqual(session.speakerFrame(for: top), .preset("small_top_left"))
+        let beforeReplacement = session.document.clips.first { $0.id == tail }?.raw["speaker_frame_override"]
+        session.select(.init(kind: .clip, id: tail), seekToStart: false)
+        session.replaceSelectedClipSource(clipIndex: 0)
+        XCTAssertEqual(session.document.clips.first { $0.id == tail }?.raw["speaker_frame_override"], beforeReplacement)
+        XCTAssertEqual(EditorDocument(snapshot: session.document.encodeSnapshot()).clips, session.document.clips)
+    }
+}
+
+extension NativeSplitScreenTests {
+    @MainActor
+    func testScopedFullWidthSeedAndExplicitInheritResetDoNotChangeGlobalFrame() throws {
+        let (session, top, bottom) = speakerOccurrenceSession()
+        let global = session.speakerFrame
+        XCTAssertTrue(session.setSpeakerFrame(preset: "full", for: bottom))
+        XCTAssertEqual(session.speakerEditingFrame(for: bottom), .init(widthFraction: 1, xFraction: 0.5, yFraction: 0.5))
+        session.setSpeakerFrameWidth(0.6, for: bottom)
+        XCTAssertEqual(session.speakerFrame(for: bottom), .init(widthFraction: 0.6, xFraction: 0.5, yFraction: 0.5))
+        XCTAssertEqual(session.speakerFrame(for: top), global)
+        XCTAssertTrue(session.resetSpeakerFrame(for: bottom))
+        XCTAssertEqual(session.document.clips[1].raw["speaker_frame_override"], .object(["mode": .string("inherit")]))
+        XCTAssertEqual(session.speakerFrame(for: bottom), global)
+        XCTAssertEqual(session.speakerFrame, global)
+        session.undo()
+        XCTAssertEqual(session.speakerFrame(for: bottom)?.widthFraction, 0.6)
+    }
+
+    @MainActor
+    func testRemovingGlobalSpeakerBackgroundResetsOverridesAtomicallyAndUndoRestoresThem() {
+        let (session, top, bottom) = speakerOccurrenceSession()
+        XCTAssertTrue(session.setSpeakerFrame(preset: "small_top_left", for: top))
+        XCTAssertTrue(session.setSpeakerFrame(preset: "full", for: bottom))
+        let before = session.document
+        XCTAssertTrue(session.removeSpeakerBackground())
+        XCTAssertNil(session.document.speakerBackground)
+        XCTAssertTrue(session.document.clips.allSatisfy { $0.raw["speaker_frame_override"] == .object(["mode": .string("inherit")]) })
+        XCTAssertTrue(session.isDirty(.timeline))
+        XCTAssertTrue(session.isDirty(.speakerBackground))
+        XCTAssertTrue(session.previewSpeakerItems.isEmpty)
+        let reopened = EditorDocument(snapshot: session.document.encodeSnapshot())
+        XCTAssertEqual(reopened.clips, session.document.clips)
+        XCTAssertNil(reopened.speakerBackground)
+        session.undo()
+        XCTAssertEqual(session.document, before)
+        session.redo()
+        XCTAssertNil(session.document.speakerBackground)
+        XCTAssertTrue(session.document.splitScreenIsValid)
+    }
+}
+
+extension NativeSplitScreenTests {
+    @MainActor
+    func testAuthoredAPISnapshotSpeakerFramingRequiresAdvertisedCapabilitiesAfterReopen() {
+        let (fixture, top, bottom) = speakerOccurrenceSession()
+        // The production API emits these boolean leaves only when each gate is open.
+        // A pinned background alone must never grant editing permission.
+        for gates in [(base: false, windows: false), (base: true, windows: false), (base: true, windows: true)] {
+            var snapshot = fixture.document.encodeSnapshot()
+            snapshot["render_destination"] = .string("device")
+            snapshot["editor_timeline_mode"] = .string("authored")
+            snapshot["resolved_archetype"] = .string("subtitled")
+            var capabilities: [String: JSONValue] = [
+                "timeline": .bool(true), "clips": .object(["split_screen": .object(["editable": .bool(true)])])]
+            if gates.base { capabilities["speaker_background"] = .bool(true) }
+            if gates.windows { capabilities["speaker_background_windows"] = .bool(true) }
+            snapshot["editor_capabilities"] = .object(capabilities)
+            func reopen(_ value: [String: JSONValue]) -> NativeEditorSession {
+                let api = DraftSnapshot(draftID: "authored-speaker", itemID: "item", variantKey: "variant", draftRevision: 1,
+                    snapshotHash: "hash", etag: "etag", baseJobID: nil, baseGenerationID: nil,
+                    snapshot: value, canUndo: false, createdAt: .now)
+                return NativeEditorSession(draft: api.editorDraft(projectID: UUID()))
+            }
+            let session = reopen(snapshot)
+            let allowed = gates.base && gates.windows
+            XCTAssertEqual(session.canEditSpeakerFrame(for: bottom), allowed)
+            XCTAssertEqual(session.speakerSelection(forClip: .init(kind: .clip, id: bottom.id)) != nil, allowed)
+            let before = session.document
+            XCTAssertEqual(session.setSpeakerFrame(preset: "small_top_left", for: bottom), allowed)
+            if allowed {
+                XCTAssertEqual(session.speakerFrame(for: bottom), .preset("small_top_left"))
+                XCTAssertEqual(session.speakerFrame(for: top), before.speakerBackground?.speakerFrame)
+            } else {
+                XCTAssertEqual(session.document, before)
+                XCTAssertFalse(session.canUndo)
+            }
+            let saved = reopen(session.document.encodeSnapshot())
+            XCTAssertEqual(saved.canEditSpeakerFrame(for: bottom), allowed)
+            XCTAssertEqual(saved.speakerFrame(for: bottom), session.speakerFrame(for: bottom))
+            XCTAssertEqual(saved.setSpeakerFrame(preset: "full", for: bottom), allowed)
+            XCTAssertEqual(saved.speakerFrame(for: top), before.speakerBackground?.speakerFrame)
+        }
+    }
+
+    @MainActor
+    func testOrdinaryCropAndTiltKeepOccurrenceFramingAndPeerUnchanged() {
+        let (session, top, bottom) = speakerOccurrenceSession()
+        var document = session.document
+        document.capabilities["clips.source_crop"] = .init(editable: true)
+        document.capabilities["clips.tilt"] = .init(editable: true)
+        session.replaceDocumentForTesting(document)
+        XCTAssertTrue(session.setSpeakerFrame(preset: "small_top_left", for: top))
+        let before = session.document
+        let target = EditorSelection(kind: .clip, id: top.id)
+        let crop = NormalizedSourceRect(x: 0.2, y: 0.1, width: 0.6, height: 0.8)
+        session.setFootageCrop(target, crop: crop)
+        XCTAssertEqual(session.document.clips[0].raw["source_crop"], .object([
+            "x": .number(0.2), "y": .number(0.1), "width": .number(0.6), "height": .number(0.8)]))
+        let tilt = ClipTilt(rotationDeg: 15, backdrop: .blur)
+        session.setClipTilt(tilt, for: target)
+        XCTAssertEqual(session.clipTilt(for: target), tilt)
+        XCTAssertEqual(session.document.clips[0].raw["speaker_frame_override"], before.clips[0].raw["speaker_frame_override"])
+        XCTAssertEqual(session.speakerFrame(for: top), .preset("small_top_left"))
+        XCTAssertEqual(session.speakerFrame(for: bottom), before.speakerBackground?.speakerFrame)
+        XCTAssertEqual(session.document.clips[1], before.clips[1])
+        XCTAssertEqual(session.document.speakerBackground, before.speakerBackground)
+    }
+
+    @MainActor
+    func testSpeakerReplacementPreservesVideoOverrideAndRequiresExplicitResetForPhoto() throws {
+        let (session, top, _) = speakerOccurrenceSession()
+        var document = session.document
+        document.clips.append(EditorTimelineSlot(id: UUID().uuidString, clipIndex: 1, inS: 0, durationS: 2,
+            raw: ["media_kind": .string("image"), "source_duration_s": .number(20)]))
+        session.replaceDocumentForTesting(document)
+        XCTAssertTrue(session.setSpeakerFrame(preset: "small_top_left", for: top))
+        session.select(.init(kind: .clip, id: top.id), seekToStart: false)
+        let custom = session.document.clips[0].raw["speaker_frame_override"]
+        let transform = session.document.clips[0].raw["media_transform"]
+        session.replaceSelectedClipSource(clipIndex: 0)
+        XCTAssertEqual(session.document.clips[0].raw["speaker_frame_override"], custom)
+        XCTAssertEqual(session.document.clips[0].raw["speaker_subject"], .bool(true))
+        XCTAssertEqual(session.document.clips[0].raw["media_transform"], transform)
+        let beforePhoto = session.document
+        session.replaceSelectedClipSource(clipIndex: 1)
+        XCTAssertEqual(session.document, beforePhoto)
+        XCTAssertTrue(session.splitScreenActionError?.contains("Use default framing") == true)
+        XCTAssertTrue(session.resetSpeakerFrame(for: top))
+        session.replaceSelectedClipSource(clipIndex: 1)
+        XCTAssertEqual(session.document.clips[0].clipIndex, 1)
+        XCTAssertEqual(session.document.clips[0].raw["speaker_frame_override"], .object(["mode": .string("inherit")]))
+        XCTAssertEqual(session.document.clips[0].raw["speaker_subject"], .bool(false))
+        XCTAssertEqual(session.document.clips[0].raw["media_transform"], transform)
+        XCTAssertEqual(session.document.clips[1], beforePhoto.clips[1])
+        XCTAssertNil(session.splitScreenActionError)
+    }
+}

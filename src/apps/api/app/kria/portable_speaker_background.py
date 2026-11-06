@@ -81,6 +81,29 @@ class SpeakerFrame(BaseModel):
     y_fraction: float = Field(ge=0.0, le=1.0)
 
 
+class SpeakerFrameOverride(BaseModel):
+    """Occurrence frame: inherit the global frame, disable inset, or supply custom geometry."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    mode: Literal["inherit", "full", "custom"]
+    frame: SpeakerFrame | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_override(self, handler):
+        data = handler(self)
+        if self.frame is None:
+            data.pop("frame", None)
+        return data
+
+    @model_validator(mode="after")
+    def valid_frame(self):
+        if self.mode == "custom" and self.frame is None:
+            raise ValueError("custom speaker frame requires geometry")
+        if self.mode != "custom" and self.frame is not None:
+            raise ValueError("full/inherit speaker frame must omit geometry")
+        return self
+
+
 def speaker_frame_for_preset(preset: str | None) -> SpeakerFrame | None:
     """The frame a preset names; ``None`` for ``full``, ``None`` or an unknown name."""
     values = SPEAKER_FRAME_PRESETS.get(preset or "")

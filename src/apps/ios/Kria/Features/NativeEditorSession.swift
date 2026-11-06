@@ -277,7 +277,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         case .mediaOverlay: mediaID = "overlay:" + selection.id
         case .visualBlock: mediaID = "visual-\(selection.id)-\(selection.id)"
         case .speaker:
-            guard canMoveSpeakerOnPreview, document.splitScreenSections.isEmpty else { return }
+            guard canMoveSpeakerOnPreview, selection == .speaker, document.splitScreenSections.isEmpty else { return }
             mediaID = selection.id
         default: return
         }
@@ -5643,6 +5643,88 @@ struct NativeEditorTemporaryVideo: Sendable {
     var speakerBackgroundWindows: [EditorSpeakerBackgroundWindow] { document.speakerBackground?.windows ?? [] }
     var speakerFrame: EditorSpeakerFrame? { document.speakerBackground?.speakerFrame }
 
+    private func speakerOccurrenceIndex(for selected: EditorSelection) -> Int? {
+        guard selected.kind == .speaker, selected.id != EditorSelection.speakerID,
+              let index = document.clips.firstIndex(where: { $0.id == selected.id && !$0.removed }),
+              document.clips[index].splitSectionID != nil || document.clips[index].raw["speaker_frame_override"] != nil else { return nil }
+        return index
+    }
+
+    func usesScopedSpeakerFrame(for selected: EditorSelection) -> Bool { speakerOccurrenceIndex(for: selected) != nil }
+
+    private func isSpeakerSubject(_ slot: EditorTimelineSlot) -> Bool {
+        slot.raw["speaker_subject"]?.boolValue
+            ?? (NativePhoneTalkingSource.isSourceSlot(slot) || slot.parentSegmentID?.hasPrefix(NativePhoneTalkingSource.slotID) == true)
+    }
+
+    func canEditSpeakerFrame(for selected: EditorSelection) -> Bool {
+        canEditSpeakerBackgroundWindows && document.speakerBackground != nil
+            && (usesScopedSpeakerFrame(for: selected) ? canEditTimeline : isGlobalSpeakerFrameTarget(selected))
+    }
+
+    private func isGlobalSpeakerFrameTarget(_ selected: EditorSelection) -> Bool {
+        selected == .speaker || (selected.kind == .speaker && !usesScopedSpeakerFrame(for: selected)
+            && document.clips.contains { $0.id == selected.id })
+    }
+
+    func speakerFrame(for selected: EditorSelection) -> EditorSpeakerFrame? {
+        guard selected.kind == .speaker else { return nil }
+        if selected.id == EditorSelection.speakerID { return speakerFrame }
+        guard let slot = document.clips.first(where: { $0.id == selected.id }) else { return nil }
+        guard let raw = slot.raw["speaker_frame_override"] else { return speakerFrame }
+        return EditorSpeakerFrameOverride(json: raw)?.resolved(defaultFrame: speakerFrame)
+    }
+
+    func speakerEditingFrame(for selected: EditorSelection) -> EditorSpeakerFrame? {
+        speakerFrame(for: selected) ?? (usesScopedSpeakerFrame(for: selected)
+            ? EditorSpeakerFrame(widthFraction: 1, xFraction: 0.5, yFraction: 0.5) : nil)
+    }
+
+    func speakerSelection(forClip selected: EditorSelection) -> EditorSelection? {
+        guard selected.kind == .clip, let index = clipSlotIndex(selected.id), let id = document.clips[index].id else { return nil }
+        let slot = document.clips[index]
+        let subject = isSpeakerSubject(slot)
+        let target = EditorSelection(kind: .speaker, id: id)
+        return subject && usesScopedSpeakerFrame(for: target) && canEditSpeakerFrame(for: target) ? target : nil
+    }
+
+    @discardableResult
+    func setSpeakerFrame(preset: String, for selected: EditorSelection) -> Bool {
+        if isGlobalSpeakerFrameTarget(selected) { return setSpeakerFrame(preset: preset) }
+        if preset == "full" { return setSpeakerFrameOverride(.full, for: selected) }
+        guard let frame = EditorSpeakerFrame.preset(preset) else { return false }
+        return setSpeakerFrameOverride(.custom(frame), for: selected)
+    }
+
+    func setSpeakerFrameCenter(x: Double, y: Double, for selected: EditorSelection) {
+        if isGlobalSpeakerFrameTarget(selected) { setSpeakerFrameCenter(x: x, y: y); return }
+        guard let frame = speakerEditingFrame(for: selected),
+              let next = EditorSpeakerFrame.clamped(widthFraction: frame.widthFraction, xFraction: x, yFraction: y) else { return }
+        setSpeakerFrameOverride(.custom(next), for: selected)
+    }
+
+    func setSpeakerFrameWidth(_ width: Double, for selected: EditorSelection) {
+        if isGlobalSpeakerFrameTarget(selected) { setSpeakerFrameWidth(width); return }
+        guard let frame = speakerEditingFrame(for: selected),
+              let next = EditorSpeakerFrame.clamped(widthFraction: width, xFraction: frame.xFraction, yFraction: frame.yFraction) else { return }
+        setSpeakerFrameOverride(.custom(next), for: selected)
+    }
+
+    @discardableResult
+    func resetSpeakerFrame(for selected: EditorSelection) -> Bool {
+        setSpeakerFrameOverride(.inherit, for: selected)
+    }
+
+    @discardableResult
+    private func setSpeakerFrameOverride(_ value: EditorSpeakerFrameOverride, for selected: EditorSelection) -> Bool {
+        guard canEditSpeakerBackgroundWindows, canEditTimeline, document.speakerBackground != nil,
+              let index = speakerOccurrenceIndex(for: selected) else { return false }
+        guard value == .inherit || (isSpeakerSubject(document.clips[index])
+            && document.clips[index].raw["media_kind"]?.stringValue != "image") else { return false }
+        transactDocument(section: .timeline) { $0.clips[index].raw["speaker_frame_override"] = value.json }
+        return true
+    }
+
     /// Where a background window may end: the end of the video, else the wire's own ceiling while it is unknown.
     private var backgroundWindowsCeiling: Double {
         let total = timelineProjection.unprojectOutputTime(timelineProjection.totalDuration)
@@ -5727,7 +5809,12 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     /// The speaker can be selected, moved and resized on the preview: the frame controls are open and the speaker is
     /// drawn small. A full-frame speaker is never selectable: it would cover the canvas and swallow tap-to-expand.
-    var canMoveSpeakerOnPreview: Bool { canEditSpeakerBackgroundWindows && speakerFrame != nil }
+    var canMoveSpeakerOnPreview: Bool {
+        canEditSpeakerBackgroundWindows && document.speakerBackground != nil && (speakerFrame != nil || document.clips.contains {
+            guard let raw = $0.raw["speaker_frame_override"] else { return false }
+            return EditorSpeakerFrameOverride(json: raw)?.resolved(defaultFrame: nil) != nil
+        })
+    }
 
     /// Moves the framed speaker's centre (canvas fractions, top-left origin), clamped to the wire's range (SF3).
     /// A same-value sample is not an edit. The preview gesture wraps its samples in one direct-manipulation
@@ -5758,7 +5845,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         background.speakerFrame = nil
         transactDocument(section: .speakerBackground) { $0.speakerBackground = background }
         // A full-frame speaker is not a preview object any more (SF2).
-        if selection?.kind == .speaker { select(nil) }
+        if let selected = selection, selected.kind == .speaker, !usesScopedSpeakerFrame(for: selected),
+           speakerFrame(for: selected) == nil { select(nil) }
         return true
     }
 
@@ -5841,7 +5929,13 @@ struct NativeEditorTemporaryVideo: Sendable {
     @discardableResult
     func removeSpeakerBackground() -> Bool {
         guard canEditSpeakerBackground, document.speakerBackground != nil else { return false }
-        transactDocument(section: .speakerBackground) { $0.speakerBackground = nil }
+        let hasOverrides = document.clips.contains { $0.raw["speaker_frame_override"] != nil }
+        transactDocument(sections: hasOverrides ? [.speakerBackground, .timeline] : [.speakerBackground]) {
+            $0.speakerBackground = nil
+            for index in $0.clips.indices where $0.clips[index].raw["speaker_frame_override"] != nil {
+                $0.clips[index].raw["speaker_frame_override"] = EditorSpeakerFrameOverride.inherit.json
+            }
+        }
         if selection?.kind == .speaker { select(nil) }
         return true
     }
@@ -9556,7 +9650,7 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     private func selectionExists(_ value: EditorSelection) -> Bool {
         if value.kind == .speaker {
-            return speakerFrame != nil && (value.id == EditorSelection.speakerID || document.clips.contains { $0.id == value.id })
+            return speakerFrame(for: value) != nil || usesScopedSpeakerFrame(for: value)
         }
         if value.kind == .clip, let id = UUID(uuidString: value.id) { return draft.clips.contains { $0.id == id } }
         return timelineItems.contains { $0.selection == value }
@@ -9777,12 +9871,19 @@ extension NativeEditorSession {
             ?? template.flatMap { Self.number($0.raw["source_duration_s"] ?? $0.raw["source_duration"]) }
         let isPhoto = resolvedSources?[clipIndex].map { isStill($0.url) }
             ?? ((template?.raw["media_kind"]?.stringValue ?? template?.raw["kind"]?.stringValue) == "image")
+        let frameOverride = document.clips[index].raw["speaker_frame_override"].flatMap { EditorSpeakerFrameOverride(json: $0) }
+        let preservesSpeaker = frameOverride != nil && frameOverride != .inherit
+        if isPhoto && preservesSpeaker {
+            splitScreenActionError = "Use default framing before replacing this speaker with a photo."
+            return
+        }
         guard isPhoto || (measured ?? 0) >= minimumClipDuration else { return }
+        splitScreenActionError = nil
         transactDocument(section: .timeline) { value in
             var slot = value.clips[index]
             slot.clipIndex = clipIndex; slot.inS = 0
             if let placementID { slot.raw["editor_source_placement_id"] = .string(placementID) }
-            slot.raw["speaker_subject"] = .bool(false)
+            slot.raw["speaker_subject"] = .bool(preservesSpeaker)
             for key in ["asset_id", "media_id", "media_kind", "kind", "source_duration_s", "source_duration", "source_end_s", "native_source_span_s", "native_composite_source", "freeze_frame_s", "freeze_hold_s"] { slot.raw.removeValue(forKey: key) }
             if let template {
                 for key in ["asset_id", "media_id", "media_kind"] { slot.raw[key] = template.raw[key] }
@@ -9892,25 +9993,24 @@ extension NativeEditorSession {
 extension NativeEditorSession {
     var previewSpeakerItems: [NativeEditorTimelineItem] {
         guard canMoveSpeakerOnPreview else { return [] }
-        guard !document.splitScreenSections.isEmpty else {
+        guard !document.splitScreenSections.isEmpty || document.clips.contains(where: { $0.raw["speaker_frame_override"] != nil }) else {
             return [.init(selection: .speaker, start: 0, end: SpeakerBackgroundLimits.maxTimeline, zIndex: -1_000)]
         }
         return timelineProjection.clipWindows.compactMap { window in
             let slot = document.clips[window.sourceIndex]
-            let subject = slot.raw["speaker_subject"]?.boolValue
-                ?? (NativePhoneTalkingSource.isSourceSlot(slot) || slot.parentSegmentID?.hasPrefix(NativePhoneTalkingSource.slotID) == true)
-            guard subject, let id = slot.id else { return nil }
+            let subject = isSpeakerSubject(slot)
+            guard subject, let id = slot.id, speakerFrame(for: .init(kind: .speaker, id: id)) != nil else { return nil }
             return .init(selection: .init(kind: .speaker, id: id), start: window.start, end: window.end, zIndex: -1_000, sourceIndex: window.sourceIndex)
         }
     }
 
     func speakerViewport(for selected: EditorSelection, at time: Double) -> CGRect? {
-        guard selected.kind == .speaker, canMoveSpeakerOnPreview else { return nil }
+        guard selected.kind == .speaker, canEditSpeakerBackgroundWindows, speakerFrame(for: selected) != nil else { return nil }
         return sourcePreview?.speakerViewport(time: time, clipID: selected.id == EditorSelection.speakerID ? nil : selected.id)
     }
 
     func speakerFrameRect(for selected: EditorSelection, at time: Double) -> CGRect? {
-        guard let frame = speakerFrame, let viewport = speakerViewport(for: selected, at: time) else { return nil }
+        guard let frame = speakerFrame(for: selected), let viewport = speakerViewport(for: selected, at: time) else { return nil }
         let local = frame.layerFrame.canvasRect
         return CGRect(x: viewport.minX + local.minX * viewport.width, y: viewport.minY + local.minY * viewport.height,
                       width: local.width * viewport.width, height: local.height * viewport.height)

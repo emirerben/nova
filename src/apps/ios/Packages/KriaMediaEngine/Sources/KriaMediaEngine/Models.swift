@@ -177,6 +177,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                 throw RecipeError.invalidTimeline
             }
             try clip.sourceCrop?.validate()
+            try clip.speakerFrameOverride?.validate()
             if let backdrop = clip.backdrop {
                 try backdrop.validate()
                 guard tracks.contains(where: { $0.kind == .video && $0.clips.contains(where: { $0.id == clip.id }) }),
@@ -236,7 +237,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
     /// Derive requirements from content too: an omitted server capability must not drop an effect.
     public var effectiveCapabilities: Set<MediaCapability> {
         var result = requiredCapabilities
-        if speakerBackground?.subjectClipIDs != nil || !splitScreenSections.isEmpty || tracks.flatMap(\.clips).contains(where: { $0.splitScreen != nil }) { result.insert(.splitScreen) }
+        if speakerBackground?.subjectClipIDs != nil || !splitScreenSections.isEmpty || tracks.flatMap(\.clips).contains(where: { $0.splitScreen != nil || $0.speakerFrameOverride != nil }) { result.insert(.splitScreen) }
         let clips = tracks.flatMap(\.clips)
         if !clips.isEmpty { result.formUnion([.basicComposition, .local1080Export]) }
         if !textLayers.isEmpty { result.insert(.positionedText) }
@@ -246,7 +247,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if !drawingLayers.isEmpty { result.insert(.freehandDrawing) }
         if speakerBackground != nil { result.insert(.speakerBackground) }
         if speakerBackground?.mediaKind == .color { result.insert(.speakerBackgroundColor) }
-        if speakerBackground?.windows != nil || speakerBackground?.speakerFrame != nil { result.insert(.speakerBackgroundWindows) }
+        if speakerBackground?.windows != nil || speakerBackground?.speakerFrame != nil || tracks.flatMap(\.clips).contains(where: { $0.speakerFrameOverride?.mode == .custom }) { result.insert(.speakerBackgroundWindows) }
         // Qendresa item 16 (protocol 41): a full-screen opening/ending is a layer property an older build would silently ignore.
         if speakerBackground?.fullScreenWindows != nil { result.insert(.speakerFrameWindows) }
         // Qendresa item 18 (protocol 42): an aimed background (fill or any window) is a layer property an older build would silently ignore.
@@ -402,6 +403,7 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
     public var overlayPopIn: Bool?
     public var overlayPreserveAlpha: Bool?
     public var splitScreen: SplitScreenMembership?
+    public var speakerFrameOverride: SpeakerFrameOverride?
     public var visualPlacement: VisualMediaPlacement?
     public var overlayDissolveSeed: UInt32?
     /// Fade an overlay-track clip in and/or out on the shared 0.15 s curve
@@ -444,15 +446,15 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
                                                  fadeIn: overlayFadeIn == true, fadeOut: overlayFadeOut == true)
     }
     // Use Swift's acronym-normalized spelling so convertToSnakeCase/convertFromSnakeCase agree.
-    private enum CodingKeys: String, CodingKey { case id, sourceAssetID = "sourceAssetId", sourceStart, sourceDuration, timelineStart, rate, transform, transition, text, volume, look, holdDuration, overlayAboveText, overlayPopIn, overlayPreserveAlpha, visualPlacement, overlayDissolveSeed, sourceCrop, stillLayout, overlayFadeIn, overlayFadeOut, audioFadeIn, audioFadeOut, backdrop, splitScreen }
+    private enum CodingKeys: String, CodingKey { case id, sourceAssetID = "sourceAssetId", sourceStart, sourceDuration, timelineStart, rate, transform, transition, text, volume, look, holdDuration, overlayAboveText, overlayPopIn, overlayPreserveAlpha, visualPlacement, overlayDissolveSeed, sourceCrop, stillLayout, overlayFadeIn, overlayFadeOut, audioFadeIn, audioFadeOut, backdrop, splitScreen, speakerFrameOverride }
     public init(id: String, sourceAssetID: String, sourceStart: TimeInterval = 0, sourceDuration: TimeInterval,
                 timelineStart: TimeInterval = 0, rate: Double = 1, transform: MediaTransform = .identity,
-                transition: Transition? = nil, text: TextTreatment? = nil, volume: Double = 1, look: SourceLook? = nil, holdDuration: Double? = nil, overlayAboveText: Bool? = nil, overlayPopIn: Bool? = nil, overlayPreserveAlpha: Bool? = nil, visualPlacement: VisualMediaPlacement? = nil, overlayDissolveSeed: UInt32? = nil, sourceCrop: NormalizedSourceRect? = nil, stillLayout: StillLayout? = nil, overlayFadeIn: Bool? = nil, overlayFadeOut: Bool? = nil, audioFadeIn: TimeInterval? = nil, audioFadeOut: TimeInterval? = nil, backdrop: ClipBackdrop? = nil, splitScreen: SplitScreenMembership? = nil) {
+                transition: Transition? = nil, text: TextTreatment? = nil, volume: Double = 1, look: SourceLook? = nil, holdDuration: Double? = nil, overlayAboveText: Bool? = nil, overlayPopIn: Bool? = nil, overlayPreserveAlpha: Bool? = nil, visualPlacement: VisualMediaPlacement? = nil, overlayDissolveSeed: UInt32? = nil, sourceCrop: NormalizedSourceRect? = nil, stillLayout: StillLayout? = nil, overlayFadeIn: Bool? = nil, overlayFadeOut: Bool? = nil, audioFadeIn: TimeInterval? = nil, audioFadeOut: TimeInterval? = nil, backdrop: ClipBackdrop? = nil, splitScreen: SplitScreenMembership? = nil, speakerFrameOverride: SpeakerFrameOverride? = nil) {
         self.id = id; self.sourceAssetID = sourceAssetID; self.sourceStart = sourceStart; self.sourceDuration = sourceDuration
         self.timelineStart = timelineStart; self.rate = rate; self.transform = transform; self.transition = transition; self.text = text; self.volume = volume
         self.look = look; self.holdDuration = holdDuration; self.overlayAboveText = overlayAboveText; self.overlayPopIn = overlayPopIn; self.overlayPreserveAlpha = overlayPreserveAlpha; self.visualPlacement = visualPlacement; self.overlayDissolveSeed = overlayDissolveSeed; self.sourceCrop = sourceCrop; self.stillLayout = stillLayout
         self.overlayFadeIn = overlayFadeIn; self.overlayFadeOut = overlayFadeOut
-        self.audioFadeIn = audioFadeIn; self.audioFadeOut = audioFadeOut; self.backdrop = backdrop; self.splitScreen = splitScreen
+        self.audioFadeIn = audioFadeIn; self.audioFadeOut = audioFadeOut; self.backdrop = backdrop; self.splitScreen = splitScreen; self.speakerFrameOverride = speakerFrameOverride
     }
 }
 

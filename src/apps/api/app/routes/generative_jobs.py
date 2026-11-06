@@ -61,6 +61,7 @@ from app.config import settings
 from app.database import get_db
 from app.kria.draft_schemas import DraftSnapshotOut
 from app.kria.media_sources import OriginalMediaDescriptor
+from app.kria.portable_speaker_background import SpeakerFrameOverride
 from app.kria.recipes import MediaTransform
 from app.kria.split_screen import SplitScreenSection, layout_split_timeline
 from app.limiter import limiter
@@ -1014,6 +1015,7 @@ class TimelineSlotEdit(BaseModel):
     # retains the legacy duration * rate window contract.
     source_end_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     speaker_subject: bool | None = None
+    speaker_frame_override: SpeakerFrameOverride | None = None
     media_transform: MediaTransform | None = None
     source_audio_volume: float | None = Field(default=None, ge=0, le=2, allow_inf_nan=False)
     audio_fade_in: float | None = Field(default=None, ge=0, le=60, allow_inf_nan=False)
@@ -10331,6 +10333,16 @@ async def dispatch_edit_timeline(
     candidate_variant = _find_variant(job, variant_id)
     if candidate_variant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    from app.services.split_screen_editor import require_split_screen_commit
+
+    require_split_screen_commit(
+        candidate_variant, EditorCommitRequest(timeline_slots=payload.slots)
+    )
+    if any(
+        row.get("speaker_frame_override") is not None
+        for row in (candidate_variant.get("user_timeline") or {}).get("slots") or []
+    ) or any(row.speaker_frame_override is not None for row in payload.slots):
+        raise HTTPException(422, detail={"code": "split_screen_requires_atomic_commit"})
     guided_v2 = candidate_variant.get("resolved_archetype") == "guided_story" and getattr(
         settings, "guided_story_editor_v2_enabled", False
     )
@@ -10378,7 +10390,7 @@ async def dispatch_edit_timeline(
         raise _timeline_error(status.HTTP_409_CONFLICT, "JOB_BUSY")
 
     if (variant.get("user_timeline") or {}).get("split_screen_sections") or any(
-        row.split_section_id for row in payload.slots
+        row.split_section_id or row.speaker_frame_override is not None for row in payload.slots
     ):
         raise HTTPException(422, detail={"code": "split_screen_requires_atomic_commit"})
     resolved = resolve_timeline_slots_for_edit(job, variant, payload.slots)
@@ -11251,6 +11263,11 @@ def prepare_editor_commit(
                 and variant.get("resolved_archetype") == "subtitled"
             )
             or payload.split_screen_sections
+            or any(slot.speaker_frame_override is not None for slot in payload.timeline_slots or [])
+            or any(
+                row.get("speaker_frame_override") is not None
+                for row in (variant.get("user_timeline") or {}).get("slots") or []
+            )
             or (variant.get("user_timeline") or {}).get("split_screen_sections")
         ):
             from app.services.authored_editor import prepare_authored_editor_commit
@@ -11526,17 +11543,14 @@ def _validate_drawings_section(
 
 
 def _speaker_background_shape_ok(job: Job, variant: dict) -> bool:
-    """Can this variant carry a background at all (the shape half of the capability)?
+    """Existing Talking lanes, plus verified receipt-backed split-origin authored speakers."""
+    if variant.get("editor_state") == "empty":
+        return False
+    if variant.get("editor_timeline_mode") == "authored":
+        from app.services.split_screen_editor import authored_split_speaker_background_available
 
-    A device-rendered Talk-to-camera edit whose lanes the editor recompiles. Cloud variants,
-    other archetypes, empty drafts and authored timelines (whose compiler has no such lane)
-    are all closed.
-    """
-    return bool(
-        variant.get("editor_state") != "empty"
-        and variant.get("editor_timeline_mode") != "authored"
-        and _phone_subtitled_editor_lanes_available(job, variant)
-    )
+        return authored_split_speaker_background_available(job, variant)
+    return _phone_subtitled_editor_lanes_available(job, variant)
 
 
 def _speaker_background_capability(job: Job, variant: dict) -> bool:
@@ -13376,7 +13390,10 @@ def _prepare_editor_commit(
         if speaker_background_touched:
             # The phone Save recompiles the lanes and rewrites this row from them.
             if validated_speaker_background is None:
-                updated.pop("speaker_background", None)
+                if updated.get("editor_timeline_mode") == "authored":
+                    updated["speaker_background"] = None
+                else:
+                    updated.pop("speaker_background", None)
             else:
                 updated["speaker_background"] = validated_speaker_background
         if carousel_moment_touched:

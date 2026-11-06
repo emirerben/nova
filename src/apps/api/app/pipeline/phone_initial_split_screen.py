@@ -54,6 +54,13 @@ def compile_initial_split_screen(job, request):
                 if background.subject_clip_ids is not None
                 else track.id == background.subject_track_id
             )
+            if background is None:
+                # The primary Talking track is the speaker even before a background is added.
+                is_subject = (
+                    staged_variant.get("resolved_archetype") in {"subtitled", "talking_head"}
+                    and track.id == "subtitled"
+                    and getattr(asset, "kind", None) == "original"
+                )
             audio_clip = next(
                 (
                     candidate
@@ -70,6 +77,9 @@ def compile_initial_split_screen(job, request):
             )
             row = {
                 "speaker_subject": is_subject,
+                "speaker_frame_override": clip.speaker_frame_override.model_dump(exclude_none=True)
+                if clip.speaker_frame_override
+                else None,
                 "slot_id": clip.id,
                 "clip_index": index,
                 "media_id": media_id,

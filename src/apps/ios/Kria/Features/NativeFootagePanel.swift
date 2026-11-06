@@ -106,6 +106,7 @@ struct NativeFootagePanel: View {
 struct NativeSplitScreenControls: View {
     @ObservedObject var session: NativeEditorSession
     let selection: EditorSelection
+    @Environment(\.dismiss) private var dismiss
     private struct ImportTarget: Identifiable { let id: String }
     @State private var importTarget: ImportTarget?
 
@@ -246,6 +247,13 @@ struct NativeSplitScreenControls: View {
     }
 
     @ViewBuilder private var clipActions: some View {
+        if let speaker = session.speakerSelection(forClip: selection) {
+            Button("Speaker position") {
+                dismiss()
+                session.select(speaker, seekToStart: false)
+            }
+            .accessibilityIdentifier("native-editor-clip-speaker-position")
+        }
         LabeledContent("Footage", value: session.splitScreenSourceChoices.first { $0.clipIndex == slot?.clipIndex }?.label ?? "Clip")
             .accessibilityIdentifier("native-editor-split-source")
         Button("Cut at playhead") { session.splitSelectedClip() }

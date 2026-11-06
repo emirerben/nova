@@ -14,6 +14,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.kria.portable_speaker_background import SpeakerFrameOverride
 from app.kria.portable_visual import AudioMuteWindow, VisualMediaPlacement
 from app.kria.split_screen import SplitScreenMembership
 
@@ -130,6 +131,7 @@ class ClipBackdrop(_RecipeModel):
 
 
 class TimelineClip(_RecipeModel):
+    speaker_frame_override: SpeakerFrameOverride | None = None
     split_screen: SplitScreenMembership | None = None
     id: str = Field(min_length=1, max_length=160)
     source_asset_id: str = Field(min_length=1, max_length=160)
@@ -173,6 +175,7 @@ class TimelineClip(_RecipeModel):
         result = handler(self)
         for key in (
             "split_screen",
+            "speaker_frame_override",
             "overlay_dissolve_seed",
             "visual_placement",
             "hold_duration",
@@ -340,6 +343,10 @@ class EditRecipeV1(_RecipeModel):
         clips = [clip for track in self.tracks for clip in track.clips]
         for track in self.tracks:
             for clip in track.clips:
+                if clip.speaker_frame_override is not None and (
+                    self.schema_version != 2 or track.kind != "video"
+                ):
+                    raise ValueError("speaker frame overrides require a V2 video track")
                 if clip.split_screen is not None and (
                     self.schema_version != 2 or track.kind != "video"
                 ):

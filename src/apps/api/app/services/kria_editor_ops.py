@@ -337,6 +337,7 @@ def _safe_slot(
         "audio_fade_in",
         "audio_fade_out",
         "speaker_subject",
+        "speaker_frame_override",
         "media_transform",
     ):
         if key in row:
@@ -950,7 +951,10 @@ def background_state(job: Any, variant: dict[str, Any]) -> tuple[bool, str | Non
     if not settings.speaker_background_enabled:
         return False, None
     if variant.get("resolved_archetype") not in _BACKGROUND_ARCHETYPES:
-        return False, None
+        from app.services.split_screen_editor import authored_split_speaker_background_available
+
+        if not authored_split_speaker_background_available(job, variant):
+            return False, None
     if variant.get("render_destination") != "device":
         return False, "cloud"
     if not _speaker_background_shape_ok(job, variant):
@@ -1916,6 +1920,12 @@ def project_editor_draft(
             # KRI-1008: the next turn's snapshot reads caption_margin_v (the phone compiler,
             # the style y) before caption_y_frac, so the staged spot must reach both.
             projected.update(caption_y_fields(projected, float(value)))
+    if (projected.get("user_timeline") or {}).get("split_screen_sections"):
+        from app.kria.split_screen import layout_split_timeline
+
+        timeline = projected["user_timeline"]
+        layout_split_timeline(timeline["slots"], timeline["split_screen_sections"])
+        projected["editor_split_screen_origin"] = True
     return projected
 
 

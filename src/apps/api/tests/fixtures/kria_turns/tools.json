@@ -2813,6 +2813,17 @@
               "default": null,
               "title": "Source Start Locked"
             },
+            "speaker_frame_override": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SpeakerFrameOverride"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "speaker_subject": {
               "anyOf": [
                 {
@@ -3833,6 +3844,68 @@
             "height"
           ],
           "title": "SourceCrop",
+          "type": "object"
+        },
+        "SpeakerFrame": {
+          "additionalProperties": false,
+          "description": "Where the matted speaker is drawn: uniformly scaled so its width is\n``width_fraction`` of the canvas width, centred at (``x_fraction``, ``y_fraction``).\nThe person mask is computed on the full-size speaker layer first (S27).",
+          "properties": {
+            "width_fraction": {
+              "maximum": 1.0,
+              "minimum": 0.2,
+              "title": "Width Fraction",
+              "type": "number"
+            },
+            "x_fraction": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "X Fraction",
+              "type": "number"
+            },
+            "y_fraction": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Y Fraction",
+              "type": "number"
+            }
+          },
+          "required": [
+            "width_fraction",
+            "x_fraction",
+            "y_fraction"
+          ],
+          "title": "SpeakerFrame",
+          "type": "object"
+        },
+        "SpeakerFrameOverride": {
+          "additionalProperties": false,
+          "description": "Occurrence frame: inherit the global frame, disable inset, or supply custom geometry.",
+          "properties": {
+            "frame": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SpeakerFrame"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "mode": {
+              "enum": [
+                "inherit",
+                "full",
+                "custom"
+              ],
+              "title": "Mode",
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "title": "SpeakerFrameOverride",
           "type": "object"
         },
         "SplitScreenSection": {

@@ -7,6 +7,69 @@ import XCTest
 /// saved lane across relaunches.
 @MainActor
 final class SpeakerFrameDirectManipulationUITests: XCTestCase {
+    func testScopedSpeakerSaveReopenAndFullResetThroughClipInspector() {
+        func launchSplit(reset: Bool) -> XCUIApplication {
+            let app = XCUIApplication()
+            app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-split-speaker",
+                "-ui-testing-editor-speaker-background", "-ui-testing-editor-speaker-background-windows",
+                "-ui-testing-editor-speaker-frame", "-ui-testing-editor-live-preview"]
+            if reset { app.launchArguments.append("-ui-testing-editor-speaker-background-reset") }
+            app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+            app.launch()
+            return app
+        }
+        func occurrence(_ app: XCUIApplication, _ panel: String) -> XCUIElement {
+            app.descendants(matching: .any)["native-editor-preview-speaker-split-speaker-" + panel].firstMatch
+        }
+        func geometry(_ element: XCUIElement) -> String {
+            (element.value as? String ?? "").replacingOccurrences(of: ", selected", with: "")
+        }
+        let app = launchSplit(reset: true)
+        let top = occurrence(app, "top"), bottom = occurrence(app, "bottom")
+        XCTAssertTrue(bottom.waitForExistence(timeout: 30))
+        let peer = geometry(top)
+        let original = geometry(bottom)
+        bottom.tap()
+        app.buttons["native-editor-speaker-spot-small_top_left"].tap()
+        app.sliders["native-editor-speaker-size"].adjust(toNormalizedSliderPosition: 0.6)
+        let custom = geometry(bottom)
+        XCTAssertNotEqual(custom, original)
+        XCTAssertEqual(geometry(top), peer)
+        saveAndWait(app)
+        app.terminate()
+
+        let reopened = launchSplit(reset: false)
+        let savedTop = occurrence(reopened, "top"), savedBottom = occurrence(reopened, "bottom")
+        XCTAssertTrue(savedBottom.waitForExistence(timeout: 30))
+        XCTAssertEqual(geometry(savedBottom), custom, "Actual committed timeline override survives relaunch")
+        XCTAssertEqual(geometry(savedTop), peer)
+        XCTAssertFalse(reopened.buttons["native-editor-save"].isEnabled)
+        savedBottom.tap()
+        reopened.buttons["native-editor-speaker-spot-full"].tap()
+        saveAndWait(reopened)
+        reopened.terminate()
+
+        let full = launchSplit(reset: false)
+        XCTAssertTrue(occurrence(full, "top").waitForExistence(timeout: 30))
+        XCTAssertFalse(occurrence(full, "bottom").exists)
+        XCTAssertEqual(geometry(occurrence(full, "top")), peer)
+        let clip = full.descendants(matching: .any)["native-editor-clip-2"].firstMatch
+        XCTAssertTrue(clip.waitForExistence(timeout: 5))
+        clip.tap()
+        XCTAssertTrue(clip.isSelected)
+        full.buttons["native-editor-adjust"].tap()
+        let position = full.buttons["native-editor-clip-speaker-position"]
+        for _ in 0..<6 where !position.isHittable { full.swipeUp() }
+        XCTAssertTrue(position.isHittable)
+        position.tap()
+        let reset = full.buttons["native-editor-speaker-use-default"]
+        XCTAssertTrue(reset.waitForExistence(timeout: 5))
+        reset.tap()
+        XCTAssertTrue(occurrence(full, "bottom").waitForExistence(timeout: 5))
+        XCTAssertEqual(geometry(occurrence(full, "bottom")), original)
+        XCTAssertEqual(geometry(occurrence(full, "top")), peer)
+    }
+
     func testRepeatedSpeakerPanelsSelectAndDragTheChosenOccurrence() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-split-speaker",
@@ -25,14 +88,36 @@ final class SpeakerFrameDirectManipulationUITests: XCTestCase {
         bottom.tap()
         XCTAssertTrue((bottom.value as? String)?.hasSuffix("selected") == true)
         XCTAssertFalse((top.value as? String)?.hasSuffix("selected") == true)
+        let peerValue = top.value as? String
+        let peerFrame = top.frame
         let before = bottom.value as? String
         let start = bottom.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         start.press(forDuration: 0.15, thenDragTo: start.withOffset(CGVector(dx: -20, dy: -20)))
         XCTAssertNotEqual(bottom.value as? String, before)
         XCTAssertTrue((bottom.value as? String)?.hasSuffix("selected") == true)
         XCTAssertLessThan(top.frame.midY, bottom.frame.midY)
+        XCTAssertEqual(top.value as? String, peerValue, "Dragging the lower occurrence must not edit its peer")
+        XCTAssertEqual(top.frame, peerFrame)
+        let beforeResize = bottom.value as? String
+        canvas(app).pinch(withScale: 1.3, velocity: 1)
+        XCTAssertNotEqual(bottom.value as? String, beforeResize)
+        XCTAssertEqual(top.value as? String, peerValue, "Resizing the lower occurrence must not edit its peer")
+        XCTAssertEqual(top.frame, peerFrame)
+        app.sliders["native-editor-speaker-size"].adjust(toNormalizedSliderPosition: 0.5)
+        XCTAssertEqual(top.value as? String, peerValue)
+        app.buttons["native-editor-speaker-spot-small_top_left"].tap()
+        XCTAssertEqual(top.value as? String, peerValue)
+        app.buttons["native-editor-speaker-spot-full"].tap()
+        let disappeared = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: bottom)
+        XCTAssertEqual(XCTWaiter.wait(for: [disappeared], timeout: 5), .completed)
+        XCTAssertFalse(bottom.exists)
+        XCTAssertTrue(top.exists)
+        XCTAssertEqual(top.value as? String, peerValue)
+        app.buttons["native-editor-speaker-use-default"].tap()
+        XCTAssertTrue(bottom.waitForExistence(timeout: 5))
+        XCTAssertEqual(top.value as? String, peerValue)
         let attachment = XCTAttachment(screenshot: app.screenshot())
-        attachment.name = "Selected lower speaker occurrence after panel-local drag"
+        attachment.name = "Lower speaker reset after scoped edits with unchanged upper peer"
         attachment.lifetime = .keepAlways
         add(attachment)
     }

@@ -5088,6 +5088,11 @@
             "title": "Source Start Locked",
             "type": "boolean"
           },
+          "speaker_frame_override": {
+            "$ref": "#/components/schemas/SpeakerFrameOverride",
+            "default": null,
+            "nullable": true
+          },
           "speaker_subject": {
             "default": null,
             "nullable": true,
@@ -11670,6 +11675,31 @@
         "title": "SpeakerFrame",
         "type": "object"
       },
+      "SpeakerFrameOverride": {
+        "additionalProperties": false,
+        "description": "Occurrence frame: inherit the global frame, disable inset, or supply custom geometry.",
+        "properties": {
+          "frame": {
+            "$ref": "#/components/schemas/SpeakerFrame",
+            "default": null,
+            "nullable": true
+          },
+          "mode": {
+            "enum": [
+              "inherit",
+              "full",
+              "custom"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "SpeakerFrameOverride",
+        "type": "object"
+      },
       "SpeakerFullScreenWindow": {
         "additionalProperties": false,
         "description": "Qendresa item 16: from ``start`` to ``end`` (output seconds) the speaker's own take shows\nfull-frame and untouched (no mask, no background, no corner frame).",
@@ -13329,6 +13359,11 @@
             "title": "Source Start",
             "type": "number"
           },
+          "speaker_frame_override": {
+            "$ref": "#/components/schemas/SpeakerFrameOverride",
+            "default": null,
+            "nullable": true
+          },
           "split_screen": {
             "$ref": "#/components/schemas/SplitScreenMembership",
             "default": null,
@@ -13535,6 +13570,11 @@
             "nullable": true,
             "title": "Source Start Locked",
             "type": "boolean"
+          },
+          "speaker_frame_override": {
+            "$ref": "#/components/schemas/SpeakerFrameOverride",
+            "default": null,
+            "nullable": true
           },
           "speaker_subject": {
             "default": null,

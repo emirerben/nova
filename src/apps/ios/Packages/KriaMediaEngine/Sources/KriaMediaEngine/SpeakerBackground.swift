@@ -167,6 +167,29 @@ public struct SpeakerFrame: Codable, Equatable, Sendable {
     }
 }
 
+/// An occurrence's framing policy. Full retains the person matte and replacement background.
+public struct SpeakerFrameOverride: Codable, Equatable, Sendable {
+    public enum Mode: String, Codable, Sendable { case inherit, full, custom }
+    public var mode: Mode
+    public var frame: SpeakerFrame?
+    public init(mode: Mode, frame: SpeakerFrame? = nil) { self.mode = mode; self.frame = frame }
+    public func resolved(defaultFrame: SpeakerFrame?) -> SpeakerFrame? {
+        switch mode { case .inherit: return defaultFrame; case .full: return nil; case .custom: return frame }
+    }
+    public func validate() throws {
+        guard (mode == .custom) == (frame != nil) else { throw RecipeError.invalidTimeline }
+        try frame?.validate()
+    }
+    private enum CodingKeys: String, CodingKey { case mode, frame }
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownAssetFields(decoder, allowed: ["mode", "frame"])
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try c.decode(Mode.self, forKey: .mode)
+        frame = try c.decodeIfPresent(SpeakerFrame.self, forKey: .frame)
+        try validate()
+    }
+}
+
 /// KRI-1173: what fills the layer behind the speaker. `VisualMediaKind` is shared with manifest `.visual`
 /// sources and windows and must not gain a colour case, so the fill has its own kind.
 public enum SpeakerBackgroundFillKind: String, Codable, Sendable { case image, video, color }
