@@ -35,7 +35,7 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
         SlidePostSession(defaults: defaults, readRetrySleep: readRetrySleep, readNow: readNow,
             submissionJournal: .init(root: journalRoot), submissionScope: { _, id in
                 .init(owner: "test-owner", environment: "https://native-editor.test", itemID: id)
-            })
+            }, transportOwner: { _ in nil })
     }
 
     private func state(version: Int = 1) -> SlidePostState {

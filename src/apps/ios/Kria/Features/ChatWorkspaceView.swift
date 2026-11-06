@@ -2905,7 +2905,9 @@ private struct CreationWorkspaceView: View {
         defer { isActing = false }
         if fullThread?.failedRenderExecutionID == nil { await refreshNow() }
         guard let executionID = fullThread?.failedRenderExecutionID else {
-            failure = ChatFailure("The render status is still updating. Your edit is saved. Refresh the project before retrying.")
+            // The authoritative projection may already have moved on. Its
+            // existing live poll follows the result; there is no exact failed
+            // execution to retry or a manual reload the creator must perform.
             return
         }
         do {

@@ -7,12 +7,13 @@ import XCTest
     private let itemID = "11111111-1111-1111-1111-111111111111"
     private var defaults: UserDefaults!
     private var suite: String!
+    private var now = Date()
     override func setUp() {
         super.setUp(); suite = "SlidePostChatEditTests.\(UUID())"; defaults = UserDefaults(suiteName: suite)
     }
     override func tearDown() {
         NativeEditorURLProtocol.handler = nil
-        defaults.removePersistentDomain(forName: suite); defaults = nil
+        SlidePostTestSubmissionStorage.reset(defaults: defaults); defaults.removePersistentDomain(forName: suite); defaults = nil
         super.tearDown()
     }
 
@@ -30,7 +31,7 @@ import XCTest
     /// Serves GET slide-post, POST chat-edit (with `reply`), PUT slide-post.
     private func serve(remote: SlidePostState, reply: @escaping () throws -> (Int, Data)) {
         captured = Captured()
-        NativeEditorURLProtocol.handler = { [unowned self] request in
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { [unowned self] request in
             let path = request.url?.path ?? ""
             if path.hasSuffix("/chat-edit") {
                 let body = try XCTUnwrap(JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request)) as? [String: Any])
@@ -53,8 +54,8 @@ import XCTest
         return (200, try JSONSerialization.data(withJSONObject: object))
     }
     private func session(remote: SlidePostState) async -> SlidePostSession {
-        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
-        await session.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults, now: { self.now })
+        await session.refresh(api: SlidePostTestSubmissionStorage.api(), itemID: itemID)
         return session
     }
     private func reordered(_ draft: SlidePostDraft) -> SlidePostDraft {
@@ -65,12 +66,12 @@ import XCTest
 
     func testNonEditedOutcomesOnlyAddAnAssistantBubble() async throws {
         for outcome in ["clarification", "unsupported", "no_effect", "failed"] {
-            defaults.removePersistentDomain(forName: suite)  // the transcript persists per item; start each case clean
+            SlidePostTestSubmissionStorage.reset(defaults: defaults); defaults.removePersistentDomain(forName: suite)  // the transcript persists per item; start each case clean
             let remote = state()
             serve(remote: remote) { try self.response(outcome, reply: "Server says \(outcome).") }
             let session = await session(remote: remote)
             let before = session.draft
-            let staged = await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "do something")
+            let staged = await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "do something")
             XCTAssertFalse(staged, outcome)
             XCTAssertEqual(session.draft, before, outcome)
             XCTAssertFalse(session.hasUnsavedChanges, outcome)
@@ -82,7 +83,7 @@ import XCTest
 
     func testCompletedChatEditThoughtRemainsWithReplyAfterReopening() async throws {
         let remote = state()
-        NativeEditorURLProtocol.handler = { request in
+        NativeEditorURLProtocol.handler = SlidePostAIStubTransport.adapt { request in
             let path = request.url?.path ?? ""
             if path.hasSuffix("/thought-summaries") {
                 var requestID = ""
@@ -108,14 +109,14 @@ import XCTest
             }
             return (200, try JSONEncoder().encode(remote))
         }
-        let api = NativeEditorTestSupport.api()
-        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
+        let api = SlidePostTestSubmissionStorage.api()
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults, now: { self.now })
         await session.refresh(api: api, itemID: itemID)
         await session.chatEdit(api: api, itemID: itemID, message: "Update the caption")
         XCTAssertEqual(session.chat.last?.thoughts.map(\.text), ["Checked the requested caption."])
         XCTAssertEqual(session.chat.last?.thoughts.first?.durationLabel, "Thought for 2s")
 
-        let reopened = SlidePostTestSubmissionStorage.session(defaults: defaults)
+        let reopened = SlidePostTestSubmissionStorage.session(defaults: defaults, now: { self.now })
         await reopened.refresh(api: api, itemID: itemID)
         XCTAssertEqual(reopened.chat.last?.text, "Which caption?")
         XCTAssertEqual(reopened.chat.last?.thoughts.map(\.text), ["Checked the requested caption."])
@@ -125,7 +126,7 @@ import XCTest
         let remote = state()
         serve(remote: remote) { try self.response("edited", reply: "Done.") }
         let session = await session(remote: remote)
-        let staged = await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "reorder")
+        let staged = await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "reorder")
         XCTAssertFalse(staged)
         XCTAssertFalse(session.hasUnsavedChanges)
     }
@@ -139,14 +140,15 @@ import XCTest
         }
         let session = await session(remote: remote)
         let before = session.draft
-        let staged = await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "sort them")
+        let staged = await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "sort them")
         XCTAssertFalse(staged)
         XCTAssertEqual(session.draft, before)
         XCTAssertFalse(session.isChatting)
         let failure = try XCTUnwrap(session.chat.last)
         XCTAssertEqual(failure.retryText, "sort them")
         fail = false
-        await session.retryChat(api: NativeEditorTestSupport.api(), itemID: itemID, bubble: failure)
+        now = now.addingTimeInterval(3)
+        await session.retryChat(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, bubble: failure)
         XCTAssertEqual(session.chat.map(\.text), ["sort them", "Which photos?"], "retry replaces the failed pair instead of stacking")
     }
 
@@ -161,7 +163,7 @@ import XCTest
         }
         let session = await session(remote: remote)
         local.session = session
-        let staged = await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "reverse")
+        let staged = await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "reverse")
         XCTAssertFalse(staged)
         XCTAssertEqual(session.draft?.caption, "Mine")
         XCTAssertEqual(session.draft?.slides.map(\.id), ["slide-1", "slide-2", "slide-3"])
@@ -173,7 +175,7 @@ import XCTest
         let remote = state()
         serve(remote: remote) { [self] in try response("edited", reply: "Reordered.", draft: reordered(remote.draft!), baseVersion: 1, changes: ["Reordered 3"]) }
         let session = await session(remote: remote)
-        let staged = await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "reverse them")
+        let staged = await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "reverse them")
         XCTAssertTrue(staged)
         XCTAssertEqual(session.draft?.slides.map(\.id), ["slide-3", "slide-2", "slide-1"])
         XCTAssertEqual(session.draft?.version, 1, "the meaningless returned version is replaced by the editor's")
@@ -189,10 +191,10 @@ import XCTest
         let remote = state()
         serve(remote: remote) { try self.response("clarification") }
         let session = await session(remote: remote)
-        await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "first")
+        await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "first")
         XCTAssertNil(captured.chatBodies.last?["draft"], "a clean editor lets the server use its stored copy")
         session.setCaption("Unsaved caption")
-        await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "second")
+        await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "second")
         let sent = try XCTUnwrap(captured.chatBodies.last?["draft"] as? [String: Any])
         XCTAssertEqual(sent["caption"] as? String, "Unsaved caption", "the editor's draft is the newest truth")
         XCTAssertEqual(captured.chatBodies.last?["message"] as? String, "second")
@@ -203,7 +205,7 @@ import XCTest
         let remote = state()
         serve(remote: remote) { try self.response("clarification", reply: "reply") }
         let session = await session(remote: remote)
-        for index in 0..<10 { await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "m\(index)") }
+        for index in 0..<10 { await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "m\(index)") }
         let turns = try XCTUnwrap(captured.chatBodies.last?["turns"] as? [[String: Any]])
         XCTAssertEqual(turns.count, 12)
         XCTAssertEqual(turns.first?["role"] as? String, "user")
@@ -215,9 +217,9 @@ import XCTest
         let remote = state(version: 3)
         serve(remote: remote) { [self] in try response("edited", reply: "Done.", draft: reordered(remote.draft!), baseVersion: 3) }
         let session = await session(remote: remote)
-        await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "reverse")
+        await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "reverse")
         XCTAssertTrue(session.hasUnsavedChanges)
-        await session.save(api: NativeEditorTestSupport.api(), itemID: itemID)
+        await session.save(api: SlidePostTestSubmissionStorage.api(), itemID: itemID)
         let put = try XCTUnwrap(captured.putBodies.last)
         XCTAssertEqual(put["expected_version"] as? Int, 3, "save quotes base_version, not the returned draft's version")
         XCTAssertEqual((put["slides"] as? [[String: Any]])?.compactMap { $0["id"] as? String }, ["slide-3", "slide-2", "slide-1"])
@@ -228,7 +230,7 @@ import XCTest
         let remote = state()
         serve(remote: remote) { try self.response("clarification", reply: "Which photos?") }
         let first = await session(remote: remote)
-        await first.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "sort them")
+        await first.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "sort them")
         let reopened = await session(remote: remote)
         XCTAssertEqual(reopened.chat.map(\.text), ["sort them", "Which photos?"])
         XCTAssertEqual(reopened.chat.map(\.role), ["user", "assistant"])
@@ -280,12 +282,12 @@ import XCTest
             return try self.response("clarification", reply: "Which photos?")
         }
         let session = await session(remote: remote)
-        await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "first")
+        await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "first")
         fail = false
-        await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "second")
+        await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "second")
         let turns = try XCTUnwrap(captured.chatBodies.last?["turns"] as? [[String: Any]])
         XCTAssertEqual(turns.count, 0, "the failed 'first' (user + retry bubble) is excluded")
-        await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "third")
+        await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "third")
         let later = try XCTUnwrap(captured.chatBodies.last?["turns"] as? [[String: Any]])
         XCTAssertEqual(later.compactMap { $0["role"] as? String }, ["user", "assistant"])
     }
@@ -297,8 +299,8 @@ import XCTest
         let payload = try response("edited", reply: long, draft: reordered(remote.draft!), changes: manyChanges)
         serve(remote: remote) { payload }
         let session = await session(remote: remote)
-        await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "reverse")
-        await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "again")
+        await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "reverse")
+        await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "again")
         let turns = try XCTUnwrap(captured.chatBodies.last?["turns"] as? [[String: Any]])
         let assistant = try XCTUnwrap(turns.last)
         XCTAssertEqual((assistant["content"] as? String)?.count, 2000)
@@ -314,7 +316,7 @@ import XCTest
         XCTAssertFalse(session.canChat(message: long))
         XCTAssertNotNil(session.error)
         XCTAssertTrue(session.canChat(message: "ok"))
-        let staged = await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: long)
+        let staged = await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: long)
         XCTAssertFalse(staged)
         XCTAssertTrue(session.chat.isEmpty)
         XCTAssertTrue(captured.chatBodies.isEmpty)
@@ -324,12 +326,12 @@ import XCTest
         let remote = state()
         serve(remote: remote) { throw URLError(.notConnectedToInternet) }
         let session = await session(remote: remote)
-        await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "sort them")
+        await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "sort them")
         let failure = try XCTUnwrap(session.chat.last)
         XCTAssertEqual(session.chat.count, 2)
         // Make the guard bail: no draft to edit.
         session.draft = nil
-        await session.retryChat(api: NativeEditorTestSupport.api(), itemID: itemID, bubble: failure)
+        await session.retryChat(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, bubble: failure)
         XCTAssertEqual(session.chat.count, 2, "bubbles survive when chatEdit would bail")
     }
 
@@ -337,7 +339,7 @@ import XCTest
         let remote = state()
         serve(remote: remote) { try self.response("clarification", reply: "r") }
         let first = await session(remote: remote)
-        for index in 0..<30 { await first.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "m\(index)") }
+        for index in 0..<30 { await first.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "m\(index)") }
         XCTAssertEqual(first.chat.count, 60)
         let reopened = await session(remote: remote)
         XCTAssertEqual(reopened.chat.count, SlidePostSession.maxPersistedChat)
@@ -351,7 +353,7 @@ import XCTest
             DispatchQueue.main.sync {
                 MainActor.assumeIsolated {
                     guard let session = box.session else { return }
-                    Task { await session.create(api: NativeEditorTestSupport.api(), itemID: self.itemID) }
+                    Task { await session.create(api: SlidePostTestSubmissionStorage.api(), itemID: self.itemID) }
                 }
             }
             return try self.response("clarification")
@@ -359,7 +361,7 @@ import XCTest
         let session = await session(remote: remote)
         box.session = session
         session.setCaption("dirty")
-        await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "hi")
+        await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "hi")
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertTrue(captured.putBodies.isEmpty, "create must not save while a chat turn is in flight")
     }
@@ -382,7 +384,7 @@ import XCTest
         XCTAssertNil(session.draft)
         XCTAssertTrue(session.seedDraftIfNeeded())
         XCTAssertEqual(session.draft?.version, 0, "the local seed is unsaved")
-        await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "make a slideshow")
+        await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "make a slideshow")
         let body = try XCTUnwrap(captured.chatBodies.last)
         let sent = try XCTUnwrap(body["draft"] as? [String: Any], "an unsaved seed must be sent, the server has nothing stored")
         XCTAssertGreaterThanOrEqual(try XCTUnwrap(sent["version"] as? Int), 1)
@@ -392,13 +394,13 @@ import XCTest
     }
 
     func testFailedChatEditExplainsClearlyAndKeepsTheMessageForRetry() async throws {
-        for (status, expect) in [(422, "couldn't use that edit request"), (500, "problem on its side")] {
-            defaults.removePersistentDomain(forName: suite)
+        for (status, expect) in [(422, "could not use this request"), (500, "Checking the original AI request")] {
+            SlidePostTestSubmissionStorage.reset(defaults: defaults); defaults.removePersistentDomain(forName: suite)
             let remote = state()
             serve(remote: remote) { (status, Data(#"{"detail":[{"loc":["body","draft","version"],"msg":"Input should be greater than or equal to 1"}]}"#.utf8)) }
             let session = await session(remote: remote)
             session.setCaption("dirty")
-            await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "sort them")
+            await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "sort them")
             let failure = try XCTUnwrap(session.chat.last)
             XCTAssertTrue(failure.text.contains(expect), failure.text)
             XCTAssertFalse(failure.text.contains("reach"), "a server answer must not be blamed on the connection")

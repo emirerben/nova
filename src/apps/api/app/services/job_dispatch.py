@@ -259,6 +259,7 @@ def enqueue_orchestrator_sync(
     *,
     queue: str | None = None,
     kwargs: dict[str, Any] | None = None,
+    preserve_unknown: bool = False,
 ) -> str:
     """Sync-context analogue of `enqueue_orchestrator` for Celery tasks that
     dispatch a sub-orchestrator (e.g. content-plan per-item generation).
@@ -270,6 +271,10 @@ def enqueue_orchestrator_sync(
     task commits first so the worker can load the row; this helper then performs
     a fresh status read and skips broker publication when cancellation is
     already visible.
+
+    ``preserve_unknown`` is reserved for durable keyed first-render claims:
+    their bounded outbox owns recovery and duplicate messages cannot compute
+    twice. Other callers retain queued-only terminalization on publish failure.
 
     Returns the task_id (= `str(job_id)`).
     """
@@ -308,11 +313,12 @@ def enqueue_orchestrator_sync(
     try:
         task.apply_async(**opts)
     except Exception as exc:
-        _recover_sync_publish_failure(
-            job_id=job_uuid,
-            task_name=task.name,
-            publish_error=exc,
-        )
+        if not preserve_unknown:
+            _recover_sync_publish_failure(
+                job_id=job_uuid,
+                task_name=task.name,
+                publish_error=exc,
+            )
         raise
     return task_id
 

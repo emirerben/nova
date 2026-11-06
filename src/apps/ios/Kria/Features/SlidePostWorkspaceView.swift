@@ -560,10 +560,19 @@ struct SlidePostWorkspaceView: View {
             }
             .buttonStyle(.plain).accessibilityHint("Dismiss")
         } else if let error = session.error {
-            Button { session.error = nil } label: {
-                NativeEditorBannerRow(title: "Something went wrong", detail: error, systemImage: "exclamationmark.triangle", tint: .red, identifier: "slidepost-error")
+            VStack(alignment: .leading, spacing: 8) {
+                Button { session.error = nil } label: {
+                    NativeEditorBannerRow(title: session.canCheckAIResult ? "Checking your result" : "Something went wrong", detail: error, systemImage: "exclamationmark.triangle", tint: .red, identifier: "slidepost-error")
+                }
+                .buttonStyle(.plain).accessibilityHint("Dismiss")
+                if session.canCheckAIResult {
+                    Button("Check original result") {
+                        guard let itemID else { return }
+                        Task { await session.checkAIResult(api: model.api, itemID: itemID) }
+                    }
+                    .buttonStyle(.bordered).accessibilityIdentifier("slidepost-check-ai-result")
+                }
             }
-            .buttonStyle(.plain).accessibilityHint("Dismiss")
         } else if let issue = session.state?.validationErrors.first {
             NativeEditorBannerRow(title: "Needs attention", detail: issue.message, systemImage: "exclamationmark.triangle", tint: .red, identifier: "slidepost-validation")
         } else if let notice = session.autoAppendNotice {
@@ -782,7 +791,7 @@ struct SlidePostWorkspaceView: View {
 
     private func refresh() async {
         guard let itemID else { return }
-        await session.refresh(api: model.api, itemID: itemID)
+        await session.refresh(api: model.api, itemID: itemID, projectID: uploadProjectID)
         seedAndAppend()
     }
     private func refreshOwner() async {

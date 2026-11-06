@@ -134,6 +134,7 @@ MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
     # the `worker` machine it's managing — obviously.
     "tasks.manage_render_worker_lifecycle",
     "tasks.reconcile_kria_turns",
+    "tasks.reconcile_slide_post_generations",
     "tasks.reconcile_generation_reviews",
     "tasks.reconcile_creator_preparations",
     "tasks.prune_kria_drafts",
@@ -331,6 +332,10 @@ celery_app.conf.update(
         "schedule-tiktok-syncs-every-15-min": {
             "task": "app.tasks.tiktok.schedule_tiktok_account_syncs",
             "schedule": 900.0,
+        },
+        "reconcile-slide-post-generations-every-minute": {
+            "task": "tasks.reconcile_slide_post_generations",
+            "schedule": 60.0,
         },
         "reconcile-kria-turns-every-minute": {
             "task": "tasks.reconcile_kria_turns",

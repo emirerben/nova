@@ -135,8 +135,15 @@ struct KeychainError: Error, LocalizedError { let status: OSStatus; init(_ statu
 /// The two calls needed while a slide-post proposal is in flight. Keeping
 /// this narrow lets fixtures control the reply and live poll independently.
 protocol SlidePostProposalClient: Sendable {
+    func submitSlidePostAI(itemID: String, body: SlidePostAIRequest, expectedOwner: String) async throws -> SlidePostAIReceipt
+    func slidePostAIReceipt(itemID: String, requestID: UUID, expectedOwner: String) async throws -> SlidePostAIReceipt
     func proposeSlidePost(itemID: String, request: SlidePostProposalRequest) async throws -> SlidePostProposal
     func slidePostThoughtSummaries(itemID: String, clientRequestID: String) async throws -> KriaThoughtSummaryResponse
+}
+
+extension SlidePostProposalClient {
+    func submitSlidePostAI(itemID: String, body: SlidePostAIRequest, expectedOwner: String) async throws -> SlidePostAIReceipt { throw APIError.unsupported }
+    func slidePostAIReceipt(itemID: String, requestID: UUID, expectedOwner: String) async throws -> SlidePostAIReceipt { throw APIError.unsupported }
 }
 
 protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgroundClient, CameraRollItemsClient, Sendable {
@@ -186,11 +193,15 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgro
     func creationThoughtSummaryHistory(threadID: UUID) async throws -> KriaThoughtSummaryResponse
     func slidePostThoughtSummaryHistory(itemID: String) async throws -> KriaThoughtSummaryResponse
     func slidePost(itemID: String) async throws -> SlidePostState
+    func slidePost(itemID: String, expectedOwner: String?) async throws -> SlidePostState
     func slidePostChatEdit(itemID: String, body: SlidePostChatEditRequest) async throws -> SlidePostChatEditResponse
     func saveSlidePost(itemID: String, request: SlidePostSaveRequest) async throws -> SlidePostDraft
+    func saveSlidePost(itemID: String, request: SlidePostSaveRequest, expectedOwner: String?) async throws -> SlidePostDraft
     func generateSlidePost(itemID: String, expectedVersion: Int) async throws
     func generateSlidePost(itemID: String, expectedVersion: Int, clientRequestID: UUID, expectedCurrentJobID: UUID?) async throws -> SlidePostGenerationReceipt
+    func generateSlidePost(itemID: String, expectedVersion: Int, clientRequestID: UUID, expectedCurrentJobID: UUID?, expectedOwner: String?) async throws -> SlidePostGenerationReceipt
     func slidePostGenerationReceipt(itemID: String, clientRequestID: UUID) async throws -> SlidePostGenerationReceipt
+    func slidePostGenerationReceipt(itemID: String, clientRequestID: UUID, expectedOwner: String?) async throws -> SlidePostGenerationReceipt
     func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse
     func downloadDeviceAsset(_ body: DeviceAssetDownloadBody) async throws -> DeviceAssetDownloadTarget
     func reserveDeviceExport(_ body: DeviceExportUploadBody) async throws -> DeviceExportUploadTarget
@@ -435,6 +446,22 @@ extension KriaAPIClient {
         return try await undoDraft(threadID: threadID, expectedRevision: expectedRevision)
     }
     func refreshLibraryPosters(jobIDs: [UUID], brokenJobIDs: [UUID]) async throws -> [LibraryPoster] { throw APIError.unsupported }
+    func slidePost(itemID: String, expectedOwner: String?) async throws -> SlidePostState {
+        guard expectedOwner == nil else { throw APIError.unsupported }
+        return try await slidePost(itemID: itemID)
+    }
+    func saveSlidePost(itemID: String, request: SlidePostSaveRequest, expectedOwner: String?) async throws -> SlidePostDraft {
+        guard expectedOwner == nil else { throw APIError.unsupported }
+        return try await saveSlidePost(itemID: itemID, request: request)
+    }
+    func generateSlidePost(itemID: String, expectedVersion: Int, clientRequestID: UUID, expectedCurrentJobID: UUID?, expectedOwner: String?) async throws -> SlidePostGenerationReceipt {
+        guard expectedOwner == nil else { throw APIError.unsupported }
+        return try await generateSlidePost(itemID: itemID, expectedVersion: expectedVersion, clientRequestID: clientRequestID, expectedCurrentJobID: expectedCurrentJobID)
+    }
+    func slidePostGenerationReceipt(itemID: String, clientRequestID: UUID, expectedOwner: String?) async throws -> SlidePostGenerationReceipt {
+        guard expectedOwner == nil else { throw APIError.unsupported }
+        return try await slidePostGenerationReceipt(itemID: itemID, clientRequestID: clientRequestID)
+    }
     func slidePost(itemID: String) async throws -> SlidePostState { throw APIError.unsupported }
     func proposeSlidePost(itemID: String, request: SlidePostProposalRequest) async throws -> SlidePostProposal { throw APIError.unsupported }
     func slidePostChatEdit(itemID: String, body: SlidePostChatEditRequest) async throws -> SlidePostChatEditResponse { throw APIError.unsupported }
@@ -1684,6 +1711,9 @@ struct KriaAPI: KriaAPIClient {
             if timeline["base_generation"] == .string(generation) {
                 variant["user_timeline"] = .object(timeline)
                 variant["editor_revision_number"] = timeline["revision_number"]
+                // This same-generation timeline owns the saved edit baseline;
+                // do not retain a marker from an older status read.
+                variant["saved_user_song"] = timeline["saved_user_song"]
                 return variant
             }
             if attempt < 2 { try await Task.sleep(for: .milliseconds(150 * (attempt + 1))) }

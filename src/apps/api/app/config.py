@@ -2509,6 +2509,10 @@ class Settings(BaseSettings):
     # NEXT_PUBLIC_SLIDE_POSTS_ENABLED twin. Rollback:
     #   fly secrets set SLIDE_POSTS_ENABLED=false --app nova-video (api + worker)
     slide_posts_enabled: bool = True
+    # Enable only after migrations 0133/0134 and ALL render workers understand
+    # permanent keyed claims. Old workers must be drained before enabling beat
+    # recovery; stable Celery task IDs alone do not prevent duplicate execution.
+    slide_post_generation_recovery_enabled: bool = False
     # Camera-roll idea forms (`content_plan.form`). Off: parse neither requires, validates
     # nor stores a form (legacy-shaped ideas; wording edits drop a stored form), so new rows
     # stay readable by an older API image. Flip BEFORE rolling the API image back; see
@@ -2525,6 +2529,7 @@ class Settings(BaseSettings):
     # (`POST /plan-items/{id}/slide-post/chat-edit`, read-only staging). Off: the route
     # 404s. Capability `slide_post_chat_edit`. Apply: `fly secrets set
     # SLIDE_POST_CHAT_EDIT_ENABLED=true --app nova-video` + restart (api).
+    slide_post_ai_recovery_enabled: bool = False
     slide_post_chat_edit_enabled: bool = False
     # KRI-44: per-slide framing (crop + Vertical/Landscape). Off: the slide-post PUT
     # keeps each slide's stored `framing` and ignores incoming values, the chat op

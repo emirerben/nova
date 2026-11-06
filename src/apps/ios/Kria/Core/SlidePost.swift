@@ -495,9 +495,12 @@ struct SlidePostState: Codable, Equatable, Sendable {
     var validationErrors: [SlidePostValidationError] = []
     var bundleURL: URL? = nil
     var generationIdempotencyVersion: Int? = nil
+    var aiRequestRecoveryVersion: Int? = nil
+    var aiProjectID: UUID? = nil
     enum CodingKeys: String, CodingKey {
         case title, draft, assets, slides
         case generationIdempotencyVersion = "generation_idempotency_version"
+        case aiRequestRecoveryVersion = "ai_request_recovery_version", aiProjectID = "ai_project_id"
         case schemaVersion = "schema_version", itemID = "item_id", jobID = "job_id", renderStatus = "render_status"
         case renderedVersion = "rendered_version", validationErrors = "validation_errors", bundleURL = "bundle_url"
     }
@@ -662,6 +665,17 @@ struct SlidePostChatMessage: Codable, Equatable, Identifiable, Sendable {
 }
 
 extension KriaAPI {
+    func slidePost(itemID: String, expectedOwner: String?) async throws -> SlidePostState {
+        try await request(path: "plan-items/\(itemID)/slide-post", method: "GET", bodyData: nil, decode: SlidePostState.self, expectedOwner: expectedOwner.map(Self.slidePostOwnerHash))
+    }
+    func saveSlidePost(itemID: String, request body: SlidePostSaveRequest, expectedOwner: String?) async throws -> SlidePostDraft {
+        let result = try await request(path: "plan-items/\(itemID)/slide-post", method: "PUT", bodyData: JSONEncoder().encode(body), decode: SlidePostItemResponse.self, expectedOwner: expectedOwner.map(Self.slidePostOwnerHash))
+        guard let draft = result.draft else { throw APIError.invalidResponse }
+        return draft
+    }
+    func slidePostGenerationReceipt(itemID: String, clientRequestID: UUID, expectedOwner: String?) async throws -> SlidePostGenerationReceipt {
+        try await request(path: "plan-items/\(itemID)/slide-post/generation-requests/\(clientRequestID.uuidString)", method: "GET", bodyData: nil, decode: SlidePostGenerationReceipt.self, expectedOwner: expectedOwner.map(Self.slidePostOwnerHash))
+    }
     func slidePostChatEdit(itemID: String, body: SlidePostChatEditRequest) async throws -> SlidePostChatEditResponse {
         try await request(path: "plan-items/\(itemID)/slide-post/chat-edit", method: "POST", bodyData: JSONEncoder().encode(body), decode: SlidePostChatEditResponse.self)
     }
@@ -681,6 +695,12 @@ extension KriaAPI {
             bodyData: nil, decode: SlidePostGenerationReceipt.self, expectedOwner: mediaLibraryOwner)
     }
     func generateSlidePost(itemID: String, expectedVersion: Int, clientRequestID: UUID, expectedCurrentJobID: UUID?) async throws -> SlidePostGenerationReceipt {
+        try await generateSlidePostBound(itemID: itemID, expectedVersion: expectedVersion, clientRequestID: clientRequestID, expectedCurrentJobID: expectedCurrentJobID, ownerHash: mediaLibraryOwner)
+    }
+    func generateSlidePost(itemID: String, expectedVersion: Int, clientRequestID: UUID, expectedCurrentJobID: UUID?, expectedOwner: String?) async throws -> SlidePostGenerationReceipt {
+        try await generateSlidePostBound(itemID: itemID, expectedVersion: expectedVersion, clientRequestID: clientRequestID, expectedCurrentJobID: expectedCurrentJobID, ownerHash: expectedOwner.map(Self.slidePostOwnerHash))
+    }
+    private func generateSlidePostBound(itemID: String, expectedVersion: Int, clientRequestID: UUID, expectedCurrentJobID: UUID?, ownerHash: String?) async throws -> SlidePostGenerationReceipt {
         struct Body: Encodable {
             let expected_version: Int
             let client_request_id: UUID
@@ -696,7 +716,7 @@ extension KriaAPI {
         }
         struct Response: Decodable { let generation_receipt: SlidePostGenerationReceipt }
         let response = try await request(path: "plan-items/\(itemID)/slide-post/generation-requests", method: "POST",
-            bodyData: JSONEncoder().encode(Body(expected_version: expectedVersion, client_request_id: clientRequestID, expected_current_job_id: expectedCurrentJobID)), decode: Response.self, expectedOwner: mediaLibraryOwner)
+            bodyData: JSONEncoder().encode(Body(expected_version: expectedVersion, client_request_id: clientRequestID, expected_current_job_id: expectedCurrentJobID)), decode: Response.self, expectedOwner: ownerHash)
         return response.generation_receipt
     }
     func generateSlidePost(itemID: String, expectedVersion: Int) async throws {
@@ -793,6 +813,7 @@ struct SlidePostRenderAcknowledgement {
     private static let maxRebases = 2
     private var baselineDraft: SlidePostDraft?
     private var proposalBaselineDraft: SlidePostDraft?
+    private var proposalUsesCurrentBaseline = false
     private var undoDraft: SlidePostDraft?
     private var itemID: String?
     private var restoring = false
@@ -816,6 +837,20 @@ struct SlidePostRenderAcknowledgement {
     private let readNow: () -> ContinuousClock.Instant
     private let defaults: UserDefaults
     private let submissionJournal: SlidePostSubmissionJournal
+    private let aiJournal: SlidePostAIJournal
+    private struct LocalIdentity: Codable, Equatable { let scope: SlidePostSubmissionScope; let projectID: UUID? }
+    private var localIdentity: LocalIdentity?
+    private var localUIBinding: LocalIdentity?
+    private var contextGeneration = 0
+    private var appliedAIOperations: Set<UUID> = []
+    private var lastLocalData: Data?
+    private let localProjectID: (SlidePostState) -> UUID?
+    private let transportOwner: (SlidePostSubmissionScope) -> String?
+    private var aiRecoveryTask: Task<Void, Never>?
+    private var aiRecoveryToken = UUID()
+    private var aiRecoveryMessage: String?
+    private var aiResultTerminal = false
+    private var aiRecovering = false
     private let submissionScope: (any KriaAPIClient, String) throws -> SlidePostSubmissionScope
     private let submissionNow: () -> Date
     private var loadedSubmissionScope: SlidePostSubmissionScope?
@@ -823,9 +858,14 @@ struct SlidePostRenderAcknowledgement {
     init(defaults: UserDefaults = .standard, readRetrySleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }, readNow: @escaping () -> ContinuousClock.Instant = { ContinuousClock.now },
          submissionJournal: SlidePostSubmissionJournal = .applicationStore(),
          submissionScope: @escaping (any KriaAPIClient, String) throws -> SlidePostSubmissionScope = { try SlidePostSubmissionJournal.authenticatedScope(api: $0, itemID: $1) },
-         submissionNow: @escaping () -> Date = Date.init) {
+         submissionNow: @escaping () -> Date = Date.init,
+         localProjectID: @escaping (SlidePostState) -> UUID? = { $0.aiProjectID },
+         transportOwner: @escaping (SlidePostSubmissionScope) -> String? = { $0.owner }) {
         self.defaults = defaults
         self.submissionJournal = submissionJournal
+        self.aiJournal = submissionJournal.aiJournal()
+        self.localProjectID = localProjectID
+        self.transportOwner = transportOwner
         self.submissionScope = submissionScope
         self.submissionNow = submissionNow
         self.readRetrySleep = readRetrySleep
@@ -850,6 +890,7 @@ struct SlidePostRenderAcknowledgement {
         return !draft.hasSameContent(as: saved)
     }
     var canExport: Bool { state?.canExport == true && !hasUnsavedChanges && !isBusy }
+    var canCheckAIResult: Bool { aiRecoveryMessage != nil && !aiResultTerminal && !isBusy && !isChatting }
     /// Undo of the last SAVED change (the server's previous version).
     var canUndo: Bool { undoDraft != nil && !isBusy }
     /// Undo/redo of unsaved edits in this editor.
@@ -864,16 +905,20 @@ struct SlidePostRenderAcknowledgement {
         return ["pending", "queued", "generating", "rendering", "processing"].contains(state?.renderStatus ?? "")
     }
 
-    func refresh(api: any KriaAPIClient, itemID: String) async {
+    func refresh(api: any KriaAPIClient, itemID: String, projectID: UUID? = nil) async {
+        let scopeBeforeRead = try? submissionScope(api, itemID)
+        if let current = localIdentity?.scope ?? loadedSubmissionScope, current != scopeBeforeRead {
+            clearPrivatePresentation()
+        }
+        if let projectID, let scopeBeforeRead {
+            let binding = LocalIdentity(scope: scopeBeforeRead, projectID: projectID)
+            if let old = localUIBinding, old != binding { clearPrivatePresentation() }
+            localUIBinding = binding
+        }
         guard !isBusy, !Task.isCancelled else { return }
         if requestedItemID != itemID {
             requestedItemID = itemID
             mutationGeneration += 1
-        }
-        let scopeBeforeRead = try? submissionScope(api, itemID)
-        if let loadedSubmissionScope, loadedSubmissionScope.owner != scopeBeforeRead?.owner || loadedSubmissionScope.environment != scopeBeforeRead?.environment {
-            error = APIError.sessionExpired.localizedDescription
-            return
         }
         let generation = mutationGeneration
         refreshSequence += 1
@@ -887,8 +932,12 @@ struct SlidePostRenderAcknowledgement {
             guard generation == mutationGeneration, !isBusy, sequence == refreshSequence else { return }
             guard result.schemaVersion == 1, result.itemID == itemID else { throw APIError.invalidResponse }
             guard scopeBeforeRead == (try? submissionScope(api, itemID)) else { throw CancellationError() }
-            if self.itemID != itemID {
+            let identity = scopeBeforeRead.map { scope in LocalIdentity(scope: scope, projectID: localProjectID(result) ?? (localUIBinding?.scope == scope ? localUIBinding?.projectID : nil)) }
+            if self.itemID != itemID || localIdentity != identity {
+                clearPrivatePresentation(invalidate: false)
+                localIdentity = identity
                 restoring = true
+                aiRecoveryTask?.cancel(); aiRecoveryTask = nil; aiRecoveryToken = UUID()
                 self.itemID = itemID
                 renderAcknowledgement = nil
                 submission = nil
@@ -901,11 +950,29 @@ struct SlidePostRenderAcknowledgement {
             if error == refreshError { error = nil }
             refreshError = nil
             loadedSubmissionScope = scopeBeforeRead
+            if let projectID = state?.aiProjectID, let scope = scopeBeforeRead,
+               SlidePostAIKind.allCases.contains(where: { kind in
+                   guard let record = try? aiJournal.load(scope: scope, projectID: projectID, kind: kind) else { return false }
+                   return !record.delivered && record.receipt?.status == .completed
+               }) {
+                await recoverAI(api: api, itemID: itemID, explicit: false)
+            }
+            if let projectID = state?.aiProjectID, let scope = scopeBeforeRead {
+                for kind in SlidePostAIKind.allCases {
+                    if let record = try? aiJournal.load(scope: scope, projectID: projectID, kind: kind), !record.delivered,
+                       record.remainingReads == 0, record.receipt?.status != .rejected {
+                        aiRecoveryMessage = aiWaitingCopy
+                        if error == nil { error = aiRecoveryMessage }
+                    }
+                }
+            }
+            startAIRecovery(api: api, itemID: itemID)
             if let scope = scopeBeforeRead {
                 try reconcileSubmission(result, scope: scope)
                 if submission != nil {
+                    let context = contextGeneration
                     isBusy = true
-                    defer { isBusy = false }
+                    defer { if contextGeneration == context { isBusy = false } }
                     try await refreshSubmissionReceipt(api: api, scope: scope)
                     if submission?.receipt?.isCurrentTarget == false {
                         try await observeSupersedingSubmission(api: api, scope: scope)
@@ -960,6 +1027,221 @@ struct SlidePostRenderAcknowledgement {
         UUID(uuidString: itemID)?.uuidString.lowercased() ?? itemID
     }
 
+    private struct AIWaiting: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+    private func aiCurrent(_ record: SlidePostAIRecord, api: any KriaAPIClient, itemID: String) -> Bool {
+        self.itemID == itemID && requestedItemID == itemID && state?.aiProjectID == record.projectID &&
+        (try? submissionScope(api, itemID)) == record.scope &&
+        (try? aiJournal.load(scope: record.scope, projectID: record.projectID, kind: record.kind)?.operationID) == record.operationID
+    }
+    private func prepareAI<T: Encodable>(api: any KriaAPIClient, itemID: String, kind: SlidePostAIKind, body: T, baseline: SlidePostDraft?, operationID: UUID) throws -> SlidePostAIRecord {
+        guard validateMutationTarget(itemID), let projectID = state?.aiProjectID else {
+            throw AIWaiting(message: "Recoverable AI editing is not available for this project yet. Your draft is safe.")
+        }
+        let scope = try submissionScope(api, itemID)
+        let input = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(body))
+        // Repeating the same unresolved instruction is recovery, even if a UI button is tapped again.
+        if let old = try aiJournal.load(scope: scope, projectID: projectID, kind: kind), !old.delivered, old.receipt?.status != .rejected,
+           case let .object(oldInput) = old.input, case let .object(newInput) = input,
+           oldInput[kind == .propose ? "instruction" : "message"] == newInput[kind == .propose ? "instruction" : "message"] {
+            return old
+        }
+        guard state?.aiRequestRecoveryVersion == 1 else {
+            throw AIWaiting(message: "Recoverable AI editing is not available for new requests yet. Your draft is safe.")
+        }
+        let record = SlidePostAIRecord(scope: scope, projectID: projectID, kind: kind, input: input, baseline: baseline, operationID: operationID)
+        try Task.checkCancellation()
+        try aiJournal.reserve(record)
+        aiRecoveryMessage = nil; aiResultTerminal = false
+        return record
+    }
+    private func acceptAIReceipt(_ receipt: SlidePostAIReceipt, record: inout SlidePostAIRecord) throws {
+        guard receipt.clientRequestID == record.operationID, receipt.itemID == UUID(uuidString: record.scope.itemID),
+              receipt.projectID == record.projectID, receipt.kind == record.kind, receipt.input == record.input,
+              record.receipt.map({ $0.inputDigest == receipt.inputDigest }) ?? true else { throw APIError.invalidResponse }
+        if record.receipt?.status == .completed && receipt.status != .completed { return }
+        record.receipt = receipt
+        if receipt.status == .rejected { record.remainingReads = 0 }
+        try aiJournal.update(record)
+    }
+    private func noteAIFailure(_ failure: Error, record: inout SlidePostAIRecord) throws {
+        var delay: TimeInterval = 3
+        if case let APIError.requestFailed(_, detail) = failure { delay = max(delay, detail.retryAfter ?? 0) }
+        let date = submissionNow().addingTimeInterval(delay)
+        if record.notBefore.map({ $0 < date }) ?? true { record.notBefore = date }
+        if record.serverNotBefore.map({ $0 < date }) ?? true { record.serverNotBefore = date }
+        try aiJournal.update(record)
+        aiResultTerminal = false
+        aiRecoveryMessage = "Checking the original AI request. Your draft is safe; this check will not start another AI call."
+    }
+    private func postAI(api: any KriaAPIClient, itemID: String, record: inout SlidePostAIRecord, explicit: Bool = false, ownReadDeadline: Date? = nil) async throws {
+        guard aiCurrent(record, api: api, itemID: itemID), !Task.isCancelled else { throw CancellationError() }
+        record = try aiJournal.reserveAttempt(record, post: true, explicit: explicit, now: submissionNow(), ownReadDeadline: ownReadDeadline)
+        do {
+            let receipt = try await api.submitSlidePostAI(itemID: itemID, body: record.request, expectedOwner: record.scope.owner)
+            guard aiCurrent(record, api: api, itemID: itemID), !Task.isCancelled else { throw CancellationError() }
+            try acceptAIReceipt(receipt, record: &record)
+        } catch {
+            guard aiCurrent(record, api: api, itemID: itemID) else { throw CancellationError() }
+            try noteAIFailure(error, record: &record)
+            throw error
+        }
+    }
+    private func sendAI<T: Decodable>(api: any KriaAPIClient, itemID: String, record original: SlidePostAIRecord) async throws -> T {
+        var record = original
+        // Any previously submitted intent is observed before an original-ID resumption.
+        if record.remainingPosts < 3 || record.receipt != nil {
+            try await readAI(api: api, itemID: itemID, record: &record, explicit: true)
+        } else {
+            try await postAI(api: api, itemID: itemID, record: &record)
+        }
+        if record.receipt?.status == .rejected {
+            aiResultTerminal = true
+            aiRecoveryMessage = "Kria could not use this request. Update your instruction and send a new request."
+            throw AIWaiting(message: aiRecoveryMessage!)
+        }
+        guard let receipt = record.receipt, receipt.status == .completed, let result = receipt.result else {
+            let message = record.receipt?.status == .unknown
+                ? "Kria could not verify the original AI result. Check again to recover it; no AI call will be repeated."
+                : "Kria is finishing the original request. Your result will appear here automatically."
+            aiRecoveryMessage = message
+            throw AIWaiting(message: message)
+        }
+        try validateAIResult(result, record: record)
+        return try JSONDecoder().decode(T.self, from: JSONEncoder().encode(result))
+    }
+    @discardableResult
+    private func stageAIChat(_ value: SlidePostChatEditResponse, record: SlidePostAIRecord) -> Bool {
+        guard value.outcome == .edited, let proposed = value.draft else { return false }
+        if let current = draft, let original = record.baseline,
+           let merged = try? SlidePostMerge.merge(base: original, local: proposed, remote: current), merged.conflicts.isEmpty {
+            // Keep the latest committed baseline; AI's original B is only a merge ancestor.
+            baseVersion = max(baseVersion, value.baseVersion)
+            stageDraft(merged.draft)
+            return true
+        }
+        proposalBaselineDraft = record.baseline
+        proposalUsesCurrentBaseline = true
+        proposal = .init(draft: proposed, baseVersion: value.baseVersion, fallbackUsed: false,
+                         summary: "Recovered AI edit. Review it alongside your newer changes.")
+        return false
+    }
+    private func validateAIResult(_ result: JSONValue, record: SlidePostAIRecord) throws {
+        guard case let .object(input) = record.input, case let .number(expected)? = input["expected_version"],
+              case let .object(output) = result, case let .number(actual)? = output["base_version"], expected == actual else {
+            throw APIError.invalidResponse
+        }
+    }
+    private func markAIDelivered(_ original: SlidePostAIRecord) throws {
+        restoring = false
+        guard var record = try aiJournal.load(scope: original.scope, projectID: original.projectID, kind: original.kind), record.operationID == original.operationID else { throw CancellationError() }
+        appliedAIOperations.insert(record.operationID)
+        guard localIdentity?.scope == record.scope, localIdentity?.projectID == record.projectID else { throw CancellationError() }
+        try persistDurably()
+        record.delivered = true
+        try aiJournal.update(record)
+        if error == aiRecoveryMessage { error = nil }
+        aiRecoveryMessage = nil
+    }
+    private func readAI(api: any KriaAPIClient, itemID: String, record: inout SlidePostAIRecord, explicit: Bool) async throws {
+        guard aiCurrent(record, api: api, itemID: itemID), !Task.isCancelled else { throw CancellationError() }
+        if record.receipt?.status == .completed { return }
+        guard record.notBefore.map({ $0 <= submissionNow() }) ?? true else { return }
+        guard record.remainingReads > 0 || explicit else { return }
+        record = try aiJournal.reserveAttempt(record, post: false, explicit: explicit, now: submissionNow())
+        do {
+            let receipt = try await api.slidePostAIReceipt(itemID: itemID, requestID: record.operationID, expectedOwner: record.scope.owner)
+            guard aiCurrent(record, api: api, itemID: itemID), !Task.isCancelled else { throw CancellationError() }
+            try acceptAIReceipt(receipt, record: &record)
+            if receipt.status == .pending, state?.aiRequestRecoveryVersion == 1, (record.remainingPosts > 0 || explicit) {
+                // GET never dispatches. Resume only the same admitted, still-unclaimed intent.
+                let ownDelay = record.notBefore
+                try await postAI(api: api, itemID: itemID, record: &record, explicit: explicit, ownReadDeadline: ownDelay)
+            }
+        } catch {
+            guard aiCurrent(record, api: api, itemID: itemID) else { throw CancellationError() }
+            if case let APIError.requestFailed(status, _) = error, status == 404,
+               record.receipt == nil, state?.aiRequestRecoveryVersion == 1, (record.remainingPosts > 0 || explicit) {
+                let ownDelay = record.notBefore
+                try await postAI(api: api, itemID: itemID, record: &record, explicit: explicit, ownReadDeadline: ownDelay)
+            } else {
+                try noteAIFailure(error, record: &record)
+                throw error
+            }
+        }
+    }
+    private func startAIRecovery(api: any KriaAPIClient, itemID: String) {
+        guard aiRecoveryTask == nil, let projectID = state?.aiProjectID,
+              let scope = try? submissionScope(api, itemID),
+              SlidePostAIKind.allCases.contains(where: { kind in
+                  guard let record = try? aiJournal.load(scope: scope, projectID: projectID, kind: kind) else { return false }
+                  return !record.delivered && (record.remainingReads > 0 || record.receipt?.status == .completed)
+              }) else { return }
+        let token = UUID(); aiRecoveryToken = token
+        aiRecoveryTask = Task { [weak self] in
+            for _ in 0..<40 {
+                guard !Task.isCancelled else { break }
+                try? await Task.sleep(for: .seconds(3))
+                guard let self, self.aiRecoveryToken == token, self.itemID == itemID,
+                      self.state?.aiProjectID == projectID, (try? self.submissionScope(api, itemID)) == scope else { break }
+                if self.isBusy || self.isChatting { continue }
+                await self.recoverAI(api: api, itemID: itemID, explicit: false)
+                let pending = SlidePostAIKind.allCases.contains { kind in
+                    guard let record = try? self.aiJournal.load(scope: scope, projectID: projectID, kind: kind) else { return false }
+                    return !record.delivered && (record.remainingReads > 0 || record.receipt?.status == .completed)
+                }
+                if !pending { break }
+            }
+            if let self, self.aiRecoveryToken == token { self.aiRecoveryTask = nil }
+        }
+    }
+    private var aiWaitingCopy: String { "The original AI result is not available yet. Check again to recover it without starting another AI call." }
+    private func recoverAI(api: any KriaAPIClient, itemID: String, explicit: Bool) async {
+        guard !isBusy, !isChatting, !aiRecovering, let projectID = state?.aiProjectID,
+              let scope = try? submissionScope(api, itemID) else { return }
+        let context = contextGeneration
+        aiRecovering = true; defer { if contextGeneration == context { aiRecovering = false } }
+        let generation = mutationGeneration
+        for kind in SlidePostAIKind.allCases {
+            do {
+                guard var record = try aiJournal.load(scope: scope, projectID: projectID, kind: kind), !record.delivered else { continue }
+                try await readAI(api: api, itemID: itemID, record: &record, explicit: explicit)
+                guard aiCurrent(record, api: api, itemID: itemID), !Task.isCancelled else { return }
+                guard generation == mutationGeneration, !isBusy, !isChatting else { return }
+                guard record.receipt?.status == .completed, let result = record.receipt?.result else {
+                    aiResultTerminal = record.receipt?.status == .rejected
+                    aiRecoveryMessage = record.receipt?.status == .rejected
+                        ? "Kria could not use this request. Update your instruction and send a new request."
+                        : aiWaitingCopy
+                    error = aiRecoveryMessage; continue
+                }
+                try validateAIResult(result, record: record)
+                if appliedAIOperations.contains(record.operationID) { try markAIDelivered(record); continue }
+                let data = try JSONEncoder().encode(result)
+                if kind == .propose {
+                    let value = try JSONDecoder().decode(SlidePostProposal.self, from: data)
+                    restoring = true
+                    proposalBaselineDraft = record.baseline
+                    proposalUsesCurrentBaseline = record.baseline != nil
+                    proposal = value
+                } else {
+                    let value = try JSONDecoder().decode(SlidePostChatEditResponse.self, from: data)
+                    restoring = true
+                    stageAIChat(value, record: record)
+                    if case let .object(input) = record.input, let message = input["message"]?.stringValue,
+                       let failed = chat.lastIndex(where: { $0.retryText == message }) { chat.remove(at: failed) }
+                    chat.append(.init(role: "assistant", text: value.reply, changes: value.changes))
+                }
+                try markAIDelivered(record)
+            } catch is CancellationError { return } catch {
+                guard self.itemID == itemID, state?.aiProjectID == projectID, (try? submissionScope(api, itemID)) == scope else { return }
+                aiRecoveryMessage = aiWaitingCopy; self.error = aiRecoveryMessage
+            }
+        }
+    }
+
     private func prepareSubmissionRead(_ scope: SlidePostSubmissionScope, operationID: UUID? = nil) throws {
         guard let record = try submissionJournal.load(scope) else { return }
         if let operationID, record.operationID != operationID { throw APIError.conflict }
@@ -1006,7 +1288,7 @@ struct SlidePostRenderAcknowledgement {
             }
             if let expectedScope { try prepareSubmissionRead(expectedScope) }
             do {
-                let result = try await api.slidePost(itemID: itemID)
+                let result = try await api.slidePost(itemID: itemID, expectedOwner: expectedScope.flatMap(transportOwner))
                 try Task.checkCancellation()
                 guard expectedScope == (try? submissionScope(api, itemID)) else { throw CancellationError() }
                 guard generation == mutationGeneration, requestedItem == requestedItemID, isCurrent() else { throw CancellationError() }
@@ -1160,12 +1442,17 @@ struct SlidePostRenderAcknowledgement {
     }
 
     func propose(api: any SlidePostProposalClient, itemID: String, instruction: String, platformProfile: String? = nil) async {
-        guard !isBusy else { return }
+        guard !isBusy, !isChatting, validateMutationTarget(itemID) else { return }
+        guard let ownerAPI = api as? any KriaAPIClient,
+              let ownerScope = try? submissionScope(ownerAPI, itemID), loadedSubmissionScope == ownerScope else {
+            clearPrivatePresentation(); error = APIError.sessionExpired.localizedDescription; return
+        }
         // A never-saved draft is only the editor's starting point, so it does not block a proposal.
         guard !hasUnsavedChanges || state?.draft == nil else { error = "Save your slide edits before asking Kria for another direction."; return }
         let prompt = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, prompt.count <= 2000 else { error = "Tell Kria your direction in 2,000 characters or fewer."; return }
         guard !readyAssets.isEmpty else { error = "Add photos or videos and wait for them to finish preparing."; return }
+        let context = contextGeneration
         mutationGeneration += 1
         let proposalGeneration = mutationGeneration
         let scopedAPI = api as? any KriaAPIClient
@@ -1173,16 +1460,19 @@ struct SlidePostRenderAcknowledgement {
         let previousProposalRequestText = proposalRequestText
         let proposalBase = baselineDraft
         self.instruction = instruction; proposalRequestText = prompt; isBusy = true; error = nil; liveThoughtSummaries = []; operationMessage = "Kria is arranging your post…"
-        defer { isBusy = false; operationMessage = nil }
+        defer { if contextGeneration == context { isBusy = false; operationMessage = nil; if let api = api as? any KriaAPIClient { startAIRecovery(api: api, itemID: itemID) } } }
         do {
             let profile = platformProfile ?? draft?.platformProfile ?? proposal?.draft.platformProfile ?? (readyAssets.contains(where: { $0.kind == "video" }) ? "instagram_carousel" : "tiktok_photo")
             let ids = draft?.slides.map(\.assetID) ?? proposal?.draft.slides.map(\.assetID) ?? readyAssets.map(\.id)
             // Media that arrives while Kria arranges is not in this request, so it must stay unseen.
             seenAssetIDs = (seenAssetIDs ?? []).union(ids)
             let requestID = UUID().uuidString
+            guard let recoveryAPI = api as? any KriaAPIClient else { throw APIError.unsupported }
+            let request = SlidePostProposalRequest(expectedVersion: baseVersion, platformProfile: profile, assetIDs: ids, instruction: prompt, clientRequestID: requestID)
+            let record = try prepareAI(api: recoveryAPI, itemID: itemID, kind: .propose, body: request, baseline: proposalBase, operationID: UUID(uuidString: requestID)!)
             let polling = Task { [api, itemID] in
                 while !Task.isCancelled {
-                    if let response = try? await api.slidePostThoughtSummaries(itemID: itemID, clientRequestID: requestID), response.clientRequestID == requestID {
+                    if let response = try? await api.slidePostThoughtSummaries(itemID: itemID, clientRequestID: record.operationID.uuidString), response.clientRequestID == record.operationID.uuidString {
                         guard !Task.isCancelled, proposalGeneration == self.mutationGeneration,
                               proposalScope == scopedAPI.flatMap({ try? self.submissionScope($0, itemID) }) else { return }
                         self.liveThoughtSummaries = response.summaries.filter { $0.hasText }
@@ -1191,22 +1481,25 @@ struct SlidePostRenderAcknowledgement {
                 }
             }
             defer { polling.cancel() }
-            let result = try await api.proposeSlidePost(itemID: itemID, request: .init(expectedVersion: baseVersion, platformProfile: profile, assetIDs: ids, instruction: prompt, clientRequestID: requestID))
+            let result: SlidePostProposal = try await sendAI(api: recoveryAPI, itemID: itemID, record: record)
             polling.cancel()
-            if let response = try? await api.slidePostThoughtSummaries(itemID: itemID, clientRequestID: requestID), response.clientRequestID == requestID {
+            if let response = try? await api.slidePostThoughtSummaries(itemID: itemID, clientRequestID: record.operationID.uuidString), response.clientRequestID == record.operationID.uuidString {
                 guard !Task.isCancelled, proposalGeneration == mutationGeneration,
                       proposalScope == scopedAPI.flatMap({ try? submissionScope($0, itemID) }) else { throw CancellationError() }
                 liveThoughtSummaries = response.summaries.filter { $0.hasText }
             }
             try Task.checkCancellation()
-            guard proposalGeneration == mutationGeneration,
+            guard proposalGeneration == mutationGeneration, aiCurrent(record, api: recoveryAPI, itemID: itemID),
                   proposalScope == scopedAPI.flatMap({ try? submissionScope($0, itemID) }) else { throw CancellationError() }
-            guard result.baseVersion == baseVersion else { throw APIError.conflict }
+            restoring = true
+            proposalBaselineDraft = record.baseline
+            proposalUsesCurrentBaseline = record.baseline != nil
             proposal = result
-            proposalBaselineDraft = proposalBase
             proposalThoughtSummaries = completedThoughts()
             if selectedID == nil { selectedID = result.draft.slides.first?.id }
+            try markAIDelivered(record)
         } catch is CancellationError { } catch {
+            guard contextGeneration == context, requestedItemID == itemID, proposalScope == scopedAPI.flatMap({ try? submissionScope($0, itemID) }) else { return }
             liveThoughtSummaries = []; proposalRequestText = previousProposalRequestText; handle(error)
         }
     }
@@ -1214,6 +1507,17 @@ struct SlidePostRenderAcknowledgement {
     func applyProposal(api: any KriaAPIClient, itemID: String) async {
         guard !isBusy, let proposal else { return }
         guard let message = proposal.draft.validationMessage else {
+            if proposalUsesCurrentBaseline {
+                guard let original = proposalBaselineDraft, let current = draft,
+                      let merged = try? SlidePostMerge.merge(base: original, local: proposal.draft, remote: current, preference: .local) else {
+                    error = "The original edit context is unavailable. Your current draft is unchanged."
+                    return
+                }
+                // Accepting this proposal selects AI changes where they overlap; the actual
+                // committed server baseline stays intact for the subsequent versioned Save.
+                await persistDraft(merged.draft, api: api, itemID: itemID)
+                return
+            }
             if let proposalBaselineDraft, proposalBaselineDraft.version == proposal.baseVersion {
                 baselineDraft = proposalBaselineDraft
             } else if baselineDraft?.version != proposal.baseVersion {
@@ -1235,15 +1539,17 @@ struct SlidePostRenderAcknowledgement {
 
     private func persistDraft(_ value: SlidePostDraft, api: any KriaAPIClient, itemID: String) async {
         guard !Task.isCancelled, validateMutationTarget(itemID) else { return }
+        let context = contextGeneration
         let expectedScope = try? submissionScope(api, itemID)
+        guard expectedScope != nil, loadedSubmissionScope == expectedScope else { clearPrivatePresentation(); error = APIError.sessionExpired.localizedDescription; return }
         mutationGeneration += 1
         isBusy = true; error = nil; refreshError = nil; operationMessage = "Saving your post…"
-        defer { isBusy = false; operationMessage = nil }
+        defer { if contextGeneration == context { isBusy = false; operationMessage = nil } }
         do {
             var previous = state?.draft
             var candidate = value
             let current = try await readState(api: api, itemID: itemID)
-            guard expectedScope == (try? submissionScope(api, itemID)) else { throw CancellationError() }
+            guard contextGeneration == context, requestedItemID == itemID, expectedScope == (try? submissionScope(api, itemID)) else { throw CancellationError() }
             guard current.schemaVersion == 1, current.itemID == itemID,
                   (current.draft?.version ?? 0) >= baseVersion else { throw APIError.invalidResponse }
             state = current
@@ -1260,14 +1566,14 @@ struct SlidePostRenderAcknowledgement {
             while true {
                 do {
                     try Task.checkCancellation()
-                    guard expectedScope == (try? submissionScope(api, itemID)) else { throw CancellationError() }
-                    saved = try await api.saveSlidePost(itemID: itemID, request: .init(draft: candidate, expectedVersion: baseVersion))
-                    guard expectedScope == (try? submissionScope(api, itemID)) else { throw CancellationError() }
+                    guard contextGeneration == context, requestedItemID == itemID, expectedScope == (try? submissionScope(api, itemID)) else { throw CancellationError() }
+                    saved = try await api.saveSlidePost(itemID: itemID, request: .init(draft: candidate, expectedVersion: baseVersion), expectedOwner: expectedScope.flatMap(transportOwner))
+                    guard contextGeneration == context, requestedItemID == itemID, expectedScope == (try? submissionScope(api, itemID)) else { throw CancellationError() }
                     break
                 } catch let failure as APIError where failure == .conflict && rebases < Self.maxRebases {
                     rebases += 1
                     let latest = try await readState(api: api, itemID: itemID)
-                    guard expectedScope == (try? submissionScope(api, itemID)) else { throw CancellationError() }
+                    guard contextGeneration == context, requestedItemID == itemID, expectedScope == (try? submissionScope(api, itemID)) else { throw CancellationError() }
                     guard latest.schemaVersion == 1, latest.itemID == itemID else { throw APIError.invalidResponse }
                     guard let remote = latest.draft, remote.version >= baseVersion else { throw APIError.invalidResponse }
                     state = latest
@@ -1290,8 +1596,9 @@ struct SlidePostRenderAcknowledgement {
             state?.renderedVersion = saved.renderedVersion
             if state?.jobID != nil { state?.renderStatus = "rendering" }
             let result = try await readState(api: api, itemID: itemID)
+            guard contextGeneration == context, requestedItemID == itemID, expectedScope == (try? submissionScope(api, itemID)) else { throw CancellationError() }
             adopt(result)
-        } catch is CancellationError { } catch { handle(error) }
+        } catch is CancellationError { } catch { if contextGeneration == context, requestedItemID == itemID { handle(error) } }
     }
 
     // MARK: Chat edit
@@ -1304,57 +1611,65 @@ struct SlidePostRenderAcknowledgement {
     /// other outcome only adds an assistant bubble. Returns true when a draft was staged.
     @discardableResult
     func chatEdit(api: any KriaAPIClient, itemID: String, message: String) async -> Bool {
-        guard canChat(message: message), let current = draft else { return false }
+        guard canChat(message: message), validateMutationTarget(itemID), let current = draft else { return false }
+        let context = contextGeneration
+        let expectedScope = try? submissionScope(api, itemID)
+        guard expectedScope != nil, loadedSubmissionScope == expectedScope else {
+            clearPrivatePresentation(); error = APIError.sessionExpired.localizedDescription; return false
+        }
+        let chatGeneration = mutationGeneration
         let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
         let turns = chatTurns()
         chat.append(.init(role: "user", text: text))
         isChatting = true; error = nil
-        defer { isChatting = false }
+        defer { if contextGeneration == context { isChatting = false; startAIRecovery(api: api, itemID: itemID) } }
         let requestID = UUID().uuidString
         let body = SlidePostChatEditRequest(message: text, expectedVersion: baseVersion, draft: hasUnsavedChanges ? current : nil,
                                             turns: Array(turns), clientRequestID: requestID)
-        let thoughtPoll = Task { [api, itemID] in
-            while !Task.isCancelled {
-                if let response = try? await api.slidePostThoughtSummaries(itemID: itemID, clientRequestID: requestID), response.clientRequestID == requestID {
-                    guard !Task.isCancelled else { return }
-                    self.liveThoughtSummaries = response.summaries.filter { $0.hasText }
-                }
-                try? await Task.sleep(for: .seconds(1))
-            }
-        }
-        defer { thoughtPoll.cancel() }
+        var thoughtPoll: Task<Void, Never>?
+        defer { thoughtPoll?.cancel() }
         let result: SlidePostChatEditResponse
-        do { result = try await api.slidePostChatEdit(itemID: itemID, body: body) } catch is CancellationError { return false } catch {
+        var completedRecord: SlidePostAIRecord?
+        do {
+            let record = try prepareAI(api: api, itemID: itemID, kind: .chatEdit, body: body, baseline: current, operationID: UUID(uuidString: requestID)!)
+            thoughtPoll = Task { [api, itemID] in
+                while !Task.isCancelled {
+                    if let response = try? await api.slidePostThoughtSummaries(itemID: itemID, clientRequestID: record.operationID.uuidString), response.clientRequestID == record.operationID.uuidString {
+                        guard !Task.isCancelled, self.aiCurrent(record, api: api, itemID: itemID) else { return }
+                        self.liveThoughtSummaries = response.summaries.filter { $0.hasText }
+                    }
+                    try? await Task.sleep(for: .seconds(1))
+                }
+            }
+            result = try await sendAI(api: api, itemID: itemID, record: record)
+            completedRecord = record
+        } catch is CancellationError { return false } catch {
+            guard chatGeneration == mutationGeneration, requestedItemID == itemID, expectedScope == (try? submissionScope(api, itemID)) else { return false }
             Self.logChatFailure(error)
             liveThoughtSummaries = []
-            chat.append(.init(role: "assistant", text: Self.chatFailureMessage(error), retryText: text))
+            chat.append(.init(role: "assistant", text: aiRecoveryMessage ?? Self.chatFailureMessage(error), retryText: text))
             return false
         }
-        thoughtPoll.cancel()
+        guard let completedRecord, aiCurrent(completedRecord, api: api, itemID: itemID), !Task.isCancelled else { return false }
+        thoughtPoll?.cancel()
         // The final response can beat the poll by a fraction of a second. Read
         // once more before writing history so a completed disclosure survives
         // closing and reopening the editor.
-        if let response = try? await api.slidePostThoughtSummaries(itemID: itemID, clientRequestID: requestID), response.clientRequestID == requestID {
+        if let response = try? await api.slidePostThoughtSummaries(itemID: itemID, clientRequestID: completedRecord.operationID.uuidString), response.clientRequestID == completedRecord.operationID.uuidString {
+            guard aiCurrent(completedRecord, api: api, itemID: itemID), !Task.isCancelled else { return false }
             liveThoughtSummaries = response.summaries.filter { $0.hasText }
         }
+        guard aiCurrent(completedRecord, api: api, itemID: itemID), !Task.isCancelled else { return false }
+        restoring = true
+        defer { do { try markAIDelivered(completedRecord) } catch { self.error = "The AI result is visible but could not be stored. Keep this post open." } }
         guard result.outcome == .edited, let proposed = result.draft else {
             chat.append(.init(role: "assistant", text: result.reply, changes: result.changes, thoughts: completedThoughts())); return false
         }
-        // The user changed the slides while Kria worked: never overwrite newer local edits.
-        guard let latest = draft, latest.hasSameContent(as: current) else {
-            chat.append(.init(role: "assistant", text: "Your slides changed while I was working, so I left them as they are. Ask me again.", thoughts: completedThoughts()))
-            return false
-        }
-        var staged = proposed
-        // The returned version is meaningless; keep the editor's stamps and quote the server's
-        // current version on the next save.
-        staged.version = latest.version; staged.renderedVersion = latest.renderedVersion; staged.userEdited = latest.userEdited
-        baseVersion = result.baseVersion
-        stageDraft(staged)
-        if let selectedID, !staged.slides.contains(where: { $0.id == selectedID }) { self.selectedID = staged.slides.first?.id }
+        let didStage = stageAIChat(result, record: completedRecord)
+        if let selectedID, let staged = draft, !staged.slides.contains(where: { $0.id == selectedID }) { self.selectedID = staged.slides.first?.id }
         selectedTextID = nil
         chat.append(.init(role: "assistant", text: result.reply, changes: result.changes, thoughts: completedThoughts()))
-        return true
+        return didStage
     }
     private func completedThoughts() -> [KriaThoughtSummary] {
         defer { liveThoughtSummaries = [] }
@@ -1417,9 +1732,12 @@ struct SlidePostRenderAcknowledgement {
     /// Retry a failed send: drops the failure bubble and the user bubble it answered, then resends.
     func retryChat(api: any KriaAPIClient, itemID: String, bubble: SlidePostChatMessage) async {
         guard let text = bubble.retryText, let at = chat.firstIndex(where: { $0.id == bubble.id }), canChat(message: text) else { return }
-        chat.remove(at: at)
-        if at > 0, chat[at - 1].isUser, chat[at - 1].text == text { chat.remove(at: at - 1) }
-        await chatEdit(api: api, itemID: itemID, message: text)
+        _ = at
+        await checkAIResult(api: api, itemID: itemID)
+    }
+    func checkAIResult(api: any KriaAPIClient, itemID: String) async {
+        await recoverAI(api: api, itemID: itemID, explicit: true)
+        startAIRecovery(api: api, itemID: itemID)
     }
     func clearChat() { chat = [] }
 
@@ -1442,19 +1760,21 @@ struct SlidePostRenderAcknowledgement {
 
     func create(api: any KriaAPIClient, itemID: String) async {
         guard !isBusy, !isChatting, !Task.isCancelled, validateMutationTarget(itemID) else { return }
+        let context = contextGeneration
         do {
             let scope = try submissionScope(api, itemID)
-            guard loadedSubmissionScope == scope else { throw APIError.sessionExpired }
+            guard loadedSubmissionScope == scope else { clearPrivatePresentation(); error = APIError.sessionExpired.localizedDescription; throw CancellationError() }
             error = nil; refreshError = nil
             if proposal != nil { await applyProposal(api: api, itemID: itemID) }
             else if hasUnsavedChanges { await save(api: api, itemID: itemID) }
+            guard contextGeneration == context, requestedItemID == itemID else { return }
             guard error == nil, let draft, draft.validationMessage == nil else { return }
             mutationGeneration += 1
             isBusy = true; operationMessage = "Creating your post…"
-            defer { isBusy = false; operationMessage = nil }
+            defer { if contextGeneration == context { isBusy = false; operationMessage = nil } }
             // A fresh projection is required both for capability negotiation and explicit failed-job retry.
             let latest = try await readState(api: api, itemID: itemID)
-            guard try submissionScope(api, itemID) == scope else { throw APIError.sessionExpired }
+            guard contextGeneration == context, requestedItemID == itemID, try submissionScope(api, itemID) == scope else { throw APIError.sessionExpired }
             adopt(latest)
             try reconcileSubmission(latest, scope: scope)
             try await refreshSubmissionReceipt(api: api, scope: scope, allowExhausted: true)
@@ -1475,15 +1795,16 @@ struct SlidePostRenderAcknowledgement {
                     return
                 }
                 try Task.checkCancellation()
-                guard try submissionScope(api, itemID) == scope else { throw APIError.sessionExpired }
+                guard contextGeneration == context, requestedItemID == itemID, try submissionScope(api, itemID) == scope else { throw APIError.sessionExpired }
                 submission = try submissionJournal.reserve(.init(scope: scope, expectedVersion: latestDraft.version, previousJobID: latest.jobID)).record
             }
             try await resumeSubmission(api: api, scope: scope, capability: latest.generationIdempotencyVersion, explicit: true)
             let result = try await readState(api: api, itemID: itemID)
-            guard try submissionScope(api, itemID) == scope else { throw APIError.sessionExpired }
+            guard contextGeneration == context, requestedItemID == itemID, try submissionScope(api, itemID) == scope else { throw APIError.sessionExpired }
             adopt(result)
             try reconcileSubmission(result, scope: scope)
         } catch is CancellationError { } catch {
+            guard contextGeneration == context, requestedItemID == itemID else { return }
             if submission != nil { self.error = Self.renderChecking } else { handle(error) }
         }
     }
@@ -1524,7 +1845,7 @@ struct SlidePostRenderAcknowledgement {
         if let cooldown = readCooldowns[Self.readCooldownKey(scope.itemID)] { throw cooldown.error }
         try prepareSubmissionRead(scope, operationID: record.operationID)
         do {
-            let latest = try await api.slidePostGenerationReceipt(itemID: itemID ?? scope.itemID, clientRequestID: record.operationID)
+            let latest = try await api.slidePostGenerationReceipt(itemID: itemID ?? scope.itemID, clientRequestID: record.operationID, expectedOwner: transportOwner(scope))
             try Task.checkCancellation()
             guard try submissionScope(api, scope.itemID) == scope, loadedSubmissionScope == scope else { throw CancellationError() }
             guard latest.clientRequestID == pinned.clientRequestID, latest.itemID == pinned.itemID,
@@ -1571,7 +1892,7 @@ struct SlidePostRenderAcknowledgement {
         submission = try submissionJournal.load(scope)
         do {
             let receipt = try await api.generateSlidePost(itemID: itemID ?? scope.itemID, expectedVersion: record.expectedVersion,
-                clientRequestID: record.operationID, expectedCurrentJobID: record.previousJobID)
+                clientRequestID: record.operationID, expectedCurrentJobID: record.previousJobID, expectedOwner: transportOwner(scope))
             guard try submissionScope(api, scope.itemID) == scope, loadedSubmissionScope == scope else { throw CancellationError() }
             guard receipt.clientRequestID == record.operationID, receipt.itemID == UUID(uuidString: scope.itemID),
                   receipt.draftVersion == record.expectedVersion else { throw APIError.invalidResponse }
@@ -2130,7 +2451,25 @@ struct SlidePostRenderAcknowledgement {
             self.error = "This post kept changing while we saved. Your edits are still here. Try again."
         } else { self.error = error.localizedDescription }
     }
+    private func clearPrivatePresentation(invalidate: Bool = true) {
+        contextGeneration += 1
+        isBusy = false; isChatting = false; aiRecovering = false; operationMessage = nil
+        if invalidate { mutationGeneration += 1 }
+        aiRecoveryTask?.cancel(); aiRecoveryTask = nil; aiRecoveryToken = UUID()
+        restoring = true
+        draft = nil; proposal = nil; chat = []; instruction = ""; selectedID = nil
+        proposalThoughtSummaries = []; proposalRequestText = nil; liveThoughtSummaries = []
+        baselineDraft = nil; proposalBaselineDraft = nil; proposalUsesCurrentBaseline = false
+        baseVersion = 0; undoDraft = nil; undoStack = []; redoStack = []; lastCoalesceKey = nil
+        seenAssetIDs = nil; stickerUploadNames = []; hasConflict = false; conflictRemote = nil; saveAfterConflict = false
+        state = nil; submission = nil; renderAcknowledgement = nil; loadedSubmissionScope = nil
+        localIdentity = nil; appliedAIOperations = []; lastLocalData = nil; error = nil; aiRecoveryMessage = nil; aiResultTerminal = false
+        restoring = false
+    }
+
     private struct LocalState: Codable {
+        let identity: LocalIdentity
+        let appliedAIOperations: Set<UUID>
         let draft: SlidePostDraft?
         let proposal: SlidePostProposal?
         let selectedID: String?
@@ -2141,24 +2480,42 @@ struct SlidePostRenderAcknowledgement {
         var chat: [SlidePostChatMessage]? = nil
         var proposalThoughtSummaries: [KriaThoughtSummary]? = nil
         var proposalRequestText: String? = nil
+        var proposalUsesCurrentBaseline: Bool? = nil
         var seenAssets: [String]? = nil
         var stickerUploadNames: [String]? = nil
     }
     private func persist() {
-        guard !restoring, let itemID else { return }
-        let local = LocalState(draft: draft, proposal: proposal, selectedID: selectedID, instruction: instruction, baseVersion: baseVersion, baselineDraft: baselineDraft, proposalBaselineDraft: proposalBaselineDraft, chat: Array(chat.suffix(Self.maxPersistedChat)), proposalThoughtSummaries: proposalThoughtSummaries.filter { $0.status == .completed && $0.hasText }, proposalRequestText: proposalRequestText, seenAssets: seenAssetIDs.map { Array($0).sorted() }, stickerUploadNames: Array(stickerUploadNames).sorted())
-        guard let data = try? JSONEncoder().encode(local) else { return }
-        defaults.set(data, forKey: "kria.slide-post.\(itemID)")
+        guard !restoring else { return }
+        do { try persistDurably() }
+        catch { error = "Your local changes could not be stored. Keep this post open and try again." }
+    }
+    private func persistDurably() throws {
+        guard let identity = localIdentity else { return }
+        let trusted = identity.projectID != nil
+        let local = LocalState(identity: identity, appliedAIOperations: trusted ? appliedAIOperations : [], draft: draft, proposal: trusted ? proposal : nil, selectedID: selectedID, instruction: instruction, baseVersion: baseVersion, baselineDraft: baselineDraft, proposalBaselineDraft: trusted ? proposalBaselineDraft : nil, chat: trusted ? Array(chat.suffix(Self.maxPersistedChat)) : [], proposalThoughtSummaries: trusted ? proposalThoughtSummaries.filter { $0.status == .completed && $0.hasText } : [], proposalRequestText: trusted ? proposalRequestText : nil, proposalUsesCurrentBaseline: trusted ? proposalUsesCurrentBaseline : false, seenAssets: seenAssetIDs.map { Array($0).sorted() }, stickerUploadNames: Array(stickerUploadNames).sorted())
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(local)
+        guard data != lastLocalData else { return }
+        try aiJournal.writeLocal(data, scope: identity.scope, projectID: identity.projectID)
+        lastLocalData = data
     }
     private func restore() {
         hasConflict = false; conflictRemote = nil; saveAfterConflict = false
-        proposalBaselineDraft = nil
-        guard let itemID, let data = defaults.data(forKey: "kria.slide-post.\(itemID)"), let local = try? JSONDecoder().decode(LocalState.self, from: data) else {
+        proposalBaselineDraft = nil; proposalUsesCurrentBaseline = false
+        guard let identity = localIdentity,
+              let data = try? aiJournal.readLocal(scope: identity.scope, projectID: identity.projectID),
+              let local = try? JSONDecoder().decode(LocalState.self, from: data), local.identity == identity else {
+            if let itemID, defaults.data(forKey: "kria.slide-post.\(itemID)") != nil {
+                error = "Older local changes are kept on this device, but their account could not be verified. The saved post is shown."
+            }
             stickerUploadNames = []
             draft = nil; proposal = nil; proposalThoughtSummaries = []; proposalRequestText = nil; selectedID = nil; instruction = ""; baseVersion = 0; baselineDraft = nil; chat = []; seenAssetIDs = nil; return
         }
+        lastLocalData = data
+        appliedAIOperations = local.appliedAIOperations
         draft = local.draft; proposal = local.proposal; selectedID = local.selectedID; instruction = local.instruction; baseVersion = local.baseVersion; baselineDraft = local.baselineDraft
         proposalBaselineDraft = local.proposalBaselineDraft
+        proposalUsesCurrentBaseline = local.proposalUsesCurrentBaseline ?? false
         chat = Array((local.chat ?? []).suffix(Self.maxPersistedChat))
         proposalThoughtSummaries = (local.proposalThoughtSummaries ?? []).filter { $0.status == .completed && $0.hasText }
         proposalRequestText = local.proposalRequestText

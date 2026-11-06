@@ -401,6 +401,17 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// Song edits the server has acknowledged since the current variant loaded (KRI-428). They are
     /// folded out of `document.userSong` on Save so a retry or a rebase never sends them again.
     private var acknowledgedUserSong: EditorUserSongState?
+    private struct SavedSongProjectionLag {
+        let thread: UUID?
+        let job: UUID?
+        let item: String?
+        let variant: String?
+        let generation: String
+        let revision: Int?
+        let previousProjection: JSONValue?
+        let acknowledged: EditorUserSongState
+    }
+    private var savedSongProjectionLag: SavedSongProjectionLag?
     /// KRI-432: the built composition plays the song at unity gain and the PLAYER carries the level, so a
     /// volume change is `AVPlayer.volume` (instant, no rebuild, no black frame). Re-assigning the item's
     /// audio mix is not an option: on iPhone any live `audioMix` swap silences the preview (KRI-241).
@@ -452,9 +463,43 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// The server's song (`user_song`) exactly as the loaded variant lists it.
     private var baseUserSong: NativeUserSong? { NativeUserSong(variant: previewVariant) }
     /// The song as last SAVED: the variant plus every edit the server has acknowledged since that
-    /// variant loaded (a refresh of the variant resets the acknowledged edits, see `configureCapabilities`).
+    /// variant loaded. A refresh clears them unless an exact durable Save proves its render plan still lags.
     /// The unsaved edits in `document.userSong` are relative to this. Nil once a removal was saved.
     private var savedUserSong: NativeUserSong? { baseUserSong?.applying(acknowledgedUserSong) }
+    private static func serverSavedSongOverlay(for variant: [String: JSONValue], job: UUID?, variantKey: String?) -> EditorUserSongState? {
+        guard let marker = variant["saved_user_song"]?.objectValue,
+              let job, let variantKey, marker["job_id"]?.stringValue.flatMap(UUID.init(uuidString:)) == job,
+              marker["variant_id"] == .string(variantKey), variant["variant_id"] == .string(variantKey),
+              let generation = variant["render_generation_id"]?.stringValue ?? variant["render_finished_at"]?.stringValue,
+              !generation.isEmpty, marker["generation"] == .string(generation),
+              case let .number(revision)? = marker["revision_number"], revision.isFinite,
+              revision >= 1, revision.rounded() == revision,
+              variant["editor_revision_number"] == .number(revision),
+              let state = marker["state"]?.objectValue, case let .bool(removed)? = state["removed"] else { return nil }
+        for key in ["volume", "window_start_s", "window_end_s"] {
+            guard let value = state[key], value != .null else { continue }
+            guard case let .number(number) = value, number.isFinite, number >= 0,
+                  key != "volume" || number <= 1,
+                  key != "window_end_s" || number > 0 else { return nil }
+        }
+        return EditorUserSongState(volume: state["volume"]?.numberValue,
+            windowStartS: state["window_start_s"]?.numberValue,
+            windowEndS: state["window_end_s"]?.numberValue, removed: removed)
+    }
+    private func savedSongOverlay(for variant: [String: JSONValue], thread: UUID?, job: UUID?,
+                                  item: String?, variantKey: String?, generation: String) -> EditorUserSongState? {
+        guard let proof = savedSongProjectionLag, !generation.isEmpty,
+              proof.thread == thread, proof.job == job, proof.item == item, proof.variant == variantKey,
+              proof.generation == generation, proof.previousProjection == variant["user_song"] else { return nil }
+        let revision: Int?
+        if let value = variant["editor_revision_number"] {
+            guard case let .number(number) = value, number.isFinite, number >= 1,
+                  number <= Double(Int32.max), number.rounded() == number else { return nil }
+            revision = Int(number)
+        } else { revision = nil }
+        guard proof.revision == revision else { return nil }
+        return proof.acknowledged
+    }
     private static func mergeSongAuthority(variant: [String: JSONValue], effective: NativeUserSong?, job: UUID?, generation: String) -> JSONValue? {
         guard var raw = variant["user_song"]?.objectValue, let effective else { return nil }
         raw["volume"] = .number(effective.volume)
@@ -1963,7 +2008,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             else { authoritativeVariant = nil }
             let loadedDraft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: authoritativeVariant)
             draft = loadedDraft
-            configureCapabilities(from: authoritativeVariant)
+            configureCapabilities(from: authoritativeVariant, songVariantKey: requestedVariantKey)
             await applyCloudReadOnlyIfNeeded(api: api, variant: authoritativeVariant)
             cleanDocument = document; undoStack.removeAll(); redoStack.removeAll(); changedSections.removeAll(); explicitlyDirtySections.removeAll(); pendingRenderRetrySections.removeAll(); hasUnsavedChanges = false; saveState = .idle
             appliedChatDraftRevision = nil; chatStagedDocument = nil; chatStagedSections = []
@@ -2480,6 +2525,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func resetLatestJobDrain() {
+        savedSongProjectionLag = nil
         latestJobGate.reset()
         latestJobDrainTask?.cancel()
         latestJobDrainTask = nil
@@ -2823,7 +2869,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             let loadedDraft = snapshot.editorDraft(projectID: projectID, authoritativeVariant: variant)
             draft = loadedDraft
             legacyPromptSnapshot = loadedDraft.serverSnapshot
-            configureCapabilities(from: variant)
+            configureCapabilities(from: variant, songVariantKey: resolved.variantID)
             await applyCloudReadOnlyIfNeeded(api: api, variant: variant, capabilities: capabilitiesTask)
             cleanDocument = document
             undoStack.removeAll()
@@ -7423,6 +7469,16 @@ struct NativeEditorTemporaryVideo: Sendable {
                 }
             }
             acknowledge(acknowledged, generation: response.generation, submittedDocument: savedSubmission)
+            // A durable intent can outlive failed recipe compilation. Its old
+            // song projection is not evidence that this exact Save was undone.
+            if response.ok, response.renderStarted == false, let song = acknowledgedUserSong, !response.generation.isEmpty {
+                savedSongProjectionLag = SavedSongProjectionLag(thread: saveThreadID, job: saveJobID,
+                    item: saveItemID, variant: saveVariantKey, generation: response.generation,
+                    revision: response.revisionNumber,
+                    previousProjection: previewVariant["user_song"], acknowledged: song)
+            } else {
+                savedSongProjectionLag = nil
+            }
             let acknowledgedRevision = document.revision
             let rebaseSong = userSongRebase
             let rebaseHistory: (EditorDocument) -> EditorDocument = { value in
@@ -7611,7 +7667,14 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     private func applyMerge(_ context: PendingMerge, preference: AuthoredJSONMerge.Preference?) -> Bool {
         guard threadID == context.thread, jobID == context.originalJob, variantKey == context.originalVariant else { return false }
-        let remoteSong = context.variant.map { Self.mergeSongAuthority(variant: $0, effective: NativeUserSong(variant: $0), job: context.destinationJob, generation: context.clean.revision.baseGeneration) } ?? context.baseSong
+        let remoteSong = context.variant.map { variant in
+            let overlay = Self.serverSavedSongOverlay(for: variant, job: context.destinationJob, variantKey: context.destinationVariant)
+                ?? savedSongOverlay(for: variant, thread: context.thread, job: context.destinationJob,
+                item: context.destinationItem, variantKey: context.destinationVariant,
+                generation: context.clean.revision.baseGeneration)
+            return Self.mergeSongAuthority(variant: variant, effective: NativeUserSong(variant: variant)?.applying(overlay),
+                job: context.destinationJob, generation: context.clean.revision.baseGeneration)
+        } ?? context.baseSong
         let result = NativeEditorMerge.documents(base: context.base, local: document, remote: context.remote,
             baseSong: context.baseSong, remoteSong: remoteSong,
             preference: preference)
@@ -9180,10 +9243,14 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
     }
 
-    private func configureCapabilities(from variant: [String: JSONValue]?) {
+    private func configureCapabilities(from variant: [String: JSONValue]?, songVariantKey: String? = nil) {
+        let serverOverlay = variant.flatMap { Self.serverSavedSongOverlay(for: $0, job: jobID, variantKey: songVariantKey ?? variantKey) }
+        let overlay = serverOverlay ?? variant.flatMap { savedSongOverlay(for: $0, thread: threadID, job: jobID,
+            item: itemID, variantKey: variantKey,
+            generation: $0["render_generation_id"]?.stringValue ?? $0["render_finished_at"]?.stringValue ?? "") }
         previewVariant = variant ?? [:]
-        // The variant is the server's word on the song: what it lists already includes saved edits.
-        acknowledgedUserSong = nil
+        acknowledgedUserSong = overlay
+        if serverOverlay != nil || overlay == nil { savedSongProjectionLag = nil }
         // KRI-576: its lyric rows were projected for that same window.
         songCaptionWindowStartS = NativeUserSong(variant: previewVariant)?.windowStartS
         songCaptionLipsyncCarryS = 0

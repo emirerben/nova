@@ -2,10 +2,27 @@ import XCTest
 @testable import Kria
 
 @MainActor enum SlidePostTestSubmissionStorage {
-    static func session(defaults: UserDefaults = .standard) -> SlidePostSession {
-        SlidePostSession(defaults: defaults,
-            submissionJournal: .init(root: FileManager.default.temporaryDirectory.appending(path: "SlidePostTestSession-\(UUID())")),
-            submissionScope: { _, id in .init(owner: "isolated-unit-test", environment: "https://native-editor.test", itemID: id) })
+    private static var roots: [ObjectIdentifier: URL] = [:]
+    private static var owners: [ObjectIdentifier: UserDefaults] = [:]
+    static func reset(defaults: UserDefaults) {
+        let key = ObjectIdentifier(defaults)
+        if let root = roots.removeValue(forKey: key) { try? FileManager.default.removeItem(at: root) }
+        owners.removeValue(forKey: key)
+    }
+    static func api() -> KriaAPI {
+        let payload = Data(#"{"sub":"isolated-unit-test"}"#.utf8).base64EncodedString()
+        return NativeEditorTestSupport.api(tokenStore: NativeEditorMemoryTokenStore(.init(accessToken: "test.\(payload).test", refreshToken: "fixture", expiresIn: 3600)))
+    }
+    static func journal(defaults: UserDefaults) -> SlidePostSubmissionJournal {
+        let key = ObjectIdentifier(defaults)
+        owners[key] = defaults
+        if roots[key] == nil { roots[key] = FileManager.default.temporaryDirectory.appending(path: "SlidePostTestSession-\(UUID())") }
+        return .init(root: roots[key]!)
+    }
+    static func session(defaults: UserDefaults = UserDefaults(suiteName: "SlidePostTestSession-\(UUID())")!, now: @escaping () -> Date = Date.init) -> SlidePostSession {
+        SlidePostSession(defaults: defaults, submissionJournal: journal(defaults: defaults),
+            submissionScope: { _, id in .init(owner: "isolated-unit-test", environment: "https://native-editor.test", itemID: id) }, submissionNow: now,
+            localProjectID: { $0.aiProjectID ?? SlidePostAIStubTransport.projectID }, transportOwner: { _ in nil })
     }
 }
 
@@ -232,7 +249,7 @@ final class SlidePostSubmissionRecoveryTests: XCTestCase {
     private func session(journal: SlidePostSubmissionJournal? = nil) -> SlidePostSession {
         let key = scope
         return SlidePostSession(defaults: defaults, submissionJournal: journal ?? .init(root: root),
-            submissionScope: { _, id in .init(owner: key.owner, environment: key.environment, itemID: id) }, submissionNow: { self.now })
+            submissionScope: { _, id in .init(owner: key.owner, environment: key.environment, itemID: id) }, submissionNow: { self.now }, transportOwner: { _ in nil })
     }
 
     func testPreparedIntentAutomaticallyResumesSameIDOnFreshSessionRefresh() async throws {
@@ -402,7 +419,7 @@ final class SlidePostSubmissionRecoveryTests: XCTestCase {
     func testAccountChangeCannotDispatchThePreviouslyLoadedDraft() async throws {
         var owner = "first-owner"
         let value = SlidePostSession(defaults: defaults, submissionJournal: .init(root: root),
-            submissionScope: { _, id in .init(owner: owner, environment: "https://native-editor.test", itemID: id) })
+            submissionScope: { _, id in .init(owner: owner, environment: "https://native-editor.test", itemID: id) }, transportOwner: { _ in nil })
         let server = Server(snapshot())
         NativeEditorURLProtocol.handler = { try server.handle($0) }
         let api = NativeEditorTestSupport.api()
@@ -520,7 +537,7 @@ final class SlidePostSubmissionRecoveryTests: XCTestCase {
         _ = try journal.reserve(.init(scope: firstScope, expectedVersion: 1, previousJobID: nil))
         _ = try journal.reserve(.init(scope: otherScope, expectedVersion: 1, previousJobID: nil))
         let value = SlidePostSession(defaults: defaults, readRetrySleep: { _ in owner = "other-owner" },
-            submissionJournal: journal, submissionScope: { _, id in .init(owner: owner, environment: firstScope.environment, itemID: id) })
+            submissionJournal: journal, submissionScope: { _, id in .init(owner: owner, environment: firstScope.environment, itemID: id) }, transportOwner: { _ in nil })
         var reads = 0
         NativeEditorURLProtocol.handler = { _ in reads += 1; return (503, Data()) }
         await value.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
@@ -551,7 +568,7 @@ final class SlidePostSubmissionRecoveryTests: XCTestCase {
         let otherScope = SlidePostSubmissionScope(owner: "other-owner", environment: firstScope.environment, itemID: itemID)
         _ = try journal.reserve(.init(scope: otherScope, expectedVersion: 1, previousJobID: nil))
         let value = SlidePostSession(defaults: defaults, readRetrySleep: { _ in owner = "other-owner" },
-            submissionJournal: journal, submissionScope: { _, id in .init(owner: owner, environment: firstScope.environment, itemID: id) })
+            submissionJournal: journal, submissionScope: { _, id in .init(owner: owner, environment: firstScope.environment, itemID: id) }, transportOwner: { _ in nil })
         let server = Server(snapshot())
         NativeEditorURLProtocol.handler = { try server.handle($0) }
         let api = NativeEditorTestSupport.api()

@@ -76,7 +76,9 @@ from app.routes.generative_jobs import (
     GenerativeJobStatusResponse,
     GenerativeUploadUrlRequest,
     GenerativeUploadUrlResponse,
+    GenerativeVariant,
     TemporaryUploadCancellationResponse,
+    TimelineResponse,
 )
 from app.routes.me import (
     LibraryPlaybackResponse,
@@ -94,10 +96,12 @@ from app.routes.plan_items import (
     SlidePostChatEditBody,
     SlidePostDraftBody,
     SlidePostGenerateBody,
+    SlidePostGenerationRequestBody,
     SlidePostProposalResponse,
     SlidePostProposeBody,
     SlidePostState,
 )
+from app.routes.slide_post_ai_requests import AIRequestBody, AIRequestReceipt
 from app.schemas.media_assets import (
     MediaAssetAccessOut,
     MediaAssetFinalizeBody,
@@ -122,6 +126,7 @@ from app.schemas.media_collections import (
     StorySelectionBody,
 )
 from app.schemas.slide_post import SlidePostDraft
+from app.schemas.slide_post_generation import SlidePostGenerationReceiptOut
 from app.services.ios_device_admission import is_legacy_creation_path, is_state_changing_method
 from app.services.slide_post_chat_edit import SlidePostChatEditResponse
 
@@ -137,6 +142,7 @@ class SlidePostMutationResponse(BaseModel):
     id: str
     status: str
     current_job_id: str | None = None
+    generation_receipt: SlidePostGenerationReceiptOut | None = None
     slide_post: SlidePostDraft | None = None
 
 
@@ -219,8 +225,12 @@ MOBILE_API_MODELS = (
     PoolUploadUrlsResponse,
     RegisterAssetBody,
     SlidePostMutationResponse,
+    SlidePostGenerationReceiptOut,
     SlidePostDraftBody,
     SlidePostGenerateBody,
+    SlidePostGenerationRequestBody,
+    AIRequestBody,
+    AIRequestReceipt,
     SlidePostProposeBody,
     SlidePostProposalResponse,
     SlidePostChatEditBody,
@@ -236,6 +246,8 @@ MOBILE_API_MODELS = (
     OpenInEditorBody,
     OpenInEditorResponse,
     GenerativeJobStatusResponse,
+    GenerativeVariant,
+    TimelineResponse,
     EditorCommitRequest,
     EditorCommitResponse,
     EditorSourceRequest,
@@ -754,6 +766,56 @@ def mobile_openapi_json() -> str:
                     "responses": _json_responses(SlidePostChatEditResponse),
                 },
             },
+            "/plan-items/{item_id}/slide-post/ai-requests": {
+                "parameters": [item_id],
+                "post": {
+                    "operationId": "submitSlidePostAI",
+                    "security": bearer,
+                    "requestBody": _json_request(AIRequestBody),
+                    "responses": _json_responses(AIRequestReceipt),
+                },
+            },
+            "/plan-items/{item_id}/slide-post/ai-requests/{request_id}": {
+                "parameters": [
+                    item_id,
+                    {
+                        "name": "request_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "format": "uuid"},
+                    },
+                ],
+                "get": {
+                    "operationId": "getSlidePostAIReceipt",
+                    "security": bearer,
+                    "responses": _json_responses(AIRequestReceipt),
+                },
+            },
+            "/plan-items/{item_id}/slide-post/generation-requests/{client_request_id}": {
+                "parameters": [
+                    item_id,
+                    {
+                        "name": "client_request_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "format": "uuid"},
+                    },
+                ],
+                "get": {
+                    "operationId": "getSlidePostGenerationReceipt",
+                    "security": bearer,
+                    "responses": _json_responses(SlidePostGenerationReceiptOut),
+                },
+            },
+            "/plan-items/{item_id}/slide-post/generation-requests": {
+                "parameters": [item_id],
+                "post": {
+                    "operationId": "requestSlidePostGeneration",
+                    "security": bearer,
+                    "requestBody": _json_request(SlidePostGenerationRequestBody),
+                    "responses": _json_responses(SlidePostMutationResponse),
+                },
+            },
             "/plan-items/{item_id}/slide-post/generate": {
                 "parameters": [item_id],
                 "post": {
@@ -1079,6 +1141,14 @@ def mobile_openapi_json() -> str:
                     "operationId": "cancelTemporaryUpload",
                     "security": bearer,
                     "responses": _json_responses(TemporaryUploadCancellationResponse),
+                },
+            },
+            "/generative-jobs/{job_id}/variants/{variant_id}/timeline": {
+                "parameters": [job_id, variant_id],
+                "get": {
+                    "operationId": "getGenerativeVariantTimeline",
+                    "security": bearer,
+                    "responses": _json_responses(TimelineResponse),
                 },
             },
             "/generative-jobs/{job_id}/status": {

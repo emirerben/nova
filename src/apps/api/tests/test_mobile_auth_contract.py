@@ -373,3 +373,27 @@ def test_mobile_openapi_schema_references_resolve() -> None:
                 visit(child)
 
     visit(document)
+
+
+def test_mobile_timeline_saved_song_has_typed_identity_and_state() -> None:
+    document = json.loads(mobile_openapi_json())
+    operation = document["paths"]["/generative-jobs/{job_id}/variants/{variant_id}/timeline"]["get"]
+    assert operation["security"] == [{"mobileBearer": []}]
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/TimelineResponse"
+    }
+    schemas = document["components"]["schemas"]
+    for name in ("TimelineResponse", "GenerativeVariant"):
+        field = schemas[name]["properties"]["saved_user_song"]
+        assert "#/components/schemas/SavedUserSong" in json.dumps(field)
+    saved = schemas["SavedUserSong"]
+    assert set(saved["required"]) == {
+        "job_id",
+        "variant_id",
+        "generation",
+        "revision_number",
+        "state",
+    }
+    assert saved["properties"]["job_id"]["format"] == "uuid"
+    assert saved["properties"]["revision_number"]["minimum"] == 1
+    assert saved["properties"]["state"]["$ref"] == "#/components/schemas/GuidedEditorUserSong"

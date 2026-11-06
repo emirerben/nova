@@ -918,6 +918,7 @@ async def run_slide_post_chat_edit(
     sizes_enabled: bool = False,
     tilt_enabled: bool = False,
     tilt_zoom_enabled: bool = False,
+    paid_execution=None,
 ) -> SlidePostChatEditResponse:
     """One chat-edit turn. Never writes; every outcome is honest about what changed."""
     from app.agents._model_client import default_client  # noqa: PLC0415
@@ -969,10 +970,26 @@ async def run_slide_post_chat_edit(
             if run_context is not None and run_context.timeout_override_s is not None
             else 40.0,
         )
-        output = await asyncio.to_thread(
-            EditCopilotAgent(default_client()).run, agent_input, ctx=agent_context
-        )
+
+        async def invoke():
+            return await asyncio.to_thread(
+                EditCopilotAgent(default_client()).run, agent_input, ctx=agent_context
+            )
+
+        if paid_execution is None:
+            output = await invoke()
+        else:
+            output = await paid_execution.run(
+                {
+                    "agent_input": agent_input.model_dump(mode="json"),
+                    "baseline": draft.model_dump(mode="json"),
+                    "server_version": server_version,
+                },
+                invoke,
+            )
     except TerminalError as exc:
+        if paid_execution is not None:
+            raise
         log.warning("slide_post_chat_edit.agent_failed", error=str(exc)[:300])
         return response("failed", "I couldn't reach the editor assistant just now. Try again.")
 

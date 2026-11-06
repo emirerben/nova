@@ -94,6 +94,8 @@ final class SlidePostSubmissionJournal: @unchecked Sendable {
         self.io = io
     }
 
+    func aiJournal() -> SlidePostAIJournal { SlidePostAIJournal(root: root.appending(path: "AI"), io: io) }
+
     static func applicationStore() -> SlidePostSubmissionJournal {
         SlidePostSubmissionJournal(root: URL.applicationSupportDirectory.appending(path: "SlidePostSubmissions", directoryHint: .isDirectory))
     }

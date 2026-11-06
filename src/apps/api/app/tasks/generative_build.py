@@ -125,6 +125,8 @@ from app.schemas.montage_preset import (
     coerce_montage_preset,
     is_collage_montage_preset,
 )
+from app.services import slide_post_generation_delivery as slide_delivery
+from app.services import slide_post_render_revisions as slide_revisions
 from app.services.creator_song_rule import catalog_song_match_blocked
 from app.services.generative_jobs import (
     CONTENT_PLAN_ORIGINAL_VARIANT_POLICY,
@@ -1570,6 +1572,8 @@ def _cancelled_job_write_rejected(job: Job, *, operation: str, db=None) -> bool:
             operation=operation,
         )
         return True
+    if db is not None and slide_delivery.write_rejected(db, job):
+        return True
     return bool(db is not None and _content_plan_write_rejected(db, job, operation=operation))
 
 
@@ -2235,6 +2239,7 @@ def _store_hdr_pretonemap_cache(
     soft_time_limit=1740,
     time_limit=1800,
 )
+@slide_delivery.with_first_render_claim
 @_with_required_speech_upload_deadline
 @_with_owned_job_fence
 def orchestrate_generative_job(self, job_id: str) -> None:
@@ -16173,6 +16178,7 @@ def _resolve_slide_post_draft_and_assets(
     job_id: str,  # noqa: ANN001
     *,
     approved: bool = False,
+    revision_id: str | None = None,
 ) -> tuple[uuid.UUID, uuid.UUID, SlidePostDraft, list[dict[str, Any]]]:  # noqa: F821
     """Load the job's plan item, its `slide_post` draft, and every slide's
     resolved (ownership-checked) `PlanItemAsset` row, as plain dicts.
@@ -16209,6 +16215,23 @@ def _resolve_slide_post_draft_and_assets(
             pinned = approved_slide_post(getattr(job, "assembly_plan", None))
         except PreparedExecutionError as exc:
             raise SlidePostPolicyError(exc.code, str(exc)) from exc
+    receipt_assets = None
+    if approved:
+        from app.services.slide_post_generation_receipts import (  # noqa: PLC0415
+            ReceiptConflict,
+            first_render_snapshot,
+        )
+
+        try:
+            receipt_snapshot = first_render_snapshot(db, job)
+        except ReceiptConflict as exc:
+            raise SlidePostPolicyError("slide_post_input_changed", str(exc)) from exc
+        if receipt_snapshot is not None:
+            draft, receipt_assets = receipt_snapshot
+            pinned = (draft, {key: value["generation"] for key, value in receipt_assets.items()})
+    if revision_id is not None:
+        draft, receipt_assets = slide_revisions.revision_snapshot(db, job, revision_id)
+        pinned = (draft, {key: value["generation"] for key, value in receipt_assets.items()})
     if pinned is not None:
         draft, pinned_generations = pinned
     else:
@@ -16234,6 +16257,15 @@ def _resolve_slide_post_draft_and_assets(
             if asset_id not in live
             or live[asset_id].media_status != "ready"
             or generation != live[asset_id].gcs_generation
+            or (
+                receipt_assets is not None
+                and (
+                    live[asset_id].gcs_path != receipt_assets[asset_id]["path"]
+                    or live[asset_id].kind != receipt_assets[asset_id]["kind"]
+                    or live[asset_id].user_id != job_user_id
+                    or live[asset_id].plan_item_id != content_plan_item_id
+                )
+            )
         ]
         if moved:
             from app.kria.prepared_execution import STALE  # noqa: PLC0415
@@ -16304,7 +16336,7 @@ def _resolve_slide_post_draft_and_assets(
 
 
 def _download_slide_sticker_sources(
-    stickers: dict[str, dict[str, Any]], *, tmpdir: str, slide_index: int
+    stickers: dict[str, dict[str, Any]], *, tmpdir: str, slide_index: int, strict: bool = False
 ) -> dict[str, str]:
     """Download one slide's (already ownership-checked) sticker originals; sticker id -> path.
 
@@ -16327,6 +16359,8 @@ def _download_slide_sticker_sources(
                 storage.download_to_file(row["gcs_path"], local)
         except Exception as exc:  # noqa: BLE001
             log.warning("slide_sticker_download_failed", sticker_id=sticker_id, error=str(exc))
+            if strict:
+                raise
             continue
         sources[sticker_id] = local
     return sources
@@ -16341,6 +16375,8 @@ def _build_slide_post_result(
     caption: str,
     render_trace_id: str,
     aspect: str | None = None,
+    artifact_generation: str | None = None,
+    strict_inputs: bool = False,
 ) -> dict[str, Any]:
     """Normalize every slide, stitch the preview, build the export bundle,
     and return the full variant payload. No DB access — pure render + upload.
@@ -16369,7 +16405,8 @@ def _build_slide_post_result(
         ],
     )
 
-    render_generation_id = uuid.uuid4().hex
+    render_generation_id = artifact_generation or uuid.uuid4().hex
+    output_prefix = slide_revisions.artifact_prefix(job_id, artifact_generation)
     # A drawn post is stamped by the drawing renderer (KRI-589), everything else by
     # the sizes renderer exactly as before.
     has_drawing = any(
@@ -16415,8 +16452,12 @@ def _build_slide_post_result(
             kind = asset["kind"]
             ext = "jpg" if kind == "image" else "mp4"
             fingerprint = (
-                asset["content_fingerprint"]
-                or hashlib.sha256(asset["gcs_path"].encode("utf-8")).hexdigest()
+                slide_revisions.source_identity(asset)
+                if artifact_generation
+                else (
+                    asset["content_fingerprint"]
+                    or hashlib.sha256(asset["gcs_path"].encode("utf-8")).hexdigest()
+                )
             )
             edits = asset.get("edits")
             # A slide's edits (text overlay, look preset) must be part of the
@@ -16429,7 +16470,9 @@ def _build_slide_post_result(
             edits_digest = slide_build.edits_cache_digest(
                 edits,
                 {
-                    sid: row["content_fingerprint"] or row["gcs_path"]
+                    sid: slide_revisions.source_identity(row)
+                    if artifact_generation
+                    else row["content_fingerprint"] or row["gcs_path"]
                     for sid, row in stickers.items()
                 },
             )
@@ -16447,7 +16490,7 @@ def _build_slide_post_result(
             wm_suffix += slide_build.tilt_key_suffix(edits)
             export_canvas = slide_build.slide_canvas(platform_profile, edits, aspect)
             normalized_key = (
-                f"generative-jobs/{job_id}/slides/normalized/"
+                f"{slide_revisions.normalized_prefix(job_id, strict=strict_inputs)}/"
                 f"{fingerprint}_{export_canvas[0]}x{export_canvas[1]}_"
                 f"{edits_digest}{norm_suffix}{wm_suffix}.{ext}"
             )
@@ -16466,7 +16509,7 @@ def _build_slide_post_result(
                 else:
                     storage.download_to_file(asset["gcs_path"], source_local)
                 sticker_sources = _download_slide_sticker_sources(
-                    stickers, tmpdir=tmpdir, slide_index=index
+                    stickers, tmpdir=tmpdir, slide_index=index, strict=strict_inputs
                 )
                 if kind == "image":
                     slide_build.normalize_image_slide(
@@ -16533,13 +16576,13 @@ def _build_slide_post_result(
 
         preview_local = os.path.join(tmpdir, "preview.mp4")
         slide_build.concat_preview_segments(preview_segments, preview_local, canvas=canvas)
-        preview_key = f"generative-jobs/{job_id}/slides/preview.mp4"
+        preview_key = f"{output_prefix}/preview.mp4"
         storage.upload_local_file(preview_local, preview_key, "video/mp4")
 
         cover_local = os.path.join(tmpdir, "cover.jpg")
         assert cover_local_path is not None  # ordered_assets is non-empty, cover_index is clamped
         slide_build.extract_cover(cover_local_path, cover_kind, cover_local)
-        cover_key = f"generative-jobs/{job_id}/slides/cover.jpg"
+        cover_key = f"{output_prefix}/cover.jpg"
         storage.upload_local_file(cover_local, cover_key, "image/jpeg")
 
         manifest = slide_build.build_post_manifest(
@@ -16553,7 +16596,7 @@ def _build_slide_post_result(
         slide_build.build_bundle_zip(
             bundle_local, slides=bundle_slides, manifest=manifest, caption=caption
         )
-        bundle_key = f"generative-jobs/{job_id}/slides/bundle.zip"
+        bundle_key = f"{output_prefix}/bundle.zip"
         storage.upload_local_file(bundle_local, bundle_key, "application/zip")
 
     return {
@@ -16690,12 +16733,20 @@ def _run_slide_post_job(job_id: str, *, render_trace_id: str) -> None:
         caption=caption,
         render_trace_id=render_trace_id,
         aspect=aspect,
+        **(
+            {"artifact_generation": str(slide_delivery.active_job.get()), "strict_inputs": True}
+            if slide_delivery.active_job.get()
+            else {}
+        ),
     )
+    if not slide_delivery.stage_result(job_id, result):
+        return
     if _upsert_variant_entry(job_id, result) is False:
         return
     if _finalize_job(job_id, [result]) is False:
         return
-    _stamp_slide_post_rendered_version(content_plan_item_id, draft_version)
+    if slide_delivery.active_job.get() != uuid.UUID(job_id):
+        _stamp_slide_post_rendered_version(content_plan_item_id, draft_version)
 
 
 @celery_app.task(
@@ -16709,8 +16760,11 @@ def _run_slide_post_job(job_id: str, *, render_trace_id: str) -> None:
     soft_time_limit=1740,
     time_limit=1800,
 )
+@slide_revisions.with_revision_claim
 @_with_owned_job_fence
-def rebuild_slide_post_variant(self, job_id: str, render_gen_id: str | None = None) -> None:
+def rebuild_slide_post_variant(
+    self, job_id: str, render_gen_id: str | None = None, revision_id: str | None = None
+) -> None:
     """Re-render the "slides" variant after a post-render draft edit.
 
     The route side mints `render_gen_id`, calls `stamp_variant_attempt` on
@@ -25760,6 +25814,14 @@ def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> bool:
         variants = list(plan.get("variants") or [])
         for i, v in enumerate(variants):
             if v.get("variant_id") == variant_id:
+                if (
+                    slide_delivery.active_job.get() == job.id
+                    and v.get("render_status") in {"pending", "rendering"}
+                    and v.get("render_generation_id")
+                    and result.get("render_generation_id")
+                    and v["render_generation_id"] != result["render_generation_id"]
+                ):
+                    return False
                 previous_variant = dict(v)
                 if result.get("render_status") == "pending":
                     # Pending is an announcement/recovery state, not an output
@@ -39906,7 +39968,16 @@ def _set_status(
         )
 
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        keyed_graph = None
+        if slide_delivery.active_job.get() == uuid.UUID(job_id):
+            keyed_graph = slide_delivery.lock_graph(db, uuid.UUID(job_id))
+            job = (
+                keyed_graph[1]
+                if keyed_graph and keyed_graph[2].execution_state == "running"
+                else None
+            )
+        else:
+            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
             return _finish(
                 JobFinalizationResult(
@@ -40086,6 +40157,23 @@ def _set_status(
                     existing.get("variants"),
                     finalized_input,
                 )
+                if keyed_graph is not None:
+                    newer = {
+                        row.get("variant_id"): row
+                        for row in existing.get("variants") or []
+                        if isinstance(row, dict)
+                        and row.get("render_status") in {"pending", "rendering"}
+                    }
+                    finalized_variants = [
+                        copy.deepcopy(newer[row["variant_id"]])
+                        if isinstance(row, dict)
+                        and row.get("variant_id") in newer
+                        and newer[row["variant_id"]].get("render_generation_id")
+                        and newer[row["variant_id"]].get("render_generation_id")
+                        != row.get("render_generation_id")
+                        else row
+                        for row in finalized_variants
+                    ]
                 plan_patch = {
                     **extra_plan,
                     "variants": finalized_variants,
@@ -40222,6 +40310,8 @@ def _set_status(
             "accepted",
             variants=tuple(variant_decisions),
         )
+        if keyed_graph is not None:
+            slide_delivery.finish_locked(*keyed_graph)
         db.commit()
     if expected_speech_cut_operation_id and expected_speech_cut_attempt_id:
         # Speech-cut ``_set_status`` is only an intermediate commit: compose and

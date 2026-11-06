@@ -57,6 +57,7 @@ async def propose_slide_post_draft(
     instruction: str = "",
     run_context: RunContext | None = None,
     aspect: str | None = None,
+    paid_execution=None,
 ) -> SlidePostProposalResult:
     """Return a new `SlidePostDraft` ordering `assets` — AI-proposed when
     possible, pool order as the fail-open fallback. Never raises."""
@@ -115,15 +116,33 @@ async def propose_slide_post_draft(
                 for asset in assets
             ],
         )
-        result = await asyncio.to_thread(
-            SlidePostComposerAgent(default_client()).run,
-            agent_input,
-            ctx=run_context,
-        )
+
+        async def invoke():
+            return await asyncio.to_thread(
+                SlidePostComposerAgent(default_client()).run,
+                agent_input,
+                ctx=run_context,
+            )
+
+        if paid_execution is None:
+            result = await invoke()
+        else:
+            result = await paid_execution.run(
+                {
+                    "agent_input": agent_input.model_dump(mode="json"),
+                    "baseline": current_draft.model_dump(mode="json") if current_draft else None,
+                    "previous_version": previous_version,
+                },
+                invoke,
+            )
     except TerminalError as exc:
+        if paid_execution is not None:
+            raise
         log.warning("slide_post_compose_failed", plan_item_id=str(item.id), error=str(exc)[:200])
         return SlidePostProposalResult(fallback, fallback_used=True)
     except Exception as exc:  # noqa: BLE001 - a bad compose must never block assembly
+        if paid_execution is not None:
+            raise
         log.warning(
             "slide_post_compose_unexpected_error", plan_item_id=str(item.id), error=str(exc)[:200]
         )

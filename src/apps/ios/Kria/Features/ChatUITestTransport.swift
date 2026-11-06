@@ -155,6 +155,7 @@ final class CreationChatFixture: @unchecked Sendable {
     private var sendRefused = false
     private var slideDrafts: [String: [String: Any]] = [:]
     private var slideRendered: Set<String> = []
+    private var slideAIReceipts: [String: [String: Any]] = [:]
     private var slideGenerationReceipts: [String: [String: Any]] = [:]
     private var slideGenerationTargets: [String: String] = [:]
     private var generatedMediaOperations: [String: [String: Any]] = [:]
@@ -1670,6 +1671,22 @@ final class CreationChatFixture: @unchecked Sendable {
     /// proposal, versioned save, and version-approved dispatch endpoints.
     private func slideResponse(_ request: URLRequest, itemID: String, parts: [String], body: [String: Any]) -> (Int, Data) {
         func response(_ object: Any, status: Int = 200) -> (Int, Data) { (status, (try? JSONSerialization.data(withJSONObject: object)) ?? Data()) }
+        let aiProjectID = "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"
+        if let index = parts.firstIndex(of: "ai-requests") {
+            let operation = (index + 1 < parts.count ? parts[index + 1] : (body["client_request_id"] as? String ?? "")).lowercased()
+            if let stored = slideAIReceipts[operation] { return response(stored) }
+            if request.httpMethod == "GET" { return response(["detail": "AI receipt missing"], status: 404) }
+            guard (body["project_id"] as? String).flatMap(UUID.init(uuidString:)) == UUID(uuidString: aiProjectID), let input = body["input"] as? [String: Any],
+                  let kind = body["kind"] as? String, ["propose", "chat_edit"].contains(kind), UUID(uuidString: operation) != nil else {
+                return response(["detail": "Invalid AI intent"], status: 422)
+            }
+            let legacy = slideResponse(request, itemID: itemID, parts: Array(parts.prefix(index)) + [kind == "propose" ? "propose" : "chat-edit"], body: input)
+            guard legacy.0 == 200, let result = try? JSONSerialization.jsonObject(with: legacy.1) else { return legacy }
+            let receipt: [String: Any] = ["client_request_id": operation, "item_id": itemID, "project_id": aiProjectID,
+                "kind": kind, "input_digest": "fixture-exact-input", "input": input, "status": "completed", "result": result]
+            slideAIReceipts[operation] = receipt
+            return response(receipt)
+        }
         // `KRIA_SLIDE_POST_MANY=1`: twelve slides, so the strip overflows and auto-scroll can be exercised.
         let base = [("trulli-street", "jpg", "image"), ("istanbul", "mp4", "video"), ("lisbon", "jpg", "image")]
         let media = ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_MANY"] == "1" ? Array(repeating: base, count: 4).flatMap { $0 } : base
@@ -1791,7 +1808,7 @@ final class CreationChatFixture: @unchecked Sendable {
             lateAssetPolls[itemID] = polls
             assets.append(lateAsset(status: polls <= 2 ? "processing" : "ready"))
         }
-        var state: [String: Any] = ["schema_version": 1, "generation_idempotency_version": 1, "item_id": itemID, "title": "Three connected moments", "assets": assets, "render_status": "not_rendered", "slides": [], "validation_errors": []]
+        var state: [String: Any] = ["schema_version": 1, "generation_idempotency_version": 1, "ai_request_recovery_version": 1, "ai_project_id": aiProjectID, "item_id": itemID, "title": "Three connected moments", "assets": assets, "render_status": "not_rendered", "slides": [], "validation_errors": []]
         if let draft = slideDrafts[itemID] { state["draft"] = draft }
         if slideRendered.contains(itemID), let draft = slideDrafts[itemID] {
             state["job_id"] = itemID; state["render_status"] = "ready"; state["rendered_version"] = draft["version"]
