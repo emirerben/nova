@@ -57,6 +57,7 @@ from app.pipeline.narrated_title import TITLE_MAX_CHARS
 from app.schemas.clip_intents import ClipIntent
 from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS, PINNED_TEXT_MAX_CHARS
 from app.services.creator_capabilities import (
+    BACKGROUND_FOCUS_NOTICES,
     CAPABILITY_REACTION_BEATS,
     ENDING_CLIP_NOT_ALSO_A_POP_IN_NOTICE,
     ENDING_CLIP_NOTICES,
@@ -296,6 +297,14 @@ _KNOWN_TR: dict[str, str] = {
     ),
     SPEAKER_FULL_OPENING_NOTICES["unavailable"]: (
         "Arka plandan önce seni tam ekran başlatamadım: bu şu an burada kullanılamıyor."
+    ),
+    # Qendresa item 18: aiming the recordings behind the speaker.
+    BACKGROUND_FOCUS_NOTICES["app_too_old"]: (
+        "Kayıtları istediğin yöne çevirmek için Kria uygulamasının son sürümü gerekiyor; "
+        "şimdilik ortalı duruyorlar."
+    ),
+    BACKGROUND_FOCUS_NOTICES["unavailable"]: (
+        "Kayıtları istediğin yöne çevirmek henüz kullanılamıyor; şimdilik ortalı duruyorlar."
     ),
     # KRI-1173: a plain colour.
     SPEAKER_BACKGROUND_NOTICES["color_unavailable"]: (

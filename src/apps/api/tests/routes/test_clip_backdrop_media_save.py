@@ -343,7 +343,7 @@ async def test_a_save_pins_the_pool_photo_or_video_before_it_is_validated(monkey
     _open(monkeypatch)
     seen = {}
 
-    def bind(_open_session, *, job_id, pins):
+    def bind(_open_session, *, job_id, pins, measure_text=False):
         seen["pins"] = pins
         return (_binding(kind),)
 

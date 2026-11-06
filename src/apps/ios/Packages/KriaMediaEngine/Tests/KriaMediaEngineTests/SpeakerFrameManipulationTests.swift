@@ -152,8 +152,16 @@ final class SpeakerFrameManipulationTests: XCTestCase {
         let live = try await LivePreviewComposition(recipe: framed.recipe, assetURLs: framed.urls)
         let layer = try XCTUnwrap(framed.recipe.speakerBackground)
         let moved = SpeakerFrame(widthFraction: 0.5, xFraction: 0.3, yFraction: 0.3)
+        // Qendresa item 18: a moved frame that also aims the fill is not only a move (the aim would never reach the preview).
+        let aim = SpeakerBackgroundFocus(x: 0, y: 0.5, zoom: 2)
+        let movedAndAimed = SpeakerBackgroundLayer(assetID: layer.assetID, mediaKind: layer.mediaKind, sourceStart: layer.sourceStart,
+                                                   loop: layer.loop, subjectTrackID: layer.subjectTrackID, windows: layer.windows,
+                                                   speakerFrame: moved, color: layer.color,
+                                                   fullScreenWindows: layer.fullScreenWindows, focus: aim)
+        XCTAssertEqual(movedAndAimed.replacingSpeakerFrame(corner).focus, aim, "a new frame keeps the aim")
         for changed in [layer.replacingSpeakerFrame(nil),
-                        SpeakerBackgroundLayer(assetID: try XCTUnwrap(layer.assetID), mediaKind: .image, loop: false, speakerFrame: moved)] {
+                        SpeakerBackgroundLayer(assetID: try XCTUnwrap(layer.assetID), mediaKind: .image, loop: false, speakerFrame: moved),
+                        movedAndAimed] {
             var next = framed.recipe
             next.speakerBackground = changed
             XCTAssertThrowsError(try live.updateText(recipe: next)) { error in

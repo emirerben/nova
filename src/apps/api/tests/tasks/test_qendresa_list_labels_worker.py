@@ -196,7 +196,7 @@ def _label_job(
 
     rows = {row["id"]: row for row in _pool_rows()}
 
-    def bind(_open, *, job_id, pins):  # noqa: ARG001
+    def bind(_open, *, job_id, pins, measure_text=False):  # noqa: ARG001 - item 18's measure
         return tuple(
             PhoneVisualBinding(
                 media_id=media,

@@ -112,6 +112,8 @@ SECTION_OPS: dict[str, frozenset[str]] = {
             "set_background_sequence",
             "set_speaker_frame",
             "clear_speaker_frame",
+            # Qendresa item 18: aim / zoom the recordings behind the speaker.
+            "set_background_focus",
         }
     ),
 }
@@ -176,6 +178,7 @@ SECTION_FAMILIES: dict[str, frozenset[str]] = {
             "carousel",
             "background",
             "background_windows",
+            "background_focus",
         }
     ),
 }

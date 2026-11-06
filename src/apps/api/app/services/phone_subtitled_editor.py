@@ -184,6 +184,43 @@ def variant_carries_speaker_full_opening(assembly_plan: dict, variant: dict) -> 
     )
 
 
+def variant_carries_background_focus(assembly_plan: dict, variant: dict) -> bool:
+    """Does this variant already hold a background ``focus`` on the fill or any window
+    (Qendresa item 18, F1)?
+
+    The same three places as `variant_carries_speaker_full_opening`. PURE. Decides whether a Save
+    from a build below the focus protocol must be refused: such a build would drop the focus
+    silently (or cannot decode the recipe at all).
+    """
+    if not isinstance(assembly_plan, dict) or not isinstance(variant, dict):
+        return False
+
+    def uses(value: object) -> bool:
+        if not isinstance(value, dict):
+            return False
+        return bool(value.get("focus")) or any(
+            isinstance(window, dict) and window.get("focus")
+            for window in value.get("windows") or ()
+        )
+
+    if uses(variant.get("speaker_background")):
+        return True
+    persisted = variant.get(PHONE_SUBTITLED_EDITOR_LANES_FIELD)
+    if isinstance(persisted, dict):
+        lanes = persisted.get("lanes")
+        if isinstance(lanes, dict) and uses(lanes.get("background")):
+            return True
+    variant_id = variant.get("variant_id")
+    if not isinstance(variant_id, str) or not variant_id:
+        return False
+    recipe = _pinned_recipe(assembly_plan, variant_id)
+    return (
+        recipe is not None
+        and recipe.speaker_background is not None
+        and recipe.speaker_background.uses_focus
+    )
+
+
 def variant_carries_speaker_background_color(assembly_plan: dict, variant: dict) -> bool:
     """Does this variant already hold a solid-colour background fill (KRI-1173)?
 
@@ -421,6 +458,16 @@ def sections_from_lanes(
     return sections
 
 
+def _focus_document(focus: Any) -> dict[str, float]:
+    """A lane focus as the editor document's complete ``{x, y, zoom}`` (Qendresa item 18): an unset
+    part is today's 0.5 / 1.0."""
+    return {
+        "x": 0.5 if focus.x is None else focus.x,
+        "y": focus.y,
+        "zoom": 1.0 if focus.zoom is None else focus.zoom,
+    }
+
+
 def speaker_background_document(background: SubtitledBackground) -> dict[str, Any]:
     """The editor document's ``speaker_background`` value (a fixed shared interface):
     ``{"media_id", "kind", "source_start_s"}``. The path and generation stay server-side.
@@ -442,6 +489,8 @@ def speaker_background_document(background: SubtitledBackground) -> dict[str, An
             "kind": background.kind,
             "source_start_s": background.source_start_s,
         }
+        if background.focus is not None:
+            document["focus"] = _focus_document(background.focus)
     if background.windows:
         document["windows"] = [
             {
@@ -450,6 +499,7 @@ def speaker_background_document(background: SubtitledBackground) -> dict[str, An
                 "source_start_s": window.source_start_s,
                 "start_s": window.start_s,
                 "end_s": window.end_s,
+                **({"focus": _focus_document(window.focus)} if window.focus is not None else {}),
             }
             for window in background.windows
         ]
@@ -635,6 +685,7 @@ def lanes_from_recipe(
                 generation=visual.generation,
                 kind="video" if visual.kind == "video" else "image",
                 source_start_s=layer.source_start if visual.kind == "video" else 0.0,
+                focus=_focus_lane(layer.focus),
                 # KRI-1162: the recipe's windows are already in the compiled (cut) timeline,
                 # like the overlay cards derived above. A window whose visual cannot be
                 # matched is dropped rather than guessed.
@@ -653,6 +704,65 @@ def lanes_from_recipe(
         ending_clip=ending_clip,
         background=background,
     )
+
+
+def lanes_with_recipe_focus(
+    previous: PhoneSubtitledLanes | None,
+    recipe: EditRecipeV2,
+    *,
+    visuals: tuple[PhoneVisualBinding, ...],
+) -> PhoneSubtitledLanes | None:
+    """``previous`` with the background focus the pinned recipe holds (Qendresa item 18, F12/F14).
+
+    The first render writes a MEASURED focus into the recipe only; the persisted lanes (the
+    worker's or an earlier Save's) never held it, and a later recompile rebuilds its bindings
+    from receipts that carry no measure. So a Save that leaves the background untouched would
+    lose it. A focus the lane already holds always wins; the recipe fills only the gaps, matched
+    by media id (the fill) and by position and media id (the windows).
+    """
+    if (
+        previous is None
+        or previous.background is None
+        or recipe.speaker_background is None
+        or not recipe.speaker_background.uses_focus
+    ):
+        return previous
+    derived = lanes_from_recipe(recipe, visuals=visuals).background
+    if derived is None:
+        return previous
+    background = previous.background
+    updates: dict[str, Any] = {}
+    if (
+        background.focus is None
+        and derived.focus is not None
+        and not background.uses_color
+        and background.media_id == derived.media_id
+    ):
+        updates["focus"] = derived.focus
+    if len(background.windows) == len(derived.windows) and any(
+        window.focus is None and fresh.focus is not None and window.media_id == fresh.media_id
+        for window, fresh in zip(background.windows, derived.windows, strict=True)
+    ):
+        updates["windows"] = tuple(
+            window.model_copy(update={"focus": fresh.focus})
+            if window.focus is None
+            and fresh.focus is not None
+            and window.media_id == fresh.media_id
+            else window
+            for window, fresh in zip(background.windows, derived.windows, strict=True)
+        )
+    if not updates:
+        return previous
+    return previous.model_copy(update={"background": background.model_copy(update=updates)})
+
+
+def _focus_lane(focus: Any) -> Any:
+    """A recipe focus as a lane focus (Qendresa item 18), or None."""
+    from app.pipeline.phone_subtitled_lanes import SubtitledBackgroundFocus  # noqa: PLC0415
+
+    if focus is None:
+        return None
+    return SubtitledBackgroundFocus(x=focus.x, y=focus.y, zoom=focus.zoom)
 
 
 def _full_screen_from_layer(layer: Any) -> tuple[Any, ...]:
@@ -680,6 +790,7 @@ def _windows_from_layer(layer: Any, visual_for: Any) -> list[SubtitledBackground
                 source_start_s=window.source_start if window_visual.kind == "video" else 0.0,
                 start_s=window.start,
                 end_s=window.end,
+                focus=_focus_lane(window.focus),
             )
         )
     return windows
