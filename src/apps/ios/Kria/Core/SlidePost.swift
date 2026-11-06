@@ -497,10 +497,12 @@ struct SlidePostState: Codable, Equatable, Sendable {
     var generationIdempotencyVersion: Int? = nil
     var aiRequestRecoveryVersion: Int? = nil
     var aiProjectID: UUID? = nil
+    var aiRequestDeliveryVersion: Int? = nil
     enum CodingKeys: String, CodingKey {
         case title, draft, assets, slides
         case generationIdempotencyVersion = "generation_idempotency_version"
         case aiRequestRecoveryVersion = "ai_request_recovery_version", aiProjectID = "ai_project_id"
+        case aiRequestDeliveryVersion = "ai_request_delivery_version"
         case schemaVersion = "schema_version", itemID = "item_id", jobID = "job_id", renderStatus = "render_status"
         case renderedVersion = "rendered_version", validationErrors = "validation_errors", bundleURL = "bundle_url"
     }
@@ -904,14 +906,7 @@ struct SlidePostRenderAcknowledgement {
         return submission.receipt?.isCurrentTarget == true && state?.jobID == submission.receipt?.jobID &&
             state?.draft?.version == submission.expectedVersion
     }
-    var originalAIActionTitle: String {
-        guard let scope = loadedSubmissionScope, let projectID = state?.aiProjectID else { return "Check original result" }
-        for kind in SlidePostAIKind.allCases {
-            if let record = try? aiJournal.load(scope: scope, projectID: projectID, kind: kind), !record.delivered,
-               record.receipt == nil || record.receipt?.status == .pending { return "Check or resume original" }
-        }
-        return "Check original result"
-    }
+    var originalAIActionTitle: String { "Check original result" }
     var canCheckAIResult: Bool { aiRecoveryMessage != nil && !aiResultTerminal && !isBusy && !isChatting }
     /// Undo of the last SAVED change (the server's previous version).
     var canUndo: Bool { undoDraft != nil && !isBusy }
@@ -1027,6 +1022,12 @@ struct SlidePostRenderAcknowledgement {
             refreshError = nil
             stateObservationNotBefore = nil
             loadedSubmissionScope = scopeBeforeRead
+            if !readOnlyObservation {
+                await resumeUnsubmittedAI(api: api, itemID: itemID)
+                guard generation == mutationGeneration, sequence == refreshSequence,
+                      loadedSubmissionScope == scopeBeforeRead, self.itemID == itemID,
+                      !observationsStopped else { return }
+            }
             if let projectID = state?.aiProjectID, let scope = scopeBeforeRead,
                SlidePostAIKind.allCases.contains(where: { kind in
                    guard let record = try? aiJournal.load(scope: scope, projectID: projectID, kind: kind) else { return false }
@@ -1140,10 +1141,10 @@ struct SlidePostRenderAcknowledgement {
            oldInput[kind == .propose ? "instruction" : "message"] == newInput[kind == .propose ? "instruction" : "message"] {
             return old
         }
-        guard state?.aiRequestRecoveryVersion == 1 else {
+        guard state?.aiRequestRecoveryVersion == 1, state?.aiRequestDeliveryVersion == 1 else {
             throw AIWaiting(message: "Recoverable AI editing is not available for new requests yet. Your draft is safe.")
         }
-        let record = SlidePostAIRecord(scope: scope, projectID: projectID, kind: kind, input: input, baseline: baseline, operationID: operationID)
+        let record = SlidePostAIRecord(scope: scope, projectID: projectID, kind: kind, input: input, baseline: baseline, operationID: operationID, deliveryVersion: 1)
         try Task.checkCancellation()
         try aiJournal.reserve(record)
         aiRecoveryTask?.cancel(); aiRecoveryTask = nil; aiRecoveryToken = UUID()
@@ -1171,21 +1172,27 @@ struct SlidePostRenderAcknowledgement {
         aiRecoveryMessage = "Checking the original AI request. Your draft is safe; this check will not start another AI call."
     }
     private func postAI(api: any KriaAPIClient, itemID: String, record: inout SlidePostAIRecord, explicit: Bool = false, ownReadDeadline: Date? = nil) async throws {
+        let epoch = observationEpoch
         guard aiCurrent(record, api: api, itemID: itemID), !Task.isCancelled else { throw CancellationError() }
         record = try aiJournal.reserveAttempt(record, post: true, explicit: explicit, now: submissionNow(), ownReadDeadline: ownReadDeadline)
         do {
             let receipt = try await api.submitSlidePostAI(itemID: itemID, body: record.request, expectedOwner: record.scope.owner)
-            guard aiCurrent(record, api: api, itemID: itemID), !Task.isCancelled else { throw CancellationError() }
+            guard epoch == observationEpoch, aiCurrent(record, api: api, itemID: itemID), !Task.isCancelled else { throw CancellationError() }
             try acceptAIReceipt(receipt, record: &record)
         } catch {
-            guard aiCurrent(record, api: api, itemID: itemID) else { throw CancellationError() }
+            guard epoch == observationEpoch, aiCurrent(record, api: api, itemID: itemID) else {
+                if case let APIError.requestFailed(_, detail) = error, (detail.retryAfter ?? 0) > 0 {
+                    try? noteAIFailure(error, record: &record, publish: false)
+                }
+                throw CancellationError()
+            }
             try noteAIFailure(error, record: &record)
             throw error
         }
     }
     private func sendAI<T: Decodable>(api: any KriaAPIClient, itemID: String, record original: SlidePostAIRecord) async throws -> T {
         var record = original
-        // Any previously submitted intent is observed before an original-ID resumption.
+        // Any previously submitted intent is observed without resubmission.
         if record.remainingPosts < 3 || record.receipt != nil {
             try await readAI(api: api, itemID: itemID, record: &record, explicit: true)
         } else {
@@ -1250,11 +1257,6 @@ struct SlidePostRenderAcknowledgement {
             let receipt = try await fetchAIReceipt(api: api, itemID: itemID, record: &record, explicit: explicit, epoch: epoch)
             guard epoch == observationEpoch, aiCurrent(record, api: api, itemID: itemID), !Task.isCancelled else { throw CancellationError() }
             try acceptAIReceipt(receipt, record: &record)
-            if !observationOnly, receipt.status == .pending, state?.aiRequestRecoveryVersion == 1, (record.remainingPosts > 0 || explicit) {
-                // GET never dispatches. Resume only the same admitted, still-unclaimed intent.
-                let ownDelay = record.notBefore
-                try await postAI(api: api, itemID: itemID, record: &record, explicit: explicit, ownReadDeadline: ownDelay)
-            }
         } catch {
             let current = epoch == observationEpoch && aiCurrent(record, api: api, itemID: itemID)
             if !current {
@@ -1264,14 +1266,8 @@ struct SlidePostRenderAcknowledgement {
                 }
                 throw CancellationError()
             }
-            if !observationOnly, case let APIError.requestFailed(status, _) = error, status == 404,
-               record.receipt == nil, state?.aiRequestRecoveryVersion == 1, (record.remainingPosts > 0 || explicit) {
-                let ownDelay = record.notBefore
-                try await postAI(api: api, itemID: itemID, record: &record, explicit: explicit, ownReadDeadline: ownDelay)
-            } else {
-                try noteAIFailure(error, record: &record)
-                throw error
-            }
+            try noteAIFailure(error, record: &record)
+            throw error
         }
     }
     private func fetchAIReceipt(api: any KriaAPIClient, itemID: String, record: inout SlidePostAIRecord, explicit: Bool, epoch: Int) async throws -> SlidePostAIReceipt {
@@ -1312,6 +1308,9 @@ struct SlidePostRenderAcknowledgement {
                     break
                 }
                 if self.isBusy || self.isChatting { continue }
+                await self.resumeUnsubmittedAI(api: api, itemID: itemID)
+                guard self.aiRecoveryToken == token, !Task.isCancelled,
+                      (try? self.submissionScope(api, itemID)) == scope else { break }
                 await self.recoverAI(api: api, itemID: itemID, explicit: false)
                 let pending = SlidePostAIKind.allCases.contains { kind in
                     guard let record = try? self.aiJournal.load(scope: scope, projectID: projectID, kind: kind) else { return false }
@@ -1324,13 +1323,29 @@ struct SlidePostRenderAcknowledgement {
     }
     private var aiWaitingCopy: String { "The original AI result is not available yet. Kria will keep checking without starting another AI call." }
     private func aiWaitingCopy(for record: SlidePostAIRecord) -> String {
-        if record.receipt?.status == .pending && record.remainingPosts == 0 {
-            return "The original request has not started. Resume that request to continue. Automatic checks only read its status."
+        if record.receipt?.status == .pending, record.receipt?.deliveryVersion == 1 {
+            return "Your original request is waiting to start. Kria will deliver it automatically and keep checking its result."
         }
-        if record.receipt == nil && record.remainingPosts == 0 {
-            return "Kria cannot confirm whether the original request started. Check or resume that same request; automatic checks only read its status."
+        if record.receipt == nil {
+            return "Kria cannot confirm whether the original request started. It will keep checking the original ID without sending another AI request."
         }
         return aiWaitingCopy
+    }
+    private func resumeUnsubmittedAI(api: any KriaAPIClient, itemID: String) async {
+        // Initial admission has separate ownership from result observation. The journal
+        // reserves the attempt before transport; any attempted/uncertain request is GET-only.
+        guard !observationsStopped, !isBusy, !isChatting, state?.aiRequestDeliveryVersion == 1,
+              state?.aiRequestRecoveryVersion == 1, let projectID = state?.aiProjectID,
+              let scope = try? submissionScope(api, itemID), loadedSubmissionScope == scope else { return }
+        let epoch = observationEpoch
+        for kind in SlidePostAIKind.allCases {
+            guard epoch == observationEpoch, !Task.isCancelled else { return }
+            guard var record = try? aiJournal.load(scope: scope, projectID: projectID, kind: kind),
+                  !record.delivered, record.deliveryVersion == 1, record.remainingPosts == 3, record.receipt == nil else { continue }
+            do { try await postAI(api: api, itemID: itemID, record: &record) }
+            catch is CancellationError { return }
+            catch { /* Durable attempted identity remains observer-only after uncertainty. */ }
+        }
     }
     func recoverAI(api: any KriaAPIClient, itemID: String, explicit: Bool) async {
         guard !observationsStopped, !isBusy, !isChatting, !aiRecovering, let projectID = state?.aiProjectID,

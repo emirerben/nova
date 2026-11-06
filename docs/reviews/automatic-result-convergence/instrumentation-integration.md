@@ -12,6 +12,26 @@ Independent Services/instrumentation review found its auto-merge limited to an e
 
 Root independently reviewed the coordinator composition. Source diff checks passed. This is static review, not native compilation or runtime proof. No native/package/model/simulator/device or paid execution was launched.
 
+Integration committed at `789789214046faf15c5e944c2d85cc5badc35666`, tree `d21b82e26b5c8d0529f35ba4588dd8e42b6ac2fb`, parents `23f8a3296866bc67c40e4a34e355af0d7c3710ce` and `dbb260e47ef640b8c0908808df640723e0f8c1a2`.
+
+## Component checks executed on 789789214
+
+Guarded offline selection: **205 passed**, 44 warnings, 3.80 seconds; `/tmp/nova-auto-789-integration-offline.log`. From repository root:
+
+```sh
+src/apps/api/.venv/bin/python /tmp/slide-ai-offline-tests.py -q \
+  src/apps/api/tests/kria/test_unknown_dispatch_recovery.py \
+  src/apps/api/tests/routes/test_saved_user_song_state.py \
+  src/apps/api/tests/routes/test_slide_post_ai_requests.py \
+  src/apps/api/tests/services/test_slide_post_ai_requests.py \
+  src/apps/api/tests/services/test_suggestion_serve_wiring.py \
+  src/apps/api/tests/test_mobile_auth_contract.py
+```
+
+Guarded isolated AI PostgreSQL selection: **10 passed**, 44 warnings, 3.88 seconds; `/tmp/nova-auto-789-ai-pg.log`. From src/apps/api: `/tmp/nova-ai-db-safe-python -m pytest -q -rs tests/routes/test_slide_post_ai_requests_postgres.py`. This runner restricts SQL to the private synthetic AI test database and denies external provider connections.
+
+Generated contracts: `/tmp/nova-ai-db-safe-python -m app.cli.kria_contracts --check` exited zero and reported matching tool, mobile fixture and mobile OpenAPI artifacts; `/tmp/nova-auto-789-contract-check.log`. These are component checks, not aggregate, decoder, native, package, UI, device or model proof. Future AI delivery edits require their own source-bound checks.
+
 ## AI admission follow-up
 
 Existing pending AI rows retain original request_input, but resolved_input is first written with the permanent running claim. Pending proposal requests may omit baseline draft and asset ordering/descriptions; chat preparation also resolves bindings, dimensions and feature settings later. Therefore those legacy pending rows lack a complete original execution envelope and must not be reconstructed from current data.

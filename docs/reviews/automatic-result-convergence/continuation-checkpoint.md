@@ -1,6 +1,6 @@
 # Finite continuation implementation checkpoint
 
-This snapshot preserves source implementations and written controls, **not native, package, UI or model execution proof**. It supersedes the known missing-helper state recorded in the historical WIP `56b1ddc4649b2f14c95fdc1da6b5de08edc75783`. The helper is now implemented; compilation remains unverified.
+This records historical source checkpoint `23f8a3296866bc67c40e4a34e355af0d7c3710ce`, **not native, package, UI or model execution proof**. It supersedes the known missing-helper state recorded in WIP `56b1ddc4649b2f14c95fdc1da6b5de08edc75783`. Later instrumentation integration and original AI delivery supersede the pending-admission limitation below; see instrumentation-integration.md and slide-post-ai-delivery-evidence.md. Compilation remains unverified.
 
 Base integration remains `c0ab9630a3abdaf59c3892ed6bc9ed90ce8c4c74`, inheriting Cunda `70bff5f3738ca8f6873e3a85ddd9fbad374ada49` through main `c078f13b9ad6f0f60d4a5e94f4cd2afac551a76b`. New main `dbb260e47ef640b8c0908808df640723e0f8c1a2` was fetched and verified to inherit that ancestry; its #2120 instrumentation has **not yet been merged**. No unmerged speed or split candidate was stacked.
 

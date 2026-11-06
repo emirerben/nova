@@ -7,7 +7,8 @@ struct SlidePostAIRequest: Codable, Sendable {
     let projectID: UUID
     let kind: SlidePostAIKind
     let input: JSONValue
-    enum CodingKeys: String, CodingKey { case clientRequestID = "client_request_id", projectID = "project_id", kind, input }
+    var deliveryVersion: Int? = nil
+    enum CodingKeys: String, CodingKey { case clientRequestID = "client_request_id", projectID = "project_id", kind, input; case deliveryVersion = "delivery_version" }
 }
 struct SlidePostAIReceipt: Codable, Equatable, Sendable {
     enum Status: String, Codable, Sendable { case pending, running, completed, unknown, rejected }
@@ -19,9 +20,11 @@ struct SlidePostAIReceipt: Codable, Equatable, Sendable {
     let input: JSONValue
     let status: Status
     let result: JSONValue?
+    var deliveryVersion: Int? = nil
     enum CodingKeys: String, CodingKey {
         case clientRequestID = "client_request_id", itemID = "item_id", projectID = "project_id"
         case inputDigest = "input_digest", input, kind, status, result
+        case deliveryVersion = "delivery_version"
     }
 }
 struct SlidePostAIRecord: Codable, Sendable {
@@ -31,6 +34,7 @@ struct SlidePostAIRecord: Codable, Sendable {
     let input: JSONValue
     let baseline: SlidePostDraft?
     let operationID: UUID
+    var deliveryVersion: Int? = nil
     var remainingReads = 40
     var remainingPosts = 3
     var notBefore: Date?
@@ -38,7 +42,7 @@ struct SlidePostAIRecord: Codable, Sendable {
     var serverNotBefore: Date?
     var receipt: SlidePostAIReceipt?
     var delivered = false
-    var request: SlidePostAIRequest { .init(clientRequestID: operationID, projectID: projectID, kind: kind, input: input) }
+    var request: SlidePostAIRequest { .init(clientRequestID: operationID, projectID: projectID, kind: kind, input: input, deliveryVersion: deliveryVersion) }
 }
 
 final class SlidePostAIJournal: @unchecked Sendable {
@@ -84,7 +88,7 @@ final class SlidePostAIJournal: @unchecked Sendable {
     func update(_ candidate: SlidePostAIRecord) throws {
         Self.lock.lock(); defer { Self.lock.unlock() }
         guard let current = try read(candidate.scope, candidate.projectID, candidate.kind),
-              current.operationID == candidate.operationID, current.input == candidate.input, current.baseline == candidate.baseline else { throw Failure.staleIntent }
+              current.operationID == candidate.operationID, current.input == candidate.input, current.baseline == candidate.baseline, current.deliveryVersion == candidate.deliveryVersion else { throw Failure.staleIntent }
         var record = candidate
         record.remainingReads = min(current.remainingReads, record.remainingReads)
         record.remainingPosts = min(current.remainingPosts, record.remainingPosts)
@@ -102,6 +106,9 @@ final class SlidePostAIJournal: @unchecked Sendable {
         if let deadline = record.serverNotBefore, deadline > now { throw Failure.paused }
         if let deadline = record.notBefore, deadline > now, deadline != ownReadDeadline { throw Failure.paused }
         if post {
+            if record.deliveryVersion == 1 {
+                guard record.remainingPosts == 3, record.receipt == nil else { throw Failure.paused }
+            }
             guard record.receipt == nil || record.receipt?.status == .pending,
                   record.remainingPosts > 0 || explicit else { throw Failure.paused }
             record.remainingPosts = max(0, record.remainingPosts - 1)

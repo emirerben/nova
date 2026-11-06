@@ -39,7 +39,15 @@ Required next evidence: combined source integration, final native build, actual 
 The parent verified current main `e090eb668124fee58cfc74c34e662ac78e268342`, four commits beyond base05, including #2097/#2124. A local read-only diff confirms no native Swift delta. It adds media replacement/ownership behavior in creation_threads/runtime/planner/source_replacement, caption processing/configuration in generative_build and caption modules, contract metadata and generated OpenAPI. This task has not rebased onto it; existing evidence remains explicitly based on05.
 
 At controlled integration, merge source-replacement/media ownership semantics rather than choosing entire shared files, preserve caption pipeline changes, and regenerate the combined contract. Recheck strict AI thread/item claim locking against media replacement/editor-opening order, and rerun media-replacement/caption named checks alongside new receipt/revision/AI checks. The shared model owner keeps its original M=05 reference until correspondence is reviewed; no coverage hash resync was performed here.
-# Read-recovery continuation after 62ac28e09
+# Current combined-source handoff
+
+Main instrumentation integration is `789789214046faf15c5e944c2d85cc5badc35666` on main `dbb260e47ef640b8c0908808df640723e0f8c1a2`, inheriting landed Cunda. Original AI delivery is `083ededa04b59285c05783d4c8f646ad44a8bc59`. The final native selection and 14 production-source hashes are in native-selection.json; all native/package/UI cases remain unexecuted under the parent's hold.
+
+New delivery semantics for correspondence: a fully prepared immutable request/authority envelope is committed before outbox publication; publication pacing is committed before broker I/O; only pending never-claimed work is deliverable. Canonical owner/project/draft/source and rollback policy are revalidated before the permanent claim. Pending cancellation races that claim; running/unknown is never reclaimed. GET never publishes or dispatches. Legacy pending without its original envelope rejects instead of reconstructing inputs. Database/process tests establish component evidence, not a new formal proof.
+
+No shared model or coverage hashes were changed here. The shared model owner must review correspondence and scope against the final immutable checkpoint before model/aggregate signoff. Historical snapshots below retain their original bounds and must not be attributed to this combined source.
+
+# Historical read-recovery continuation after 62ac28e09
 
 Device source checkpoint `86e1afb04c2b1104ad52eee4ab9d5d78a0c2885c` retains a slow status-read transition after twelve fast retries instead of entering a state with no guaranteed automatic wake. The timer is coalesced and owner/operation/token fenced. Stop and settlement disable work/Resume authorization while retaining the server read deadline; shutdown cancels work and changes transport lifetime. A transport reader remains owned until its underlying read exits, so cancellation of a UI ticket does not authorize a second GET or discard a late server deadline. Explicit Resume is a specific owner/key-operation/durable-intent-operation/identity/base-generation authorization, not permission for whichever result arrives later.
 
