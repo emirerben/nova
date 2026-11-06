@@ -81,11 +81,14 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # `caption_box`): the brief section's cleanup sentence teaches `pauses: "tight"`. v120 alone
 # was d690f1ff / ca93a669 / 2e66923b / f56fcd47; v119's values were e632c312 / cd66c5b5 /
 # 09c8a8cc / e86242d5.
+# Re-pinned for says-done group E (creator v137): the brief section's caption-count and cleanup
+# sentences carry her Q1/Q2 sentences as examples; v136's values were 39455ee1 / 06797395 /
+# 4b280598 / 83b280d6.
 MAIN_PROMPT_SHA = {
-    "neither": "39455ee18360da7e3780ec22a38d993b894d7869826bf6e87d6b6b25c9a07474",
-    (True, True): "06797395bfbd83d1aa897d786c39758dd0c1af444b8dc1055a486a6920c4af33",
-    (True, False): "4b2805986afd719d046bb7f93047dcbac8d76612379a1ca8bfc061c77e34961b",
-    (False, True): "83b280d6a117a66b3bfbdd79ee97ec5e3bb28bbf3d137db6634387c69e7e3fdd",
+    "neither": "d5ffa4c0fd6d707aeec3a1d14eaf35da035ef79d601c5f3d11d380c5b4a48c74",
+    (True, True): "cb19ac3c8cbed18ed8fe0d0615920cb0d7accb24ca68446acbaba900d9d75ba3",
+    (True, False): "b40a12b3feeedc3bd44abdefdad2d0e213fae7ebfe8d1c329b0d0d9618bdfed5",
+    (False, True): "bb84b5f7dfa7fa2265dc3c4896e63ffab8f0c63727dc7d687921b155500bde1c",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (

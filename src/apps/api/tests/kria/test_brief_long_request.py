@@ -290,11 +290,11 @@ def test_brief_extractor_prompt_flag_off_is_byte_identical_and_on_changes_only_t
 
 
 def test_brief_extractor_prompt_version_is_bumped() -> None:
-    assert BRIEF_EXTRACTOR_PROMPT_VERSION == "2026-11-06-v68"  # v66 + item 16 (v68)
+    assert BRIEF_EXTRACTOR_PROMPT_VERSION == "2026-11-06-v69"  # v66 + item 16 (v68)
 
 
 def test_main_creator_prompt_version_is_bumped() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-06-v136"  # 16 v133, 20 v135, 18 v136
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-06-v137"  # 16 v133, 20 v135, 18 v136
 
 
 # ------------------------------------------------------------------ f. follow-up path

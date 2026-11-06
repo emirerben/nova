@@ -1,0 +1,438 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-11-06-v137",
+  "input": {
+    "user_message": "Cut out all my pauses and mistakes so it's tight. Captions word by word in the middle of the screen, white, two words at a time. Start with a big title \"lets build an agent that reads an APP before I trust it!!\" for the first 3 seconds. When I talk about something, show the matching screenshot or screen recording in the top or bottom part of the screen, not over my face. When I list the four things, show each one as big text, like \"1. which company it sends data to?\". End with \"comment READ\" and an arrow for the last 3 seconds. Only my voice, no music.",
+    "creator_request": "",
+    "creator_context": "Tech creator who films short talking-to-camera explainers about AI tools, with screenshots and screen recordings.",
+    "creator_direction": "",
+    "item_context": "{'idea': 'AI tools explainer', 'theme': '', 'creator_notes': '', 'filming_guide': [], 'current_edit_format': 'subtitled', 'current_audio_mode': 'kria', 'has_recorded_voiceover': False}",
+    "media_context": [
+      {
+        "media_id": "analysis-proxy-ios-4DB8A9C3-80FE-4269-9D22-7C19280DC543.mp4",
+        "kind": "video",
+        "duration_s": 31.223,
+        "creator_note": null,
+        "analysis_only_not_copy": {
+          "subject": "a woman talking to the camera",
+          "summary": "A woman talks to the camera about the Kervan x Lumo fashion show at Pamukkale.",
+          "content_type": "talking_head",
+          "audio_type": "speech",
+          "people": {
+            "count": 1,
+            "note": "one woman",
+            "speaks_to_camera": true
+          },
+          "speech": {
+            "has_speech": true,
+            "to_camera": true,
+            "transcript": "Okay, we're recording. Kervan celebrated its tenth year with a sunrise fashion show at Pamukkale. And it wasn't alone. Lumo was the show's technology partner. The patterns were drawn on Lumo tablets, and the whole show was filmed on Lumo phones, mounted on drones. So Lumo took its tech from cold hard, no again. So Lumo took its tech from cold hardware to a creative space that feeds fashion. In short, it's a real one plus one equals three story. So what did you think of this collaboration?",
+            "segments": [
+              {
+                "s": 0.0,
+                "e": 1.22,
+                "text": "Okay, we're recording."
+              },
+              {
+                "s": 1.54,
+                "e": 3.32,
+                "text": "Curvan celebrated its 10th year with"
+              },
+              {
+                "s": 3.32,
+                "e": 5.46,
+                "text": "a Sunrise Fashion Show at Pamukkale."
+              },
+              {
+                "s": 5.71,
+                "e": 6.83,
+                "text": "And it wasn't alone."
+              },
+              {
+                "s": 7.306,
+                "e": 9.006,
+                "text": "Lumo was the show's technology partner."
+              },
+              {
+                "s": 9.546,
+                "e": 11.846,
+                "text": "The patterns were drawn on Lumo tablets,"
+              },
+              {
+                "s": 11.846,
+                "e": 13.666,
+                "text": "and the whole show was filmed on"
+              },
+              {
+                "s": 13.666,
+                "e": 15.686,
+                "text": "Lumo phones, mounted on drones."
+              },
+              {
+                "s": 15.936,
+                "e": 18.296,
+                "text": "So Lumo took its tech from cold hard..."
+              },
+              {
+                "s": 18.296,
+                "e": 18.836,
+                "text": "No, again."
+              },
+              {
+                "s": 19.296,
+                "e": 21.496,
+                "text": "So Lumo took its tech from cold hardware"
+              },
+              {
+                "s": 21.496,
+                "e": 23.896,
+                "text": "to a creative space that feeds fashion."
+              },
+              {
+                "s": 24.096,
+                "e": 25.876,
+                "text": "In short, it's a real 1"
+              },
+              {
+                "s": 25.876,
+                "e": 27.616,
+                "text": "plus 1 equals 3 story."
+              },
+              {
+                "s": 27.616,
+                "e": 29.156,
+                "text": "So what did you think"
+              },
+              {
+                "s": 29.156,
+                "e": 30.016,
+                "text": "of this collaboration?"
+              }
+            ]
+          },
+          "notable_moments": []
+        }
+      }
+    ],
+    "conversation": [
+      {
+        "role": "assistant",
+        "content": "What are we making? Pick a format and we’ll shape it together."
+      },
+      {
+        "role": "user",
+        "content": "Cut out all my pauses and mistakes so it's tight. Captions word by word in the middle of the screen, white, two words at a time. Start with a big title \"lets build an agent that reads an APP before I trust it!!\" for the first 3 seconds. When I talk about something, show the matching screenshot or screen recording in the top or bottom part of the screen, not over my face. When I list the four things, show each one as big text, like \"1. which company it sends data to?\". End with \"comment READ\" and an arrow for the last 3 seconds. Only my voice, no music."
+      }
+    ],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-says-done-e",
+      "edit_format": "subtitled",
+      "render_program": "native",
+      "has_voiceover": false,
+      "narration": null,
+      "current_edit": null,
+      "media": [
+        {
+          "media_id": "analysis-proxy-ios-4DB8A9C3-80FE-4269-9D22-7C19280DC543.mp4",
+          "kind": "video",
+          "duration_s": 31.223,
+          "label": null
+        }
+      ],
+      "catalog": [
+        {
+          "catalog_id": "f79b69faaab14beaa035db18ec32ac39",
+          "kind": "sound_effect",
+          "label": "Wrong buzzer"
+        },
+        {
+          "catalog_id": "4fcc09a5901f4f2eaba6571f1c183d3b",
+          "kind": "sound_effect",
+          "label": "Correct ding"
+        }
+      ],
+      "capabilities": {
+        "set_item_intent": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "guided_story": {
+          "available": false,
+          "reason_code": "native_render_required",
+          "reason": "this edit format or audio contract requires the native renderer"
+        },
+        "native_render": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "draft_guided_proposal": {
+          "available": false,
+          "reason_code": "native_render_required",
+          "reason": "this edit format or audio contract requires the native renderer"
+        },
+        "dispatch_render": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "select_ready_variant": {
+          "available": false,
+          "reason_code": "no_ready_variant",
+          "reason": "a ready variant is required before selection"
+        },
+        "caption_style": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "caption styling is disabled by the server"
+        },
+        "automatic_cut": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "automatic speech cuts are disabled by the server"
+        },
+        "guided_voiceover": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "guided voiceover is disabled by the server"
+        },
+        "main_creator_agent": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "execution": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "execution is disabled by the server"
+        },
+        "review": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "review is disabled by the server"
+        },
+        "auto_iteration": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "auto_iteration is disabled by the server"
+        },
+        "guided_conversation": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "guided_direction_confirmation": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "guided_auto_design": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "transitions": {
+          "available": false,
+          "reason_code": "disabled_by_setting",
+          "reason": "transitions is disabled by the server"
+        },
+        "wide_looks": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "wide_looks cannot render on the iPhone yet"
+        },
+        "media_overlays": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "visual_blocks": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "motion_scenes": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "motion_scenes cannot render on the iPhone yet"
+        },
+        "sound_effects": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "sound_effects cannot render on the iPhone yet"
+        },
+        "phone_source_audio": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_still_images": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_visual_videos": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "media_overlays:video_cards": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format_pending_voiceover:narrated_ready": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format_pending_voiceover:narrated_planned": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format_pending_voiceover:narrated": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:montage": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:talking_head": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "talking_head does not render on this iPhone yet"
+        },
+        "phone_format:day_vlog": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:single_hero": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:subtitled": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "phone_format:narrated": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "narrated does not render on this iPhone yet"
+        },
+        "phone_format:narrated_planned": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "narrated_planned does not render on this iPhone yet"
+        },
+        "phone_format:narrated_ready": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "narrated_ready does not render on this iPhone yet"
+        },
+        "phone_format:slides": {
+          "available": false,
+          "reason_code": "phone_format_unavailable",
+          "reason": "slides does not render on this iPhone yet"
+        },
+        "reaction_beats": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:montage": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:talking_head": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:day_vlog": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:single_hero": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:subtitled": {
+          "available": true,
+          "reason_code": null,
+          "reason": null
+        },
+        "edit_format:narrated": {
+          "available": false,
+          "reason_code": "format_unavailable",
+          "reason": "narrated is disabled or has no production renderer for this media snapshot"
+        },
+        "edit_format:narrated_planned": {
+          "available": false,
+          "reason_code": "format_unavailable",
+          "reason": "narrated_planned is disabled or has no production renderer for this media snapshot"
+        },
+        "edit_format:narrated_ready": {
+          "available": false,
+          "reason_code": "format_unavailable",
+          "reason": "narrated_ready is disabled or has no production renderer for this media snapshot"
+        },
+        "edit_format:slides": {
+          "available": false,
+          "reason_code": "format_unavailable",
+          "reason": "slides is disabled or has no production renderer for this media snapshot"
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "manifest_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "brief_enabled": true
+  },
+  "raw_text": "{\"brief_updates\": [{\"kind\": \"audio\", \"scope\": \"global\", \"literal\": null, \"description\": \"Cut out all my pauses and mistakes so it's tight\", \"facts\": {\"speech_cleanup\": true, \"pauses\": \"tight\", \"cut_restarts\": true}}, {\"kind\": \"style\", \"scope\": \"global\", \"literal\": null, \"description\": \"Captions word by word in the middle of the screen, white, two words at a time\", \"facts\": {\"captions\": \"word_by_word\", \"caption_words\": 2, \"caption_position\": \"middle\", \"caption_color\": \"#FFFFFF\"}}, {\"kind\": \"text\", \"scope\": \"title\", \"literal\": \"lets build an agent that reads an APP before I trust it!!\", \"description\": \"a big opening title for the first 3 seconds\", \"facts\": {}}, {\"kind\": \"style\", \"scope\": \"global\", \"literal\": null, \"description\": \"show the matching screenshot or screen recording in the top or bottom part of the screen when I talk about it, not over my face\", \"facts\": {}}, {\"kind\": \"text\", \"scope\": \"global\", \"literal\": \"1. which company it sends data to?\", \"description\": \"show each of the four listed things as big text, like this one\", \"facts\": {}}, {\"kind\": \"text\", \"scope\": \"global\", \"literal\": \"comment READ\", \"description\": \"end with this and an arrow for the last 3 seconds\", \"facts\": {\"closing\": \"comment READ with an arrow\"}}, {\"kind\": \"audio\", \"scope\": \"global\", \"literal\": null, \"description\": \"Only my voice, no music\", \"facts\": {\"audio_intent\": \"no_music\"}}], \"action\": {\"kind\": \"propose_strategy\", \"strategy\": {\"direction\": \"native\", \"edit_format\": \"subtitled\", \"archetype\": null, \"audio_strategy\": \"original_audio\", \"execution_contract\": null, \"media_scope\": \"all\", \"clip_intents\": [], \"story_structure\": [\"The talk to camera, tightened, with captions\"], \"intro_hook\": null, \"pacing\": \"balanced\", \"target_duration_s\": 31.2, \"render_program\": \"native\", \"selected_media_ids\": [\"analysis-proxy-ios-4DB8A9C3-80FE-4269-9D22-7C19280DC543.mp4\"], \"optional_treatments\": [], \"rationale\": \"One talking take, kept in order, cut tight and captioned.\", \"caption_style\": \"karaoke\"}, \"summary\": \"I'll cut your take tight and caption it in white in the middle, two words at a time.\", \"render_intent_evidence\": {\"opening_title\": null, \"font_family\": null, \"text_color\": null, \"opening_title_duration_s\": null, \"shot_labels\": null, \"closing_title\": null, \"licensed_sfx\": null}}}",
+  "output": null,
+  "meta": {
+    "source": "hand_authored_golden",
+    "prod_profile": true,
+    "settings": {
+      "phone_render_user_ids": [],
+      "phone_subtitled_rendering_enabled": true
+    },
+    "note": "Qendresa says-done cases 6 and 8 (kit Q1, `test_q1_caption_two_words`, `test_q1_pauses_tight`): her full Q1 prompt. 'word by word ... two words at a time' records caption_words 2 beside captions word_by_word on ONE requirement; 'all my pauses ... so it's tight' records pauses tight; unnamed 'mistakes' is cut_restarts. Hand-authored golden answer (NOT a model recording): the cassette ignores the prompt, so replay proves only the answer shape, that the v137 teaching is in the rendered prompt (`prompt_contains`) and the `caption_cleanup_brief` check. The paid live run in docs/reviews/says-done-e-brief-prompt-live-check.md measures what the model records. Input shell: kri1189_green3_restart_en (one-take iPhone Talking, prod profile; her screenshots and recordings are not attached, which the brief facts judged here do not depend on).",
+    "prompt_contains": [
+      "\"word by word\" names the karaoke style, never a count",
+      "\"caption_words\": 2, \"caption_position\": \"middle\", \"caption_color\": \"#FFFFFF\"",
+      "\"Cut out all my pauses and mistakes so it's tight\""
+    ],
+    "caption_cleanup_brief": {
+      "captions": {
+        "captions": "word_by_word",
+        "words": 2,
+        "box": null,
+        "position": "middle",
+        "color": "#FFFFFF"
+      },
+      "tight_pauses": true
+    },
+    "restart_brief": {
+      "cut_restarts": true,
+      "speech_cleanup": true
+    }
+  }
+}

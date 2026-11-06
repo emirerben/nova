@@ -271,7 +271,15 @@ log = structlog.get_logger()
 # v136 (Qendresa item 18; was v126, then v132, then v134 until item 20 merged as v135):
 # v126's background-focus paragraph on top of v133 (item 16) and v135 (item 20). Every other
 # prompt keeps its bytes.
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-06-v136"
+# v137 (Qendresa says-done cases 6-8, group E): the shared brief section's caption and cleanup
+# sentences, on top of v136. "Word by word" names the karaoke style, never a count, and a stated
+# count wins (her Q1 sentence is the example: `caption_words: 2`); the captions' whole look goes on
+# the one captions requirement (the item-23 golden split it and dropped `caption_box`); "cut all my
+# pauses" is `pauses: "tight"` without the word tight, "cut the (long) pauses" stays plain; an
+# unnamed "mistakes" joins the KRI-1189 unquoted-restart rule (`cut_restarts`). Ungated like
+# v120/v121 (the facts are read only behind PHONE_CAPTION_SHAPE / TIGHT_PAUSE_CUT); brief_extractor
+# v69 shares it. Replay fixtures `qendresa_*` are hand-authored; only a paid live run measures it.
+MAIN_CREATOR_PROMPT_VERSION = "2026-11-06-v137"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -1199,12 +1207,15 @@ photo, each with its own display_mode; keep a take whole, uncut =>
 particular shot, photo or badge => {"closing": "<the creator's words for it>"}; remove pauses or
 filler sounds from the speech => {"speech_cleanup": true}, keep them => {"speech_cleanup": false},
 every pause gone or a tight, fast pace, not only the long ones ("cut out all my pauses so it's
-tight", "no pauses at all", "bütün boşlukları kes, sıkı olsun") => {"speech_cleanup": true,
-"pauses": "tight"};
-remove a sentence they restarted, their retakes or false starts without quoting or naming which
-one ("the sentence I restarted", "the places I restarted", "my retakes", "yanlış başladığım
-cümleleri", "tekrar aldığım cümleyi") => {"speech_cleanup": true, "cut_restarts": true} and no
-`cut_lines` for it: never copy words from the take or its transcript into `cut_lines`, which hold
+tight", "cut all my pauses", "no pauses at all", "bütün boşlukları kes, sıkı olsun") =>
+{"speech_cleanup": true, "pauses": "tight"}: ALL or EVERY pause is tight even without the word
+tight, while "cut the pauses" or "cut the long pauses" is the plain cleanup;
+remove a sentence they restarted, their retakes, false starts or mistakes without quoting or
+naming which one ("the sentence I restarted", "the places I restarted", "my retakes", "all my
+mistakes", "yanlış başladığım cümleleri", "tekrar aldığım cümleyi") => {"speech_cleanup": true,
+"cut_restarts": true} and no `cut_lines` for it ("Cut out all my pauses and mistakes so it's
+tight" => {"speech_cleanup": true, "pauses": "tight", "cut_restarts": true}):
+never copy words from the take or its transcript into `cut_lines`, which hold
 only the creator's own words. A restart they quote or name ("the part where I restart the
 kilometer thirty sentence") is a cut line, not `cut_restarts`; "start over" about the edit or a
 clip ("start over with a clip", "make it again from scratch", "videoyu baştan yap") is no restart;
@@ -1235,9 +1246,13 @@ says how many words show at a time ("two words at a time" => 2, "one word at a t
 {"caption_box": "#E5E5E5"} (a literal #RRGGBB: light grey #E5E5E5, grey #9E9E9E, white #FFFFFF,
 black #000000) ONLY when they ask for a box, pill or background behind the captions; "Captions
 word by word in a light grey box near the bottom" => {"captions": "word_by_word", "caption_box":
-"#E5E5E5", "caption_position": "bottom"}; "word by word" alone sets no caption_words; where
-the creator puts themselves, a photo, a card or the background ("me small at the bottom right")
-is never a caption position, plus
+"#E5E5E5", "caption_position": "bottom"}; "word by word" names the karaoke style, never a count:
+alone it sets no caption_words, and with a count the count wins ("Captions word by word in the
+middle of the screen, white, two words at a time" => {"captions": "word_by_word",
+"caption_words": 2, "caption_position": "middle", "caption_color": "#FFFFFF"}); in one message
+the captions' whole look goes on the same requirement as `captions`, never split into a second
+requirement; where the creator puts themselves, a photo, a card or the background ("me small at
+the bottom right") is never a caption position, plus
 {"ask_if_unclear": "the third sauce he names"} (the creator's own words for WHICH word) when they
 say they could not make out a word and want to be asked instead of having it guessed ("I didn't
 catch the third sauce he names: if you can't tell what he says, ask me"), on the captions

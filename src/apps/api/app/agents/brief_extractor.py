@@ -100,7 +100,11 @@ from app.pipeline.prompt_loader import load_prompt
 # Flag off: byte-identical.
 # v68 (Qendresa item 16 after main reached v66; v67 is held by item 24): v60's full-screen-opening
 # fact on top of v66. Flag off: unchanged bytes.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-06-v68"
+# v69 (Qendresa says-done cases 6-8, Main Creator v137): the shared brief section's caption and
+# cleanup sentences: "word by word" is never a count and a stated count wins, the captions' look
+# stays on the one captions requirement, "cut all my pauses" is `pauses: "tight"`, and an
+# unnamed "mistakes" is `cut_restarts`.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-06-v69"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")

@@ -249,7 +249,7 @@ def test_the_planner_is_taught_the_field_only_while_the_rollout_is_open(monkeypa
     from app.agents.main_creator import MAIN_CREATOR_PROMPT_VERSION, _insert_clip_section
 
     section = _insert_clip_section(cutaways_open=False)
-    assert MAIN_CREATOR_PROMPT_VERSION.endswith("-v136")
+    assert MAIN_CREATOR_PROMPT_VERSION.endswith("-v137")
     _open(monkeypatch, insert=True)
     manifest = _julio_manifest()
     open_prompt = _render_prompt(manifest)
@@ -424,7 +424,10 @@ def _extractor_prompt(**kw) -> str:
 # it the digest is 562441ab494ae1bf4c0f79dd9811163c782b8548712f05ed7334ceaba675ffe6.
 # Qendresa item 17 (creator v123, on top of v121) leaves the brief section unchanged: the pin
 # covers v121 + v123. Qendresa item 16 (creator v125, now v133) changes it only with its flag on.
-_BRIEF_SECTION_BEFORE_INSERTS = "14ad8c6e284569817ed3c380fea76ae35b5983b1fe42a2f53c42a6c14bcaa6d7"
+# Says-done group E (creator v137) rewords the caption-count and cleanup sentences (her Q1/Q2
+# sentences as examples); with v136's sentences the digest is
+# 14ad8c6e284569817ed3c380fea76ae35b5983b1fe42a2f53c42a6c14bcaa6d7.
+_BRIEF_SECTION_BEFORE_INSERTS = "856e1d91b5c885453e00a63383ec324e0477053c6a429337bf3af928a9ea870f"
 
 
 def test_a_closed_rollout_leaves_the_brief_section_byte_identical_to_before_inserts():
