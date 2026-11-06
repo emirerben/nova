@@ -395,3 +395,46 @@ Scope: the parent-narrowed Cunda correction and direct caller fallbacks; no new 
 | prepareSourcePreview and nested source/audio/media compilation | preview, sources, duration and failure state | existing source sequence invalidated at every load; no new propagation behavior |
 
 Not applicable to this narrowed correction: media-gallery refresh/import/paste/export operations and chat submission orchestration are separate user actions, not reopening or fallback reloads. No new behavior is added to those paths. This inventory does not claim a whole-session or automatic-update redesign.
+
+## Hosted assertion contract correction (2026-11-06)
+
+Hosted native CI on `a7ed058b` ran 2650 tests with 33 skips and two assertion
+failures. Its synthetic merge `06f41ffb` has the same tree as that candidate.
+Independent review found two test-contract defects, not established production
+regressions. The measured 1.92-second source with 1.933333-second output is the
+approved bounded final-frame hold; the test now verifies source span, rate,
+output clock, hold bound and unchanged document. A 59/30-second request retains
+the genuine-overrun refusal. The shape fixture now records an explicit one-second
+source span; recipe hydration, projection and compilation verify one second of
+motion plus two seconds of hold and no letterbox transform. The unmarked stale
+projection separately verifies three seconds of motion and letterboxing. This
+is component-chain coverage, not a gesture, session Save/reopen or device claim.
+No production code changed in this correction.
+
+The reviewed two-test-file diff SHA256 is
+`0dc10cb286f30525d203c7b740f43e125b76794223e71895dac46169830901ac`
+on parent `bc0bfd6ee198a5b5ec3e2d0dc3276b1908c50a3c`. The retained command used
+`xcodebuild -project src/apps/ios/Kria.xcodeproj -scheme Kria -jobs 2
+-skipPackagePluginValidation -disableAutomaticPackageResolution -destination
+'platform=iOS Simulator,id=50596C09-D082-4819-B74C-765D5480F6F5'
+-derivedDataPath /tmp/cunda-recovery-dd CODE_SIGNING_ALLOWED=NO` with the six
+`-only-testing:KriaTests/<class>` selectors below, `test`, and result bundle
+`/tmp/cunda-ci-contract-correction.xcresult`. Log:
+`/tmp/cunda-ci-contract-correction.log`; executed manifest:
+`/tmp/cunda-ci-contract-executed.json`.
+
+On 2026-11-06 at 11:58 UTC, **176 passed, zero failed, zero skipped**:
+RenderedOriginalClockTests 4; VideoShapeTests 31; NativeEditorSourcesTests 25;
+NativeEditorRenderCompilerTests 73; SavedEditorRecoveryTests 31;
+SavedDraftPreviewRangeTests 12. All 176 intended identifiers actually executed,
+with no missing or unexpected identifiers. Non-grid, missing-original,
+genuine-shortage and invalid-endpoint controls remain in the selection.
+The earlier interrupted runs remain interrupted; isolation or this bounded pass
+does not establish their SIGKILL cause or complete full-suite coverage.
+
+No formal/model correspondence check was run for this correction; no formal,
+model or coverage files were changed. The broader Cunda changes affect saved-edit
+availability, explicit retry versus dirtiness, generation/load-lifetime ownership,
+and bounded original-source frame padding. Prior preship gate selection does not
+establish correspondence for those semantics. Private-project/receipt, database
+Save/reopen, physical-device/Photos export and rollout verification remain pending.
