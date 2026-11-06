@@ -748,6 +748,43 @@ def canvas_speech_slots(slots: Sequence[dict], sections: Sequence[dict]) -> list
     return result
 
 
+def project_canvas_background(
+    background: dict,
+    old_slots: Sequence[dict],
+    old_sections: Sequence[dict],
+    new_slots: Sequence[dict],
+    new_sections: Sequence[dict],
+) -> dict:
+    """Move omitted background windows on the canvas clock, retaining media settings."""
+    from app.kria.portable_speaker_background import MIN_BACKGROUND_WINDOW_S
+
+    old_canvas = canvas_speech_slots(old_slots, old_sections)
+    new_canvas = canvas_speech_slots(new_slots, new_sections)
+    result = deepcopy(background)
+    for key in ("windows", "full_screen_windows"):
+        if not isinstance(background.get(key), list):
+            continue
+        projected = project_speech_basis(
+            [
+                speech_basis_entry(window, old_slots, canvas_slots=old_canvas)
+                for window in background[key]
+            ],
+            new_slots,
+            captions=False,
+            canvas_slots=new_canvas,
+        )
+        projected = [
+            window
+            for window in projected
+            if window["end_s"] - window["start_s"] >= MIN_BACKGROUND_WINDOW_S
+        ]
+        if projected:
+            result[key] = projected
+        else:
+            result.pop(key, None)
+    return result
+
+
 def _record_segment_id(record: dict) -> str | None:
     return record.get("segment_id") or (record.get("source_params") or {}).get("segment_id")
 

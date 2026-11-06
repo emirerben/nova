@@ -75,7 +75,7 @@ enum NativeSplitTimelineRebase {
         for i in next.visualBlocks.indices where owns(next.visualBlocks[i].raw) { let span = interval(next.visualBlocks[i].startS, next.visualBlocks[i].endS); next.visualBlocks[i].startS = span.0; next.visualBlocks[i].endS = span.1 }
         for i in next.motionScenes.indices where owns(next.motionScenes[i].raw) { let span = interval(next.motionScenes[i].startS, next.motionScenes[i].endS); next.motionScenes[i].startS = span.0; next.motionScenes[i].endS = span.1 }
         for i in next.cameraEffects.indices where owns(next.cameraEffects[i].raw) { let span = interval(next.cameraEffects[i].startS, next.cameraEffects[i].endS); next.cameraEffects[i].startS = span.0; next.cameraEffects[i].endS = span.1 }
-        for i in next.drawings.indices where owns(next.drawings[i].raw) { let span = interval(next.drawings[i].startS, next.drawings[i].endS); next.drawings[i].startS = span.0; next.drawings[i].endS = span.1 }
+        for i in next.drawings.indices { let span = interval(next.drawings[i].startS, next.drawings[i].endS); next.drawings[i].startS = span.0; next.drawings[i].endS = span.1 }
         if speech {
             for i in next.textElements.indices where owns(next.textElements[i].raw) {
                 let span = interval(next.textElements[i].startS, next.textElements[i].endS)
@@ -86,6 +86,8 @@ enum NativeSplitTimelineRebase {
         if var background = next.speakerBackground {
             for i in background.windows.indices { let span = interval(background.windows[i].startS, background.windows[i].endS); background.windows[i].startS = span.0; background.windows[i].endS = span.1 }
             for i in background.fullScreenWindows.indices { let span = interval(background.fullScreenWindows[i].startS, background.fullScreenWindows[i].endS); background.fullScreenWindows[i].startS = span.0; background.fullScreenWindows[i].endS = span.1 }
+            background.windows.removeAll { !$0.isValid }
+            background.fullScreenWindows.removeAll { !$0.isValid }
             background.windows.sort { $0.startS < $1.startS }; background.fullScreenWindows.sort { $0.startS < $1.startS }
             next.speakerBackground = background
         }

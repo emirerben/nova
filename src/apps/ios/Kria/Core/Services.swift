@@ -2870,6 +2870,7 @@ extension DraftSnapshot {
                sections["timeline_slots"] == nil,
                let value = timeline?["slots"], case let .array(slots) = value {
                 sections["timeline_slots"] = .array(slots)
+                sections["split_screen_sections"] = timeline?["split_screen_sections"] ?? .array([])
                 payload["sections"] = .object(sections)
                 document["editor_payload"] = .object(payload)
             }
@@ -2976,10 +2977,14 @@ extension DraftSnapshot {
             if !isIntentionalEmpty, let timeline,
                let slotValue = timeline["slots"], case let .array(slots) = slotValue {
                 sections["timeline_slots"] = .array(slots)
+                sections["split_screen_sections"] = timeline["split_screen_sections"] ?? .array([])
             } else if !isIntentionalEmpty,
                       ["narrated", "voiceover"].contains(authoritativeVariant["resolved_archetype"]?.stringValue ?? "") {
                 let slots = Self.narratedTimelineSlots(authoritativeVariant)
-                if !slots.isEmpty { sections["timeline_slots"] = .array(slots) }
+                if !slots.isEmpty {
+                    sections["timeline_slots"] = .array(slots)
+                    sections["split_screen_sections"] = .array([])
+                }
             }
             let baseline = [authoritativeVariant["render_generation_id"]?.stringValue,
                 authoritativeVariant["render_finished_at"]?.stringValue, baseGenerationID,
@@ -3069,7 +3074,8 @@ extension DraftSnapshot {
     /// copy (`kria_editor_ops.merge_editor_draft`), so the flat keys identify
     /// the changed lanes and `sections` carries their full content.
     private static let stagedLaneKeys: [(key: String, section: EditorSection, sectionKeys: [String])] = [
-        ("timeline_slots", .timeline, ["timeline_slots"]), ("text_elements", .text, ["text_elements"]),
+        ("timeline_slots", .timeline, ["timeline_slots", "split_screen_sections"]),
+        ("split_screen_sections", .timeline, ["timeline_slots", "split_screen_sections"]), ("text_elements", .text, ["text_elements"]),
         ("caption_cues", .captions, ["caption_cues"]), ("caption_meta", .captionMeta, ["caption_meta"]),
         ("mix", .mix, ["mix"]), ("music_track_id", .music, ["music_track_id", "music_window"]),
         ("music_window", .music, ["music_track_id", "music_window"]), ("remove_music", .music, ["music_track_id", "music_window"]),
@@ -3107,8 +3113,13 @@ extension DraftSnapshot {
         for lane in Self.stagedLaneKeys where draftPayload[lane.key] != nil && !changed.contains(lane.section) {
             var candidate = sections
             if lane.section == .timeline {
-                guard let merged = Self.mergedTimeline(draft: Self.array(draftValue("timeline_slots")), base: Self.array(baseSections["timeline_slots"])) else { continue }
-                candidate["timeline_slots"] = .array(merged)
+                let explicitSections = draftValue("split_screen_sections")
+                let authoritative = explicitSections != nil
+                let rows = draftValue("timeline_slots") ?? baseSections["timeline_slots"]
+                if let merged = Self.mergedTimeline(draft: Self.array(rows), base: Self.array(baseSections["timeline_slots"]), authoritative: authoritative) {
+                    candidate["timeline_slots"] = .array(merged)
+                } else if !authoritative { continue }
+                if let explicitSections { candidate["split_screen_sections"] = explicitSections }
             } else {
                 for key in lane.sectionKeys {
                     if key == "music_track_id", draftPayload["remove_music"] == .bool(true) { candidate[key] = .null }
@@ -3129,8 +3140,8 @@ extension DraftSnapshot {
     /// slot rows by identity (`slot_id`, else `clip_index`) so media/asset
     /// metadata survives. Draft order wins (reorder); base slots the draft does
     /// not mention keep their place at the end. Nil when nothing changed.
-    private static func mergedTimeline(draft: [JSONValue], base: [JSONValue]) -> [JSONValue]? {
-        guard !draft.isEmpty else { return nil }
+    private static func mergedTimeline(draft: [JSONValue], base: [JSONValue], authoritative: Bool = false) -> [JSONValue]? {
+        guard !draft.isEmpty || authoritative else { return nil }
         var unmatched = base.compactMap(object)
         func take(_ row: [String: JSONValue]) -> [String: JSONValue]? {
             let index = row["slot_id"]?.stringValue.flatMap { id in unmatched.firstIndex { $0["slot_id"]?.stringValue == id } }
@@ -3142,15 +3153,24 @@ extension DraftSnapshot {
             guard let row = object(value) else { continue }
             let matched = take(row)
             var slot = matched ?? [:]
+            if matched == nil, let source = base.compactMap(object).first(where: { $0["clip_index"] == row["clip_index"] }) {
+                for key in ["asset_id", "media_id", "media_kind", "kind", "source_duration_s", "source_duration"] {
+                    slot[key] = source[key]
+                }
+            }
+            if authoritative {
+                for key in ["split_section_id", "split_panel_index", "split_offset_s"] { slot.removeValue(forKey: key) }
+            }
             for (key, field) in row { slot[key] = field }
             // KRI-773: a draft clip that matches no saved clip is a new placement. An id it carries
             // (chat minted `cs-<state>-<n>` ids before #1698, and they live on in stored drafts) was
             // never a real slot; keeping it made every Save fail 409 TIMELINE_STALE, and "Reload and
             // keep my edits" re-applied the same timeline.
-            if matched == nil, slot["removed"] != .bool(true), slot["slot_id"] != nil { slot.removeValue(forKey: "slot_id") }
+            if matched == nil, slot["removed"] != .bool(true),
+               let id = slot["slot_id"]?.stringValue, UUID(uuidString: id) == nil { slot.removeValue(forKey: "slot_id") }
             merged.append(slot)
         }
-        merged.append(contentsOf: unmatched)
+        if !authoritative { merged.append(contentsOf: unmatched) }
         // Historical chat drafts can carry a window longer than their clip
         // (Troya: 3 s on 3.36 s from 0.9 s).
         // Preserve authoring intent; feasible footage mapping belongs to the

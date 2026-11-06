@@ -57,6 +57,7 @@ def sync_talking_source_lanes(
     submitted output clock and is never remapped a second time. Returns the payload (its text
     lane stripped of caption mirrors) and whether newly exposed speech has no caption timing.
     """
+    from app.kria.split_screen import layout_split_timeline
     from app.pipeline.speech_cut_state import (
         SPEECH_EDITOR_LANES,
         authored_speech_texts,
@@ -68,7 +69,26 @@ def sync_talking_source_lanes(
     from app.services.editor_deletions import canonical_caption_rows
 
     new_sections = (variant.get("user_timeline") or {}).get("split_screen_sections") or []
-    use_canvas = bool(old_sections or new_sections)
+    if old_sections or new_sections:
+        old_slots = [row for row in old_slots if not row.get("removed")]
+        resolved = [row for row in resolved if not row.get("removed")]
+        old_starts, _, _ = layout_split_timeline(old_slots, old_sections or [])
+        old_slots = [
+            {**row, "_speech_output_start_s": start}
+            for row, start in zip(old_slots, old_starts, strict=True)
+        ]
+        new_starts, _, _ = layout_split_timeline(resolved, new_sections)
+        resolved = [
+            {**row, "_speech_output_start_s": start}
+            for row, start in zip(resolved, new_starts, strict=True)
+        ]
+    use_canvas = bool(old_sections or new_sections) or any(
+        entry.get("anchor_space") == "canvas"
+        for entries in (variant.get("speech_timing_basis") or {}).values()
+        if isinstance(entries, list)
+        for entry in entries
+        if isinstance(entry, dict)
+    )
     old_canvas = canvas_speech_slots(old_slots, old_sections or []) if use_canvas else None
     new_canvas = canvas_speech_slots(resolved, new_sections) if use_canvas else None
     basis = speech_timing_basis_for_job(job, variant, old_slots)
@@ -233,6 +253,22 @@ def prepare_authored_editor_commit(
             baseline = canonical.get(row.slot_id)
             if baseline is None or row.clip_index != baseline["clip_index"]:
                 raise HTTPException(409, detail={"code": "TIMELINE_STALE"})
+    new_sections = (variant.get("user_timeline") or {}).get("split_screen_sections") or []
+    if (
+        payload.timeline_slots is not None
+        and (old_sections or new_sections)
+        and "speaker_background" not in payload.model_fields_set
+        and isinstance(variant.get("speaker_background"), dict)
+    ):
+        from app.pipeline.speech_cut_state import project_canvas_background
+
+        variant["speaker_background"] = project_canvas_background(
+            variant["speaker_background"],
+            list(canonical.values()),
+            old_sections,
+            resolve_authored_phone_slots(job, variant, payload.timeline_slots),
+            new_sections,
+        )
     if (payload.timeline_slots is not None or variant.get("speech_timing_basis")) and any(
         str(key).startswith("native-phone-talking-source") for key in canonical
     ):

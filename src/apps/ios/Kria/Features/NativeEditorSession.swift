@@ -2894,6 +2894,31 @@ struct NativeEditorTemporaryVideo: Sendable {
                 return (index, ResolvedEditorSource(clipIndex: index, mediaID: "fixture-source-\(index)",
                     asset: MediaAsset(id: "fixture-\(index)", relativePath: sourceURL.lastPathComponent, fingerprint: sourceFingerprint), url: sourceURL))
             })
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-mixed-media") {
+                let photoURL = FileManager.default.temporaryDirectory.appendingPathComponent("split-unused-photo.png")
+                let image = UIGraphicsImageRenderer(size: CGSize(width: 96, height: 160)).image { context in
+                    UIColor.blue.setFill(); context.fill(CGRect(x: 0, y: 0, width: 96, height: 160))
+                }
+                try image.pngData()!.write(to: photoURL)
+                let photoFingerprint = try SHA256Fingerprinter().fingerprint(file: photoURL)
+                let fixtureProject = ProjectDirectory(root: FileManager.default.temporaryDirectory
+                    .appendingPathComponent("split-media-\(UUID().uuidString)", isDirectory: true))
+                let cache = NativePreviewAssetCache(project: fixtureProject)
+                try cache.project.createIfNeeded()
+                let assetID = "native-preview-" + photoFingerprint.hex
+                let storedPhoto = cache.project.originals.appendingPathComponent(assetID + ".png")
+                if !FileManager.default.fileExists(atPath: storedPhoto.path) {
+                    try FileManager.default.copyItem(at: photoURL, to: storedPhoto)
+                }
+                let asset = MediaAsset(id: assetID, relativePath: "originals/" + assetID + ".png", fingerprint: photoFingerprint)
+                try cache.store(asset, for: "\(document.revision.baseGeneration):1:fixture-source-1")
+                sourcePool = NativeEditorSourcePool(clips: [.init(clipIndex: 1, nativeSource: .init(
+                    mediaID: "fixture-source-1", sourceURL: URL(string: "https://fixture.invalid/unused-photo.png"),
+                    original: nil, localRequired: false))], baseGeneration: document.revision.baseGeneration)
+                sourceResolver = NativeEditorSourceResolver(project: fixtureProject)
+                // Resolve the admitted photo through the ordinary verified disk-cache path on selection.
+                resolvedSources?.removeValue(forKey: 1)
+            }
             if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-caption-visuals") {
                 let source = ResolvedEditorSource(clipIndex: -1, mediaID: "fixture", asset: MediaAsset(id: "fixture", relativePath: url.lastPathComponent, fingerprint: fingerprint, duration: 4), url: url)
                 authoredVisualSources["visual:paper-media:paper-media"] = source
@@ -4399,13 +4424,13 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// fixed at job creation, so a slot referencing an unminted index would be
     /// rejected on Save. The new slot itself then round-trips through the
     /// normal Save path like any other timeline edit.
-    func addClip(fileURL: URL) async { await addClip(source: { fileURL }) }
+    func addClip(fileURL: URL, replacingSlotID: String? = nil) async { await addClip(source: { fileURL }, replacingSlotID: replacingSlotID) }
 
     /// `source` produces the file. For a Photos pick that is the export out of the library, which can
     /// take seconds when the asset lives in iCloud. Running it here, rather than before the call,
     /// keeps `isAddingClip` true throughout, so the editor can show progress after the picker sheet
     /// has already dismissed instead of holding the user on it.
-    func addClip(source: @MainActor () async throws -> URL, uploadSource: UploadSource = .files) async {
+    func addClip(source: @MainActor () async throws -> URL, uploadSource: UploadSource = .files, replacingSlotID: String? = nil) async {
         // 20 mirrors the server's `_MAX_CLIPS` pool cap — an early, friendly
         // no-op instead of a round trip that would 422 anyway.
         guard !isAddingClip else { return }
@@ -4419,7 +4444,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             defer { isAddingClip = false }
             do {
                 let url = try await source()
-                await addDeviceTimelineMedia(fileURL: url, source: uploadSource, alreadyPreparing: true)
+                await addDeviceTimelineMedia(fileURL: url, source: uploadSource, alreadyPreparing: true, replacingSlotID: replacingSlotID)
             } catch {
                 addClipError = "This file couldn’t be read. Try Files or choose it again."
             }
@@ -5224,7 +5249,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// Device renders retain a local footage original and send only its
     /// analysis proxy through the existing project reservation.  Completion is
     /// admitted to this variant, never attached to its creation thread.
-    func addDeviceTimelineMedia(fileURL: URL, source: UploadSource, alreadyPreparing: Bool = false) async {
+    func addDeviceTimelineMedia(fileURL: URL, source: UploadSource, alreadyPreparing: Bool = false, replacingSlotID: String? = nil) async {
         guard canAddTimelineMedia, let uploads = mediaUploads else {
             addClipError = "Adding media isn’t available for this edit right now."
             return
@@ -5233,7 +5258,6 @@ struct NativeEditorTemporaryVideo: Sendable {
         if !alreadyPreparing { isAddingClip = true }
         addClipError = nil
         defer { if !alreadyPreparing { isAddingClip = false } }
-        let replacingSlotID = selectedSplitScreenSectionID == nil ? nil : selection?.id
         var importID: UUID?
         do {
             let values = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
@@ -9530,7 +9554,8 @@ extension NativeEditorSession {
             var members: [EditorTimelineSlot] = []
             for panel in 0..<panelCount {
                 var member = original
-                if member.raw["speaker_subject"] == nil, NativePhoneTalkingSource.isSourceSlot(original) {
+                if member.raw["speaker_subject"]?.boolValue == nil,
+                   NativePhoneTalkingSource.isSourceSlot(original) || original.parentSegmentID?.hasPrefix("native-phone-talking-source") == true {
                     member.raw["speaker_subject"] = .bool(true)
                 }
                 if panel > 0 { member.id = UUID().uuidString; member.parentSegmentID = nil }
@@ -9555,7 +9580,12 @@ extension NativeEditorSession {
                 let templates = value.clips.filter { $0.splitSectionID == id && $0.splitPanelIndex == 0 }
                 guard let insertion = value.clips.lastIndex(where: { $0.splitSectionID == id }) else { return }
                 let copies = templates.map { slot -> EditorTimelineSlot in
-                    var copy = slot; copy.id = UUID().uuidString; copy.parentSegmentID = nil
+                    var copy = slot
+                    if copy.raw["speaker_subject"]?.boolValue == nil,
+                       NativePhoneTalkingSource.isSourceSlot(copy) || copy.parentSegmentID?.hasPrefix("native-phone-talking-source") == true {
+                        copy.raw["speaker_subject"] = .bool(true)
+                    }
+                    copy.id = UUID().uuidString; copy.parentSegmentID = nil
                     copy.setSplitMembership(sectionID: id, panelIndex: 2, offset: slot.splitOffsetS)
                     return copy
                 }
@@ -9640,6 +9670,10 @@ extension NativeEditorSession {
         guard canDuplicateSelectedClip, let selection, let index = clipSlotIndex(selection.id) else { return }
         transactDocument(section: .timeline) { value in
             var copy = value.clips[index]
+            if copy.raw["speaker_subject"]?.boolValue == nil,
+               NativePhoneTalkingSource.isSourceSlot(copy) || copy.parentSegmentID?.hasPrefix("native-phone-talking-source") == true {
+                copy.raw["speaker_subject"] = .bool(true)
+            }
             copy.parentSegmentID = nil; copy.id = UUID().uuidString
             if copy.splitSectionID != nil { copy.raw["split_offset_s"] = .number(copy.splitOffsetS + (copy.durationS ?? 0)) }
             value.clips.insert(copy, at: index + 1)

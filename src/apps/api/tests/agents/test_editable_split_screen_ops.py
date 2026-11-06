@@ -659,3 +659,68 @@ def test_panel_audio_respects_closed_capability(document):
                 variant,
                 [{"op": "patch_slots", "selector": {"slot_indexes": [0]}, "patch": patch}],
             )
+
+
+@pytest.mark.parametrize("bounded", [False, True])
+@pytest.mark.parametrize("explicit", [None, False, True])
+def test_legacy_speaker_provenance_survives_copy_and_unstack(document, bounded, explicit):
+    job, variant = document
+    row = variant["user_timeline"]["slots"][0]
+    row.update(slot_id="native-phone-talking-source-a", duration_s=4)
+    if explicit is not None:
+        row["speaker_subject"] = explicit
+    command = {"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2}
+    if bounded:
+        command.update(start_s=1, end_s=3)
+    variant, payload = apply(job, variant, command)
+    expected = explicit if explicit is not None else True
+    copied = [r for r in payload["timeline_slots"] if r["clip_index"] == 0]
+    assert all(r.get("speaker_subject") is expected for r in copied)
+    assert all(not r.get("parent_segment_id") for r in copied)
+    section = payload["split_screen_sections"][0]["id"]
+    variant, payload = apply(
+        job, variant, {"op": "remove_split_screen", "section_id": section, "keep_panel": 1}
+    )
+    copied = [r for r in variant["user_timeline"]["slots"] if r["clip_index"] == 0]
+    assert all(r.get("speaker_subject") is expected for r in copied)
+
+
+def test_legacy_speaker_provenance_on_assignment_and_panel_expansion(document):
+    job, variant = document
+    rows = variant["user_timeline"]["slots"]
+    rows[0].update(slot_id="native-phone-talking-source-a", duration_s=4)
+    rows[1].update(slot_id="native-phone-talking-source-b", duration_s=4, speaker_subject=False)
+    variant, payload = apply(
+        job,
+        variant,
+        {"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2, "duration_s": 8},
+    )
+    section = payload["split_screen_sections"][0]["id"]
+    variant, payload = apply(
+        job, variant, {"op": "update_split_screen", "section_id": section, "panel_count": 3}
+    )
+    assert all(
+        r.get("speaker_subject") is True for r in payload["timeline_slots"] if r["clip_index"] == 0
+    )
+    source_index = next(
+        i
+        for i, r in enumerate(editor.build_editor_snapshot(job, variant)["slots"])
+        if r["clip_index"] == 1
+    )
+    variant, payload = apply(
+        job,
+        variant,
+        {
+            "op": "assign_split_panel",
+            "section_id": section,
+            "slot_index": source_index,
+            "panel_index": 1,
+            "offset_s": 4,
+            "duplicate": True,
+        },
+    )
+    assigned = next(
+        r for r in payload["timeline_slots"] if r["clip_index"] == 1 and r.get("split_section_id")
+    )
+    assert assigned["speaker_subject"] is False
+    assert not assigned.get("parent_segment_id")

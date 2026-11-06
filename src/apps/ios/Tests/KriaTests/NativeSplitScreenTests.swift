@@ -326,11 +326,17 @@ extension NativeSplitScreenTests {
         var weights = old; weights.splitScreenSections[0].panelWeights = [2, 1]
         NativeSplitTimelineRebase.rebase(&weights, from: old)
         NativeSpeechTimelineProjection.rebase(&weights, from: old)
-        XCTAssertEqual(weights.cameraEffects, old.cameraEffects)
+        XCTAssertEqual(weights.cameraEffects.count, 1)
+        XCTAssertEqual(weights.cameraEffects.first?.id, "gap")
+        XCTAssertEqual(weights.cameraEffects.first?.startS, 3)
+        XCTAssertEqual(weights.cameraEffects.first?.endS, 3.5)
         var longer = old; longer.splitScreenSections[0].durationS = 6
         NativeSplitTimelineRebase.rebase(&longer, from: old)
         NativeSpeechTimelineProjection.rebase(&longer, from: old)
-        XCTAssertEqual(longer.cameraEffects, old.cameraEffects)
+        XCTAssertEqual(longer.cameraEffects.count, 1)
+        XCTAssertEqual(longer.cameraEffects.first?.id, "gap")
+        XCTAssertEqual(longer.cameraEffects.first?.startS, 3)
+        XCTAssertEqual(longer.cameraEffects.first?.endS, 3.5)
         XCTAssertEqual(longer.speakerBackground?.fullScreenWindows.first?.startS, 6)
         XCTAssertEqual(longer.speakerBackground?.fullScreenWindows.first?.endS, 7)
         XCTAssertEqual(longer.clipAudio.first?.startS, 6)
@@ -345,5 +351,186 @@ extension NativeSplitScreenTests {
         XCTAssertEqual(decoded.replacingSlotID, "panel-member")
         let ordinary = PendingEditorSourcePlacement(id: UUID(), target: target, lane: .timeline, visual: nil, localDurationS: nil)
         XCTAssertNil(ordinary.replacingSlotID)
+    }
+}
+
+extension NativeSplitScreenTests {
+    func testShorteningSectionDropsCollapsedAndTooShortSpeakerWindows() {
+        var slot = EditorTimelineSlot(id: "speaker", clipIndex: 0, inS: 0, durationS: 4)
+        slot.setSplitMembership(sectionID: "s", panelIndex: 0, offset: 0)
+        var old = EditorDocument(clips: [slot])
+        old.splitScreenSections = [.init(id: "s", durationS: 4, panelCount: 2)]
+        old.speakerBackground = .init(color: "#000000", windows: [
+            .init(localID: "keep", mediaID: "photo", kind: .image, startS: 0, endS: 1),
+            .init(localID: "short", mediaID: "photo", kind: .image, startS: 1.75, endS: 2.5),
+            .init(localID: "collapsed", mediaID: "photo", kind: .image, startS: 3, endS: 4)
+        ], fullScreenWindows: [.init(startS: 0, endS: 1), .init(startS: 1.75, endS: 2.5), .init(startS: 3, endS: 4)])
+        var next = old; next.clips[0].durationS = 2; next.splitScreenSections[0].durationS = 2
+        NativeSplitTimelineRebase.rebase(&next, from: old)
+        XCTAssertEqual(next.speakerBackground?.windows.map(\.localID), ["keep"])
+        XCTAssertEqual(next.speakerBackground?.fullScreenWindows, [.init(startS: 0, endS: 1)])
+        XCTAssertNotNil(next.speakerBackground.flatMap { EditorSpeakerBackground(json: $0.json) })
+    }
+}
+
+extension NativeSplitScreenTests {
+    @MainActor
+    func testLegacySpeakerDuplicateThenSplitPreservesSubjectWithoutCaptionParent() throws {
+        let cases: [(marker: JSONValue?, parentOnly: Bool, expected: Bool)] = [
+            (nil, false, true), (.null, false, true), (.bool(true), false, true),
+            (.bool(false), false, false), (nil, true, true), (.null, true, true), (.bool(false), true, false)
+        ]
+        for testCase in cases {
+            let id = testCase.parentOnly ? "legacy-child" : "native-phone-talking-source-original"
+            var raw: [String: JSONValue] = [:]
+            raw["speaker_subject"] = testCase.marker
+            let slot = EditorTimelineSlot(id: id, clipIndex: 0, inS: 0, durationS: 4,
+                parentSegmentID: testCase.parentOnly ? "native-phone-talking-source-parent" : nil, raw: raw)
+            let document = EditorDocument(clips: [slot], capabilities: ["timeline": .init(editable: true), "split_screen": .init(editable: true)])
+            let session = NativeEditorSession(draft: EditorDraft(projectID: UUID(), clips: [], text: [], captions: .init(enabled: false, style: "sentence"), music: nil, revision: 0, serverSnapshot: ["render_destination": .string("device")]))
+            session.replaceDocumentForTesting(document)
+            session.select(.init(kind: .clip, id: id), seekToStart: false)
+            session.duplicateSelectedClip()
+            XCTAssertEqual(session.document.clips.count, 2)
+            let copy = session.document.clips[1]
+            XCTAssertNil(copy.parentSegmentID)
+            XCTAssertEqual(copy.raw["speaker_subject"], .bool(testCase.expected))
+            session.select(.init(kind: .clip, id: try XCTUnwrap(copy.id)), seekToStart: false)
+            session.createSplitScreen(panelCount: 2)
+            let members = session.document.clips.filter { $0.splitSectionID != nil }
+            XCTAssertEqual(members.count, 2)
+            XCTAssertTrue(members.allSatisfy { $0.raw["speaker_subject"] == .bool(testCase.expected) && $0.parentSegmentID == nil })
+        }
+    }
+}
+
+extension NativeSplitScreenTests {
+    @MainActor
+    func testAPISnapshotReopensSplitThroughCompatibilityDraftWithoutOrphaning() throws {
+        var top = EditorTimelineSlot(id: "saved-top", clipIndex: 0, inS: 2, durationS: 2)
+        var bottom = EditorTimelineSlot(id: "saved-bottom", clipIndex: 1, inS: 7, durationS: 3)
+        top.setSplitMembership(sectionID: "saved-section", panelIndex: 0, offset: 1)
+        bottom.setSplitMembership(sectionID: "saved-section", panelIndex: 1, offset: 0)
+        var saved = EditorDocument(clips: [top, bottom])
+        saved.splitScreenSections = [.init(id: "saved-section", durationS: 4, panelCount: 2)]
+        var snapshot = saved.encodeSnapshot()
+        var payload = snapshot["editor_payload"]?.objectValue ?? [:]
+        var sections = payload["sections"]?.objectValue ?? [:]
+        let staleID = UUID().uuidString
+        sections["ios_editor"] = .object(["clips": .array([.object([
+            "id": .string(staleID), "asset_id": .string(staleID), "start": .number(0), "end": .number(99),
+            "trim_in": .number(0), "trim_out": .number(99)
+        ])])])
+        payload["sections"] = .object(sections); snapshot["editor_payload"] = .object(payload)
+        let apiSnapshot = DraftSnapshot(draftID: "draft", itemID: "item", variantKey: "variant", draftRevision: 1,
+            snapshotHash: "hash", etag: "etag", baseJobID: nil, baseGenerationID: nil,
+            snapshot: snapshot, canUndo: false, createdAt: .now)
+        let compatibility = apiSnapshot.editorDraft(projectID: UUID())
+        XCTAssertEqual(compatibility.clips.map(\.slotID), ["saved-top", "saved-bottom"])
+        let session = NativeEditorSession(draft: compatibility)
+        XCTAssertTrue(session.document.splitScreenIsValid)
+        XCTAssertEqual(session.document.splitScreenSections, saved.splitScreenSections)
+        XCTAssertEqual(session.document.clips.map(\.inS), [2, 7])
+        XCTAssertEqual(session.document.clips.map(\.splitOffsetS), [1, 0])
+        XCTAssertEqual(session.timelineProjection.totalDuration, 4)
+        XCTAssertEqual(session.timelineProjection.baseClipWindows.map(\.start), [1, 0])
+        XCTAssertFalse(session.hasUnsavedChanges)
+    }
+}
+
+extension NativeSplitScreenTests {
+    @MainActor
+    func testVariantTimelineFallbackHydratesSplitAtomicallyAcrossPayloadVersions() {
+        for stateVersion in [1, 2] {
+            let slot: JSONValue = .object(["slot_id": .string("variant-panel"), "clip_index": .number(1),
+                "in_s": .number(3), "duration_s": .number(2), "split_section_id": .string("variant-split"),
+                "split_panel_index": .number(1), "split_offset_s": .number(1)])
+            let section: JSONValue = .object(["id": .string("variant-split"), "panel_count": .number(2), "duration_s": .number(4)])
+            let snapshot = DraftSnapshot(draftID: "draft", itemID: "item", variantKey: "variant", draftRevision: 1,
+                snapshotHash: "hash", etag: "etag", baseJobID: nil, baseGenerationID: "generation",
+                snapshot: ["editor_payload": .object(["editor_state_version": .number(Double(stateVersion)), "sections": .object([:])])],
+                canUndo: false, createdAt: .now)
+            let variant: [String: JSONValue] = ["render_generation_id": .string("generation"), "render_destination": .string("device"),
+                "user_timeline": .object(["slots": .array([slot]), "split_screen_sections": .array([section])])]
+            let session = NativeEditorSession(draft: snapshot.editorDraft(projectID: UUID(), authoritativeVariant: variant))
+            XCTAssertTrue(session.document.splitScreenIsValid, "state version \(stateVersion)")
+            XCTAssertEqual(session.document.splitScreenSections.map(\.id), ["variant-split"])
+            XCTAssertEqual(session.document.clips.first?.id, "variant-panel")
+            XCTAssertEqual(session.document.clips.first?.inS, 3)
+            XCTAssertEqual(session.timelineProjection.baseClipWindows.first?.start, 1)
+            XCTAssertEqual(session.timelineProjection.totalDuration, 4)
+            XCTAssertFalse(session.hasUnsavedChanges)
+        }
+    }
+
+    @MainActor
+    func testAuthoritativeOrdinaryTimelineClearsStaleSplitConfiguration() {
+        for stateVersion in [1, 2] {
+            var sections: [String: JSONValue] = ["split_screen_sections": .array([.object([
+                "id": .string("stale"), "panel_count": .number(2), "duration_s": .number(4)
+            ])])]
+            if stateVersion == 1 {
+                sections["timeline_slots"] = .array([.object(["slot_id": .string("old"), "clip_index": .number(0),
+                    "in_s": .number(0), "duration_s": .number(4), "split_section_id": .string("stale"),
+                    "split_panel_index": .number(0), "split_offset_s": .number(0)])])
+            }
+            let snapshot = DraftSnapshot(draftID: "draft", itemID: "item", variantKey: "variant", draftRevision: 1,
+                snapshotHash: "hash", etag: "etag", baseJobID: nil, baseGenerationID: "generation",
+                snapshot: ["editor_payload": .object(["editor_state_version": .number(Double(stateVersion)), "sections": .object(sections)])],
+                canUndo: false, createdAt: .now)
+            let variant: [String: JSONValue] = ["render_generation_id": .string("generation"), "user_timeline": .object([
+                "slots": .array([.object(["slot_id": .string("ordinary"), "clip_index": .number(0), "in_s": .number(1), "duration_s": .number(2)])])
+            ])]
+            let session = NativeEditorSession(draft: snapshot.editorDraft(projectID: UUID(), authoritativeVariant: variant))
+            XCTAssertTrue(session.document.splitScreenIsValid)
+            XCTAssertTrue(session.document.splitScreenSections.isEmpty)
+            XCTAssertEqual(session.document.clips.map(\.id), ["ordinary"])
+            XCTAssertEqual(session.timelineProjection.totalDuration, 2)
+            XCTAssertFalse(session.hasUnsavedChanges)
+        }
+    }
+}
+
+extension NativeSplitScreenTests {
+    @MainActor
+    func testChatStagingTreatsSplitTimelineAsAtomicAndPreservesNewUUIDMetadata() throws {
+        let firstID = UUID().uuidString, secondID = UUID().uuidString, thirdID = UUID().uuidString
+        func row(_ id: String, panel: Int?) -> JSONValue {
+            var raw: [String: JSONValue] = ["slot_id": .string(id), "clip_index": .number(0), "in_s": .number(1), "duration_s": .number(2)]
+            if let panel { raw["split_section_id"] = .string("s"); raw["split_panel_index"] = .number(Double(panel)); raw["split_offset_s"] = .number(0) }
+            return .object(raw)
+        }
+        func section(_ count: Int, duration: Double = 2) -> JSONValue {
+            .object(["id": .string("s"), "panel_count": .number(Double(count)), "duration_s": .number(duration)])
+        }
+        var original = row(firstID, panel: nil).objectValue!
+        original["source_duration_s"] = .number(20); original["media_id"] = .string("approved-source")
+        var base: [String: JSONValue] = ["editor_payload": .object(["sections": .object(["timeline_slots": .array([.object(original)])])])]
+        let cases: [(slots: [JSONValue]?, sections: [JSONValue], ids: [String], duration: Double)] = [
+            ([row(firstID, panel: 0), row(secondID, panel: 1), row(thirdID, panel: 2)], [section(3)], [firstID, secondID, thirdID], 2),
+            (nil, [section(3, duration: 4)], [firstID, secondID, thirdID], 4),
+            ([row(firstID, panel: 0), row(secondID, panel: 1)], [section(2)], [firstID, secondID], 2),
+            ([row(secondID, panel: nil)], [], [secondID], 2)
+        ]
+        for (index, testCase) in cases.enumerated() {
+            var payload: [String: JSONValue] = ["base_generation": .string("g"), "split_screen_sections": .array(testCase.sections)]
+            if let slots = testCase.slots { payload["timeline_slots"] = .array(slots) }
+            let chat = DraftSnapshot(draftID: "draft", itemID: "item", variantKey: "variant", draftRevision: index + 1,
+                snapshotHash: "hash", etag: "etag", baseJobID: nil, baseGenerationID: "g",
+                snapshot: ["kind": .string("editor"), "editor_payload": .object(payload)], canUndo: false, createdAt: .now)
+            let staged = try XCTUnwrap(chat.stagedChatEdit(over: base, variant: ["render_generation_id": .string("g")], appliedRevision: nil))
+            XCTAssertEqual(staged.sections, [.timeline])
+            let document = EditorDocument(snapshot: staged.snapshot)
+            XCTAssertTrue(document.splitScreenIsValid)
+            XCTAssertEqual(document.clips.compactMap(\.id), testCase.ids)
+            XCTAssertEqual(document.clips.last?.raw["source_duration_s"], .number(20))
+            XCTAssertEqual(document.clips.last?.raw["media_id"], .string("approved-source"))
+            let restored = DraftSnapshot(draftID: "draft", itemID: "item", variantKey: "variant", draftRevision: index + 1,
+                snapshotHash: "hash", etag: "etag", baseJobID: nil, baseGenerationID: "g", snapshot: staged.snapshot, canUndo: false, createdAt: .now)
+            let session = NativeEditorSession(draft: restored.editorDraft(projectID: UUID()))
+            XCTAssertTrue(session.document.splitScreenIsValid)
+            XCTAssertEqual(session.timelineProjection.totalDuration, testCase.duration)
+            base = staged.snapshot
+        }
     }
 }

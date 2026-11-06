@@ -12,6 +12,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         clip.tap()
         app.buttons["native-editor-adjust"].tap()
         let create = app.buttons["native-editor-split-create-2"]
+        for _ in 0..<5 where !create.isHittable { app.swipeUp() }
         XCTAssertTrue(create.waitForExistence(timeout: 5))
         create.tap()
         app.buttons["native-editor-inspector-done"].tap()
@@ -61,6 +62,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         clip.tap()
         app.buttons["native-editor-adjust"].tap()
         let create = app.buttons["native-editor-split-create-2"]
+        for _ in 0..<5 where !create.isHittable { app.swipeUp() }
         XCTAssertTrue(create.waitForExistence(timeout: 5))
         create.tap()
         let count = app.segmentedControls["native-editor-split-count"]
@@ -85,6 +87,8 @@ final class NativeEditorInspectorUITests: XCTestCase {
         }
         app.descendants(matching: .any)["native-editor-clip-2"].firstMatch.tap()
         app.buttons["native-editor-adjust"].tap()
+        let position = app.segmentedControls["native-editor-split-position"]
+        for _ in 0..<5 where !position.isHittable { app.swipeUp() }
         XCTAssertTrue(app.segmentedControls["native-editor-split-position"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.segmentedControls["native-editor-split-position"].buttons["Middle"].isSelected)
         app.segmentedControls["native-editor-split-position"].buttons["Top"].tap()

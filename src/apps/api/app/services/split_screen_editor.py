@@ -18,7 +18,7 @@ def require_split_screen_commit(variant, payload):
             detail={
                 "code": "client_update_required",
                 "feature": "split_screen",
-                "minimum_client_protocol": 42,
+                "minimum_client_protocol": 43,
             },
         )
     if variant.get("render_destination") != "device":

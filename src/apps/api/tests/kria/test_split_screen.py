@@ -138,6 +138,7 @@ def test_old_app_cannot_erase_sections(monkeypatch):
             EditorCommitRequest(text_elements=[]),
         )
     assert error.value.status_code == 426
+    assert error.value.detail["minimum_client_protocol"] == 43
 
 
 def test_authored_save_reopens_with_independent_panel_source_clocks(monkeypatch):
@@ -611,7 +612,8 @@ def test_real_save_keeps_canvas_lanes_independent_of_panel_coverage(monkeypatch,
     from app.routes import generative_jobs as gj
     from tests.routes.test_authored_playback_speed import _authored_phone_job
 
-    job, variant = _authored_phone_job(monkeypatch)
+    job, _ = _authored_phone_job(monkeypatch)
+    variant = job.assembly_plan["variants"][0]
     monkeypatch.setattr(
         settings,
         "phone_render_verified_features",
@@ -628,7 +630,14 @@ def test_real_save_keeps_canvas_lanes_independent_of_panel_coverage(monkeypatch,
     ]
     variant["user_timeline"] = {"slots": rows, "split_screen_sections": [section().model_dump()]}
     variant["text_elements"] = [
-        {"id": "canvas-label", "text": "Canvas gap", "start_s": 3, "end_s": 3.5}
+        {"id": "canvas-label", "text": "Canvas gap", "start_s": 3, "end_s": 3.5},
+        {
+            "id": "panel-owned",
+            "text": "Panel label",
+            "start_s": 1,
+            "end_s": 1.5,
+            "segment_id": "native-phone-talking-source-1",
+        },
     ]
     variant["drawings"] = [
         {
@@ -653,10 +662,26 @@ def test_real_save_keeps_canvas_lanes_independent_of_panel_coverage(monkeypatch,
     )
     saved = job.assembly_plan["variants"][0]
     assert [(d["id"], d["start_s"], d["end_s"]) for d in saved["drawings"]] == [("ink", 1, 1.5)]
+    canvas = [t for t in saved["text_elements"] if t["id"] == "canvas-label"]
+    owned = [t for t in saved["text_elements"] if t["id"] == "panel-owned"]
+    assert [(t["start_s"], t["end_s"]) for t in owned] == [(1, 1.5)]
     if change != "section_trim":
-        assert [(t["start_s"], t["end_s"]) for t in saved["text_elements"]] == [(3, 3.5)]
+        assert [(t["start_s"], t["end_s"]) for t in canvas] == [(3, 3.5)]
     else:
-        assert saved["text_elements"] == []
+        assert canvas == []
+    gj.prepare_editor_commit(
+        job,
+        "original_text",
+        gj.EditorCommitRequest(
+            base_generation=saved["render_generation_id"],
+            editor_state_version=2,
+            timeline_slots=[gj.TimelineSlotEdit.model_validate(r) for r in rows],
+            split_screen_sections=[layout],
+        ),
+    )
+    repeated = job.assembly_plan["variants"][0]
+    assert repeated["drawings"] == saved["drawings"]
+    assert repeated["text_elements"] == saved["text_elements"]
 
 
 @pytest.mark.parametrize("nested", [False, True])
@@ -680,11 +705,97 @@ def test_speech_basis_explicit_panel_owner_does_not_duplicate(nested):
 
 
 def test_canvas_basis_crossing_section_boundary_stays_one_object_and_ripples():
-    from app.pipeline.speech_cut_state import canvas_speech_slots, project_speech_basis, sync_speech_basis
-    rows = [{**member(0, duration=2), 'clip_index': 0, 'in_s': 0}, {**member(1, duration=2), 'clip_index': 1, 'in_s': 0}, {'slot_id': 'after', 'clip_index': 0, 'in_s': 4, 'duration_s': 2}]
-    record = {'id': 'ink', 'start_s': 3, 'end_s': 5}
+    from app.pipeline.speech_cut_state import (
+        canvas_speech_slots,
+        project_speech_basis,
+        sync_speech_basis,
+    )
+
+    rows = [
+        {**member(0, duration=2), "clip_index": 0, "in_s": 0},
+        {**member(1, duration=2), "clip_index": 1, "in_s": 0},
+        {"slot_id": "after", "clip_index": 0, "in_s": 4, "duration_s": 2},
+    ]
+    record = {"id": "ink", "start_s": 3, "end_s": 5}
     old = canvas_speech_slots(rows, [section().model_dump()])
     entries = sync_speech_basis(None, [record], rows, captions=False, canvas_slots=old)
     assert project_speech_basis(entries, rows, captions=False, canvas_slots=old) == [record]
     new = canvas_speech_slots(rows, [section(duration_s=3).model_dump()])
-    assert project_speech_basis(entries, rows, captions=False, canvas_slots=new) == [{**record, 'start_s': 3, 'end_s': 4}]
+    assert project_speech_basis(entries, rows, captions=False, canvas_slots=new) == [
+        {**record, "start_s": 3, "end_s": 4}
+    ]
+
+
+def test_omitted_speaker_background_follows_section_extent_on_real_save(monkeypatch):
+    from app.config import settings
+    from app.routes import generative_jobs as gj
+    from tests.routes.test_authored_playback_speed import _authored_phone_job
+
+    job, _ = _authored_phone_job(monkeypatch)
+    variant = job.assembly_plan["variants"][0]
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [
+            *settings.phone_render_verified_features,
+            "splitScreen",
+            "speakerBackground",
+            "speakerBackgroundColor",
+            "speakerFrameWindows",
+        ],
+    )
+    rows = [
+        {**member(0), "slot_id": "added", "clip_index": 1, "in_s": 0},
+        {"slot_id": "tail", "clip_index": 0, "in_s": 0, "duration_s": 2},
+    ]
+    variant["user_timeline"] = {"slots": rows, "split_screen_sections": [section().model_dump()]}
+    variant["speaker_background"] = {
+        "kind": "color",
+        "color": "#112233",
+        "full_screen_windows": [{"start_s": 4, "end_s": 5}],
+    }
+    gj.prepare_editor_commit(
+        job,
+        "original_text",
+        gj.EditorCommitRequest(
+            base_generation="first",
+            editor_state_version=2,
+            timeline_slots=[gj.TimelineSlotEdit.model_validate(row) for row in rows],
+            split_screen_sections=[section(duration_s=6)],
+        ),
+    )
+    assert job.assembly_plan["variants"][0]["speaker_background"]["full_screen_windows"] == [
+        {"start_s": 6, "end_s": 7}
+    ]
+
+
+def test_background_projection_preserves_media_focus_and_drops_short_windows():
+    from app.pipeline.speech_cut_state import project_canvas_background
+
+    rows = [
+        {**member(0, duration=2), "clip_index": 0, "in_s": 0},
+        {"slot_id": "tail", "clip_index": 0, "in_s": 0, "duration_s": 2},
+    ]
+    window = {
+        "start_s": 4,
+        "end_s": 5,
+        "media_id": "bg",
+        "kind": "video",
+        "source_start_s": 8,
+        "focus": {"x": 0.2, "y": 0.7},
+    }
+    background = {
+        "kind": "color",
+        "color": "#112233",
+        "windows": [window],
+        "full_screen_windows": [{"start_s": 3.8, "end_s": 4.5}],
+    }
+    projected = project_canvas_background(
+        background, rows, [section().model_dump()], rows, [section(duration_s=6).model_dump()]
+    )
+    assert projected["windows"] == [{**window, "start_s": 6, "end_s": 7}]
+    clipped = project_canvas_background(
+        background, rows, [section().model_dump()], rows[:1], [section(duration_s=3.9).model_dump()]
+    )
+    assert "windows" not in clipped
+    assert "full_screen_windows" not in clipped

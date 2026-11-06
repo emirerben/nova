@@ -106,6 +106,8 @@ struct NativeFootagePanel: View {
 struct NativeSplitScreenControls: View {
     @ObservedObject var session: NativeEditorSession
     let selection: EditorSelection
+    private struct ImportTarget: Identifiable { let id: String }
+    @State private var importTarget: ImportTarget?
 
     private var slot: EditorTimelineSlot? {
         guard let clip = session.timelineClips.first(where: { $0.id.uuidString == selection.id }) else { return nil }
@@ -254,6 +256,21 @@ struct NativeSplitScreenControls: View {
         }
         .disabled(session.splitScreenSourceChoices.isEmpty)
         .accessibilityIdentifier("native-editor-split-replace")
+        if section != nil, let slotID = slot?.id {
+            Button("Choose a new photo or video…") { importTarget = ImportTarget(id: slotID) }
+                .disabled(!session.canAddTimelineMedia || session.isAddingClip)
+                .accessibilityIdentifier("native-editor-split-import")
+                .sheet(item: $importTarget) { target in
+                    NativeEditorAddClipSheet(session: session, replacingSlotID: target.id)
+                }
+            if let reason = session.addClipUnavailableReason {
+                Text(reason).font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        if let error = session.addClipError {
+            Text(error).font(.footnote).foregroundStyle(KriaColor.failureText)
+                .accessibilityIdentifier("native-editor-split-source-error")
+        }
         if session.splitScreenSourceChoices.isEmpty {
             Text("Replacement footage is not available yet.")
                 .font(.footnote).foregroundStyle(.secondary)

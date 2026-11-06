@@ -233,6 +233,17 @@ def is_caption_text_bar(row: dict[str, Any]) -> bool:
     )
 
 
+def copy_source_occurrence(row: dict[str, Any]) -> dict[str, Any]:
+    """Keep legacy speaker ownership durable before changing an occurrence ID."""
+    result = copy.deepcopy(row)
+    if result.get("speaker_subject") is None and any(
+        str(result.get(key) or "").startswith("native-phone-talking-source")
+        for key in ("slot_id", "parent_segment_id")
+    ):
+        result["speaker_subject"] = True
+    return result
+
+
 def _variant_slots(variant: dict[str, Any], job: Any = None) -> list[dict[str, Any]]:
     """The variant's timeline slots; guided v2 variants fall back to the revision.
 
@@ -2686,8 +2697,9 @@ def _op_split_clip(state: _DraftState, op: dict[str, Any]) -> None:
 
     from app.kria.clip_source_clock import slice_source_window
 
-    left = slice_source_window(row, 0, local)
-    right = slice_source_window(row, local, duration)
+    source = copy_source_occurrence(row)
+    left = slice_source_window(source, 0, local)
+    right = slice_source_window(source, local, duration)
     right.update(slot_id=str(uuid4()), parent_segment_id=row.get("slot_id"))
     if row.get("split_section_id"):
         right["split_offset_s"] = float(row["split_offset_s"]) + local

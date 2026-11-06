@@ -44,7 +44,7 @@ def apply_initial_split_screen(
             raise editor.KriaEditorOpError("A requested panel source is not in the approved media")
         from app.kria.clip_source_clock import resize_source_window, set_source_start
 
-        row = copy.deepcopy(source)
+        row = editor.copy_source_occurrence(source)
         row["slot_id"] = str(uuid4())
         if panel.source_start_s is not None:
             if row.get("freeze_hold_s"):
@@ -76,7 +76,9 @@ def apply_initial_split_screen(
                     continue
                 from app.kria.clip_source_clock import slice_source_window
 
-                kept = slice_source_window(row, low - left, high - left)
+                kept = slice_source_window(
+                    editor.copy_source_occurrence(row), low - left, high - left
+                )
                 kept["slot_id"] = str(uuid4())
                 destination.append(kept)
     staged = copy.deepcopy(variant)

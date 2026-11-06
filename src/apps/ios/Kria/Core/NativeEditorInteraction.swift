@@ -472,6 +472,10 @@ enum NativeEditorInteraction {
     }
 
     private static func sourcePreservingOutputDuration(_ slot: EditorTimelineSlot) -> TimeInterval? {
+        if slot.raw["freeze_frame_s"]?.numberValue != nil,
+           let hold = slot.raw["freeze_hold_s"]?.numberValue, hold > 0 {
+            return NativeClipSourceClock(slot: slot).duration
+        }
         if slot.raw["timing_mode"]?.stringValue == "rendered",
            let end = slot.raw["source_end_s"]?.numberValue {
             let rate = slot.raw["playback_rate"]?.numberValue ?? 1

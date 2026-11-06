@@ -15,8 +15,15 @@ def test_initial_request_keeps_panel_source_identity_and_clocks(monkeypatch):
     variant = _variant()
     variant.update(render_destination="device", editor_timeline_mode="authored")
     rows = variant["ai_timeline"]["slots"]
-    rows[0].update(media_id="content", duration_s=4, in_s=0)
-    rows[1].update(media_id="face", duration_s=4, in_s=0, source_duration_s=20, media_kind="video")
+    rows[0].update(media_id="content", duration_s=4, in_s=0, speaker_subject=False)
+    rows[1].update(
+        media_id="face",
+        duration_s=4,
+        in_s=0,
+        source_duration_s=20,
+        media_kind="video",
+        slot_id="native-phone-talking-source-a",
+    )
     monkeypatch.setattr(editor, "split_screen_available", lambda *args: True)
     request = CreativeStrategy.model_validate(
         {
@@ -31,6 +38,8 @@ def test_initial_request_keeps_panel_source_identity_and_clocks(monkeypatch):
     ).split_screen
     result = apply_initial_split_screen(_job(variant), variant, request, source_rows=rows)
     members = result["user_timeline"]["slots"]
+    assert [r["speaker_subject"] for r in members] == [False, True]
+    assert all(not r.get("parent_segment_id") for r in members)
     assert [r["clip_index"] for r in members] == [0, 1]
     assert [r["in_s"] for r in members] == [1, 7]
     assert [r["split_panel_index"] for r in members] == [0, 1]

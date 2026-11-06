@@ -2,6 +2,16 @@ import XCTest
 @testable import Kria
 
 final class NativeSplitScreenRowsTests: XCTestCase {
+    @MainActor
+    func testRepeatedSpeakerFixtureRetainsMembershipThroughSessionHydration() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.splitSpeaker)
+        XCTAssertTrue(session.document.splitScreenIsValid)
+        XCTAssertEqual(session.document.clips.map(\.id), ["split-speaker-top", "split-speaker-bottom"])
+        XCTAssertEqual(session.document.clips.map(\.splitPanelIndex), [0, 1])
+        XCTAssertEqual(session.timelineProjection.totalDuration, 4)
+        XCTAssertNotNil(session.document.speakerBackground?.speakerFrame)
+    }
+
     func testLegacyTimelineKeepsOneVideoRow() {
         let rows = NativeSplitScreenRows(document: EditorDocument())
         XCTAssertEqual(rows.titles, ["Video"])

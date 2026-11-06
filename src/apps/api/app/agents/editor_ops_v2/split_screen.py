@@ -174,7 +174,7 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
             if "start_s" in command or "end_s" in command:
                 if len(rows) != 1 or full:
                     raise ValueError("A bounded split section needs one source occurrence")
-                source = copy.deepcopy(rows[0])
+                source = editor.copy_source_occurrence(rows[0])
                 span = editor._slot_duration(source)
                 start, end = command.get("start_s", 0), command.get("end_s", span)
                 if end > span or end - start < 0.1:
@@ -211,7 +211,7 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
                 panel_rows = rows if full else [rows[panel] if panel < len(rows) else rows[0]]
                 offset = 0.0
                 for source in panel_rows:
-                    row = copy.deepcopy(source)
+                    row = editor.copy_source_occurrence(source)
                     if (full and panel > 0) or (not full and panel >= len(rows)):
                         row["slot_id"] = str(uuid4())
                     row.update(
@@ -251,7 +251,7 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
                 if revised["panel_count"] > section["panel_count"]:
                     for source in members:
                         if source["split_panel_index"] == 0 and not source.get("removed"):
-                            row = copy.deepcopy(source)
+                            row = editor.copy_source_occurrence(source)
                             row["slot_id"] = str(uuid4())
                             row["split_panel_index"] = 2
                             position = max(
@@ -267,10 +267,11 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
                 if row.get("removed"):
                     raise ValueError("The selected clip was removed")
                 if command["duplicate"]:
-                    row = copy.deepcopy(row)
+                    row = editor.copy_source_occurrence(row)
                     row["slot_id"] = str(uuid4())
                 else:
                     state.slots.remove(row)
+                    row = editor.copy_source_occurrence(row)
                 row.update(
                     split_section_id=section["id"],
                     split_panel_index=command["panel_index"],

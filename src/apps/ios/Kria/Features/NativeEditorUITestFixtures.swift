@@ -811,10 +811,18 @@ enum NativeEditorUITestFixtures {
         bottom.setSplitMembership(sectionID: "speaker-panels", panelIndex: 1, offset: 0)
         document.clips = [top, bottom]
         document.splitScreenSections = [EditorSplitScreenSection(id: "speaker-panels", durationS: 4, panelCount: 2)]
+        document.speakerBackground = EditorSpeakerBackground(json: seededSpeakerFrame)
         document.captionCues = []
         document.textElements = []
         document.captionMeta["enabled"] = .bool(false)
         document.capabilities["split_screen"] = EditorCapability(editable: true)
+        if let original = value.clips.first {
+            value.clips = [top, bottom].enumerated().map { index, slot in
+                EditorClip(id: id(1100 + index), assetID: original.assetID, sourceClipIndex: slot.clipIndex,
+                           start: 0, end: 4, trimIn: 0, trimOut: 4, sourceDuration: original.sourceDuration,
+                           muted: false, slotID: slot.id)
+            }
+        }
         value.serverSnapshot = document.encodeSnapshot()
         return value
     }
