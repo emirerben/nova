@@ -231,18 +231,11 @@ log = structlog.get_logger()
 # it). Every other creator prompt is byte-identical.
 # v119 (KRI-1189 lands after #2088): v117's `cut_restarts` teaching on top of v118. The
 # KRI-1189 replay fixtures keep the `2026-11-03-v117` label they were recorded under.
-# v120 (Qendresa item 12): the shared brief section records the caption shape as typed facts,
-# `caption_words` (1-3 words at a time) and `caption_box` (a #RRGGBB box behind the captions).
-# On top of v119; brief_extractor v55 shares it.
-# v121 (Qendresa 13, tight pauses; on top of v120, Qendresa 12 caption shape): the shared brief
-# section records an "all my pauses / tight pace" ask as `pauses: "tight"` beside
-# `speech_cleanup`. On top of v119.
-# v123 (Qendresa item 17, follow-up of KRI-1175; v121-v122 reserved by items 13-14): one
-# paragraph after the windows section teaching how to write a sequence entry's `spoken_phrase`
-# (as said in the take, with the words only said where that visual is introduced). Shown only
-# with BACKGROUND_FOLLOWS_TALK_ENABLED and the windows capability; every other prompt keeps its
-# bytes.
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-04-v123"
+# v128 (Qendresa item 21), on top of v120 (Qendresa 12 caption shape): behind
+# `settings.clip_text_tiktok_look_enabled`, `_CLIP_TEXT_LOOK_PROMPT_SECTION` teaches one line
+# pinned in the MIDDLE for the whole video (`corner: "middle_center"`) and TikTok's own text look
+# (`look: "tiktok"`). Flag off => the rendered prompt is byte-identical to v120.
+MAIN_CREATOR_PROMPT_VERSION = "2026-11-05-v128"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -769,6 +762,28 @@ THAT entry's `media_id` verbatim; never invent or shorten an id. A photo timed t
 ("when I say X") is a reaction beat (where available), never a timed card; a photo that should
 fill the whole screen or play as its own moment is a selected media / clip intent, never a timed
 card. Say in `summary`, in plain words, where and for how long each small card shows.
+""".strip("\n")
+
+# Qendresa item 21: appended to the `$reaction_beats_section` slot ONLY when
+# `settings.clip_text_tiktok_look_enabled`; "" otherwise, so the flag-off prompt keeps its bytes.
+_CLIP_TEXT_LOOK_PROMPT_SECTION = """
+ONE LINE IN THE MIDDLE, IN TIKTOK'S LOOK
+When the creator wants ONE line of text in the middle / centre of the screen / across the middle
+("put this text in the middle", "metni ekranın ortasına koy") for the whole video (or for a stated
+time), set a `pinned_texts` entry with `"corner": "middle_center"` and the words copied exactly.
+Never also put the same words in `opening_title`, `closing_title` or `shot_labels`.
+When she says "like TikTok's", "TikTok text / style / font", "TikTok native", "the normal TikTok
+text" ("TikTok'taki gibi", "TikTok yazısı"), add `"look": "tiktok"` on that pin (white, TikTok's
+own font, small, soft shadow). A colour she names still goes in `text_color`, a size she names in
+`size_px`. "Small white" is already the look: do not add `size_px` for "small".
+"No captions" turns speech captions off; it says nothing about this line's place or colour.
+Example: "Just put this text in the middle for the whole video: \"The prompt I run at the end of
+every Claude session\". Small white text like TikTok's, no captions and nothing else. Make it 11
+seconds. Mute my sound." ->
+"pinned_texts": [{"text": "The prompt I run at the end of every Claude session", "corner":
+"middle_center", "look": "tiktok"}] and no `opening_title`.
+The server keeps the line off any face: if a face is in the middle it moves the line just below
+or above and tells her. Never refuse "in the middle".
 """.strip("\n")
 
 # KRI-519: the same beats on a phone Voiceover edit, grounded against the recorded
@@ -1483,6 +1498,12 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 + (
                     "\n" + _TIMED_CARDS_PROMPT_SECTION
                     if _timed_cards_available(input.capability_manifest)
+                    else ""
+                )
+                # Qendresa item 21: middle line + TikTok look; "" unless the flag is on.
+                + (
+                    "\n" + _CLIP_TEXT_LOOK_PROMPT_SECTION
+                    if settings.clip_text_tiktok_look_enabled
                     else ""
                 )
                 # KRI-1151: footage clips shown full screen over the talk; "" unless the

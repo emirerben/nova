@@ -462,6 +462,15 @@ FIELD_MATRIX: dict[str, FieldRule] = {
     **_rules(
         "upstream_resolved",
         "render_contract:text",
+        "pinned_texts[].look",
+        note=(
+            "the pinned-text compiler resolves the look into the row's font, colour, size and "
+            "shadow; the contract still verifies the pin's exact text"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
+        "render_contract:text",
         "pinned_texts[].start_s",
         "pinned_texts[].end_s",
         "pinned_texts[].clip",

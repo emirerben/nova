@@ -3941,6 +3941,21 @@ before rollout. API/workers must run the same revision and flags before new jobs
 are admitted. Release 2's repeated-edit learning remains separately gated under
 KRI-336 and is not activated by the typography flag.
 
+### Middle line in TikTok's look (Qendresa item 21; related KRI-523)
+
+`CLIP_TEXT_TIKTOK_LOOK_ENABLED` defaults off (API + worker read it; no client protocol or
+verified token). On, Main Creator v128 may write a whole-video pin with
+`corner: "middle_center"` and `look: "tiktok"`. The pinned-text compiler centres it and paints
+`schemas/phone_text_style.TIKTOK_TEXT_LOOK` (TikTok Sans Bold, white, 56 px, 0.72 wrap, authored
+shadow at opacity 0.2), listing the look fields in `creator_style_fields` so this pass keeps them.
+`_place` slides a middle line to the nearest y clear of faces, other text and the wordmark
+(`source_params.moved_off`), or records `source_params.covers` when no spot is clear; the brief
+receipt then says so. An identical `opening_title` is drawn once. Off: a stray middle pin is
+drawn as `top_center` with no look. Failure modes and measurements:
+`docs/reviews/qendresa-item21-clip-text-look.md`; simulator harness:
+`scripts/ios/qendresa-clip-text-look-e2e.py` + `DeviceClipTextLookRenderE2ETests`.
+Rollback: `fly secrets set CLIP_TEXT_TIKTOK_LOOK_ENABLED=false` + restart api and worker.
+
 
 ## Text Bend capability (KRI-646)
 
