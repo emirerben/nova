@@ -28,7 +28,11 @@ from tests.e2e_suggestions.gaps import Gap
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 OUT_DIR = Path(os.environ.get("CHIP_EVAL_DIR") or REPO_ROOT / ".chip-eval")
-RUN_ID = os.environ.get("PYTEST_XDIST_TESTRUNUID") or uuid.uuid4().hex
+# One id for the controller and every xdist worker: the controller imports this first and the
+# workers it spawns inherit the variable (``PYTEST_XDIST_TESTRUNUID`` is set in workers only).
+RUN_ID = os.environ.setdefault(
+    "CHIP_EVAL_RUN_ID", os.environ.get("PYTEST_XDIST_TESTRUNUID") or uuid.uuid4().hex
+)
 PARTIALS = OUT_DIR / "e2e-partials"
 
 # Column order of the per-kind table: (key, header).

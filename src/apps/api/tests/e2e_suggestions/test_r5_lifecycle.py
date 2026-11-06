@@ -39,7 +39,6 @@ import pytest
 from app.kria.runtime import RuntimeFailure
 from app.services.suggestions.kinds import mute_clip
 from tests.e2e_suggestions import driver as d
-from tests.e2e_suggestions import gaps
 from tests.e2e_suggestions import scenes as s
 from tests.e2e_suggestions.flow import tap_every_card, verify_render_kick
 from tests.e2e_suggestions.report import Recorder
@@ -206,7 +205,6 @@ async def test_l1_l4_the_card_executes_again_after_its_approval_ended(
         served_again,
         f"served {s.kinds_of(again)} (state {again.state!r}); the chat was "
         f"{'reopened while the approval was pending' if reopened else 'not opened'}",
-        gap=gaps.WITHDRAWN_CARD_STAYS_HIDDEN if reopened else None,
     )
     if served_again:
 

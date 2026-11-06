@@ -37,7 +37,6 @@ from __future__ import annotations
 import pytest
 
 from tests.e2e_suggestions import driver as d
-from tests.e2e_suggestions import gaps
 from tests.e2e_suggestions import scenes as s
 from tests.e2e_suggestions.flow import LANE, RESTATE, ensure_stored, tap_every_card
 from tests.e2e_suggestions.report import Recorder
@@ -169,7 +168,6 @@ async def test_v7_an_editor_tap_and_its_undo_do_not_lift_the_saves_fence(talking
         "the plan still holds none of the Save's edits, so the filler card must not run",
         held,
         f"the filler card was {outcome}",
-        gap=gaps.SAVE_FENCE_LIFTED,
     )
     rec.finish()
 
