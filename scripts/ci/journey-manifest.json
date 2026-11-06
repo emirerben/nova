@@ -1126,6 +1126,14 @@
       ]
     },
     {
+      "id": "qendresa-20-title-look",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_title_look_worker.py tests/pipeline/test_phone_title_look.py tests/pipeline/test_phone_title_look_lines.py tests/kria/test_title_look_receipts.py tests/agents/test_title_look_prompt.py tests/test_raw_chat_text_readers.py",
+      "paths": [
+        "src/apps/api/app/pipeline/phone_title_look.py"
+      ]
+    },
+    {
       "id": "kri-827-protected-text-regions",
       "needs_native": false,
       "api_tests": "tests/pipeline/test_protected_object_text_e2e.py tests/tasks/test_kri827_protected_text_worker.py tests/kria/test_kri827_protected_targets.py tests/kria/test_kri827_protected_region_turn_postgres.py tests/kria/test_kri901_mark_before_approval_postgres.py",

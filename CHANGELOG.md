@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.11.0] - 2026-11-06
+
+### Changed
+- feat(title-look): Qendresa item 20, her stacked hook title + logo above it (phone Talking, flag off) (#2115) <!-- release-pr: 2115 -->
+
 ## [0.88.10.0] - 2026-11-06
 
 ### Changed

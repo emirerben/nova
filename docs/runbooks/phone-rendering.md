@@ -4600,3 +4600,36 @@ text matches the two rows joined (`creator_render_contract.verify_phone_recipe`)
 
 **Rollout.** `fly secrets set CREATOR_CTA_ENDING_ENABLED=true --app nova-video`, restart api + worker.
 Rollback: set it to `false`; endings already rendered keep their rows and arrow.
+
+## Title look on phone Talking edits (Qendresa item 20)
+
+`TITLE_LOOK_ENABLED` (default **false**, API + worker; server only, no protocol or verified token).
+A confirmed `opening_title` typed with " / " (or newlines) on a phone Talking edit is drawn as her
+stacked hook title: one ordinary text row per line (`opening-title`, `opening-title-line-N`,
+`source_params.title_look`), her exact words, a face and colour per line.
+
+- **Look per line:** her own per-line words in a sentence about the title ("bold caps, serif,
+  yellow handwriting") > a title/all-text font or colour she named or saved > the default stack
+  measured on her V5 (Bricolage Grotesque 145 / Instrument Serif 100 / Patrick Hand 105). A
+  strategy font knob is never read as her ask (it can be a provisional face). Every font already
+  ships in the iPhone bundle (`project.yml` bundles `assets/fonts`), so old builds draw it.
+- **Placement** (`phone_title_look.place_title_look`): one block, centred or top-left when she
+  asks; asked spot, under the face, between face and captions, above the face, then 0.85 / 0.72
+  / 0.6 size. Faces and marked objects are hard limits; captions are kept clear whenever any spot
+  allows it. Held 3 s unless she gave a hold. The styling pass leaves these rows as built.
+- **Logo above the title:** a reaction beat with `anchor: "title"` (Main Creator v135 teaches it
+  only while the flag is on) becomes a card right above the block for the title's window
+  (`beat-<id>-1`, source time like every beat card). The title is placed so the biggest logo
+  fits off her face and her captions (with captions up in the title band, the block drops just
+  enough for the logo to sit between them and the title); the worker places the logo against
+  the same caption boxes (`caption_boxes` in the title receipt). A logo with no room is
+  reported `no_room_above_title` (her face) or `no_room_off_captions` (only her captions).
+- **Receipts / approval:** the brief and `verify_phone_recipe` find her title in its " / " form
+  when it is drawn line by line (exact lines, shown together, top to bottom).
+- **Rollback:** `fly secrets set TITLE_LOOK_ENABLED=false` + restart api and worker. Strategies
+  approved while it was on keep `anchor: "title"` beats; with it off they go to word grounding
+  and are reported as never heard.
+- **Known limits:** the iPhone editor lists lines 2..N as "Text" blocks; a chat "change the
+  title" edits line 1 only; a sound on a title-anchored beat is not played.
+- Evidence: `tests/tasks/test_title_look_worker.py`, `tests/pipeline/test_phone_title_look*.py`,
+  `scripts/ios/qendresa-title-look-e2e.py` (+ `DeviceTitleLookRenderE2ETests`).

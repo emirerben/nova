@@ -248,7 +248,7 @@ log = structlog.get_logger()
 # `background_media.full_screen_opening` (+ `full_screen_opening_s` for a named length). Brief: the
 # shared section records `speaker_full_opening` / `speaker_full_opening_s` on the requirement it
 # belongs to (brief_extractor v60 shares it). Every other prompt keeps its bytes.
-# v126 (Qendresa item 18; v124 is reserved for item 15; shipped as v134, below): one paragraph
+# v126 (Qendresa item 18; v124 is reserved for item 15; shipped as v136, below): one paragraph
 # after the full-opening section, shown only with BACKGROUND_FOCUS_ENABLED and the
 # `background_focus` capability. The recordings behind the speaker are aimed at their readable
 # text by the compile; the planner sets `background_media.focus` (a named side) / `focus_zoom`
@@ -263,10 +263,15 @@ log = structlog.get_logger()
 # v133 (Qendresa item 16; v130 until main reached v131 with item 23; v132 is held by item 24):
 # v125's two full-screen-opening teachings on top of v128 and v131. Flag off, every prompt keeps
 # its bytes.
-# v134 (Qendresa item 18; was v126, then v132 while item 16 was v130; v135 is item 20's):
-# v126's background-focus paragraph on top of v133 (item 16, merged first). Every other
+# v135 (Qendresa item 20, TITLE_LOOK_ENABLED): only while `title_look_enabled` is on, the Talking
+# reaction-beats section gains one rule: a logo/sticker she wants with or above the opening title
+# is a beat with `anchor: "title"`; the title stays in `opening_title`, " / " included. Flag off:
+# every prompt keeps its bytes. On top of v133 (#2111). Reserved as v129, renumbered once main
+# passed it; v132 and v134 are held by items 24 and 18.
+# v136 (Qendresa item 18; was v126, then v132, then v134 until item 20 merged as v135):
+# v126's background-focus paragraph on top of v133 (item 16) and v135 (item 20). Every other
 # prompt keeps its bytes.
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-06-v134"
+MAIN_CREATOR_PROMPT_VERSION = "2026-11-06-v136"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -423,6 +428,14 @@ at a spoken word is a beat with `display_mode` "fullscreen", never `overlay_disp
 This edit always stays `edit_format: "subtitled"`. Beats never
 replace a title: when the creator asks for a hook/opening title or closing text, still set
 `opening_title` / `closing_title` by the title rules above, alongside the beats.
+""".strip("\n")
+
+# Item 20: appended to the Talking reaction-beats section ONLY while `title_look_enabled` is on.
+# Kept outside `_FIELDS_START`/`_FIELDS_END` (that slice is byte-shared with Voiceover).
+_TITLE_ANCHOR_PROMPT_RULE = """
+A logo or sticker she wants WITH or ABOVE the opening title ("the GitHub logo above it") is a
+beat with `"anchor": "title"`, `visual_id` = that Visual and `trigger` = the Visual's name (it is
+never listened for). Keep the title itself in `opening_title` exactly as typed, " / " included.
 """.strip("\n")
 
 # KRI-841: a video appended AFTER the talk, with its own sound, on a phone `subtitled` (Talking)
@@ -2156,6 +2169,12 @@ def _timed_cards_available(manifest: ResolvedCreatorManifest) -> bool:
     return bool(capability is not None and capability.available)
 
 
+def _title_look_on() -> bool:
+    """TITLE_LOOK_ENABLED (Qendresa item 20), read per prompt render."""
+
+    return settings.title_look_enabled
+
+
 def _reaction_beats_section(manifest: ResolvedCreatorManifest) -> str:
     """KRI-519: the beats guidance worded for the edit that advertises them --
     the capability resolver only opens it on a phone Talking or a phone
@@ -2163,6 +2182,8 @@ def _reaction_beats_section(manifest: ResolvedCreatorManifest) -> str:
 
     if manifest.has_voiceover and manifest.edit_format in NARRATED_EDIT_FORMATS:
         return _VOICEOVER_REACTION_BEATS_PROMPT_SECTION
+    if _title_look_on():
+        return _REACTION_BEATS_PROMPT_SECTION + "\n" + _TITLE_ANCHOR_PROMPT_RULE
     return _REACTION_BEATS_PROMPT_SECTION
 
 
