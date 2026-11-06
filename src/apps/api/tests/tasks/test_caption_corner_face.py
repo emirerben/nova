@@ -324,3 +324,37 @@ def test_after_a_dropped_background_the_review_judges_the_full_frame_face(monkey
     variant = job.assembly_plan["variants"][0]
     over_face = (variant.get("caption_look_receipt") or {}).get("over_face")
     assert over_face is True, f"captions cover her full-frame face, review over_face={over_face!r}"
+
+
+def test_a_dropped_background_judges_the_caption_colour_on_her_take_again(monkeypatch, tmp_path):
+    """Second review on #2127: the contrast frames are restored, exercised with REAL sampling.
+
+    Green 5's harness samples real luminance grids (take and backgrounds). The corner background is
+    registered (the caption colour is chosen against the room behind her), then its fill fails to
+    bind (a video starting at its end) and the worker compiles without it. The finished look must
+    be exactly what a Talking edit with no background picks from her take (Green 5's own control:
+    #767676, no outline), never the look chosen against the dropped room."""
+    from tests.tasks import test_green45_caption_contrast as green5
+    from tests.tasks.test_kri841_talking_ending_clip import BITE, BITE_S
+
+    job = green5._job(monkeypatch, tmp_path)
+    background = job.all_candidates["creator_strategy"]["background_media"]
+    background.update(media_id=f"asset-{BITE}", source_start_s=BITE_S, speaker_frame=CORNER)
+    seen: list[bool] = []
+    original = styling.register_generation_background
+
+    def spy(background, canvas=None, focus_for=None):
+        seen.append(background is not None)
+        return original(background, canvas=canvas, focus_for=focus_for)
+
+    monkeypatch.setattr(styling, "register_generation_background", spy)
+    gb._run_generative_job(str(job.id))
+    assert job.status == "awaiting_device", job.error_detail
+    assert True in seen, "setup: the background was never registered"
+    assert _recipe(job).speaker_background is None, "setup: the background was not dropped"
+    assert green5._look(job) == {
+        "caption_text_color": "#767676",
+        "caption_stroke_width": 0,
+        "caption_shadow_enabled": False,
+        "stroke_color": None,
+    }
