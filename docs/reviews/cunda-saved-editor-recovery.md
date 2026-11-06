@@ -2,7 +2,7 @@
 
 Acceptance before implementation: a cold-open runtime-v2 failed video project with a complete current saved editor snapshot offers Open saved edit and the Editor switch. Opening uses the existing read-only editor loader and exact persisted lanes. The render remains failed; no planning, retry, dispatch or save occurs on open. A no-op chat reply and reopening do not remove this access or erase same-job local changes. Failed first renders without a saved snapshot, reference-only drafts, mismatched item/job/variant/generation, unknown format and slides do not expose video recovery. Real missing media and insufficient source windows still fail honestly.
 
-Production read-only observation on 2026-11-06: the incident job's authored video slot requested 1.933333s from 1.92s source, in_s 0, no source_end_s, playback_rate null, unlocked, not removed. Job and variant remained failed with editor_render_recovery from November 5 20:04 UTC, before the source-window patch deployed. The variant pinned a v2 saved draft reference, while the original phone export remained recorded published. The November 6 white-text turn was a no-op and dispatched nothing. Approved admin diagnostics exposed only the pinned draft ID, not its body or base generation, and stripped the device recipe; current snapshot validity and exact recipe end/hold remain unverified. No production state was changed.
+Production read-only observation on 2026-11-06: the incident job's authored video slot requested 1.933333s against a stored source-duration hint of 1.92s, in_s 0, no source_end_s, playback_rate null, unlocked, not removed. Job and variant remained failed with editor_render_recovery from November 5 20:04 UTC, before the source-window patch deployed. The variant pinned a v2 saved draft reference, while the original phone export remained recorded published. The November 6 white-text turn was a no-op and dispatched nothing. Approved admin diagnostics exposed only the pinned draft ID, not its body or base generation, and stripped the device recipe; current snapshot validity and exact recipe end/hold remain unverified. No production state was changed.
 
 This change must apply through shared native contracts, with no project, account or title exceptions. Opening alone does not establish current-project recovery: legacy source-window preview/Save compatibility and physical iPhone Save/reopen/Photos export require independent evidence.
 
@@ -43,6 +43,12 @@ xcodebuild -project src/apps/ios/Kria.xcodeproj -scheme Kria \
 ```
 
 Scratch evidence on the selected Mac: `/tmp/cunda-recovery-baseline-red.{log,xcresult}` and `/tmp/cunda-recovery-final.{log,xcresult}`. The green result contains retained preview frame attachments. The summary above is the durable safe evidence record; scratch paths are not portable artifacts.
+
+## Combined local integration
+
+The supplied backend patch from parent head `ebb71d002` was reconstructed and all seven target Git blob hashes were checked against the supplied diff before application. `git apply --check` passed. Its 617 socket-blocked offline tests and independent review are parent-provided evidence at that backend head; they are separate from the 232 native simulator checks above. Local integration introduces no changes to native implementation or selected test source. No simulator rebuild is needed for that backend/docs-only addition. Production diagnosis wording now distinguishes stored duration hints from a verified original receipt.
+
+Current main at integration intake is `31477c8e9b0eabf5f143d4b506b9543a7c17f44c`. Its changed paths since the common base do not textually overlap this candidate. Native application source equality to tested commit `4a001e44c34aca09dda34e120c866438ae0341aa` is checked independently after local integration. The prior native results do not establish current-main backend contract behavior; the full 617-test suite and DB-backed/physical-device gates still need revision-bound integration verification before publication.
 
 ## Limits and next action
 
