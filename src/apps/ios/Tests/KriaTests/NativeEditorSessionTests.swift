@@ -1,6 +1,7 @@
 import AVFoundation
 import Combine
 import KriaMediaEngine
+import Synchronization
 import UIKit
 import XCTest
 @testable import Kria
@@ -7960,7 +7961,11 @@ private actor SessionTestStatus {
 // Keep reports, counters and suspended-call state on the same actor as those readers.
 @MainActor
 final class EditorCommitSpy: KriaAPIClient {
-    var mediaLibraryOwner: String? = nil
+    private nonisolated let libraryOwner = Mutex<String?>(nil)
+    nonisolated var mediaLibraryOwner: String? {
+        get { libraryOwner.withLock { $0 } }
+        set { libraryOwner.withLock { $0 = newValue } }
+    }
     var draftSnapshot: DraftSnapshot
     var draftError: APIError?
     let openReceipt: OpenInEditorResponse?
