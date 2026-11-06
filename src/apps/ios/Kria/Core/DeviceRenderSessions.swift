@@ -234,8 +234,9 @@ enum DeviceRenderGate: Equatable {
     nonisolated static let jobCancelledReason = "job_cancelled"
     /// `.cancelled` reason for the creator's own Stop: a resumable pause, never a failure.
     nonisolated static let pausedReason = "cancelled_by_user"
-    /// Automatic re-reads per key before waiting for a reconnect, foreground or thermal change.
+    /// Fast automatic re-reads before retaining one slow check while the result is relevant.
     static let maxAutomaticRetries = 12
+    static let slowReadRecheck: Duration = .seconds(300)
     static func retryDelay(attempt: Int) -> Duration { .seconds(min(60, 1 << min(max(attempt, 1), 6))) }
     /// Heat and storage are re-checked on this cadence (plus their own notifications).
     static let waitRecheck: Duration = .seconds(30)
@@ -279,11 +280,15 @@ enum DeviceRenderGate: Equatable {
     @ObservationIgnored private let reportDecline: ReportDecline
     @ObservationIgnored private let environment: DeviceRenderEnvironment
     @ObservationIgnored private let sleep: Sleep
+    @ObservationIgnored private let now: @MainActor () -> Date
     @ObservationIgnored private let projectDirectory: @MainActor (UUID) -> ProjectDirectory
     @ObservationIgnored private var entries: [DeviceRenderKey: DeviceRenderCoordinator] = [:]
     @ObservationIgnored private var requests: [DeviceRenderKey: DeviceRenderRequest] = [:]
     @ObservationIgnored private var observations: [DeviceRenderKey: Task<Void, Never>] = [:]
     @ObservationIgnored private var tickets: [DeviceRenderKey: UUID] = [:]
+    // UI cancellation does not release an HTTP reader that has not returned yet.
+    @ObservationIgnored private var transportReads: [DeviceRenderKey: Task<DeviceRenderStatusResponse, Error>] = [:]
+    @ObservationIgnored private var transportLifetime = UUID()
     @ObservationIgnored private var keyOperations: [DeviceRenderKey: UUID] = [:]
     @ObservationIgnored private var resetOperation: UUID?
     @ObservationIgnored private var pendingRetries: [DeviceRenderKey: PendingRetry] = [:]
@@ -301,6 +306,8 @@ enum DeviceRenderGate: Equatable {
     @ObservationIgnored private var capabilities: [DeviceRenderKey: PhoneRenderingCapabilities] = [:]
     @ObservationIgnored private var retryTasks: [DeviceRenderKey: Task<Void, Never>] = [:]
     @ObservationIgnored private var retryAttempts: [DeviceRenderKey: Int] = [:]
+    @ObservationIgnored private var retryTokens: [DeviceRenderKey: UUID] = [:]
+    @ObservationIgnored private var readNotBefore: [DeviceRenderKey: Date] = [:]
     @ObservationIgnored private var declines: [DeviceRenderKey: DeclineReport] = [:]
     /// A reconcile asked for while another held the ticket (value: whether it was a
     /// retry). It runs as soon as the holder finishes, so a read asked for after a
@@ -310,6 +317,19 @@ enum DeviceRenderGate: Equatable {
         let action: IntentAction
     }
     @ObservationIgnored private var rereads: [DeviceRenderKey: PendingRead] = [:]
+    @ObservationIgnored private var delayedReads: [DeviceRenderKey: PendingRead] = [:]
+    private struct ResumeTarget {
+        let identity: DeviceRenderIdentity
+        let baseGeneration: String?
+    }
+    private struct ResumeAuthorization {
+        let owner: String
+        let operation: UUID?
+        let intentOperation: UUID?
+        let target: ResumeTarget
+    }
+    @ObservationIgnored private var observedResumeTargets: [DeviceRenderKey: ResumeTarget] = [:]
+    @ObservationIgnored private var resumeAuthorizations: [DeviceRenderKey: ResumeAuthorization] = [:]
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var pathMonitor: NWPathMonitor?
     @ObservationIgnored private var wasOnline = true
@@ -368,13 +388,14 @@ enum DeviceRenderGate: Equatable {
          reportDecline: @escaping ReportDecline = { _, _, _, _ in },
          environment: DeviceRenderEnvironment = .live,
          sleep: @escaping Sleep = { try await Task.sleep(for: $0) },
+         now: @escaping @MainActor () -> Date = Date.init,
          projectDirectory: @escaping @MainActor (UUID) -> ProjectDirectory = { BackgroundUploadCoordinator.projectDirectory($0) }) {
         self.initiation = initiation
         self.intentStore = intentStore
         self.ownerIdentity = ownerIdentity
         self.fetch = fetch; self.factory = factory; self.retryFailure = retryFailure
         self.reportPreparationFailure = reportPreparationFailure; self.reportDecline = reportDecline
-        self.environment = environment; self.sleep = sleep; self.projectDirectory = projectDirectory
+        self.environment = environment; self.sleep = sleep; self.now = now; self.projectDirectory = projectDirectory
     }
 
     /// A receipt this build can't read (written by a newer build, or truncated)
@@ -433,7 +454,13 @@ enum DeviceRenderGate: Equatable {
     }
 
     func resumeFromUser(_ key: DeviceRenderKey) async {
-        guard let capabilities = capabilities[key] ?? lastEnabledCapabilities else { return }
+        guard resetOperation == nil, await synchronizeOwner(), let owner = activeOwner,
+              let capabilities = capabilities[key] ?? lastEnabledCapabilities else { return }
+        let stored = try? intentStore.load(intentKey(key))
+        let target = observedResumeTargets[key] ?? stored.map { ResumeTarget(identity: $0.observedIdentity ?? $0.acknowledgement ?? $0.sourceIdentity, baseGeneration: $0.baseGeneration) }
+        guard let target else { holdIntent(key); return }
+        resumeAuthorizations[key] = ResumeAuthorization(owner: owner, operation: keyOperations[key],
+            intentOperation: stored?.operationID, target: target)
         await reconcile(key, capabilities: capabilities, retry: true, origin: .automaticRecovery, intentAction: .creatorResume)
     }
 
@@ -450,6 +477,15 @@ enum DeviceRenderGate: Equatable {
         do {
             let storageKey = try intentKey(key)
             if case .creatorResume = action {
+                guard let authorization = resumeAuthorizations[key], authorization.owner == activeOwner,
+                      authorization.operation == keyOperations[key],
+                      authorization.intentOperation == (try intentStore.load(storageKey))?.operationID,
+                      authorization.target.identity == status.request.identity,
+                      authorization.target.baseGeneration == status.baseGeneration else {
+                    holdIntent(key)
+                    return false
+                }
+                resumeAuthorizations[key] = nil
                 let resumed = DeviceRenderIntent(sourceIdentity: status.request.identity, baseGeneration: status.baseGeneration, state: .released)
                 try intentStore.save(resumed, for: storageKey)
                 failedIntentWrites.remove(storageKey)
@@ -484,10 +520,12 @@ enum DeviceRenderGate: Equatable {
         await reconcile(key, capabilities: offered, retry: retry, origin: origin, intentAction: .automatic)
     }
 
-    private func reconcile(_ key: DeviceRenderKey, capabilities offered: PhoneRenderingCapabilities, retry: Bool,
-                           origin: DeviceRenderExecutionOrigin, intentAction: IntentAction) async {
+    private func reconcile(_ key: DeviceRenderKey, capabilities offered: PhoneRenderingCapabilities, retry requestedRetry: Bool,
+                           origin: DeviceRenderExecutionOrigin, intentAction requestedAction: IntentAction) async {
         guard resetOperation == nil, await synchronizeOwner() else { return }
-        if case .automatic = intentAction {
+        let intentAction: IntentAction = requestedAction == .creatorResume || delayedReads[key]?.action == .creatorResume || resumeAuthorizations[key] != nil ? .creatorResume : .automatic
+        let retry = requestedRetry || delayedReads[key]?.retry == true || resumeAuthorizations[key] != nil
+        if case .automatic = intentAction, delayedReads[key]?.action != .creatorResume {
             do {
                 if let intent = try intentStore.load(intentKey(key)), intent.state != .released {
                     holdIntent(key, pending: intent.state == .retryPending)
@@ -500,6 +538,19 @@ enum DeviceRenderGate: Equatable {
         if offered.enabled, lastEnabledCapabilities != offered { lastEnabledCapabilities = offered }
         let capabilities = offered == .disabled ? (lastEnabledCapabilities ?? offered) : offered
         self.capabilities[key] = capabilities
+        if let deadline = readNotBefore[key], deadline > now() {
+            deferRead(key, retry: retry, action: intentAction)
+            scheduleRetry(key)
+            return
+        }
+        if tickets[key] == nil, let active = transportReads[key] {
+            let owner = activeOwner, operation = keyOperations[key], lifetime = transportLifetime
+            _ = try? await active.value
+            guard ownerIsCurrent, activeOwner == owner, keyOperations[key] == operation,
+                  transportLifetime == lifetime, !Task.isCancelled else { return }
+            await reconcile(key, capabilities: capabilities, retry: retry, origin: origin, intentAction: intentAction)
+            return
+        }
         guard tickets[key] == nil else {
             // The read in flight may predate a request pinned since (an editor Save while
             // the chat poll's read was out): read again once it finishes.
@@ -510,6 +561,9 @@ enum DeviceRenderGate: Equatable {
         }
         let ticket = UUID()
         tickets[key] = ticket
+        retryTasks.removeValue(forKey: key)?.cancel()
+        retryTokens[key] = nil
+        delayedReads[key] = nil
         defer {
             if tickets[key] == ticket {
                 tickets[key] = nil
@@ -527,11 +581,23 @@ enum DeviceRenderGate: Equatable {
         }
         let status: DeviceRenderStatusResponse
         do {
-            status = try await fetch(key.jobID, key.variantID)
+            let owner = activeOwner, lifetime = transportLifetime, fetch = self.fetch
+            let transport = Task<DeviceRenderStatusResponse, Error> { [weak self] in
+                defer { self?.transportReads[key] = nil }
+                do { return try await fetch(key.jobID, key.variantID) }
+                catch {
+                    if let self, self.activeOwner == owner, self.ownerIsCurrent, self.transportLifetime == lifetime {
+                        self.recordReadDeadline(error, key: key)
+                    }
+                    throw error
+                }
+            }
+            transportReads[key] = transport
+            status = try await transport.value
         } catch {
             let failure = DeviceRenderReadFailure(error)
             guard ownerIsCurrent, tickets[key] == ticket else { return }
-            await readFailed(key, failure: failure, error: error, ticket: ticket)
+            await readFailed(key, failure: failure, error: error, ticket: ticket, retry: retry, intentAction: intentAction)
             return
         }
         guard ownerIsCurrent, tickets[key] == ticket, !Task.isCancelled else { return }
@@ -554,6 +620,10 @@ enum DeviceRenderGate: Equatable {
                        capabilities: PhoneRenderingCapabilities, retry: Bool, origin: DeviceRenderExecutionOrigin, intentAction: IntentAction) async throws {
         let request = status.request
         guard ownerIsCurrent else { return }
+        // A read started before Resume cannot consume its newly captured authority.
+        // The ticket's coalesced creator read will validate the exact target next.
+        if intentAction == .automatic, resumeAuthorizations[key] != nil { return }
+        observedResumeTargets[key] = ResumeTarget(identity: status.request.identity, baseGeneration: status.baseGeneration)
         guard resolveIntent(status, key: key, action: intentAction) else {
             let current = heldRequests[key] ?? requests[key]
             if let current, request.identity.recipeRevision > current.identity.recipeRevision {
@@ -576,6 +646,7 @@ enum DeviceRenderGate: Equatable {
         if status.retryRequiresApproval { retryApprovalKeys.insert(key) }
         else { retryApprovalKeys.remove(key) }
         if requests[key] != request {
+            settle(key)
             if let previousIdentity = requests[key]?.identity {
                 keyOperations[key] = UUID()
                 initiation.invalidate(identity: previousIdentity)
@@ -742,7 +813,7 @@ enum DeviceRenderGate: Equatable {
         await observe(key, coordinator: coordinator)
     }
 
-    private func readFailed(_ key: DeviceRenderKey, failure: DeviceRenderReadFailure, error: Error, ticket: UUID) async {
+    private func readFailed(_ key: DeviceRenderKey, failure: DeviceRenderReadFailure, error: Error, ticket: UUID, retry: Bool, intentAction: IntentAction) async {
         switch failure {
         case .cancelled, .appGate:
             return
@@ -750,10 +821,11 @@ enum DeviceRenderGate: Equatable {
             do {
                 let storageKey = try intentKey(key)
                 if failedIntentWrites.contains(storageKey) { holdIntent(key, unreadable: true); return }
-                if let intent = try intentStore.load(storageKey), intent.state != .released {
+                if let intent = try intentStore.load(storageKey), intent.state != .released, intentAction != .creatorResume {
                     holdIntent(key, pending: intent.state == .retryPending); return
                 }
             } catch { holdIntent(key, unreadable: true); return }
+            deferRead(key, retry: retry, action: intentAction)
             wait(reason, for: key)
         case .superseded:
             presentations[key] = DeviceRenderPresentation(phase: .superseded)
@@ -851,20 +923,41 @@ enum DeviceRenderGate: Equatable {
         scheduleRetry(key)
     }
 
-    /// Re-reads `key` after a backoff. Reconnect, foreground and thermal
-    /// changes cut the wait short through `resumeWaiting`.
+    private func recordReadDeadline(_ error: Error, key: DeviceRenderKey) {
+        guard case let APIError.requestFailed(_, detail) = error, let hint = detail.retryAfter else { return }
+        // Keep representable long hints. Leave headroom at Duration's integer bound
+        // for floating-point rounding; malformed hints use a slow finite fallback.
+        let seconds = hint.isFinite && hint >= 0 && hint < Double(Int64.max) - 8192 ? hint : 300
+        let deadline = now().addingTimeInterval(seconds)
+        if readNotBefore[key].map({ $0 < deadline }) ?? true { readNotBefore[key] = deadline }
+    }
+
+    private func deferRead(_ key: DeviceRenderKey, retry: Bool, action: IntentAction) {
+        let previous = delayedReads[key]
+        delayedReads[key] = PendingRead(retry: retry || previous?.retry == true,
+            action: action == .creatorResume || previous?.action == .creatorResume ? .creatorResume : .automatic)
+    }
+
+    /// One coalesced status read remains after fast retries run out. No new
+    /// generation is requested; the existing identity/intent gates still own execution.
     private func scheduleRetry(_ key: DeviceRenderKey, after delay: Duration? = nil) {
-        retryTasks.removeValue(forKey: key)?.cancel()
-        let attempt = (retryAttempts[key] ?? 0) + 1
+        guard retryTasks[key] == nil else { return }
+        let attempt = min((retryAttempts[key] ?? 0) + 1, Self.maxAutomaticRetries + 1)
         retryAttempts[key] = attempt
-        guard attempt <= Self.maxAutomaticRetries else { return }
-        let pause = delay ?? Self.retryDelay(attempt: attempt), sleep = self.sleep
+        var pause = attempt > Self.maxAutomaticRetries ? Self.slowReadRecheck : (delay ?? Self.retryDelay(attempt: attempt))
+        if let deadline = readNotBefore[key] { pause = max(pause, .seconds(max(0, deadline.timeIntervalSince(now())))) }
+        let sleep = self.sleep, token = UUID(), owner = activeOwner, operation = keyOperations[key]
+        retryTokens[key] = token
         retryTasks[key] = Task { [weak self] in
             do { try await sleep(pause) } catch { return }
-            guard !Task.isCancelled, let self else { return }
+            guard !Task.isCancelled, let self, self.retryTokens[key] == token,
+                  self.activeOwner == owner, self.ownerIsCurrent, self.keyOperations[key] == operation else { return }
             self.retryTasks[key] = nil
+            self.retryTokens[key] = nil
             guard let capabilities = self.capabilities[key] else { return }
-            await self.reconcile(key, capabilities: capabilities)
+            let deferred = self.delayedReads.removeValue(forKey: key)
+            await self.reconcile(key, capabilities: capabilities, retry: deferred?.retry ?? false,
+                                 origin: .automaticRecovery, intentAction: deferred?.action ?? .automatic)
         }
     }
 
@@ -872,6 +965,10 @@ enum DeviceRenderGate: Equatable {
     private func settle(_ key: DeviceRenderKey) {
         retryTasks.removeValue(forKey: key)?.cancel()
         retryAttempts[key] = nil
+        retryTokens[key] = nil
+        // Stop and settlement cancel work, not the server's transport pacing.
+        delayedReads[key] = nil
+        resumeAuthorizations[key] = nil
     }
 
     /// Drops the local coordinator for a request the server no longer wants
@@ -1081,9 +1178,19 @@ enum DeviceRenderGate: Equatable {
         for (key, presentation) in presentations {
             guard let waiting = presentation.waiting, !thermalOnly || waiting == .cooling,
                   let capabilities = capabilities[key] else { continue }
+            if let deadline = readNotBefore[key], deadline > now() { continue }
             retryTasks.removeValue(forKey: key)?.cancel()
+            retryTokens[key] = nil
             retryAttempts[key] = nil
-            Task { await self.reconcile(key, capabilities: capabilities) }
+            let owner = activeOwner, operation = keyOperations[key]
+            Task { [weak self] in
+                guard let self, self.ownerIsCurrent, self.activeOwner == owner,
+                      self.keyOperations[key] == operation, self.capabilities[key] != nil,
+                      self.resetOperation == nil else { return }
+                let deferred = self.delayedReads.removeValue(forKey: key)
+                await self.reconcile(key, capabilities: capabilities, retry: deferred?.retry ?? false,
+                                     origin: .automaticRecovery, intentAction: deferred?.action ?? .automatic)
+            }
         }
     }
 
@@ -1263,6 +1370,8 @@ enum DeviceRenderGate: Equatable {
     func stopAll() async {
         let operation = UUID()
         resetOperation = operation
+        transportLifetime = UUID()
+        for transport in transportReads.values { transport.cancel() }
         defer { if resetOperation == operation { resetOperation = nil } }
         keyOperations.removeAll()
         pendingRetries.removeAll()
@@ -1270,11 +1379,11 @@ enum DeviceRenderGate: Equatable {
         heldRequests.removeAll()
         initiation.invalidate()
         tickets.removeAll()
-        rereads.removeAll()
+        rereads.removeAll(); delayedReads.removeAll(); resumeAuthorizations.removeAll(); observedResumeTargets.removeAll()
         for observer in observations.values { observer.cancel() }
         observations.removeAll()
         for task in retryTasks.values { task.cancel() }
-        retryTasks.removeAll(); retryAttempts.removeAll()
+        retryTasks.removeAll(); retryAttempts.removeAll(); retryTokens.removeAll(); readNotBefore.removeAll()
         for report in declines.values { report.task?.cancel() }
         declines.removeAll()
         for coordinator in entries.values { try? await coordinator.cancel() }
