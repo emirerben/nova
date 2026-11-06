@@ -90,7 +90,7 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # BACKGROUND_FOLLOWS_TALK_ENABLED and the windows capability, which these renders never have, so
 # all four hashes are v121's, unchanged (the pins cover v121 + v123).
 # v125 (Qendresa item 16): its teachings render only with SPEAKER_FULL_OPENING_ENABLED and the
-# `speaker_full_opening` capability, so the pins cover v125 too.
+# `speaker_full_opening` capability, so the pins cover v125 too (renumbered v130 on top of v128).
 # v128 (Qendresa item 21): its section renders only with CLIP_TEXT_TIKTOK_LOOK_ENABLED, so the
 # pins cover v128 too.
 # v132 (Qendresa item 18, was v126): its paragraph renders only with BACKGROUND_FOCUS_ENABLED and

@@ -900,6 +900,13 @@ def register_generation_background(background, canvas=None, focus_for=None) -> N
         if frame is None
         else {"width": frame.width_fraction, "x": frame.x_fraction, "y": frame.y_fraction},
     }
+    full_screen = getattr(background, "full_screen_windows", None) or ()
+    if full_screen:
+        # Qendresa item 16 (S86): inside these spans her take fills the canvas (no background,
+        # no frame), so the text there is judged against the take. Same timeline as `windows`.
+        policy["_speaker_background"]["full_screen"] = [
+            {"start_s": float(span.start_s), "end_s": float(span.end_s)} for span in full_screen
+        ]
     if policy.get("_environment_sampled"):
         # Text was already styled (an earlier compile pass, before the background was known):
         # the frames change for what comes next, and an automatic caption colour is chosen
@@ -928,6 +935,24 @@ def _segments(spec: dict, until: float) -> list[tuple[float, float, dict]]:
     if cursor < until - 1e-6:
         out.append((cursor, until, spec["fill"]))
     return out
+
+
+def _outside(start: float, end: float, spans: list[dict]) -> list[tuple[float, float]]:
+    """``[start, end)`` without any full-screen span, as the pieces left (Qendresa item 16)."""
+    pieces = [(start, end)]
+    for span in spans:
+        cut_from, cut_to = span["start_s"], span["end_s"]
+        kept: list[tuple[float, float]] = []
+        for a, b in pieces:
+            if cut_to <= a or b <= cut_from:
+                kept.append((a, b))
+                continue
+            if cut_from > a:
+                kept.append((a, cut_from))
+            if cut_to < b:
+                kept.append((cut_to, b))
+        pieces = kept
+    return [(a, b) for a, b in pieces if b - a > 1e-3]
 
 
 def _framed(background: bytes, take: bytes | None, frame: dict | None) -> bytes:
@@ -971,6 +996,15 @@ def _background_frames(spec: dict, take_frames: list[dict], canvas) -> list[dict
         # is unavailable, the same as an unreadable background (fail-open, never a failed job).
         record_pipeline_event("text", "styling_background_sample_failed", {"reason": "no_samples"})
         return take_frames
+    full_screen = spec.get("full_screen") or []
+    if full_screen and not take_frames:
+        # Qendresa item 16 (S86): her take fills the screen in the opening and cannot be read, so
+        # nothing says what is behind those captions; never judge them by a room that is not on
+        # screen. Unavailable, like an unreadable background (fail-open, the safe look).
+        record_pipeline_event(
+            "text", "styling_background_sample_failed", {"reason": "no_take_for_full_screen"}
+        )
+        return take_frames
     until = max(ends)
     until = min(until, 1800.0) if until > 0 else 1800.0
     frames: list[dict] = []
@@ -978,6 +1012,9 @@ def _background_frames(spec: dict, take_frames: list[dict], canvas) -> list[dict
         with tempfile.TemporaryDirectory(prefix="phone-text-background-") as directory:
             local: dict[str, str] = {}
             for index, (start, end, media) in enumerate(_segments(spec, until)):
+                pieces = _outside(start, end, full_screen) if full_screen else [(start, end)]
+                if not pieces:
+                    continue
                 path = local.get(media["path"])
                 if path is None:
                     # The media's own extension, so the decoder is chosen by it (a photo's jpg).
@@ -989,25 +1026,40 @@ def _background_frames(spec: dict, take_frames: list[dict], canvas) -> list[dict
                 pixels = sample_background(path, at, canvas=canvas, focus=media.get("focus"))
                 if pixels is None:
                     raise ValueError(f"segment {index} unreadable")
-                take = next(
-                    (f["pixels"] for f in take_frames if f["start_s"] < end and start < f["end_s"]),
-                    take_frames[0]["pixels"] if take_frames else None,
-                )
-                frames.append(
-                    {"start_s": start, "end_s": end, "pixels": _framed(pixels, take, spec["frame"])}
-                )
-                if spec["frame"] is None and take is not None:
-                    frames.append({"start_s": start, "end_s": end, "pixels": take})
+                for piece_start, piece_end in pieces:
+                    take = next(
+                        (
+                            f["pixels"]
+                            for f in take_frames
+                            if f["start_s"] < piece_end and piece_start < f["end_s"]
+                        ),
+                        take_frames[0]["pixels"] if take_frames else None,
+                    )
+                    piece = {"start_s": piece_start, "end_s": piece_end}
+                    frames.append({**piece, "pixels": _framed(pixels, take, spec["frame"])})
+                    if spec["frame"] is None and take is not None:
+                        frames.append({**piece, "pixels": take})
+            for span in full_screen:
+                # Her take, full-frame: what the phone draws behind the opening's text.
+                inside = [
+                    {
+                        "start_s": max(f["start_s"], span["start_s"]),
+                        "end_s": min(f["end_s"], span["end_s"]),
+                        "pixels": f["pixels"],
+                    }
+                    for f in take_frames
+                    if f["start_s"] < span["end_s"] and span["start_s"] < f["end_s"]
+                ]
+                frames.extend(inside or [{**span, "pixels": take_frames[0]["pixels"]}])
     except Exception as exc:  # noqa: BLE001 - never fail styling; no paths in the trace
         record_pipeline_event(
             "text", "styling_background_sample_failed", {"reason": type(exc).__name__}
         )
         return take_frames
-    record_pipeline_event(
-        "text",
-        "styling_background_sample",
-        {"segments": len(frames), "speaker_frame": spec["frame"] is not None},
-    )
+    detail = {"segments": len(frames), "speaker_frame": spec["frame"] is not None}
+    if full_screen:
+        detail["full_screen"] = len(full_screen)
+    record_pipeline_event("text", "styling_background_sample", detail)
     return frames
 
 

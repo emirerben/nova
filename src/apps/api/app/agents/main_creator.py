@@ -257,9 +257,12 @@ log = structlog.get_logger()
 # `settings.clip_text_tiktok_look_enabled`, `_CLIP_TEXT_LOOK_PROMPT_SECTION` teaches one line
 # pinned in the MIDDLE for the whole video (`corner: "middle_center"`) and TikTok's own text look
 # (`look: "tiktok"`). Flag off => the rendered prompt is byte-identical to v120.
+# v130 (Qendresa item 16 after main reached v128; item 22 left v130 unused, v129 / v131 / v132
+# are held by items 20 / 23 / 18): v125's two full-screen-opening teachings on top of v128.
+# Flag off, every prompt keeps its bytes.
 # v132 (Qendresa item 18, renumbered from v126 after #2114 took v128 on main; v129 is held by
 # item 20, v130 by item 16, v131 by item 23): v126's background-focus paragraph on top of
-# v128. Every other prompt keeps its bytes.
+# v130 (item 16, merged first). Every other prompt keeps its bytes.
 MAIN_CREATOR_PROMPT_VERSION = "2026-11-05-v132"
 
 # Prior chat messages the model sees. Callers must bound their history to this:

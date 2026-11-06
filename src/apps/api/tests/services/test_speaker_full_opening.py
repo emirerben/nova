@@ -18,6 +18,7 @@ from tests.tasks.test_background_follows_talk import (
     SAID,
     TAKE_S,
     WORDS,
+    _contract,
     _lay,
     _rows,
 )
@@ -261,6 +262,75 @@ def test_near_the_take_end_nothing_is_pushed_past_it(monkeypatch):
     assert len(shown) == len(set(shown)) and 3 in shown, _rows(layout)
     dropped = {n["window"] for n in layout.notes if n.get("reason") == "window_too_short"}
     assert dropped == {0, 1, 2} - set(shown), (layout.notes, _rows(layout))
+
+
+def test_two_later_names_in_a_saturated_tail_keep_the_lane_valid(monkeypatch):
+    """S83 tail chain (Emir's review of #2111, found by reading the control flow): an 8 s take,
+    a title to 3 s and an opening resolved to 6 s; Notion, Figma and Linear are said inside the
+    opening (0.6 / 1.2 / 1.8 s), Miro at 6.6 s and Slack at 7.2 s. The three intro names claim
+    6.0-7.5 s at the switch, Miro is pushed to 7.5 s, then the push-back stops at the take's last
+    half second and Slack stayed at 7.2 s: Miro got a reversed window (7.5 -> 7.2) and Slack's
+    overlapped Linear's, so the phone lane refused the whole background (corner and opening too).
+
+    Ways it could fail (written before the fix):
+    1. A later mention left before a pushed one: a reversed window, an overlap, the lane lost.
+    2. A crowded later name dropped with no note (the receipt says nothing).
+    3. The fix drops names that do fit, or moves a window before the switch or past the take.
+    4. A visual shown twice to make room.
+    5. The near-end case with ONE later name (test above) changes.
+    """
+    monkeypatch.setattr(settings, "background_follows_talk_enabled", True)
+    names = ["Notion", "Figma", "Linear", "Miro", "Slack"]
+    heard = [0.6, 1.2, 1.8, 6.6, 7.2]
+    words = [
+        {"text": text, "start_s": at, "end_s": at + 0.2}
+        for text, at in zip(names, heard, strict=True)
+    ]
+    words.insert(3, {"text": "blah", "start_s": 5.2, "end_s": 5.4})
+    opening, why = _open(words=words, take_s=8.0, title=3.0)
+    assert opening == pytest.approx(6.0), (opening, why)
+    layout = _lay(names, words=words, take_s=8.0, opening_s=opening)
+
+    _contract(layout, 8.0)
+    assert all(w.start_s >= opening - 1e-9 for w in layout.windows), _rows(layout)
+    shown = [w.index for w in layout.windows]
+    assert len(shown) == len(set(shown)), _rows(layout)
+    dropped = {n["window"] for n in layout.notes if n.get("reason") == "window_too_short"}
+    assert set(shown) | dropped == {0, 1, 2, 3, 4}, (layout.notes, _rows(layout))
+    assert not set(shown) & dropped, (layout.notes, _rows(layout))
+    # Every name that has room shows: four half-second windows fit in the 2 s after the switch.
+    assert len(shown) == 4, _rows(layout)
+    assert layout.windows[-1].end_s == pytest.approx(8.0)
+
+
+def test_a_crowded_tail_never_breaks_the_lane(monkeypatch):
+    """S83 tail chain, seeded: short takes with names said in the opening and several right after
+    it. Whatever saturates, the lane gets ordered, disjoint windows of at least 0.5 s from the
+    switch to the take end, no visual twice, and every name either shows or carries a note."""
+    monkeypatch.setattr(settings, "background_follows_talk_enabled", True)
+    rng = random.Random(2108)
+    names = ["Notion", "Figma", "Linear", "Miro", "Slack", "Jira"]
+    for trial in range(300):
+        opening = rng.choice([2.0, 3.0, 4.5, 6.0, 7.5])
+        take = opening + rng.choice([0.5, 1.0, 1.5, 2.0, 2.5, 3.5])
+        intro = rng.randint(0, 4)
+        later = len(names) - intro
+        heard = sorted(rng.uniform(0.2, opening - 0.3) for _ in range(intro))
+        heard += sorted(rng.uniform(opening + 0.05, take - 0.1) for _ in range(later))
+        words = [
+            {"text": text, "start_s": round(at, 3), "end_s": round(at, 3) + 0.05}
+            for text, at in zip(names, heard, strict=True)
+        ]
+        layout = _lay(names, words=words, take_s=take, opening_s=opening)
+        case = (trial, opening, take, [round(h, 2) for h in heard], _rows(layout), layout.notes)
+        _contract(layout, take)
+        assert all(w.start_s >= opening - 1e-9 for w in layout.windows), case
+        assert layout.windows[0].start_s == pytest.approx(opening), case
+        assert layout.windows[-1].end_s == pytest.approx(take), case
+        shown = [w.index for w in layout.windows]
+        assert len(shown) == len(set(shown)), case
+        noted = {n["window"] for n in layout.notes if "window" in n}
+        assert set(shown) | noted == set(range(len(names))), case
 
 
 @pytest.mark.parametrize("follows", [True, False])

@@ -436,6 +436,20 @@ def _lay_out_on_the_word(
                 break
             mention[:] = [(max(at, floor), idx) for at, idx in mention]
             floor = mention[0][0] + len(mention) * MIN_WINDOW_S
+        # Where the push-back stops at the take's last half second, a later mention can still sit
+        # before (or within half a second of) the one pushed ahead of it (Emir's review of #2111:
+        # Miro pushed to 7.5 s, Slack heard at 7.2 s): a reversed window and an overlap, and the
+        # phone lane then refuses the whole background. Such a mention joins the one before it,
+        # so its names share that span and those without room get `window_too_short`. Unless the
+        # tail saturates, every mention already starts that far after the one before (no change).
+        kept = [mentions[0]]
+        for mention in mentions[1:]:
+            seat = kept[-1][0][0]
+            if mention[0][0] < seat + MIN_WINDOW_S - _EPS:
+                kept[-1].extend((seat, idx) for _at, idx in mention)
+            else:
+                kept.append(mention)
+        mentions = kept
     windows: list[OutputWindow] = []
     for position, mention in enumerate(mentions):
         more_follow = position + 1 < len(mentions)
