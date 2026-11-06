@@ -101,6 +101,10 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// compatibility projection for first-pass views and test fixtures.
     @Published private(set) var document: EditorDocument {
         didSet {
+            if let checkpoint = mergeDecisionCheckpoint, checkpoint.isOpen, document != checkpoint.before {
+                document = checkpoint.before
+                return
+            }
             draftProjectionCache = nil
             timelineItemsCache = nil
             timelineClipsCache = nil
@@ -176,7 +180,26 @@ struct NativeEditorTemporaryVideo: Sendable {
     @Published var saveState: NativeEditorSaveState = .idle
     @Published private(set) var mergeConflictMessage: String?
     @Published private(set) var canKeepLocalMergeConflicts = true
+    private enum MergeOrigin: Equatable { case rendered, submittedChat, unprovenChat }
+    private struct MergeAuthority: Equatable {
+        let identity: EditorOperationIdentity
+        let owner: String?
+        let generation: String
+        let clean: EditorDocument
+        let song: JSONValue?
+    }
+    private var mergeAuthority: MergeAuthority {
+        MergeAuthority(identity: editorOperationIdentity, owner: api?.mediaLibraryOwner,
+            generation: cleanDocument.revision.baseGeneration, clean: cleanDocument,
+            song: Self.mergeSongAuthority(variant: previewVariant, effective: savedUserSong,
+                job: jobID, generation: cleanDocument.revision.baseGeneration))
+    }
     private struct PendingMerge {
+        let id = UUID()
+        var origin: MergeOrigin = .rendered
+        var authority: MergeAuthority? = nil
+        var localOverride: EditorDocument? = nil
+        var stagedSections: Set<EditorSection> = []
         let base: EditorDocument
         let clean: EditorDocument
         let remote: EditorDocument
@@ -194,6 +217,28 @@ struct NativeEditorTemporaryVideo: Sendable {
         let legacySnapshot: [String: JSONValue]?
     }
     private var pendingMerge: PendingMerge?
+    /// A decision boundary is not an executable document checkpoint. Reopening it
+    /// shows the original local document read-only until the destination is chosen.
+    private struct MergeDecisionCheckpoint {
+        let context: PendingMerge
+        let before: EditorDocument
+        let after: EditorDocument
+        let authority: MergeAuthority
+        var isOpen = false
+    }
+    private var mergeDecisionCheckpoint: MergeDecisionCheckpoint?
+    private var mutatingDocumentHistory = false
+    var isReviewingPreviousMerge: Bool { mergeDecisionCheckpoint?.isOpen == true }
+    private var decisionIsCurrent: Bool { mergeDecisionCheckpoint?.authority == mergeAuthority }
+    private func clearMergeDecisionCheckpoint() {
+        let checkpoint = mergeDecisionCheckpoint
+        mergeDecisionCheckpoint = nil
+        if let checkpoint, checkpoint.isOpen {
+            document = checkpoint.after
+            pendingMerge = nil; mergeConflictMessage = nil; canKeepLocalMergeConflicts = true
+        }
+    }
+
     @Published private(set) var refreshSync: NativeEditorRefreshSync = .idle
     /// Waits between background refresh retries; the last one repeats. Internal so tests can shorten it.
     var refreshRetryDelays: [Duration] = [.seconds(1), .seconds(3), .seconds(9), .seconds(27), .seconds(60)]
@@ -1128,7 +1173,12 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     private let minimumClipDuration: TimeInterval = 0.1
     private let historyLimit = 100
-    private var undoStack: [EditorDocument] = [] { didSet { undoHistoryVersion &+= 1 } }
+    private var undoStack: [EditorDocument] = [] {
+        didSet {
+            undoHistoryVersion &+= 1
+            if !mutatingDocumentHistory { clearMergeDecisionCheckpoint() }
+        }
+    }
     /// KRI-240: changes on every undo-history change (new step, undo, trim at the
     /// limit, clear), so the caption editor's Undo notice can tell its removal is
     /// still the newest step. A count can't: it saturates at `historyLimit`.
@@ -1200,7 +1250,11 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// Editor documents submitted with a chat turn, keyed by the `client_state_id`
     /// the server echoes on the draft it builds from them. The apply path uses the
     /// submitted document as the three-way merge base. In-memory only; bounded.
-    private struct SubmittedEditorState { let document: EditorDocument; let sections: Set<EditorSection> }
+    private struct SubmittedEditorState {
+        let document: EditorDocument
+        let sections: Set<EditorSection>
+        let authority: MergeAuthority
+    }
     private var submittedEditorStates: [String: SubmittedEditorState] = [:]
     private var submittedEditorStateOrder: [String] = []
     private static let submittedEditorStateLimit = 8
@@ -1219,6 +1273,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// must fall back to the legacy save-then-send flow. A clean editor exports
     /// request metadata without changed lanes, meaning "no unsaved edits".
     func exportEditorState(maxBytes: Int? = nil) -> EditorStateRequest? {
+        guard !isReviewingPreviousMerge else { return nil }
         guard loadState == .loaded, !isSaving else { return nil }
         // A text field still being typed is part of the creator's current state.
         _ = finishTextCreation()
@@ -1237,7 +1292,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             Self.stagingLog.debug("editor_state over cap bytes=\(encoded.count, privacy: .public) max=\(maxBytes, privacy: .public); legacy flush")
             return nil
         }
-        submittedEditorStates[request.clientStateID] = SubmittedEditorState(document: document, sections: changedSections)
+        submittedEditorStates[request.clientStateID] = SubmittedEditorState(document: document, sections: changedSections, authority: mergeAuthority)
         submittedEditorStateOrder.append(request.clientStateID)
         while submittedEditorStateOrder.count > Self.submittedEditorStateLimit {
             submittedEditorStates[submittedEditorStateOrder.removeFirst()] = nil
@@ -1252,36 +1307,26 @@ struct NativeEditorTemporaryVideo: Sendable {
         return probe == a
     }
 
-    /// Three-way per-lane merge of a chat draft built on `submitted`. A lane only
-    /// one side changed keeps that side. KRI-935: a lane changed on BOTH sides
-    /// takes the chat's version, because it is the newest edit and the creator
-    /// asked for it; the caller's single Undo step restores their own version.
-    private func mergeChatDraft(_ staged: (document: EditorDocument, sections: Set<EditorSection>), over submitted: EditorDocument) -> (document: EditorDocument, taken: Set<EditorSection>) {
-        var merged = document
-        var taken: Set<EditorSection> = []
-        for section in staged.sections where !lanesEqual(section, staged.document, submitted) {
-            copy(section, from: staged.document, into: &merged); taken.insert(section)
-        }
-        merged.revision.number = staged.document.revision.number ?? merged.revision.number
-        // Deletes made after the chat saw this state stay deleted.
-        let unseen = Set(document.deletions).subtracting(submitted.deletions)
-        return (Self.honoringDeletions(unseen, in: merged), taken)
-    }
-
-    /// A chat lane copied over the creator's own edit never brings back what they
-    /// deleted and the chat never saw deleted (KRI-935).
-    private static func honoringDeletions(_ deletions: Set<EditorDeletion>, in value: EditorDocument) -> EditorDocument {
-        guard !deletions.isEmpty else { return value }
-        func ids(_ kind: String) -> Set<String> { Set(deletions.filter { $0.kind == kind }.map(\.id)) }
-        let text = ids("text"), cues = ids("caption_cue"), sounds = ids("sound_effect")
-        let overlays = ids("media_overlay"), blocks = ids("visual_block")
-        var kept = value
-        kept.textElements.removeAll { text.contains($0.id) || ($0.isCaption && cues.contains($0.id)) }
-        kept.captionCues.removeAll { cues.contains($0.id) }
-        kept.soundEffects.removeAll { sounds.contains($0.id) }
-        kept.mediaOverlays.removeAll { overlays.contains($0.id) }
-        kept.visualBlocks.removeAll { blocks.contains($0.id) }
-        return kept
+    /// Only an echoed, lifetime-scoped submitted state proves the chat's base.
+    private func mergeChatDraft(_ staged: (document: EditorDocument, sections: Set<EditorSection>),
+                                submitted: SubmittedEditorState?, revision: Int) {
+        let proven = submitted.flatMap { $0.authority == mergeAuthority ? $0 : nil }
+        let base = proven?.document ?? cleanDocument
+        var remote = base
+        for section in staged.sections { copy(section, from: staged.document, into: &remote) }
+        // Chat changes authored fields; rendered authority remains the current one.
+        remote.revision = document.revision
+        remote.capabilities = document.capabilities
+        let requiresChoice = proven == nil && hasUnsavedChanges
+        let context = PendingMerge(origin: requiresChoice ? .unprovenChat : .submittedChat,
+            authority: mergeAuthority, stagedSections: staged.sections,
+            base: base, clean: cleanDocument, remote: remote, baseSong: mergeAuthority.song,
+            variant: previewVariant, forcePreview: false, thread: threadID,
+            originalJob: jobID, originalVariant: variantKey, destinationJob: jobID,
+            destinationVariant: variantKey, destinationItem: itemID, stagedRevision: revision,
+            remoteETag: nil, legacySnapshot: nil)
+        pendingMerge = context
+        _ = applyMerge(context, preference: nil)
     }
 
     var hasOnlyChatStagedChanges: Bool {
@@ -1309,6 +1354,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                                 variantKey: variantKey, threadID: threadID)
     }
     private func beginEditorLoad() -> UInt64 {
+        clearMergeDecisionCheckpoint()
         editorLoadEpoch &+= 1
         resetLatestJobDrain()
         pendingLoadObservation = nil
@@ -1394,6 +1440,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     private let playbackEndTolerance: TimeInterval = 0.05
 
     var videoDownloadTarget: NativeEditorVideoDownloadTarget? {
+        guard !isReviewingPreviousMerge else { return nil }
         guard let jobID, let variantKey else { return nil }
         let generation = document.revision.baseGeneration.isEmpty ? nil : document.revision.baseGeneration
         return NativeEditorVideoDownloadTarget(
@@ -1405,6 +1452,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     var canDownloadCurrentVideo: Bool {
+        guard !isReviewingPreviousMerge else { return false }
         guard document.editorState != "empty" else { return false }
         if savedEditDeviceRenderFile() != nil { return true }
         let displayedVideoIsCurrent: Bool
@@ -1427,6 +1475,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// when export is available.
     var exportBlockReason: String? {
         guard !canDownloadCurrentVideo else { return nil }
+        if isReviewingPreviousMerge { return "Choose which changes to keep, or Redo, before exporting." }
         if document.editorState == "empty" { return "Add a clip before exporting." }
         if isSaving { return "Saving your changes…" }
         if hasUnsavedChanges { return "Save your changes to export the current video." }
@@ -1445,6 +1494,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func videoDownloadRoute(deviceLocalFile: URL?) throws -> NativeEditorVideoDownloadRoute {
+        guard !isReviewingPreviousMerge else { throw NativeEditorVideoDownloadError.unavailable }
         let rendered = finishedRenderRoute(deviceLocalFile: deviceLocalFile)
         if let rendered, case .localFile = rendered { return rendered }
         if let own = savedEditDeviceRenderFile() { return .localFile(own) }
@@ -1523,7 +1573,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// throws through to the caller rather than falling back to the last
     /// cloud render. The user must always get what the preview shows.
     func exportDisplayedSourcePreview(progress: (@Sendable (Double) -> Void)? = nil) async throws -> NativeEditorTemporaryVideo {
-        guard sourcePreviewState == .ready, sourcePreviewSettled,
+        guard !isReviewingPreviousMerge, sourcePreviewState == .ready, sourcePreviewSettled,
               let sourcePreview,
               player?.currentItem === sourcePreview.preview.playerItem else {
             throw NativeEditorVideoDownloadError.unavailable
@@ -1863,10 +1913,10 @@ struct NativeEditorTemporaryVideo: Sendable {
         latestJobDrainTask?.cancel()
     }
 
-    var canUndo: Bool { !undoStack.isEmpty }
+    var canUndo: Bool { !isReviewingPreviousMerge && (!undoStack.isEmpty || (mergeDecisionCheckpoint != nil && decisionIsCurrent)) }
     var undoHistoryCount: Int { undoStack.count }
     var isTimingGestureActive: Bool { activeTimedEdit != nil || activeTrim != nil }
-    var canRedo: Bool { !redoStack.isEmpty }
+    var canRedo: Bool { isReviewingPreviousMerge ? decisionIsCurrent : !redoStack.isEmpty }
     var selectedClipID: UUID? {
         get { guard selection?.kind == .clip else { return nil }; return UUID(uuidString: selection?.id ?? "") }
         set { selection = newValue.map { EditorSelection(kind: .clip, id: $0.uuidString) } }
@@ -1899,6 +1949,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// typed mutation APIs while a transaction is open update the document but
     /// do not append additional undo entries.
     func beginTransaction() {
+        guard !isReviewingPreviousMerge else { return }
         guard transactionBaseline == nil else { return }
         transactionBaseline = document
     }
@@ -1910,9 +1961,13 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func appendUndo(_ value: EditorDocument, isRedo: Bool = false) {
+        guard !isReviewingPreviousMerge else { return }
+        mutatingDocumentHistory = true
+        defer { mutatingDocumentHistory = false }
         saveHistory?.appendUndo(value, isRedo: isRedo)
         undoStack.append(value)
         if undoStack.count > historyLimit {
+            clearMergeDecisionCheckpoint()
             undoStack.removeFirst(undoStack.count - historyLimit)
         }
     }
@@ -2205,6 +2260,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var syncNeedsRetry = false
 
     func synchronizePromptRevision() async {
+        guard !isReviewingPreviousMerge else { return }
         // A concurrent save/hydration can change the clean baseline while this
         // suspends; a dropped sync would otherwise leave a chat edit invisible
         // until the editor is reloaded (nothing else re-polls without new events).
@@ -2218,6 +2274,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func runPromptRevisionSync(identity: EditorOperationIdentity) async {
+        guard !isReviewingPreviousMerge, pendingMerge == nil else { return }
         guard editorOperationIdentity == identity else { return }
         if isSaving, loadState == .loaded, !promptSyncStopped,
            refreshSync == .reconnecting || isRunningRefreshRetry {
@@ -2303,25 +2360,12 @@ struct NativeEditorTemporaryVideo: Sendable {
             // A save/load completed while this request was suspended. Its newer
             // authority wins, even when the local document is now clean.
             guard cleanDocument == baseline else { syncNeedsRetry = true; return }
+            guard transactionBaseline == nil, !isTimingGestureActive else { return }
             if sameTarget { refreshEditingPermissions(from: variant, document: nextDocument) }
             guard !sameTarget || nextDocument != cleanDocument || staged != nil else { return }
-            // Only the previous chat draft is unsaved: the newer cumulative
-            // head replaces it wholesale instead of conflicting with it.
-            // Editor-state turn: the draft says which submitted state it was built on,
-            // so merge three-way against THAT instead of guessing from the head.
-            if let staged, sameTarget, variantUnchanged(variant), pendingText == nil, !isSaving,
-               let stateID = snapshot.snapshot["client_state_id"]?.stringValue,
-               let submitted = submittedEditorStates[stateID] {
-                let result = mergeChatDraft(staged, over: submitted.document)
-                // One Undo restores the creator's own pre-chat UNSAVED state. The clean
-                // baseline (the rendered variant) is deliberately left untouched.
-                appendUndo(document); redoStack.removeAll()
-                document = result.document
-                changedSections.formUnion(staged.sections)
-                appliedChatDraftRevision = snapshot.draftRevision
-                chatStagedDocument = nil; chatStagedSections = []
-                refreshDirtyState(); refreshDuration()
-                scheduleSourcePreviewUpdate()
+            if let staged, sameTarget, variantUnchanged(variant), pendingText == nil, transactionBaseline == nil, !isTimingGestureActive, !isSaving {
+                let submitted = snapshot.snapshot["client_state_id"]?.stringValue.flatMap { submittedEditorStates[$0] }
+                mergeChatDraft(staged, submitted: submitted, revision: snapshot.draftRevision)
                 return
             }
             let onlyChatStaged = hasOnlyChatStagedChanges
@@ -2331,21 +2375,6 @@ struct NativeEditorTemporaryVideo: Sendable {
                 // next sync (every chat send runs one first) stages this draft then.
                 guard pendingText == nil, !isSaving else {
                     Self.stagingLog.debug("sync deferred: text entry or save in flight rev=\(snapshot.draftRevision, privacy: .public)")
-                    return
-                }
-                // Unsaved local edits on the same rendered variant: keep both sides
-                // lane-by-lane. A lane the chat also changed takes the chat's version
-                // (the newest edit, which the creator asked for); one Undo restores
-                // the creator's own version (KRI-935).
-                if let staged, variantUnchanged(variant) {
-                    appendUndo(document); redoStack.removeAll()
-                    var merged = document
-                    for section in staged.sections { copy(section, from: staged.document, into: &merged) }
-                    document = Self.honoringDeletions(Set(merged.deletions), in: merged)
-                    changedSections.formUnion(staged.sections)
-                    appliedChatDraftRevision = snapshot.draftRevision
-                    chatStagedDocument = nil
-                    refreshDirtyState(); refreshDuration()
                     return
                 }
                 // Same rendered generation and no new chat draft: nothing newer exists,
@@ -2698,6 +2727,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func resetLatestJobDrain() {
+        clearMergeDecisionCheckpoint()
         savedSongProjectionLag = nil
         watchedLatestProject = nil
         latestJobGate.reset()
@@ -2710,6 +2740,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func drainPendingLatestJob() {
+        guard !isReviewingPreviousMerge, pendingMerge == nil else { return }
         guard observersVisible, !isSaving, activeSaveAttemptID == nil, let ticket = latestJobGate.pending,
               ticket.threadID == threadID, let api else { return }
         latestJobDrainTask?.cancel()
@@ -3354,8 +3385,18 @@ struct NativeEditorTemporaryVideo: Sendable {
     #if DEBUG
     func pendingMergeSnapshotForTesting() -> [String: JSONValue]? {
         guard let context = pendingMerge else { return nil }
-        return ["base": .object(context.base.encodeSnapshot()), "local": .object(document.encodeSnapshot()),
+        let remoteSong = mergeRemoteSong(for: context)
+        let result = NativeEditorMerge.documents(base: context.base, local: context.localOverride ?? document,
+            remote: context.remote, baseSong: context.baseSong, remoteSong: remoteSong)
+        let paths: [JSONValue]
+        if case .conflicts(let conflicts) = result {
+            paths = conflicts.map { .array($0.path.map(JSONValue.string)) }
+        } else { paths = [] }
+        return ["base": .object(context.base.encodeSnapshot()),
+                "local": .object((context.localOverride ?? document).encodeSnapshot()),
                 "remote": .object(context.remote.encodeSnapshot()), "base_song": context.baseSong ?? .null,
+                "remote_song": remoteSong ?? .null, "conflict_paths": .array(paths),
+                "authority_matches": .bool(context.authority == mergeAuthority),
                 "variant": .object(context.variant ?? [:])]
     }
 
@@ -3627,6 +3668,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func prepareSourcePreview() async {
+        guard !isReviewingPreviousMerge else { return }
         guard let api, let jobID, let variantKey else { return }
         Perf.begin("editor.preview", id: jobID.uuidString)
         defer { Perf.end("editor.preview", id: jobID.uuidString) }
@@ -4142,6 +4184,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func scheduleSourcePreviewUpdate() {
+        guard !isReviewingPreviousMerge else { return }
         guard resolvedSources != nil, sourceCompiler != nil else { return }
         sourcePreviewTask?.cancel()
         sourcePreviewSequence += 1
@@ -4171,6 +4214,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     static let previewCoalesceMilliseconds = 80
 
     private func rebuildSourcePreview(sequence: Int) async {
+        guard !isReviewingPreviousMerge else { return }
         guard let compiler = sourceCompiler, var sources = resolvedSources else { return }
         let baseline = document
         let pending = pendingText
@@ -4394,6 +4438,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func togglePlayback() {
+        guard !isReviewingPreviousMerge else { return }
         guard document.editorState != "empty" else { return }
         guard canDisplayCurrentPlayer, let player else {
             // While the editable preview is still building there is nothing to play yet. Remember the tap
@@ -7694,12 +7739,51 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func undo() {
+        guard !isReviewingPreviousMerge else { return }
+        if !isSaving, transactionBaseline == nil, !isTimingGestureActive,
+           undoStack.isEmpty, var checkpoint = mergeDecisionCheckpoint, decisionIsCurrent {
+            pausePlayback()
+            promptRefreshSequence &+= 1
+            latestJobDrainTask?.cancel(); latestJobDrainTask = nil
+            previewRefreshTask?.cancel(); previewRefreshTask = nil
+            sourcePreviewTask?.cancel(); sourcePreviewQuietRetryTask?.cancel()
+            sourcePreviewSequence &+= 1
+            pendingPlayRequest = false
+            checkpoint.isOpen = true
+            mergeDecisionCheckpoint = checkpoint
+            pendingMerge = checkpoint.context
+            document = checkpoint.before
+            sourcePreviewState = .failed("Review your previous edits and choose which changes to keep before preparing a preview.")
+            let context = checkpoint.context
+            if case .resolved = NativeEditorMerge.documents(base: context.base, local: checkpoint.before,
+                remote: context.remote, baseSong: context.baseSong, remoteSong: checkpoint.authority.song,
+                preference: .local) {
+                canKeepLocalMergeConflicts = true
+            } else { canKeepLocalMergeConflicts = false }
+            mergeConflictMessage = "Your previous edits are shown read-only. Choose which changes to keep on the current version, or Redo the previous choice."
+            refreshDirtyState(); refreshDuration()
+            return
+        }
+        mutatingDocumentHistory = true
+        defer { mutatingDocumentHistory = false }
         guard let previous = undoStack.popLast() else { return }
         saveHistory?.recordUndo(to: previous, from: document)
         appendRedo(document); document = previous; refreshDirtyState(); refreshDuration()
     }
 
     func redo() {
+        if let checkpoint = mergeDecisionCheckpoint, checkpoint.isOpen {
+            guard !isSaving, decisionIsCurrent else { return }
+            var restored = checkpoint
+            restored.isOpen = false
+            mergeDecisionCheckpoint = restored
+            pendingMerge = nil; mergeConflictMessage = nil; canKeepLocalMergeConflicts = true
+            document = checkpoint.after
+            refreshDirtyState(); refreshDuration()
+            refreshRebasedSourcePreview(force: true)
+            rearmLatestJobAfterMergeDecision()
+            return
+        }
         guard let next = redoStack.popLast() else { return }
         appendUndo(document, isRedo: true); document = next; refreshDirtyState(); refreshDuration()
     }
@@ -7709,6 +7793,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func save(retrying retrySections: Set<EditorSection>) async {
+        guard !isReviewingPreviousMerge, pendingMerge == nil else { return }
         guard !isSaving, activeSaveAttemptID == nil else { return }
         let attemptID = UUID()
         let identity = editorOperationIdentity
@@ -8078,7 +8163,8 @@ struct NativeEditorTemporaryVideo: Sendable {
                                  destination: (job: UUID?, variant: String?, item: String?)? = nil,
                                  stagedRevision: Int? = nil, remoteETag: String? = nil,
                                  legacySnapshot: [String: JSONValue]? = nil) -> Bool {
-        let context = PendingMerge(base: cleanDocument, clean: latestClean, remote: remoteEdits ?? latestClean,
+        guard !isReviewingPreviousMerge else { return false }
+        let context = PendingMerge(authority: mergeAuthority, base: cleanDocument, clean: latestClean, remote: remoteEdits ?? latestClean,
             baseSong: Self.mergeSongAuthority(variant: previewVariant, effective: savedUserSong, job: jobID, generation: cleanDocument.revision.baseGeneration), variant: variant, forcePreview: forcePreviewRebuild,
             thread: threadID, originalJob: jobID, originalVariant: variantKey,
             destinationJob: destination?.job ?? jobID, destinationVariant: destination?.variant ?? variantKey,
@@ -8091,12 +8177,21 @@ struct NativeEditorTemporaryVideo: Sendable {
     func resolveMergeConflicts(keepingLocal: Bool) {
         guard let context = pendingMerge, !isSaving else { return }
         guard !keepingLocal || canKeepLocalMergeConflicts else { return }
-        _ = applyMerge(context, preference: keepingLocal ? .local : .remote)
+        if applyMerge(context, preference: keepingLocal ? .local : .remote) {
+            rearmLatestJobAfterMergeDecision()
+        }
     }
 
-    private func applyMerge(_ context: PendingMerge, preference: AuthoredJSONMerge.Preference?) -> Bool {
-        guard threadID == context.thread, jobID == context.originalJob, variantKey == context.originalVariant else { return false }
-        let remoteSong = context.variant.map { variant in
+    private func rearmLatestJobAfterMergeDecision() {
+        let authority = mergeAuthority
+        Task { @MainActor [weak self] in
+            guard let self, self.mergeAuthority == authority else { return }
+            self.drainPendingLatestJob()
+        }
+    }
+
+    private func mergeRemoteSong(for context: PendingMerge) -> JSONValue? {
+        return context.variant.map { variant in
             let overlay = Self.serverSavedSongOverlay(for: variant, job: context.destinationJob, variantKey: context.destinationVariant)
                 ?? savedSongOverlay(for: variant, thread: context.thread, job: context.destinationJob,
                 item: context.destinationItem, variantKey: context.destinationVariant,
@@ -8104,15 +8199,29 @@ struct NativeEditorTemporaryVideo: Sendable {
             return Self.mergeSongAuthority(variant: variant, effective: NativeUserSong(variant: variant)?.applying(overlay),
                 job: context.destinationJob, generation: context.clean.revision.baseGeneration)
         } ?? context.baseSong
-        let result = NativeEditorMerge.documents(base: context.base, local: document, remote: context.remote,
-            baseSong: context.baseSong, remoteSong: remoteSong,
-            preference: preference)
+    }
+
+    private func applyMerge(_ context: PendingMerge, preference: AuthoredJSONMerge.Preference?) -> Bool {
+        guard !isReviewingPreviousMerge || preference != nil else { return false }
+        guard pendingMerge?.id == context.id, context.authority == mergeAuthority else { return false }
+        guard context.origin == .rendered || context.remote.capabilities == document.capabilities else { return false }
+        let local = context.localOverride ?? document
+        if context.origin == .unprovenChat, preference == nil {
+            canKeepLocalMergeConflicts = true
+            mergeConflictMessage = "This chat edit has no matching submitted state. Choose your current edits or the chat edit; nothing changes until you choose."
+            return false
+        }
+        let remoteSong = mergeRemoteSong(for: context)
+        // An unproven base is only a conservative comparison aid after an explicit
+        // choice; it never authorizes automatic replacement of local work.
+        let result = NativeEditorMerge.documents(base: context.base, local: local, remote: context.remote,
+            baseSong: context.baseSong, remoteSong: remoteSong, preference: preference)
         let rebased: EditorDocument
         switch result {
         case .resolved(let value): rebased = value
         case .conflicts(let conflicts):
             let connected = conflicts.contains(where: { $0.path.first == "dependent" })
-            canKeepLocalMergeConflicts = context.baseSong == remoteSong || (document.userSong?.isEmpty != false && !connected)
+            canKeepLocalMergeConflicts = context.baseSong == remoteSong || (local.userSong?.isEmpty != false && !connected)
             mergeConflictMessage = !canKeepLocalMergeConflicts
                 ? "The latest version may use a different song. Use the latest conflicting changes, then edit the song. Your current edits remain here until you choose."
                 : connected
@@ -8125,6 +8234,18 @@ struct NativeEditorTemporaryVideo: Sendable {
             return false
         }
         let selected = selection
+        let before = local
+        let preservesAuthority = context.localOverride == nil && !isReviewingPreviousMerge
+            && before.revision.baseGeneration == context.clean.revision.baseGeneration
+            && context.originalJob == context.destinationJob
+            && context.originalVariant == context.destinationVariant
+            && context.clean.revision.baseGeneration == cleanDocument.revision.baseGeneration
+            && context.baseSong == remoteSong
+        if !preservesAuthority || isReviewingPreviousMerge { mergeDecisionCheckpoint = nil }
+        let authoredChanged = before.editorState != rebased.editorState
+            || before.deletions != rebased.deletions || before.userSong != rebased.userSong
+            || EditorSection.allCases.contains { before.snapshot(for: $0) != rebased.snapshot(for: $0) }
+        if preservesAuthority, authoredChanged { appendUndo(before) }
         if context.originalJob != context.destinationJob { discardPlaybackForNewJob() }
         document = rebased
         cleanDocument = context.clean
@@ -8135,13 +8256,25 @@ struct NativeEditorTemporaryVideo: Sendable {
         mergeConflictMessage = nil
         canKeepLocalMergeConflicts = true
         if let revision = context.stagedRevision { appliedChatDraftRevision = revision }
-        chatStagedDocument = nil; chatStagedSections = []
-        redoStack.removeAll()
-        configureCapabilities(from: context.variant)
+        if context.origin == .rendered {
+            chatStagedDocument = nil; chatStagedSections = []
+        } else {
+            chatStagedDocument = context.remote
+            chatStagedSections = context.stagedSections
+        }
+        if !preservesAuthority || authoredChanged { redoStack.removeAll() }
+        if context.origin == .rendered { configureCapabilities(from: context.variant) }
         refreshRebasedSourcePreview(force: context.forcePreview)
         refreshDirtyState()
         explicitlyDirtySections.formIntersection(changedSections)
-        undoStack = hasUnsavedChanges ? [context.clean] : []
+        if !preservesAuthority {
+            undoStack.removeAll()
+            var decision = context
+            decision.authority = mergeAuthority
+            decision.localOverride = before
+            mergeDecisionCheckpoint = MergeDecisionCheckpoint(context: decision, before: before,
+                after: document, authority: mergeAuthority)
+        }
         if let selected, selectionExists(selected) { selection = selected } else { selection = nil }
         durationSourcesInvalidated = hasUnsavedChanges && (changedSections.contains(.timeline) || changedSections.contains(.carouselMoment))
         setAuthoritativeDuration(Self.number(context.variant?["duration_s"]))
@@ -8150,6 +8283,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func transact(section: EditorSection, _ body: (inout EditorDraft) -> Void) {
+        guard !isReviewingPreviousMerge else { return }
         var next = draft; body(&next); guard next != draft else { return }
         invalidateDurationSources(for: Set([section]))
         let before = document
@@ -8166,6 +8300,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func transactDocument(sections: Set<EditorSection>, _ body: (inout EditorDocument) -> Void) {
+        guard !isReviewingPreviousMerge else { return }
         var next = document; body(&next)
         if !next.clips.isEmpty { next.editorState = "renderable" }
         guard next != document else { return }
@@ -8177,6 +8312,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func canEditOperation(_ keys: [String], section: EditorSection) -> Bool {
+        guard !isReviewingPreviousMerge else { return false }
         for key in keys {
             if let capability = document.capabilities[key] { return capability.editable }
         }
@@ -8712,6 +8848,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
     }
     private func canEditSection(_ section: EditorSection) -> Bool {
+        guard !isReviewingPreviousMerge else { return false }
         if cloudEditorUnavailableMessage != nil { return false }
         if let capability = capability(for: section) { return capability.editable }
         switch section {
@@ -9187,6 +9324,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func startPendingPlaybackIfPossible() {
+        guard !isReviewingPreviousMerge else { return }
         guard pendingPlayRequest, canDisplayCurrentPlayer, !isPlaying else { return }
         togglePlayback()
     }

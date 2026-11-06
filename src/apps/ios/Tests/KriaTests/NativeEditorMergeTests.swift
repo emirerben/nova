@@ -206,6 +206,38 @@ final class NativeEditorMergeTests: XCTestCase {
         XCTAssertEqual(result.state?.sections["text_elements"], .array([.object(["id": .string("a"), "text": .string("mine"), "color": .string("red"), "future": .bool(true)])]))
     }
 
+    func testStableTrimMergesExistingTextWordingButKeepsTimingAndSourceConflicts() {
+        let slot: [String: JSONValue] = ["slot_id": .string("slot"), "asset_id": .string("source-a"),
+            "in_s": .number(0), "duration_s": .number(3)]
+        let row: [String: JSONValue] = ["id": .string("text"), "text": .string("before"),
+            "start_s": .number(0), "end_s": .number(2), "font_family": .string("System")]
+        let base = state(["timeline_slots": .array([.object(slot)]), "text_elements": .array([.object(row)])])
+        var trim = slot; trim["duration_s"] = .number(2.5)
+        var wording = row; wording["text"] = .string("after"); wording["font_family"] = .string("Inter")
+        var local = base, remote = base
+        local.sections["timeline_slots"] = .array([.object(trim)])
+        remote.sections["text_elements"] = .array([.object(wording)])
+        for (left, right) in [(local, remote), (remote, local)] {
+            let result = NativeEditorMerge.merge(base: base, local: left, remote: right)
+            XCTAssertEqual(result.state?.sections["timeline_slots"], local.sections["timeline_slots"])
+            XCTAssertEqual(result.state?.sections["text_elements"], remote.sections["text_elements"])
+            XCTAssertTrue(result.conflicts.isEmpty)
+        }
+        var timed = wording; timed["end_s"] = .number(2.2)
+        remote.sections["text_elements"] = .array([.object(timed)])
+        XCTAssertNil(NativeEditorMerge.merge(base: base, local: local, remote: remote).state)
+        remote.sections["text_elements"] = .array([.object(wording)])
+        var replaced = trim; replaced["asset_id"] = .string("source-b")
+        local.sections["timeline_slots"] = .array([.object(replaced)])
+        XCTAssertNil(NativeEditorMerge.merge(base: base, local: local, remote: remote).state)
+        local.sections["timeline_slots"] = .array([.object(trim)])
+        remote.sections["text_elements"] = .array([])
+        XCTAssertNil(NativeEditorMerge.merge(base: base, local: local, remote: remote).state)
+        var unknown = wording; unknown["future_timing"] = .number(1)
+        remote.sections["text_elements"] = .array([.object(unknown)])
+        XCTAssertNil(NativeEditorMerge.merge(base: base, local: local, remote: remote).state)
+    }
+
     func testTimelineChangeConflictsWithRemoteTimedEditWithoutPublishingCandidate() {
         let base = state(["timeline_slots": .array([]), "caption_cues": .array([])])
         var local = base, remote = base

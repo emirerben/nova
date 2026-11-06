@@ -200,6 +200,42 @@ enum NativeEditorMerge {
         })
     }
 
+    /// A trim cannot invalidate wording/font changes to the same existing rows.
+    /// Unknown fields, timing, source identity, insertion, deletion and order remain
+    /// coupled. The exception deliberately recognizes a small authored vocabulary.
+    private static func independentTextEdit(_ changed: State, from base: State) -> Bool {
+        guard changed.editorState == base.editorState, changed.deletions == base.deletions,
+              changed.userSong == base.userSong,
+              changed.sections.filter({ $0.key != "text_elements" }) == base.sections.filter({ $0.key != "text_elements" }),
+              case .array(let before)? = base.sections["text_elements"],
+              case .array(let after)? = changed.sections["text_elements"], before.count == after.count else { return false }
+        let allowed: Set<String> = ["text", "font_family", "font_size_px"]
+        var ids = Set<String>()
+        return zip(before, after).allSatisfy { old, new in
+            guard let a = old.objectValue, let b = new.objectValue,
+                  let id = a["id"]?.stringValue, !id.isEmpty, ids.insert(id).inserted,
+                  b["id"] == a["id"] else { return false }
+            return a.filter { !allowed.contains($0.key) } == b.filter { !allowed.contains($0.key) }
+        }
+    }
+
+    private static func hasOnlyStableTimelineTrim(_ changed: State, from base: State) -> Bool {
+        guard changed.editorState == base.editorState, changed.deletions == base.deletions,
+              changed.userSong == base.userSong,
+              changed.sections.filter({ $0.key != "timeline_slots" }) == base.sections.filter({ $0.key != "timeline_slots" }),
+              case .array(let before)? = base.sections["timeline_slots"],
+              case .array(let after)? = changed.sections["timeline_slots"],
+              !before.isEmpty, before.count == after.count else { return false }
+        let trim: Set<String> = ["in_s", "duration_s", "duration_beats"]
+        var ids = Set<String>()
+        return zip(before, after).allSatisfy { old, new in
+            guard let a = old.objectValue, let b = new.objectValue,
+                  let id = (a["slot_id"] ?? a["id"])?.stringValue, !id.isEmpty,
+                  ids.insert(id).inserted else { return false }
+            return a.filter { !trim.contains($0.key) } == b.filter { !trim.contains($0.key) }
+        }
+    }
+
     static func merge(
         base: State, local: State, remote: State,
         preference: AuthoredJSONMerge.Preference? = nil
@@ -219,7 +255,9 @@ enum NativeEditorMerge {
             }
         }
         let dependent = authored.subtracting(["title"])
-        let grouped = requiresCoupledDeletion || timelineChanged
+        let independentTextAndTrim = (independentTextEdit(local, from: base) && hasOnlyStableTimelineTrim(remote, from: base))
+            || (independentTextEdit(remote, from: base) && hasOnlyStableTimelineTrim(local, from: base))
+        let grouped = requiresCoupledDeletion || (timelineChanged && !independentTextAndTrim)
         var atomicPaths: Set<[String]> = [["dependent"], ["motion"], ["music"], ["canvas"],
             ["backgroundMusic"], ["speakerBackground"], ["editorState"], ["userSong"]]
 

@@ -28,6 +28,22 @@ The original hydration regression covers opaque slot/source repeats, project sep
 
 The persistent-conflict fixture now supplies a coherent authoritative timeline matching its draft. Retry-count, selection, undo and unsaved-trim assertions remain. The transient-load test follows the intended slow automatic-observation policy and checks recovery plus hidden/owner fences using injected time and state predicates. Timeline preservation compares the complete serialized authored lane, including opaque fields, rather than stale cached raw mirrors of fields that have since been edited.
 
-## Execution boundary
+## Execution evidence and remaining repair
 
-The corrected integrated candidate still needs the allocated native run. Do not treat source review, selector output or these notes as red/green, aggregate, physical-device, export or rollout evidence. The previous artifacts remain bound to their actual heads. A comparable negative control should use identical current tests with Services.swift and NativeEditorSession.swift restored to the e689040d6719a99d4805da2cf6117d60aea8e263 baseline, followed serially by this implementation when the parent grants the lane.
+Historical control 99352402000c9b2c17bef228ac7d1e3c3af28454 ran the eight identity controls with the same tests and the two production identity files restored to the e689040d6719a99d4805da2cf6117d60aea8e263 baseline. Five failed behaviorally and three passed. Candidate c717da7941067da67a76b0adf19b7b242eeae9c5 passed all eight controls and all 88 slide cases, but its complete selected batch failed: 507 cases, 483 passed, 24 failed, none skipped. This establishes the bounded identity correction, not an aggregate passing candidate.
+
+The batch exposed additional chat reconciliation, replacement-load, preview and saved-song cases. The replacement load now separates epochs instead of waiting for an obsolete suspended transport. Preview conflicts that require a choice present an actionable failure. Those later changes have not yet run natively.
+
+The reviewed chat contract requires a three-way merge of submitted state, current local state and the chat result. Independent fields combine automatically; overlapping changes after submission require a choice. A missing submission receipt does not authorize copying a complete remote lane over local edits. Undo must restore the complete pre-application local document, and cross-authority conflict choices must remain reversible without replaying stale song or source authority. The lane-copy checkpoint 964f50e4862a3ebb9215661f579bbe3333b35992 was not published. This correction replaces it; bounded independent source review and syntax parsing pass, while native compilation/runtime validation remain pending.
+
+Native resources remain centrally allocated. New source and test changes require an explicitly allocated final-head run; prior results remain bound to their exact heads. Physical-device, real-server replacement-render/export and rollout acceptance remain unverified.
+
+## Chat merge acceptance and authority boundaries
+
+The correction compares the scoped submitted document, the current local document and the chat result. Existing wording and font fields on the same text entity can merge independently; a narrow trim/wording exception requires unchanged row identities/order, source identity, text intervals, all other fields, deletion intent and song authority. Changed intervals, replaced sources, inserted/deleted entities and unknown fields retain the conservative connected-content decision.
+
+Dirty content without a matching submitted receipt requires explicit choice. A clean editor can adopt a same-target result without inventing concurrent local work. Both automatic application and either same-authority choice retain the complete pre-application local document as one Undo step.
+
+A changed-generation decision uses an authority-bound checkpoint instead of putting an old relative document into normal executable history. Undo presents the exact old document read-only; Save, chat export, playback, preview building and video export must remain blocked until a guarded rechoice or Redo. Replacement lifetime/owner/target and a newer clean/song authority invalidate stale decisions. Source review and focused regressions must cover refreshes already suspended before Undo, not just reads started afterward.
+
+The phone-render skill's existing saved-receipt companion bounds saved-generation exports and replacement-editor writes. It does not model this new read-only merge-review state or prove the new merge algorithm. No global coverage hashes are resynced. Its existing checks and native merge/export regressions need an allocated run; a model extension or an explicit bounded correspondence review remains separate from claiming those new states formally verified.

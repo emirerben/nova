@@ -780,6 +780,53 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertNil(fake.lastRequest?.userSong, "nor does a retry after a conflict rebase")
     }
 
+    func testChangedSongAuthorityUndoCannotReapplyOldRelativeSongEdit() async throws {
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        session.setUserSongVolume(0.4)
+        session.setUserSongStart(1.5)
+        let original = session.document
+        XCTAssertEqual(original.userSong, EditorUserSongState(volume: 0.4, windowStartS: 1.5))
+        let originalSongMetadata = fake.authoritativeVariant?["user_song"]
+        // Identical projected metadata is not proof that a relative edit belongs
+        // to the new generation's song authority.
+        fake.authoritativeVariant?["render_generation_id"] = .string("generation-2")
+        XCTAssertEqual(fake.authoritativeVariant?["user_song"], originalSongMetadata)
+        fake.commitErrorQueue = [.conflict]
+        await session.save()
+        XCTAssertNotNil(session.mergeConflictMessage)
+        XCTAssertFalse(session.canKeepLocalMergeConflicts)
+        XCTAssertEqual(session.document, original)
+        session.resolveMergeConflicts(keepingLocal: false)
+        let adopted = session.document
+        XCTAssertEqual(adopted.revision.baseGeneration, "generation-2")
+        XCTAssertNil(adopted.userSong, "the old relative song command cannot bind to the new source authority")
+        XCTAssertNil(session.mergeConflictMessage)
+        let commitsBeforeReview = fake.commitCount
+
+        session.undo()
+        XCTAssertEqual(session.document, original, "review shows the complete old document, including its own revision")
+        XCTAssertTrue(session.isReviewingPreviousMerge)
+        XCTAssertFalse(session.canKeepLocalMergeConflicts)
+        XCTAssertNil(session.exportEditorState())
+        XCTAssertNil(session.videoDownloadTarget)
+        XCTAssertFalse(session.canDownloadCurrentVideo)
+        XCTAssertThrowsError(try session.videoDownloadRoute(deviceLocalFile: nil))
+        await session.save()
+        XCTAssertEqual(fake.commitCount, commitsBeforeReview)
+        session.resolveMergeConflicts(keepingLocal: true)
+        XCTAssertEqual(session.document, original)
+        XCTAssertTrue(session.isReviewingPreviousMerge, "an unsupported old-song choice remains read-only")
+        XCTAssertNotNil(session.mergeConflictMessage)
+
+        session.resolveMergeConflicts(keepingLocal: false)
+        XCTAssertEqual(session.document, adopted)
+        XCTAssertEqual(session.document.revision.baseGeneration, "generation-2")
+        XCTAssertNil(session.document.userSong)
+        XCTAssertFalse(session.isReviewingPreviousMerge)
+        XCTAssertNil(session.mergeConflictMessage)
+        XCTAssertEqual(fake.commitCount, commitsBeforeReview, "choosing current authority does not submit an old relative song edit")
+    }
+
     func testSavedSongRemovalSurvivesExactGenerationRenderRecoveryProjectionWithoutResending() async throws {
         let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
         session.removeUserSong()
@@ -7126,6 +7173,91 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertTrue(session.canUndo)
         XCTAssertEqual(fake.commitCount, 0)
+    }
+
+    func testCrossGenerationMergeUndoReviewsOriginalWithoutExecutingItsAuthority() async throws {
+        let thread = UUID(), job = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "initial",
+            draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: job.uuidString, baseGenerationID: "g1",
+            snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
+        fake.sourcePoolError = .conflict
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: thread)
+        let initialFailure = await waitUntil(timeout: .seconds(3)) { session.sourcePreviewState.isFailure }
+        XCTAssertTrue(initialFailure)
+        let clipID = try XCTUnwrap(session.timelineClips.first?.id)
+        session.setClipTiming(clipID: clipID, durationS: 1.5)
+        let original = session.document
+        fake.authoritativeVariant = Self.variant(duration: 1.2, generation: "g2")
+        await session.retryPreview()
+        let needsChoice = await waitUntil(timeout: .seconds(3)) { session.mergeConflictMessage != nil }
+        XCTAssertTrue(needsChoice)
+        let notificationJob = UUID()
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        fake.refreshedThread = try decoder.decode(CreationThread.self, from: Data(#"""
+        {"id":"\#(thread.uuidString)","title":"Latest","status":"active","revision":2,"runtime_version":2,
+         "active_job_id":"\#(notificationJob.uuidString)","active_plan_item_id":"item","state":{"selected_variant_id":"initial"},
+         "job":{"id":"\#(notificationJob.uuidString)","status":"failed","variants":[{"variant_id":"initial","render_status":"failed"}]},
+         "updated_at":"2026-09-09T08:00:00Z"}
+        """#.utf8))
+        let notification = try XCTUnwrap(fake.refreshedThread?.summary)
+        let readsBeforeChoice = fake.projectCallCount
+        await session.adoptLatestJob(notification, api: fake)
+        XCTAssertEqual(fake.projectCallCount, readsBeforeChoice, "the pending choice defers its queued check")
+        fake.sourcePoolError = .offline
+        session.resolveMergeConflicts(keepingLocal: false)
+        let drainedAfterChoice = await waitUntil(timeout: .seconds(3)) { fake.projectCallCount > readsBeforeChoice }
+        XCTAssertTrue(drainedAfterChoice, "choosing must rearm the queued notification without another event")
+        let adopted = session.document
+        XCTAssertEqual(adopted.revision.baseGeneration, "g2")
+        XCTAssertNil(session.mergeConflictMessage)
+
+        // Edits above the decision boundary remain normal document history.
+        session.setClipTiming(clipID: clipID, durationS: 1.0)
+        let laterEdit = session.document
+        XCTAssertNotEqual(laterEdit, adopted)
+        session.undo()
+        XCTAssertEqual(session.document, adopted)
+        session.undo()
+        XCTAssertEqual(session.document, original)
+        XCTAssertTrue(session.isReviewingPreviousMerge)
+        XCTAssertNotNil(session.mergeConflictMessage)
+        XCTAssertNil(session.exportEditorState())
+        session.setClipTiming(clipID: clipID, durationS: 0.5)
+        session.transactDocument(section: .timeline) { $0.clips.removeAll() }
+        session.togglePlayback()
+        await session.save()
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document, original, "old-authority review cannot execute edits or background adoption")
+        XCTAssertFalse(session.isPlaying)
+        XCTAssertEqual(fake.commitCount, 0)
+        let readsBeforeRedo = fake.projectCallCount
+        await session.adoptLatestJob(notification, api: fake)
+        XCTAssertEqual(fake.projectCallCount, readsBeforeRedo, "read-only review defers its queued check")
+        session.redo()
+        let drainedAfterRedo = await waitUntil(timeout: .seconds(3)) { fake.projectCallCount > readsBeforeRedo }
+        XCTAssertTrue(drainedAfterRedo, "Redo must rearm the queued notification without another event")
+        XCTAssertEqual(session.document, adopted)
+        XCTAssertFalse(session.isReviewingPreviousMerge)
+        session.redo()
+        XCTAssertEqual(session.document, laterEdit, "redo preserves the edit above the decision boundary")
+
+        session.undo()
+        session.undo()
+        XCTAssertTrue(session.isReviewingPreviousMerge)
+        session.resolveMergeConflicts(keepingLocal: false)
+        XCTAssertEqual(session.document, adopted)
+        XCTAssertFalse(session.isReviewingPreviousMerge)
+        session.undo()
+        XCTAssertEqual(session.document, original)
+        XCTAssertTrue(session.isReviewingPreviousMerge, "rechoosing cannot turn the old generation into executable document history")
+        XCTAssertNil(session.exportEditorState())
+        await session.load(api: fake, threadID: UUID())
+        let replacement = session.document
+        session.resolveMergeConflicts(keepingLocal: false)
+        session.redo()
+        XCTAssertEqual(session.document, replacement, "a replacement lifetime cannot replay the previous decision")
+        XCTAssertFalse(session.isReviewingPreviousMerge)
     }
 
     func testPreviewConflictReloadCancellationDoesNotLeavePreparationRunning() async throws {
