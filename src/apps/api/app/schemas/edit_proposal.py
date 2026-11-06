@@ -178,6 +178,7 @@ PinnedCorner = Literal[
     "top_left",
     "top_center",
     "top_right",
+    "middle_center",
     "bottom_left",
     "bottom_center",
     "bottom_right",
@@ -191,6 +192,7 @@ class PinnedText(BaseModel):
     side means the video's start/end) or by ``clip`` (1-based, in edit order) - never both.
     The range fields are omitted from dumps when unset, so a whole-video pin serialises
     byte-identically to the pre-range shape (snapshot hashes, records, tool boundary).
+    ``middle_center`` and ``look`` (item 21) render only behind CLIP_TEXT_TIKTOK_LOOK_ENABLED.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -216,6 +218,11 @@ class PinnedText(BaseModel):
         le=300,
         exclude_if=lambda value: value is None,
         description="Exact creator-requested corner text size; never shrink it during fitting.",
+    )
+    look: Literal["tiktok"] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description="Named text look; 'tiktok' = TikTok Sans Bold, white, small, soft shadow.",
     )
 
     @field_validator("text", mode="before")

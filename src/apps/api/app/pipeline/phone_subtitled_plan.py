@@ -656,9 +656,14 @@ def compile_phone_subtitled_plan(
         )
         cursor += extra_duration
     speaker_end = cursor
-    from app.services.phone_text_styling import register_generation_timeline
+    from app.services.phone_text_styling import (
+        register_generation_background,
+        register_generation_timeline,
+    )
 
     register_generation_timeline(main_clips)
+    # Green 5: what is behind the captions, before their colour is chosen below.
+    register_generation_background(lanes.background if lanes is not None else None, canvas=canvas)
     register_backdrop_visuals(main_clips, visuals=visuals, assets=assets, manifest=manifest)
 
     try:
