@@ -1,0 +1,16 @@
+{
+  "long_request": false,
+  "model_calls": 3,
+  "first_prompt_cap": 16,
+  "last_prompt_has_exceeds_16": true,
+  "outcome": {
+    "mode": "respond",
+    "turn_value": "question",
+    "recovery_reason": "creator_planning_failed",
+    "response": "I couldn't turn that into a plan this time. Your complete request is saved and your draft is unchanged. Try again, or tell me the most important change first.",
+    "brief_route": null
+  },
+  "brief_update_count": 0,
+  "brief_updates": [],
+  "effective_request_chars": 630
+}

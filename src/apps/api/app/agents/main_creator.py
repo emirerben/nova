@@ -35,7 +35,7 @@ from app.agents._skills import load_skill
 from app.agents._writing_context import turkish_audience_instruction
 from app.agents.prompt_vocab import render_vocab_tokens
 from app.config import settings
-from app.kria.brief import BriefUpdate, parse_brief_updates
+from app.kria.brief import LONG_REQUEST_MAX_UPDATES, BriefUpdate, parse_brief_updates
 from app.kria.reply_language import prompt_language_line
 from app.kria.take_trim import refile_take_trim
 from app.kria.text_sequence import last_quoted_literal, refile_text_sequences
@@ -231,11 +231,10 @@ log = structlog.get_logger()
 # it). Every other creator prompt is byte-identical.
 # v119 (KRI-1189 lands after #2088): v117's `cut_restarts` teaching on top of v118. The
 # KRI-1189 replay fixtures keep the `2026-11-03-v117` label they were recorded under.
-# v128 (Qendresa item 21), on top of v120 (Qendresa 12 caption shape): behind
-# `settings.clip_text_tiktok_look_enabled`, `_CLIP_TEXT_LOOK_PROMPT_SECTION` teaches one line
-# pinned in the MIDDLE for the whole video (`corner: "middle_center"`) and TikTok's own text look
-# (`look: "tiktok"`). Flag off => the rendered prompt is byte-identical to v120.
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-05-v128"
+# v131 (item 23, Related KRI-1129), on top of v120 (Qendresa 12 caption shape): with
+# BRIEF_LONG_REQUEST_ENABLED the brief section says "at most 32 objects" instead of 16.
+# Flag off: every prompt byte-identical.
+MAIN_CREATOR_PROMPT_VERSION = "2026-11-05-v131"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -1324,12 +1323,24 @@ def with_insert_clip_brief(section: str) -> str:
     )
 
 
+_BRIEF_CAP_ANCHOR = "at most 16 objects"
+
+
+def with_long_request_cap(section: str) -> str:
+    """``section`` with the per-turn entry cap raised to the long-request ceiling."""
+    assert section.count(_BRIEF_CAP_ANCHOR) == 1, "brief cap anchor moved"
+    return section.replace(_BRIEF_CAP_ANCHOR, f"at most {LONG_REQUEST_MAX_UPDATES} objects")
+
+
 def brief_prompt_section(insert_clips_open: bool = False) -> str:
-    return (
+    section = (
         with_insert_clip_brief(_BRIEF_PROMPT_SECTION)
         if insert_clips_open
         else _BRIEF_PROMPT_SECTION
     )
+    if settings.brief_long_request_enabled:
+        section = with_long_request_cap(section)
+    return section
 
 
 class MainCreatorInput(BaseModel):

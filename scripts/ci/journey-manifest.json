@@ -3185,6 +3185,20 @@
       ]
     },
     {
+      "id": "qendresa-23-long-prompts",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_brief_long_request.py tests/kria/test_creative_brief.py tests/evals/test_main_creator_evals.py tests/evals/test_brief_extractor_evals.py",
+      "paths": [
+        "src/apps/api/app/kria/brief.py",
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/agents/brief_extractor.py",
+        "src/apps/api/tests/kria/test_brief_long_request.py",
+        "src/apps/api/tests/fixtures/kria_replay/q2-long-prompt/",
+        "scripts/kria/score_q2_long_prompt.py",
+        "docs/reviews/qendresa-23-long-prompts.md"
+      ]
+    },
+    {
       "id": "steer-now",
       "needs_native": true,
       "api_tests": "tests/kria/test_steer_now_postgres.py",

@@ -157,7 +157,8 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   all stay live and restating a shot replaces only that shot. A label-every-clip
   rule (no such pair) still replaces the whole per-clip lane, shot texts
   included. The Main Creator (prompt v43) only proposes `brief_updates`, at most
-  16 per turn; unparseable entries are dropped, never fatal. Versions are written by the turn-completion
+  16 per turn (32 with `BRIEF_LONG_REQUEST_ENABLED` when the batch's JSON is within
+  9,000 chars); a larger batch is refused whole, never truncated. Versions are written by the turn-completion
   transaction under the thread lock, after the revision fence, so a requeued
   turn never persists one.
 - **Context is not a command.** The brief records requested output changes, not

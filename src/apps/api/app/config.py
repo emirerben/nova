@@ -1266,6 +1266,10 @@ class Settings(BaseSettings):
     # `fly secrets set KRIA_CREATIVE_BRIEF_ENABLED=true --app nova-video`
     # + restart api + worker. Rollback: set it false + restart.
     kria_creative_brief_enabled: bool = False
+    # Item 23 (Related KRI-1129): on = one brief batch may carry up to 32 entries when its
+    # JSON is within 9,000 chars, so a long creation prompt is planned in one go. Off = the
+    # 16-entry cap exactly as before. Apply: fly secret + restart api and worker.
+    brief_long_request_enabled: bool = False
     # Deploy readers everywhere before enabling snapshot writers.
     kria_brief_binding_enabled: bool = False
     kria_brief_binding_user_ids: Annotated[list[str], NoDecode] = []
