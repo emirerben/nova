@@ -1,6 +1,6 @@
 # Local halo/session integration candidate
 
-This branch is local integration preparation, explicitly authorized against Cunda `bc0bfd6ee198a5b5ec3e2d0dc3276b1908c50a3c`. The standalone halo remains unchanged at `d8c93aa545609c1d272986d623645885487d255e`. Cunda's worktree and published branch were not edited. Publication and merge require Cunda to land, rebase onto the resulting main, and affected revalidation. Native execution and tracking-issue creation remain held.
+This branch is local integration preparation, explicitly authorized against Cunda `bc0bfd6ee198a5b5ec3e2d0dc3276b1908c50a3c`. The standalone halo remains unchanged at `d8c93aa545609c1d272986d623645885487d255e`. Cunda's worktree and published branch were not edited. Publication and merge require Cunda to land, rebase onto the resulting main, and affected revalidation. Native execution remains held. Tracking-issue creation was subsequently approved, but its single authorized retry failed because the Linear workspace is at its free issue limit; no issue was created.
 
 ## Choice: session-owned old-item handoff
 
@@ -62,3 +62,10 @@ Passed static checks: affected Swift syntax parsing, whitespace checks, registry
 Use the existing `verify-kria-ios` helper to create this integration worktree's own simulator and build once, only after the parent grants the lane. Run the five `NativeEditorAIActivityTests`, five `NativeEditorPreviewHandoffTests` and four `NativeEditorPreviewWorkSessionTests`, then the three new editor activity UI cases and the existing conversation-sheet-return regression, serially with an `.xcresult` bundle and no hidden retry. Keep failed attempts and attachments.
 
 That first slot establishes compilation and initial adapter/fixture viability. It does not close the changed-document picture gate: add/exercise a real delayed changed-document case (cached and uncached; paused and playing), inspect previous/new frames and clock, test failure/superseding/reset/export negatives, and capture normal/reduced-motion/transparency plus fullscreen evidence. Inspect actual pixels, then re-review fixes. No native command has run yet.
+
+
+## Tracking and dependency update
+
+The single authorized create retry for **Show AI editing activity in the iPhone editor**, in existing project **iOS editor polish** (`P-KRI-10`), reached Linear and failed with HTTP 400: "You've exceeded the free issue limit for this workspace." No issue identifier or URL was returned. No second retry, archival/deletion of existing issues, or substitute tracker was attempted. The earlier authorization denial is resolved; workspace capacity is now the blocker. PR evidence cannot be assigned a fabricated issue.
+
+Cunda's parent reports published head `0997d4fe7e6a7768c023cb6e7bf538e68f588d8a`, containing two test corrections and evidence after this integration base. The inspected base `bc0bfd6` has production app subtree `c4ee10fcd6b6cdfe67941f55c98bbe68f241bc23`, matching the parent-reported production subtree of that newer head. This branch has not adopted the unmerged dependency update. Cunda must still land before rebase and final validation.
