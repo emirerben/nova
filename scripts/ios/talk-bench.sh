@@ -5,6 +5,7 @@
 #   scripts/ios/talk-bench.sh                                    # 3 runs of each default scenario
 #   scripts/ios/talk-bench.sh --runs 5 --seconds 20 --idle-seconds 60 --label base
 #   scripts/ios/talk-bench.sh --scenarios video-cin0,video-cin1  # <none|photo|video>-cin<0|1>, comma separated
+#   scripts/ios/talk-bench.sh --scenarios video-cin0,video-cin0-old   # A/B the live-preview levers (see below)
 #   scripts/ios/talk-bench.sh --dry-run                          # resolve the plan, touch no device and build nothing
 #   scripts/ios/talk-bench.sh --pull-only manual                 # report on a session you ran by hand (see below)
 #   scripts/ios/talk-bench.sh --retries 2 --retry-failed-runs 2  # install/launch retries, and reruns of a failed measurement
@@ -15,6 +16,11 @@
 # take, and `scripts/ios/talk_bench_report.py` reduces everything to .talk-bench/report.json: median, min, max, MAD and
 # run count per timing, per scenario. The scenarios are interleaved (A B C A B C ...), as bench.sh does, so thermal drift
 # hits all of them.
+#
+# LIVE-PREVIEW A/B. A scenario may end in `-old` (all five live-preview levers back to their previous behaviour) or in
+# `-old-<lever>[-<lever>...]` with lever one of fresh, input, async, video, decode (only those). The Debug app reads this as
+# KRIA_TALK_BENCH_LIVE_OLD and writes the resulting values to the `live.tuning` fact of the report. The scenarios are
+# interleaved, so `video-cin0,video-cin0-old` is one A/B under the same thermal drift. Needs a background (photo or video).
 #
 # WHAT THE SCRIPTED RUN CANNOT DO. "Use take" and editor Save need a signed-in session on a backend that accepts the
 # upload; the UI-test fixture does not. Their signposts are in the app and the recorder captures them, but the scripted run
@@ -64,7 +70,7 @@ DRY_RUN=0
 USE_TAKE=0
 PULL_ONLY=""
 
-usage() { sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -130,14 +136,20 @@ if [[ -z "$DEVICE_ID" ]]; then DEVICE_ID="$(detect_device || true)"; fi
 
 IFS=',' read -ra SCENARIO_LIST <<<"$SCENARIOS"
 for scenario in "${SCENARIO_LIST[@]}"; do
-  [[ "$scenario" =~ ^(none|photo|video)-cin[01]$ ]] || { echo "Bad scenario '$scenario'; expected <none|photo|video>-cin<0|1>" >&2; exit 2; }
+  [[ "$scenario" =~ ^(none|photo|video)-cin[01](-old(-(fresh|input|async|video|decode))*)?$ ]] || {
+    echo "Bad scenario '$scenario'; expected <none|photo|video>-cin<0|1>[-old[-fresh][-input][-async][-video][-decode]]" >&2; exit 2; }
 done
 
 RUN_ROOT="$OUT_ROOT/$LABEL"
 
-scenario_env() { # scenario -> "background cinematic"
-  local background="${1%%-*}" cinematic="${1##*-cin}"
-  echo "$background $cinematic"
+scenario_env() { # scenario -> "background cinematic live-old" (live-old is "-" for none, "all", or a comma list)
+  local background="${1%%-*}" rest="${1#*-cin}" old="-"
+  local cinematic="${rest:0:1}"
+  if [[ "$rest" == *-old* ]]; then
+    old="${rest#*-old}"; old="${old#-}"; old="${old//-/,}"
+    [[ -n "$old" ]] || old="all"
+  fi
+  echo "$background $cinematic $old"
 }
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
@@ -159,9 +171,9 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   for run in $(seq 1 "$RUNS"); do
     for scenario in "${SCENARIO_LIST[@]}"; do
       index=$((index + 1))
-      read -r background cinematic < <(scenario_env "$scenario")
-      printf '    %2d. %-12s run %d  KRIA_TALK_BENCH_BACKGROUND=%s KRIA_TALK_BENCH_CINEMATIC=%s KRIA_TALK_BENCH_SECONDS=%s -> %s/%s--run%d\n' \
-        "$index" "$scenario" "$run" "$background" "$cinematic" "$SECONDS_PER_TAKE" "$RUN_ROOT" "$scenario" "$run"
+      read -r background cinematic live_old < <(scenario_env "$scenario")
+      printf '    %2d. %-18s run %d  KRIA_TALK_BENCH_BACKGROUND=%s KRIA_TALK_BENCH_CINEMATIC=%s KRIA_TALK_BENCH_LIVE_OLD=%s KRIA_TALK_BENCH_SECONDS=%s -> %s/%s--run%d\n' \
+        "$index" "$scenario" "$run" "$background" "$cinematic" "${live_old/#-/}" "$SECONDS_PER_TAKE" "$RUN_ROOT" "$scenario" "$run"
     done
   done
   exit 0
@@ -295,7 +307,8 @@ echo "talk-bench: label=$LABEL device=$DEVICE_ID bundle=$BUNDLE_ID runs=$RUNS sc
 # --- interleaved runs ---------------------------------------------------------------------------------------------
 for run in $(seq 1 "$RUNS"); do
   for scenario in "${SCENARIO_LIST[@]}"; do
-    read -r background cinematic < <(scenario_env "$scenario")
+    read -r background cinematic live_old < <(scenario_env "$scenario")
+    [[ "$live_old" != "-" ]] || live_old=""
     run_dir="$RUN_ROOT/$scenario--run$run"
     if [[ "$RESUME" -eq 1 && -f "$run_dir/summary.json" ]] && grep -q '"xcodebuild_exit": 0' "$run_dir/status.json" 2>/dev/null; then
       echo "talk-bench: $scenario run $run/$RUNS already good, kept"
@@ -318,7 +331,7 @@ for run in $(seq 1 "$RUNS"); do
       [[ "$REINSTALL" -eq 1 ]] && uninstall_app
       exit_code=0
       TEST_RUNNER_KRIA_TELEPROMPTER_HARDWARE_TEST=1 TEST_RUNNER_KRIA_TALK_BENCH=1 \
-      TEST_RUNNER_KRIA_TALK_BENCH_BACKGROUND="$background" TEST_RUNNER_KRIA_TALK_BENCH_CINEMATIC="$cinematic" \
+      TEST_RUNNER_KRIA_TALK_BENCH_BACKGROUND="$background" TEST_RUNNER_KRIA_TALK_BENCH_CINEMATIC="$cinematic" TEST_RUNNER_KRIA_TALK_BENCH_LIVE_OLD="$live_old" \
       TEST_RUNNER_KRIA_TALK_BENCH_SECONDS="$SECONDS_PER_TAKE" TEST_RUNNER_KRIA_TALK_BENCH_IDLE_SECONDS="$IDLE_SECONDS" TEST_RUNNER_KRIA_TALK_BENCH_REVIEW_TIMEOUT="$REVIEW_TIMEOUT" TEST_RUNNER_KRIA_TALK_BENCH_USE_TAKE="$USE_TAKE" \
         xcodebuild test-without-building -project "$IOS_ROOT/Kria.xcodeproj" -scheme "$SCHEME" -configuration Debug \
           -destination "platform=iOS,id=$DEVICE_ID" -derivedDataPath "$DERIVED_DATA" -enableCodeCoverage NO \
