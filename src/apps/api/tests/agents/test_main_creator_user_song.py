@@ -97,12 +97,15 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v135 too.
 # v136 (Qendresa item 18, was v126 / v132 / v134): its paragraph renders only with
 # BACKGROUND_FOCUS_ENABLED and the `background_focus` capability, so the pins cover v136 too.
+# #2131 (Qendresa says-done cases 6-8) rewords the brief section's caption-count and cleanup
+# sentences: the two brief-on hashes re-pinned (v136's: b4ebb285… / bbccdc91…); brief-off
+# unchanged.
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "b4ebb285ecf45439fac6a6ef12251cfe6ee507d8f8c7760a0a37de07c7753b26",
+    (True, True): "7d7d75bc140c9d5fc3d641fc1324293f141afea76e3c5bd2ae30eccd4f5ff132",
     (True, False): "e3de37c194b88bd906568375111a33a5d8ec8bdab981a29ff6f377162710e87e",
-    (False, True): "bbccdc9144d5257ecbe3e647d944c970665902b7f8afe7f0ea8e5388992f9e52",
+    (False, True): "1d0026727df973ae2e6c8a7da8d05b0c71a9eb4d79862602c5132bdb9235ca06",
     (False, False): "e804c3135cb2e6eae9093216bee3ee0d97159aa120c2b1eef8e34e61a3d37240",
 }
 

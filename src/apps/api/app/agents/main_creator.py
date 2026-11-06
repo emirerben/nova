@@ -908,7 +908,8 @@ Preserve EVERY independently requested behavior, including modifiers and relatio
 parts of a compound request. An entrance animation does not describe segmentation, ordering,
 overlap, duration, or when one text replaces another. Keep these instructions in the requirement's
 complete description and structured facts; if they need separate verification, record a separate
-style or timing requirement as well. Never shorten a compound request to the one field the
+style or timing requirement as well (never for the captions' look, which stays on the one
+captions requirement). Never shorten a compound request to the one field the
 strategy happens to expose. Descriptions may retain behavior requiring composition of operations.
 Do not duplicate an opening hook as a per-clip caption unless the creator requests both.
 
@@ -1017,12 +1018,15 @@ photo, each with its own display_mode; keep a take whole, uncut =>
 particular shot, photo or badge => {"closing": "<the creator's words for it>"}; remove pauses or
 filler sounds from the speech => {"speech_cleanup": true}, keep them => {"speech_cleanup": false},
 every pause gone or a tight, fast pace, not only the long ones ("cut out all my pauses so it's
-tight", "no pauses at all", "bütün boşlukları kes, sıkı olsun") => {"speech_cleanup": true,
-"pauses": "tight"};
-remove a sentence they restarted, their retakes or false starts without quoting or naming which
-one ("the sentence I restarted", "the places I restarted", "my retakes", "yanlış başladığım
-cümleleri", "tekrar aldığım cümleyi") => {"speech_cleanup": true, "cut_restarts": true} and no
-`cut_lines` for it: never copy words from the take or its transcript into `cut_lines`, which hold
+tight", "cut all my pauses", "no pauses at all", "bütün boşlukları kes, sıkı olsun") =>
+{"speech_cleanup": true, "pauses": "tight"}: ALL or EVERY pause is tight even without the word
+tight, while "cut the pauses", "cut the long pauses" or "cut all the long pauses" is the plain
+cleanup; remove a sentence they restarted, their retakes, false starts or spoken mistakes without
+quoting or naming which one ("the sentence I restarted", "the places I restarted", "my retakes",
+"all my mistakes", "yanlış başladığım cümleleri", "tekrar aldığım cümleyi") => {"speech_cleanup":
+true, "cut_restarts": true} and no `cut_lines` for it ("Cut out all my pauses and mistakes so it's
+tight" => {"speech_cleanup": true, "pauses": "tight", "cut_restarts": true}):
+never copy words from the take or its transcript into `cut_lines`, which hold
 only the creator's own words. A restart they quote or name ("the part where I restart the
 kilometer thirty sentence") is a cut line, not `cut_restarts`; "start over" about the edit or a
 clip ("start over with a clip", "make it again from scratch", "videoyu baştan yap") is no restart;
@@ -1053,9 +1057,13 @@ says how many words show at a time ("two words at a time" => 2, "one word at a t
 {"caption_box": "#E5E5E5"} (a literal #RRGGBB: light grey #E5E5E5, grey #9E9E9E, white #FFFFFF,
 black #000000) ONLY when they ask for a box, pill or background behind the captions; "Captions
 word by word in a light grey box near the bottom" => {"captions": "word_by_word", "caption_box":
-"#E5E5E5", "caption_position": "bottom"}; "word by word" alone sets no caption_words; where
-the creator puts themselves, a photo, a card or the background ("me small at the bottom right")
-is never a caption position, plus
+"#E5E5E5", "caption_position": "bottom"}; "word by word" names the karaoke style, never a count:
+alone it sets no caption_words, and with a count the count wins ("Captions word by word in the
+middle of the screen, white, two words at a time" => {"captions": "word_by_word",
+"caption_words": 2, "caption_position": "middle", "caption_color": "#FFFFFF"}); in one message
+the captions' whole look goes on the same requirement as `captions`, never split into a second
+requirement; where the creator puts themselves, a photo, a card or the background ("me small at
+the bottom right") is never a caption position, plus
 {"ask_if_unclear": "the third sauce he names"} (the creator's own words for WHICH word) when they
 say they could not make out a word and want to be asked instead of having it guessed ("I didn't
 catch the third sauce he names: if you can't tell what he says, ask me"), on the captions
@@ -1161,6 +1169,21 @@ than 15 seconds", "up to 15 seconds", "15 seconds or less", "en fazla 15 saniye"
 geçmesin" all become {"duration_s": 15, "duration_bound": "at_most"}; every other length has no
 `duration_bound` (omitting it means exact), and a change to a timing requirement must restate
 `duration_bound` if it still applies.
+Seconds tied to ONE moment are never the video's length: an opening title "for the first 3 seconds"
+or ending words "for the last 3 seconds" record NO `timing` requirement and no `duration_s`; the
+seconds stay in the `description` of that moment's own requirement (the opening title is a `text`
+requirement with scope "title" and `facts` {}; the ending words a `text` requirement with scope
+"global" whose `facts` hold {"closing": "<the ending words, exactly as written>"}, which marks them
+as the ending, never a line for the whole video), and the strategy carries them
+(`opening_title_duration_s`, `pinned_texts` `end_s`). `Start with a big title "lets build an agent
+that reads an APP before I trust it!!" for the first 3 seconds` => {"kind": "text", "scope":
+"title", "literal": "lets build an agent that reads an APP before I trust it!!", "description": "a
+big opening title for the first 3 seconds", "facts": {}}; `End with "comment READ" and an arrow for
+the last 3 seconds` => {"kind": "text", "scope": "global", "literal": "comment READ", "description":
+"end with comment READ and an arrow for the last 3 seconds", "facts": {"closing": "comment READ"}};
+neither adds a timing requirement. A length for the whole video in the same message still does ("...
+and make the video 30 seconds long" => {"kind": "timing", "scope": "global", "facts": {"duration_s":
+30}}).
 The exception is exact text the creator dictates for particular shots ("1. The
 bookshop photo: "..." 2. The bowling video: "..."): add one {"operation":"add", "kind": "text",
 "scope":

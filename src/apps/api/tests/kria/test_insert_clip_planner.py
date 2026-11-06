@@ -423,7 +423,10 @@ def _extractor_prompt(**kw) -> str:
 # it the digest is 562441ab494ae1bf4c0f79dd9811163c782b8548712f05ed7334ceaba675ffe6.
 # Qendresa item 17 (creator v123, on top of v121) leaves the brief section unchanged: the pin
 # covers v121 + v123. Qendresa item 16 (creator v125, now v133) changes it only with its flag on.
-_BRIEF_SECTION_BEFORE_INSERTS = "14ad8c6e284569817ed3c380fea76ae35b5983b1fe42a2f53c42a6c14bcaa6d7"
+# Says-done group E (#2131) rewords the caption-count and cleanup sentences (her Q1/Q2
+# sentences as examples); with v136's sentences the digest is
+# 14ad8c6e284569817ed3c380fea76ae35b5983b1fe42a2f53c42a6c14bcaa6d7.
+_BRIEF_SECTION_BEFORE_INSERTS = "001bd937bb08cea812fa52d0379a1af9ea6a81108011c563c60a543d4fdfe206"
 
 
 def test_a_closed_rollout_leaves_the_brief_section_byte_identical_to_before_inserts():

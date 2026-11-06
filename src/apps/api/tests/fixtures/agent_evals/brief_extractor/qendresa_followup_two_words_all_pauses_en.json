@@ -1,0 +1,39 @@
+{
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "2026-11-06-v69",
+  "input": {
+    "creator_request": "Creative brief v1 (everything the creator has asked for, still in force):\n- [r1] [style/global] Captions word by word in the middle of the screen, white.\n- [r2] [audio/global] Only my voice, no music.",
+    "user_message": "Make the captions two words at a time, and cut all my pauses.",
+    "conversation": [
+      {
+        "role": "user",
+        "content": "Captions word by word in the middle of the screen, white. Only my voice, no music."
+      },
+      {
+        "role": "assistant",
+        "content": "Your video is ready."
+      },
+      {
+        "role": "user",
+        "content": "Make the captions two words at a time, and cut all my pauses."
+      }
+    ],
+    "require_request_scope": true
+  },
+  "raw_text": "{\"brief_updates\": [{\"operation\": \"change\", \"target_requirement_id\": \"r1\", \"kind\": \"style\", \"scope\": \"global\", \"literal\": null, \"description\": \"Captions word by word in the middle of the screen, white, two words at a time\", \"facts\": {\"captions\": \"word_by_word\", \"caption_words\": 2, \"caption_position\": \"middle\", \"caption_color\": \"#FFFFFF\"}}, {\"kind\": \"audio\", \"scope\": \"global\", \"literal\": null, \"description\": \"cut all my pauses\", \"facts\": {\"speech_cleanup\": true, \"pauses\": \"tight\"}}], \"request_scope\": \"edit\"}",
+  "output": null,
+  "meta": {
+    "source": "hand_authored_golden",
+    "note": "Qendresa says-done cases 6 and 8 as a follow-up on a rendered edit (rendered edits use the brief extractor, which shares the brief section, v69). Hand-authored golden answer; the paid live run measures the model.",
+    "caption_cleanup_brief": {
+      "captions": {
+        "captions": "word_by_word",
+        "words": 2,
+        "box": null,
+        "position": "middle",
+        "color": "#FFFFFF"
+      },
+      "tight_pauses": true
+    }
+  }
+}
