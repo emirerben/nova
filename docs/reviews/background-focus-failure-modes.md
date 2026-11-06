@@ -115,3 +115,7 @@ the plain word count is recorded too.
   contain, black bands), and a closed gate records exactly #2099's spec.
   `tests/pipeline/test_background_focus_caption_contrast.py` (failure modes listed before the
   fix).
+  **Limit (predates F18, not universal):** `register_generation_background` returns at once for a
+  colour fill (`kind="color"`, #2099's scope), so on a colour fill nothing is sampled, aimed
+  windows included: those captions keep the take-based colour. Aimed-background caption contrast
+  covers photo/video fills and their windows only; say so before rollout.
