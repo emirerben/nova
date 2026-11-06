@@ -1734,10 +1734,10 @@ struct NativeMiniStrip: View {
                             laneLabels
                                 .frame(width: laneLabelWidth, alignment: .leading)
                             timeline
+                                .simultaneousGesture(timelinePanGesture)
                         }
                         .frame(maxWidth: .infinity, minHeight: max(0, viewport.size.height - bottomClearance), alignment: .topLeading)
                         .contentShape(Rectangle())
-                        .simultaneousGesture(timelinePanGesture)
                     }
                     .contentMargins(.bottom, bottomClearance, for: .scrollContent)
                     .contentMargins(.bottom, bottomClearance, for: .scrollIndicators)

@@ -109,15 +109,10 @@ enum NativeEditorRenderError: Error, Equatable {
         /// while a song bed is actually applied (KRI-428); removing the song, or a bed that cannot
         /// play, restores these levels.
         var cameraLevelWithoutSong: [Double] = []
-        let requestedOriginalGain = document.mix["original_level"]?.numberValue ?? (audioSources["narration"] != nil ? 0 : 1)
+        let requestedOriginalGain = document.mix["original_level"]?.numberValue ?? 1
         let originalGain = requestedOriginalGain.isFinite ? min(max(0, requestedOriginalGain), 1) : 1
         let hasExplicitOriginalGain = document.mix["original_level"] != nil
         let activeSlots = document.clips.filter { !$0.removed }
-        // Voiceover renders normally silence every camera clip. A new server
-        // projection may opt one or more slots back in with this field: it is
-        // the clip-level half of the mix, while `originalGain` below remains
-        // the global creator-controlled bed gain. Its *presence* is the
-        // feature gate so older narrated documents stay byte-for-byte silent.
         // The creator's song replaces the camera audio unless they explicitly turned the original
         // audio up (Sounds > Original audio): then the camera plays WITH the song at that level
         // (the song keeps its own level). An unset level, or an explicit 0, keeps the camera silent.
@@ -270,7 +265,9 @@ enum NativeEditorRenderError: Error, Equatable {
                 // original-audio gain exactly once after this value.
                 narratedSourceLevel = requested.isFinite ? min(max(0, requested), 2) : 0
             } else {
-                narratedSourceLevel = sourceGain
+                // Narrated projects opt each source in explicitly; an absent
+                // per-clip gain must preserve legacy camera silence.
+                narratedSourceLevel = audioSources["narration"] != nil ? 0 : sourceGain
             }
             let cameraLevel: Double = clip.muted || authoredSlot?.raw["muted"] == .bool(true) ? 0 : narratedSourceLevel
             cameraLevelWithoutSong.append(cameraLevel)

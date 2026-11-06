@@ -629,3 +629,29 @@ extension NativeSplitScreenTests {
         }
     }
 }
+
+extension NativeSplitScreenTests {
+    @MainActor
+    func testExplicitNarratedAudioEnablePersistsMissingNullAndCustomGainsIntoRecipe() throws {
+        let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
+        let footage = ResolvedEditorSource(clipIndex: 0, mediaID: "footage", asset: MediaAsset(id: "footage", relativePath: "footage.mp4", fingerprint: fingerprint, duration: 4), url: URL(fileURLWithPath: "/footage.mp4"))
+        let narration = ResolvedEditorSource(clipIndex: -1, mediaID: "narration", asset: MediaAsset(id: "narration", relativePath: "narration.m4a", fingerprint: fingerprint, duration: 2), url: URL(fileURLWithPath: "/narration.m4a"))
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let gains: [JSONValue?] = [nil, .null, .number(0), .number(0.4)]
+        for initial in gains {
+            var raw: [String: JSONValue] = ["muted": .bool(true)]
+            raw["source_audio_volume"] = initial
+            var document = EditorDocument(clips: [.init(id: "source", clipIndex: 0, inS: 0, durationS: 2, raw: raw)], mix: ["original_level": .number(1)], capabilities: ["timeline": .init(editable: true), "original_audio": .init(editable: true), "clips.audio": .init(editable: true)])
+            document.editFormat = "narrated"
+            let session = NativeEditorSession()
+            session.replaceDocumentForTesting(document)
+            session.toggleClipAudio(clipID: "source")
+            let expected = initial?.numberValue == 0.4 ? 0.4 : 1.0
+            XCTAssertEqual(session.document.clips[0].raw["source_audio_volume"], .number(expected))
+            XCTAssertTrue(session.isClipAudioOn(clipID: "source"))
+            let reopened = EditorDocument(snapshot: session.document.encodeSnapshot())
+            let recipe = try compiler.compile(document: reopened, clips: session.timelineClips, items: [], sources: [0: footage], audioSources: ["narration": narration]).recipe
+            XCTAssertEqual(recipe.tracks.first(where: { $0.kind == .video })?.clips.first?.volume, expected)
+        }
+    }
+}

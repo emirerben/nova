@@ -7126,7 +7126,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         let turningOn = !isClipAudioOn(clipID: clipID)
         let levelIsOff = originalAudioLevel <= 0
         transactDocument(sections: [.timeline, .mix]) { doc in
-            if turningOn, (doc.clips[target].raw["source_audio_volume"]?.numberValue ?? 1) <= 0 {
+            if turningOn, (doc.clips[target].raw["source_audio_volume"]?.numberValue ?? 0) <= 0 {
                 doc.clips[target].raw["source_audio_volume"] = .number(1)
             }
             if turningOn && levelIsOff {

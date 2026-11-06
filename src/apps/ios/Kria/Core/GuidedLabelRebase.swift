@@ -258,8 +258,12 @@ enum GuidedLabelRebase {
         let owner = element.raw["segment_id"]?.stringValue
         let ownedOld = owner.map { id in old.filter { $0.id == id || $0.parentID == id } } ?? []
         let ownedNew = owner.map { id in new.filter { $0.id == id || $0.parentID == id } } ?? []
-        let old = ownedOld.isEmpty ? canvasWindows(old) : ownedOld
-        let new = ownedOld.isEmpty ? canvasWindows(new) : ownedNew
+        // Serial titles can retain an old segment_id after being manually inset.
+        // Their actual output window remains authoritative. Only simultaneous
+        // panel ownership requires selecting one source clock explicitly.
+        let panelOwned = ownedOld.contains { $0.sectionID != nil }
+        let old = panelOwned ? ownedOld : canvasWindows(old)
+        let new = panelOwned ? ownedNew : canvasWindows(new)
         let start = element.startS, end = element.endS
         let opening = start <= edgeS
         let closing = oldTotal > 0 && end >= oldTotal - edgeS
