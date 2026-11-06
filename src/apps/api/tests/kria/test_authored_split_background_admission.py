@@ -199,6 +199,8 @@ def test_initial_talking_split_without_background_keeps_speaker_eligibility(monk
     from tests.routes.test_authored_playback_speed import _authored_phone_job
 
     job, variant = _authored_phone_job(monkeypatch)
+    # pin_device_request copies assembly_plan; the helper returns its pre-pin row.
+    variant = job.assembly_plan["variants"][0]
     variant["resolved_archetype"] = "subtitled"
     monkeypatch.setattr(
         settings,

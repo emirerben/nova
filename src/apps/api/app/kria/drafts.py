@@ -617,6 +617,249 @@ async def write_draft(
     return _out(row, can_undo=True)
 
 
+POINTER_SYNC = "pointer_sync"
+
+
+def pointer_sync_record(
+    session: CreatorAgentSession, generation: str | None
+) -> dict[str, Any] | None:
+    """What an editor-op draft is about to do to the session's pointer, or None when nothing.
+
+    An editor draft is built on the saved video, so committing one moves the pointer (the video
+    the agent last read) onto it. The draft keeps the value it replaced, on its own execution,
+    so Undo can put it back: the plan the head returns to was drafted against the old video and
+    holds none of what a native Save changed, which is exactly what ``pinned.save_unread`` asks
+    the pointer about. Written by every path that re-syncs the pointer for a draft.
+    """
+    if str(session.target_generation_id or "") == str(generation or ""):
+        return None
+    return {
+        "session_id": str(session.id),
+        "from": session.target_generation_id,
+        "to": generation,
+    }
+
+
+def _pointer_record(result: Any) -> dict[str, Any] | None:  # noqa: ANN401
+    record = result.get(POINTER_SYNC) if isinstance(result, dict) else None
+    if not isinstance(record, dict) or not record.get("session_id"):
+        return None
+    return record
+
+
+async def _pointer_record_of(
+    db: AsyncSession, draft: CreatorEditDraft | None, expected_revision: int
+) -> dict[str, Any] | None:
+    """The pointer footprint of ``draft`` when it is the revision being undone, read unlocked.
+
+    A draft never changes after it is minted, so the unlocked read is the locked one once
+    ``undo_draft`` has checked that the head is that revision. It is read early because the
+    session must be locked before the turns and the head (Plan -> PlanItem -> Job -> Session ->
+    Turn -> Draft -> Approval -> Thread).
+    """
+    source_id = getattr(draft, "source_execution_id", None)
+    if draft is None or source_id is None or draft.draft_revision != expected_revision:
+        return None
+    result = (
+        await db.execute(
+            select(CreatorAgentExecution.result).where(CreatorAgentExecution.id == source_id)
+        )
+    ).scalar_one_or_none()
+    return _pointer_record(result)
+
+
+def _restore_pointer(session: CreatorAgentSession | None, record: dict[str, Any]) -> None:
+    """Put the pointer back where the undone draft found it, if nothing moved it since.
+
+    A pointer that is no longer where the draft left it was moved by something that read the
+    video after (a Kria render's completion): that read stands, and so does its pointer.
+    """
+    if session is None or str(session.id) != str(record.get("session_id")):
+        return
+    if str(session.target_generation_id or "") == str(record.get("to") or ""):
+        session.target_generation_id = record.get("from")
+
+
+def _footprint_record(execution: CreatorAgentExecution | None) -> dict[str, Any] | None:
+    record = (execution.result or {}).get("pinned_undo") if execution is not None else None
+    return dict(record) if isinstance(record, dict) else None
+
+
+def _stages_a_change(record: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The footprint of a tap that wrote a requirement or flipped a setting, else None.
+
+    A staged approval that ends without a render takes back what its tap wrote besides the draft.
+    A tap that wrote nothing else (an editor op with no creative brief) has only the card's
+    identity on record, which is for Undo alone: the draft it wrote is still the head after the
+    approval ends, so its card stays spent.
+    """
+    if record is None or not (record.get("requirement_ids") or record.get("setting")):
+        return None
+    return record
+
+
+def _withdraw_footprint(
+    db: Any, *, item: PlanItem | None, thread: CreationThread, record: dict[str, Any]
+) -> None:
+    """Take back what a tapped suggestion card did besides writing the draft it staged.
+
+    ``record`` is the tap's footprint (``pinned_undo`` on the draft's execution): the brief
+    requirements the turn wrote and, for a card that flips a setting, the values it held before.
+    A staged tap that ends without a render (Undo, a deny, an expiry, a newer video) must not
+    leave them: the typed requirement the creator never typed would stay live (it blocks the
+    next approval and hides the card, KRI-129) and the setting would keep cutting speech the
+    creator turned down.
+
+    Only what is still the tap's is taken back: a requirement a later turn or the creator rewrote
+    has a different ``source_turn_id``, and a setting they flipped themselves is theirs. The
+    caller holds the item (when the record carries a setting) and the thread row locked, which
+    orders the brief version. ``db`` is a sync session: async callers reach it through
+    ``AsyncSession.run_sync``, so the sweeper's sync transaction and the API's share one body.
+    """
+    from app.services.suggestions import pinned  # noqa: PLC0415
+
+    cleared = pinned.unmark_consumed(
+        thread.state,
+        str(record.get("set_id") or ""),
+        str(record.get("id") or ""),
+        record.get("turn_id"),
+    )
+    if cleared is not None:
+        thread.state = cleared
+    print_ = record.get("print")
+    if print_ and not record.get("hidden_before"):
+        # A GET that found the tap's applied mark folded its print into the list that outlives
+        # the ring; the card is an offer again, so that memory of it goes too.
+        unfolded = pinned.without_kept_print(thread.state, str(print_))
+        if unfolded is not None:
+            thread.state = unfolded
+    setting = record.get("setting")
+    if isinstance(setting, dict) and item is not None:
+        from app.services.suggestions.kinds.filler_words import (  # noqa: PLC0415
+            undo_item_setting,
+        )
+
+        undo_item_setting(item, setting)
+    ids = [str(i) for i in record.get("requirement_ids") or []]
+    if not ids:
+        return
+    from app.kria.brief import (  # noqa: PLC0415
+        BriefUpdate,
+        apply_updates,
+        load_latest_brief_sync,
+        removed_target_ids,
+    )
+    from app.models import CreativeBriefVersion  # noqa: PLC0415
+
+    thread_id = thread.id
+    prior = load_latest_brief_sync(db, thread_id)
+    turn_id = str(record.get("turn_id") or "")
+    mine = {req.id for req in (prior.live() if prior else []) if req.source_turn_id == turn_id}
+    removals = [
+        BriefUpdate(operation="remove", target_requirement_id=i, expected_version=prior.version)
+        for i in ids
+        if prior is not None and i in mine
+    ]
+    if not removals:
+        return
+    merged = apply_updates(
+        prior, removals, source_turn_id=None, server_removed_ids=removed_target_ids(removals)
+    )
+    next_version = (
+        int(
+            db.execute(
+                select(func.coalesce(func.max(CreativeBriefVersion.version), 0)).where(
+                    CreativeBriefVersion.thread_id == thread_id
+                )
+            ).scalar_one()
+        )
+        + 1
+    )
+    db.add(
+        CreativeBriefVersion(
+            thread_id=thread_id,
+            version=next_version,
+            requirements=[req.model_dump(mode="json") for req in merged.requirements],
+            source_turn_id=None,
+        )
+    )
+    db.flush()
+
+
+async def _withdraw_pinned_tap(
+    db: AsyncSession, *, item: PlanItem, thread: CreationThread, undone: CreatorEditDraft
+) -> None:
+    """Undo of the draft ``undone``: its tap's footprint (see ``_withdraw_footprint``)."""
+    source_id = getattr(undone, "source_execution_id", None)
+    if source_id is None:
+        return
+    record = _footprint_record(await db.get(CreatorAgentExecution, source_id))
+    if record is None:
+        return
+    await db.run_sync(
+        lambda sync_db: _withdraw_footprint(sync_db, item=item, thread=thread, record=record)
+    )
+
+
+async def staged_tap_footprint(
+    db: AsyncSession, approval: CreatorAgentApproval
+) -> dict[str, Any] | None:
+    """The footprint of the tapped card whose draft ``approval`` would render, or None.
+
+    An unlocked read, for the callers that must lock the plan item before the session (a record
+    that carries a setting means the item is written): the row it reads never changes after the
+    draft is minted.
+    """
+    draft_id = getattr(approval, "draft_id", None)
+    if draft_id is None:
+        return None
+    draft = await db.get(CreatorEditDraft, draft_id)
+    source_id = getattr(draft, "source_execution_id", None)
+    if source_id is None:
+        return None
+    return _stages_a_change(_footprint_record(await db.get(CreatorAgentExecution, source_id)))
+
+
+def staged_tap_footprint_sync(db: Any, approval: CreatorAgentApproval) -> dict[str, Any] | None:
+    """``staged_tap_footprint`` for the sync sweeper."""
+    draft_id = getattr(approval, "draft_id", None)
+    if draft_id is None:
+        return None
+    draft = db.get(CreatorEditDraft, draft_id)
+    source_id = getattr(draft, "source_execution_id", None)
+    if source_id is None:
+        return None
+    return _stages_a_change(_footprint_record(db.get(CreatorAgentExecution, source_id)))
+
+
+async def withdraw_staged_tap(
+    db: AsyncSession,
+    *,
+    approval: CreatorAgentApproval,
+    item: PlanItem | None,
+    thread: CreationThread,
+) -> bool:
+    """A staged approval ends without a render: take back its tap. True when a tap was withdrawn.
+
+    The caller holds ``thread`` locked, and ``item`` when ``staged_tap_footprint`` carries a
+    setting. Nothing here commits.
+    """
+    record = await staged_tap_footprint(db, approval)
+    if record is None:
+        return False
+    await db.run_sync(
+        lambda sync_db: _withdraw_footprint(sync_db, item=item, thread=thread, record=record)
+    )
+    return True
+
+
+def withdraw_staged_tap_sync(
+    db: Any, *, record: dict[str, Any], item: PlanItem | None, thread: CreationThread
+) -> None:
+    """``withdraw_staged_tap`` for the sync sweeper, which read ``record`` before it locked."""
+    _withdraw_footprint(db, item=item, thread=thread, record=record)
+
+
 async def undo_draft(
     db: AsyncSession,
     *,
@@ -625,6 +868,23 @@ async def undo_draft(
     expected_revision: int,
 ) -> tuple[DraftSnapshotOut, str | None]:
     target = await _target(db, thread_id=thread_id, creator_id=creator_id, lock_item=True)
+    pointer = await _pointer_record_of(
+        db,
+        await _head(db, item_id=target.item.id, variant_key=target.variant_key, lock=False),
+        expected_revision,
+    )
+    session = (
+        (
+            await db.execute(
+                select(CreatorAgentSession)
+                .where(CreatorAgentSession.id == uuid.UUID(str(pointer["session_id"])))
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if pointer is not None
+        else None
+    )
     pending_refs = list(
         (
             await db.execute(
@@ -735,6 +995,9 @@ async def undo_draft(
         require_active=False,
     )
     now = datetime.now(UTC)
+    await _withdraw_pinned_tap(db, item=target.item, thread=thread, undone=head)
+    if pointer is not None:
+        _restore_pointer(session, pointer)
     for approval in approvals:
         approval.status = "cancelled"
     for execution in executions:

@@ -1,0 +1,49 @@
+{
+  "id": "b09_tr_thread_english_why",
+  "why_bad": "English why on a Turkish thread",
+  "expect": "fail",
+  "expect_failures": [
+    "why_language",
+    "why_ungrounded"
+  ],
+  "input": {
+    "state": "ready",
+    "language": "tr",
+    "creator_request": "",
+    "issued": [
+      {
+        "kind": "mute_clip",
+        "targets": [
+          {
+            "id": "c3",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      }
+    ],
+    "evidence": {
+      "e1": {
+        "signal": "audio_quality",
+        "fact": "3. klipte rüzgar gürültüsü var"
+      }
+    },
+    "already_in_edit": [],
+    "dismissed": [],
+    "untrusted_texts": []
+  },
+  "output": {
+    "ranked": [
+      {
+        "kind": "mute_clip",
+        "target_ids": [
+          "c3"
+        ],
+        "why": "Wind noise in clip 3",
+        "copy": null,
+        "rank": 1
+      }
+    ]
+  }
+}

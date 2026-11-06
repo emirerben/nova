@@ -1,0 +1,48 @@
+{
+ "id": "good_tr_first_prompt",
+ "description": "A Turkish first prompt with a Turkish-and-footage why: kept, because it shares a footage word.",
+ "context": "fp_turkish_speech",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "captions",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 1
+   },
+   {
+    "kind": "hook",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 2
+   },
+   {
+    "kind": "sfx",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 3
+   }
+  ]
+ },
+ "expect": {
+  "wording": "agent",
+  "kinds": [
+   "default_edit",
+   "captions",
+   "hook",
+   "sfx"
+  ]
+ },
+ "tags": [
+  "natural"
+ ]
+}

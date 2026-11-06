@@ -922,6 +922,7 @@ async def test_deny_approval_completes_turn_and_promotes_successor() -> None:
     successor = SimpleNamespace(id=uuid.uuid4(), status="queued")
     added: list[object] = []
     db = SimpleNamespace(
+        get=AsyncMock(return_value=None),  # no suggestion tap staged this approval
         execute=AsyncMock(
             side_effect=[
                 _Result(scalar=approval),

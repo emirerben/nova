@@ -457,4 +457,13 @@ def test_photo_replacement_refuses_active_frame_then_accepts_inherit(monkeypatch
     variant["user_timeline"]["slots"][0]["speaker_frame_override"] = {"mode": "inherit"}
     recipe = compile_phone_authored_timeline(job, variant, previous)
     assert recipe.tracks[0].clips[0].speaker_frame_override.mode == "inherit"
-    assert recipe.tracks[0].clips[0].still_layout == "fullscreen"
+    from tests.pipeline.test_phone_subtitled_plan import _photo_visual
+
+    clip = recipe.tracks[0].clips[0]
+    assert clip.still_layout is None  # The recipe encodes only the supporting-card exception.
+    assert clip.source_asset_id == _photo_visual().render_asset().id
+    asset = next(
+        asset for asset in recipe.asset_manifest.assets if asset.id == clip.source_asset_id
+    )
+    assert asset.kind == "visual"
+    assert asset.media_kind == "image"

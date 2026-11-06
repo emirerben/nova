@@ -1,0 +1,80 @@
+{
+  "name": "d13_dark_take_loses",
+  "description": "Clip 1 is a touch sharper on paper but mostly black.",
+  "language": "en",
+  "clips": [
+    {
+      "media_id": "m1",
+      "kind": "video",
+      "duration_s": 4.0,
+      "hashes": [
+        "dec1ede0758d8515",
+        "9e3408b2456f8785",
+        "9b9def52dd9b3d51"
+      ],
+      "sharpness": 110,
+      "mean_luma": 30
+    },
+    {
+      "media_id": "m2",
+      "kind": "video",
+      "duration_s": 4.0,
+      "hashes": [
+        "dec1ede0758d8516",
+        "9e3408b2456f8786",
+        "9b9def52dd9b3d52"
+      ],
+      "sharpness": 90,
+      "mean_luma": 120
+    },
+    {
+      "media_id": "m3",
+      "kind": "video",
+      "duration_s": 4.0,
+      "hashes": [
+        "e9daf9c495f635b9",
+        "2f15a0a0d2b70b80",
+        "50f24a15eb3bb540"
+      ],
+      "sharpness": 100.0,
+      "mean_luma": 120.0
+    },
+    {
+      "media_id": "m4",
+      "kind": "video",
+      "duration_s": 4.0,
+      "hashes": [
+        "64300800c7681e43",
+        "2efd92ee3cdd95b5",
+        "88adf9b95ce4c4f7"
+      ],
+      "sharpness": 100.0,
+      "mean_luma": 120.0
+    }
+  ],
+  "slots": [
+    "m1",
+    "m2",
+    "m3",
+    "m4"
+  ],
+  "needed": [],
+  "exposure": {
+    "m1": {
+      "version": 1,
+      "mean_luma": 28.0,
+      "near_black_share": 0.62
+    }
+  },
+  "expect": {
+    "offered": true,
+    "ops": [
+      0
+    ],
+    "keep": "m2",
+    "reason": "better exposed",
+    "evidence": [
+      "Keeps clip 2: better lit"
+    ]
+  }
+}

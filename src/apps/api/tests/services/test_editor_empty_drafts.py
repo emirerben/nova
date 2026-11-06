@@ -6,6 +6,88 @@ import pytest
 from app.services.editor_empty_drafts import editor_sections, public_empty_editor_variant
 
 
+@pytest.mark.parametrize("attached", [False, True])
+@pytest.mark.parametrize("empty", [False, True])
+def test_saved_editor_availability_comes_only_from_attached_snapshot(attached, empty):
+    from app.services.editor_empty_drafts import public_saved_editor_variant
+    from tests.routes.test_empty_editor_projection import empty_job
+
+    job = empty_job()
+    variant = job.assembly_plan["variants"][0]
+    variant["editor_draft_available"] = True  # stale persisted hints are not authority
+    if not empty:
+        variant.pop("editor_state")
+        variant["editor_state_version"] = 2
+        variant["render_status"] = "failed"
+    if not attached:
+        job._saved_editor_drafts = {}
+    before = copy.deepcopy(variant)
+    result = (public_empty_editor_variant if empty else public_saved_editor_variant)(job, variant)
+    assert bool(result.get("editor_draft_available")) is attached
+    assert result["render_status"] == ("draft" if empty else "failed")
+    assert variant == before
+
+
+@pytest.mark.asyncio
+async def test_removing_snapshot_reference_clears_previously_attached_availability():
+    from app.services.editor_empty_drafts import (
+        attach_saved_editor_drafts,
+        public_saved_editor_variant,
+    )
+
+    variant = {"variant_id": "v", "editor_state_version": 2, "render_status": "failed"}
+    job = SimpleNamespace(
+        assembly_plan={"variants": [variant]}, _saved_editor_drafts={"v": object()}
+    )
+    await attach_saved_editor_drafts(None, job)
+    assert job._saved_editor_drafts == {}
+    assert not public_saved_editor_variant(job, variant).get("editor_draft_available")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case", ["current", "published", "wrong_generation", "wrong_variant", "missing_body"]
+)
+async def test_availability_validates_snapshot_and_published_generation_alias(monkeypatch, case):
+    import uuid
+    from unittest.mock import AsyncMock
+
+    from app.services import editor_empty_drafts as drafts
+    from tests.routes.test_empty_editor_projection import empty_job
+
+    job = empty_job()
+    snapshot = job._saved_editor_drafts["v"]
+    draft_id = uuid.uuid4()
+    variant = job.assembly_plan["variants"][0]
+    variant.pop("editor_state")
+    variant.update(
+        editor_state_version=2, render_status="failed", editor_draft={"draft_id": str(draft_id)}
+    )
+    job.id, job.user_id, job.content_plan_item_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    generation = {"current": "new-generation", "published": "published-source"}.get(
+        case, "unrelated"
+    )
+    row = SimpleNamespace(
+        id=draft_id,
+        variant_key="wrong" if case == "wrong_variant" else "v",
+        base_generation_id=generation,
+        snapshot_json=None if case == "missing_body" else snapshot.snapshot,
+        parent_draft_id=None,
+    )
+    if case in {"wrong_variant", "missing_body"}:
+        row.base_generation_id = "new-generation"
+    monkeypatch.setattr(drafts, "published_source_generation", lambda *_: "published-source")
+    monkeypatch.setattr(drafts, "_out", lambda *_args, **_kwargs: snapshot)
+    result = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [row]))
+    db = SimpleNamespace(execute=AsyncMock(return_value=result))
+    before = copy.deepcopy(variant)
+    await drafts.attach_saved_editor_drafts(db, job)
+    projected = drafts.public_saved_editor_variant(job, variant)
+    assert bool(projected.get("editor_draft_available")) is (case in {"current", "published"})
+    assert projected["render_status"] == "failed"
+    assert variant == before
+
+
 def test_editor_sections_materializes_generated_intro_for_empty_snapshot() -> None:
     job = SimpleNamespace(
         assembly_plan={

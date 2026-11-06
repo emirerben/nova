@@ -807,7 +807,15 @@ struct EditorDocument: Equatable, Sendable {
     var kind: String
     var editFormat: String
     var clips: [EditorTimelineSlot]
-    var splitScreenSections: [EditorSplitScreenSection] = []
+    var splitScreenSections: [EditorSplitScreenSection] = [] {
+        didSet {
+            // Once this document authors a split, an empty array is an explicit clear.
+            // Preserve that field ownership across acknowledgement and render retries.
+            if rawSections["split_screen_sections"] == nil, !oldValue.isEmpty || !splitScreenSections.isEmpty {
+                rawSections["split_screen_sections"] = .array([])
+            }
+        }
+    }
     var unreadableSplitScreen = false
     var tombstones: [EditorTimelineSlot]
     var textElements: [EditorTextElement]
@@ -899,6 +907,7 @@ struct EditorDocument: Equatable, Sendable {
     enum EditorPresence: Equatable, Sendable { case absent, null, value }
     private struct LoadedState: Equatable {
         let schemaVersion: Int; let kind: String; let editFormat: String
+        let hasSplitScreenSections: Bool
         let clips: [EditorTimelineSlot]; let splitScreenSections: [EditorSplitScreenSection]; let tombstones: [EditorTimelineSlot]; let textElements: [EditorTextElement]
         let captionMeta: [String: JSONValue]; let captionCues: [EditorCaptionCue]; let music: EditorMusic?; let backgroundMusic: EditorBackgroundMusic?
         let mix: [String: JSONValue]; let soundEffects: [EditorTimedEffect]; let mediaOverlays: [EditorTimedEffect]; let visualBlocks: [EditorVisualBlock]
@@ -1078,7 +1087,7 @@ struct EditorDocument: Equatable, Sendable {
     }
 
     private func currentState() -> LoadedState {
-        LoadedState(schemaVersion: schemaVersion, kind: kind, editFormat: editFormat, clips: clips, splitScreenSections: splitScreenSections, tombstones: tombstones, textElements: textElements, captionMeta: captionMeta, captionCues: captionCues, music: music, backgroundMusic: backgroundMusic, mix: mix, soundEffects: soundEffects, mediaOverlays: mediaOverlays, visualBlocks: visualBlocks, motionScenes: motionScenes, motionRuntimeHash: motionRuntimeHash, cameraEffects: cameraEffects, drawings: drawings, speakerBackground: speakerBackground, carouselMoment: carouselMoment, lyrics: lyrics, title: title, orientation: orientation, landscapeFit: landscapeFit, capabilities: capabilities, revision: revision, editorState: editorState, deletions: deletions)
+        LoadedState(schemaVersion: schemaVersion, kind: kind, editFormat: editFormat, hasSplitScreenSections: rawSections["split_screen_sections"] != nil, clips: clips, splitScreenSections: splitScreenSections, tombstones: tombstones, textElements: textElements, captionMeta: captionMeta, captionCues: captionCues, music: music, backgroundMusic: backgroundMusic, mix: mix, soundEffects: soundEffects, mediaOverlays: mediaOverlays, visualBlocks: visualBlocks, motionScenes: motionScenes, motionRuntimeHash: motionRuntimeHash, cameraEffects: cameraEffects, drawings: drawings, speakerBackground: speakerBackground, carouselMoment: carouselMoment, lyrics: lyrics, title: title, orientation: orientation, landscapeFit: landscapeFit, capabilities: capabilities, revision: revision, editorState: editorState, deletions: deletions)
     }
 
     private mutating func makeOpaqueRecords(_ sections: [String: JSONValue]) -> [EditorSection: [EditorOpaqueRecord]] {
@@ -1119,6 +1128,7 @@ private extension EditorDocument {
         guard let loadedState else { return true }
         switch section {
         case .timeline: return loadedState.clips != clips || loadedState.tombstones != tombstones || loadedState.splitScreenSections != splitScreenSections
+            || loadedState.hasSplitScreenSections != (rawSections["split_screen_sections"] != nil)
         case .text: return loadedState.textElements != textElements
         case .captions: return loadedState.captionCues != captionCues
         case .captionMeta: return loadedState.captionMeta != captionMeta

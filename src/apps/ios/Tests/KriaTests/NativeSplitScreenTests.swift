@@ -1071,6 +1071,98 @@ extension NativeSplitScreenTests {
 }
 
 extension NativeSplitScreenTests {
+    func testNativeSplitClearRetainsExplicitFieldWithoutChangingUntouchedLegacySnapshot() {
+        let snapshot: [String: JSONValue] = ["editor_payload": .object(["sections": .object([
+            "timeline_slots": .array([.object(["slot_id": .string("legacy"), "clip_index": .number(0),
+                "in_s": .number(0), "duration_s": .number(4)])]), "unknown_lane": .string("preserve")])])]
+        var document = EditorDocument(snapshot: snapshot)
+        XCTAssertEqual(document.encodeSnapshot(), snapshot)
+        document.splitScreenSections = [.init(id: "temporary", durationS: 4, panelCount: 2)]
+        document.splitScreenSections = []
+        XCTAssertNotEqual(document.sectionSnapshot(.timeline), EditorDocument(snapshot: snapshot).sectionSnapshot(.timeline),
+            "An explicit split clear owns the timeline even when arrays return to their loaded values")
+        let encoded = document.encodeSnapshot()
+        let sections = encoded["editor_payload"]?.objectValue?["sections"]?.objectValue
+        XCTAssertEqual(sections?["split_screen_sections"], .array([]))
+        XCTAssertEqual(sections?["unknown_lane"], .string("preserve"))
+        XCTAssertEqual(EditorDocument(snapshot: encoded).encodeSnapshot(), encoded)
+        XCTAssertEqual(EditorDocument(snapshot: snapshot).encodeSnapshot(), snapshot)
+    }
+
+    @MainActor
+    private func assertSplitSaveRetryPreservesTimeline(unstack: Bool) async throws {
+        let jobID = UUID()
+        let slotID = UUID().uuidString
+        let slot: JSONValue = .object(["slot_id": .string(slotID), "clip_index": .number(0),
+            "in_s": .number(0), "duration_s": .number(4), "source_duration_s": .number(20),
+            "speaker_subject": .bool(true)])
+        let variant: [String: JSONValue] = ["variant_id": .string("initial"),
+            "render_destination": .string("device"), "render_generation_id": .string("generation-1"),
+            "editor_state_version": .number(2), "duration_s": .number(4),
+            "editor_timeline_mode": .string("authored"),
+            "editor_capabilities": .object(["timeline": .bool(true), "speaker_background": .bool(true),
+                "speaker_background_windows": .bool(true), "clips": .object(["split_screen": .object(["editable": .bool(true)])])]),
+            "speaker_background": .object(["kind": .string("color"), "color": .string("#223344"),
+                "speaker_frame": .object(["width_fraction": .number(0.42), "x_fraction": .number(0.76), "y_fraction": .number(0.8)])]),
+            "user_timeline": .object(["slots": .array([slot])])]
+        let snapshot = DraftSnapshot(draftID: "retry-split", itemID: "item", variantKey: "initial", draftRevision: 1,
+            snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
+            snapshot: [:], canUndo: false, createdAt: .now)
+        let fake = EditorCommitSpy(draftSnapshot: snapshot,
+            openReceipt: OpenInEditorResponse(planItemID: "item", variantID: "initial"), authoritativeVariant: variant,
+            commitResponse: EditorCommitResponse(ok: true, generation: "saved-generation",
+                sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false),
+                revisionNumber: 2, revisionHash: "saved", expectedDuration: nil, renderStarted: false))
+        let session = NativeEditorSession(project: ProjectSummary(id: jobID, title: "Retry split", status: .ready,
+            updatedAt: .now, posterURL: nil))
+        await session.load(libraryJobID: jobID, api: fake)
+        XCTAssertTrue(session.document.splitScreenSections.isEmpty)
+        session.selectClip(try XCTUnwrap(session.timelineClips.first?.id))
+        session.createSplitScreen(panelCount: 2)
+        XCTAssertEqual(session.document.splitScreenSections.count, 1)
+        let top = EditorSelection(kind: .speaker, id: try XCTUnwrap(session.document.clips.first?.id))
+        let bottom = EditorSelection(kind: .speaker, id: try XCTUnwrap(session.document.clips.last?.id))
+        XCTAssertTrue(session.setSpeakerFrame(preset: "small_top_left", for: bottom))
+        let peer = session.document.clips.first
+        await session.save()
+        XCTAssertEqual(fake.commitCount, 1)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        if unstack {
+            session.select(.init(kind: .clip, id: bottom.id), seekToStart: false)
+            session.removeSelectedSplitScreen()
+            XCTAssertTrue(session.document.splitScreenSections.isEmpty)
+            await session.save()
+            XCTAssertEqual(fake.commitCount, 2)
+            XCTAssertEqual(fake.lastRequest?.splitScreenSections, [])
+        } else {
+            XCTAssertEqual(session.document.clips.first, peer)
+            XCTAssertEqual(session.speakerFrame(for: top), session.speakerFrame)
+        }
+        guard case .renderRetryNeeded = session.saveState else { return XCTFail("Durable save must expose failed-render retry") }
+        XCTAssertFalse(session.hasUnsavedChanges)
+        let sentSlots = try XCTUnwrap(fake.lastRequest?.timelineSlots)
+        let sentSections = try XCTUnwrap(fake.lastRequest?.splitScreenSections)
+        let before = session.document
+        await session.retryRender()
+        XCTAssertEqual(fake.commitCount, unstack ? 3 : 2)
+        XCTAssertEqual(fake.lastRequest?.baseGeneration, "saved-generation")
+        XCTAssertEqual(fake.lastRequest?.timelineSlots, sentSlots, "Retry preserves scoped framing and every peer field")
+        XCTAssertEqual(fake.lastRequest?.splitScreenSections, sentSections, "Retry includes definitions or explicit empty unstack")
+        XCTAssertEqual(session.document.clips, before.clips)
+        XCTAssertEqual(session.document.splitScreenSections, before.splitScreenSections)
+        XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
+    @MainActor
+    func testCleanFailedRenderRetryResendsNativeCreatedSplitDefinitionsAndScopedFrames() async throws {
+        try await assertSplitSaveRetryPreservesTimeline(unstack: false)
+    }
+
+    @MainActor
+    func testCleanFailedRenderRetryResendsExplicitEmptyAfterNativeCreatedSplitIsUnstacked() async throws {
+        try await assertSplitSaveRetryPreservesTimeline(unstack: true)
+    }
+
     @MainActor
     func testAuthoredAPISnapshotSpeakerFramingRequiresAdvertisedCapabilitiesAfterReopen() {
         let (fixture, top, bottom) = speakerOccurrenceSession()

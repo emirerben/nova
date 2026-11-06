@@ -84,13 +84,18 @@ struct NativeEditorSaveBanner: View {
     var reviewInChat: (() -> Void)? = nil
     @Environment(\.openURL) private var openURL
 
-    @ViewBuilder var body: some View {
+    var showsRenderRetryAction: Bool {
         switch session.saveState {
-        case .failed(let message):
-            banner(title: "Couldn’t save this edit", detail: message, systemImage: "exclamationmark.triangle", tint: .red)
-        case .renderRetryNeeded(let message):
-            VStack(spacing: 0) {
-                banner(title: "Saved — render didn’t start", detail: message, systemImage: "arrow.clockwise", tint: .orange)
+        case .renderRetryNeeded: return true
+        case .failed: return session.hasPendingRenderRetry && !session.isSaving
+        default: return false
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            statusBanner
+            if showsRenderRetryAction {
                 Button("Retry render") { Task { await session.retryRender() } }
                     .font(KriaFont.body(12).weight(.semibold))
                     .foregroundStyle(KriaColor.ink)
@@ -98,6 +103,15 @@ struct NativeEditorSaveBanner: View {
                     .background(KriaColor.softZinc)
                     .accessibilityIdentifier("native-editor-retry-render")
             }
+        }
+    }
+
+    @ViewBuilder private var statusBanner: some View {
+        switch session.saveState {
+        case .failed(let message):
+            banner(title: "Couldn’t save this edit", detail: message, systemImage: "exclamationmark.triangle", tint: .red)
+        case .renderRetryNeeded(let message):
+            banner(title: "Saved — render didn’t start", detail: message, systemImage: "arrow.clockwise", tint: .orange)
         case .deviceRenderRetryNeeded(let message):
             let step = session.deviceRenderNextStep
             VStack(spacing: 0) {

@@ -4825,6 +4825,19 @@
           "title": "Status",
           "type": "string"
         },
+        "suggestion_outcome": {
+          "anyOf": [
+            {
+              "const": "refused",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Suggestion Outcome"
+        },
         "thread_revision": {
           "title": "Thread Revision",
           "type": "integer"

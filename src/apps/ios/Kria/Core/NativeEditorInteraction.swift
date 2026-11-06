@@ -311,7 +311,8 @@ enum NativeEditorInteraction {
     ) -> NativeEditorTimelineProjection {
         let speech = slots.contains { $0.id?.hasPrefix("native-phone-talking-source") == true }
         let renderedClock = slots.contains { !$0.removed && $0.raw["timing_mode"]?.stringValue == "rendered" }
-        let continuousClock = speech || renderedClock
+        let authoredFrameClock = slots.contains { !$0.removed && NativeLegacySourceWindow.preservesAuthoredClock($0) }
+        let continuousClock = speech || renderedClock || authoredFrameClock
         var baseWindows: [NativeEditorClipWindow] = []
         // A source-window marker opts the whole timeline into the server's
         // 30fps layout clock: downstream legacy slots and transition edges

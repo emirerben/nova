@@ -1,0 +1,51 @@
+{
+ "id": "good_en_first_prompt",
+ "description": "First prompt: the agent puts sound effects ahead of the hook and keeps three kinds. The order follows the model, the labels stay the server templates.",
+ "context": "nermin-matcha-update::first_prompt",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "sfx",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 1
+   },
+   {
+    "kind": "transition",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 2
+   },
+   {
+    "kind": "hook",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 3
+   }
+  ]
+ },
+ "expect": {
+  "wording": "agent",
+  "kinds": [
+   "default_edit",
+   "sfx",
+   "transition",
+   "hook"
+  ],
+  "why": {
+   "sfx": false
+  }
+ },
+ "tags": [
+  "natural"
+ ]
+}
