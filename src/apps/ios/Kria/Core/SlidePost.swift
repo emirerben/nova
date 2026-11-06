@@ -2697,7 +2697,7 @@ struct SlidePostRenderAcknowledgement {
     private func persist() {
         guard !restoring else { return }
         do { try persistDurably() }
-        catch { error = "Your local changes could not be stored. Keep this post open and try again." }
+        catch { self.error = "Your local changes could not be stored. Keep this post open and try again." }
     }
     private func persistDurably() throws {
         guard let identity = localIdentity else { return }
