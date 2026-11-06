@@ -837,20 +837,22 @@ public actor DeviceRenderCoordinator {
                 return
             }
             try update(attempt, phase: .preparing)
-            let assets = try await sources.resolve(for: saved.request.recipe)
+            let assets = try await EngineSignpost.measureAsync("talk.save.resolveAssets") { try await sources.resolve(for: saved.request.recipe) }
             guard current(attempt) else { return }
             try update(attempt, phase: .rendering)
             exportFraction = nil
             output = directory.appendingPathComponent("\(attempt.uuidString).mp4")
             receipt?.continuationStage = .exportStarted
             try persist()
-            _ = try await exporter.export(recipe: saved.request.recipe, assetURLs: assets, outputURL: output, exportID: attempt.uuidString,
-                                     progress: { [weak self] fraction in Task { await self?.recordExport(fraction, attempt: attempt, run: run) } })
+            _ = try await EngineSignpost.measureAsync("talk.save.export") {
+                try await exporter.export(recipe: saved.request.recipe, assetURLs: assets, outputURL: output, exportID: attempt.uuidString,
+                                          progress: { [weak self] fraction in Task { await self?.recordExport(fraction, attempt: attempt, run: run) } })
+            }
             guard current(attempt) else { return }
             try await validateOutputDuration(output, for: saved.request)
             guard current(attempt) else { return }
             receipt?.outputURL = output
-            receipt?.outputFingerprint = try SHA256Fingerprinter().fingerprint(file: output)
+            receipt?.outputFingerprint = try EngineSignpost.measure("talk.save.hashOutput") { try SHA256Fingerprinter().fingerprint(file: output) }
             receipt?.continuationStage = .outputReady
             try update(attempt, phase: .localReady)
         }
@@ -859,7 +861,9 @@ public actor DeviceRenderCoordinator {
         guard current(attempt) else { return }
         guard stillCurrent else { try update(attempt, phase: .superseded); return }
         try update(attempt, phase: .syncing)
-        let result = try await publisher.publish(file: output, identity: saved.request.identity, attemptID: attempt, brandTail: exporter.brandTail)
+        let result = try await EngineSignpost.measureAsync("talk.save.publish") {
+            try await publisher.publish(file: output, identity: saved.request.identity, attemptID: attempt, brandTail: exporter.brandTail)
+        }
         guard current(attempt) else { return }
         try update(attempt, phase: result == .published ? .synced : .superseded)
     }
