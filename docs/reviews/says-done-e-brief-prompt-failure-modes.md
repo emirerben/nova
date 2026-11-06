@@ -87,8 +87,16 @@ Ways it could fail:
 10d. **Clip holds caught by the new rule.** "show this clip for 2 seconds" is a clip hold
      (`timing`/`clip:<id>`, KRI-824), not a title. Mitigation: the rule names only an opening title
      and the ending words.
-10e. **Ending filed with the `closing` fact.** `closing` is for ending on a shot / photo / badge;
-     the ending words are a `text` requirement with the literal (item 14 reads the arrow from it).
-     Mitigation: the example shows `facts: {}`; the Q1/Q2 goldens drop the `closing` fact they had.
+10e. **Ending filed without a typed ending fact.** (Corrected after Emir's review of #2131 on
+     main 6fa6105a1.) This change first dropped `closing` from the ending text, reading that fact
+     as "end on a shot". After #2129, `brief_checks._asks_whole_video_text` judges a `text`/
+     `global` line with no fact beyond its look as a line for the WHOLE video, so "End with THANK
+     YOU for the last 2 seconds" with `closing_title` shown 9-11 s of 11 s was reported "on screen
+     for 2 s of the 11 s video". Mitigation: the ending words carry `{"closing": "<the words>"}`
+     (the contract #2129's own ending control uses); on a `text` requirement `closing` does not
+     start the closing-photo check (`_wants_closing` reads style/audio/select only). Regression:
+     `tests/kria/test_says_done_e_ending_receipt.py` (real planner + compile + final review), with
+     the same words without the fact as the contract control and a genuine whole-video line as
+     the preserved negative control.
 10f. **Kit test stays red.** `test_q1_title_hold_length` builds the `timing`/`global` rows itself;
      a prompt cannot turn it green. That is expected: it pins what code does with a wrong brief.

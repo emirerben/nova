@@ -18,6 +18,9 @@ test-run-id + about $0.46.** The re-run used two commands within the approved $1
 | `says-done-e-s2-20261106`, $0.70 | Q1 (repeat) | PASS (same facts; action `ask_user`) | $0.079 |
 | | Q2 (repeat) | PASS (same facts) | $0.077 |
 
+**This run predates the ending fix** (review of #2131 after #2129 landed): its Q1/Q2 answers filed the ending
+words with `facts` {}, which #2129's receipt reads as a whole-video line. The teaching now adds
+`{"closing": "<the words>"}`; whether the live model writes it is not measured (no paid re-run).
 Captures: `~/Downloads/kria-qendresa-test/handoff/says_done_e_live/step1/`, `step2/`. Two runs per
 prompt, not three: still a small sample. Not covered: her real footage and the rendered video.
 

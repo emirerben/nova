@@ -803,3 +803,6 @@ def test_the_moment_hold_check_rejects_a_hold_filed_as_the_video_length():
 
     assert any("video length" in failure and "3.0" in failure for failure in failures), failures
     assert any("duration_s 3" in failure for failure in failures), failures
+    # the ending row above carries `facts` {} (no typed "closing"), so #2129 reads it as a line
+    # for the whole video: the checker must say so
+    assert any("whole-video line" in failure for failure in failures), failures

@@ -12,6 +12,9 @@ Expectations:
 
 - ``video_length_s``: the seconds `creator_duration` reads from the brief (``None`` = no length).
 - ``texts``: each ``{"scope", "literal"}`` is present as a `text` update.
+  A text with ``"ending": True`` must also carry ``facts["closing"]`` equal to its literal (the
+  typed mark that the words are the ending) and must not be read by
+  ``brief_checks._asks_whole_video_text`` as a line for the whole video (#2129).
 - ``moment_seconds``: no `timing` update carries a `duration_s` equal to one of these.
 """
 
@@ -53,13 +56,33 @@ def moment_hold_brief_failures(updates: list[dict[str, Any]], expect: dict[str, 
     if got != want:
         failures.append(f"video length read from the brief is {got!r}, expected {want!r}")
 
+    from app.kria.brief_checks import _asks_whole_video_text
+
+    def _norm(value: Any) -> str:
+        return " ".join(str(value or "").split()).casefold()
+
     for text in expect.get("texts") or []:
-        if not any(
-            req.kind == "text" and req.scope == text["scope"] and req.literal == text["literal"]
+        matches = [
+            req
             for req in reqs
-        ):
+            if req.kind == "text" and req.scope == text["scope"] and req.literal == text["literal"]
+        ]
+        if not matches:
             failures.append(
                 f"no text update with scope {text['scope']!r} and literal {text['literal']!r}"
+            )
+            continue
+        if not text.get("ending"):
+            continue
+        req = matches[0]
+        if _norm(req.facts.get("closing")) != _norm(text["literal"]):
+            failures.append(
+                f"ending text {text['literal']!r} has closing fact {req.facts.get('closing')!r}, "
+                "expected the ending words themselves"
+            )
+        if _asks_whole_video_text(req):
+            failures.append(
+                f"ending text {text['literal']!r} is read as a whole-video line (#2129 receipt)"
             )
 
     held = [float(value) for value in expect.get("moment_seconds") or []]

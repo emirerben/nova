@@ -281,6 +281,8 @@ log = structlog.get_logger()
 # v69 shares it. Replay fixtures `qendresa_*` are hand-authored; only a paid live run measures it.
 # Also (case 10): seconds tied to one moment (an opening title "for the first 3 seconds", ending
 # words "for the last 3 seconds") record no timing/duration_s; her Q1 sentences are the examples.
+# Ending words carry {"closing": "<the words>"} so #2129's whole-video text receipt never judges
+# them as a line for the whole video.
 MAIN_CREATOR_PROMPT_VERSION = "2026-11-06-v137"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
@@ -1361,19 +1363,20 @@ than 15 seconds", "up to 15 seconds", "15 seconds or less", "en fazla 15 saniye"
 geçmesin" all become {"duration_s": 15, "duration_bound": "at_most"}; every other length has no
 `duration_bound` (omitting it means exact), and a change to a timing requirement must restate
 `duration_bound` if it still applies.
-Seconds tied to ONE moment are never the video's length: an opening title "for the first 3
-seconds" or ending words "for the last 3 seconds" record NO `timing` requirement and no
-`duration_s`; the seconds stay in the `description` of that moment's own requirement (the opening
-title is a `text` requirement with scope "title", the ending words a `text` requirement with scope
-"global", `facts` {} unless another rule here adds one), and the strategy carries them
+Seconds tied to ONE moment are never the video's length: an opening title "for the first 3 seconds"
+or ending words "for the last 3 seconds" record NO `timing` requirement and no `duration_s`; the
+seconds stay in the `description` of that moment's own requirement (the opening title is a `text`
+requirement with scope "title" and `facts` {}; the ending words a `text` requirement with scope
+"global" whose `facts` hold {"closing": "<the ending words, exactly as written>"}, which marks them
+as the ending, never a line for the whole video), and the strategy carries them
 (`opening_title_duration_s`, `pinned_texts` `end_s`). `Start with a big title "lets build an agent
 that reads an APP before I trust it!!" for the first 3 seconds` => {"kind": "text", "scope":
-"title", "literal": "lets build an agent that reads an APP before I trust it!!", "description":
-"a big opening title for the first 3 seconds", "facts": {}}; `End with "comment READ" and an arrow
-for the last 3 seconds` => {"kind": "text", "scope": "global", "literal": "comment READ",
-"description": "end with comment READ and an arrow for the last 3 seconds", "facts": {}}; neither
-adds a timing requirement. A length for the whole video in the same message still does ("... and
-make the video 30 seconds long" => {"kind": "timing", "scope": "global", "facts": {"duration_s":
+"title", "literal": "lets build an agent that reads an APP before I trust it!!", "description": "a
+big opening title for the first 3 seconds", "facts": {}}; `End with "comment READ" and an arrow for
+the last 3 seconds` => {"kind": "text", "scope": "global", "literal": "comment READ", "description":
+"end with comment READ and an arrow for the last 3 seconds", "facts": {"closing": "comment READ"}};
+neither adds a timing requirement. A length for the whole video in the same message still does ("...
+and make the video 30 seconds long" => {"kind": "timing", "scope": "global", "facts": {"duration_s":
 30}}).
 The exception is exact text the creator dictates for particular shots ("1. The
 bookshop photo: "..." 2. The bowling video: "..."): add one {"operation":"add", "kind": "text",
