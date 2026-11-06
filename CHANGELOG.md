@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.31.0] - 2026-11-06
+
+### Changed
+- fix(ios): fence stale device-render reset cleanup and admission (#2134) <!-- release-pr: 2134 -->
+
 ## [0.88.30.0] - 2026-11-06
 
 ### Changed
