@@ -37,7 +37,8 @@ final class NativeEditorSessionTests: XCTestCase {
         let preserved = try hydrate(project: project, slotID: slotUUID.uuidString, assetID: assetUUID.uuidString)
         XCTAssertEqual(preserved.id, slotUUID)
         XCTAssertEqual(preserved.assetID, assetUUID)
-        XCTAssertEqual(try hydrate(project: project, slotID: nil), try hydrate(project: project, slotID: nil))
+        XCTAssertNotEqual(try hydrate(project: project, slotID: nil).id, try hydrate(project: project, slotID: nil).id,
+                          "anonymous rows must not invent a canonical cross-read identity")
     }
 
     func testReadyJobReceivedDuringSaveIsRecheckedAfterSaveAndTransientReadFailure() async throws {
