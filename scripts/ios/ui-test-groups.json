@@ -400,7 +400,11 @@
       "KriaUITests/OverlayGenerationUITests/testAvailabilityCheckFailureCanBeRetriedWithoutLeavingThePanel",
       "KriaUITests/BackgroundLaneUITests/testDraggingAWindowMovesTheInspectorAndTheSave",
       "KriaUITests/BackgroundLaneUITests/testTheSequenceTilesAddAndRemoveWindowsAndTheSpeakerControlSetsThePreset",
-      "KriaUITests/BackgroundLaneUITests/testAProjectWithoutWindowsKeepsItsLanesAndHidesTheWindowControls"
+      "KriaUITests/BackgroundLaneUITests/testAProjectWithoutWindowsKeepsItsLanesAndHidesTheWindowControls",
+      "KriaUITests/SpeakerFrameDirectManipulationUITests/testTapDragAndPinchMoveAndResizeTheSpeaker",
+      "KriaUITests/SpeakerFrameDirectManipulationUITests/testOneDragIsOneUndoStep",
+      "KriaUITests/SpeakerFrameDirectManipulationUITests/testDragAndPinchPastTheLimitsSaveAFrameInRange",
+      "KriaUITests/SpeakerFrameDirectManipulationUITests/testFullFrameSpeakerIsNotSelectable"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
@@ -568,6 +572,8 @@
     "src/apps/ios/Kria/Features/NativeBackgroundPanel.swift": "editor",
     "src/apps/ios/Tests/KriaUITests/SpeakerBackgroundUITests.swift": "editor",
     "src/apps/ios/Tests/KriaUITests/BackgroundLaneUITests.swift": "editor",
+    "src/apps/ios/Tests/KriaUITests/SpeakerFrameDirectManipulationUITests.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeSpeakerPanel.swift": "editor",
     "src/apps/ios/Kria/Core/WhatsNew.swift": "projects",
     "src/apps/ios/Kria/Core/WhatsNewReleases.swift": "projects",
     "src/apps/ios/Kria/Features/WhatsNewView.swift": "projects",

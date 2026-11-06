@@ -63,9 +63,12 @@ struct NativePreviewFootprint {
 struct NativePreviewDangerGuide: View {
     let canvas: CGSize
     let edges: Set<NativePreviewDangerZones.Edge>
+    /// The edges were tested against the speaker's face, not the whole box (speaker frame, SF9).
+    var followsFace = false
 
     private var message: String {
-        edges.isEmpty ? "Reels & TikTok guide · approximate" : "May be covered on Reels or TikTok"
+        if edges.isEmpty { return "Reels & TikTok guide · approximate" }
+        return followsFace ? "Your face may be covered on Reels or TikTok" : "May be covered on Reels or TikTok"
     }
 
     var body: some View {

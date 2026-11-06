@@ -67,6 +67,41 @@ public struct LivePreviewExportSnapshot: Sendable {
             width: rectangle.width / instruction.canvas.width, height: rectangle.height / instruction.canvas.height, rotationDegrees: rotation)
     }
 
+    /// The instruction drawing `time` when it shows a framed Talk-to-camera speaker (SF2), with that frame.
+    private func framedSpeakerInstruction(at time: Double, timescale: Int32 = 60_000) -> (composition: AVVideoComposition, instructions: [RecipeVideoInstruction], instruction: RecipeVideoInstruction, frame: SpeakerFrame)? {
+        guard let composition = preview.playerItem.videoComposition,
+              let instructions = composition.instructions as? [RecipeVideoInstruction],
+              let instruction = instructions.first(where: { CMTimeRangeContainsTime($0.timeRange, time: CMTime(seconds: time, preferredTimescale: timescale)) }),
+              instruction.showsFramedSpeaker(at: time), let frame = instruction.speakerFrame else { return nil }
+        return (composition, instructions, instruction, frame)
+    }
+
+    /// Where the framed speaker is on screen at `time`, clipped to the canvas so its handles stay reachable (SF10).
+    /// Nil without a frame, or where no speaker clip is drawn (the ending clip; SF2). The box is the whole scaled
+    /// speaker picture, the same box `RecipeVideoCompositor.framed` draws into.
+    public func speakerSelectionBounds(time: Double) -> TextSelectionBounds? {
+        guard let found = framedSpeakerInstruction(at: time) else { return nil }
+        let rect = found.frame.canvasRect.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard !rect.isNull, rect.width > 0, rect.height > 0 else { return nil }
+        return TextSelectionBounds(centerX: rect.midX, centerY: rect.midY, width: rect.width, height: rect.height, rotationDegrees: 0)
+    }
+
+    /// Splits the scene around the framed speaker at `time` (SF4): everything under the speaker (opaque), the framed
+    /// cut-out alone and everything above it (both on a clear canvas), each a slice of the instruction that draws
+    /// `time`, so the three stills composited back are the frame the player shows. `rect` is the whole scaled speaker
+    /// picture in canvas fractions (top-left origin), NOT clipped: the editor scales the speaker still about its centre.
+    public func speakerInteractionLayers(time: Double) throws -> (below: AVVideoComposition, above: AVVideoComposition, speaker: AVVideoComposition, rect: CGRect) {
+        guard let found = framedSpeakerInstruction(at: time, timescale: 600) else { throw MediaEngineError.exportFailed }
+        func slice(_ part: SpeakerSlice) -> AVVideoComposition {
+            let copy = found.composition.mutableCopy() as! AVMutableVideoComposition
+            copy.instructions = found.instructions.map { original in
+                original.timeRange == found.instruction.timeRange ? original.slicedAroundSpeaker(part) : original
+            }
+            return copy
+        }
+        return (slice(.belowSpeaker), slice(.aboveSpeaker), slice(.speakerOnly), found.frame.canvasRect)
+    }
+
     public func textSelectionBounds(id: String, time: Double) -> TextSelectionBounds? {
         guard let instructions = preview.playerItem.videoComposition?.instructions as? [RecipeVideoInstruction],
               let instruction = instructions.first(where: { CMTimeRangeContainsTime($0.timeRange, time: CMTime(seconds: time, preferredTimescale: 60_000)) }) else { return nil }
@@ -112,7 +147,8 @@ public struct LivePreviewExportSnapshot: Sendable {
                     drawings: above ? original.drawings : nil, transparentBackground: above,
                     // The dragged text itself paints plain while the finger is down (F8); the scene below keeps its occlusion.
                     subjectMatte: above ? nil : original.subjectMatte, speakerMatte: above ? nil : original.speakerMatte,
-                    speakerFrame: above ? nil : original.speakerFrame)
+                    speakerFrame: above ? nil : original.speakerFrame,
+                    fullScreenWindows: above ? [] : original.fullScreenWindows)
             }
             return copy
         }
@@ -145,7 +181,8 @@ public struct LivePreviewExportSnapshot: Sendable {
                     motionScenes: transparent ? nil : original.motionScenes,
                     drawings: paintsDrawings ? original.drawings : nil, transparentBackground: transparent,
                     subjectMatte: transparent ? nil : original.subjectMatte, speakerMatte: transparent ? nil : original.speakerMatte,
-                    speakerFrame: transparent ? nil : original.speakerFrame)
+                    speakerFrame: transparent ? nil : original.speakerFrame,
+                    fullScreenWindows: transparent ? [] : original.fullScreenWindows)
             }
             return copy
         }
@@ -217,8 +254,15 @@ public struct LivePreviewExportSnapshot: Sendable {
         // Any speaker-background change (asset, source start, loop, subject track, added or removed) re-inserts
         // the background track, so it always takes the full rebuild. Checked before the tracks: the editor names its
         // speaker track after the background, so a changed background also changes a track id, and the refusal
-        // should name the background.
-        guard next.speakerBackground == recipe.speakerBackground else { throw NativePreviewFeatureError("LivePreviewComposition-speaker-background") }
+        // should name the background. Moving or resizing an existing speaker frame is the one background change that stays
+        // in place (SF5): the frame is read per instruction, and the background track and its matte are untouched.
+        let movesSpeakerFrame: Bool
+        switch (recipe.speakerBackground, next.speakerBackground) {
+        case (nil, nil): movesSpeakerFrame = false
+        case let (current?, updated?) where current == updated: movesSpeakerFrame = false
+        case let (current?, updated?) where current.onlyMovesTheSpeakerFrame(to: updated): movesSpeakerFrame = true
+        default: throw NativePreviewFeatureError("LivePreviewComposition-speaker-background")
+        }
         guard next.audio == recipe.audio, withoutVisuals(recipe.tracks) == withoutVisuals(next.tracks) else { throw NativePreviewFeatureError("LivePreviewComposition-79") }
         if next.visualFills.contains(where: { $0.kind == .blurPrevious }), recipe.cameraPulses != next.cameraPulses {
             throw NativePreviewFeatureError("LivePreviewComposition-81")
@@ -233,6 +277,7 @@ public struct LivePreviewExportSnapshot: Sendable {
         expected.textLayers = next.textLayers
         expected.drawingLayers = next.drawingLayers
         expected.requiredCapabilities = next.requiredCapabilities
+        if movesSpeakerFrame { expected.speakerBackground = next.speakerBackground }
         guard expected == next,
               let current = preview.playerItem.videoComposition,
               let replacement = current.mutableCopy() as? AVMutableVideoComposition else {
@@ -314,8 +359,10 @@ public struct LivePreviewExportSnapshot: Sendable {
         replacement.instructions = RecipeInstructionTiming.tiledRanges(total: total, layers: layers).map { range, active in
             RecipeVideoInstruction(timeRange: range, layers: active, text: painted, canvas: current.renderSize,
                 cameraPulses: next.cameraPulses, motionScenes: motion, textStore: textStore, drawings: drawings, subjectMatte: subjectMatte,
-                // The background is unchanged (guarded above), so its layer and its matte carry over.
-                speakerMatte: first.speakerMatte, speakerFrame: first.speakerFrame)
+                // The background is unchanged apart from a moved frame (guarded above), so its layer, its matte and its
+                // full-screen windows carry over.
+                speakerMatte: first.speakerMatte, speakerFrame: movesSpeakerFrame ? next.speakerBackground?.speakerFrame : first.speakerFrame,
+                fullScreenWindows: first.fullScreenWindows)
         }
         // Publish only after every layer validates successfully. Never touch
         // `audioMix` here (see `withoutVisuals`).

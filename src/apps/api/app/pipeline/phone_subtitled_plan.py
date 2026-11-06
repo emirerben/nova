@@ -76,6 +76,7 @@ from app.kria.portable_speaker_background import (
     SpeakerBackgroundLayer,
     SpeakerBackgroundWindow,
     SpeakerFrame,
+    SpeakerFullScreenWindow,
 )
 from app.kria.portable_visual import AudioMuteWindow, VisualMediaPlacement
 from app.kria.recipes import (
@@ -652,9 +653,14 @@ def compile_phone_subtitled_plan(
         )
         cursor += extra_duration
     speaker_end = cursor
-    from app.services.phone_text_styling import register_generation_timeline
+    from app.services.phone_text_styling import (
+        register_generation_background,
+        register_generation_timeline,
+    )
 
     register_generation_timeline(main_clips)
+    # Green 5: what is behind the captions, before their colour is chosen below.
+    register_generation_background(lanes.background if lanes is not None else None, canvas=canvas)
     register_backdrop_visuals(main_clips, visuals=visuals, assets=assets, manifest=manifest)
 
     try:
@@ -1050,6 +1056,18 @@ def _compile_background(
                 end=end,
             )
         )
+    # Qendresa item 16: the full-screen spans pin nothing; clip them to the edit like windows.
+    full_screen: list[SpeakerFullScreenWindow] = []
+    for span in background.full_screen_windows:
+        start = span.start_s
+        end = span.end_s
+        if timeline_duration_s is not None:
+            if start >= timeline_duration_s - 1e-6:
+                continue
+            end = min(end, timeline_duration_s)
+        if end - start < MIN_BACKGROUND_WINDOW_S - 1e-9:
+            continue
+        full_screen.append(SpeakerFullScreenWindow(start=start, end=end))
     frame = background.speaker_frame
     fill: dict[str, Any] = (
         {"media_kind": "color", "color": background.color}
@@ -1060,6 +1078,7 @@ def _compile_background(
         **fill,
         source_start=background.source_start_s if background.kind == "video" else 0.0,
         windows=windows or None,
+        full_screen_windows=full_screen or None,
         speaker_frame=(
             SpeakerFrame(
                 width_fraction=frame.width_fraction,
@@ -1294,7 +1313,8 @@ def _card_placement(
     canvas: Canvas,
 ) -> tuple[float, float, float]:
     """``(width_fraction, x_fraction, y_fraction)`` for a pip card."""
-    y_frac = min(card.y_frac, CAPTION_BAND_TOP_FRAC)
+    # Item 15: a card the layout placed clear of the drawn captions keeps its own y.
+    y_frac = card.y_frac if card.caption_clear else min(card.y_frac, CAPTION_BAND_TOP_FRAC)
     if canvas.width <= canvas.height:
         return card.scale, card.x_frac, y_frac
     return _contain_card_in_canvas(

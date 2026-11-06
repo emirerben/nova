@@ -480,7 +480,8 @@ public struct PreviewComposition: @unchecked Sendable {
         videoComposition.instructions = RecipeInstructionTiming.tiledRanges(total: covered, layers: layers).map { range, active in
             RecipeVideoInstruction(timeRange: range, layers: active, text: textLayers, canvas: canvas,
                 cameraPulses: recipe.cameraPulses, motionScenes: motion, textStore: textStore, drawings: drawings, subjectMatte: subjectMatte,
-                speakerMatte: speakerMatte, speakerFrame: recipe.speakerBackground?.speakerFrame)
+                speakerMatte: speakerMatte, speakerFrame: recipe.speakerBackground?.speakerFrame,
+                fullScreenWindows: recipe.speakerBackground?.fullScreenWindows ?? [])
         }
         let audioMix = AVMutableAudioMix()
         audioMix.inputParameters = audioParameters

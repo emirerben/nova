@@ -155,7 +155,7 @@ Capability row: `speakerBackgroundWindows`.
 | Recipe (`SpeakerBackgroundLayer`) | `windows: [{asset_id, media_kind, source_start, start, end}]` and `speaker_frame`, omitted while unused (every first-cut recipe keeps its digest). `EditRecipeV2` requires a matching-kind `VisualRenderAsset` per window, `end` within the recipe, and derives `speakerBackgroundWindows`. Shared fixture: `tests/fixtures/speaker-background-parity/v2.json`. |
 | Compile (`_compile_background`) | Pins the fill and every window (`_pin_background_visual`), clips windows to the edit (a window starting at or past the end is dropped), one manifest asset per distinct visual. |
 | Editor document / Save | `speaker_background` gains `windows` and `speaker_frame` (keys absent while unused). `EditorCommitSpeakerBackground` accepts them; every window id is pinned from THIS item's pool before validation (`background_pin_requests`). 422 `speaker_background_windows_disabled` (reason), `speaker_background_window_invalid`, and the first-cut per-visual codes; 426 `client_update_required` `feature: "speaker_background_windows"` for a build below 32 that sets them, Saves a variant already carrying them, or polls a pinned recipe using them (`phone_editor.py`, `device_render.py`). Capability `editor_capabilities.speaker_background_windows`. |
-| Speaker frame | Written only from a named preset (`SPEAKER_FRAME_PRESETS` in `portable_speaker_background.py`): `small_bottom_right` {0.42, 0.76, 0.80}, `small_bottom_left`, `small_top_right`, `small_top_left`; `full` = absent. The phone masks the full-size speaker first, then scales and places the cut-out. |
+| Speaker frame | The chat writes only a named preset (`SPEAKER_FRAME_PRESETS` in `portable_speaker_background.py`): `small_bottom_right` {0.42, 0.76, 0.80}, `small_bottom_left`, `small_top_right`, `small_top_left`; `full` = absent. The iPhone editor also writes any in-range frame when the creator drags or pinches the speaker on the preview (see "Moving the speaker by hand" below). The phone masks the full-size speaker first, then scales and places the cut-out. |
 
 ### Gates
 
@@ -194,6 +194,36 @@ and the frame, tracing `speaker_background_windows_phone_fallback` (`reason`: `w
 `speakerBackgroundWindows` joins `PHONE_RENDER_VERIFIED_FEATURES` only after the physical iPhone check in the failure-mode
 doc (three photo windows + corner speaker in preview and export, a silent looping video window, a 60 s ten-window export
 within 120 s). Until then every request renders the single fill background exactly as before.
+
+### Moving the speaker by hand (iPhone editor)
+
+On a variant whose editor opens `speaker_background_windows`, a speaker drawn small (a `speaker_frame` is set) is a
+preview object: tapping them selects them and opens the "You" panel (size slider, the four corners, Full screen); a drag
+moves the centre, a pinch or any corner handle resizes about the centre. The session clamps every sample to the wire
+range (width 0.2–1, centre 0–1) and one gesture is one undo step. Nothing on the wire changed: the server already
+accepted any in-range frame, so there is no protocol bump or new token, and the chat still writes presets only
+(`brief_checks` calls a hand-placed frame "custom"; parity group `speaker_frame_by_hand` is `agent_unsupported`).
+
+The live drag uses three stills of the same compositor instruction (`LivePreviewComposition.speakerInteractionLayers`:
+under the speaker / the framed cut-out / above it) and moves only the middle one, so the finger shows the render's
+pixels. A frame-only change updates the player in place (`updateText` accepts a background that only moves an existing
+frame); Full ↔ corner still takes the full rebuild. The safe-zone guide follows the speaker's face (Vision, once per
+gesture) rather than the whole box. Failure modes SF1–SF13: `docs/reviews/speaker-frame-direct-manipulation-failure-modes.md`.
+
+### Names heard when said another way (`BACKGROUND_FOLLOWS_TALK_ENABLED`, Qendresa item 17)
+
+Server only, default off (off = windows and the Main Creator prompt byte-identical). On, every sequence entry's
+`spoken_phrase` is also heard when said another way (joined / split words, a final plural "s", a plural with a KRI-961
+sound-alike), as a last resort after the exact and KRI-961 matchers, and not inside another entry's longer phrase
+("agents" inside "trading agents") while it is heard elsewhere too. Main Creator v123 (only with the flag on) teaches the
+planner to write each phrase as said in the take, with the words said only where that visual is introduced. Holding the
+last visual to the take end is the no-repeat rule (S57) for everyone, not this flag. Failure modes S64-S69 in
+`docs/reviews/speaker-background-windows-failure-modes.md`.
+
+- Apply: `fly secrets set BACKGROUND_FOLLOWS_TALK_ENABLED=true --app nova-video` + restart (api + worker).
+- Rollback: `...=false` + restart; never a code revert.
+- Before turning it on: one live v123 turn on a screen walkthrough (paid, about $0.10-0.50, not run) to see the planner
+  copy the spoken names.
 
 ## Solid-colour fill (KRI-1173)
 
@@ -261,6 +291,29 @@ copilot `set_background_color`) are described below.
   `partial` when it carries a different one, and `not_possible` with a NAMED reason otherwise (not an iPhone Talking edit, token not
   verified, app too old, or "this draft doesn't put a plain colour behind you"). "Attach the photos or videos first" is never the
   answer to a colour ask.
+
+## Full screen first, then the corner (`SPEAKER_FULL_OPENING_ENABLED`, Qendresa item 16)
+
+Her screen walkthroughs open with her full screen in her own room for 3-7 s (V5: 0-7.2 s, switching on "first
+one"; V1: 0-2.5 s), then she sits small in the bottom-right corner over the recordings. Contract and failure
+modes S70-S82: `docs/reviews/speaker-background-windows-failure-modes.md` (last section).
+
+| Where | Shape |
+| --- | --- |
+| Recipe (`SpeakerBackgroundLayer`) | `full_screen_windows: [{start, end}]` (output seconds, sorted, disjoint, >= 0.5 s, 1-4, absent while unused). Inside one the phone draws the speaker's own take untouched: no person mask, no background, no `speaker_frame`; decided per frame. Capability `speakerFrameWindows`; shared fixture `tests/fixtures/speaker-background-parity/v4.json`. |
+| Lane (`SubtitledBackground`) | `full_screen_windows: tuple[SubtitledFullScreenWindow]` in ORIGINAL take time, moved by `remap_lanes_for_cut` like windows; `strip_unsupported_background` drops only them on a closed gate (trace `speaker_full_opening_phone_fallback`). |
+| Strategy | `background_media.full_screen_opening: true` (+ `full_screen_opening_s` 1-15 when a length was named), omitted while unused; taught by Main Creator v133 only while the manifest advertises `speaker_full_opening`. Brief fact `speaker_full_opening` (+ `_s`), Main Creator v133 / Brief extractor v68, only with the flag on. |
+| Layout | `phone_background_sequence.full_screen_opening_end`: the stated length, else the first recording's word when heard 2-8 s in, else 5 s, never before the hook title ends; snapped to a gap between kept words (a sentence end within 1 s first), never inside a word, >= 1 s of take on each side. `lay_out(opening_s=X)`: no window starts before X (the lead-in opens the first window at X). |
+| Receipts | Finished: `phone_lane_receipt.background.full_screen_opening_s` (read off the compiled recipe), or a `dropped` entry `{lane: background, part: full_screen_opening, reason: app_too_old\|unavailable\|take_too_short}`. `_check_full_screen_opening` (fact route) and `_check_speaker_framing` never answer "fills the frame" for a corner speaker; the editor document wins over the lane receipt. |
+| Editor | Document `speaker_background.full_screen_windows: [{start_s, end_s}]` (cut time); Save validates it (422 `speaker_full_opening_disabled` / `_invalid`), 426 `speaker_full_opening` for a build below 41 that sets it or Saves a variant carrying it, and on a device poll of a pinned recipe with it. Capability `editor_capabilities.speaker_full_opening`. iPhone: a "Starts full screen" row with a remove button; every background change keeps it, removing the background clears it. Copilot ops keep it (no new op). |
+
+Gates: `speaker_full_opening_supported()` (request-aware) and `speaker_full_opening_planned_for(protocol)` (the
+build the creator acted from: the turn's bound build, then `creator_client_protocol` on the Job). An old build
+gets today's corner from 0 s and an honest "update the app" receipt, never a 426 on the whole video.
+Rollout: verify `speakerFrameWindows` on a device (opening in preview and export, the switch frame cut out
+cleanly, a failed mask at the switch falls back to the plain speaker in the corner), add it to
+`PHONE_RENDER_VERIFIED_FEATURES`, then the flag (api + worker, restart). Rollback: the flag off.
+Not changed: the corner preset's size (her corner face is 1.5-2x today's `small_bottom_right`).
 
 ## Rollback
 

@@ -696,14 +696,20 @@
         "src/apps/api/app/pipeline/phone_subtitled_plan.py",
         "src/apps/api/app/pipeline/phone_subtitled_title.py",
         "src/apps/api/app/services/phone_editor.py",
-        "src/apps/api/app/kria/strategy_policy.py"
+        "src/apps/api/app/kria/strategy_policy.py",
+        "src/apps/api/app/pipeline/phone_cta_ending.py",
+        "src/apps/api/app/pipeline/phone_cta_text.py"
       ],
       "regression_tests": [
         "tests/pipeline/test_phone_subtitled_title.py",
         "tests/routes/test_phone_subtitled_title_editor.py",
         "tests/tasks/test_phone_subtitled_title_worker.py",
         "tests/tasks/test_phone_subtitled_closing_title_worker.py",
-        "tests/kria/test_strategy_policy.py"
+        "tests/kria/test_strategy_policy.py",
+        "tests/tasks/test_phone_cta_ending_worker.py",
+        "tests/tasks/test_phone_cta_ending_inserts.py",
+        "tests/kria/test_cta_ending_receipt.py",
+        "tests/services/test_contract_imports_without_skia.py"
       ],
       "harness": "real_compiler",
       "kill_switch": "phone_subtitled_title_enabled",

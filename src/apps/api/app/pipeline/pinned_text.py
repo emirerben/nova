@@ -34,6 +34,22 @@ PIN_MARGIN_X = 0.08
 PIN_TOP_Y = 0.12
 PIN_BOTTOM_Y = 0.86
 PIN_LINE_STEP = math.ceil(PIN_SIZE_PX * 1.4) / 1920
+# Item 21: a middle pin is centred on the frame; several stack downward from there. The line
+# step allows two wrapped lines, and the style pass slides any line that still touches
+# another one or a face.
+PIN_MIDDLE_Y = 0.5
+PIN_MIDDLE_LINE_STEP = 2 * PIN_LINE_STEP
+# Fields of the look the phone style pass must keep. Never position / x_frac / y_frac: the
+# line has to stay free to move off a face.
+LOOK_STYLE_FIELDS = (
+    "alignment",
+    "color",
+    "font_family",
+    "max_width_frac",
+    "shadow_enabled",
+    "size_px",
+    "stroke_width",
+)
 # Per-clip labels and beat thoughts normally sit at 0.78-0.80; while a bottom pin is on
 # screen they move up out of its way (only for snapshots that carry pins, so every other
 # snapshot is unchanged).
@@ -61,6 +77,19 @@ def pins_from_strategy(strategy: Mapping[str, Any] | None) -> list[PinnedText]:
             pins.append(PinnedText.model_validate({**raw, "text": text}))
         except ValidationError:
             continue
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.clip_text_tiktok_look_enabled:
+        # Item 21 off: a stray middle pin is the nearest corner it used to be, with no look.
+        pins = [
+            pin.model_copy(
+                update={
+                    "corner": "top_center" if pin.corner == "middle_center" else pin.corner,
+                    "look": None,
+                }
+            )
+            for pin in pins
+        ]
     return [pin for pin in pins if pin.fits_a_corner][:MAX_CREATOR_PINNED_TEXTS]
 
 
@@ -76,6 +105,10 @@ class PinWindow:
     @property
     def is_bottom(self) -> bool:
         return self.pin.corner.startswith("bottom")
+
+    @property
+    def is_top(self) -> bool:
+        return self.pin.corner.startswith("top")
 
     def overlaps(self, start_s: float, end_s: float) -> bool:
         return self.start_s < end_s and start_s < self.end_s
@@ -264,7 +297,7 @@ def top_pin_edge(
     edges = [
         PIN_TOP_Y + ranks[w.index] * PIN_LINE_STEP + PIN_LINE_STEP / 2
         for w in windows
-        if not w.is_bottom and w.overlaps(start_s, end_s)
+        if w.is_top and w.overlaps(start_s, end_s)
     ]
     return max(edges) if edges else None
 
@@ -308,7 +341,7 @@ def _stack_ranks(windows: Sequence[PinWindow]) -> dict[int, int]:
     for window in windows:
         by_corner.setdefault(window.pin.corner, []).append(window)
     for corner, members in by_corner.items():
-        ordered = members if corner.startswith("top") else list(reversed(members))
+        ordered = list(reversed(members)) if corner.startswith("bottom") else members
         placed: list[PinWindow] = []
         for window in ordered:
             taken = {
@@ -339,11 +372,12 @@ def pinned_text_elements(
         pin = window.pin
         zone, side = pin.corner.split("_", 1)
         rank = ranks[window.index]
-        y_frac = (
-            PIN_TOP_Y + rank * PIN_LINE_STEP
-            if zone == "top"
-            else PIN_BOTTOM_Y - rank * PIN_LINE_STEP
-        )
+        if zone == "top":
+            y_frac = PIN_TOP_Y + rank * PIN_LINE_STEP
+        elif zone == "middle":
+            y_frac = PIN_MIDDLE_Y + rank * PIN_MIDDLE_LINE_STEP
+        else:
+            y_frac = PIN_BOTTOM_Y - rank * PIN_LINE_STEP
         # A pin must stay on ONE line (the stack step assumes it), so it gets the full width
         # between the margins; two corners sharing a vertical zone while both on screen
         # split it instead.
@@ -386,9 +420,12 @@ def pinned_text_elements(
     semantic_corners = {
         w.pin.corner
         for w in windows
-        if w.pin.heading_level is not None
-        or w.pin.stack_id is not None
-        or w.pin.size_px is not None
+        if w.pin.corner != "middle_center"
+        and (
+            w.pin.heading_level is not None
+            or w.pin.stack_id is not None
+            or w.pin.size_px is not None
+        )
     }
     for corner in semantic_corners:
         members = []
@@ -410,4 +447,41 @@ def pinned_text_elements(
             }
             members.append(row)
         layout_corner_stack(members, bottom=corner.startswith("bottom"), canvas=canvas)
+    for window, row in zip(windows, elements, strict=True):
+        if window.pin.corner == "middle_center":
+            row["source_params"] = {**(row.get("source_params") or {}), "pin_zone": "middle"}
+        if window.pin.look is not None:
+            _apply_look(row, window.pin, text_color=text_color)
     return elements
+
+
+def _apply_look(row: dict, pin: PinnedText, *, text_color: str | None) -> None:
+    """Item 21: paint a pin row in a named look. A colour or size the creator named wins.
+
+    The font is the look's own: the snapshot's ``font_family`` is not evidence she named one
+    (under the phone text policy the planner fills it with a provisional curated face, KRI-1024).
+    """
+
+    from app.schemas.phone_text_style import TIKTOK_TEXT_LOOK  # noqa: PLC0415
+
+    look = dict(TIKTOK_TEXT_LOOK)
+    if text_color:
+        look["color"] = text_color
+    if pin.size_px is not None:
+        look["size_px"] = pin.size_px
+    # A corner keeps the side alignment and width its position gave it; only the middle line
+    # takes the look's own.
+    middle = pin.corner == "middle_center"
+    for field in ("font_family", "color", "size_px", "stroke_width", "shadow_enabled"):
+        row[field] = look[field]
+    row["shadow_color"] = look["shadow_color"]
+    row["shadow_opacity"] = look["shadow_opacity"]
+    if middle:
+        row["max_width_frac"] = look["max_width_frac"]
+        row["alignment"] = look["alignment"]
+    kept = [f for f in LOOK_STYLE_FIELDS if middle or f not in ("alignment", "max_width_frac")]
+    row["source_params"] = {
+        **(row.get("source_params") or {}),
+        "clip_text_look": pin.look,
+        "creator_style_fields": sorted(kept),
+    }
