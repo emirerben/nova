@@ -26,8 +26,10 @@ down). The brief writer records the meaning and this module reads the field:
   language and any wording, so an ``audio`` requirement is an ask about the soundtrack, unless its
   typed facts place it in the footage's own sound lane: a clip's sound turned on or off
   (``clip_sound``, read by ``clip_sound_toggle_ask``: the very requirement a mute-clip tap writes)
-  is about what a clip plays, not about the music or the sound effects, and withholds neither card.
-  A fact that lane's reader cannot parse is not that lane: the requirement still speaks;
+  is about what a clip plays, not about the music or the sound effects, and withholds neither card
+  (only while ``KRIA_SUGGESTION_PINNED_TAPS_ENABLED`` is on: with it off, every ``audio``
+  requirement speaks, as it always did). A fact that lane's reader cannot parse is not that lane:
+  the requirement still speaks;
 * ``facts``: ``captions`` / ``caption_*``, ``animation``, ``audio_intent: no_music``, ``music*``.
 
 Two splits have no typed signal, so they read the creator's ``description`` once, over the shared
@@ -147,9 +149,14 @@ def _is_clip_sound_toggle(req: Any) -> bool:
 
     The one reader of that shape (``clip_sound_toggle_ask``); anything it cannot read is not a
     toggle, so a malformed or unrecognised fact leaves the requirement speaking for the card.
+    Only while pinned taps are on: that is when a mute-clip tap can write one, and with the flag
+    off the legacy chips must read the brief exactly as they did (flag off is byte-identical).
     """
+    from app.config import settings  # noqa: PLC0415
     from app.kria.clip_sound_toggle_ask import requirement_sound_toggle  # noqa: PLC0415
 
+    if not settings.kria_suggestion_pinned_taps_enabled:
+        return False
     try:
         return requirement_sound_toggle(req) is not None
     except Exception:  # noqa: BLE001 - a shape that cannot be read is not the footage lane
