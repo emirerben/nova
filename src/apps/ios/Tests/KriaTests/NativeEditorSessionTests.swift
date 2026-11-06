@@ -15,7 +15,11 @@ final class NativeEditorSessionTests: XCTestCase {
         try await exerciseLatestJobDuringSave(runtimeVersion: 1)
     }
 
-    private func exerciseLatestJobDuringSave(runtimeVersion: Int) async throws {
+    func testLatestJobRetriesSixtySecondHintWithoutAnotherNotification() async throws {
+        try await exerciseLatestJobDuringSave(runtimeVersion: 2, retryAfter: 60)
+    }
+
+    private func exerciseLatestJobDuringSave(runtimeVersion: Int, retryAfter: Double? = nil) async throws {
         let thread = UUID(), oldJob = UUID(), newJob = UUID()
         let snapshot: [String: JSONValue] = ["editor_payload": .object(["sections": .object([
             "text_elements": .array([.object(["id": .string("text"), "text": .string("Original"),
@@ -28,6 +32,13 @@ final class NativeEditorSessionTests: XCTestCase {
                 "editor_capabilities": .object(["text_elements": .bool(true)])], suspendNextCommit: true)
         let session = NativeEditorSession()
         session.latestJobRetryDelays = [.zero]
+        var now = ContinuousClock.now
+        var waited: Duration = .zero
+        session.latestJobReadNow = { now }
+        session.latestJobReadSleep = { delay in
+            waited += delay
+            now = now.advanced(by: delay)
+        }
         await session.load(api: fake, threadID: thread)
         if runtimeVersion == 1 { fake.draftError = .unsupported }
         let draftReadsBefore = fake.draftCallCount
@@ -48,7 +59,7 @@ final class NativeEditorSessionTests: XCTestCase {
         fake.editorVariantsByJob[newJob] = [["variant_id": .string("variant"), "render_status": .string("ready")]]
         let newest = try XCTUnwrap(fake.refreshedThread?.summary)
         let readsBefore = fake.projectCallCount
-        fake.projectErrorQueue = [.requestFailed(status: 503, detail: .init("Temporary"))]
+        fake.projectErrorQueue = [.requestFailed(status: 503, detail: .init("Temporary", retryAfter: retryAfter))]
         await session.adoptLatestJob(newest, api: fake)
         XCTAssertEqual(fake.projectCallCount, readsBefore, "Save owns the document until its response settles")
         session.updateTextContent(id: "text", content: "Still editing")
@@ -62,6 +73,7 @@ final class NativeEditorSessionTests: XCTestCase {
         } else { XCTAssertEqual(session.newerJobPrompt?.activeJobID, newJob) }
         XCTAssertEqual(session.document.textElements.first?.text, "Still editing")
         XCTAssertTrue(session.hasUnsavedChanges)
+        if let retryAfter { XCTAssertEqual(waited, .seconds(retryAfter)) }
     }
 
     func testDeviceNarrationRequestUsesPublishedGenerationAndExactTarget() throws {

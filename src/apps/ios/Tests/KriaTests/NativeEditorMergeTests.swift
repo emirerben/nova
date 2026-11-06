@@ -3,6 +3,42 @@ import KriaMediaEngine
 @testable import Kria
 
 final class NativeEditorMergeTests: XCTestCase {
+    func testLatestReadWindowSchedulesSixtySecondHintAndResumesAtDeadline() {
+        let now = ContinuousClock.now
+        let window = NativeEditorReadWindow(started: now)
+        var cooldown = NativeEditorReadCooldown()
+        cooldown.record(seconds: 60, now: now)
+        XCTAssertEqual(window.action(cooldown: cooldown, now: now), .wait(.seconds(60)))
+        XCTAssertEqual(window.action(cooldown: cooldown, now: now.advanced(by: .seconds(59))), .wait(.seconds(1)))
+        XCTAssertEqual(window.action(cooldown: cooldown, now: now.advanced(by: .seconds(60))), .ready)
+    }
+
+    func testLatestReadWindowBoundsCumulativeExtendedHints() {
+        let now = ContinuousClock.now
+        let window = NativeEditorReadWindow(started: now)
+        var cooldown = NativeEditorReadCooldown()
+        cooldown.record(seconds: 240, now: now)
+        XCTAssertEqual(window.action(cooldown: cooldown, now: now), .wait(.seconds(240)))
+        cooldown.record(seconds: 90, now: now.advanced(by: .seconds(240)))
+        XCTAssertEqual(window.action(cooldown: cooldown, now: now.advanced(by: .seconds(240))), .paused)
+        XCTAssertEqual(cooldown.delay(now: now.advanced(by: .seconds(240))), .seconds(90), "Pausing never shortens the server deadline")
+    }
+
+    func testLatestReadWindowRetainsCancellationOwnershipAcrossWake() {
+        var gate = NativeEditorLatestGate()
+        let thread = UUID()
+        let old = gate.enqueue(threadID: thread)
+        let now = ContinuousClock.now
+        var cooldown = NativeEditorReadCooldown()
+        cooldown.record(seconds: 60, now: now)
+        XCTAssertEqual(NativeEditorReadWindow(started: now).action(cooldown: cooldown, now: now), .wait(.seconds(60)))
+        gate.reset()
+        let replacement = gate.enqueue(threadID: thread)
+        XCTAssertFalse(gate.matches(old), "An eligible deadline cannot restore ownership to an old load")
+        gate.finish(old)
+        XCTAssertEqual(gate.pending, replacement)
+    }
+
     func testLegacyDeleteKeepsUnrelatedRemoteEdit() {
         let row: JSONValue = .object(["id": .string("a"), "text": .string("old"), "start_s": .number(0), "end_s": .number(1)])
         let base = EditorDocument(snapshot: ["text_elements": .array([row]), "title": .string("old")])

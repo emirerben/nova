@@ -1,6 +1,24 @@
 import Foundation
 import KriaMediaEngine
 
+/// One latest-job check owns a bounded wait window across all of its GETs.
+struct NativeEditorReadWindow {
+    enum Action: Equatable { case ready, wait(Duration), paused }
+    private let deadline: ContinuousClock.Instant
+
+    init(started: ContinuousClock.Instant) {
+        deadline = started.advanced(by: .seconds(300))
+    }
+    func remaining(now: ContinuousClock.Instant) -> Duration {
+        max(.zero, now.duration(to: deadline))
+    }
+    func action(cooldown: NativeEditorReadCooldown, now: ContinuousClock.Instant) -> Action {
+        let wait = cooldown.delay(now: now)
+        guard !cooldown.isPaused, now <= deadline, wait <= remaining(now: now) else { return .paused }
+        return wait > .zero ? .wait(wait) : .ready
+    }
+}
+
 struct NativeEditorReadCooldown {
     private var deadline: ContinuousClock.Instant?
     private(set) var isPaused = false
