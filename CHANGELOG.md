@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.16.0] - 2026-11-06
+
+### Changed
+- fix(captions): phone Talking captions spell the names the creator typed and drop whisper's unsupported title case (Green 4/5) (#2097) <!-- release-pr: 2097 -->
+
 ## [0.88.15.0] - 2026-11-06
 
 ### Changed
