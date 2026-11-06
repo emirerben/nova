@@ -194,7 +194,13 @@ async def test_m2_the_filler_card_held_from_before_the_ask_is_refused_in_words(
 
 # ── R: an account on approval readiness with an ordinary length ask ──────────────────
 
-LENGTHS = ["none", "length_6s", "length_at_most_8s", "length_20s_too_long"]
+LENGTHS = [
+    "none",
+    "length_6s",
+    "length_at_most_8s",
+    "length_20s_too_long",
+    "east_run_recorded_brief",
+]
 COLUMNS = ["readiness_pinned", "readiness"]
 
 
@@ -206,7 +212,7 @@ async def test_r1_r2_a_readiness_account_with_a_length_ask_gets_cards_that_execu
 ):
     rec = Recorder(f"readiness R {shape} {column}")
     readiness_on(monkeypatch)
-    where = f"{KEY}/talking/{shape}/{column}"
+    where = f"{SHAPES[shape].scenario}/talking/{shape}/{column}"
     scene = await scene_for(talking_world, monkeypatch, SHAPES[shape], "filler_words", column)
     out = await scene.phone.serve()
     kinds = s.kinds_of(out)

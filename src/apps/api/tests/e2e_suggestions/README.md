@@ -9,6 +9,12 @@ python scripts/suggestion_chip_report.py         # the replay report; it reads t
 bash scripts/dev/test-db.sh --drop               # when done
 ```
 
+Run it serially for the report of record (about 15 minutes). `-n 4` works (the report merges the
+workers' partials) but the workers share one database, and the expiry sweep of one worker can touch
+another's pending approvals: an occasional failure under `-n` that does not reproduce alone is that,
+not a defect. A second session that wants to iterate should use its own scratch database and set
+`CHIP_EVAL_DIR` so it neither writes into nor cleans the first one's report.
+
 Without a test database the directory skips; under `NOVA_REQUIRE_POSTGRES_TESTS` (the api shards)
 it fails instead.
 
@@ -60,14 +66,19 @@ set, and after Undo: the draft, the approval, the brief and the item settings ar
 | `test_r5_copy_states.py` | A1-A4: the on-screen title's decision in every state, decided before and after the set was served |
 | `test_r5_turkish_asks.py` | T1-T5: the softened-k forms of "muzik", the other lanes' words, over-withholding, volume asks, English |
 | `test_r5_matrix.py` | M1-M5: the mute matrix (constant patched, marked not shipped), a held set tapped without a refresh, a card queued over a pending approval, coverage in both languages |
-| `scenes.py` | the round-5 state helpers: `route_save`, `decide`, `lapse_approval`, `sweep_expired_approvals`, `agent_reads_video` |
+| `test_r5_serve_*.py`, `test_r6_brief_asks.py`, `test_r6_duplicates_length.py`, `test_r6_restate_drift.py` | the serve lanes' fixtures: identity, evidence, strip, brief asks (KRI-667), a stated length, serve-and-tap never part |
+| `test_r6_orders.py` | O1-O6: a native Save, an editor card and Undo in six orders (also with the brief off); a readiness account after a Save. Every tap sits on the saved video, an Undo never takes a Save, the held filler card is refused `base_moved` |
+| `test_r6_scenarios.py` | M (the mark gate, four states, both languages), R (approval readiness with a 6 s / 8 s / 20 s length ask, pinned plan or not, the east-run brief), B (a busy ring write: chips alone, then every card; held cards survive), D (duplicates and a stated length, before and after the serve), U (a taken-back tap is an offer again, brief on and off) |
+| `scenes.py` | the state helpers: `route_save`, `decide`, `lapse_approval`, `sweep_expired_approvals`, `agent_reads_video` |
 
 ## States, not just footage
 
 Every cell of the report carries the state its thread was in when the card was served: `baseline`
 (a ready render, nothing unusual) or what a round-5 scenario did first (`after-save`,
 `saved-and-read`, `after-deny`, `after-sweep`, `switch-pulled-and-restored`, `title-<state>`,
-`patched-constant`). The coverage matrix counts baseline cells only; the state table under it shows
+`patched-constant`, `order-o1` ... `order-o6`, `mark-gate-<case>`, `readiness-<length>-<plan>`,
+`ring-write-busy`, `length-<kind>-stated`, `undo-reoffer-brief-on|off`, `kind-switched-on-after-
+freeze`, `lever-pulled-and-restored`, `volume-ask-in-force`). The coverage matrix counts baseline cells only; the state table under it shows
 the rest, and `kinds_proven.tap_executes` is true only when EVERY shipped served cell of the kind,
 in every state, was applied.
 
@@ -80,6 +91,9 @@ A check that fails because of code outside this directory carries a `Gap` (`gaps
 prints it, the run stays green, and the day the check passes the run fails with "gap closed, remove
 the marker". Gaps closed upstream have no marker, so they are ordinary failing checks now.
 `test_probe_gaps.py` keeps the minimal repros of the closed GAP-1 and GAP-2 as plain regression tests.
+Open now: GAP-17 (a hook card is served again after its own Undo on an account without the creative
+brief, and its tap is refused). A gap whose card was served and refused is a `serves_dead_card`
+gap: `kinds_proven` reports `tap_executes: false` for its kind whatever the other cells did.
 
 The cassette is a preference list, not a recorded model answer: the call's own strict
 `response_schema` decides which of its kinds and clip handles are possible answers, so one file
@@ -96,3 +110,16 @@ The round-5 states add: the render kick, the durable-sources prefix and the stor
 of a timeline Save (no bucket), the render worker's completion write after a Save, the session
 pointer following a render (written by hand), an approval's clock (`expires_at` moved into the
 past), and the legacy planner as the answer to a typed message.
+
+The round-6 states add: a Kria render landing is a hand-written variant update (a new
+`render_generation_id`) followed by the session pointer following it; a busy ring write is a second
+transaction holding the thread row `FOR UPDATE`; an account on approval readiness is the readiness
+flag plus the product's own manifest resolver (`readiness_on`), with the head plan naming its clips
+(`plan_names_its_clips`) and, in the pinned columns, pinning the length plan the live planner makes
+(`pin_the_plan`); the phone's client protocol is the header the GET sends and the build the tap's
+turn is bound to.
+
+Receipts: the card's OWN requirement must be met. A requirement the creator wrote earlier that
+nothing can verify yet (a keep-the-text-off-the-mug ask) is honestly partial and unchecked, and is
+reported as such, not counted against the tap. The mute card's own receipt may be partial and
+unchecked too: whether a phone then mutes the clip is a device question (the kind is dark).
