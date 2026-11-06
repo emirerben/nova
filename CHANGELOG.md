@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.29.0] - 2026-11-06
+
+### Changed
+- fix(kria): brief writer records her caption count, grey box, all-pauses and title/ending holds as typed facts (Qendresa says-done 6, 7, 8, 10) (#2131) <!-- release-pr: 2131 -->
+
 ## [0.88.28.0] - 2026-11-06
 
 ### Changed
