@@ -974,7 +974,7 @@ class Settings(BaseSettings):
     # person mask, no background, no corner) and then drops into the background / corner for the
     # rest of the edit. Recipe field `speaker_background.full_screen_windows` (capability
     # `speakerFrameWindows`, app builds >= `speaker_full_opening_min_client_protocol`); the planner
-    # writes it from `background_media.full_screen_opening` (Main Creator v133, taught only with
+    # writes it from `background_media.full_screen_opening` (Main Creator v130, taught only with
     # the flag on). Below the protocol, or without the verified token, the windows are laid out as
     # today (corner from 0 s) and the receipt says the full-screen opening was not made. Default
     # FALSE: off, every prompt, recipe and receipt is byte-identical. Apply: verify

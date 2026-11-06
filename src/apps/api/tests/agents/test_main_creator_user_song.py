@@ -90,7 +90,7 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # BACKGROUND_FOLLOWS_TALK_ENABLED and the windows capability, which these renders never have, so
 # all four hashes are v121's, unchanged (the pins cover v121 + v123).
 # v125 (Qendresa item 16): its teachings render only with SPEAKER_FULL_OPENING_ENABLED and the
-# `speaker_full_opening` capability, so the pins cover v125 too (renumbered v133 on top of v128).
+# `speaker_full_opening` capability, so the pins cover v125 too (renumbered v130 on top of v128).
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
 PRE_CHANGE_PROMPT_SHA = {
@@ -178,7 +178,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-06-v133"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-06-v130"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 
