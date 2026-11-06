@@ -566,6 +566,11 @@ def test_reaction_beats_prompt_section_omitted_when_capability_unavailable() -> 
         described_text_exception=(
             main_creator_module._DESCRIBED_TEXT_EXCEPTION if settings.clip_intents_enabled else ""
         ),
+        boundary_evidence_keys=(
+            main_creator_module._BOUNDARY_EVIDENCE_KEYS
+            if settings.planner_boundary_honest_enabled
+            else ""
+        ),
         story_shape_section=(
             main_creator_module._STORY_SHAPE_PROMPT_SECTION
             if main_creator_module._story_shapes_available(agent_input.capability_manifest)
