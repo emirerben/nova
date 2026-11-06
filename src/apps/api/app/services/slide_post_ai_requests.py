@@ -17,6 +17,19 @@ class AIReceiptConflict(Exception):
     pass
 
 
+def delivery_enabled(kind):
+    from app.config import settings
+
+    return bool(
+        settings.slide_post_ai_recovery_enabled
+        and settings.slide_posts_enabled
+        and (
+            kind != "chat_edit"
+            or (settings.slide_post_chat_edit_enabled and settings.slide_post_rich_text_enabled)
+        )
+    )
+
+
 def input_digest(kind: str, body: dict) -> str:
     value = json.dumps(
         {"kind": kind, "input": body}, sort_keys=True, separators=(",", ":"), allow_nan=False
@@ -58,7 +71,18 @@ class SQLAIRequestStore:
     def __init__(self, db):
         self.db = db
 
-    async def reserve(self, *, request_id, owner_id, item_id, project_id, kind, body):
+    async def reserve(
+        self,
+        *,
+        request_id,
+        owner_id,
+        item_id,
+        project_id,
+        kind,
+        body,
+        prepared_input=None,
+        authority_snapshot=None,
+    ):
         from sqlalchemy.dialects.postgresql import insert
 
         from app.models import SlidePostAIRequest
@@ -75,6 +99,8 @@ class SQLAIRequestStore:
                 input_digest=digest,
                 request_input=body,
                 status="pending",
+                prepared_input=prepared_input,
+                authority_snapshot=authority_snapshot,
             )
             .on_conflict_do_nothing(index_elements=["id"])
         )
@@ -97,20 +123,24 @@ class SQLAIRequestStore:
         from sqlalchemy.exc import DBAPIError
 
         from app.models import CreationThread, SlidePostAIRequest
-        from app.routes.plan_items import _load_owned_item
+        from app.routes.plan_items import _load_owned_item_context
+        from app.services.slide_post_ai_authority import authority_snapshot
+        from app.services.slide_post_ai_prepared import supported
 
         row = await self.db.get(SlidePostAIRequest, request_id, populate_existing=True)
         if row is None:
             raise AIReceiptConflict("request_missing")
         if row.status != "pending":
             return None
+        if not delivery_enabled(row.kind):
+            raise AIReceiptConflict("request_delivery_paused")
         token = uuid.uuid4()
         try:
             # Legacy mutation paths use both Thread→Item and Item→Thread order.
             # Never wait for Thread while holding canonical owner/item locks.
             # Rolling back this savepoint releases every claim-acquired lock.
             async with self.db.begin_nested():
-                item = await _load_owned_item(
+                item, plan, _ = await _load_owned_item_context(
                     str(row.item_id), row.owner_id, self.db, for_update=True
                 )
                 thread = await self.db.scalar(
@@ -119,8 +149,10 @@ class SQLAIRequestStore:
                         CreationThread.id == row.project_id,
                         CreationThread.creator_id == row.owner_id,
                         CreationThread.active_plan_item_id == row.item_id,
+                        CreationThread.status == "active",
                     )
                     .with_for_update(nowait=True)
+                    .execution_options(populate_existing=True)
                 )
                 if thread is None:
                     raise HTTPException(409, "The project changed before the AI request started")
@@ -129,6 +161,17 @@ class SQLAIRequestStore:
                     raise HTTPException(
                         409, "The saved draft changed before the AI request started"
                     )
+                if (
+                    not row.prepared_input
+                    or not row.authority_snapshot
+                    or not supported(row.kind, row.prepared_input)
+                    or snapshot != row.prepared_input
+                    or await authority_snapshot(self.db, item, plan, thread, lock_sources=True)
+                    != row.authority_snapshot
+                ):
+                    raise HTTPException(409, "The original AI inputs are unavailable or changed")
+                if not delivery_enabled(row.kind):
+                    raise AIReceiptConflict("request_delivery_paused")
                 result = await self.db.execute(
                     update(SlidePostAIRequest)
                     .where(
@@ -182,6 +225,26 @@ class SQLAIRequestStore:
         )
         await self.db.commit()
 
+    async def cancel(self, request_id):
+        from sqlalchemy import update
+
+        from app.models import SlidePostAIRequest
+
+        changed = await self.db.execute(
+            update(SlidePostAIRequest)
+            .where(
+                SlidePostAIRequest.id == request_id,
+                SlidePostAIRequest.status == "pending",
+                SlidePostAIRequest.claim_id.is_(None),
+            )
+            .values(
+                status="rejected",
+                result={"message": "This original AI request was cancelled.", "code": "cancelled"},
+            )
+        )
+        await self.db.commit()
+        return changed.rowcount == 1
+
     async def unknown(self, request_id, claim_id):
         from sqlalchemy import update
 
@@ -217,5 +280,6 @@ def receipt_output(row) -> dict[str, Any]:
         "input_digest": row.input_digest,
         "input": row.request_input,
         "status": status,
+        "delivery_version": 1 if getattr(row, "prepared_input", None) else 0,
         "result": row.result if status in {"completed", "rejected"} else None,
     }

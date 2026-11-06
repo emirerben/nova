@@ -41,11 +41,23 @@ def rig(monkeypatch):
     ids = [uuid.uuid4()]
     item, _ = _install(monkeypatch, _draft(ids, version=1), ids)
     user = SimpleNamespace(id=uuid.uuid4())
-    project = SimpleNamespace(id=uuid.uuid4())
+    project = SimpleNamespace(
+        id=uuid.uuid4(), creator_id=user.id, active_plan_item_id=item.id, status="active"
+    )
     app.dependency_overrides[get_current_user] = lambda: user
     monkeypatch.setattr(
         plan_items, "_slide_post_thread_for_item", AsyncMock(side_effect=lambda *args: project)
     )
+    monkeypatch.setattr(
+        plan_items,
+        "_load_owned_item_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), None)),
+    )
+    monkeypatch.setattr(
+        "app.services.slide_post_ai_authority.authority_snapshot",
+        AsyncMock(return_value={"original": True}),
+    )
+    monkeypatch.setattr("app.services.slide_post_ai_delivery.publish_due", AsyncMock())
     rows = {}
     db = AsyncMock()
     db.get.side_effect = lambda _model, key, **kw: rows.get(key)
@@ -56,7 +68,18 @@ def rig(monkeypatch):
         def __init__(self, _db):
             pass
 
-        async def reserve(self, *, request_id, owner_id, item_id, project_id, kind, body):
+        async def reserve(
+            self,
+            *,
+            request_id,
+            owner_id,
+            item_id,
+            project_id,
+            kind,
+            body,
+            prepared_input=None,
+            authority_snapshot=None,
+        ):
             digest = input_digest(kind, body)
             row = rows.get(request_id)
             if row is not None:
@@ -82,6 +105,8 @@ def rig(monkeypatch):
                 claimed_at=None,
                 result=None,
                 resolved_input=None,
+                prepared_input=copy.deepcopy(prepared_input),
+                authority_snapshot=copy.deepcopy(authority_snapshot),
             )
             rows[request_id] = row
             return row
@@ -116,6 +141,15 @@ def rig(monkeypatch):
                 row.status = "unknown"
 
     monkeypatch.setattr(route, "SQLAIRequestStore", Store)
+    monkeypatch.setattr("app.services.slide_post_ai_delivery.SQLAIRequestStore", Store)
+
+    async def execute_fake(kind, prepared):
+        from app.agents._runtime import RunContext
+
+        calls.append(RunContext(**prepared["snapshot"]["context"]))
+        return {"outcome": "no_effect", "reply": "original result", "base_version": 1}
+
+    monkeypatch.setattr("app.services.slide_post_ai_delivery.execute_prepared", execute_fake)
 
     async def fake_service(**kwargs):
         async def fake_paid():
@@ -126,7 +160,15 @@ def rig(monkeypatch):
 
         gate = kwargs.get("paid_execution")
         if gate:
-            return await gate.run({"agent_input": {"message": kwargs["message"]}}, fake_paid)
+            from app.services.slide_post_ai_prepared import prepared_context
+
+            return await gate.run(
+                {
+                    "agent_input": {"utterance": kwargs["message"], "variant_snapshot": {}},
+                    "context": prepared_context(kwargs["run_context"]),
+                },
+                fake_paid,
+            )
         return await fake_paid()
 
     monkeypatch.setattr(plan_items, "run_slide_post_chat_edit", fake_service)
@@ -174,14 +216,11 @@ def test_changed_input_or_project_or_owner_cannot_reuse_result(client, rig):
 
 
 def test_unknown_provider_outcome_never_calls_again(client, rig, monkeypatch):
-    async def uncertain(**kwargs):
-        async def fake_paid():
-            rig.calls.append("unknown")
-            raise TimeoutError("lost provider result")
+    async def uncertain(kind, prepared):
+        rig.calls.append("unknown")
+        raise TimeoutError("lost provider result")
 
-        return await kwargs["paid_execution"].run({"prompt": "caption"}, fake_paid)
-
-    monkeypatch.setattr(plan_items, "run_slide_post_chat_edit", uncertain)
+    monkeypatch.setattr("app.services.slide_post_ai_delivery.execute_prepared", uncertain)
     payload = body(rig)
     path = f"/plan-items/{rig.item.id}/slide-post/ai-requests"
     first = client.post(path, json=payload)

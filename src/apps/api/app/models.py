@@ -4957,6 +4957,10 @@ class SlidePostAIRequest(Base):
     kind: Mapped[str] = mapped_column(Text, nullable=False)
     input_digest: Mapped[str] = mapped_column(Text, nullable=False)
     request_input: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    prepared_input: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    authority_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    next_delivery_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    delivery_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     resolved_input: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     claim_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
@@ -4977,4 +4981,6 @@ class SlidePostAIRequest(Base):
         ),
         CheckConstraint("status != 'completed' OR result IS NOT NULL", name="ck_slide_ai_result"),
         Index("ix_slide_ai_owner_item", "owner_id", "item_id"),
+        Index("ix_slide_ai_delivery", "status", "next_delivery_at"),
+        CheckConstraint("delivery_attempts >= 0", name="ck_slide_ai_delivery_attempts"),
     )

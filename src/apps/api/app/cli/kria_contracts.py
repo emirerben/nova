@@ -805,6 +805,22 @@ def mobile_openapi_json() -> str:
                     "responses": _json_responses(AIRequestReceipt),
                 },
             },
+            "/plan-items/{item_id}/slide-post/ai-requests/{request_id}/cancel": {
+                "parameters": [
+                    item_id,
+                    {
+                        "name": "request_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "format": "uuid"},
+                    },
+                ],
+                "post": {
+                    "operationId": "cancelPendingSlidePostAI",
+                    "security": bearer,
+                    "responses": _json_responses(AIRequestReceipt),
+                },
+            },
             "/plan-items/{item_id}/slide-post/generation-requests/{client_request_id}": {
                 "parameters": [
                     item_id,

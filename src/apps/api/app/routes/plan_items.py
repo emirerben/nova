@@ -4407,6 +4407,9 @@ class SlidePostValidationError(BaseModel):
 
 
 class SlidePostState(BaseModel):
+    ai_request_delivery_version: Literal[0, 1] = Field(
+        default_factory=lambda: int(settings.slide_post_ai_recovery_enabled)
+    )
     ai_project_id: uuid.UUID | None = None
     ai_request_recovery_version: Literal[0, 1] = Field(
         default_factory=lambda: 1 if settings.slide_post_ai_recovery_enabled else 0

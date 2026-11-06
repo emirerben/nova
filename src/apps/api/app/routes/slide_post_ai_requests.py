@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from typing import Literal
 
@@ -16,7 +15,6 @@ from app.database import get_db
 from app.models import SlidePostAIRequest
 from app.routes import plan_items
 from app.services.slide_post_ai_requests import (
-    AIExecution,
     AIReceiptConflict,
     SQLAIRequestStore,
     receipt_output,
@@ -31,6 +29,7 @@ class AIRequestBody(BaseModel):
     project_id: uuid.UUID
     kind: Literal["propose", "chat_edit"]
     input: dict
+    delivery_version: Literal[1] | None = None
 
 
 class AIRequestReceipt(BaseModel):
@@ -42,6 +41,7 @@ class AIRequestReceipt(BaseModel):
     input: dict
     status: Literal["pending", "running", "completed", "unknown", "rejected"]
     result: dict | None = None
+    delivery_version: int = 0
 
 
 async def owned_receipt(item_id, request_id, user, db):
@@ -106,6 +106,48 @@ async def request_ai(
     existing = await db.get(SlidePostAIRequest, body.client_request_id)
     if existing is None and not settings.slide_post_ai_recovery_enabled:
         raise HTTPException(404, "Recoverable AI editing is not available yet")
+    from app.services.slide_post_ai_authority import authority_snapshot
+    from app.services.slide_post_ai_delivery import deliver, publish_due
+    from app.services.slide_post_ai_prepared import PrepareAIExecution, PreparedInput, envelope
+
+    prepared = authority = None
+    if existing is None:
+        # Canonical item locks serialize Save/source replacement. Thread is read
+        # optimistically here and locked NOWAIT with an exact pin check at claim.
+        item, plan, _ = await plan_items._load_owned_item_context(
+            item_id, user.id, db, for_update=True
+        )
+        await db.refresh(thread)
+        if (
+            thread.creator_id != user.id
+            or thread.active_plan_item_id != item.id
+            or thread.status != "active"
+        ):
+            raise HTTPException(409, "This project changed before admission")
+        authority = await authority_snapshot(db, item, plan, thread)
+        gate = PrepareAIExecution(body.client_request_id)
+        try:
+            if body.kind == "propose":
+                result = await plan_items._propose_slide_post_impl(
+                    request, item_id, parsed, user, db, paid_execution=gate
+                )
+            else:
+                result = await plan_items._chat_edit_slide_post_impl(
+                    request, item_id, parsed, user, db, client_protocol, paid_execution=gate
+                )
+            prepared = envelope(body.kind, result=result.model_dump(mode="json"))
+        except PreparedInput as captured:
+            prepared = envelope(body.kind, snapshot=captured.snapshot)
+        except HTTPException as exc:
+            if not 400 <= exc.status_code < 500:
+                raise
+            prepared = {
+                "version": 1,
+                "rejection": "This request cannot use the current draft. Send a new instruction.",
+            }
+        await db.refresh(thread)
+        if authority != await authority_snapshot(db, item, plan, thread):
+            raise HTTPException(409, "The original source changed during admission")
     try:
         row = await store.reserve(
             request_id=body.client_request_id,
@@ -114,41 +156,32 @@ async def request_ai(
             project_id=thread.id,
             kind=body.kind,
             body=body.input,
+            prepared_input=prepared,
+            authority_snapshot=authority,
         )
     except AIReceiptConflict as exc:
         raise HTTPException(409, "AI request identity mismatch") from exc
-    if row.status != "pending":
-        return receipt_output(row)
-    if not settings.slide_post_ai_recovery_enabled:
-        return receipt_output(row)
-    execution = AIExecution(store, row.id)
-    try:
-        if body.kind == "propose":
-            result = await plan_items._propose_slide_post_impl(
-                request, item_id, parsed, user, db, paid_execution=execution
-            )
-        else:
-            result = await plan_items._chat_edit_slide_post_impl(
-                request, item_id, parsed, user, db, client_protocol, paid_execution=execution
-            )
-        await execution.complete(result.model_dump(mode="json"))
-    except AIReceiptConflict:
-        pass  # Another request owns the permanent execution claim.
-    except HTTPException as exc:
-        if execution.claim_id is None and 400 <= exc.status_code < 500:
-            await store.reject(
-                body.client_request_id,
-                "Kria could not use this request. Update your instruction and try a new request.",
-            )
-        else:
-            await execution.unknown()
-            if execution.claim_id is None:
-                raise
-    except asyncio.CancelledError:
-        await execution.unknown()
-        raise
-    except Exception:
-        await execution.unknown()
-        if execution.claim_id is None:
-            raise  # Proven preflight rejection; no provider call was made.
+    if row.status == "pending":
+        # The store returns the INSERT winner. Never execute caller-local preparation.
+        await deliver(db, row.id)
+        # Inline completion is the low-latency path. A busy claim or cancelled
+        # HTTP process leaves a durable outbox row for the independently scheduled sweep.
+        await publish_due(db, request_id=body.client_request_id)
     return receipt_output(await owned_receipt(item_id, body.client_request_id, user, db))
+
+
+@router.post(
+    "/{item_id}/slide-post/ai-requests/{request_id}/cancel", response_model=AIRequestReceipt
+)
+async def cancel_ai_request(
+    item_id: str, request_id: uuid.UUID, user: CurrentUser, db: AsyncSession = Depends(get_db)
+):
+    row = await owned_receipt(item_id, request_id, user, db)
+    if row.status == "pending":
+        await SQLAIRequestStore(db).cancel(row.id)
+        row = await owned_receipt(item_id, request_id, user, db)
+    if row.status in {"running", "unknown"}:
+        raise HTTPException(
+            409, "This original request was already claimed; its outcome remains observable."
+        )
+    return receipt_output(row)

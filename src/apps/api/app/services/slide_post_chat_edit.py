@@ -922,7 +922,7 @@ async def run_slide_post_chat_edit(
 ) -> SlidePostChatEditResponse:
     """One chat-edit turn. Never writes; every outcome is honest about what changed."""
     from app.agents._model_client import default_client  # noqa: PLC0415
-    from app.routes._copilot import _honest_outcome  # noqa: PLC0415
+    from app.services.slide_post_ai_prepared import prepared_context as _prepared_context
 
     stored_binding = draft.brief_binding
     # A stored binding remains authoritative when the writer feature is rolled
@@ -984,6 +984,8 @@ async def run_slide_post_chat_edit(
                     "agent_input": agent_input.model_dump(mode="json"),
                     "baseline": draft.model_dump(mode="json"),
                     "server_version": server_version,
+                    "binding": active_binding.model_dump(mode="json") if active_binding else None,
+                    "context": _prepared_context(agent_context),
                 },
                 invoke,
             )
@@ -992,6 +994,18 @@ async def run_slide_post_chat_edit(
             raise
         log.warning("slide_post_chat_edit.agent_failed", error=str(exc)[:300])
         return response("failed", "I couldn't reach the editor assistant just now. Try again.")
+
+    return finish_prepared_chat(draft, active_binding, server_version, output)
+
+
+def finish_prepared_chat(draft, active_binding, server_version, output):
+    """Compile against the immutable draft/binding captured before admission."""
+    from app.routes._copilot import _honest_outcome
+
+    def response(outcome, reply, **extra):
+        return SlidePostChatEditResponse(
+            outcome=outcome, reply=reply, base_version=server_version, **extra
+        )
 
     ops = [] if (output.needs_clarification or output.intent != "edit") else output.ops
     outcome, reply = _honest_outcome(output, ops, supports_proposed=True)

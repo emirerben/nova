@@ -9,6 +9,15 @@
             "title": "Client Request Id",
             "type": "string"
           },
+          "delivery_version": {
+            "default": null,
+            "enum": [
+              1
+            ],
+            "nullable": true,
+            "title": "Delivery Version",
+            "type": "integer"
+          },
           "input": {
             "additionalProperties": true,
             "title": "Input",
@@ -43,6 +52,11 @@
             "format": "uuid",
             "title": "Client Request Id",
             "type": "string"
+          },
+          "delivery_version": {
+            "default": 0,
+            "title": "Delivery Version",
+            "type": "integer"
           },
           "input": {
             "additionalProperties": true,
@@ -11558,6 +11572,14 @@
             "title": "Ai Project Id",
             "type": "string"
           },
+          "ai_request_delivery_version": {
+            "enum": [
+              0,
+              1
+            ],
+            "title": "Ai Request Delivery Version",
+            "type": "integer"
+          },
           "ai_request_recovery_version": {
             "enum": [
               0,
@@ -20457,6 +20479,77 @@
           }
         }
       ]
+    },
+    "/plan-items/{item_id}/slide-post/ai-requests/{request_id}/cancel": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "item_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "request_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "cancelPendingSlidePostAI",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AIRequestReceipt"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
+          "422": {
+            "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
     },
     "/plan-items/{item_id}/slide-post/chat-edit": {
       "parameters": [
