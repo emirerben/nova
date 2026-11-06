@@ -3655,3 +3655,23 @@ watermark as hard obstacles, then raised.
 **Result (offline replay, real Green 5 luminance):** prod picked #767676 (worst caption 1.41:1); now white + black outline, every caption 21:1 against its outline; no plain colour reaches 4.5:1 over these backgrounds.
 **Gap:** face boxes are still mapped as if the speaker filled the canvas, so `caption_look_receipt.over_face` can be wrong for a corner speaker (not changed here).
 **Guards:** `tests/tasks/test_green45_caption_contrast.py`.
+
+## [2026-11-06] Main Creator and brief-extractor prompt versions are fingerprints of their source files
+
+**Decision:** `MAIN_CREATOR_PROMPT_VERSION` / `BRIEF_EXTRACTOR_PROMPT_VERSION` are computed at import
+from the files their prompt text comes from (`app/agents/_prompt_fingerprint.py`, `mc-<12 hex>` /
+`be-<12 hex>`). Nobody bumps, renumbers or pins them, and the history comments above them are frozen
+in `docs/pipelines/prompt-version-history.md`.
+
+**Why:** every prompt PR edited the same version line, appended to the same history comment and
+re-pinned the same number in up to 9 test files, so each merge conflicted with every other open
+prompt PR. In the 2026-11-05 batch (23 PRs), 31 of 64 conflicting merge commits touched only those
+files, and the renumber chain (v120 to v136) forced extra pushes, CI runs and re-approvals
+(`docs/reviews/pr-merge-speed-2026-11-05/`). The version is metadata only (traces, stored agent
+runs, eval proofs); nothing orders or compares these two versions.
+
+**Guard:** `tests/agents/test_prompt_fingerprint.py` checks that every `load_prompt` / `load_skill`
+the two agents call is a listed source, that every source ships in the prod image, and that the
+fingerprint is order/line-ending stable and moves on any byte change. A prompt-text module that is
+neither loaded nor listed (a constant imported from elsewhere) is the remaining gap: list it in
+`*_PROMPT_SOURCES` when it starts feeding prompt text.
