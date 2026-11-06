@@ -1,0 +1,518 @@
+{
+  "scope": "bounded local reset ownership fix; simulator unit fixtures, no physical-device/output/rollout acceptance",
+  "issue": "KRI-1233",
+  "tested_fixed_commit": "bdf7bcd7601775873f280f4a55ccad513d986f45",
+  "tested_unfixed_control": "05b8bac639d9ca48fcf70f98cf4a7f3a67de8137",
+  "base": "c577a5fa5004f8edb84e607e7f6ff9a59920ed23",
+  "source_tree": "4b59d80e4ab2eefe49aea831b61a5c263ac5e66a",
+  "test_blob": "cba7195229305ca6f72ee4d1b4743c643e2ee6d6",
+  "manifest_blob": "699386c1caa3667d218b1c8b17fa45dc636557a7",
+  "toolchain": {
+    "xcode": "26.6",
+    "simulator": "iPhone 17 Pro",
+    "os": "iOS26.5",
+    "architecture": "arm64",
+    "destination": "50596C09-D082-4819-B74C-765D5480F6F5",
+    "jobs": 2,
+    "parallel_testing": false
+  },
+  "normalization": "$TASK_ROOT replaces local workspace prefix in commands; raw receipts/logs/xcresults retained locally, hashes below",
+  "native": {
+    "control-minimal": {
+      "source_commit": "05b8bac639d9ca48fcf70f98cf4a7f3a67de8137",
+      "exit": 65,
+      "elapsed_seconds": 325.25701062503504,
+      "started_utc": "2026-11-06T18:23:07.314512+00:00",
+      "finished_utc": "2026-11-06T18:28:32.576686+00:00",
+      "counts": {
+        "passedTests": 0,
+        "failedTests": 2,
+        "skippedTests": 0
+      },
+      "command": [
+        "xcodebuild",
+        "-project",
+        "Kria.xcodeproj",
+        "-scheme",
+        "Kria",
+        "-skipPackagePluginValidation",
+        "-derivedDataPath",
+        "$TASK_ROOT/reset-native-kri1233-results/derived-control",
+        "CODE_SIGNING_ALLOWED=NO",
+        "-destination",
+        "platform=iOS Simulator,id=50596C09-D082-4819-B74C-765D5480F6F5",
+        "-jobs",
+        "2",
+        "-parallel-testing-enabled",
+        "NO",
+        "-resultBundlePath",
+        "$TASK_ROOT/reset-native-kri1233-results/control-minimal.xcresult",
+        "-only-testing:KriaTests/DeviceRenderResetOwnershipTests/testOlderResetCannotClearNewOwnerReplacement",
+        "-only-testing:KriaTests/DeviceRenderResetOwnershipTests/testStaleOwnerSynchronizationCannotAdmitDuringNewerReset",
+        "test"
+      ],
+      "tests": [
+        {
+          "id": "DeviceRenderResetOwnershipTests/testOlderResetCannotClearNewOwnerReplacement()",
+          "result": "Failed"
+        },
+        {
+          "id": "DeviceRenderResetOwnershipTests/testStaleOwnerSynchronizationCannotAdmitDuringNewerReset()",
+          "result": "Failed"
+        }
+      ],
+      "raw_sha256": {
+        ".log": "664523e88c7aa9d2c9820cb700454acaf5e5f56d24f5a11e0a8c160332c836f3",
+        "-receipt.json": "7744277192829ad74fe6c324d1b66db584687d7ec2c36c2fd4ba42fdba246d0f",
+        "-summary.json": "4c9d034e69af7334a8b1ebfce5dce191efafa65f245b9eb462398612430ecb6b",
+        "-tests.json": "badb49a3b2d8d3d02b684fd1be6055a14c79f962fc2317ef0b8d39f3acf8c97b"
+      }
+    },
+    "fixed-minimal": {
+      "source_commit": "bdf7bcd7601775873f280f4a55ccad513d986f45",
+      "exit": 0,
+      "elapsed_seconds": 305.6007537919795,
+      "started_utc": "2026-11-06T18:29:10.369289+00:00",
+      "finished_utc": "2026-11-06T18:34:15.974342+00:00",
+      "counts": {
+        "passedTests": 2,
+        "failedTests": 0,
+        "skippedTests": 0
+      },
+      "command": [
+        "xcodebuild",
+        "-project",
+        "Kria.xcodeproj",
+        "-scheme",
+        "Kria",
+        "-skipPackagePluginValidation",
+        "-derivedDataPath",
+        "$TASK_ROOT/reset-native-kri1233-results/derived-fixed",
+        "CODE_SIGNING_ALLOWED=NO",
+        "-destination",
+        "platform=iOS Simulator,id=50596C09-D082-4819-B74C-765D5480F6F5",
+        "-jobs",
+        "2",
+        "-parallel-testing-enabled",
+        "NO",
+        "-resultBundlePath",
+        "$TASK_ROOT/reset-native-kri1233-results/fixed-minimal.xcresult",
+        "-only-testing:KriaTests/DeviceRenderResetOwnershipTests/testOlderResetCannotClearNewOwnerReplacement",
+        "-only-testing:KriaTests/DeviceRenderResetOwnershipTests/testStaleOwnerSynchronizationCannotAdmitDuringNewerReset",
+        "test"
+      ],
+      "tests": [
+        {
+          "id": "DeviceRenderResetOwnershipTests/testOlderResetCannotClearNewOwnerReplacement()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderResetOwnershipTests/testStaleOwnerSynchronizationCannotAdmitDuringNewerReset()",
+          "result": "Passed"
+        }
+      ],
+      "raw_sha256": {
+        ".log": "aacecb18537da39beee7398a0bcbcf41826d330bd179e00ba877eb5ae46840fd",
+        "-receipt.json": "9ed9d74ad198074f2aa197339ae083815873bc64c34d7b50f42cc0d1251ec541",
+        "-summary.json": "d7a322fca582b6633c0e4d6f6e486ac0166daccad4e417312a725b048c94914c",
+        "-tests.json": "7ff24bbf8921ea1d9f252b28575fed99a4ea022d70b43bfb35280cde164c40f8"
+      }
+    },
+    "fixed-six": {
+      "source_commit": "bdf7bcd7601775873f280f4a55ccad513d986f45",
+      "exit": 0,
+      "elapsed_seconds": 19.67179675004445,
+      "started_utc": "2026-11-06T18:34:29.649248+00:00",
+      "finished_utc": "2026-11-06T18:34:49.336853+00:00",
+      "counts": {
+        "passedTests": 6,
+        "failedTests": 0,
+        "skippedTests": 0
+      },
+      "command": [
+        "xcodebuild",
+        "-project",
+        "Kria.xcodeproj",
+        "-scheme",
+        "Kria",
+        "-skipPackagePluginValidation",
+        "-derivedDataPath",
+        "$TASK_ROOT/reset-native-kri1233-results/derived-fixed",
+        "CODE_SIGNING_ALLOWED=NO",
+        "-destination",
+        "platform=iOS Simulator,id=50596C09-D082-4819-B74C-765D5480F6F5",
+        "-jobs",
+        "2",
+        "-parallel-testing-enabled",
+        "NO",
+        "-resultBundlePath",
+        "$TASK_ROOT/reset-native-kri1233-results/fixed-six.xcresult",
+        "-only-testing:KriaTests/DeviceRenderResetOwnershipTests",
+        "test"
+      ],
+      "tests": [
+        {
+          "id": "DeviceRenderResetOwnershipTests/testLogoutDuringOwnerSynchronizationRejectsAdmissionAndAllowsLaterReturn()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderResetOwnershipTests/testMissingOwnerDoesNotFetchOrCreateCoordinator()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderResetOwnershipTests/testNewerResetStillOwnsCleanupWhenOlderReturnsFirst()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderResetOwnershipTests/testOlderResetCannotClearNewOwnerReplacement()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderResetOwnershipTests/testRepeatedSameOwnerResetPreservesReplacement()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderResetOwnershipTests/testStaleOwnerSynchronizationCannotAdmitDuringNewerReset()",
+          "result": "Passed"
+        }
+      ],
+      "raw_sha256": {
+        ".log": "7c9a4c2f00a2d60fb21611044860afc23dc18b2f07d8790149c9a667acdf3364",
+        "-receipt.json": "9960a7b17a75e3d1b31d6e4f7616fd50190c8952e484543c7d235828606faff2",
+        "-summary.json": "8981489ea2b65859d94678f1f0b8007bae1f87b6903574fd9f6f5f49694fae38",
+        "-tests.json": "82dc02b78472bf3e07ffcdcd439b12cc951c946fb5d9b4ede1fc74ffc2759548"
+      }
+    },
+    "fixed-neighbors": {
+      "source_commit": "bdf7bcd7601775873f280f4a55ccad513d986f45",
+      "exit": 0,
+      "elapsed_seconds": 21.914990707999095,
+      "started_utc": "2026-11-06T18:35:01.074932+00:00",
+      "finished_utc": "2026-11-06T18:35:22.993516+00:00",
+      "counts": {
+        "passedTests": 30,
+        "failedTests": 0,
+        "skippedTests": 0
+      },
+      "command": [
+        "xcodebuild",
+        "-project",
+        "Kria.xcodeproj",
+        "-scheme",
+        "Kria",
+        "-skipPackagePluginValidation",
+        "-derivedDataPath",
+        "$TASK_ROOT/reset-native-kri1233-results/derived-fixed",
+        "CODE_SIGNING_ALLOWED=NO",
+        "-destination",
+        "platform=iOS Simulator,id=50596C09-D082-4819-B74C-765D5480F6F5",
+        "-jobs",
+        "2",
+        "-parallel-testing-enabled",
+        "NO",
+        "-resultBundlePath",
+        "$TASK_ROOT/reset-native-kri1233-results/fixed-neighbors.xcresult",
+        "-only-testing:KriaTests/DeviceRenderExecutionTests",
+        "-only-testing:KriaTests/DeviceRenderIntentRepairTests",
+        "-only-testing:KriaTests/NativeEditorSessionTests/testCoalescedSaveCannotExportDuringRequestReplacement",
+        "-only-testing:KriaTests/NativeEditorSessionTests/testFailedStatusReadAfterANewSaveDoesNotLinkThePreviousRenderToIt",
+        "-only-testing:KriaTests/NativeEditorSessionTests/testStatusReadThatNamesTheSavedGenerationLinksTheNewRender",
+        "test"
+      ],
+      "tests": [
+        {
+          "id": "DeviceRenderExecutionTests/testAcceptedRequestWithoutLaunchFallsBackOnceAndRejectsLateLaunch()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderExecutionTests/testActualRetryMutationStartsOneAuthorizedDurableJobAndPollingDoesNot()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderExecutionTests/testAlreadyCancelledAcquisitionDoesNotSubmit()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderExecutionTests/testCancellationWhileAwaitingLaunchResumesAndRejectsLateTask()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderExecutionTests/testCompletedWindowIgnoresLateExpiryAndProgress()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderExecutionTests/testCreatorResumeQueuedBehindAutomaticReadKeepsTypedConsent()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderExecutionTests/testFailedStopReportStillBlocksAutomaticRetryInThisSession()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderExecutionTests/testFailedStopWriteDoesNotLetRelinkRestartAfterStorageRecovers()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderExecutionTests/testGrantProgressExpirationAndCompletionAreExactlyOnce()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderExecutionTests/testLateLaunchAfterWindowDeallocationCompletesFalseWithoutWork()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderExecutionTests/testLegacyServerPauseRejectsAutomaticRelinkAndAcceptsTypedResume()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderExecutionTests/testPublishedAcknowledgedRetryMayReplaceLocalPause()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderExecutionTests/testRejectedTaskIdentityIsRetainedOnlyForTheWindowLifetime()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderExecutionTests/testResetDuringRetryCleanupPreventsGrantAndReplacement()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderExecutionTests/testRetryAuthorizationIsSingleUseExactAndInvalidatedByForegroundEpoch()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderExecutionTests/testRetryBeginningInBackgroundOrInvalidatedDuringMutationNeverAuthorizes()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderExecutionTests/testStopBeforeRetryAcknowledgementPausesReturnedIdentity()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderExecutionTests/testStopDuringRetryCleanupPreventsGrantAndReplacement()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderExecutionTests/testStopWithOnlyPersistedObservedTargetDoesNotInventAcknowledgement()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderExecutionTests/testUnsupportedRejectedAutomaticAndBackgroundAcquisitionFallBack()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderIntentRepairTests/testDefinitiveRetryRefusalDoesNotWedgeLaterReads()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderIntentRepairTests/testDifferentNewerRevisionDuringCreatorRetryStaysFenced()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderIntentRepairTests/testNewerGenerationUnderStopStaysHeldUntilTypedResume()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderIntentRepairTests/testPollDuringExplicitRetryDoesNotFenceTheRetry()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderIntentRepairTests/testPublishedResultShowsWithoutReleasingTheStopAndALaterRevisionStaysHeld()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderIntentRepairTests/testRepeatedStopKeepsTheAcknowledgedRevisionFloor()",
+          "result": "Passed"
+        },
+        {
+          "id": "DeviceRenderIntentRepairTests/testStopTargetPrefersTheStoredAcknowledgementOverObservationAndSource()",
+          "result": "Passed"
+        },
+        {
+          "id": "NativeEditorSessionTests/testCoalescedSaveCannotExportDuringRequestReplacement()",
+          "result": "Passed"
+        },
+        {
+          "id": "NativeEditorSessionTests/testFailedStatusReadAfterANewSaveDoesNotLinkThePreviousRenderToIt()",
+          "result": "Passed"
+        },
+        {
+          "id": "NativeEditorSessionTests/testStatusReadThatNamesTheSavedGenerationLinksTheNewRender()",
+          "result": "Passed"
+        }
+      ],
+      "raw_sha256": {
+        ".log": "8c5a97b6c460d3f7f7a65a29bc5eb9d83446c0f9e64d0795939e309837f074b3",
+        "-receipt.json": "5b10f43f796ff66faa60bb44e0a5d9c6862e9733373b112a227db0fab95f172c",
+        "-summary.json": "643858122a93123bca656fee8feb25111c63676e4b764358ef8441c7cb022420",
+        "-tests.json": "17e54ca22850a2ec6654a46fc1b3d88dcd32e27d76405f0200fcc3a7f334a1d1"
+      }
+    }
+  },
+  "model": {
+    "original": {
+      "model_commit": "a50b82958fa173ac44097f2899018fe7e3942bad",
+      "model_sha256": "7ef9b628180680a50d50eacef0a859c1bc3b30a5a020a5b83892b80efbd8c3f2",
+      "source_commit": "05b8bac639d9ca48fcf70f98cf4a7f3a67de8137",
+      "source_profile": "kri-1233",
+      "runs": {
+        "types": {
+          "broken": [],
+          "trace": 0,
+          "states": 1566,
+          "seconds": 0.5
+        },
+        "stale-cleanup": {
+          "broken": [
+            "StaleCleanupPreservesSlot"
+          ],
+          "trace": 5,
+          "states": 92,
+          "seconds": 0.4
+        },
+        "stale-admission": {
+          "broken": [
+            "AdmissionWaitsForReset"
+          ],
+          "trace": 6,
+          "states": 149,
+          "seconds": 0.4
+        },
+        "fresh-replacement-loss": {
+          "broken": [
+            "FreshReplacementPreserved"
+          ],
+          "trace": 9,
+          "states": 797,
+          "seconds": 0.5
+        },
+        "overlap-retained": {
+          "broken": [
+            "NeverReplacementWhileOldResetWaits"
+          ],
+          "trace": 8,
+          "states": 551,
+          "seconds": 0.5
+        },
+        "shared-cleanup-reachable": {
+          "broken": [
+            "NeverSharedCleanup"
+          ],
+          "trace": 3,
+          "states": 13,
+          "seconds": 0.4
+        }
+      },
+      "wrapper_exit": 3,
+      "note": "separate local verification-maintenance branch; no model code bundled in this source PR"
+    },
+    "corrected": {
+      "model_commit": "a50b82958fa173ac44097f2899018fe7e3942bad",
+      "model_sha256": "7ef9b628180680a50d50eacef0a859c1bc3b30a5a020a5b83892b80efbd8c3f2",
+      "source_commit": "bdf7bcd7601775873f280f4a55ccad513d986f45",
+      "source_profile": "kri-1233",
+      "runs": {
+        "types": {
+          "broken": [],
+          "trace": 0,
+          "states": 1491,
+          "seconds": 0.5
+        },
+        "corrected-safety": {
+          "broken": [],
+          "trace": 0,
+          "states": 1491,
+          "seconds": 0.4
+        },
+        "remove-cleanup-guard": {
+          "broken": [
+            "StaleCleanupPreservesSlot"
+          ],
+          "trace": 5,
+          "states": 92,
+          "seconds": 0.3
+        },
+        "remove-cleanup-guard-fresh-slot": {
+          "broken": [
+            "FreshReplacementPreserved"
+          ],
+          "trace": 9,
+          "states": 783,
+          "seconds": 0.3
+        },
+        "remove-admission-guard": {
+          "broken": [
+            "AdmissionWaitsForReset"
+          ],
+          "trace": 6,
+          "states": 149,
+          "seconds": 0.4
+        },
+        "stale-sync-still-returns": {
+          "broken": [
+            "NeverRejectedStaleSynchronize"
+          ],
+          "trace": 6,
+          "states": 111,
+          "seconds": 0.4
+        },
+        "overlap-retained": {
+          "broken": [
+            "NeverReplacementWhileOldResetWaits"
+          ],
+          "trace": 8,
+          "states": 539,
+          "seconds": 0.3
+        },
+        "shared-cleanup-reachable": {
+          "broken": [
+            "NeverSharedCleanup"
+          ],
+          "trace": 3,
+          "states": 13,
+          "seconds": 0.4
+        }
+      },
+      "wrapper_exit": 0,
+      "note": "separate local verification-maintenance branch; no model code bundled in this source PR"
+    }
+  },
+  "limits": [
+    "receipt eligibility/coherence not proven by focused model",
+    "no broad lifecycle/planner/output-verification proof",
+    "no physical-device test or real export fidelity acceptance",
+    "hosted compile failure at older synthetic merge remains separate; new hosted checks required"
+  ],
+  "lane_release": "2026-11-06T18:38:22.772071+00:00",
+  "required_13_selectors": {
+    "KriaTests/DeviceRenderExecutionTests/testStopDuringRetryCleanupPreventsGrantAndReplacement": "Passed",
+    "KriaTests/DeviceRenderExecutionTests/testStopBeforeRetryAcknowledgementPausesReturnedIdentity": "Passed",
+    "KriaTests/DeviceRenderExecutionTests/testFailedStopReportStillBlocksAutomaticRetryInThisSession": "Passed",
+    "KriaTests/DeviceRenderExecutionTests/testCreatorResumeQueuedBehindAutomaticReadKeepsTypedConsent": "Passed",
+    "KriaTests/DeviceRenderExecutionTests/testFailedStopWriteDoesNotLetRelinkRestartAfterStorageRecovers": "Passed",
+    "KriaTests/DeviceRenderExecutionTests/testStopWithOnlyPersistedObservedTargetDoesNotInventAcknowledgement": "Passed",
+    "KriaTests/DeviceRenderExecutionTests/testLegacyServerPauseRejectsAutomaticRelinkAndAcceptsTypedResume": "Passed",
+    "KriaTests/DeviceRenderResetOwnershipTests/testOlderResetCannotClearNewOwnerReplacement": "Passed",
+    "KriaTests/DeviceRenderResetOwnershipTests/testRepeatedSameOwnerResetPreservesReplacement": "Passed",
+    "KriaTests/DeviceRenderResetOwnershipTests/testNewerResetStillOwnsCleanupWhenOlderReturnsFirst": "Passed",
+    "KriaTests/DeviceRenderResetOwnershipTests/testStaleOwnerSynchronizationCannotAdmitDuringNewerReset": "Passed",
+    "KriaTests/DeviceRenderResetOwnershipTests/testLogoutDuringOwnerSynchronizationRejectsAdmissionAndAllowsLaterReturn": "Passed",
+    "KriaTests/DeviceRenderResetOwnershipTests/testMissingOwnerDoesNotFetchOrCreateCoordinator": "Passed"
+  },
+  "hosted_earlier_failure": {
+    "hosted_run": 42254345905,
+    "attempt": 2,
+    "job": 128030570325,
+    "source_head": "258980e4a7fc1ff9f6096afb31901cf3ad806b52",
+    "synthetic_checkout": "a885650d9ead763ad5bd3253ccbf38e7a6c37f46",
+    "base": "6fa6105a1432edd4cac95becd111c13aa5f908a7",
+    "conclusion": "compile_failure",
+    "executed_tests": 0,
+    "error": "default argument cannot be both main actor-isolated and actor-isolated",
+    "file": "src/apps/ios/Tests/KriaTests/DeviceRenderResetOwnershipTests.swift",
+    "line": 139,
+    "native_log_sha256": "d2ebc7b4d264e2cc59c6a3a658452e5df557fbac9ce20450c565195b0d10479a",
+    "subsequent_local_source": "bdf7bcd7601775873f280f4a55ccad513d986f45",
+    "tracking_issue": "KRI-1233"
+  }
+}

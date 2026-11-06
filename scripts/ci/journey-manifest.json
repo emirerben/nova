@@ -3042,7 +3042,13 @@
         "KriaTests/DeviceRenderExecutionTests/testCreatorResumeQueuedBehindAutomaticReadKeepsTypedConsent",
         "KriaTests/DeviceRenderExecutionTests/testFailedStopWriteDoesNotLetRelinkRestartAfterStorageRecovers",
         "KriaTests/DeviceRenderExecutionTests/testStopWithOnlyPersistedObservedTargetDoesNotInventAcknowledgement",
-        "KriaTests/DeviceRenderExecutionTests/testLegacyServerPauseRejectsAutomaticRelinkAndAcceptsTypedResume"
+        "KriaTests/DeviceRenderExecutionTests/testLegacyServerPauseRejectsAutomaticRelinkAndAcceptsTypedResume",
+        "KriaTests/DeviceRenderResetOwnershipTests/testOlderResetCannotClearNewOwnerReplacement",
+        "KriaTests/DeviceRenderResetOwnershipTests/testRepeatedSameOwnerResetPreservesReplacement",
+        "KriaTests/DeviceRenderResetOwnershipTests/testNewerResetStillOwnsCleanupWhenOlderReturnsFirst",
+        "KriaTests/DeviceRenderResetOwnershipTests/testStaleOwnerSynchronizationCannotAdmitDuringNewerReset",
+        "KriaTests/DeviceRenderResetOwnershipTests/testLogoutDuringOwnerSynchronizationRejectsAdmissionAndAllowsLaterReturn",
+        "KriaTests/DeviceRenderResetOwnershipTests/testMissingOwnerDoesNotFetchOrCreateCoordinator"
       ],
       "paths": [
         "src/apps/ios/Kria/Core/DeviceRenderIntentPersistence.swift",
@@ -3053,7 +3059,8 @@
         "src/apps/ios/Kria/KriaApp.swift",
         "src/apps/ios/Tests/KriaTests/DeviceRenderExecutionTests.swift",
         "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderIntent.swift",
-        "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/DeviceRenderIntentTests.swift"
+        "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/DeviceRenderIntentTests.swift",
+        "src/apps/ios/Tests/KriaTests/DeviceRenderResetOwnershipTests.swift"
       ]
     },
     {
