@@ -3667,11 +3667,16 @@ in `docs/pipelines/prompt-version-history.md`.
 re-pinned the same number in up to 9 test files, so each merge conflicted with every other open
 prompt PR. In the 2026-11-05 batch (23 PRs), 31 of 64 conflicting merge commits touched only those
 files, and the renumber chain (v120 to v136) forced extra pushes, CI runs and re-approvals
-(`docs/reviews/pr-merge-speed-2026-11-05/`). The version is metadata only (traces, stored agent
-runs, eval proofs); nothing orders or compares these two versions.
+(`docs/reviews/pr-merge-speed-2026-11-05/`). The version labels traces, stored agent runs and eval
+proofs, and it is one input of the turn-checkpoint identity digest (`services/turn_checkpoint.py`):
+a new value only makes a continued turn re-call the model, which `FLY_IMAGE_REF` already does on
+every deploy. Nothing orders these two versions.
 
 **Guard:** `tests/agents/test_prompt_fingerprint.py` checks that every `load_prompt` / `load_skill`
 the two agents call is a listed source, that every source ships in the prod image, and that the
-fingerprint is order/line-ending stable and moves on any byte change. A prompt-text module that is
-neither loaded nor listed (a constant imported from elsewhere) is the remaining gap: list it in
-`*_PROMPT_SOURCES` when it starts feeding prompt text.
+fingerprint is order/line-ending stable and moves on any byte change. It also checks that the
+file behind every `{{TOKEN}}` vocabulary a source renders (`prompt_vocab.PROMPT_VOCABULARY_SOURCES`,
+e.g. `_schemas/text_animation_phases.py`) is listed (Emir's #2133 review). Remaining gaps: text
+built at render time from capability manifests and other runtime inputs, and a constant imported
+from an unlisted module; list such a module in `*_PROMPT_SOURCES` when it starts feeding prompt
+text.

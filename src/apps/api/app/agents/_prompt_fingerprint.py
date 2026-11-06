@@ -6,8 +6,14 @@ edits, so each merge conflicts with every other open prompt PR (2026-11-05: 31 o
 pinned it). A fingerprint of the prompt's source files changes exactly when they
 change, and nobody edits it, so two PRs can't collide on it.
 
-The version is metadata only (traces, stored agent runs, eval proofs); no code
-orders or compares Main Creator / brief-extractor versions.
+The version labels traces, stored agent runs and eval proofs, and it is one input of
+the turn-checkpoint identity digest (``services/turn_checkpoint.py``): a new value only
+makes a continued turn re-call the model instead of reusing a cached answer, and
+``FLY_IMAGE_REF`` already does that on every deploy. Nothing orders these versions.
+
+Covered: the files each agent lists, including the file behind every ``{{TOKEN}}``
+vocabulary it renders (``prompt_vocab.PROMPT_VOCABULARY_SOURCES``). Not covered: text
+built at render time from capability manifests and other runtime inputs.
 """
 
 from __future__ import annotations

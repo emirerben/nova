@@ -18,16 +18,26 @@ Ways this can fail, and the test that catches each:
      traces and stored runs disagree                -> test_specs_stamp_the_fingerprint
   F6 the two agents' versions can be mistaken for each other in traces
                                                     -> test_specs_stamp_the_fingerprint
+  F7 a ``{{TOKEN}}`` vocabulary a listed source renders comes from a module that
+     is not a source (Emir's #2133 review: TEXT_ANIMATION_EDGES is built from
+     _schemas/text_animation_phases.py), so editing that vocabulary changes the
+     prompt and not the version          -> test_every_rendered_vocabulary_is_a_source,
+                                            test_prompt_vocab_sources_match_its_imports,
+                                            test_changing_animation_vocabulary_moves_both_versions
+Known limit, not guarded: prompt text built at render time from capability manifests
+and other runtime inputs is not a file, so no fingerprint can cover it.
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from app.agents import _prompt_fingerprint as fp
+from app.agents import prompt_vocab
 from app.agents.brief_extractor import (
     BRIEF_EXTRACTOR_PROMPT_SOURCES,
     BRIEF_EXTRACTOR_PROMPT_VERSION,
@@ -118,3 +128,61 @@ def test_a_missing_source_changes_the_version_without_crashing(tmp_path: Path) -
     present = fp.prompt_fingerprint("xx", ("a.txt", "gone.txt"), root=tmp_path)
     (tmp_path / "gone.txt").write_text("")
     assert fp.prompt_fingerprint("xx", ("a.txt", "gone.txt"), root=tmp_path) != present
+
+
+_TOKEN = re.compile(r"\{\{([A-Z][A-Z0-9_]*)\}\}")
+
+
+@pytest.mark.parametrize("sources", AGENTS.values())
+def test_every_rendered_vocabulary_is_a_source(sources: tuple[str, ...]) -> None:
+    used = {
+        token
+        for rel in sources
+        for token in _TOKEN.findall((API_ROOT / rel).read_text(encoding="utf-8"))
+        if token in prompt_vocab.PROMPT_VOCABULARIES
+    }
+    assert used, "no {{TOKEN}} found; update this guard if the prompts stopped using vocab tokens"
+    assert "app/agents/prompt_vocab.py" in sources
+    for token in used:
+        assert prompt_vocab.PROMPT_VOCABULARY_SOURCES[token] in sources, token
+
+
+def test_prompt_vocab_sources_match_its_imports() -> None:
+    # Every vocabulary names the file it is built from, and those files are exactly
+    # the app modules prompt_vocab imports, so a new vocabulary can't skip the map.
+    assert set(prompt_vocab.PROMPT_VOCABULARY_SOURCES) == set(prompt_vocab.PROMPT_VOCABULARIES)
+    text = (API_ROOT / "app/agents/prompt_vocab.py").read_text(encoding="utf-8")
+    imported = {
+        m.replace(".", "/") + ".py" for m in re.findall(r"^from (app\.[\w.]+) import", text, re.M)
+    }
+    assert set(prompt_vocab.PROMPT_VOCABULARY_SOURCES.values()) == imported
+
+
+def test_changing_animation_vocabulary_moves_both_versions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vocab_rel = "app/agents/_schemas/text_animation_phases.py"
+    edges = prompt_vocab.TEXT_ANIMATION_VOCAB
+    # 1) The rendered prompt text changes when a displayed edge label changes.
+    before = prompt_vocab.render_vocab_tokens("{{TEXT_ANIMATION_EDGES}}")
+    monkeypatch.setitem(edges, "silkReveal", replace(edges["silkReveal"], label="Silky Reveal"))
+    monkeypatch.setitem(
+        prompt_vocab.PROMPT_VOCABULARIES, "TEXT_ANIMATION_EDGES", prompt_vocab._edges()
+    )
+    after = prompt_vocab.render_vocab_tokens("{{TEXT_ANIMATION_EDGES}}")
+    assert after != before and "silkReveal (Silky Reveal)" in after
+    # 2) The same edit to the file moves both fingerprints; an untouched copy does not.
+    for rel in set(MAIN_CREATOR_PROMPT_SOURCES) | set(BRIEF_EXTRACTOR_PROMPT_SOURCES):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_bytes((API_ROOT / rel).read_bytes())
+    assert fp.prompt_fingerprint("mc", MAIN_CREATOR_PROMPT_SOURCES, root=tmp_path) == (
+        MAIN_CREATOR_PROMPT_VERSION
+    )
+    source = (tmp_path / vocab_rel).read_text(encoding="utf-8")
+    edited = source.replace('EdgeVocab("Silk Reveal",', 'EdgeVocab("Silky Reveal",', 1)
+    assert edited != source
+    (tmp_path / vocab_rel).write_text(edited, encoding="utf-8")
+    mc = fp.prompt_fingerprint("mc", MAIN_CREATOR_PROMPT_SOURCES, root=tmp_path)
+    be = fp.prompt_fingerprint("be", BRIEF_EXTRACTOR_PROMPT_SOURCES, root=tmp_path)
+    assert mc != MAIN_CREATOR_PROMPT_VERSION
+    assert be != BRIEF_EXTRACTOR_PROMPT_VERSION

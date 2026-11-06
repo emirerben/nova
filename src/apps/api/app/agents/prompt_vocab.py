@@ -43,6 +43,17 @@ PROMPT_VOCABULARIES: dict[str, PromptVocabulary] = {
     "INTENT_REVIEW_CONFIDENCE": _plain(CONFIDENCE_LEVELS),
 }
 
+# The file each vocabulary is built from (relative to src/apps/api). A prompt whose
+# version is a fingerprint of its sources (Main Creator, brief extractor) must list the
+# file behind every token it renders; tests/agents/test_prompt_fingerprint.py checks it.
+PROMPT_VOCABULARY_SOURCES: dict[str, str] = {
+    "TEXT_ANIMATION_EDGES": "app/agents/_schemas/text_animation_phases.py",
+    "TEXT_ANIMATION_LOOPS": "app/agents/_schemas/text_animation_phases.py",
+    "INTENT_REVIEW_VERDICTS": "app/agents/_schemas/intent_review.py",
+    "INTENT_REVIEW_DEFECT_KINDS": "app/agents/_schemas/intent_review.py",
+    "INTENT_REVIEW_CONFIDENCE": "app/agents/_schemas/intent_review.py",
+}
+
 _TOKEN = re.compile(r"\{\{([A-Z][A-Z0-9_]*)\}\}")
 
 

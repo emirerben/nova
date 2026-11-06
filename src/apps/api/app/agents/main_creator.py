@@ -77,6 +77,7 @@ log = structlog.get_logger()
 MAIN_CREATOR_PROMPT_SOURCES = (
     "app/agents/main_creator.py",
     "app/agents/prompt_vocab.py",
+    "app/agents/_schemas/text_animation_phases.py",  # {{TEXT_ANIMATION_EDGES}}
     "app/agents/_writing_context.py",
     "app/kria/reply_language.py",
     "app/kria/brief.py",
