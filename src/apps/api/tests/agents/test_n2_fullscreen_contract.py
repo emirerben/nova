@@ -152,3 +152,9 @@ def test_default_new_reaction_fields_are_not_serialized():
     dumped = beat.model_dump(mode="json")
     assert "display_mode" not in dumped
     assert "following_clip_id" not in dumped
+    assert "anchor" not in dumped
+    title = ReactionBeat(
+        beat_id="logo", trigger="GitHub logo", visual_id="asset-gh", anchor="title"
+    ).model_dump(mode="json")
+    assert title["anchor"] == "title"
+    assert ReactionBeat.model_validate(title).anchor == "title"
