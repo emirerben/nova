@@ -59,7 +59,13 @@ CREATOR_SAID = [
         said("style", "global", "no captions on this one", captions="off"),
         None,
     ),
-    ("captions", "tr", "own words", said("style", "global", "altyazı istemiyorum"), None),
+    (
+        "captions",
+        "tr",
+        "own words",
+        said("style", "global", "altyazı istemiyorum", captions="off"),
+        None,
+    ),
     (
         "music",
         "en",

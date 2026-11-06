@@ -18,9 +18,11 @@ Failure catalogue (written first):
   D5  the other dimensions' Turkish words survive their own softening: "altyazıyı kapat",
       "geçişleri kaldır", "efektleri kaldır", "animasyonu kaldır" still withhold their card.
 
-D1-D3 and D5 are tables over the dimension's own matcher; ``test_d_the_card_is_withheld_on_the_
-real_get`` proves the same words reach the screen path (GET -> worker -> GET) on the Turkish twin
-of the Nermin footage, with the control (no request) serving the card.
+R5 (KRI-667) replaced the word tables that used to sit here: whether the creator asked about the
+music is read from the requirement's kind (``audio``), not from Turkish suffix lists, so the forms
+below no longer need to be enumerated (``test_r5_serve_brief_asks.py`` carries the wider table and
+the typed rules). What stays is the proof on the real GET (GET -> worker -> GET) on the Turkish
+twin of the Nermin footage, with the control (no request) serving the card.
 """
 
 from __future__ import annotations
@@ -31,8 +33,6 @@ from pathlib import Path
 import pytest
 
 from app.kria.brief import BriefUpdate
-from app.services.suggestions import brief_asks
-from app.text_fold import has_marker
 from tests.e2e_suggestions import threads
 from tests.e2e_suggestions.driver import Phone
 from tests.e2e_suggestions.report import Recorder
@@ -41,79 +41,6 @@ from tests.tasks import kria_pinned_kinds_harness as k
 
 CASSETTES = Path(__file__).resolve().parent / "cassettes"
 KEY = "nermin-matcha-update/tr"
-
-MUSIC_ASKS = [
-    # D1: the k of "müzik" softens to ğ before a vowel.
-    "müziği çok kıs",
-    "Müziği kısmanı istiyorum",
-    "müziği kapat",
-    "müziğin sesini azalt",
-    "müziğe gerek yok",
-    "müziğini değiştir",
-    "müziğimi seç",
-    "fon müziği ekle",
-    "arka plan müziği olmasın",
-    "müzik olmasın",
-    "müziksiz olsun",
-    "şarkıyı değiştir",
-    "şarkının sesi çok yüksek",
-    # D2: the volume asks.
-    "sesi kıs lütfen",
-    "sesini kıs",
-    "sesi azalt",
-    "sesini azalt",
-    "sesi düşür",
-    "sesini düşür",
-    "sesi artır",
-    "sesini artır",
-    "sesi yükselt",
-    "sesini yükselt",
-    "sesi kapat",
-    "sesini kapat",
-    # D3: spelling and casing.
-    "muzigi kis",
-    "muzigin sesini azalt",
-    "MÜZİĞİ KAPAT",
-    "SESİNİ KIS",
-]
-NOT_MUSIC_ASKS = [
-    "klipleri kısalt",
-    "videoyu 20 saniye yap",
-    "ses efekti ekle",
-    "ses efektleri olmasın",
-    "altyazı ekle",
-    "geçiş olmasın",
-    "başlığı değiştir",
-    "kameraya konuşuyorum",
-    "ilk klibi sona koy",
-]
-OTHER_DIMENSIONS = [
-    (brief_asks.CAPTIONS, "altyazıyı kapat"),
-    (brief_asks.CAPTIONS, "altyazısız olsun"),
-    (brief_asks.TRANSITION, "geçişleri kaldır"),
-    (brief_asks.TRANSITION, "geçişi sert yap"),
-    (brief_asks.SFX, "efektleri kaldır"),
-    (brief_asks.SFX, "ses efektini kapat"),
-    (brief_asks.TITLE_ANIMATION, "animasyonu kaldır"),
-    (brief_asks.TITLE_ANIMATION, "animasyonlu olmasın"),
-]
-
-
-@pytest.mark.parametrize("text", MUSIC_ASKS)
-def test_d1_d3_a_music_ask_in_any_form_is_a_music_ask(text):
-    assert has_marker(text, brief_asks.MUSIC.words), f"{text!r} is not read as a music ask"
-
-
-@pytest.mark.parametrize("text", NOT_MUSIC_ASKS)
-def test_d4_an_ask_about_another_lane_is_not_a_music_ask(text):
-    assert not has_marker(text, brief_asks.MUSIC.words), f"{text!r} is read as a music ask"
-
-
-@pytest.mark.parametrize(
-    ("dimension", "text"), OTHER_DIMENSIONS, ids=[f"{d.name}-{t}" for d, t in OTHER_DIMENSIONS]
-)
-def test_d5_the_other_dimensions_keep_their_turkish_words(dimension, text):
-    assert has_marker(text, dimension.words), f"{text!r} is not read as a {dimension.name} ask"
 
 
 def prefs() -> list[dict]:

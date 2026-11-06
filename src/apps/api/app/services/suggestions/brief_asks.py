@@ -17,10 +17,22 @@ flag on): a ``CreativeBrief``, or ``None`` when the thread has none. A context w
 never loaded (every flag off, or a test context) and is left exactly as it was. Anything under the
 key that is not a brief fails closed.
 
-Typed facts decide where the brief writer records them (``captions``, ``audio_intent``,
-``animation``). Where it records nothing (transitions, sound effects, music level) the creator's
-own words decide, read over the shared Turkish-aware fold: the ``description`` only, never the
-``literal``, which is the text the creator wants ON the video and says nothing about its lanes.
+KRI-667: the server does not guess what a creator meant from their words (every word list needs
+a twin per language and misses a paraphrase: a Turkish verb one word further from its noun than a
+list allowed left the music card on screen over a creator who had just asked to turn the sound
+down). The brief writer records the meaning and this module reads the field:
+
+* ``kind``: the writer files every volume, music and sound ask as an ``audio`` requirement, in any
+  language and any wording, so an ``audio`` requirement is an ask about the soundtrack;
+* ``facts``: ``captions`` / ``caption_*``, ``animation``, ``audio_intent: no_music``, ``music*``.
+
+Two splits have no typed signal, so they read the creator's ``description`` once, over the shared
+Turkish-aware fold (``app.text_fold``), never the ``literal`` (the text the creator wants ON the
+video, which says nothing about its lanes): music against sound effects (both are ``audio``), and
+transitions (the writer records no fact and no kind for them). That one reader,
+``_description_says``, is on the raw chat text allow-list (``tests/test_raw_chat_text_readers.py``).
+An ``audio`` requirement that names sound effects is a sound-effects ask and not a music ask; any
+other is a music ask, however it is worded.
 
 Import-light on purpose: no ``app.kria`` import at module level (the brief module pulls the ORM),
 the requirements are read by attribute.
@@ -44,49 +56,40 @@ class Dimension:
     """One thing the creator can have an opinion about, and how an opinion about it reads."""
 
     name: str
+    # A requirement of one of these kinds is a statement about the dimension ...
+    kinds: tuple[str, ...] = ()
+    # ... but only when its description names one of ``kind_needs`` (when set) and none of
+    # ``kind_not``: the split between two dimensions that share a kind.
+    kind_needs: tuple[str, ...] = ()
+    kind_not: tuple[str, ...] = ()
     # A requirement fact whose key starts with one of these is a typed statement.
     fact_prefixes: tuple[str, ...] = ()
     # Typed facts that only count with a specific value: {key: values}.
     fact_values: Mapping[str, frozenset[str]] | None = None
-    # Phrases over the folded description (word start, any ending): "caption" hits "captions".
+    # Phrases over the folded description (word start, any ending): "gecis" hits "gecisler". Only
+    # for a dimension the brief writer records nothing typed about.
     words: tuple[str, ...] = ()
 
 
-CAPTIONS = Dimension(
-    "captions",
-    fact_prefixes=("caption",),
-    words=("caption", "subtitle", "altyazi"),
-)
+CAPTIONS = Dimension("captions", fact_prefixes=("caption",))
+# Sound-effect names: what tells an `audio` requirement about sound effects from one about music.
+_SFX_WORDS = ("sound effect", "sfx", "whoosh", "efekt", "ses efekt")
+# The writer files volume, music and sound asks as `audio` requirements ("sesi biraz kıs", "tone
+# down the sound", "parçayı değiştir"), so the kind is the signal; a sound-effects ask is not one.
 MUSIC = Dimension(
     "music",
+    kinds=("audio",),
+    kind_not=_SFX_WORDS,
     fact_prefixes=("music",),
     fact_values={"audio_intent": frozenset({"no_music"})},
-    words=(
-        "music",
-        "song",
-        "soundtrack",
-        "muzik",
-        # "müzik" + a vowel suffix: the k softens to ğ ("müziği", "müziğin", "müziğe"), which the
-        # fold writes as "g".
-        "muzig",
-        "sarki",
-        "volume",
-        "louder",
-        "quieter",
-        "ses seviye",
-        # "sesi" / "sesini" + the verb: the ask names the sound, not the word "music".
-        *(
-            f"{noun} {verb}"
-            for noun in ("sesi", "sesini")
-            for verb in ("kis", "ac", "azalt", "dusur", "artir", "yukselt", "kapat")
-        ),
-    ),
 )
 SFX = Dimension(
     "sfx",
+    kinds=("audio",),
+    kind_needs=_SFX_WORDS,
     fact_prefixes=("sfx", "sound_effect", "licensed_sfx"),
-    words=("sound effect", "sfx", "whoosh", "efekt", "ses efekt"),
 )
+# No typed fact and no kind of its own: the one dimension that reads the description.
 TRANSITION = Dimension(
     "transition",
     fact_prefixes=("transition",),
@@ -102,11 +105,7 @@ TRANSITION = Dimension(
         "gecis",
     ),
 )
-TITLE_ANIMATION = Dimension(
-    "title_animation",
-    fact_prefixes=("animation", "text_animation"),
-    words=("animat", "typewriter", "animasyon"),
-)
+TITLE_ANIMATION = Dimension("title_animation", fact_prefixes=("animation", "text_animation"))
 
 
 class _Unreadable:
@@ -133,7 +132,23 @@ def _live(ctx: SuggestionContext) -> list[Any] | _Unreadable | None:
         return UNREADABLE
 
 
+def _description_says(req: Any, words: tuple[str, ...]) -> bool:
+    """The creator's description names one of ``words`` (the shared fold; the registered reader)."""
+    description = getattr(req, "description", None)
+    return isinstance(description, str) and has_marker(description, words)
+
+
+def _kind_says(req: Any, dim: Dimension) -> bool:
+    if getattr(req, "kind", None) not in dim.kinds:
+        return False
+    if dim.kind_needs and not _description_says(req, dim.kind_needs):
+        return False
+    return not (dim.kind_not and _description_says(req, dim.kind_not))
+
+
 def _talks_about(req: Any, dim: Dimension) -> bool:
+    if _kind_says(req, dim):
+        return True
     facts = getattr(req, "facts", None)
     facts = facts if isinstance(facts, Mapping) else {}
     for key, value in facts.items():
@@ -143,8 +158,7 @@ def _talks_about(req: Any, dim: Dimension) -> bool:
         wanted = (dim.fact_values or {}).get(key)
         if wanted is not None and str(value).strip().casefold() in wanted:
             return True
-    description = getattr(req, "description", None)
-    return isinstance(description, str) and has_marker(description, dim.words)
+    return bool(dim.words) and _description_says(req, dim.words)
 
 
 def spoke(ctx: SuggestionContext, dim: Dimension) -> bool:

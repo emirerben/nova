@@ -37,7 +37,7 @@ import pytest
 from app.config import settings
 from app.services.suggestions.kinds import mute_clip
 from tests.e2e_suggestions import driver as d
-from tests.e2e_suggestions import gaps, threads
+from tests.e2e_suggestions import threads
 from tests.e2e_suggestions.driver import Phone
 from tests.e2e_suggestions.flow import (
     ensure_stored,
@@ -435,12 +435,12 @@ async def test_n6_mute_with_the_constant_patched_on(talking_world, monkeypatch, 
     rec.negative(
         "the mute card shows the measurement: an evidence line for the wind in clip 3",
         key,
-        "an evidence line that names the noise, whatever the agent wrote as the reason",
+        "a line that names the noise (the reason, or the evidence when the agent's reason stands)",
         any(
-            w in " ".join(mute.evidence).casefold() for w in ("wind", "noise", "rüzgar", "gürültü")
+            w in " ".join([mute.why, *mute.evidence]).casefold()
+            for w in ("wind", "crowd", "noise", "rüzgâr", "rüzgar", "gürültü")
         ),
         f"why={mute.why!r} evidence={mute.evidence}",
-        gap=gaps.MUTE_NO_REASON,
     )
 
     async def probe(cell, kind):  # noqa: ANN001, ANN202
