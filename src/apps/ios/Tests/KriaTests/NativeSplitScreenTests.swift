@@ -1105,7 +1105,7 @@ extension NativeSplitScreenTests {
         XCTAssertEqual(document.encodeSnapshot(), snapshot)
         document.splitScreenSections = [.init(id: "temporary", durationS: 4, panelCount: 2)]
         document.splitScreenSections = []
-        XCTAssertNotEqual(document.sectionSnapshot(.timeline), EditorDocument(snapshot: snapshot).sectionSnapshot(.timeline),
+        XCTAssertNotEqual(document.snapshot(for: .timeline), EditorDocument(snapshot: snapshot).snapshot(for: .timeline),
             "An explicit split clear owns the timeline even when arrays return to their loaded values")
         let encoded = document.encodeSnapshot()
         let sections = encoded["editor_payload"]?.objectValue?["sections"]?.objectValue
