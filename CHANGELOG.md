@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.36.0] - 2026-11-06
+
+### Changed
+- Classify stopped release-command machines in deployment guard (#1978) <!-- release-pr: 1978 -->
+
 ## [0.88.35.0] - 2026-11-06
 
 ### Changed
