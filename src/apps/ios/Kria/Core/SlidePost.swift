@@ -769,11 +769,18 @@ struct SlidePostRenderAcknowledgement {
     }
     private static let renderWaitExhausted = "Kria hasn’t confirmed this render yet. Your edits are saved. Check the post again later; another render hasn’t been requested."
     private static let renderFailed = "Rendering failed. Your saved edits are still here."
+    private struct ReadCooldown {
+        let notBefore: ContinuousClock.Instant
+        let error: Error
+    }
+    private var readCooldowns: [String: ReadCooldown] = [:]
     private let readRetrySleep: (Duration) async throws -> Void
+    private let readNow: () -> ContinuousClock.Instant
     private let defaults: UserDefaults
-    init(defaults: UserDefaults = .standard, readRetrySleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
+    init(defaults: UserDefaults = .standard, readRetrySleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }, readNow: @escaping () -> ContinuousClock.Instant = { ContinuousClock.now }) {
         self.defaults = defaults
         self.readRetrySleep = readRetrySleep
+        self.readNow = readNow
     }
 
     /// Pool assets that can become slides: everything except the pictures used (or being uploaded) as stickers.
@@ -856,6 +863,22 @@ struct SlidePostRenderAcknowledgement {
         }
     }
 
+    private func pruneReadCooldowns(at now: ContinuousClock.Instant) {
+        readCooldowns = readCooldowns.filter { $0.value.notBefore > now }
+    }
+
+    private func recordReadCooldown(_ error: Error, itemID: String) {
+        let now = readNow()
+        pruneReadCooldowns(at: now)
+        guard case let APIError.requestFailed(status, detail) = error,
+              status == 408 || status == 429 || (500...599).contains(status),
+              let seconds = detail.retryAfter, seconds > 0 else { return }
+        // Keep even extreme server hints representable; this ceiling is beyond any session lifetime.
+        let deadline = now.advanced(by: .seconds(min(seconds, Double(Int64.max / 4))))
+        guard readCooldowns[itemID].map({ $0.notBefore >= deadline }) != true else { return }
+        readCooldowns[itemID] = ReadCooldown(notBefore: deadline, error: error)
+    }
+
     /// Only GETs retry. A failed save or generate may already have committed on the server.
     private func readState(api: any KriaAPIClient, itemID: String, isCurrent: () -> Bool = { true }) async throws -> SlidePostState {
         let generation = mutationGeneration
@@ -863,6 +886,11 @@ struct SlidePostRenderAcknowledgement {
         for attempt in 0..<3 {
             try Task.checkCancellation()
             guard generation == mutationGeneration, requestedItem == requestedItemID, isCurrent() else { throw CancellationError() }
+            pruneReadCooldowns(at: readNow())
+            if let cooldown = readCooldowns[itemID] {
+                refreshError = cooldown.error.localizedDescription
+                throw cooldown.error
+            }
             do {
                 let result = try await api.slidePost(itemID: itemID)
                 try Task.checkCancellation()
@@ -872,6 +900,8 @@ struct SlidePostRenderAcknowledgement {
                 refreshError = nil
                 return result
             } catch {
+                // Server pacing applies to future calls even when this read is final, cancelled or superseded.
+                recordReadCooldown(error, itemID: itemID)
                 try Task.checkCancellation()
                 guard generation == mutationGeneration, requestedItem == requestedItemID, isCurrent() else { throw CancellationError() }
                 guard attempt < 2, let delay = Self.readRetryDelay(error, attempt: attempt) else {

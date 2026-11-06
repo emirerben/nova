@@ -1,6 +1,23 @@
 import XCTest
 @testable import Kria
 
+private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var handler: ((URLRequest, SlidePostRetryAfterURLProtocol) -> Void)?
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() { Self.handler?(request, self) }
+    override func stopLoading() {}
+
+    func respond(status: Int, data: Data = Data(), retryAfter: Int? = nil) {
+        var headers = ["Content-Type": "application/json"]
+        if let retryAfter { headers["Retry-After"] = String(retryAfter) }
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: headers)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
 @MainActor final class SlidePostExportTests: XCTestCase {
     private final class StateBox: @unchecked Sendable {
         var value: SlidePostState
@@ -11,7 +28,7 @@ import XCTest
     private var suite = ""
 
     override func setUp() { super.setUp(); suite = "SlidePostExportTests.\(UUID())"; defaults = UserDefaults(suiteName: suite) }
-    override func tearDown() { NativeEditorURLProtocol.handler = nil; defaults.removePersistentDomain(forName: suite); super.tearDown() }
+    override func tearDown() { SlidePostRetryAfterURLProtocol.handler = nil; NativeEditorURLProtocol.handler = nil; defaults.removePersistentDomain(forName: suite); super.tearDown() }
 
     private func state(version: Int = 1) -> SlidePostState {
         let refs = [SlidePostSlide(id: "one", assetID: "a", kind: "image"), SlidePostSlide(id: "two", assetID: "b", kind: "video")]
@@ -780,6 +797,142 @@ import XCTest
         XCTAssertTrue(session.isRendering)
         await session.create(api: api, itemID: itemID)
         XCTAssertEqual(server.calls, ["generate"], "A read rejection cannot authorize repeating an accepted POST")
+    }
+
+    private func retryAfterAPI() -> KriaAPI {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [SlidePostRetryAfterURLProtocol.self]
+        return KriaAPI(baseURL: URL(string: "https://native-editor.test")!, tokenStore: NativeEditorMemoryTokenStore(), session: URLSession(configuration: configuration))
+    }
+
+    func testRetryAfterSurvivesLaterPollsAndDoesNotBlockAnotherItem() async throws {
+        let origin = ContinuousClock.now
+        var now = origin
+        let session = SlidePostSession(defaults: defaults, readRetrySleep: { _ in XCTFail("A long hint ends this bounded attempt without sleeping") }, readNow: { now })
+        let api = retryAfterAPI()
+        let ready = try JSONEncoder().encode(state())
+        let otherID = "22222222-2222-2222-2222-222222222222"
+        let other = try JSONEncoder().encode(SlidePostState(itemID: otherID, title: "Other"))
+        var reads = 0
+        var otherReads = 0
+        SlidePostRetryAfterURLProtocol.handler = { request, transport in
+            Task { @MainActor in
+                if request.url!.path.contains(otherID) {
+                    otherReads += 1
+                    transport.respond(status: 200, data: other)
+                } else {
+                    reads += 1
+                    if reads == 1 { transport.respond(status: 429, retryAfter: 60) }
+                    else { transport.respond(status: 200, data: ready) }
+                }
+            }
+        }
+        await session.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(reads, 1)
+        XCTAssertNotNil(session.error)
+        now = origin.advanced(by: .seconds(3))
+        await session.refresh(api: api, itemID: itemID)
+        now = origin.advanced(by: .seconds(59))
+        await session.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(reads, 1, "Workspace polls cannot bypass the server's deadline")
+        await session.refresh(api: api, itemID: otherID)
+        XCTAssertEqual(otherReads, 1)
+        now = origin.advanced(by: .seconds(60))
+        await session.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(reads, 2)
+        XCTAssertNil(session.error)
+        XCTAssertTrue(session.canExport)
+    }
+
+    func testFinalReadAttemptRetainsRetryAfterForTheNextInvocation() async throws {
+        var now = ContinuousClock.now
+        let session = SlidePostSession(defaults: defaults, readRetrySleep: { now = now.advanced(by: $0) }, readNow: { now })
+        let api = retryAfterAPI()
+        let ready = try JSONEncoder().encode(state())
+        var reads = 0
+        SlidePostRetryAfterURLProtocol.handler = { _, transport in
+            Task { @MainActor in
+                reads += 1
+                if reads < 3 { transport.respond(status: 503) }
+                else if reads == 3 { transport.respond(status: 429, retryAfter: 60) }
+                else { transport.respond(status: 200, data: ready) }
+            }
+        }
+        await session.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(reads, 3)
+        let failedAt = now
+        now = failedAt.advanced(by: .seconds(59))
+        await session.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(reads, 3)
+        now = failedAt.advanced(by: .seconds(60))
+        await session.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(reads, 4)
+        XCTAssertNil(session.error)
+    }
+
+    func testSupersedingASleepingRefreshCannotBypassRetryAfter() async throws {
+        let origin = ContinuousClock.now
+        var now = origin
+        let sleeping = expectation(description: "First refresh reached retry wait")
+        var resume: CheckedContinuation<Void, Never>?
+        let session = SlidePostSession(defaults: defaults, readRetrySleep: { _ in
+            await withCheckedContinuation { resume = $0; sleeping.fulfill() }
+        }, readNow: { now })
+        let api = retryAfterAPI()
+        let ready = try JSONEncoder().encode(state())
+        var reads = 0
+        SlidePostRetryAfterURLProtocol.handler = { _, transport in
+            Task { @MainActor in
+                reads += 1
+                if reads == 1 { transport.respond(status: 429, retryAfter: 10) }
+                else { transport.respond(status: 200, data: ready) }
+            }
+        }
+        let first = Task { await session.refresh(api: api, itemID: itemID) }
+        await fulfillment(of: [sleeping], timeout: 2)
+        now = origin.advanced(by: .seconds(3))
+        await session.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(reads, 1)
+        resume?.resume()
+        await first.value
+        now = origin.advanced(by: .seconds(9))
+        await session.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(reads, 1)
+        now = origin.advanced(by: .seconds(10))
+        await session.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(reads, 2)
+        XCTAssertNil(session.error)
+    }
+
+    func testLateShorterHintCannotShortenAnotherRefreshDeadline() async throws {
+        let origin = ContinuousClock.now
+        var now = origin
+        let firstStarted = expectation(description: "First GET in flight")
+        var firstTransport: SlidePostRetryAfterURLProtocol?
+        let session = SlidePostSession(defaults: defaults, readRetrySleep: { _ in XCTFail("No bounded retry is eligible") }, readNow: { now })
+        let api = retryAfterAPI()
+        let ready = try JSONEncoder().encode(state())
+        var reads = 0
+        SlidePostRetryAfterURLProtocol.handler = { _, transport in
+            Task { @MainActor in
+                reads += 1
+                if reads == 1 { firstTransport = transport; firstStarted.fulfill() }
+                else if reads == 2 { transport.respond(status: 429, retryAfter: 60) }
+                else { transport.respond(status: 200, data: ready) }
+            }
+        }
+        let first = Task { await session.refresh(api: api, itemID: itemID) }
+        await fulfillment(of: [firstStarted], timeout: 2)
+        await session.refresh(api: api, itemID: itemID)
+        firstTransport?.respond(status: 429, retryAfter: 10)
+        await first.value
+        now = origin.advanced(by: .seconds(11))
+        await session.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(reads, 2)
+        now = origin.advanced(by: .seconds(60))
+        await session.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(reads, 3)
+        XCTAssertNil(session.error)
     }
 
     // MARK: Gallery open: a server draft is the baseline
