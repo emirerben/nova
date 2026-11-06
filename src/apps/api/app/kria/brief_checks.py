@@ -354,13 +354,20 @@ class ListLabelFact:
     text: str = ""
     face_collision: bool = False
     # What the label's own row on the video reads (`text_elements` by the receipt's
-    # ``element_id``); None = no such row to read (removed, or an older receipt).
+    # ``element_id``); None = no such row on the video (removed by an edit, or never written),
+    # so a placed label with None is never "met".
     shown_text: str | None = None
     # How many items of a typed "1." list the render found on the take (its own first one
-    # included); None = the rest of the list was never looked for.
+    # included); None = the rest of the list was never looked for. Counted BEFORE placement:
+    # what the video really shows of them is `items_missing` / `items_unaccounted`.
     list_found: int | None = None
     # A spoken item of the list (found after the typed one) could not be kept off a face.
     items_on_face: bool = False
+    # The found items the video does not show (left out: too long, same moment, no time, error,
+    # never heard; or placed but their row is gone from the video), in list order.
+    items_missing: tuple[str, ...] = ()
+    # Found items `list_found` counts that the receipt has no row for (also not shown).
+    items_unaccounted: int = 0
 
 
 @dataclass(frozen=True)
@@ -9380,17 +9387,6 @@ def _list_label_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
     rows = receipt.get("rows") if isinstance(receipt, Mapping) else None
     if not isinstance(rows, list):
         return {}
-    # A spoken item of a list found on the take (its row carries ``list_item``) is not a
-    # requirement of its own: its face is the typed label's (`items_on_face`).
-    on_face = {
-        row["requirement_id"]
-        for row in rows
-        if isinstance(row, Mapping)
-        and isinstance(row.get("requirement_id"), str)
-        and "list_item" in row
-        and row.get("status") == "placed"
-        and row.get("face_collision") is True
-    }
     # The rows the video draws: a label is judged by its own row, never by the receipt's copy
     # of the ask (review of #2116: a label cut short on screen kept its whole text there).
     elements = variant.get("text_elements")
@@ -9401,22 +9397,57 @@ def _list_label_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
         and isinstance(element.get("id"), str)
         and not element.get("removed")
     }
+
+    def _shown(row: Mapping[str, Any]) -> str | None:
+        element_id = row.get("element_id")
+        return drawn.get(element_id) if isinstance(element_id, str) else None
+
+    def _found_count(row: Mapping[str, Any]) -> int | None:
+        value = row.get("list_found")
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    # A spoken item of a list found on the take (its row carries ``list_item``) is not a
+    # requirement of its own: it is the typed label's, which is met only when EVERY found item
+    # is on the video (second review of #2116: `list_found` counts before placement).
+    items: dict[str, list[Mapping[str, Any]]] = {}
+    for row in rows:
+        if (
+            isinstance(row, Mapping)
+            and isinstance(row.get("requirement_id"), str)
+            and "list_item" in row
+        ):
+            items.setdefault(row["requirement_id"], []).append(row)
+
+    def _drawn_item(row: Mapping[str, Any]) -> bool:
+        return row.get("status") == "placed" and _shown(row) is not None
+
+    def _item_number(row: Mapping[str, Any]) -> int:
+        number = row.get("list_item")
+        return number if isinstance(number, int) and not isinstance(number, bool) else 0
+
+    def _fact(row: Mapping[str, Any]) -> ListLabelFact:
+        rid = row["requirement_id"]
+        found_items = sorted(items.get(rid, []), key=_item_number)
+        found = _found_count(row)
+        return ListLabelFact(
+            requirement_id=rid,
+            status=str(row.get("status") or "error"),
+            text=str(row.get("text") or ""),
+            face_collision=row.get("face_collision") is True,
+            shown_text=_shown(row),
+            list_found=found,
+            items_on_face=any(
+                _drawn_item(item) and item.get("face_collision") is True for item in found_items
+            ),
+            items_missing=tuple(
+                str(item.get("text") or "") for item in found_items if not _drawn_item(item)
+            ),
+            items_unaccounted=max(0, found - 1 - len(found_items)) if found is not None else 0,
+        )
+
     return {
         "list_labels": tuple(
-            ListLabelFact(
-                requirement_id=row["requirement_id"],
-                status=str(row.get("status") or "error"),
-                text=str(row.get("text") or ""),
-                face_collision=row.get("face_collision") is True,
-                shown_text=drawn.get(row["element_id"])
-                if isinstance(row.get("element_id"), str)
-                else None,
-                list_found=row["list_found"]
-                if isinstance(row.get("list_found"), int)
-                and not isinstance(row["list_found"], bool)
-                else None,
-                items_on_face=row["requirement_id"] in on_face,
-            )
+            _fact(row)
             for row in rows
             if isinstance(row, Mapping)
             and isinstance(row.get("requirement_id"), str)
@@ -9521,6 +9552,20 @@ def _with_list_label_face(
             say(
                 en="I showed this one, but couldn't find the rest of your list in the take",
                 tr="Bunu gösterdim ama listenin geri kalanını çekiminde bulamadım",
+            ),
+        )
+    missing = len(fact.items_missing) + fact.items_unaccounted
+    if missing:
+        # Second review of #2116: a found item the video does not show (whatever the reason)
+        # keeps the list from "met", and every one of them is named.
+        named = ", ".join(f"“{text}”" for text in fact.items_missing if text)
+        tail = f": {named}" if named else ""
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"I showed this one, but couldn't show {missing} more from your list{tail}",
+                tr=f"Bunu gösterdim ama listenden {missing} maddeyi daha gösteremedim{tail}",
             ),
         )
     return base
@@ -11208,6 +11253,16 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
     label = _list_label_fact(facts, req) if facts.list_labels is not None else None
     if label is not None and label.status != "placed":
         return _list_label_miss(req, label)
+    if label is not None and label.shown_text is None:
+        # Second review of #2116: a placed label is judged only by its own row. With that row
+        # gone (removed by an edit, or never written) no other text or caption with the same
+        # words stands in for it.
+        text = f"“{label.text or req.literal or ''}”"
+        return _receipt(
+            req,
+            "partial",
+            say(en=f"{text} isn't on the video", tr=f"{text} videoda yok"),
+        )
     if (
         label is not None
         and label.shown_text is not None

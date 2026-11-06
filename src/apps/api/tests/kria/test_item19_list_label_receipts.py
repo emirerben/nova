@@ -66,12 +66,35 @@ def _draft(req: BriefRequirement, *, lang: str | None = None):
     return receipt
 
 
-def _after(req: BriefRequirement, rows: list[dict], *, texts=(), lang: str | None = None):
+def _element_id(row: dict) -> str:
+    # The worker's ids: `list-label-<requirement>` for the typed label, `-<n>` per found item.
+    item = f"-{row['list_item']}" if "list_item" in row else ""
+    return f"list-label-{row['requirement_id']}{item}"
+
+
+def _after(
+    req: BriefRequirement,
+    rows: list[dict],
+    *,
+    texts=(),
+    lang: str | None = None,
+    removed: frozenset[str] = frozenset(),
+):
+    """After a render whose receipt is ``rows``. Every placed row is drawn on the video under
+    the element id the worker gives it (``removed`` ids are flagged removed, as an edit does)."""
+    rows = [
+        {**r, "element_id": r.get("element_id", _element_id(r))} if r["status"] == "placed" else r
+        for r in rows
+    ]
     variant = {
         "resolved_archetype": "subtitled",
         "edit_format": "subtitled",
         "text_elements": [
-            {"id": f"list-label-{r['requirement_id']}", "text": r["text"]}
+            {
+                "id": r["element_id"],
+                "text": r["text"],
+                **({"removed": True} if r["element_id"] in removed else {}),
+            }
             for r in rows
             if r["status"] == "placed"
         ]
@@ -261,13 +284,26 @@ LONG = (
 )
 
 
-def _drawn(req: BriefRequirement, drawn: str | None, *, status="placed", texts=(), lang=None):
-    """After a render whose list-label row reads ``drawn`` (None: no such row on the video);
-    the placement receipt keeps the asked text, as the worker writes it."""
+def _drawn(
+    req: BriefRequirement,
+    drawn: str | None,
+    *,
+    status="placed",
+    texts=(),
+    lang=None,
+    removed: bool = False,
+):
+    """After a render whose list-label row reads ``drawn`` (None: no such row on the video;
+    ``removed``: the row is there but flagged removed, as an edit leaves it); the placement
+    receipt keeps the asked text, as the worker writes it."""
     row = _row(status, text=req.literal, item=req.literal[3:], face_collision=False)
     if status == "placed":
         row["element_id"] = f"list-label-{req.id}"
-    elements = [{"id": f"list-label-{req.id}", "text": drawn}] if drawn is not None else []
+    elements = (
+        [{"id": f"list-label-{req.id}", "text": drawn, **({"removed": True} if removed else {})}]
+        if drawn is not None
+        else []
+    )
     variant = {
         "resolved_archetype": "subtitled",
         "edit_format": "subtitled",
@@ -319,3 +355,82 @@ def test_after_render_a_label_too_long_to_fit_says_so():
         "partial",
         "Bu etiket ekrana tam sığmayacak kadar uzun; kesmek yerine hiç koymadım",
     )
+
+
+# --- second review of #2116: every found item and the label's own row are checked ------------
+#
+# Ways this receipt could lie (each is a test below):
+# R1 the typed label is drawn, a found item is left out (too long, same moment, no time, error,
+#    never heard) and the list is still "met";
+# R2 several found items are left out and the reason names only one of them;
+# R3 a found item's receipt says placed but its row is gone from the video (removed by an edit);
+# R4 the receipt counts more found items than it has rows for, and the missing rows are ignored;
+# R5 the typed label's own row is missing or removed and other text with the same words (or the
+#    captions) makes it "met";
+# R6 the controls: a whole list drawn, and a label drawn as typed, are still "met".
+
+LIST_REQ = _req("l1", "1. which company it sends data to?")
+
+
+@pytest.mark.parametrize("status", ["too_long", "same_moment", "no_time", "error", "not_heard"])
+def test_r1_a_found_item_left_out_makes_the_list_partial(status):
+    rows = [_typed(face_collision=False, list_found=3), _item(2, status=status), _item(3)]
+    receipt = _after(LIST_REQ, rows)
+    assert (receipt.status, receipt.reason) == (
+        "partial",
+        "I showed this one, but couldn't show 1 more from your list: “2. which x?”",
+    )
+
+
+def test_r2_every_left_out_item_is_named():
+    rows = [
+        _typed(face_collision=False, list_found=4),
+        _item(2, status="too_long"),
+        _item(3),
+        _item(4, status="same_moment"),
+    ]
+    en = _after(LIST_REQ, rows)
+    assert (en.status, en.reason) == (
+        "partial",
+        "I showed this one, but couldn't show 2 more from your list: “2. which x?”, “4. which x?”",
+    )
+    tr = _after(LIST_REQ, rows, lang="tr")
+    assert (tr.status, tr.reason) == (
+        "partial",
+        "Bunu gösterdim ama listenden 2 maddeyi daha gösteremedim: “2. which x?”, “4. which x?”",
+    )
+
+
+def test_r3_a_found_item_removed_from_the_video_counts_as_left_out():
+    rows = [_typed(face_collision=False, list_found=3), _item(2), _item(3)]
+    receipt = _after(LIST_REQ, rows, removed=frozenset({"list-label-l1-3"}))
+    assert (receipt.status, receipt.reason) == (
+        "partial",
+        "I showed this one, but couldn't show 1 more from your list: “3. which x?”",
+    )
+
+
+def test_r4_found_items_without_a_receipt_row_are_still_left_out():
+    rows = [_typed(face_collision=False, list_found=4), _item(2)]
+    receipt = _after(LIST_REQ, rows)
+    assert (receipt.status, receipt.reason) == (
+        "partial",
+        "I showed this one, but couldn't show 2 more from your list",
+    )
+
+
+@pytest.mark.parametrize("removed", [False, True])
+def test_r5_a_label_whose_own_row_is_gone_is_never_met(removed):
+    req = _req("l1", LONG)
+    drawn = LONG if removed else None
+    # Other text (or the captions) holding the same words does not stand in for the label.
+    receipt = _drawn(req, drawn, texts=(req.literal,), removed=removed)
+    assert (receipt.status, receipt.reason) == ("partial", f"“{LONG}” isn't on the video")
+    turkish = _drawn(req, drawn, texts=(req.literal,), removed=removed, lang="tr")
+    assert (turkish.status, turkish.reason) == ("partial", f"“{LONG}” videoda yok")
+
+
+def test_r6_a_whole_list_and_a_whole_label_are_still_met():
+    rows = [_typed(face_collision=False, list_found=3), _item(2), _item(3)]
+    assert _after(LIST_REQ, rows).status == "met"
+    assert _drawn(_req("l1", LONG), LONG, texts=(LONG,)).status == "met"
