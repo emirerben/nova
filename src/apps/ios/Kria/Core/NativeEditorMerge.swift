@@ -85,15 +85,12 @@ enum NativeEditorMerge {
             let raw = document.encodeSnapshot()
             let payload = raw["editor_payload"]?.objectValue
             var sections = payload?["sections"]?.objectValue ?? payload ?? raw
-            // A fallback-only user_timeline and a canonical editor payload describe
-            // the same authored timeline. Compare their typed wire values, not their envelopes.
-            if document.splitScreenIsValid,
-               let normalized = document.mergeValidationSnapshot(preservingOpaqueFrom: document) {
-                let canonicalPayload = normalized["editor_payload"]?.objectValue
-                let canonicalSections = canonicalPayload?["sections"]?.objectValue ?? canonicalPayload ?? normalized
-                if sections["timeline_slots"] != nil || raw["user_timeline"]?.objectValue?["slots"] != nil {
-                    sections["timeline_slots"] = canonicalSections["timeline_slots"] ?? sections["timeline_slots"]
-                        ?? raw["user_timeline"]?.objectValue?["slots"]
+            // Promote fallback rows without expanding defaults into untouched raw fields.
+            // Otherwise adopting a clean remote timeline looks like a new local edit.
+            if document.splitScreenIsValid {
+                if sections["timeline_slots"] == nil,
+                   let fallbackRows = raw["user_timeline"]?.objectValue?["slots"] {
+                    sections["timeline_slots"] = fallbackRows
                 }
                 if sections["split_screen_sections"] != nil
                     || raw["user_timeline"]?.objectValue?["split_screen_sections"] != nil
