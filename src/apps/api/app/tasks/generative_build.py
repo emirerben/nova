@@ -7453,6 +7453,11 @@ def _run_phone_unified_montage_job(
     # layout, the fast montage the route always made is composed instead and the note says why.
     plan = _composed_plan(plan, assignments, all_candidates, compose)
     record = plan.record()
+    from app.kria.brief_checks import FINAL_SOURCE_CUTS, montage_final_source_cuts  # noqa: PLC0415
+
+    # Review of #2129: the plan's FINAL cuts (after freezes, speeds and slides), so keep-whole
+    # is judged on what plays.
+    record[FINAL_SOURCE_CUTS] = montage_final_source_cuts(plan)
     from app.pipeline.story_direction import fallback_note, says_fallback  # noqa: PLC0415
 
     if (requested := (strategy or {}).get("direction")) and says_fallback(
@@ -8280,6 +8285,48 @@ def _strategy_background_request(all_candidates: dict) -> dict[str, Any] | None:
     return request
 
 
+def _unshown_background_entries(
+    entries: Sequence[Mapping[str, Any]],
+    background: Any,
+    lane_drops: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Qendresa case 5: the strategy's background entries the COMPILED lane never shows.
+
+    ``entries`` are `_resolve_strategy_background`'s ``entries_out`` rows. A recording counts as
+    shown when its pool row id is on any compiled window (two entries naming one photo are one
+    photo), or, with no windows at all, when it is the fill. A ``phrase_not_heard`` note alone
+    is not "never shown": the cadence fallback still gives such an entry a window. Each row is
+    ``{"window": i}`` plus ``phrase`` (the entry's spoken phrase) and ``reason`` (its drop note)
+    when known.
+    """
+    windows = tuple(getattr(background, "windows", None) or ())
+    shown = {str(window.media_id) for window in windows}
+    fill = getattr(background, "media_id", None)
+    if not windows and fill:
+        shown.add(str(fill))
+    reasons: dict[int, str] = {}
+    for note in lane_drops:
+        window = note.get("window") if isinstance(note, Mapping) else None
+        if (
+            isinstance(window, int)
+            and not isinstance(window, bool)
+            and note.get("lane") == "background"
+            and "part" not in note
+        ):
+            reasons.setdefault(window, str(note.get("reason") or "")[:120])
+    out: list[dict[str, Any]] = []
+    for entry in entries:
+        if entry.get("media_id") and str(entry["media_id"]) in shown:
+            continue
+        row: dict[str, Any] = {"window": entry["window"]}
+        if entry.get("phrase"):
+            row["phrase"] = entry["phrase"]
+        if reasons.get(entry["window"]):
+            row["reason"] = reasons[entry["window"]]
+        out.append(row)
+    return out
+
+
 def _resolve_strategy_background(
     request: dict[str, Any],
     *,
@@ -8291,6 +8338,7 @@ def _resolve_strategy_background(
     creator_client_protocol: int | None = None,
     title_end_s: float | None = None,
     layout_out: dict[str, Any] | None = None,
+    entries_out: list[dict[str, Any]] | None = None,
 ) -> tuple[Any, frozenset[str]]:
     """The ``SubtitledBackground`` lane the approved strategy names, and the pool spellings
     that stay out of every mid-talk placement (KRI-1117).
@@ -8325,6 +8373,11 @@ def _resolve_strategy_background(
     against all the names in the list; ``layout_out["entry_media"]`` maps an entry index to the
     pool row id its windows carry. A phone gate that strips the windows clears all three: no
     recording is shown, so none is followed. ``None``: untouched.
+
+    Qendresa case 5: given ``entries_out``, every sequence entry is appended as ``{"window": i,
+    "phrase": <spoken_phrase or None>, "media_id": <pool row id, or None when it did not
+    resolve>}`` so the lane receipt can name an asked recording the compiled windows never show
+    (`_unshown_background_entries`).
     """
     import app.services.phone_overlay_grounding as pool_mod  # noqa: PLC0415
     from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
@@ -8379,6 +8432,15 @@ def _resolve_strategy_background(
         if row is not None:
             entry_rows.append((index, entry, row))
             reserved = reserved | _pool_media_keys(str(row["id"]))
+        if entries_out is not None:
+            phrase = str(entry.get("spoken_phrase") or "").strip()
+            entries_out.append(
+                {
+                    "window": index,
+                    "phrase": phrase or None,
+                    "media_id": str(row["id"]) if row is not None else None,
+                }
+            )
 
     fill_row: dict | None = None
     fill_start = 0.0
@@ -10807,6 +10869,8 @@ def _run_phone_subtitled_job(
                 # becomes of the lane, the photo stays out of every mid-talk card below.
                 strategy_background_lane: Any = None
                 background_reserved: frozenset[str] = frozenset()
+                # Qendresa case 5: every asked recording, so the receipt names one never shown.
+                background_entries: list[dict[str, Any]] = []
                 background_request = _strategy_background_request(all_candidates)
                 if background_request is not None:
                     if ending_lane_only:
@@ -10841,6 +10905,7 @@ def _run_phone_subtitled_job(
                                     else (3.0 if talking_title_text else None)
                                 ),
                                 layout_out=list_label_layout if list_label_asks else None,
+                                entries_out=background_entries,
                             )
                         )
 
@@ -11671,6 +11736,11 @@ def _run_phone_subtitled_job(
                             lane_receipt["background"]["media"] = len(
                                 {w.media_id for w in _bg.windows}
                             )
+                        # Qendresa case 5: an asked recording the compiled windows never show
+                        # (its phrase was never heard on the word), so the review names it.
+                        _unshown = _unshown_background_entries(background_entries, _bg, lane_drops)
+                        if _unshown:
+                            lane_receipt["background"]["unshown"] = _unshown
                         # Qendresa item 16: how long the finished video really is full screen
                         # from 0 s, read off the COMPILED recipe (a speech cut is accounted for).
                         _opening_end = next(
