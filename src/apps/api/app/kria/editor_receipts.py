@@ -21,12 +21,14 @@ font change AND a colour change to be fully done.
 
 from __future__ import annotations
 
+import functools
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from app.agents._schemas.text_animation_phases import TEXT_ANIMATION_VOCAB, edge_alias_pattern
+from app.config import settings
 from app.kria.brief import BriefRequirement
 from app.kria.brief_checks import MAX_REPLY_CHARS, TextStyleRow, is_judged
 from app.kria.contracts import RequirementReceipt
@@ -110,10 +112,6 @@ _REGEX_CUES: dict[str, re.Pattern[str]] = {
     "spacing": re.compile(r"\b(spacing|letter ?spac\w*|line ?spac\w*|aralik\w*)\b"),
     "shadow": re.compile(r"\b(shadows?|golge\w*)\b"),
     "outline": re.compile(r"\b(outline|stroke|kontur\w*)\b"),
-    # Turkish softens a final k before a vowel (muzik -> muzigi, klip -> klibi).
-    "music": re.compile(r"\b(music|song|track|muzi[kg]\w*|sarki\w*)\b"),
-    # "ses efektleri" is Turkish for sound effects; on its own "ses" is the volume.
-    "volume": re.compile(r"\b(volume|louder|quieter|softer|mute\w*|audio|ses(?! efekt)\w*)\b"),
     "sfx": re.compile(r"\b(sound effects?|sfx|whoosh\w*|efekt\w*)\b"),
     "camera": re.compile(r"\b(zoom\w*|shake|camera effects?|kamera\w*)\b"),
     "transition": re.compile(r"\b(transitions?|crossfade\w*|dissolve|gecis\w*)\b"),
@@ -127,7 +125,47 @@ _REGEX_CUES: dict[str, re.Pattern[str]] = {
         r"|(?:ekranda|daha uzun|daha kisa) (?:\w+ ){0,2}kal(?:sin|sinlar|acak|ir))\b"
     ),
 }
-_CLIP_NOUN = re.compile(r"\b(clips?|shots?|videos?|footage|kli[pb]\w*|cekim\w*)\b")
+
+
+@dataclass(frozen=True)
+class _TurkishForms:
+    """The patterns whose Turkish forms differ between the receipts every creator has always had
+    and the ones the suggestion cards' prompts need (``KRIA_SUGGESTION_PINNED_TAPS_ENABLED``).
+
+    The cards say "3. klibin sesini kapat" and "2. ve 3. kliplerden daha iyisini tut": Turkish
+    softens a final k before a vowel (muzik -> muzigi, klip -> klibi), counts before the noun, and
+    "ses efektleri" is sound effects, not the volume. ``soft`` False is the pre-card behaviour byte
+    for byte (a test freezes it), so a creator without the cards gets the receipts they always did.
+    """
+
+    music: re.Pattern[str]
+    volume: re.Pattern[str]
+    clip_noun: re.Pattern[str]
+    ordinal: re.Pattern[str]
+
+
+@functools.lru_cache(maxsize=2)
+def _turkish_forms(soft: bool) -> _TurkishForms:
+    stem = "muzi[kg]" if soft else "muzik"
+    ses = "ses(?! efekt)" if soft else "ses"
+    clip = "kli[pb]" if soft else "klip"
+    counted = r"|\b(\d+) (?:kli[pb]|cekim)\w*" if soft else ""
+    return _TurkishForms(
+        music=re.compile(rf"\b(music|song|track|{stem}\w*|sarki\w*)\b"),
+        volume=re.compile(rf"\b(volume|louder|quieter|softer|mute\w*|audio|{ses}\w*)\b"),
+        clip_noun=re.compile(rf"\b(clips?|shots?|videos?|footage|{clip}\w*|cekim\w*)\b"),
+        ordinal=re.compile(
+            r"\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|last|1st|2nd|3rd"
+            r"|ilk|ikinci|ucuncu|dorduncu|son)\b|\b(\d+)(?:st|nd|rd|th)\b"
+            r"|\b(?:clip|shot|video) (?:number )?(\d+)\b" + counted
+        ),
+    )
+
+
+def _forms() -> _TurkishForms:
+    return _turkish_forms(bool(settings.kria_suggestion_pinned_taps_enabled))
+
+
 _TEXT_NOUN = re.compile(
     r"\b(texts?|titles?|labels?|captions?|words?|yazi\w*|baslik\w*|etiket\w*)\b"
 )
@@ -220,12 +258,6 @@ _ORDINALS = {
     "dorduncu": 4,
     "son": -1,
 }
-_ORDINAL_RE = re.compile(
-    r"\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|last|1st|2nd|3rd"
-    r"|ilk|ikinci|ucuncu|dorduncu|son)\b|\b(\d+)(?:st|nd|rd|th)\b"
-    r"|\b(?:clip|shot|video) (?:number )?(\d+)\b"
-    r"|\b(\d+) (?:kli[pb]|cekim)\w*"  # Turkish counts before the noun: "2. klibi" -> "2 klibi"
-)
 _VALUE_FIELDS = frozenset({"font_family", "color", "entrance", "alignment", "text_case"})
 # Fields where "not in the diff" means "not done" (a row that did not change did not get
 # smaller), so "make all of them smaller" must cover every text.
@@ -290,7 +322,16 @@ def _fact_cues(req: BriefRequirement) -> set[str]:
 
 
 def _named_cues(req: BriefRequirement, text: str) -> set[str]:
-    names = {name for name, pattern in _REGEX_CUES.items() if pattern.search(text)}
+    forms = _forms()
+    names = {
+        name
+        for name, pattern in (
+            *_REGEX_CUES.items(),
+            ("music", forms.music),
+            ("volume", forms.volume),
+        )
+        if pattern.search(text)
+    }
     if "size" in names and re.search(r"(buyuk|kucuk) harf", text):
         # "buyuk harf" is a case ask; a bare "big"/"small" next to it is not a size ask.
         if not re.search(r"\b(size|sizes|bigger|larger|smaller|boyut\w*)\b", text):
@@ -305,7 +346,7 @@ def _named_cues(req: BriefRequirement, text: str) -> set[str]:
         names.add("font")
     if _ANIMATION.search(text) and not re.search(r"\b(transitions?|between|gecis\w*)\b", text):
         names.add("animation")
-    clip_only = bool(_CLIP_NOUN.search(text)) and not _TEXT_NOUN.search(text)
+    clip_only = bool(forms.clip_noun.search(text)) and not _TEXT_NOUN.search(text)
     if _POSITION_VERB.search(text) and not clip_only:
         names.add("position")
     if _SPEED.search(text) and not re.search(r"\b(animation|exit|entrance|animasyon\w*)\b", text):
@@ -351,11 +392,13 @@ def _size_direction(text: str) -> int | None:
 
 
 def _ordinal(text: str) -> int | None:
-    if not _CLIP_NOUN.search(text):
+    forms = _forms()
+    if not forms.clip_noun.search(text):
         return None
     found: set[int] = set()
-    for match in _ORDINAL_RE.finditer(text):
-        word, suffixed, number, counted = match.groups()
+    for match in forms.ordinal.finditer(text):
+        word, suffixed, number, *rest = match.groups()
+        counted = rest[0] if rest else None
         if word:
             found.add(_ORDINALS[word])
         elif suffixed:
@@ -399,7 +442,7 @@ def ask_shape(req: BriefRequirement, rows: Sequence[TextStyleRow], live_text: in
         if "position" in named
         else frozenset()
     )
-    clip_only = bool(_CLIP_NOUN.search(text)) and not _TEXT_NOUN.search(text)
+    clip_only = bool(_forms().clip_noun.search(text)) and not _TEXT_NOUN.search(text)
     scope_clip = req.scope.split(":", 1)[1].casefold() if req.scope.startswith("clip:") else ""
     return AskShape(
         groups=tuple(groups),

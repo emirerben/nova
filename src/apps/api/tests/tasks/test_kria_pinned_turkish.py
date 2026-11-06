@@ -30,6 +30,7 @@ from __future__ import annotations
 import pytest
 import pytest_asyncio
 
+from app.config import settings
 from app.database import engine as async_engine
 from app.database import sync_session
 from tests.tasks import kria_pinned_kinds_harness as k
@@ -123,11 +124,12 @@ async def test_a_duplicates_tap_is_done_and_checked_in_both_languages(world, mon
     )
 
 
-def test_a_duplicates_removal_of_another_clip_is_not_done_in_turkish():
+def test_a_duplicates_removal_of_another_clip_is_not_done_in_turkish(monkeypatch):
     """T5, at the binder: ``2. klibi kaldır`` is held to clip 2, so removing clip 1 is not Done.
 
     The English ask has always been held to its clip (``Remove clip 2``); the Turkish one found no
-    ordinal at all and accepted any removal."""
+    ordinal at all and accepted any removal. The Turkish forms are the cards' (pinned taps on)."""
+    monkeypatch.setattr(settings, "kria_suggestion_pinned_taps_enabled", True)
     from app.kria.brief import BriefRequirement
     from app.kria.editor_receipts import bind_editor_receipts
     from app.services.kria_editor_ops_diff import DiffEntry, DiffTarget, EditorDiff
@@ -147,9 +149,11 @@ def test_a_duplicates_removal_of_another_clip_is_not_done_in_turkish():
     assert verdicts[("tr", 1)] != "met", "so is Turkish"
 
 
-def test_an_ask_that_names_the_volume_is_still_held_to_a_level_change():
+def test_an_ask_that_names_the_volume_is_still_held_to_a_level_change(monkeypatch):
     """T4, at the binder: ``Ses efektleri ekle`` is a sound-effect ask, but ``Müziğin sesini kıs``
-    names the volume, so a sound effect alone is not Done for it."""
+    names the volume, so a sound effect alone is not Done for it. The Turkish forms are the cards'
+    (pinned taps on)."""
+    monkeypatch.setattr(settings, "kria_suggestion_pinned_taps_enabled", True)
     from app.kria.brief import BriefRequirement
     from app.kria.editor_receipts import ask_shape
 

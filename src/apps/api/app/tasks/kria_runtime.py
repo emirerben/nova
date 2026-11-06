@@ -1377,7 +1377,15 @@ def _label_text_unresolved(unresolved: str, brief: Any) -> LabelTextReply | None
     return None
 
 
-def _creative_copy_problem_sync(db, thread_id, media, *, strategy=None, resolution=None):  # noqa: ANN001, ANN202
+def _creative_copy_problem_sync(
+    db,  # noqa: ANN001
+    thread_id,  # noqa: ANN001
+    media,  # noqa: ANN001
+    *,
+    strategy=None,  # noqa: ANN001
+    resolution=None,  # noqa: ANN001
+    pinned_ops=None,  # noqa: ANN001
+):  # noqa: ANN202
     rows = db.execute(
         select(
             CreationThreadEvent.role,
@@ -1396,6 +1404,7 @@ def _creative_copy_problem_sync(db, thread_id, media, *, strategy=None, resoluti
         + [("assistant", {"creative_copy_resolution": resolution})],
         media,
         strategy=strategy,
+        pinned_ops=pinned_ops,
     )
 
 
@@ -1968,6 +1977,13 @@ def _complete_draft_turn(
             _copy_media(item),
             strategy=document.strategy if document is not None else None,
             resolution=planned.creative_copy_resolution,
+            # A tapped card's editor ops: the gate reads whether they touch the title lane.
+            pinned_ops=(
+                [str(op.get("op") or "") for op in arguments.operations]
+                if planned.suggestion_pin is not None
+                and apply_intent.tool_name == "draft.apply_editor_ops"
+                else None
+            ),
         )
         if copy_problem:
             _refuse_repair_reply(planned)

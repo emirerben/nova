@@ -138,10 +138,11 @@ async def test_r1c_a_write_skipped_under_the_thread_lock_is_stored_by_the_next_r
     finally:
         await holder.rollback()
         await holder.close()
-    assert locked.suggestions, "a locked thread still serves the cards"
-    assert not stored_ids(phone, locked.set_id), "...but the write was skipped, nothing is stored"
+    assert locked.chips and not locked.suggestions, "a locked thread serves the chips, no card"
+    assert not stored_ids(phone, locked.set_id), "...because the write was skipped"
 
     again = await phone.get()
+    assert again.suggestions, "the next read stores the cards and serves them"
     assert again.set_id == locked.set_id
     assert stored_ids(phone, again.set_id) == [c.id for c in again.suggestions]
     tap = await phone.tap(card_of(again, "captions"), again)

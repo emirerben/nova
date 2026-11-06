@@ -176,6 +176,10 @@ INPUT_KINDS = ("hook", "mute_clip", "filler_words", "duplicates")
 # only the variant's next revision while its head draft IS the plan (``pinned.restate_base``), and
 # only while the saved video is one the agent has read (``pinned.save_unread``).
 RESTATING_KINDS = frozenset({"mute_clip", "filler_words"})
+# The cards whose tap writes the on-screen title (a ``copy_decision`` action: one ``set_title`` op).
+# Every other editor-ops card runs only ops that leave the title lane alone, so the consent gate
+# reads its ops, not the mere existence of a title decision (``creative_copy_gate``).
+TITLE_LANE_KINDS = frozenset({"hook"})
 BRIEF_KEY = "brief"  # kind_inputs: the latest CreativeBrief (None = the thread has none)
 
 
@@ -590,7 +594,9 @@ async def serve_suggestion_set(
     if editor_triggers_on():
         served = _without_suppressed(served, thread)
     else:
-        served.ring_has_cards = _ring_has_cards(served.out.set_id, getattr(thread, "state", None))
+        served.ring_has_cards = _ring_has_cards(
+            served.out.set_id, getattr(thread, "state", None), _shown_ids(served)
+        )
     await _prepare_cards(served)
     return served
 
@@ -633,15 +639,31 @@ async def _copy_gate_dead(
     """
     from app.kria import planner  # noqa: PLC0415
     from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
-    from app.services.creative_copy_gate import creative_copy_problem  # noqa: PLC0415
+    from app.services.creative_copy_gate import (  # noqa: PLC0415
+        TITLE_NEUTRAL_OPS,
+        creative_copy_problem,
+    )
     from app.services.suggestions import pinned  # noqa: PLC0415
 
     events = await planner._load_thread_events(db, thread.id, release=False)
     media = snapshot_media(item)
     dead: dict[str, str] = {}
     editor_ops = kinds - RESTATING_KINDS
-    if editor_ops and creative_copy_problem(events, media, strategy=None) is not None:
-        dead.update(dict.fromkeys(editor_ops, "copy_gate"))
+    # A card that writes the title is gated under any decision; one that leaves it alone (every
+    # op it can run is on the gate's allow-list, which the tap enforces) only under an open
+    # discussion. The commit asks the same function with the op names of the draft it carries.
+    titled = editor_ops & TITLE_LANE_KINDS
+    neutral = editor_ops - TITLE_LANE_KINDS
+    if titled and creative_copy_problem(events, media, strategy=None) is not None:
+        dead.update(dict.fromkeys(titled, "copy_gate"))
+    if (
+        neutral
+        and creative_copy_problem(
+            events, media, strategy=None, pinned_ops=sorted(TITLE_NEUTRAL_OPS)
+        )
+        is not None
+    ):
+        dead.update(dict.fromkeys(neutral, "copy_gate"))
     restating = kinds & RESTATING_KINDS
     if restating:
         base = await pinned.restate_base(db, thread_id=thread.id, ctx=ctx)
@@ -724,6 +746,112 @@ async def _restate_held(
     return "requirements_not_ready" if unmet else None
 
 
+async def _filler_unoffered(db: Any, item: Any, ctx: SuggestionContext) -> str | None:
+    """Why the filler card's evidence no longer supports it, or None when it still does.
+
+    The kind's own judge (``filler_words.unoffered_reason``) over the evidence as it is now: the
+    engine and the capability levers it rides on, the creator's decision on the analysis, the
+    plan item's setting, the source-policy fingerprint, the analysis status. This GET's context
+    already read it (``with_transcripts``); a context that did not is read here. What the frozen
+    set was proven on is not asked: the tap re-reads it and refuses on any change.
+
+    This is the evidence's freshness. It is not part of the set digest on purpose: the evidence is
+    only read while the kind's own switch is on, so a digest that followed it would make pulling
+    that switch a new set (a model run and a pending screen) instead of the instant strip of the
+    same frozen set.
+    """
+    from app.services.suggestions.kinds import filler_words  # noqa: PLC0415
+
+    found = (
+        ctx.kind_inputs.get(filler_words.INPUTS_KEY)
+        if isinstance(ctx.kind_inputs, Mapping)
+        else None
+    )
+    evidence = (
+        found if isinstance(found, filler_words.FillerEvidence) else await filler_evidence(db, item)
+    )
+    return filler_words.unoffered_reason(evidence)
+
+
+async def _mark_needed(db: Any, thread: Any, ctx: SuggestionContext, item: Any) -> bool:
+    """Would the tap's commit ask "Mark the plate" (KRI-901, ``mark_needed``) instead of staging?
+
+    A restating tap requests render approval, so ``_protected_region_gate_sync`` runs on it: when
+    the app shows the mark card, the draft renders on the phone Talking writer and a live
+    ``keep_text_off`` object has no current mark, the tap writes nothing, asks for the mark and
+    the refusal hides the card for good. The same ``protected_targets`` functions answer here, over
+    the same brief, the same marks (the creator's own events), the same clips and the same plan. The
+    app build is the GET's own (``ctx.client_protocol``): the phone that reads the card taps it.
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.kria.brief import load_latest_brief  # noqa: PLC0415
+    from app.kria.protected_targets import (  # noqa: PLC0415
+        clip_generations,
+        fold_protected_regions,
+        marks_route,
+        missing_object_marks,
+        rendered_speaker_media_id,
+        speaker_candidates,
+    )
+    from app.models import CreationThreadEvent, Job  # noqa: PLC0415
+    from app.services.suggestions import pinned  # noqa: PLC0415
+
+    creator_id = getattr(thread, "creator_id", None)
+    if not settings.brief_binding_for(creator_id):
+        return False
+    protocol = ctx.client_protocol
+    client_marks = (
+        protocol is not None and protocol >= settings.protected_region_mark_min_client_protocol
+    )
+    base = await pinned.restate_base(db, thread_id=thread.id, ctx=ctx)
+    strategy = base.strategy
+    if strategy is None or not marks_route(
+        client_marks=client_marks,
+        creator_id=creator_id,
+        strategy=strategy,
+        edit_format=getattr(item, "edit_format", None) or strategy.get("edit_format"),
+        clip_paths=getattr(item, "clip_gcs_paths", None) or (),
+        voiceover_path=getattr(item, "voiceover_gcs_path", None),
+    ):
+        return False
+    brief = await load_latest_brief(db, thread.id)
+    rows = (
+        await db.execute(
+            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            .where(CreationThreadEvent.thread_id == thread.id, CreationThreadEvent.role == "user")
+            .order_by(CreationThreadEvent.sequence)
+        )
+    ).all()
+    assignments = getattr(item, "clip_assignments", None) or []
+    job_id = getattr(item, "current_job_id", None)
+    job = await db.get(Job, job_id) if job_id else None
+    variants = ((getattr(job, "assembly_plan", None) or {}).get("variants")) or []
+    return bool(
+        missing_object_marks(
+            brief,
+            fold_protected_regions([(role, payload) for role, payload in rows]),
+            clip_generations(assignments),
+            render_clips=speaker_candidates(
+                assignments, rendered_speaker=rendered_speaker_media_id(variants)
+            ),
+        )
+    )
+
+
+async def _restate_refused(
+    db: Any, thread: Any, ctx: SuggestionContext, item: Any, kind: str
+) -> str | None:
+    """Refusals of a restating tap that neither the plan nor approval readiness explain."""
+    if kind == "filler_words":
+        reason = await _filler_unoffered(db, item, ctx)
+        if reason is not None:
+            return f"filler:{reason}"
+    if await _mark_needed(db, thread, ctx, item):
+        return "mark_needed"
+    return None
+
+
 async def dead_card_kinds(
     db: Any, thread: Any, ctx: SuggestionContext, kinds: frozenset[str]
 ) -> dict[str, str]:
@@ -753,6 +881,8 @@ async def dead_card_kinds(
     for kind in sorted((left - dead.keys()) & RESTATING_KINDS):
         try:
             reason = await _restate_held(db, thread, ctx, item, kind)
+            if reason is None:
+                reason = await _restate_refused(db, thread, ctx, item, kind)
         except Exception:  # noqa: BLE001
             log.warning("suggestion_chips.error", stage="restate_held", kind=kind, exc_info=True)
             reason = "check_failed"
@@ -1134,23 +1264,55 @@ def apply_dismiss(
     return _with_suppressed(updated, [fp]) or updated, "dismissed"
 
 
+def _card_ids_of(entry: Mapping[str, Any]) -> set[str]:
+    return {
+        str(raw.get("id"))
+        for raw in entry.get("suggestions") or []
+        if isinstance(raw, Mapping) and raw.get("id")
+    }
+
+
 def attach_cards(
     state: Mapping[str, Any], set_id: str, cards: list[dict[str, Any]]
 ) -> dict[str, Any] | None:
-    """Put the v2 cards on the entry of ``set_id``; None when it is gone or already has them."""
+    """Put the v2 cards on the entry of ``set_id``; None when it is gone or holds them already.
+
+    A card the entry lacks is added next to the ones it holds, never in place of them: the phone
+    may hold any card of an earlier read of this set, and a served card the entry cannot resolve is
+    a dead tap. A card is named by its id, which follows its kind, targets and base.
+    """
     ring = _entries(state)
     for index in range(len(ring) - 1, -1, -1):
         if ring[index].get("set_id") != set_id:
             continue
-        if ring[index].get("suggestions"):
+        held_ids = _card_ids_of(ring[index])
+        fresh = [c for c in cards if str(c.get("id")) not in held_ids]
+        if not fresh:
             return None
-        entry = {**ring[index], "suggestions": cards}
+        held = [c for c in ring[index].get("suggestions") or [] if isinstance(c, Mapping)]
+        entry = {**ring[index], "suggestions": [*held, *fresh]}
         return {**state, RING_KEY: [*ring[:index], entry, *ring[index + 1 :]]}
     return None
 
 
-def _ring_has_cards(set_id: str, state: Mapping[str, Any] | None) -> bool:
-    return any(e.get("set_id") == set_id and e.get("suggestions") for e in _entries(state))
+def _ring_has_cards(
+    set_id: str, state: Mapping[str, Any] | None, card_ids: Sequence[str] = ()
+) -> bool:
+    """Does the ring entry of ``set_id`` hold every card in ``card_ids`` (any card, when none)?"""
+    wanted = {str(i) for i in card_ids}
+    for entry in _entries(state):
+        if entry.get("set_id") != set_id:
+            continue
+        held = _card_ids_of(entry)
+        if (wanted <= held) if wanted else bool(held):
+            return True
+    return False
+
+
+def _shown_ids(served: Served) -> list[str]:
+    """The cards the ring must hold for this read: every one the set was built with, including
+    the ones the strip took off this read's wire (they come back without a new run)."""
+    return [c.id for c in (served.unfiltered or served.out).suggestions]
 
 
 def _without_suppressed(served: Served, thread: Any) -> Served:
@@ -1163,7 +1325,7 @@ def _without_suppressed(served: Served, thread: Any) -> Served:
     suppressed = suppressed_set(state)
     served.unfiltered = served.unfiltered or served.out
     served.needs_fold = fold_suppressed(state or {}) is not None if suppressed else False
-    served.ring_has_cards = _ring_has_cards(served.out.set_id, state)
+    served.ring_has_cards = _ring_has_cards(served.out.set_id, state, _shown_ids(served))
     out = served.out
     if not suppressed:
         return served
@@ -1322,8 +1484,28 @@ async def persist_served_set(
     shown = served.unfiltered or served.out
     if shown.suggestions and shown.status == "ok" and not served.ring_has_cards:
         cards = served.cards if served.cards_built else await _server_cards(served)
-        if cards:
-            await _mutate_state(
-                db, thread_id, lambda state: _outcome(attach_cards(state, shown.set_id, cards))
-            )
+        if not await _store_cards(db, thread_id, shown.set_id, cards or [], _shown_ids(served)):
+            # The cards are an enhancement of a set that serves without them. A card the ring does
+            # not hold answers "no longer fits" however good it was, so the phone gets the chips
+            # now (same set id) and the next read builds and stores the cards again.
+            log.info("suggestion_chips.cards_not_stored", set_id=shown.set_id)
+            served.out = _legacy_only(served.out)
     return wrote
+
+
+async def _store_cards(
+    db: Any, thread_id: Any, set_id: str, cards: list[dict[str, Any]], card_ids: Sequence[str]
+) -> bool:
+    """Write ``cards`` on the entry of ``set_id``; True only when, once written, the entry holds
+    every one of ``card_ids``. A skipped write (the row stayed locked), a missing entry or cards
+    that were not built all answer False."""
+    held = False
+
+    def attach(state: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+        nonlocal held
+        new = attach_cards(state, set_id, cards)
+        held = _ring_has_cards(set_id, new if new is not None else state, card_ids)
+        return _outcome(new)
+
+    outcome = await _mutate_state(db, thread_id, attach)
+    return outcome != "busy" and held

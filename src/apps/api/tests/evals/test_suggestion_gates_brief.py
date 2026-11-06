@@ -123,8 +123,9 @@ ASKS = [
     ("captions", req("r1", "style", "no captions please", facts={"captions": "off"})),
     ("captions", req("r1", "style", "burn the captions in", facts={"captions": "on"})),
     ("captions", req("r1", "style", "Captions small, white", facts={"caption_size": "small"})),
-    ("captions", req("r1", "style", "hold off on any subtitles")),
-    ("captions", req("r1", "style", "altyazı eklemeyelim")),
+    # KRI-667: the brief writer's typed fact decides; the words alone are not read.
+    ("captions", req("r1", "style", "hold off on any subtitles", facts={"captions": "off"})),
+    ("captions", req("r1", "style", "altyazı eklemeyelim", facts={"captions": "off"})),
     # music: typed no_music, worded off, worded down, worded add, Turkish
     ("music", req("r1", "audio", "no music", facts={"audio_intent": "no_music"})),
     ("music", req("r1", "audio", "Add upbeat music")),
@@ -146,8 +147,11 @@ ASKS = [
         req("r1", "text", "title in the middle", facts={"animation": "typewriter"}),
     ),
     ("title_animation", req("r1", "text", "animated text", facts={"animation": "any"})),
-    ("title_animation", req("r1", "style", "no animation on the title")),
-    ("title_animation", req("r1", "text", "başlık animasyonlu olsun")),
+    (
+        "title_animation",
+        req("r1", "style", "no animation on the title", facts={"animation": "none"}),
+    ),
+    ("title_animation", req("r1", "text", "başlık animasyonlu olsun", facts={"animation": "any"})),
 ]
 
 
