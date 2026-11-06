@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.33.0] - 2026-11-06
+
+### Changed
+- chore(research): weekly TikTok artifact refresh 2026-11-01 (#2043) <!-- release-pr: 2043 -->
+
 ## [0.88.32.0] - 2026-11-06
 
 ### Changed
