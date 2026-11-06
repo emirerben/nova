@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.11.0] - 2026-11-06
+
+### Changed
+- feat(title-look): Qendresa item 20, her stacked hook title + logo above it (phone Talking, flag off) (#2115) <!-- release-pr: 2115 -->
+
+## [0.88.10.0] - 2026-11-06
+
+### Changed
+- Qendresa item 16: she starts full screen, then drops into the corner (#2111) <!-- release-pr: 2111 -->
+
+## [0.88.9.0] - 2026-11-06
+
+### Changed
+- feat(kria): plan a long creation prompt (~17 asks) in one go (Qendresa 23) (#2106) <!-- release-pr: 2106 -->
+
+## [0.88.8.0] - 2026-11-06
+
+### Changed
+- feat(list-labels): numbered labels appear when each item starts (Qendresa item 19) (#2116) <!-- release-pr: 2116 -->
+
+## [0.88.7.0] - 2026-11-06
+
+### Changed
+- feat(text): her short-clip text look — one line in the middle, TikTok's own look (Qendresa item 21) (#2114) <!-- release-pr: 2114 -->
+
+## [0.88.6.0] - 2026-11-06
+
+### Changed
+- fix(captions): captions over a speaker background are chosen against it, with an outline when no colour is readable (Green 5) (#2099) <!-- release-pr: 2099 -->
+
+## [0.88.5.0] - 2026-11-06
+
+### Changed
+- Qendresa item 15: phone Talking cards her size and place (builds on #2104: merge that first) (#2107) <!-- release-pr: 2107 -->
+
+## [0.88.4.0] - 2026-11-06
+
+### Changed
+- feat(speaker-background): hear background names said another way (Qendresa item 17) (#2110) <!-- release-pr: 2110 -->
+
 ## [0.88.3.0] - 2026-11-05
 
 ### Changed

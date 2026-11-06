@@ -83,6 +83,8 @@ MAX_BACKGROUND_WINDOWS = 40
 MIN_BACKGROUND_WINDOW_S = 0.5
 MAX_BACKGROUND_TIMELINE_S = 1800.0
 MIN_SPEAKER_FRAME_WIDTH_FRACTION = 0.2
+# Qendresa item 16: mirrors `kria.portable_speaker_background.MAX_FULL_SCREEN_WINDOWS`.
+MAX_FULL_SCREEN_WINDOWS = 4
 # KRI-1173: the colour is stored exactly as the recipe wire spells it.
 _COLOR_PATTERN = r"^#[0-9A-F]{6}$"
 
@@ -125,6 +127,12 @@ class SubtitledOverlayCard(_LaneModel):
     # where the compile writes it). A pip card only: a full-canvas cutaway has nothing to turn
     # about. Omitted from the dump while 0, so an untilted card's row is byte-identical.
     rotation_deg: float = Field(default=0.0, ge=-180, le=180)
+    # Qendresa item 15: True only when the server laid this pip card out against the plan's
+    # MEASURED caption band (`phone_card_layout`), so it may sit below `CAPTION_BAND_TOP_FRAC`:
+    # the compiler keeps its `y_frac` instead of clamping it, and a new iPhone editor does too.
+    # Server-owned (an editor Save carries it by card id, never from the client). Omitted from
+    # the dump while False, so every other card's row is byte-identical.
+    caption_clear: bool = False
 
     @model_validator(mode="after")
     def _window(self) -> SubtitledOverlayCard:
@@ -148,6 +156,8 @@ class SubtitledOverlayCard(_LaneModel):
             payload.pop("display_mode", None)
         if self.rotation_deg == 0:
             payload.pop("rotation_deg", None)
+        if not self.caption_clear:
+            payload.pop("caption_clear", None)
         return payload
 
 
@@ -236,6 +246,21 @@ class SubtitledSpeakerFrame(_LaneModel):
     y_fraction: float = Field(ge=0, le=1)
 
 
+class SubtitledFullScreenWindow(_LaneModel):
+    """Qendresa item 16: from ``start_s`` to ``end_s`` of the take's ORIGINAL timeline (moved
+    into cut time by `remap_lanes_for_cut`, like a background window) the speaker's own take is
+    drawn full-frame and untouched: no person mask, no background, no ``speaker_frame``."""
+
+    start_s: float = Field(ge=0, le=MAX_BACKGROUND_TIMELINE_S)
+    end_s: float = Field(gt=0, le=MAX_BACKGROUND_TIMELINE_S)
+
+    @model_validator(mode="after")
+    def _long_enough(self) -> SubtitledFullScreenWindow:
+        if self.end_s - self.start_s < MIN_BACKGROUND_WINDOW_S:
+            raise ValueError("a full-screen window must last at least 0.5 seconds")
+        return self
+
+
 class SubtitledBackground(_LaneModel):
     """The background behind the speaker (KRI-1117, KRI-1162).
 
@@ -268,6 +293,10 @@ class SubtitledBackground(_LaneModel):
         default=(), max_length=MAX_BACKGROUND_WINDOWS
     )
     speaker_frame: SubtitledSpeakerFrame | None = None
+    # Qendresa item 16: empty while unused, omitted from every dump.
+    full_screen_windows: tuple[SubtitledFullScreenWindow, ...] = Field(
+        default=(), max_length=MAX_FULL_SCREEN_WINDOWS
+    )
 
     @field_validator("color", mode="before")
     @classmethod
@@ -308,10 +337,23 @@ class SubtitledBackground(_LaneModel):
                 raise ValueError("background windows must be sorted and must not overlap")
         return self
 
+    @model_validator(mode="after")
+    def _full_screen_windows_sorted_and_disjoint(self) -> SubtitledBackground:
+        spans = self.full_screen_windows
+        for earlier, later in zip(spans, spans[1:], strict=False):
+            if later.start_s < earlier.end_s:
+                raise ValueError("full-screen windows must be sorted and must not overlap")
+        return self
+
     @property
     def uses_windows(self) -> bool:
         """True when the lane needs the ``speakerBackgroundWindows`` gate."""
         return bool(self.windows) or self.speaker_frame is not None
+
+    @property
+    def uses_full_screen(self) -> bool:
+        """True when the lane needs the ``speakerFrameWindows`` gate (Qendresa item 16)."""
+        return bool(self.full_screen_windows)
 
     @model_serializer(mode="wrap")
     def _omit_unused(self, handler):  # noqa: ANN001, ANN202
@@ -323,6 +365,8 @@ class SubtitledBackground(_LaneModel):
             data.pop("windows", None)
         if data.get("speaker_frame") is None:
             data.pop("speaker_frame", None)
+        if not data.get("full_screen_windows"):
+            data.pop("full_screen_windows", None)
         return data
 
 
@@ -498,6 +542,18 @@ def remap_lanes_for_cut(
         )
         update["background"] = lanes.background.model_copy(update={"windows": kept_windows})
         dropped_card_ids |= dropped_window_media_ids
+    if lanes.background is not None and lanes.background.full_screen_windows:
+        # Qendresa item 16 (S80): the full-screen spans are on the original take like the
+        # windows, so a speech cut moves them the same way (clipped at the removal edges,
+        # dropped when inside one or left under half a second). Dropping one carries no media.
+        base = update.get("background", lanes.background)
+        update["background"] = base.model_copy(
+            update={
+                "full_screen_windows": _remap_full_screen_windows(
+                    lanes.background.full_screen_windows, plan
+                )
+            }
+        )
     remapped = lanes.model_copy(update=update)
     return remapped, frozenset(dropped_card_ids)
 
@@ -528,7 +584,28 @@ def _remap_background_windows(
     return tuple(kept), {media_id for media_id in dropped if media_id not in still_shown}
 
 
+def _remap_full_screen_windows(
+    windows: tuple[SubtitledFullScreenWindow, ...], plan: CutPlan
+) -> tuple[SubtitledFullScreenWindow, ...]:
+    """Full-screen spans in cut time (S80)."""
+    from app.pipeline.silence_cut import remap_range  # noqa: PLC0415
+
+    kept: list[SubtitledFullScreenWindow] = []
+    cursor = 0.0
+    for window in windows:
+        mapped = remap_range(window.start_s, window.end_s, plan)
+        if mapped is None:
+            continue
+        new_start = max(mapped[0], cursor)
+        if mapped[1] - new_start < MIN_BACKGROUND_WINDOW_S:
+            continue
+        kept.append(window.model_copy(update={"start_s": new_start, "end_s": mapped[1]}))
+        cursor = mapped[1]
+    return tuple(kept)
+
+
 SPEAKER_BACKGROUND_FALLBACK_EVENT = "speaker_background_phone_fallback"
+SPEAKER_FULL_OPENING_FALLBACK_EVENT = "speaker_full_opening_phone_fallback"
 SPEAKER_BACKGROUND_WINDOWS_FALLBACK_EVENT = "speaker_background_windows_phone_fallback"
 SPEAKER_BACKGROUND_COLOR_FALLBACK_EVENT = "speaker_background_color_phone_fallback"
 
@@ -564,6 +641,7 @@ def strip_unsupported_background(lanes: _BackgroundCarrier | None) -> _Backgroun
         speaker_background_color_unavailable_reason,
         speaker_background_unavailable_reason,
         speaker_background_windows_unavailable_reason,
+        speaker_full_opening_unavailable_reason,
     )
 
     background = lanes.background
@@ -582,21 +660,40 @@ def strip_unsupported_background(lanes: _BackgroundCarrier | None) -> _Backgroun
                     },
                 )
                 return lanes.model_copy(update={"background": None})
-        if not background.uses_windows:
-            return lanes
-        windows_reason = speaker_background_windows_unavailable_reason()
-        if windows_reason is None:
-            return lanes
-        detail = {
-            "reason": windows_reason,
-            "window_count": len(background.windows),
-            "had_frame": background.speaker_frame is not None,
-        }
-        if background.media_id is not None:
-            detail = {"media_id": background.media_id, **detail}
-        _trace_background_fallback(SPEAKER_BACKGROUND_WINDOWS_FALLBACK_EVENT, detail)
-        fill_only = background.model_copy(update={"windows": (), "speaker_frame": None})
-        return lanes.model_copy(update={"background": fill_only})
+        windows_reason = (
+            speaker_background_windows_unavailable_reason() if background.uses_windows else None
+        )
+        if windows_reason is not None:
+            detail = {
+                "reason": windows_reason,
+                "window_count": len(background.windows),
+                "had_frame": background.speaker_frame is not None,
+            }
+            if background.uses_full_screen:
+                detail["full_screen_window_count"] = len(background.full_screen_windows)
+            if background.media_id is not None:
+                detail = {"media_id": background.media_id, **detail}
+            _trace_background_fallback(SPEAKER_BACKGROUND_WINDOWS_FALLBACK_EVENT, detail)
+            fill_only = background.model_copy(
+                update={"windows": (), "speaker_frame": None, "full_screen_windows": ()}
+            )
+            return lanes.model_copy(update={"background": fill_only})
+        if background.uses_full_screen:
+            # Qendresa item 16 (S77): only the full-screen spans go; the fill, windows and
+            # corner frame stay, so the creator gets today's corner from 0 s.
+            opening_reason = speaker_full_opening_unavailable_reason()
+            if opening_reason is not None:
+                detail = {
+                    "reason": opening_reason,
+                    "window_count": len(background.full_screen_windows),
+                }
+                if background.media_id is not None:
+                    detail = {"media_id": background.media_id, **detail}
+                _trace_background_fallback(SPEAKER_FULL_OPENING_FALLBACK_EVENT, detail)
+                return lanes.model_copy(
+                    update={"background": background.model_copy(update={"full_screen_windows": ()})}
+                )
+        return lanes
     detail = {"reason": reason}
     if background.uses_color:
         detail = {"color": background.color, **detail}

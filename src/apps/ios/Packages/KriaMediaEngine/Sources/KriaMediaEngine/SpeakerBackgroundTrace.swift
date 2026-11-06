@@ -27,6 +27,9 @@ public final class SpeakerBackgroundTrace: @unchecked Sendable {
         /// A background is part of the recipe but no clip of its subject track is on screen at that time, so
         /// nothing can be cut out and the frame is drawn without it.
         case noSpeakerLayer = "no_speaker_layer"
+        /// Qendresa item 16: inside a full-screen window the speaker's own take is drawn untouched on purpose. Not a
+        /// hidden background and not a mask failure; it resets the hidden run like a good frame.
+        case fullScreen = "full_screen"
 
         /// True for the outcomes in which the creator does not see the background. A build with no segmenter at all
         /// (`original.no_segmenter`) is an environment, not a frame that failed, so it is counted and labelled but

@@ -3336,6 +3336,60 @@ draft said "that exact text isn't in this draft" and the contract pinned the tex
 Tests: `tests/tasks/test_kri791_spoken_text_trigger.py` (replays the T1 brief, strategy
 and speech segments).
 
+### Numbered list labels on phone Talking edits (Qendresa item 19)
+
+"Add a label when each one starts: "1. Spec-kit", "2. Impeccable", ..." (her screen
+walkthrough) and "When I list the four things, show each one as big text, like "1. which
+company it sends data to?"" (her talking head) name no spoken word, so KRI-707 drew nothing
+and the draft said "that exact text isn't in this draft". Behind
+`SPOKEN_LIST_LABELS_ENABLED` (default off; gate `phone_list_labels_supported()` = the flag
+and the KRI-707 spoken-text gate), with no model or prompt change:
+
+- **Asks.** `phone_list_labels.list_label_asks`: live whole-video text requirements with no
+  spoken trigger (KRI-707 keeps those). Only a content match makes one a label: it names a
+  background recording, or it carries a list marker ("1.", "01:", "1)"; a marker is 1-2 digits and a "." / ":" / ")"
+  followed by a space, so "#1 PICK", "3.5 million views" and "10:30 routine" are not labels).
+- **Screen walkthrough.** Each label is paired by name with a `background_media.sequence`
+  entry (`match_labels`: assigned globally by tier -- all loose-equal pairs, then contained,
+  then overlapping -- against EVERY phrased entry, anchored or not; one entry per label; an
+  unmarked text pairs only when it IS the name) and appears where
+  `lay_out` anchored that entry (`SequenceLayout.anchor_s`), never the 0 s lead-in window.
+  Labels follow the recordings only with item 17's flag (`BACKGROUND_FOLLOWS_TALK_ENABLED`)
+  on, and only recordings still shown in the final lanes; **turn item 17 on first** so the
+  recordings and the labels agree ("4. Agents" waits for "fourth one is agents", not the
+  "agents" inside "trading agents"). With it off every marked label grounds on its own words.
+- **Talking head.** A lone label numbered 1 that no recording names is found in the take's
+  words (tolerant: "company" typed, "companies" said), then `find_spoken_list` reads the
+  items that follow from a repeated opening word ("what ... what ... and what ..."): the
+  opener must come right after item 1 (or one 1-3 letter joiner later), each item is
+  `max(2, n1 // 2)` to `2 * n1 + 2` tokens long, a 0.6 s pause inside an item ends the list,
+  and an opener led by a new short joiner ("... and what") is the last. Labels 2..N copy the
+  example's marker, case and final "?". A typed list is never extended. If only item 1 is
+  found the requirement is `partial` ("couldn't find the rest of your list").
+- **Rows.** Ordinary text rows (`list-label-<requirement id>[-<n>]`) on the KRI-467 lane
+  (no new phone capability or protocol), each until the next label starts or 3 s (a label
+  squeezed by a next one starting within 0.8 s is `same_moment`; `no_time` is the take end's),
+  placed by
+  `place_talking_title` clear of the captions, other text and cards on screen, with the
+  face and any KRI-827 marked object mapped into a corner speaker frame (`speaker_frame=`);
+  the placements are also in the KRI-827 protected-text receipt (`list:<id>-<n>`). Receipt:
+  `list_label_placement` (`placed` / `not_heard` / `no_time` / `same_moment` / `error`,
+  `list_found` on a spoken list).
+- **Receipts and contract.** Draft: "I'll show it when that part of your talk starts ...".
+  After render: met when placed off the face; otherwise the reason, never met. A Talking
+  edit does not pin such a label in `exact_texts` (its receipt answers it).
+
+Limits: lists whose items start with different words ("the first thing is ... the second
+thing is ...") or a 1-3 letter word are not found (only the typed item 1 shows, and the
+receipt says so); a lone "1." label is always read as the start of a list; talk right after a
+list that repeats the opener without a closing joiner ("this matters because this ...") can
+still be read as items.
+Kill switch: `fly secrets set SPOKEN_LIST_LABELS_ENABLED=false --app nova-video` + restart
+(api + worker). Design and failure modes: `docs/reviews/qendresa-list-labels-failure-modes.md`.
+Tests: `tests/tasks/test_qendresa_list_labels_worker.py`,
+`tests/tasks/test_qendresa_spoken_list_worker.py`, `tests/pipeline/test_phone_list_labels.py`.
+Simulator check: `scripts/ios/qendresa-list-labels-e2e.py`.
+
 ## Your song montages (KRI-374)
 
 A creator attaches their own song to a phone montage ("Add your song" in the
@@ -3941,6 +3995,21 @@ before rollout. API/workers must run the same revision and flags before new jobs
 are admitted. Release 2's repeated-edit learning remains separately gated under
 KRI-336 and is not activated by the typography flag.
 
+### Middle line in TikTok's look (Qendresa item 21; related KRI-523)
+
+`CLIP_TEXT_TIKTOK_LOOK_ENABLED` defaults off (API + worker read it; no client protocol or
+verified token). On, Main Creator v128 may write a whole-video pin with
+`corner: "middle_center"` and `look: "tiktok"`. The pinned-text compiler centres it and paints
+`schemas/phone_text_style.TIKTOK_TEXT_LOOK` (TikTok Sans Bold, white, 56 px, 0.72 wrap, authored
+shadow at opacity 0.2), listing the look fields in `creator_style_fields` so this pass keeps them.
+`_place` slides a middle line to the nearest y clear of faces, other text and the wordmark
+(`source_params.moved_off`), or records `source_params.covers` when no spot is clear; the brief
+receipt then says so. An identical `opening_title` is drawn once. Off: a stray middle pin is
+drawn as `top_center` with no look. Failure modes and measurements:
+`docs/reviews/qendresa-item21-clip-text-look.md`; simulator harness:
+`scripts/ios/qendresa-clip-text-look-e2e.py` + `DeviceClipTextLookRenderE2ETests`.
+Rollback: `fly secrets set CLIP_TEXT_TIKTOK_LOOK_ENABLED=false` + restart api and worker.
+
 
 ## Text Bend capability (KRI-646)
 
@@ -4012,6 +4081,45 @@ was not drawn): `PHONE_CAPTION_SHAPE_ENABLED` (default off) + `captionShape` and
 recipe only uses `authoredText`): add it after a device check of the editor box. Guard:
 `tests/tasks/test_qendresa_caption_shape_worker.py`. Rollback: `fly secrets set
 PHONE_CAPTION_SHAPE_ENABLED=false` (api + worker) + restart; stored shapes keep compiling.
+
+## Talking card layout (Qendresa item 15)
+
+Screenshot and recording cards on a phone Talking edit take her size and place: up to the full
+width, in the band above her face or the band below her caption row, never on her face or her
+captions; up to 14 cards; a named screenshot may open the video; a recording starts at its best
+moment. The geometry is in `phone_card_layout.py` / `phone_overlay_grounding.py`; the worker
+passes `CardLayoutContext` (the MEASURED caption band from the item-12 reserve compile's
+`_caption_boxes`, plus the title / listed-text windows mapped from the cut take back to source
+seconds, `_take_window_to_source`) only when the layout is open. Closed = the grounding call and
+every card are byte-identical to before.
+
+A card laid out against the measured captions carries `caption_clear` (`SubtitledOverlayCard`),
+so it may sit below y 0.62. The editor projection marks it (`media_overlays[].caption_clear`), a
+Save keeps the mark only for a card the server marked (never the client's value), and a recipe
+derived lane marks a portrait pip card whose centre is below 0.62.
+
+Gate (all required): `TALKING_CARD_LAYOUT_ENABLED` (default off) + `cardLayout` in
+`PHONE_RENDER_VERIFIED_FEATURES` + the approving build (`creator_client_protocol`) >=
+`CARD_LAYOUT_PROTOCOL` (40; older editors pull every card centre up to 0.62, onto the captions)
++ a portrait pip render with no speaker background, no KRI-547 face fill, a "fill" (not "fit")
+take and a source no taller than 9:16 (source face boxes only map exactly in y then). Stays
+today's: alpha stickers, landscape, speaker background, face-filled close-ups, fullscreen
+layouts, old builds. Faces are sampled for every card and must not overlap at all (no IoU
+tolerance); the Kria wordmark the phone draws at the lower left (KRI-548) keeps its corner, so a
+bottom card sits beside it (~0.78 wide for 16:9) or below it, whichever is bigger. Guards:
+`tests/services/test_talking_card_layout_gate.py`, `tests/tasks/test_qendresa_card_layout_worker.py`.
+
+Apply order: iOS build >= protocol 40 shipped -> device check of a card in the bottom band ->
+add `cardLayout` to `PHONE_RENDER_VERIFIED_FEATURES` -> `fly secrets set
+TALKING_CARD_LAYOUT_ENABLED=true` (api + worker) + restart. Rollback: `fly secrets set
+TALKING_CARD_LAYOUT_ENABLED=false` (api + worker) + restart; stored cards keep their spots.
+
+Simulator before/after: `scripts/ios/qendresa-card-layout-e2e.py prepare OUT --foot FOOT`
+(real worker, flag off vs on), render with `KRIA_CARD_LAYOUT_E2E_DIR=OUT` +
+`DeviceTalkingCardLayoutRenderE2ETests`, then `score OUT --kit <Qendresa kit>`: the kit's
+`screen` must flip, `card_hook` (a card's text in the first 3 s; the kit's own `hook` also
+passes on a misread dimmed caption) must flip, `full_speaker` stays, and the rendered-frame face
+check plus its negative control and the watermark check must hold.
 
 ## Actual-export verifier v3 rollout boundary (KRI-832)
 
@@ -4149,6 +4257,15 @@ stripped (trace `speaker_background_color_phone_fallback`) and the creator keeps
 34 get `426 client_update_required` (`feature: "speaker_background_color"`) for a variant that carries a colour,
 and `editor_capabilities.speaker_background_color` / the thread capability of the same name hide the Colour
 control. Detail: `docs/pipelines/speaker-background.md` "Solid-colour fill (KRI-1173)".
+
+Qendresa item 16 adds `full_screen_windows` on the same layer (the speaker's own take full screen, no mask and
+no background, before the corner) behind `SPEAKER_FULL_OPENING_ENABLED` (default off), the verified token
+`speakerFrameWindows` and client protocol >= 41 (`SPEAKER_FULL_OPENING_MIN_CLIENT_PROTOCOL`). Add the token only
+after a physical-iPhone check: the opening in preview and export, a clean cut-out on the switch frame, and the
+corner fallback when the mask fails there. With the flag, the token or the build missing, the windows are laid
+out as today (corner from 0 s) and the receipt says the opening was not made; builds below 41 get `426
+client_update_required` (`feature: "speaker_full_opening"`) only for a recipe already pinned with it. Detail:
+`docs/pipelines/speaker-background.md` "Full screen first, then the corner".
 
 
 ## Clip tilt (KRI-1134)
@@ -4473,3 +4590,36 @@ text matches the two rows joined (`creator_render_contract.verify_phone_recipe`)
 
 **Rollout.** `fly secrets set CREATOR_CTA_ENDING_ENABLED=true --app nova-video`, restart api + worker.
 Rollback: set it to `false`; endings already rendered keep their rows and arrow.
+
+## Title look on phone Talking edits (Qendresa item 20)
+
+`TITLE_LOOK_ENABLED` (default **false**, API + worker; server only, no protocol or verified token).
+A confirmed `opening_title` typed with " / " (or newlines) on a phone Talking edit is drawn as her
+stacked hook title: one ordinary text row per line (`opening-title`, `opening-title-line-N`,
+`source_params.title_look`), her exact words, a face and colour per line.
+
+- **Look per line:** her own per-line words in a sentence about the title ("bold caps, serif,
+  yellow handwriting") > a title/all-text font or colour she named or saved > the default stack
+  measured on her V5 (Bricolage Grotesque 145 / Instrument Serif 100 / Patrick Hand 105). A
+  strategy font knob is never read as her ask (it can be a provisional face). Every font already
+  ships in the iPhone bundle (`project.yml` bundles `assets/fonts`), so old builds draw it.
+- **Placement** (`phone_title_look.place_title_look`): one block, centred or top-left when she
+  asks; asked spot, under the face, between face and captions, above the face, then 0.85 / 0.72
+  / 0.6 size. Faces and marked objects are hard limits; captions are kept clear whenever any spot
+  allows it. Held 3 s unless she gave a hold. The styling pass leaves these rows as built.
+- **Logo above the title:** a reaction beat with `anchor: "title"` (Main Creator v135 teaches it
+  only while the flag is on) becomes a card right above the block for the title's window
+  (`beat-<id>-1`, source time like every beat card). The title is placed so the biggest logo
+  fits off her face and her captions (with captions up in the title band, the block drops just
+  enough for the logo to sit between them and the title); the worker places the logo against
+  the same caption boxes (`caption_boxes` in the title receipt). A logo with no room is
+  reported `no_room_above_title` (her face) or `no_room_off_captions` (only her captions).
+- **Receipts / approval:** the brief and `verify_phone_recipe` find her title in its " / " form
+  when it is drawn line by line (exact lines, shown together, top to bottom).
+- **Rollback:** `fly secrets set TITLE_LOOK_ENABLED=false` + restart api and worker. Strategies
+  approved while it was on keep `anchor: "title"` beats; with it off they go to word grounding
+  and are reported as never heard.
+- **Known limits:** the iPhone editor lists lines 2..N as "Text" blocks; a chat "change the
+  title" edits line 1 only; a sound on a title-anchored beat is not played.
+- Evidence: `tests/tasks/test_title_look_worker.py`, `tests/pipeline/test_phone_title_look*.py`,
+  `scripts/ios/qendresa-title-look-e2e.py` (+ `DeviceTitleLookRenderE2ETests`).

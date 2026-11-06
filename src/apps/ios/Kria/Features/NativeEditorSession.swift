@@ -5449,7 +5449,8 @@ struct NativeEditorTemporaryVideo: Sendable {
               EditorSpeakerBackground(json: EditorSpeakerBackground(mediaID: mediaID, kind: kind, sourceStartS: sourceStart).json) != nil
         else { return false }
         let value = EditorSpeakerBackground(mediaID: mediaID, kind: kind, sourceStartS: sourceStart,
-                                            windows: current?.windows ?? [], speakerFrame: current?.speakerFrame)
+                                            windows: current?.windows ?? [], speakerFrame: current?.speakerFrame,
+                                            fullScreenWindows: current?.fullScreenWindows ?? [])
         transactDocument(section: .speakerBackground) { $0.speakerBackground = value }
         return true
     }
@@ -5471,7 +5472,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     func setSpeakerBackgroundColor(hex: String) -> Bool {
         guard canEditSpeakerBackgroundColor, let color = EditorSpeakerBackground.normalizedColor(hex) else { return false }
         let current = document.speakerBackground
-        let value = EditorSpeakerBackground(color: color, windows: current?.windows ?? [], speakerFrame: current?.speakerFrame)
+        let value = EditorSpeakerBackground(color: color, windows: current?.windows ?? [], speakerFrame: current?.speakerFrame,
+                                            fullScreenWindows: current?.fullScreenWindows ?? [])
         transactDocument(section: .speakerBackground) { $0.speakerBackground = value }
         return true
     }
@@ -5594,6 +5596,30 @@ struct NativeEditorTemporaryVideo: Sendable {
         transactDocument(section: .speakerBackground) { $0.speakerBackground = background }
         // A full-frame speaker is not a preview object any more (SF2).
         if selection?.kind == .speaker { select(nil) }
+        return true
+    }
+
+    // MARK: Full-screen opening (Qendresa item 16)
+
+    /// The opening row exists only while the server advertises `speaker_full_opening` (gate open, this build speaks
+    /// protocol 41) and the background itself is editable. A variant that carries an opening without the capability
+    /// is read-only here, never silently edited.
+    var canEditSpeakerFullOpening: Bool {
+        canEditSpeakerBackground && document.capabilities["speaker_full_opening"]?.editable == true
+    }
+    /// The full-screen window that starts at the top of the edit (within 0.05 s), if any: the strategy's opening.
+    var speakerFullScreenOpening: EditorFullScreenWindow? {
+        document.speakerBackground?.fullScreenWindows.first { $0.startS <= 0.05 }
+    }
+
+    /// Takes the opening away so the speaker is in the corner from the first frame. Other full-screen windows (an ending) and the
+    /// fill, windows and corner stay. False (and no unsaved change) when there is no opening or it cannot be edited. One undo step.
+    @discardableResult
+    func removeFullScreenOpening() -> Bool {
+        guard canEditSpeakerFullOpening, var background = document.speakerBackground,
+              let opening = speakerFullScreenOpening else { return false }
+        background.fullScreenWindows.removeAll { $0 == opening }
+        transactDocument(section: .speakerBackground) { $0.speakerBackground = background }
         return true
     }
 

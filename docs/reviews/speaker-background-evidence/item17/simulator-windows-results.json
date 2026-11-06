@@ -1,0 +1,474 @@
+{
+ "what": "Qendresa item 17 simulator export: which screen recording is on screen over time, OCR'd from the exported MP4, next to the recipe's planned windows.",
+ "code_head": "f47535ca9 (2777c6f02 + origin/main 6e3253080; no app-code change since)",
+ "date": "2026-11-05",
+ "device": "iOS Simulator iPhone 17 Pro, iOS 26.5 (arm64), DeviceMontageRenderE2ETests.testSubtitledBackgroundWindowsRenderOnTheIPhone",
+ "footage": "synthetic stand-in (never in git): macOS 'say' Samantha reading the five-repo walkthrough over a 16 s Pexels talking-man loop (43.1 s), five drawn 10 s 'screen recordings' headed spec-kit / impeccable / TradingAgents / agents / Claude-Code-Game-Studios; words from local whisper.cpp large-v3-turbo",
+ "commands": [
+  "src/apps/api/.venv/bin/python scripts/ios/phone-background-windows-e2e.py OUT --flag on|off --phrases spoken|labels",
+  "KRIA_SIMULATOR_ID=<udid> TEST_RUNNER_KRIA_E2E_DIR=OUT xcodebuild test ... -only-testing:KriaTests/DeviceMontageRenderE2ETests/testSubtitledBackgroundWindowsRenderOnTheIPhone",
+  "kit tools/check_result.sh OUT.mp4 Q2 --ignore-tail-s 1.6 (OCR at 2 frames/s)"
+ ],
+ "cases": {
+  "spoken_off": {
+   "note": "flag off (today): recording 5 shows 4 s, then recordings 1 and 2 cycle back (the bug, S51 tail rotation)",
+   "flag": "off",
+   "phrases": [
+    "Spec Kit",
+    "Impeccable",
+    "Trading Agents",
+    "Number 4 Agents",
+    "Clawed Code Game Studios"
+   ],
+   "lane_drops": [],
+   "planned": [
+    {
+     "recording": 1,
+     "start_s": 0.0,
+     "end_s": 12.13,
+     "name_word_s": 6.2
+    },
+    {
+     "recording": 2,
+     "start_s": 12.13,
+     "end_s": 17.38,
+     "name_word_s": 12.13
+    },
+    {
+     "recording": 3,
+     "start_s": 17.38,
+     "end_s": 23.62,
+     "name_word_s": 17.38
+    },
+    {
+     "recording": 4,
+     "start_s": 23.62,
+     "end_s": 30.38,
+     "name_word_s": 24.12
+    },
+    {
+     "recording": 5,
+     "start_s": 30.38,
+     "end_s": 34.38,
+     "name_word_s": 30.38
+    },
+    {
+     "recording": 1,
+     "start_s": 34.38,
+     "end_s": 38.38,
+     "name_word_s": 6.2
+    },
+    {
+     "recording": 2,
+     "start_s": 38.38,
+     "end_s": 43.089,
+     "name_word_s": 12.13
+    }
+   ],
+   "seen_on_screen": [
+    {
+     "recording": 1,
+     "start_s": 0.0,
+     "end_s": 12.0
+    },
+    {
+     "recording": 2,
+     "start_s": 12.0,
+     "end_s": 17.5
+    },
+    {
+     "recording": 3,
+     "start_s": 17.5,
+     "end_s": 23.5
+    },
+    {
+     "recording": 4,
+     "start_s": 23.5,
+     "end_s": 30.5
+    },
+    {
+     "recording": 5,
+     "start_s": 30.5,
+     "end_s": 34.5
+    },
+    {
+     "recording": 1,
+     "start_s": 34.5,
+     "end_s": 38.5
+    },
+    {
+     "recording": 2,
+     "start_s": 38.5,
+     "end_s": 43.0
+    }
+   ],
+   "kit_rules": {
+    "length": {
+     "pass": false,
+     "measured": 41.49
+    },
+    "screen": {
+     "pass": true,
+     "measured": 1.0
+    },
+    "corner_speaker": {
+     "pass": true,
+     "measured": 1.0
+    },
+    "rhythm": {
+     "pass": false,
+     "measured": 4.63
+    }
+   }
+  },
+  "spoken_on": {
+   "note": "flag on, names as spoken: recording 5 holds to the end, nothing cycles back",
+   "flag": "on",
+   "phrases": [
+    "Spec Kit",
+    "Impeccable",
+    "Trading Agents",
+    "Number 4 Agents",
+    "Clawed Code Game Studios"
+   ],
+   "lane_drops": [],
+   "planned": [
+    {
+     "recording": 1,
+     "start_s": 0.0,
+     "end_s": 12.13,
+     "name_word_s": 6.2
+    },
+    {
+     "recording": 2,
+     "start_s": 12.13,
+     "end_s": 17.38,
+     "name_word_s": 12.13
+    },
+    {
+     "recording": 3,
+     "start_s": 17.38,
+     "end_s": 23.62,
+     "name_word_s": 17.38
+    },
+    {
+     "recording": 4,
+     "start_s": 23.62,
+     "end_s": 30.38,
+     "name_word_s": 24.12
+    },
+    {
+     "recording": 5,
+     "start_s": 30.38,
+     "end_s": 43.089,
+     "name_word_s": 30.38
+    }
+   ],
+   "seen_on_screen": [
+    {
+     "recording": 1,
+     "start_s": 0.0,
+     "end_s": 12.0
+    },
+    {
+     "recording": 2,
+     "start_s": 12.0,
+     "end_s": 17.5
+    },
+    {
+     "recording": 3,
+     "start_s": 17.5,
+     "end_s": 23.5
+    },
+    {
+     "recording": 4,
+     "start_s": 23.5,
+     "end_s": 30.5
+    },
+    {
+     "recording": 5,
+     "start_s": 30.5,
+     "end_s": 43.0
+    }
+   ],
+   "kit_rules": {
+    "length": {
+     "pass": false,
+     "measured": 41.49
+    },
+    "screen": {
+     "pass": true,
+     "measured": 1.0
+    },
+    "corner_speaker": {
+     "pass": true,
+     "measured": 1.0
+    },
+    "rhythm": {
+     "pass": false,
+     "measured": 6.23
+    }
+   }
+  },
+  "labels_on": {
+   "note": "flag on, her typed labels: the stand-in voice says 'Clawed Code', which no matcher hears as 'Claude code', so recording 5 is dropped (phrase_not_heard) and recording 4 holds to the end",
+   "flag": "on",
+   "phrases": [
+    "Spec-kit",
+    "Impeccable",
+    "TradingAgents",
+    "number four Agents",
+    "Claude code game studio"
+   ],
+   "lane_drops": [
+    {
+     "lane": "background",
+     "window": 4,
+     "reason": "phrase_not_heard"
+    }
+   ],
+   "planned": [
+    {
+     "recording": 1,
+     "start_s": 0.0,
+     "end_s": 12.13,
+     "name_word_s": 6.2
+    },
+    {
+     "recording": 2,
+     "start_s": 12.13,
+     "end_s": 17.38,
+     "name_word_s": 12.13
+    },
+    {
+     "recording": 3,
+     "start_s": 17.38,
+     "end_s": 23.62,
+     "name_word_s": 17.38
+    },
+    {
+     "recording": 4,
+     "start_s": 23.62,
+     "end_s": 43.089,
+     "name_word_s": 24.12
+    }
+   ],
+   "seen_on_screen": [
+    {
+     "recording": 1,
+     "start_s": 0.0,
+     "end_s": 12.0
+    },
+    {
+     "recording": 2,
+     "start_s": 12.0,
+     "end_s": 17.5
+    },
+    {
+     "recording": 3,
+     "start_s": 17.5,
+     "end_s": 23.5
+    },
+    {
+     "recording": 4,
+     "start_s": 23.5,
+     "end_s": 43.0
+    }
+   ],
+   "kit_rules": {
+    "length": {
+     "pass": false,
+     "measured": 41.49
+    },
+    "screen": {
+     "pass": true,
+     "measured": 1.0
+    },
+    "corner_speaker": {
+     "pass": true,
+     "measured": 1.0
+    },
+    "rhythm": {
+     "pass": false,
+     "measured": 7.04
+    }
+   }
+  }
+ },
+ "after_main_2118": {
+  "what": "Recipe windows recompiled (no render) after merging main with #2118 (no repeats: the last window holds to the take end for everyone): same words.json and take length, placeholder media. Flag-on cases equal the exported recipes above, so the export applies; flag off no longer cycles.",
+  "cases": {
+   "spoken_off": {
+    "flag": "off",
+    "phrases": [
+     "Spec Kit",
+     "Impeccable",
+     "Trading Agents",
+     "Number 4 Agents",
+     "Clawed Code Game Studios"
+    ],
+    "lane_drops": [],
+    "planned": [
+     {
+      "recording": 1,
+      "start_s": 0.0,
+      "end_s": 12.13,
+      "name_word_s": 6.2
+     },
+     {
+      "recording": 2,
+      "start_s": 12.13,
+      "end_s": 17.38,
+      "name_word_s": 12.13
+     },
+     {
+      "recording": 3,
+      "start_s": 17.38,
+      "end_s": 23.62,
+      "name_word_s": 17.38
+     },
+     {
+      "recording": 4,
+      "start_s": 23.62,
+      "end_s": 30.38,
+      "name_word_s": 24.12
+     },
+     {
+      "recording": 5,
+      "start_s": 30.38,
+      "end_s": 43.1,
+      "name_word_s": 30.38
+     }
+    ]
+   },
+   "spoken_on": {
+    "flag": "on",
+    "phrases": [
+     "Spec Kit",
+     "Impeccable",
+     "Trading Agents",
+     "Number 4 Agents",
+     "Clawed Code Game Studios"
+    ],
+    "lane_drops": [],
+    "planned": [
+     {
+      "recording": 1,
+      "start_s": 0.0,
+      "end_s": 12.13,
+      "name_word_s": 6.2
+     },
+     {
+      "recording": 2,
+      "start_s": 12.13,
+      "end_s": 17.38,
+      "name_word_s": 12.13
+     },
+     {
+      "recording": 3,
+      "start_s": 17.38,
+      "end_s": 23.62,
+      "name_word_s": 17.38
+     },
+     {
+      "recording": 4,
+      "start_s": 23.62,
+      "end_s": 30.38,
+      "name_word_s": 24.12
+     },
+     {
+      "recording": 5,
+      "start_s": 30.38,
+      "end_s": 43.1,
+      "name_word_s": 30.38
+     }
+    ]
+   },
+   "labels_off": {
+    "flag": "off",
+    "phrases": [
+     "Spec-kit",
+     "Impeccable",
+     "TradingAgents",
+     "number four Agents",
+     "Claude code game studio"
+    ],
+    "lane_drops": [
+     {
+      "lane": "background",
+      "window": 2,
+      "reason": "phrase_not_heard"
+     },
+     {
+      "lane": "background",
+      "window": 4,
+      "reason": "phrase_not_heard"
+     }
+    ],
+    "planned": [
+     {
+      "recording": 1,
+      "start_s": 0.0,
+      "end_s": 12.13,
+      "name_word_s": 6.2
+     },
+     {
+      "recording": 2,
+      "start_s": 12.13,
+      "end_s": 23.62,
+      "name_word_s": 12.13
+     },
+     {
+      "recording": 4,
+      "start_s": 23.62,
+      "end_s": 43.1,
+      "name_word_s": 24.12
+     }
+    ]
+   },
+   "labels_on": {
+    "flag": "on",
+    "phrases": [
+     "Spec-kit",
+     "Impeccable",
+     "TradingAgents",
+     "number four Agents",
+     "Claude code game studio"
+    ],
+    "lane_drops": [
+     {
+      "lane": "background",
+      "window": 4,
+      "reason": "phrase_not_heard"
+     }
+    ],
+    "planned": [
+     {
+      "recording": 1,
+      "start_s": 0.0,
+      "end_s": 12.13,
+      "name_word_s": 6.2
+     },
+     {
+      "recording": 2,
+      "start_s": 12.13,
+      "end_s": 17.38,
+      "name_word_s": 12.13
+     },
+     {
+      "recording": 3,
+      "start_s": 17.38,
+      "end_s": 23.62,
+      "name_word_s": 17.38
+     },
+     {
+      "recording": 4,
+      "start_s": 23.62,
+      "end_s": 43.1,
+      "name_word_s": 24.12
+     }
+    ]
+   }
+  }
+ }
+}

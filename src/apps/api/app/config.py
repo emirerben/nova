@@ -454,6 +454,10 @@ class Settings(BaseSettings):
     # PHONE_SUBTITLED_TITLE_ENABLED=false --app nova-video` + `fly machine
     # restart <id>` (api + worker).
     phone_subtitled_title_enabled: bool = True
+    # Qendresa item 20 (server-only): a multi-line opening title (" / " breaks) on a
+    # phone Talking edit becomes one styled row per line, stacked off her face, with an
+    # optional logo above it. Off = byte-identical single title row.
+    title_look_enabled: bool = False
     # KRI-514 (closing text on phone Talking edits): a confirmed `closing_title`
     # ("end on the toast photo with a 'MY PICK' badge") on a phone-rendered
     # `subtitled` edit renders as an editable text row instead of the planner
@@ -874,6 +878,16 @@ class Settings(BaseSettings):
     # otherwise captions are byte-identical to before and the receipt says what was not drawn.
     # Apply: `fly secrets set PHONE_CAPTION_SHAPE_ENABLED=true` (api + worker) + restart.
     phone_caption_shape_enabled: bool = False
+    # Qendresa item 15: the card layout on phone Talking edits. Screenshot / recording cards
+    # take her size and place (up to full width, in the band above her face or below her
+    # caption row, never on her face or captions), up to 14 cards, a named screenshot may open
+    # the video, recordings start at their best moment. Default FALSE. Applied only when
+    # `cardLayout` is in PHONE_RENDER_VERIFIED_FEATURES AND the approving app build declares >=
+    # `client_protocol.CARD_LAYOUT_PROTOCOL` (its editor keeps a `caption_clear` card below
+    # y 0.62); portrait pip layout without a speaker background only. Otherwise cards are
+    # byte-identical to before.
+    # Apply: `fly secrets set TALKING_CARD_LAYOUT_ENABLED=true` (api + worker) + restart.
+    talking_card_layout_enabled: bool = False
     # KRI-1007: caption entrance/exit/loop/speed (`animation_phases` on a caption row, or
     # the all-captions default `caption_meta.animation_phases`). Drawn on device from the
     # recipe's existing `animationPhases`. Default TRUE; the editor capability
@@ -951,6 +965,37 @@ class Settings(BaseSettings):
     # `speaker_background_color_phone_fallback`) and the creator keeps their own room.
     # Design: docs/reviews/speaker-background-color-failure-modes.md.
     speaker_background_color_min_client_protocol: int = 34
+    # Qendresa item 17 (follow-up of KRI-1175): a background sequence entry's spoken phrase is
+    # also heard when it is said another way -- joined / split words ("TradingAgents" / "trading
+    # agents"), a final plural "s" ("studio" / "studios", also with a KRI-961 sound-alike) -- and
+    # not inside another entry's longer phrase ("agents" in "trading agents"). Server only, no
+    # protocol. Default FALSE: off, windows and the Main Creator prompt are byte-identical.
+    # Apply: `fly secrets set BACKGROUND_FOLLOWS_TALK_ENABLED=true --app nova-video` + restart
+    # (api + worker); rollback = `...=false` + restart. Design:
+    # docs/reviews/speaker-background-windows-failure-modes.md (S64-S69).
+    background_follows_talk_enabled: bool = False
+    # Qendresa item 16 (builds on KRI-1162): the speaker starts FULL SCREEN in their own take (no
+    # person mask, no background, no corner) and then drops into the background / corner for the
+    # rest of the edit. Recipe field `speaker_background.full_screen_windows` (capability
+    # `speakerFrameWindows`, app builds >= `speaker_full_opening_min_client_protocol`); the planner
+    # writes it from `background_media.full_screen_opening` (Main Creator v133, taught only with
+    # the flag on). Below the protocol, or without the verified token, the windows are laid out as
+    # today (corner from 0 s) and the receipt says the full-screen opening was not made. Default
+    # FALSE: off, every prompt, recipe and receipt is byte-identical. Apply: verify
+    # `speakerFrameWindows` on a device, add it to PHONE_RENDER_VERIFIED_FEATURES, then `fly secrets
+    # set SPEAKER_FULL_OPENING_ENABLED=true --app nova-video` + restart (api + worker); rollback =
+    # `...=false` + restart. Design: docs/reviews/speaker-background-windows-failure-modes.md
+    # (S70-S82).
+    speaker_full_opening_enabled: bool = False
+    speaker_full_opening_min_client_protocol: int = 41
+    # Qendresa item 19: numbered list labels on a phone Talking edit. A brief text ("1. Spec-kit")
+    # with no spoken trigger is shown when its item's part of the talk starts (where its
+    # background recording is introduced, else the take's own words), as an ordinary text row on
+    # the authoredText lane (no new capability, no protocol). Default FALSE: off, no rows, no
+    # variant key, receipts unchanged. Apply: `fly secrets set SPOKEN_LIST_LABELS_ENABLED=true
+    # --app nova-video` + restart (api + worker). Design:
+    # docs/reviews/qendresa-list-labels-failure-modes.md.
+    spoken_list_labels_enabled: bool = False
     # KRI-1192: the app bundles Noto Sans KR / Noto Sans Arabic (the script-fallback faces that
     # draw Hangul and Arabic captions) from protocol 35. A phone recipe naming one requires
     # `scriptFonts` (verified in PHONE_RENDER_VERIFIED_FEATURES after the device check) and an
@@ -1239,6 +1284,10 @@ class Settings(BaseSettings):
     # `fly secrets set KRIA_CREATIVE_BRIEF_ENABLED=true --app nova-video`
     # + restart api + worker. Rollback: set it false + restart.
     kria_creative_brief_enabled: bool = False
+    # Item 23 (Related KRI-1129): on = one brief batch may carry up to 32 entries when its
+    # JSON is within 9,000 chars, so a long creation prompt is planned in one go. Off = the
+    # 16-entry cap exactly as before. Apply: fly secret + restart api and worker.
+    brief_long_request_enabled: bool = False
     # Deploy readers everywhere before enabling snapshot writers.
     kria_brief_binding_enabled: bool = False
     kria_brief_binding_user_ids: Annotated[list[str], NoDecode] = []
@@ -2660,6 +2709,16 @@ class Settings(BaseSettings):
     creator_memory_enabled: bool = False
     # KRI-648: stamped only at dispatch; legacy generations are never restyled.
     phone_text_styling_enabled: bool = False
+    # Green 5 (2026-11-04): on a Talk-to-camera edit with a speaker background the automatic caption
+    # colour is judged against the background behind the captions (fill and timed windows, with the
+    # speaker take in its frame), not the take alone; when no plain colour reaches 4.5:1 there the
+    # captions are white with a black outline. Edits without a background are unchanged. Default
+    # TRUE; false + worker restart = byte-identical (`phone_text_styling._background_frames`).
+    caption_background_contrast_enabled: bool = True
+
+    # Qendresa item 21: a pin may sit in the middle and carry TikTok's native text look.
+    # Default off; with it off a stray middle_center pin is drawn as top_center, no look.
+    clip_text_tiktok_look_enabled: bool = False
     # KRI-336: all three rollout conditions precede owner opt-in. No public cohort.
     creator_edit_learning_enabled: bool = False
     creator_edit_learning_privacy_approved: bool = False

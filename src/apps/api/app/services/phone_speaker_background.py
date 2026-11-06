@@ -62,6 +62,15 @@ BACKGROUND_REFUSALS: dict[str, tuple[str, str]] = {
         "Couldn't use those background times: they overlap or are too short",
         "Bu arka plan sürelerini kullanamadım: üst üste biniyor ya da çok kısa",
     ),
+    # Qendresa item 16: the speaker full screen before the corner.
+    "speaker_full_opening_disabled": (
+        "Couldn't start you full screen: it isn't available right now",
+        "Seni tam ekranda başlatamadım: şu anda kullanılamıyor",
+    ),
+    "speaker_full_opening_invalid": (
+        "Couldn't use those full-screen times: they overlap, are too short or run past the end",
+        "Bu tam ekran sürelerini kullanamadım: üst üste biniyor, çok kısa ya da videonun dışında",
+    ),
     # KRI-1173: a solid-colour fill.
     "speaker_background_color_disabled": (
         "Couldn't put a colour behind you: it isn't available right now",

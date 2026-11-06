@@ -462,6 +462,15 @@ FIELD_MATRIX: dict[str, FieldRule] = {
     **_rules(
         "upstream_resolved",
         "render_contract:text",
+        "pinned_texts[].look",
+        note=(
+            "the pinned-text compiler resolves the look into the row's font, colour, size and "
+            "shadow; the contract still verifies the pin's exact text"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
+        "render_contract:text",
         "pinned_texts[].start_s",
         "pinned_texts[].end_s",
         "pinned_texts[].clip",
@@ -644,6 +653,7 @@ FIELD_MATRIX: dict[str, FieldRule] = {
                 "following_clip_id",
                 "sound",
                 "hold_s",
+                "anchor",
             )
         ),
         "closing_media",
@@ -718,6 +728,8 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "background_media.sequence[].spoken_phrase",
         "background_media.sequence[].hold_s",
         "background_media.cadence_s",
+        "background_media.full_screen_opening",
+        "background_media.full_screen_opening_s",
         "background_media.speaker_frame",
         note=(
             "KRI-1117: kept, filled from the creator's camera pick, or dropped by "
@@ -1094,6 +1106,29 @@ def _digest(data: Mapping[str, Any]) -> str:
             and not (key in _POST_V1_FIELD_DEFAULTS and value == _POST_V1_FIELD_DEFAULTS[key])
         }
     )
+
+
+def _talking_list_label(requirement: Any, raw: Mapping[str, Any]) -> bool:
+    """Item 19: flag on and the Talking worker would read this whole-video text as a list label."""
+    from app.pipeline.phone_list_labels import is_list_label_candidate  # noqa: PLC0415
+    from app.services.phone_rollout import phone_list_labels_supported  # noqa: PLC0415
+
+    if requirement.scope != "global" or not phone_list_labels_supported():
+        return False
+    from app.config import settings  # noqa: PLC0415
+
+    # Like the worker (`_phone_list_label_follow`): a label follows a recording only with item
+    # 17's windows; without them only a marked label is one.
+    background = raw.get("background_media") if settings.background_follows_talk_enabled else None
+    sequence = background.get("sequence") if isinstance(background, Mapping) else None
+    phrases = tuple(
+        entry["spoken_phrase"].strip()
+        for entry in sequence or ()
+        if isinstance(entry, Mapping)
+        and isinstance(entry.get("spoken_phrase"), str)
+        and entry["spoken_phrase"].strip()
+    )
+    return is_list_label_candidate(requirement, phrases)
 
 
 def _strategy(raw: Mapping[str, Any] | None) -> CreativeStrategy | None:
@@ -1636,6 +1671,12 @@ def build_render_contract(
                     # take says it (`phone_spoken_text`). Its own receipt answers it ("not
                     # heard" / "can't"), so pinning it would refuse an honest render.
                     # KRI-791: so does one whose word the ask doesn't name ("which word?").
+                    continue
+                if talking_edit and _talking_list_label(requirement, raw):
+                    # Item 19: a Talking edit draws a numbered list label (or the name of a
+                    # planned recording) only where its item's part starts
+                    # (`phone_list_labels`). An item never heard gets no label and its own
+                    # receipt says so, so pinning it would refuse an honest render.
                     continue
                 shot_index = None
                 if requirement.is_shot_text:
@@ -2738,9 +2779,9 @@ def verify_phone_recipe(
                 lines[-1].append(text)
         return "\n".join("".join(line) for line in lines)
 
-    def text_layers() -> list[tuple[str, str, float, float]]:
+    def text_layers() -> list[tuple[str, str, float, float, float]]:
         return [
-            (layer.id, _normal(_layer_text(layer)), layer.start, layer.end)
+            (layer.id, _normal(_layer_text(layer)), layer.start, layer.end, layer.anchor_y)
             for layer in recipe.text_layers
             if layer.runs
             and all(
@@ -2757,8 +2798,14 @@ def verify_phone_recipe(
 
     rendered = text_layers()
     rendered_evidence = [
-        {"element_id": layer_id, "text": text, "start_s": start, "end_s": end}
-        for layer_id, text, start, end in rendered
+        {
+            "element_id": layer_id,
+            "text": text,
+            "start_s": start,
+            "end_s": end,
+            "anchor_y": anchor_y,
+        }
+        for layer_id, text, start, end, anchor_y in rendered
     ]
     # Item 14: Qendresa's "comment READ" ending is drawn as two layers (a small "comment"
     # over a big keyword) in the same window, so the confirmed closing text is never ONE
@@ -2767,11 +2814,13 @@ def verify_phone_recipe(
     # share a window (within a frame), and read "comment <keyword>". One joined row is added.
     from app.pipeline.phone_cta_text import cta_ending_parts  # noqa: PLC0415
 
-    for (lead_id, lead_text, lead_start, lead_end), (
+    # Each rendered layer also carries its `anchor_y` (item 20's stacked-title check reads it).
+    for (lead_id, lead_text, lead_start, lead_end, lead_y), (
         key_id,
         key_text,
         key_start,
         key_end,
+        _key_y,
     ) in zip(rendered, rendered[1:], strict=False):
         lead_index = _text_layer_index(lead_id)
         if (
@@ -2787,6 +2836,7 @@ def verify_phone_recipe(
                     "text": _normal(f"{lead_text} {key_text}"),
                     "start_s": lead_start,
                     "end_s": lead_end,
+                    "anchor_y": lead_y,
                 }
             )
     for requirement in contract.exact_texts:
@@ -2796,6 +2846,11 @@ def verify_phone_recipe(
             role=requirement.role,
             tolerance_s=frame,
         )
+        if not matches and requirement.role == "opening":
+            # Item 20: a " / " title drawn as one row per line, stacked top to bottom.
+            from app.pipeline.phone_title_look import stacked_title_matches  # noqa: PLC0415
+
+            matches = stacked_title_matches(rendered_evidence, requirement.text, tolerance_s=frame)
         if (
             not matches
             and requirement.role == "any"

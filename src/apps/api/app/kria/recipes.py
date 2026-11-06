@@ -279,6 +279,10 @@ MediaCapability = Literal[
     # KRI-1173: the same lane with a solid-colour FILL (`media_kind: "color"` + `color`), one flat
     # layer under the speaker. Derived from the layer; gated by its own verified token.
     "speakerBackgroundColor",
+    # Qendresa item 16: `speaker_background.full_screen_windows` -- the speaker's own take drawn
+    # full-frame and untouched for the opening span(s) (no mask, no background, no corner).
+    # Derived from the layer; gated by its own verified token and protocol 41.
+    "speakerFrameWindows",
     # A tilted clip (`transform.rotation_degrees != 0`) and/or a `backdrop` under a main-track
     # clip, drawn on device by `KriaMediaEngine`'s compositor (KRI-1134).
     "clipTilt",

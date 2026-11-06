@@ -34,7 +34,9 @@ enum NativeEditorRenderError: Error, Equatable {
     static let songSourceKey = "user_song"
     private static let songTrackID = NativeEditorSongBed.trackID
     /// Mirrors `CAPTION_BAND_TOP_FRAC` (app/pipeline/phone_subtitled_lanes.py): a PiP card's centre never goes
-    /// below it, so a card stays out of the caption band.
+    /// below it, so a card stays out of the caption band. Exception (Qendresa item 15): a card the server marked
+    /// `caption_clear` (`SubtitledOverlayCard.caption_clear`, editor media-overlay JSON `"caption_clear": true`) was
+    /// deliberately placed in the top or bottom band and keeps its own y.
     static let deviceCardMaxYFraction = 0.62
     /// The engine's text-layer cap (`EditRecipe.validate`). A recipe over it is refused whole.
     static let maxTextLayers = KriaMediaEngine.EditRecipe.maxTextLayers
@@ -491,7 +493,9 @@ enum NativeEditorRenderError: Error, Equatable {
             let x = overlay.raw["x_frac"]?.numberValue ?? 0.5
             let rawY = overlay.raw["y_frac"]?.numberValue ?? fallbackY
             // Server: `y_frac = min(card.y_frac, CAPTION_BAND_TOP_FRAC)` for PiP cards (full-screen has no geometry).
-            let y = cardsFollowDeviceRecipe && !fullscreen ? min(rawY, Self.deviceCardMaxYFraction) : rawY
+            // Qendresa item 15: a `caption_clear` card (JSON true only) is exempt from the clamp.
+            let captionClear = overlay.raw["caption_clear"] == .bool(true)
+            let y = cardsFollowDeviceRecipe && !fullscreen && !captionClear ? min(rawY, Self.deviceCardMaxYFraction) : rawY
             let transform: MediaTransform = fullscreen ? .identity : MediaTransform(scale: cardWidth / coverWidth,
                 positionX: (x * width).rounded(.toNearestOrEven) - width / 2,
                 positionY: (y * height).rounded(.toNearestOrEven) - height / 2)
