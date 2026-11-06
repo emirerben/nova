@@ -120,6 +120,8 @@ struct UploadFailure: Identifiable, Equatable, Sendable {
     /// Why it failed decides what the creator is told and offered (KRI-211): an unreadable file is
     /// simply left out, while an upload that failed on the way still exists and can be retried.
     var cause: Cause = .unreadable
+    /// Set when the failed upload was a re-record: the swap did not happen and the old take is still attached.
+    var replacesMediaID: String? = nil
 
     enum Cause: Sendable {
         /// The file could not be read at all; choosing it again is the only way back.

@@ -7,6 +7,21 @@ import UIKit
 /// Offline chat fixture: every HTTP request is intercepted, even if a caller
 /// changes its URL. The existing UI-only fallback supplies projects and drafts.
 enum ChatUITestTransport {
+    /// Uploads in the re-record fixture run through the same offline server, so the PUT lands and the real attach
+    /// path (reserve, upload, replace) runs without a network. Nil for every other fixture: the background session stays.
+    static func uploadSessionConfiguration() -> URLSessionConfiguration? {
+        guard CreationChatFixture.rerecordMode != nil else { return nil }
+        // Every launch starts with no leftover uploads, except a relaunch that is testing recovery.
+        if ProcessInfo.processInfo.environment["KRIA_RERECORD_KEEP_UPLOADS"] != "1" {
+            for suffix in ["", ".preparing", ".photo-selection", ".editor-source-placements"] {
+                UserDefaults.standard.removeObject(forKey: "kria.rerecord-ui-fixture.uploads" + suffix)
+            }
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ChatUITestURLProtocol.self]
+        return configuration
+    }
+
     static func api() -> KriaAPI {
         if ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA"] == "1" {
             URLProtocol.registerClass(GeneratedMediaImageFixtureProtocol.self)
@@ -167,6 +182,9 @@ final class CreationChatFixture: @unchecked Sendable {
     private var loadedGeneratedMediaFixture = false
     /// Item 24: visuals "uploaded" (reserve -> PUT -> register) per plan item, for `KRIA_CHAT_PLACE_HINT_FIXTURE`.
     private var placeHintPools: [String: [[String: Any]]] = [:]
+    /// `KRIA_TALKING_RERECORD=busy-twice`: the first two swap attempts (the app's own automatic pair) are refused
+    /// while a render runs; the creator's retry goes through.
+    fileprivate var rerecordBusyRefusals = 0
 
     private var generatedFixtureStorageKey: String? {
         ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA_PERSIST"].map { "kria.generated-media-fixture." + $0 }
@@ -360,6 +378,7 @@ final class CreationChatFixture: @unchecked Sendable {
             let reply = AccountTextPreferenceFixture.shared.reply(request, stale: false, learning: true, initiallyEnabled: true)
             return (reply.0, Data(reply.1.utf8))
         }
+        if let reply = rerecordRespond(request, path: path, body: body) { return reply }
         seedDeviceDeliveryThread()
         mirrorDeviceDelivery()
         if path == "/creation-threads/capabilities" {
@@ -2151,6 +2170,119 @@ enum MomentOrderFixture {
                  "found": window(5.0, 6.5, "man takes first bite of dessert"), "suggestions": [] as [Any]],
             ] as [[String: Any]],
         ]
+    }
+}
+#endif
+
+#if DEBUG
+
+// MARK: KRIA_TALKING_RERECORD (re-record from the ready Talking video)
+
+/// `KRIA_TALKING_RERECORD=ready|no-audio|busy-twice|slot-full|no-replace`: a Talking chat that already has one attached take.
+/// `ready` also has a finished video and a server that offers replace; the other values change how the swap ends.
+/// `slot-full` has no video yet (replace offered only because the one clip slot is full). `no-replace` is a server
+/// without the flag: a finished video and no `replace` capability.
+/// A plain attach is answered like the real cap (400 `clip_cap_exceeded`), so an app that attaches a second speaker
+/// instead of swapping fails loudly rather than passing.
+extension CreationChatFixture {
+    /// New for every launch: the chat caches its transcript by thread id, and a previous run's reply must not reappear.
+    static let rerecordThreadID = UUID().uuidString
+    static let rerecordOldJob = "EEEEEEEE-EEEE-EEEE-EEEE-EEEEEEEEEEEE"
+    static let rerecordNewJob = "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF"
+    static let rerecordOldMediaID = "analysis-proxy-old-take.mp4"
+    static let rerecordOldFilename = "Old take.mov"
+    static var rerecordMode: String? { ProcessInfo.processInfo.environment["KRIA_TALKING_RERECORD"] }
+
+    fileprivate func rerecordRespond(_ request: URLRequest, path: String, body: [String: Any]) -> (Int, Data)? {
+        guard let mode = Self.rerecordMode else { return nil }
+        func response(_ object: Any, status: Int = 200) -> (Int, Data) { (status, (try? JSONSerialization.data(withJSONObject: object)) ?? Data()) }
+        func problem(_ status: Int, _ code: String, _ message: String) -> (Int, Data) {
+            response(["problem": ["code": code, "message": message, "phase": "accept", "retryable": false, "recovery": "none"]], status: status)
+        }
+        let id = Self.rerecordThreadID
+        if request.url?.host == "fixture.invalid", request.httpMethod == "PUT" { return response([:]) }
+        if threads[id] == nil {
+            func event(_ seq: Int, _ type: String, _ payload: [String: Any] = [:]) -> [String: Any] {
+                ["id": UUID().uuidString, "sequence": seq, "revision": seq + 1, "role": "assistant", "event_type": type, "content": "", "payload": payload, "created_at": "2026-09-10T10:00:00Z"]
+            }
+            let clip: [String: Any] = ["media_id": Self.rerecordOldMediaID, "kind": "video", "filename": Self.rerecordOldFilename, "duration_s": 2,
+                                       "upload_contract": ["purpose": "analysis_proxy"]]
+            var thread: [String: Any] = ["id": id, "title": "Talking to camera", "status": "active", "revision": 4, "runtime_version": 1,
+                "state": ["format": "talking_to_camera", "edit_format": "subtitled", "media": [clip]],
+                "events": [event(0, "thread_created"), event(1, "format_prompt"), event(2, "action_select_format", ["format": "talking_to_camera"]), event(3, "media_added", ["media": [clip], "media_count": 1])],
+                "active_plan_item_id": id, "updated_at": "2026-09-10T10:00:00Z"]
+            var clips: [String: Any] = ["current": 1, "max": 1, "server_max": 10]
+            if mode != "slot-full" {
+                thread["active_job_id"] = Self.rerecordOldJob
+                thread["job"] = ["id": Self.rerecordOldJob, "status": "ready", "variants": [["variant_id": "original_text", "render_status": "ready", "output_url": "https://fixture.invalid/result.mp4"]]]
+            }
+            if mode != "no-replace" { clips["replace"] = true }
+            thread["media_capabilities"] = ["clips": clips, "visuals": ["current": 0, "max": 10]]
+            threads[id] = thread
+        }
+        guard var thread = threads[id] else { return nil }
+        var state = thread["state"] as? [String: Any] ?? [:]
+        var events = thread["events"] as? [[String: Any]] ?? []
+        var revision = thread["revision"] as? Int ?? 0
+        func append(_ type: String, role: String = "assistant", text: String = "", payload: [String: Any] = [:], clientEventID: String? = nil) {
+            revision += 1
+            var event: [String: Any] = ["id": UUID().uuidString, "sequence": events.count, "revision": revision, "role": role, "event_type": type, "content": text, "payload": payload, "created_at": "2026-09-10T10:05:00Z"]
+            if let clientEventID { event["client_event_id"] = clientEventID }
+            events.append(event)
+        }
+        func save() { thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread }
+        guard path.hasPrefix("/creation-threads/\(id)") else { return nil }
+        let method = request.httpMethod ?? "GET"
+        var media = state["media"] as? [[String: Any]] ?? []
+        let currentClipID = media.first?["media_id"] as? String
+
+        if path.hasSuffix("/upload-urls"), method == "POST" {
+            let file = (body["files"] as? [[String: Any]])?.first ?? [:]
+            guard file["replaces_media_id"] as? String == currentClipID else {
+                return problem(400, "clip_cap_exceeded", "This edit already has the most clips it can take.")
+            }
+            return response([["media_id": "analysis-proxy-\(UUID().uuidString).mp4", "upload_url": "https://fixture.invalid/upload",
+                              "gcs_path": "fixture/new-take.mp4", "content_type": "video/mp4", "upload_headers": [String: String]()]])
+        }
+        if path.hasSuffix("/media"), method == "POST" {
+            return problem(400, "clip_cap_exceeded", "This edit already has the most clips it can take.")
+        }
+        if path.hasSuffix("/media/replace"), method == "POST" {
+            let key = body["client_event_id"] as? String ?? ""
+            if events.contains(where: { $0["client_event_id"] as? String == key && $0["event_type"] as? String == "media_replaced" }) { return response(thread) }
+            if mode == "no-audio" { return problem(422, "retake_has_no_audio", "That take has no audio.") }
+            if mode == "busy-twice", rerecordBusyRefusals < 2 {
+                rerecordBusyRefusals += 1
+                return problem(409, "render_in_progress", "A render is still running.")
+            }
+            guard body["replaced_media_id"] as? String == currentClipID else { return problem(409, "retake_target_missing", "That clip is no longer attached.") }
+            guard body["expected_revision"] as? Int == revision else { return problem(409, "revision_mismatch", "This chat changed.") }
+            guard let incoming = body["media"] as? [String: Any], incoming["kind"] as? String == "video",
+                  let newID = incoming["media_id"] as? String else { return problem(422, "retake_kind_mismatch", "A replacement must be a video.") }
+            let filename = incoming["filename"] as? String ?? "New take.mov"
+            media[0] = ["media_id": newID, "kind": "video", "filename": filename, "duration_s": 2, "upload_contract": ["purpose": "analysis_proxy"]]
+            state["media"] = media
+            state["source_replacement"] = ["replaced_media_id": currentClipID ?? "", "media_id": newID,
+                                           "superseded_job_id": thread["active_job_id"] as? String ?? NSNull(), "revision": revision + 1]
+            append("media_replaced", role: "user", payload: ["replaced_media_id": currentClipID ?? "", "media": media, "media_count": 1, "reason": "retake"], clientEventID: key)
+            var clips = (thread["media_capabilities"] as? [String: Any])?["clips"] as? [String: Any] ?? [:]
+            clips["current"] = 1
+            thread["media_capabilities"] = ["clips": clips, "visuals": ["current": 0, "max": 10]]
+            save()
+            return response(thread)
+        }
+        if method == "POST", path.hasSuffix("/messages") || path.hasSuffix("/turns"), let marker = state["source_replacement"] as? [String: Any],
+           marker["superseded_job_id"] as? String == thread["active_job_id"] as? String {
+            let key = body["client_event_id"] as? String ?? ""
+            guard !events.contains(where: { $0["client_event_id"] as? String == key && $0["event_type"] as? String == "user_message" }) else { return response(thread) }
+            append("user_message", role: "user", text: body["message"] as? String ?? "", clientEventID: key)
+            thread["active_job_id"] = Self.rerecordNewJob
+            thread["job"] = ["id": Self.rerecordNewJob, "status": "ready", "variants": [["variant_id": "original_text", "render_status": "ready", "output_url": "https://fixture.invalid/result.mp4"]]]
+            append("assistant_review", text: "Made it again from your new take.")
+            save()
+            return response(thread)
+        }
+        return nil
     }
 }
 #endif

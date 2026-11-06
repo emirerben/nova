@@ -644,6 +644,10 @@ private struct CreationWorkspaceView: View {
     /// The server's reason the last confirmation was rejected, shown inside the card.
     @State private var confirmationConflict: CreationConfirmationConflict?
     @State private var showsAttachments = false
+    /// The creator's own re-record steps; the rest of the flow is read from uploads and the thread (`rerecordPhase`).
+    @State private var rerecordLocal: RerecordPhase.Local = .none
+    /// The camera for a re-record. Open independently of `rerecordLocal` so it is not torn down by the flow moving on.
+    @State private var rerecordCamera: RerecordTarget?
     /// KRI-815: the script the attachment sheet shows on its voiceover step; nil = the sheet as before.
     @State private var attachmentScript: VoiceoverScript?
     @State private var attachmentLaunch: AttachmentLaunch?
@@ -678,8 +682,70 @@ private struct CreationWorkspaceView: View {
     private var canAttachMedia: Bool {
         selectedFormat != nil && !isSending && !isActing && !isThinking
             && (selectedFormat != .slides || hasDedicatedSlideWorkspace)
-            && currentProject.status != .rendering && (selectedFormat == .slides || currentProject.status != .ready)
+            && currentProject.status != .rendering
     }
+
+    private var rerecordFacts: RerecordPhase.Facts {
+        let swapping = uploadRecords.contains { $0.projectID == project.id && $0.replacesMediaID != nil && $0.uploadFailed != true }
+            || uploadInFlight.values.contains { $0.projectID == project.id && $0.replacesMediaID != nil }
+        let failure = uploadFailures.first { $0.projectID == project.id && $0.replacesMediaID != nil }
+        let offer: RerecordOffer = workspaceStage == .ready && currentProject.status == .ready && !isSending && !isActing && !isThinking
+            ? .resolve(thread: fullThread) : .none
+        return RerecordPhase.Facts(
+            offer: offer, replaceInFlight: swapping,
+            failure: failure.map { RerecordFailure(code: nil, message: $0.message, retryable: $0.cause == .uploadFailed) },
+            debt: RerecordPlanDebt.owed(state: threadState, activeJobID: fullThread?.activeJobID ?? currentProject.activeJobID?.uuidString, events: events)
+        )
+    }
+
+    private var rerecordPhase: RerecordPhase { .resolve(local: rerecordLocal, facts: rerecordFacts) }
+
+    private var rerecordActions: RerecordActions {
+        RerecordActions(
+            start: {
+                switch rerecordFacts.offer {
+                case .none: break
+                case let .one(target): rerecordLocal = .confirming([target])
+                case let .choose(targets): rerecordLocal = .confirming(targets)
+                }
+            },
+            retry: { if let id = rerecordFacts.failureRecordID(in: uploadFailures, project: project.id) { Task { await model.uploads.retryUpload(recordID: id) } } },
+            dismissFailure: {
+                guard let id = rerecordFacts.failureRecordID(in: uploadFailures, project: project.id) else { return }
+                Task { await model.uploads.cancel(recordID: id); model.uploads.dismissFailure(id: id) }
+            },
+            makeAgain: { if let debt = rerecordFacts.debt { Task { await sendRerecordPlan(debt) } } }
+        )
+    }
+
+    /// The fresh-plan turn the swap owes. A failed send leaves the swap owed, so the button is still there to retry.
+    private func sendRerecordPlan(_ debt: SourceReplacement) async {
+        rerecordLocal = .planning(debt)
+        for _ in 0..<30 where isSending || isActing || isThinking || pendingUploadCount > 0 { try? await Task.sleep(for: .milliseconds(100)) }
+        // `send` returns silently while a turn runs or an earlier receipt is pending; staying `.planning` then would
+        // hide the Make it again button with nothing left to send the turn.
+        guard !isSending, !isActing, !isThinking, sendReceipt == nil else { rerecordLocal = .none; return }
+        await send(message: RerecordPlanDebt.message, keepsDraft: true)
+        if rerecordFacts.debt == debt, !isThinking, sendReceipt == nil { rerecordLocal = .none }
+    }
+
+    private func rerecordCameraClosed() {
+        // Nothing was handed over: the creator backed out, so this session has no swap to follow.
+        if case .swapping = rerecordLocal, !rerecordFacts.replaceInFlight, rerecordFacts.debt == nil { rerecordLocal = .none }
+    }
+
+    private func rerecordDebtChanged(_ debt: SourceReplacement?) {
+        guard let debt else { return }
+        if case .swapping = rerecordLocal { Task { await sendRerecordPlan(debt) } }
+    }
+
+    private var rerecordConfirmation: Binding<Bool> {
+        Binding(
+            get: { if case .confirming = rerecordLocal { true } else { false } },
+            set: { if !$0, case .confirming = rerecordLocal { rerecordLocal = .none } }
+        )
+    }
+
 
     private var readyMediaCount: Int {
         guard workspaceStage == .footage else { return 0 }
@@ -1659,6 +1725,27 @@ private struct CreationWorkspaceView: View {
         suggestionLedger.requestRefresh()
     }
 
+    private func attachmentSheet(rerecordTarget: RerecordTarget?) -> some View {
+        AttachmentSheet(
+            projectID: project.id,
+            maximumClipCount: selectedMaximumClipCount,
+            attachedClipCount: attachedClipCount,
+            format: selectedFormat,
+            thread: fullThread,
+            capabilities: capabilities,
+            capabilitiesLoaded: capabilitiesAreAuthoritative,
+            voiceoverScript: rerecordTarget == nil ? attachmentScript : nil,
+            launch: rerecordTarget == nil ? attachmentLaunch : nil,
+            rerecordTarget: rerecordTarget,
+            refresh: {
+                if !capabilitiesAreAuthoritative { await refreshCapabilities() }
+                await refreshNow()
+            }
+        )
+            .environmentObject(model)
+            .environment(\.dynamicTypeSize, dynamicTypeSize)
+    }
+
     private func openAttachments(launch: AttachmentLaunch? = nil) {
         guard canAttachMedia else { return }
         attachmentLaunch = launch
@@ -1956,25 +2043,23 @@ private struct CreationWorkspaceView: View {
             apply(thread)
         }
         .sheet(isPresented: $showsAttachments) {
-            AttachmentSheet(
-                projectID: project.id,
-                maximumClipCount: selectedMaximumClipCount,
-                attachedClipCount: attachedClipCount,
-                format: selectedFormat,
-                thread: fullThread,
-                capabilities: capabilities,
-                capabilitiesLoaded: capabilitiesAreAuthoritative,
-                voiceoverScript: attachmentScript,
-                launch: attachmentLaunch,
-                refresh: {
-                    if !capabilitiesAreAuthoritative { await refreshCapabilities() }
-                    await refreshNow()
-                }
-            )
-                .environmentObject(model)
-                .environment(\.dynamicTypeSize, dynamicTypeSize)
+            attachmentSheet(rerecordTarget: nil)
                 .presentationDetents([.large])
         }
+        .fullScreenCover(item: $rerecordCamera, onDismiss: rerecordCameraClosed) { target in
+            attachmentSheet(rerecordTarget: target)
+        }
+        .confirmationDialog("Re-record your take?", isPresented: rerecordConfirmation, titleVisibility: .visible) {
+            if case let .confirming(targets) = rerecordLocal {
+                ForEach(targets) { target in
+                    Button(targets.count == 1 ? "Record new take" : "Re-record \(target.displayName)") { rerecordLocal = .swapping; rerecordCamera = target }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Kria keeps your script, background and other clips, then makes the video again from your new take. Text and caption changes you made to this video won’t carry over. Your current video stays until the new one is ready.")
+        }
+        .onChange(of: rerecordFacts.debt) { _, debt in rerecordDebtChanged(debt) }
         .sheet(item: $reviewPresentation) { presentation in
             ReviewPlanView(
                 seed: presentation.seed, initialFlag: presentation.initialFlag,
@@ -2236,7 +2321,9 @@ private struct CreationWorkspaceView: View {
                 // ones). Capability off: nil, the fixed chips.
                 serverSuggestions: SuggestionChipsPolicy.isEnabled(capabilities) ? suggestionChips(for: .ready) : nil,
                 sendSuggestion: { sendSuggestion($0) },
-                suggestionCards: readyCardsPresentation
+                suggestionCards: readyCardsPresentation,
+                rerecord: rerecordPhase,
+                rerecordActions: rerecordActions
             )
             .id("ready")
             if capabilities?.livePlanReviewAvailable == true, currentProject.runtimeVersion == 2,

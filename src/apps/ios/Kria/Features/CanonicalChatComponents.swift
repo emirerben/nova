@@ -1019,6 +1019,9 @@ struct ReadyStage: View {
     /// the chips say, and stay quiet (no label, no chips) once the creator has handled them all.
     var suggestionCards: SuggestionCardsPresentation? = nil
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    /// Re-record: drawn only when the server offers it (`.unavailable` draws nothing, so an old server changes nothing here).
+    var rerecord: RerecordPhase = .unavailable
+    var rerecordActions = RerecordActions()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1073,6 +1076,8 @@ struct ReadyStage: View {
             .padding(12)
             .background(KriaColor.fill)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            RerecordCard(phase: rerecord, actions: rerecordActions)
 
             if let suggestionCards {
                 if !suggestionCards.isEmpty {

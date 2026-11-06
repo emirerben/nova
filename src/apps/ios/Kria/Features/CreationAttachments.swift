@@ -30,6 +30,9 @@ struct AttachmentSheet: View {
     /// script to read while recording. Nil = the sheet as before.
     var voiceoverScript: VoiceoverScript? = nil
     var launch: AttachmentLaunch? = nil
+    /// Re-record from the ready video: the sheet is only a host. It opens the teleprompter at once, swaps this clip for
+    /// the new take, and closes with it. Nil = the sheet as before.
+    var rerecordTarget: RerecordTarget? = nil
     let refresh: () async -> Void
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var auth: AuthStore
@@ -96,9 +99,11 @@ struct AttachmentSheet: View {
         capabilitiesLoaded: Bool = true,
         voiceoverScript: VoiceoverScript? = nil,
         launch: AttachmentLaunch? = nil,
+        rerecordTarget: RerecordTarget? = nil,
         refresh: @escaping () async -> Void
     ) {
         self.launch = launch
+        self.rerecordTarget = rerecordTarget
         self.projectID = projectID
         self.maximumClipCount = maximumClipCount
         self.attachedClipCount = attachedClipCount
@@ -297,10 +302,12 @@ struct AttachmentSheet: View {
                     uploadAfterCamera = false
                     pickerLaunch = .sources
                 }
+                if rerecordTarget != nil { dismiss() }
             }) {
                 if let accountID = auth.localStorageIdentity {
                     TeleprompterScreen(accountID: accountID, projectID: projectID,
                         admissionMessage: teleprompterAdmission,
+                        replacementNotice: replacementNotice,
                         intake: useCameraTake,
                         intakeState: cameraTakeState,
                         speakerBackgroundEnabled: speakerBackgroundAvailable,
@@ -312,6 +319,9 @@ struct AttachmentSheet: View {
                         .environment(\.dynamicTypeSize, dynamicTypeSize)
                 }
             }
+            .opacity(rerecordTarget == nil ? 1 : 0)
+            .accessibilityHidden(rerecordTarget != nil)
+            .onAppear { if rerecordTarget != nil { showsTeleprompter = true } }
             .interactiveDismissDisabled(recorder.isRecording || recorder.hasRecording)
             .confirmationDialog("Stop and discard this recording?", isPresented: $confirmsCancellingRecording, titleVisibility: .visible) {
                 Button("Discard recording", role: .destructive) { recorder.discard() }
@@ -602,12 +612,34 @@ struct AttachmentSheet: View {
         Task { @MainActor in showsTeleprompter = true }
     }
 
+    /// The clip a take recorded here replaces: the one the creator chose from the ready video, or, when the edit is
+    /// full and the server offers replace, the only clip it has. Nil = the take is added as a clip.
+    private var replaceTarget: RerecordTarget? {
+        if let rerecordTarget { return rerecordTarget }
+        guard isTalkingToCamera, case let .one(target) = RerecordOffer.resolve(thread: thread),
+              existing(for: .clip) + model.uploads.reservedCount(projectID: projectID, role: .clip) >= maximumClipCount else { return nil }
+        return target
+    }
+
+    /// Said before the creator commits. The take, script, background and other clips are kept; what is not carried
+    /// over is named, because it is the one thing a re-record loses.
+    private var replacementNotice: String? {
+        guard let target = replaceTarget else { return nil }
+        let video = thread?.job != nil
+            ? " Kria makes the video again from the new take. Text and caption changes you made to the current video won’t carry over. Your current video stays until the new one is ready."
+            : ""
+        return "This replaces \(target.displayName). Your script, background and other clips stay.\(video)"
+    }
+
     private func teleprompterAdmission(_ take: TeleprompterTakeManifest?) -> String? {
         guard uploadDestination(for: .clip) == .phone else {
             return uploadDestination(for: .clip).message ?? "This edit can’t accept an on-device recording yet. Your take is saved on this iPhone."
         }
         let ownID = take?.intakeID
         if let ownID, model.uploads.containsIntake(recordID: ownID) { return nil }
+        if replaceTarget != nil {
+            return replacementUnderway ? "Your new take is still being swapped in. Wait for it to finish before recording another." : nil
+        }
         // KRI-719: a Talking edit can hold several clips, so a take is only
         // refused once the edit is full, not whenever any clip is attached.
         let occupied = existing(for: .clip) + model.uploads.reservedCount(projectID: projectID, role: .clip)
@@ -615,6 +647,10 @@ struct AttachmentSheet: View {
             return "This video already has \(FootageStageCopy.count(maximumClipCount, "clip")). Your take is saved: remove a clip in Add media, then reopen it."
         }
         return nil
+    }
+
+    private var replacementUnderway: Bool {
+        BackgroundUploadCoordinator.replacementUnderway(projectID: projectID, inFlight: inFlight, records: pendingRecords)
     }
 
     private var isTalkingToCamera: Bool {
@@ -638,7 +674,7 @@ struct AttachmentSheet: View {
         model.uploads.dismissFailure(id: take.intakeID)
         let accepted = await model.uploads.enqueue(fileURL: url, projectID: projectID, source: .files,
             consentGiven: true, purpose: .analysisProxy, role: .clip, itemID: itemID,
-            limit: capabilities?.media?["clips"], recordID: take.intakeID)
+            limit: capabilities?.media?["clips"], recordID: take.intakeID, replacesMediaID: replaceTarget?.mediaID)
         return accepted ? .queued : .failed(model.uploads.failures.first(where: { $0.id == take.intakeID })?.message ?? "Couldn’t add this take. Your recording is saved; try again.")
     }
 
@@ -938,7 +974,7 @@ struct AttachmentSheet: View {
     }
     /// `flaggedClips`: Footage clips the Overlays hint points at (key -> is a screen recording by name or Photos).
     private func attachedList(role: CreationMediaRole, flaggedClips: [String: Bool] = [:]) -> some View {
-        let locked = removingMedia || !pendingRecords.filter { $0.projectID == projectID }.isEmpty
+        let locked = removingMedia || !pendingRecords.filter { $0.projectID == projectID }.isEmpty || replacementUnderway
         return VStack(spacing: 8) {
             ForEach(attachedMedia(for: role)) { attachment in
                 VStack(spacing: 8) {
