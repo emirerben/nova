@@ -1864,6 +1864,7 @@ def _complete_draft_turn(
     your_edits_snapshot: dict[str, Any] | None = None
     your_edits_hash = ""
     restore_record: dict[str, Any] | None = None  # KRI-442: pre-update lanes for Undo
+    pointer_sync: dict[str, Any] | None = None  # where an editor draft moved the session pointer
     scope_note = ""  # KRI-441: "I left X alone." for what layer 3 took back
     if apply_intent.tool_name == "draft.apply_strategy":
         changes = _strategy_changes(arguments)
@@ -2187,6 +2188,10 @@ def _complete_draft_turn(
             # session target aligned with the locked variant before minting a
             # later approval, while the existing Job -> Session lock order is
             # held. A failed transaction rolls this pointer back with the Job.
+            if settings.kria_suggestion_pinned_taps_enabled:
+                from app.kria.drafts import pointer_sync_record  # noqa: PLC0415
+
+                pointer_sync = pointer_sync_record(session, canonical_generation_id)
             session.target_generation_id = canonical_generation_id
             wants_speech_cut = any(
                 op.get("op") == "apply_speech_cut_candidate" for op in arguments.operations
@@ -3549,6 +3554,7 @@ def _complete_draft_turn(
                 **({"editor_diff": editor_diff_trace} if editor_diff_trace else {}),
                 **state_trace,
                 **({"plan_review_before": restore_record} if restore_record else {}),
+                **({"pointer_sync": pointer_sync} if pointer_sync else {}),
                 **_pinned_undo_entry(planned, turn.id, brief, setting_undo),
             },
             started_at=datetime.now(UTC),
