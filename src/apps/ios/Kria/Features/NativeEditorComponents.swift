@@ -534,6 +534,8 @@ struct NativeEditorContextStrip: View {
         .frame(height: NativeEditorIslandMetrics.contextHeight)
         .clipShape(Capsule())
         .nativeEditorIslandSurface()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("native-editor-clip-context")
     }
 }
 

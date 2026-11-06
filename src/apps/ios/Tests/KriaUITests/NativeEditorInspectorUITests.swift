@@ -6,7 +6,8 @@ final class NativeEditorInspectorUITests: XCTestCase {
     private func selectTimelineClip(_ number: Int, in app: XCUIApplication) {
         let clip = app.descendants(matching: .any)["native-editor-clip-\(number)"].firstMatch
         let lanes = app.scrollViews["native-editor-lane-scroll"]
-        let toolbar = app.buttons["native-editor-adjust"]
+        let toolbar = app.descendants(matching: .any)["native-editor-clip-context"].firstMatch
+        XCTAssertTrue(toolbar.exists)
         for _ in 0..<4 where clip.frame.maxY >= toolbar.frame.minY {
             let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
                 dx: lanes.frame.minX + 24,
@@ -115,7 +116,10 @@ final class NativeEditorInspectorUITests: XCTestCase {
         replace.tap()
         XCTAssertTrue(app.buttons["Clip 2"].waitForExistence(timeout: 5))
         app.buttons["Clip 2"].tap()
-        XCTAssertTrue(app.staticTexts["Clip 2"].exists)
+        let source = app.descendants(matching: .any)["native-editor-split-source"].firstMatch
+        let replaced = NSPredicate { _, _ in source.label == "Footage, Clip 2" }
+        expectation(for: replaced, evaluatedWith: source)
+        waitForExpectations(timeout: 5)
         app.buttons["native-editor-inspector-done"].tap()
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "Three independently editable split-screen panels"

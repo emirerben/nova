@@ -4231,6 +4231,9 @@ struct NativeEditorTemporaryVideo: Sendable {
     #if DEBUG
     /// Test seam (KRI-770): stage slot fields (`playback_rate`, a talking-source id) that a bare draft cannot carry.
     func replaceDocumentForTesting(_ value: EditorDocument) { document = value }
+    func configureReplacementSourcesForTesting(pool: NativeEditorSourcePool, resolver: NativeEditorSourceResolver) {
+        sourcePool = pool; sourceResolver = resolver; resolvedSources = [:]
+    }
     #endif
 
     /// The creator-set playback rate (`playback_rate`), 1 when none. Derived rates (slowed narration) are
@@ -9709,20 +9712,30 @@ extension NativeEditorSession {
         let template = document.clips.first(where: { $0.clipIndex == clipIndex })
         let measured = resolvedSources?[clipIndex]?.asset.duration
             ?? template.flatMap { Self.number($0.raw["source_duration_s"] ?? $0.raw["source_duration"]) }
-        let isPhoto = resolvedSources?[clipIndex].map { isStill($0.url) } ?? false
+        let isPhoto = resolvedSources?[clipIndex].map { isStill($0.url) }
+            ?? ((template?.raw["media_kind"]?.stringValue ?? template?.raw["kind"]?.stringValue) == "image")
         guard isPhoto || (measured ?? 0) >= minimumClipDuration else { return }
         transactDocument(section: .timeline) { value in
             var slot = value.clips[index]
             slot.clipIndex = clipIndex; slot.inS = 0
             if let placementID { slot.raw["editor_source_placement_id"] = .string(placementID) }
             slot.raw["speaker_subject"] = .bool(false)
-            for key in ["asset_id", "media_id", "source_end_s", "native_source_span_s", "native_composite_source", "freeze_frame_s", "freeze_hold_s"] { slot.raw.removeValue(forKey: key) }
+            for key in ["asset_id", "media_id", "media_kind", "kind", "source_duration_s", "source_duration", "source_end_s", "native_source_span_s", "native_composite_source", "freeze_frame_s", "freeze_hold_s"] { slot.raw.removeValue(forKey: key) }
             if let template {
                 for key in ["asset_id", "media_id", "media_kind"] { slot.raw[key] = template.raw[key] }
             }
-            if let measured { slot.raw["source_duration_s"] = .number(measured) }
+            slot.raw["media_kind"] = .string(isPhoto ? "image" : "video")
+            if let source = resolvedSources?[clipIndex] { slot.raw["media_id"] = .string(source.mediaID) }
             if isPhoto { slot.raw.removeValue(forKey: "playback_rate") }
-            else if let measured { slot.durationS = min(slot.durationS ?? measured, measured / Self.explicitPlaybackRate(slot)) }
+            else {
+                if let measured {
+                    slot.raw["source_duration_s"] = .number(measured)
+                    slot.durationS = min(slot.durationS ?? measured, measured / Self.explicitPlaybackRate(slot))
+                }
+                for key in ["layout", "still_layout"] where slot.raw[key]?.stringValue == "supporting_card" {
+                    slot.raw.removeValue(forKey: key)
+                }
+            }
             slot.durationBeats = nil; slot.raw["source_start_locked"] = .bool(true)
             value.clips[index] = slot
         }

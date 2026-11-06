@@ -121,10 +121,7 @@ struct NativeSplitScreenControls: View {
     var body: some View {
         if let section {
             Section("Split screen") {
-                if let error = session.splitScreenActionError {
-                    Text(error).foregroundStyle(KriaColor.failureText)
-                        .accessibilityIdentifier("native-editor-split-error")
-                }
+                actionError
                 Picker("Layout", selection: Binding(
                     get: { self.section?.panelCount ?? section.panelCount },
                     set: { session.setSplitScreenPanelCount($0) }
@@ -233,8 +230,18 @@ struct NativeSplitScreenControls: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
-            Section("Clip") { clipActions }
+            Section("Clip") {
+                actionError
+                clipActions
+            }
                 .disabled(!session.canEditTimeline)
+        }
+    }
+
+    @ViewBuilder private var actionError: some View {
+        if let error = session.splitScreenActionError {
+            Text(error).foregroundStyle(KriaColor.failureText)
+                .accessibilityIdentifier("native-editor-split-error")
         }
     }
 

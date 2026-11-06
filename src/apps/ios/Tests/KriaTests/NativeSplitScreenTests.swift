@@ -1,4 +1,6 @@
 import XCTest
+import UIKit
+import AVFoundation
 import KriaMediaEngine
 @testable import Kria
 
@@ -531,6 +533,99 @@ extension NativeSplitScreenTests {
             XCTAssertTrue(session.document.splitScreenIsValid)
             XCTAssertEqual(session.timelineProjection.totalDuration, testCase.duration)
             base = staged.snapshot
+        }
+    }
+}
+
+extension NativeSplitScreenTests {
+    @MainActor
+    func testAsyncUnusedSourceReplacementResetsSourceMetadataAndPreservesPanelEdits() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = ProjectDirectory(root: root)
+        let cacheDirectory = root.appendingPathComponent("cache")
+        let cache = NativePreviewAssetCache(project: project, directory: cacheDirectory)
+        try cache.project.createIfNeeded()
+        let photo = root.appendingPathComponent("photo.png")
+        try UIGraphicsImageRenderer(size: CGSize(width: 32, height: 48)).image { context in
+            UIColor.blue.setFill(); context.fill(CGRect(x: 0, y: 0, width: 32, height: 48))
+        }.pngData()!.write(to: photo)
+        let video = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let videoDuration = try await AVURLAsset(url: video).load(.duration).seconds
+        var poolClips: [NativeEditorSourcePool.Clip] = []
+        for (index, url, duration) in [(1, photo, Optional<Double>.none), (2, video, Optional(videoDuration))] {
+            let fingerprint = try SHA256Fingerprinter().fingerprint(file: url)
+            let assetID = "native-preview-" + fingerprint.hex
+            let file = assetID + "." + url.pathExtension
+            try FileManager.default.copyItem(at: url, to: cache.project.originals.appendingPathComponent(file))
+            try cache.store(MediaAsset(id: assetID, relativePath: "originals/" + file, fingerprint: fingerprint, duration: duration), for: "generation:\(index):source-\(index)")
+            poolClips.append(.init(clipIndex: index, nativeSource: .init(mediaID: "source-\(index)",
+                sourceURL: URL(string: "https://fixture.invalid/" + file), original: nil, localRequired: false)))
+        }
+        let edits: [String: JSONValue] = [
+            "source_crop": .object(["x": .number(0.1), "y": .number(0.1), "width": .number(0.8), "height": .number(0.8)]),
+            "media_transform": .object(["scale": .number(1.2), "position_x": .number(0.1)]),
+            "tilt": .object(["rotation_deg": .number(5)]), "source_audio_volume": .number(0.4)
+        ]
+        var original = EditorTimelineSlot(id: "panel", clipIndex: 0, inS: 3, durationS: 2, raw: edits.merging([
+            "media_kind": .string("video"), "kind": .string("video"), "source_duration_s": .number(20),
+            "source_duration": .number(20), "playback_rate": .number(2)
+        ]) { _, new in new })
+        original.setSplitMembership(sectionID: "s", panelIndex: 1, offset: 1)
+        var document = EditorDocument(clips: [original], capabilities: ["timeline": .init(editable: true), "split_screen": .init(editable: true)])
+        document.revision.baseGeneration = "generation"
+        document.splitScreenSections = [.init(id: "s", durationS: 4, panelCount: 2)]
+        let session = NativeEditorSession()
+        session.replaceDocumentForTesting(document)
+        session.configureReplacementSourcesForTesting(pool: .init(clips: poolClips, baseGeneration: "generation"),
+            resolver: NativeEditorSourceResolver(project: project, cacheDirectory: cacheDirectory))
+        session.select(.init(kind: .clip, id: "panel"), seekToStart: false)
+        for target in [1, 2] {
+            if target == 2 {
+                var withCard = session.document
+                withCard.clips[0].raw["media_kind"] = .string("image")
+                withCard.clips[0].raw["kind"] = .string("image")
+                withCard.clips[0].raw["still_layout"] = .string("supporting_card")
+                withCard.clips[0].raw["layout"] = .string("supporting_card")
+                session.replaceDocumentForTesting(withCard)
+            }
+            session.replaceSelectedClipSource(clipIndex: target)
+            for _ in 0..<200 where session.document.clips[0].clipIndex != target {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            let slot = session.document.clips[0]
+            XCTAssertEqual(slot.clipIndex, target)
+            XCTAssertEqual(slot.raw["media_kind"], .string(target == 1 ? "image" : "video"))
+            XCTAssertNotEqual(slot.raw["kind"], .string(target == 1 ? "video" : "image"))
+            XCTAssertEqual(slot.inS, 0)
+            XCTAssertEqual(slot.splitSectionID, "s"); XCTAssertEqual(slot.splitPanelIndex, 1); XCTAssertEqual(slot.splitOffsetS, 1)
+            XCTAssertEqual(session.document.splitScreenSections, document.splitScreenSections)
+            for (key, value) in edits { XCTAssertEqual(slot.raw[key], value, key) }
+            if target == 1 {
+                XCTAssertNil(slot.raw["source_duration_s"]); XCTAssertNil(slot.raw["source_duration"])
+                XCTAssertNil(slot.raw["playback_rate"])
+            } else {
+                XCTAssertEqual(slot.raw["source_duration_s"], .number(videoDuration))
+                XCTAssertNil(slot.raw["still_layout"])
+                XCTAssertNil(slot.raw["layout"])
+                XCTAssertNotEqual(session.speedBlockedReason(for: session.selection), "Photos do not have playback speed.")
+            }
+            let reopened = EditorDocument(snapshot: session.document.encodeSnapshot())
+            XCTAssertEqual(reopened.clips[0].raw["media_kind"], slot.raw["media_kind"])
+            XCTAssertEqual(reopened.clips[0].raw["source_duration_s"], slot.raw["source_duration_s"])
+            XCTAssertTrue(reopened.splitScreenIsValid)
+            let resolved = try await NativeEditorSourceResolver(project: project, cacheDirectory: cacheDirectory)
+                .resolve(.init(clips: poolClips, baseGeneration: "generation"), generation: "generation", requiredIndices: [target])
+            let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+            let recipe = try compiler.compile(document: reopened, clips: session.timelineClips, items: [], sources: resolved).recipe
+            let rendered = try XCTUnwrap(recipe.tracks.filter { $0.kind == .video }.flatMap(\.clips).first)
+            XCTAssertEqual(rendered.splitScreen?.panelIndex, 1)
+            XCTAssertEqual(rendered.sourceCrop, try NativeEditorRenderCompiler.sourceCrop(edits["source_crop"]))
+            XCTAssertEqual(rendered.transform.scale, 1.2, accuracy: 0.000001)
+            XCTAssertEqual(rendered.transform.rotationDegrees, 5, accuracy: 0.000001)
+            XCTAssertEqual(rendered.transform.positionX, 0.1, accuracy: 0.000001)
+            XCTAssertEqual(rendered.volume, 0.4, accuracy: 0.000001)
+            XCTAssertNil(rendered.stillLayout)
         }
     }
 }
