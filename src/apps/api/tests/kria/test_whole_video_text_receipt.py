@@ -97,6 +97,44 @@ def test_whole_video_line_shown_briefly_is_not_done(filing: dict) -> None:
     assert "not the whole video" in receipt.reason
 
 
+def test_a_typed_short_title_hold_is_not_done() -> None:
+    """9.6b: a title hold the Main Creator typed (`opening_title_duration_s`) stays short even
+    after group B's render fix, so the whole-video line must still read "not done"."""
+    receipt, spans, total = _shown_receipt(
+        {**BASE, "opening_title": TEXT, "opening_title_duration_s": 2}
+    )
+    assert spans == [("guided-title", 0.0, 2.0)] and total == 11.0
+    assert receipt.status != "met", receipt.reason
+    assert is_judged(WHOLE_VIDEO_LINE, receipt)
+    assert "first 2 s of the 11 s video" in receipt.reason
+    assert "not the whole video" in receipt.reason
+
+
+def test_a_same_words_title_ask_keeps_the_line_short_and_says_so() -> None:
+    """9.6b: she also asked for a title with the same words, so the live `text/title` literal
+    keeps the line short (2.2 s). The whole-video line is not done; the title ask is."""
+    title_ask = BriefRequirement(
+        id="r2",
+        kind="text",
+        scope="title",
+        literal=TEXT,
+        description="title it with the same words",
+        facts={},
+    )
+    brief = CreativeBrief(version=1, requirements=[WHOLE_VIDEO_LINE, title_ask])
+    plan = plan_unified_montage([CLIP], brief_view(brief), strategy=BASE)
+    rows = compile_execution_plan(plan.guided_edit(), track=None)["text_elements"]
+    spans = [(r["id"], r["start_s"], r["end_s"]) for r in rows if TEXT in r.get("text", "")]
+    assert spans == [("guided-title", 0.0, 2.2)] and plan.duration_s == 11.0
+    variant = {"text_elements": rows, "duration_s": plan.duration_s}
+    line = _review(WHOLE_VIDEO_LINE, plan.record(), variant)
+    assert line.status != "met", line.reason
+    assert is_judged(WHOLE_VIDEO_LINE, line)
+    assert "first 2.2 s of the 11 s video" in line.reason
+    assert "not the whole video" in line.reason
+    assert _review(title_ask, plan.record(), variant).status == "met"
+
+
 def test_control_a_pinned_whole_video_line_is_done() -> None:
     """Passes today (and must keep passing): the pin covers 0-11 s and is met."""
     receipt, spans, total = _shown_receipt(

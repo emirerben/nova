@@ -40,6 +40,7 @@ counted but not explained by reason.
 | 9.4 | **Coverage arithmetic.** Rows holding the line may overlap or abut (a pin split at a clip boundary). Coverage is the union of their spans against the finished length, with the same 0.05 s tolerance as `_wants_whole_text_span`; unknown length or no timed row holding the words ⇒ no time claim. | `test_line_split_across_two_rows_covering_the_video_is_met` |
 | 9.5 | **Words split across rows** (stacked title, word-by-word sequence): no single row holds the line, so no time can be read; the words verdict stands. Named gap. | — |
 | 9.6 | **Turkish chat.** The sentence has a Turkish twin. | `test_turkish_reason_for_brief_line` |
+| 9.6b | **The guard goes blind once group B lands.** B turns the kit's two filings into a whole-video pin, so the kit test fails at its own setup and the param guard only proves "met". A guard must keep a line B leaves short: a typed title hold (`opening_title_duration_s`) and a same-words `text/title` ask. | `test_a_typed_short_title_hold_is_not_done`, `test_a_same_words_title_ask_keeps_the_line_short_and_says_so` |
 | 9.7 | **Draft before approval** (strategy facts) and phone Talking variants carry no text times: unchanged. Named gap; the render is B's half. | — |
 
 ## Case 2 — "keep the whole clip" on a one-clip montage
@@ -52,6 +53,7 @@ counted but not explained by reason.
 | 2.4 | **Scope.** Only a one-footage-clip plan is judged this way. Multi-clip montages, Talking (keeps the take; speech-cleanup note), editor drafts and plans with no windows keep today's answers. | existing `tests/kria/test_brief_talking_receipts.py` |
 | 2.5 | **Neutral vs judged.** The new sentence is not a neutral reason, so `is_judged` is true and the draft holds for the creator's choice (`needs_creator_choice`); it is not a format limit. | `test_draft_before_approval_says_the_clip_is_cut` |
 | 2.6 | **Turkish chat.** Turkish twin through `say`. | `test_turkish_reason_for_cut_take` |
+| 2.6b | **Group B's plan keeps the clip; the receipt must follow the plan, not the format.** After B a one-clip footage montage with `keep_whole_take` plays 0 → end, and the format branch ("This montage edit cuts your footage down") would be false. The windows branch runs first, and on the B+C merge the approval-time length plan, the record's `best_parts` and the finished timeline all hold 0–11 s, so all three receipts are met. | `test_whole_clip_kept_is_met`; B+C merge check (length plan, record and rendered facts: r4 met) |
 | 2.7 | **A stated length shorter than the clip.** `_wants_whole_take` already routes a keep-whole ask that carries its own `duration_s` to the length check; a separate shorter length ask makes the plan cut, and the keep-whole receipt then honestly says how much is kept. | covered by 2.1 shape |
 
 ## Switches
