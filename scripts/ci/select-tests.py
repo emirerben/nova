@@ -487,6 +487,22 @@ def validate_journey_mapping(coverage, ids):
     return selected
 
 
+def journey_mapped(journey, coverage, ids):
+    """Whether iPhone validation may start without waiting for journey-mapping.
+
+    The same check the journey-mapping job runs, computed by the selector so the
+    Mac job can queue straight after selection (KRI-604 still holds: an unmapped
+    selection never allocates a Mac). journey-mapping stays the visible failure.
+    """
+    if not journey:
+        return True
+    try:
+        validate_journey_mapping(coverage, ids)
+    except ValueError:
+        return False
+    return True
+
+
 def gate_journey(needs, event):
     required = {
         "changes",
@@ -517,6 +533,13 @@ def gate_journey(needs, event):
         or outputs["journey_needs_native"] != "false"
     ):
         raise ValueError("Inconsistent unselected journey")
+    # journey-native queues on this output instead of the journey-mapping job;
+    # a mapped (or unselected) journey is the only state that may emit "true".
+    mapped = journey_mapped(
+        journey, outputs.get("journey_coverage"), outputs.get("journey_ids")
+    )
+    if outputs.get("journey_mapped") != str(mapped).lower():
+        raise ValueError("Missing or inconsistent journey_mapped")
     native = native_validation(
         event,
         {"ios"} if outputs["ios"] == "true" else set(),
@@ -694,6 +717,8 @@ def main():
     )
     output += f"ios_ui_groups={groups}\nios_ui_shards={shards}\njourney={str(journey).lower()}\njourney_coverage={coverage}\njourney_ids={journey_ids}\njourney_needs_native={str(native).lower()}\n"
     output += f"native_legs={json.dumps(legs)}\n"
+    mapped = journey_mapped(journey, coverage, journey_ids)
+    output += f"journey_mapped={str(mapped).lower()}\n"
     render = render_evidence_selection(
         event, os.environ.get("CI_BASE", ""), os.environ.get("CI_HEAD", "")
     )

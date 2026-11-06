@@ -412,8 +412,9 @@ jobs:
 
   # KRI-559 executes only incident-corpus journeys selected by ci-changes.
   # An affected source without a mapped fixture fails here, on a cheap Ubuntu
-  # runner (KRI-604): the macOS `journey` job needs this job, so an unmapped
-  # selection never queues for a macOS runner just to fail in its first step.
+  # runner (KRI-604). The macOS journey-native job checks the selector's
+  # journey_mapped output (the same validation) instead of waiting for this
+  # job, so an unmapped selection still never queues for a macOS runner.
   # The `test-api` gate still goes red because a skipped `journey` is not the
   # `success` it requires for a selected suite.
   journey-mapping:
@@ -611,6 +612,29 @@ jobs:
           set -o pipefail
           python3 -m pytest tests/routes/test_slide_post_native_routes.py -q \
             | tee ../../../test-results/kri-559/slide-post-binding-api-tests.log
+      - name: Verify original generation receipts and saved-song recovery
+        if: contains(needs.changes.outputs.journey_ids, 'saved-song-render-recovery') || contains(needs.changes.outputs.journey_ids, 'slide-post-generation-receipt-recovery')
+        working-directory: src/apps/api
+        env:
+          JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_journey_test
+          STORAGE_BUCKET: nova-test
+          STORAGE_PROVIDER: gcs
+          OPENAI_API_KEY: sk-test
+          GEMINI_API_KEY: test
+          INTERNAL_API_KEY: test
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY_TEST }}
+        run: |
+          set -euo pipefail
+          # This is the disposable PostgreSQL service for this CI job, not rollout.
+          python3 -m alembic upgrade head
+          recovery_ids="$(python3 -c 'import os; print(",".join(sorted(set(os.environ["JOURNEY_IDS"].split(",")) & {"saved-song-render-recovery", "slide-post-generation-receipt-recovery"})))')"
+          tests="$(python3 -c 'import json,sys; m=json.load(open("../../../scripts/ci/journey-manifest.json")); ids=set(sys.argv[1].split(",")); print(" ".join(j["api_tests"] for j in m["journeys"] if j["id"] in ids))' "$recovery_ids")"
+          test -n "$recovery_ids" && test -n "$tests"
+          python3 -m pytest $tests -q --junitxml=../../../test-results/kri-559/recovery-api-cases.xml \
+            | tee ../../../test-results/kri-559/recovery-api-cases.log
+          python3 ../../../scripts/ci/journey-gate.py api-cases --ids "$recovery_ids" \
+            --test-results ../../../test-results/kri-559/recovery-api-cases.xml
       - name: Verify song-timeline answer through the lip-sync planner
         if: contains(needs.changes.outputs.journey_ids, 'kri-561-song-order')
         working-directory: src/apps/api
@@ -1148,11 +1172,15 @@ jobs:
     # Macs compile while the Linux journeys run (~11 min, 2026-10-27..30) and
     # block only where the fixture bundle is consumed (wait-for-jobs.py). The
     # `journey` aggregate still requires both portable jobs to pass.
-    needs: [changes, journey-mapping]
+    # It also starts without waiting for the journey-mapping job: the selector
+    # runs the same mapping check (journey_mapped), so an unmapped selection
+    # still never allocates a Mac (KRI-604), and the `journey` gate still
+    # requires journey-mapping. On 2026-11-04..06 that extra Linux hop delayed
+    # the Mac job's place in the 5-Mac queue by a mean 6.4 min (p90 24.4).
+    needs: [changes]
     if: >-
       !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.native_validation == 'true' &&
-      ((needs.changes.outputs.journey == 'true' && needs.journey-mapping.result == 'success') ||
-       (needs.changes.outputs.journey == 'false' && needs.journey-mapping.result == 'skipped'))
+      needs.changes.outputs.journey_mapped == 'true'
     permissions:
       contents: read
       actions: read
@@ -1220,21 +1248,11 @@ jobs:
           KRIA_JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
           KRIA_RESTORE_INPUT_TIMES: '1'
         run: bash scripts/ios/verify.sh
-      - name: Record compiled iPhone input timestamps
-        if: matrix.leg == 'unit' && github.event_name == 'pull_request' && (needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true')
-        run: python3 scripts/ios/cache-inputs.py save
-      - name: Save Xcode build data for the next run
-        if: matrix.leg == 'unit' && github.event_name == 'pull_request' && (needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true') && steps.build-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/Library/Caches/org.swift.swiftpm
-            src/apps/ios/.derived-data/Build
-            src/apps/ios/.derived-data/SourcePackages
-            src/apps/ios/.derived-data/ModuleCache.noindex
-            src/apps/ios/.derived-data/SDKStatCaches.noindex
-            src/apps/ios/.derived-data/CompilationCache.noindex
-          key: ${{ steps.build-cache.outputs.cache-primary-key }}
+      # PR runs restore main's Xcode cache but never save their own. A PR
+      # cache (~0.9 GB per push) is only usable by later pushes to the same PR,
+      # and in the full 10 GB repo cache it evicted main's seed within 30-46
+      # minutes: 70 of 97 PR runs on 2026-11-04..06 compiled cold (+~10 min),
+      # and only 6 of 27 hits came from a PR's own save. ios.yml seeds main.
       - name: Wait for the portable journeys this leg depends on
         if: needs.changes.outputs.journey == 'true'
         env:

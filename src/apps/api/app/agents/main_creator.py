@@ -9,19 +9,24 @@ from __future__ import annotations
 
 import json
 import re
-from typing import ClassVar, Literal
+import unicodedata
+from collections.abc import Callable, Mapping
+from typing import Any, ClassVar, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.agents._prompt_fingerprint import prompt_fingerprint
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import (
     CREATOR_AGENT_OUTPUT_ADAPTER,
     CREATOR_REQUEST_MAX_CHARS,
+    MODEL_OUTPUT_CONTEXT,
     STORY_LINE_MAX_CHARS,
     CreativeStrategy,
     CreatorAgentOutput,
     DraftVoiceoverScript,
+    PlannerDecline,
     ProposeStrategy,
     ResolvedCreatorManifest,
 )
@@ -44,6 +49,7 @@ from app.pipeline.phone_talking_mentions import SOUND_WINDOW_S
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import (
     MAX_OPENING_TITLE_DURATION_S,
+    MixedMediaTimingProfile,
     MontageCadenceConstraint,
     recognize_cadence_reuse_policy,
     recognize_explicit_cadence_reuse_policy,
@@ -53,6 +59,7 @@ from app.schemas.edit_proposal import (
     resolve_video_reuse_policy,
     turkish_media_scope,
 )
+from app.schemas.text_style_intent import normalize_label_position, normalize_title_animation
 from app.services.creator_capabilities import (
     CAPABILITY_REACTION_BEATS,
     CAPABILITY_TIMED_CARDS,
@@ -68,211 +75,28 @@ from app.services.length_policy import creator_duration_s
 
 log = structlog.get_logger()
 
-# Named sound effects are model-read with verbatim licensed_sfx evidence (v35).
-# KRI-178: reaction beats (name/word-triggered photo/sticker + sound pop-ins,
-# plus a held closing shot) on a phone `subtitled` (Talking) edit (v36).
-# KRI-188: Creative Brief requirement extraction (`brief_updates`, taught only
-# when the brief is on for the creator) -- v37.
-# KRI-189: when/where clip facts with provenance (v38).
-# KRI-190: brief `facts` (distance/activity/start/end) and an `order` requirement
-# are always captured when the creator asks the edit to follow a route or sequence (v39).
-# KRI-244: descriptive footage chronology remains creative context unless the
-# creator actually asks the edit to order, group, label, include, or caption it (v40).
-# KRI-374: a creator-uploaded song as the music (`audio_strategy="user_song"` +
-# `song_sync`), taught only when the manifest carries a usable song (v42).
-# KRI-422: dictated per-shot texts are one per_clip brief entry per shot (they all
-# stay in force); `brief_updates` cap 8 -> 16 (v43).
-# KRI-459: stable IDs make changes and removals unambiguous (v44).
-# KRI-470: a stated video length ALWAYS becomes a `timing` requirement; the clarification
-# gate cannot compare a number the brief lost (v45; brief_extractor v2 shares the section).
-# KRI-506: delegated creative copy is proposed for a separate server approval (v46).
-# KRI-479: `voice_mode` (continuous | excerpts) for a montage that keeps one clip's camera
-# audio, taught only when the manifest advertises `phone_source_audio` AND the route can render
-# (`Settings.voice_behind_footage_enabled`) (v47).
-# KRI-522: brief facts for first_clip/last_clip, animation, position, placeholder (v48).
-# KRI-523: `pinned_texts` (whole-video corner text) + choice-answer brief rule (v49).
-# KRI-520: a Turkish chat gets a reply-language line at the end of the prompt; English is
-# byte-identical (v50).
-# KRI-519: reaction beats on an iPhone Voiceover edit, worded for the voiceover (v51).
-# KRI-525/526: pins may carry `start_s`/`end_s` or `clip`; the 4-line / 120-character limits are
-# taught so an over-long ask becomes a question, not a schema failure (v52).
-# KRI-598: no `execution_contract` where `guided_voiceover` is unavailable (runtime v2); on a
-# Voiceover edit a cue for an own clip is `include`, never `order`, and beats persist (v55).
-# KRI-614: a clip's `filename` (the name the app shows) identifies it when the creator writes it
-# (v56).
-# KRI-667: brief `facts` carry what an ask means in English keys and values (`triggers`,
-# `keep_whole_take`, `closing`, `speech_cleanup`, `captions`, `caption_language`) whatever the
-# creator's language, so the server checks them without re-reading the words (v58).
-# v59 combines these facts with KRI-669 heading groups and relative sizes.
-# KRI-700: a brighten / darken ask carries `footage_light`, so the server can say no draft
-# changes the footage's light instead of the summary promising it (v60).
-# v61 (KRI-674 live verification): per-clip camera sound is not spoken excerpts.
-# KRI-793: a captions ask that lists words to spell records them in `spellings`, which the
-# phone Talking writer applies to its captions and the render-ready review checks (v65).
-# KRI-791: an on-screen text timed to a spoken word carries `triggers` too (it was taught only
-# for photos, videos, stickers and sounds, so "Show MEROPE ... the first time she says Merope"
-# arrived with no trigger), plus `speaker` when someone other than the creator says it.
-# KRI-806: optional editorial plans pair only with licensed music and no kept clip sound.
-# v67 retains caption spellings, spoken triggers/speaker and the editorial audio pairing rule.
-# v66 combines both authored changes without losing either prompt instruction.
-# v66 (KRI-792): named spoken cuts carry cut_lines; caption spellings remain intact.
-# KRI-789: quoted start / end LINES inside a take are a `timing` trim (`start_line` /
-# `end_line`), never an `order` requirement; route places keep `order` (v67).
-# v68 combines caption spelling, spoken-text triggers/speaker, quoted trims and named cuts.
-# v69 retains all shared brief instructions plus editorial audio pairing.
-# v70 (KRI-851): the Talking reaction-beats section no longer forbids `opening_title`; a requested
-# title / closing text still goes in `opening_title` / `closing_title` alongside the beats.
-# KRI-814: a typed `delegates_all_choices` declaration for a message that states no requirement
-# and hands every choice to Kria, so readiness need not match the stock sentence (v71).
-# v72 (KRI-814): earlier creator lines never read into the brief are read with the current one.
-# v74 combines delegation v72 with subtitle-semantics v73, retaining all instructions.
-# v75 adds N2 fullscreen photo-then-original sequences to the complete v74 union.
-# v76 (KRI-816): a typed `starts_fresh` declaration withdraws the saved brief ("Start fresh").
-# v76 (KRI-815): `$voiceover_script_section` teaches `draft_voiceover_script` when footage is
-# attached and no voiceover is (a script request returns a script, not a doomed narrated draft).
-# v77 combines both v76 branches (KRI-816 starts_fresh + KRI-815 voiceover script section).
-# v77 (KRI-827): "no text on her face or on the plate" => `keep_text_off` facts.
-# v78 combines main's v77 (KRI-815 + KRI-816) with KRI-827's v77 (keep_text_off).
-# v77 (KRI-821): "mute the camera / crowd sound" is a typed `source_muted` audio intent.
-# v78 (KRI-821): a named cut of a repeated line records which take (`cut_line_occurrences`).
-# v79 combines main's v77 (KRI-815 + KRI-816) with KRI-821's v78.
-# v80 combines main's v79 (KRI-815/816/821) with KRI-827's keep_text_off (branch v78).
-# KRI-724: the Nth time a quoted phrase is said carries `speech_remove` {quote, occurrence}
-# beside its cut_lines, and an engine/motor noise ask carries `noise_reduction: "engine"`, so
-# the phone Talking worker cuts / filters from facts, never from the words (KRI-667) (v76,
-# on top of v75).
-# v76 (KRI-840): Talking reaction beats can ask for a photo full screen at a word
-# (`display_mode` "fullscreen"), and the shared brief records `display_mode`.
-# v76 (KRI-841): `ending_clip` (a video added after the talk, with its own sound, Talking only) and
-# the brief fact that records it next to `last_clip` (brief_extractor v21 shares the section).
-# v76 (KRI-842) adds the `clip_sound` fact: one clip's own sound under, or after, a voiceover.
-# KRI-847: a ceiling ("at most 15 seconds") carries `duration_bound: "at_most"` beside
-# `duration_s`, so a shorter draft meets it instead of missing 15 s +/- 10 % (v76).
-# v76 (KRI-849): "if you can't tell what he says, ask me instead of guessing" is a captions fact
-# (`ask_if_unclear`), and the creator's later answer is `unclear_answer` ("omit" or their own
-# words); the server compares two hearings of the speech and asks, it never reads the words.
-# v92 (KRI-881): main's v91 plus a research / sources ask as a typed `text` requirement with
-# `facts.research` ({topic, request_quote}); the server researches it before approval.
-# v93 combines main v92 research-before-approval with runtime creative skills.
-# v95 (KRI-689): the shared brief section records a clip-speed ask as `facts.playback_rate`
-# (0.25-4; "slow motion" = 0.5, "speed up" = 2) on a `style` requirement, never for pacing /
-# text / music or a speed ramp; the phone montage plans the rate onto the named clips.
-# v96: exact-timed small cards (`timed_cards`, flag PHONE_TIMED_CARDS_ENABLED) on phone
-# Montage / Voiceover edits, and the shared brief records a `timed_card` fact for the ask.
-# v97 (KRI-945): the described-text exception covers text on particular clips only; an
-# intro, explanation or facts for the whole video is never a clip intent.
-# v98 (KRI-942): the shared brief records clip sound on / off (`clip_sound` "on"/"off" with
-# `sound_clip`, `sound_from_s`/`sound_to_s`, `sound_line`, `sound_except`) for montages.
-# v99 (KRI-957): an after-voice clip ask's `triggers` is the line said in that clip, never the
-# creator's own last voiceover words ("after my last words \"before we eat\"").
-# v100 (KRI-994): a select ask records the media kind it restricts to / includes
-# (`only_media_kind` "video", `include_media_kind` "photo"), so the server can judge "clips
-# only" on the finished timeline and withdraw an earlier photo ask a later clips-only ask replaces.
-# v102 (29 Ekim lane D, KRI-1038): words shown a piece at a time are a `text_sequence`
-# requirement, not `captions: word_by_word`; "say" plus a quote with no voiceover is on-screen
-# text. (v101 is lane B's order-key edit; they merge in that order.)
-# v103 (KRI-1027): the shared brief records how sideways clips sit in a vertical video
-# (`landscape_fit` "fill" / "fit"), which preselects crop or black bars on the confirm screen.
-# v104 (30 Ekim): prompt-cache layout only, no rule change. The per-turn INPUT block
-# (creator context, footage, manifest, conversation, message) moved to
-# prompts/main_creator_turn.txt at the end so the rules above it form a shared prefix.
-# v105 (KRI-1077): title animation names come from the vocab registry (all designed edges).
-# v106 (prompt fidelity, animation): an UNNAMED animation ask ("with animations", "animated
-# text") is a `text` requirement carrying `animation: "any"`, not prose only; a named one
-# keeps its id. One fact for both: the disclosure unit's interim `animated: true` fact is gone.
-# v107 (KRI-1117): `background_media` (a photo / looping video behind the Talking speaker), taught
-# only where the manifest advertises `speaker_background`; every other prompt is byte-identical.
-# v108 (KRI-1093): the Lip-sync picker card (`manifest.chosen_format`) defaults an attached song
-# to `lipsync`; the song section gains one paragraph only on that manifest, so every other
-# render is byte-identical.
-# v109 (KRI-1151): a multi-clip Talking edit can show its other clips full screen where the creator
-# talks about them, optionally playing their own sound with the creator's voice muted under it.
-# Taught (with the voice-muted honesty) only where `talking_footage_cutaways(manifest)` is open,
-# so every other render is byte-identical; `MainCreatorInput.server_note` is the planner's one
-# corrective re-run after a refusal the open gates contradict (`app.kria.ask_refusals`).
-# v110 (parent KRI-1151): `insert_clips` (a footage clip played while the Talking take pauses),
-# taught only where `insert_clip_candidates(manifest)` is non-empty, and the shared brief records
-# it as an `insert_clip` fact (brief_extractor v46 shares the section). The cutaway section
-# says an insert exists only as `insert_clips` while that lane is open.
-# A clip shown while the talk keeps running is recorded as `display_mode` / `clip_sound`, never
-# `triggers`.
-# v109 (KRI-1162): commentary-style green screen. `background_media` gains `sequence` /
-# `spoken_phrase` / `cadence_s` / `speaker_frame`, taught in one extra paragraph only where the
-# manifest advertises `speaker_background_windows`; every other prompt is byte-identical.
-# v111: v109 (KRI-1162, 11-01), v109 (KRI-1151, 11-02) and v110 (insert clips) merged;
-# the prompt carries all three.
-# v112 (parent KRI-1151, thread b61b7673): "place them in between my speech" for clips that have
-# speech or sound of their own is an INSERT (one `insert_clips` row per clip, no phrase: the
-# worker pauses the talk at the end of the sentence about the clip, chosen by meaning), and
-# "over my speech / while I keep talking / keep my voice" stays the overlay. The creator's
-# position words decide the route, never the sound words ("use their audio" is listed once, on the
-# overlay side), and a clip with no sound of its own said "in between my speech" is the same
-# insert played silent (`keep_audio` false). Only the texts shown while the insert lane is open
-# change; every closed-gate prompt keeps its bytes. No live eval of this routing exists; the
-# fixtures under tests/fixtures/agent_evals/main_creator/kri1151_* are hand-authored.
-# v114 (KRI-1175, prod "Green 3"): "whichever photo or video I'm talking about" gives every
-# background_media.sequence entry a spoken_phrase from the take's own words (spoken order; one
-# phrase for two visuals of one thing; a visual never talked about is left out and named in
-# summary), so the worker lays them out on the words. Only the windows section changes (shown only
-# with the speaker_background_windows capability); every other prompt keeps its bytes. v113 is used
-# by unmerged branches (PR #2089, KRI-1173).
-# v116 (KRI-1177 / KRI-1164, Green 3, PR #2089; was v113 on its branch, v115 is #2088's): the
-# shared brief section records the creator's caption look (`caption_size`, `caption_position`,
-# `caption_color`, `caption_case`) and "no music" as `audio_intent: no_music`; the speaker's own
-# corner is never a caption position. On top of v114.
-# v117 (KRI-1189, Green 3; v115 is #2088's): the shared brief section records an unquoted "cut the
-# sentence I restarted" / "my retakes" / "tekrar aldığım cümle" as `cut_restarts: true` and never
-# copies the take's words into `cut_lines` (Green 3 r2 did); a named restart stays a cut line and
-# "start over" about the edit or a clip is no restart. On top of v116.
-# v118 (KRI-1173; v117 is held by #2092): a plain colour behind the speaker, on top of v116.
-# `background_media` takes `color` ("#RRGGBB") instead of `media_id`, taught in one extra
-# paragraph only where the manifest advertises `speaker_background_color`; the shared brief
-# section records `background_color` beside `speaker_background` (brief_extractor v53 shares
-# it). Every other creator prompt is byte-identical.
-# v119 (KRI-1189 lands after #2088): v117's `cut_restarts` teaching on top of v118. The
-# KRI-1189 replay fixtures keep the `2026-11-03-v117` label they were recorded under.
-# v120 (Qendresa item 12): the shared brief section records the caption shape as typed facts,
-# `caption_words` (1-3 words at a time) and `caption_box` (a #RRGGBB box behind the captions).
-# On top of v119; brief_extractor v55 shares it.
-# v121 (Qendresa 13, tight pauses; on top of v120, Qendresa 12 caption shape): the shared brief
-# section records an "all my pauses / tight pace" ask as `pauses: "tight"` beside
-# `speech_cleanup`. On top of v119.
-# v123 (Qendresa item 17, follow-up of KRI-1175; v121-v122 reserved by items 13-14): one
-# paragraph after the windows section teaching how to write a sequence entry's `spoken_phrase`
-# (as said in the take, with the words only said where that visual is introduced). Shown only
-# with BACKGROUND_FOLLOWS_TALK_ENABLED and the windows capability; every other prompt keeps its
-# bytes.
-# v125 (Qendresa item 16; v124 is reserved for item 15): two teachings, shown only with
-# SPEAKER_FULL_OPENING_ENABLED and the `speaker_full_opening` capability. Strategy: "start with me
-# full screen ... after that my recordings and me small in the corner" sets
-# `background_media.full_screen_opening` (+ `full_screen_opening_s` for a named length). Brief: the
-# shared section records `speaker_full_opening` / `speaker_full_opening_s` on the requirement it
-# belongs to (brief_extractor v60 shares it). Every other prompt keeps its bytes.
-# v126 (Qendresa item 18; v124 is reserved for item 15; shipped as v136, below): one paragraph
-# after the full-opening section, shown only with BACKGROUND_FOCUS_ENABLED and the
-# `background_focus` capability. The recordings behind the speaker are aimed at their readable
-# text by the compile; the planner sets `background_media.focus` (a named side) / `focus_zoom`
-# (a named amount) only when the creator names one. Every other prompt keeps its bytes.
-# v128 (Qendresa item 21), on top of v120 (Qendresa 12 caption shape): behind
-# `settings.clip_text_tiktok_look_enabled`, `_CLIP_TEXT_LOOK_PROMPT_SECTION` teaches one line
-# pinned in the MIDDLE for the whole video (`corner: "middle_center"`) and TikTok's own text look
-# (`look: "tiktok"`). Flag off => the rendered prompt is byte-identical to v120.
-# v131 (item 23, Related KRI-1129), on top of v120 (Qendresa 12 caption shape): with
-# BRIEF_LONG_REQUEST_ENABLED the brief section says "at most 32 objects" instead of 16.
-# Flag off: every prompt byte-identical.
-# v133 (Qendresa item 16; v130 until main reached v131 with item 23; v132 is held by item 24):
-# v125's two full-screen-opening teachings on top of v128 and v131. Flag off, every prompt keeps
-# its bytes.
-# v135 (Qendresa item 20, TITLE_LOOK_ENABLED): only while `title_look_enabled` is on, the Talking
-# reaction-beats section gains one rule: a logo/sticker she wants with or above the opening title
-# is a beat with `anchor: "title"`; the title stays in `opening_title`, " / " included. Flag off:
-# every prompt keeps its bytes. On top of v133 (#2111). Reserved as v129, renumbered once main
-# passed it; v132 and v134 are held by items 24 and 18.
-# v136 (Qendresa item 18; was v126, then v132, then v134 until item 20 merged as v135):
-# v126's background-focus paragraph on top of v133 (item 16) and v135 (item 20). Every other
-# prompt keeps its bytes.
-# v137: capability-gated initial split-screen planning on top of v136.
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-06-v137"
+# The prompt version is a fingerprint of these files, so it moves exactly when they change
+# (app/agents/_prompt_fingerprint.py). Don't bump or pin it and don't add a history here;
+# describe a prompt change in its PR. The hand-numbered history (to v136) is frozen in
+# docs/pipelines/prompt-version-history.md. A new prompt file or skill must be listed here
+# (tests/agents/test_prompt_fingerprint.py checks every load_prompt / load_skill).
+MAIN_CREATOR_PROMPT_SOURCES = (
+    "app/agents/main_creator.py",
+    "app/agents/prompt_vocab.py",
+    "app/agents/_schemas/text_animation_phases.py",  # {{TEXT_ANIMATION_EDGES}}
+    "app/agents/_writing_context.py",
+    "app/kria/reply_language.py",
+    "app/kria/brief.py",
+    "app/pipeline/phone_talking_cutaways.py",
+    "app/pipeline/phone_talking_mentions.py",
+    "app/agents/skills/edit-story/SKILL.md",
+    "app/agents/skills/grounded-hook/SKILL.md",
+    "app/agents/skills/meaningful-moment/SKILL.md",
+    "prompts/main_creator.txt",
+    "prompts/main_creator_split_screen.txt",
+    "prompts/main_creator_turn.txt",
+)
+MAIN_CREATOR_PROMPT_VERSION = prompt_fingerprint("mc", MAIN_CREATOR_PROMPT_SOURCES)
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -324,6 +148,21 @@ _DESCRIBED_TEXT_EXCEPTION = (
     " when described: an introduction, an explanation or facts about the place or topic"
     ' ("some facts about Lisbon to show why people should go, an introductory explanation")'
     " follows Researched explanations, and a hook is the opening title."
+)
+
+# KRI-1097 wave 2: the quotes that keep a typed timing, cadence or reuse ask the server's
+# English/Turkish recognizers do not read (`_timing_cadence_reuse`). Appended to the
+# `licensed_sfx` evidence line (the `$boundary_evidence_keys` slot) only with
+# PLANNER_BOUNDARY_HONEST_ENABLED; "" off, so that prompt is byte-identical.
+_BOUNDARY_EVIDENCE_KEYS = (
+    ',\n      "mixed_media_timing": "the creator\'s whole sentence, first word to end mark, word'
+    " for word in their language, asking for the photo and video timing you set (seconds and"
+    ' their unit as they wrote them), or null",'
+    '\n      "montage_cadence": "the creator\'s whole sentence, first word to end mark, word for'
+    " word in their language, asking for the alternating cut and its seconds (repeating"
+    ' footage needs its own video_reuse_policy sentence), or null",'
+    '\n      "video_reuse_policy": "the creator\'s whole sentence, first word to end mark, word'
+    ' for word in their language, asking to repeat, loop or alternate footage, or null"'
 )
 
 # KRI-118 item 1: guidance for the chat-picked "shape" layered on top of
@@ -1091,7 +930,8 @@ Preserve EVERY independently requested behavior, including modifiers and relatio
 parts of a compound request. An entrance animation does not describe segmentation, ordering,
 overlap, duration, or when one text replaces another. Keep these instructions in the requirement's
 complete description and structured facts; if they need separate verification, record a separate
-style or timing requirement as well. Never shorten a compound request to the one field the
+style or timing requirement as well (never for the captions' look, which stays on the one
+captions requirement). Never shorten a compound request to the one field the
 strategy happens to expose. Descriptions may retain behavior requiring composition of operations.
 Do not duplicate an opening hook as a per-clip caption unless the creator requests both.
 
@@ -1200,12 +1040,15 @@ photo, each with its own display_mode; keep a take whole, uncut =>
 particular shot, photo or badge => {"closing": "<the creator's words for it>"}; remove pauses or
 filler sounds from the speech => {"speech_cleanup": true}, keep them => {"speech_cleanup": false},
 every pause gone or a tight, fast pace, not only the long ones ("cut out all my pauses so it's
-tight", "no pauses at all", "bütün boşlukları kes, sıkı olsun") => {"speech_cleanup": true,
-"pauses": "tight"};
-remove a sentence they restarted, their retakes or false starts without quoting or naming which
-one ("the sentence I restarted", "the places I restarted", "my retakes", "yanlış başladığım
-cümleleri", "tekrar aldığım cümleyi") => {"speech_cleanup": true, "cut_restarts": true} and no
-`cut_lines` for it: never copy words from the take or its transcript into `cut_lines`, which hold
+tight", "cut all my pauses", "no pauses at all", "bütün boşlukları kes, sıkı olsun") =>
+{"speech_cleanup": true, "pauses": "tight"}: ALL or EVERY pause is tight even without the word
+tight, while "cut the pauses", "cut the long pauses" or "cut all the long pauses" is the plain
+cleanup; remove a sentence they restarted, their retakes, false starts or spoken mistakes without
+quoting or naming which one ("the sentence I restarted", "the places I restarted", "my retakes",
+"all my mistakes", "yanlış başladığım cümleleri", "tekrar aldığım cümleyi") => {"speech_cleanup":
+true, "cut_restarts": true} and no `cut_lines` for it ("Cut out all my pauses and mistakes so it's
+tight" => {"speech_cleanup": true, "pauses": "tight", "cut_restarts": true}):
+never copy words from the take or its transcript into `cut_lines`, which hold
 only the creator's own words. A restart they quote or name ("the part where I restart the
 kilometer thirty sentence") is a cut line, not `cut_restarts`; "start over" about the edit or a
 clip ("start over with a clip", "make it again from scratch", "videoyu baştan yap") is no restart;
@@ -1236,9 +1079,13 @@ says how many words show at a time ("two words at a time" => 2, "one word at a t
 {"caption_box": "#E5E5E5"} (a literal #RRGGBB: light grey #E5E5E5, grey #9E9E9E, white #FFFFFF,
 black #000000) ONLY when they ask for a box, pill or background behind the captions; "Captions
 word by word in a light grey box near the bottom" => {"captions": "word_by_word", "caption_box":
-"#E5E5E5", "caption_position": "bottom"}; "word by word" alone sets no caption_words; where
-the creator puts themselves, a photo, a card or the background ("me small at the bottom right")
-is never a caption position, plus
+"#E5E5E5", "caption_position": "bottom"}; "word by word" names the karaoke style, never a count:
+alone it sets no caption_words, and with a count the count wins ("Captions word by word in the
+middle of the screen, white, two words at a time" => {"captions": "word_by_word",
+"caption_words": 2, "caption_position": "middle", "caption_color": "#FFFFFF"}); in one message
+the captions' whole look goes on the same requirement as `captions`, never split into a second
+requirement; where the creator puts themselves, a photo, a card or the background ("me small at
+the bottom right") is never a caption position, plus
 {"ask_if_unclear": "the third sauce he names"} (the creator's own words for WHICH word) when they
 say they could not make out a word and want to be asked instead of having it guessed ("I didn't
 catch the third sauce he names: if you can't tell what he says, ask me"), on the captions
@@ -1344,6 +1191,21 @@ than 15 seconds", "up to 15 seconds", "15 seconds or less", "en fazla 15 saniye"
 geçmesin" all become {"duration_s": 15, "duration_bound": "at_most"}; every other length has no
 `duration_bound` (omitting it means exact), and a change to a timing requirement must restate
 `duration_bound` if it still applies.
+Seconds tied to ONE moment are never the video's length: an opening title "for the first 3 seconds"
+or ending words "for the last 3 seconds" record NO `timing` requirement and no `duration_s`; the
+seconds stay in the `description` of that moment's own requirement (the opening title is a `text`
+requirement with scope "title" and `facts` {}; the ending words a `text` requirement with scope
+"global" whose `facts` hold {"closing": "<the ending words, exactly as written>"}, which marks them
+as the ending, never a line for the whole video), and the strategy carries them
+(`opening_title_duration_s`, `pinned_texts` `end_s`). `Start with a big title "lets build an agent
+that reads an APP before I trust it!!" for the first 3 seconds` => {"kind": "text", "scope":
+"title", "literal": "lets build an agent that reads an APP before I trust it!!", "description": "a
+big opening title for the first 3 seconds", "facts": {}}; `End with "comment READ" and an arrow for
+the last 3 seconds` => {"kind": "text", "scope": "global", "literal": "comment READ", "description":
+"end with comment READ and an arrow for the last 3 seconds", "facts": {"closing": "comment READ"}};
+neither adds a timing requirement. A length for the whole video in the same message still does ("...
+and make the video 30 seconds long" => {"kind": "timing", "scope": "global", "facts": {"duration_s":
+30}}).
 The exception is exact text the creator dictates for particular shots ("1. The
 bookshop photo: "..." 2. The bowling video: "..."): add one {"operation":"add", "kind": "text",
 "scope":
@@ -1600,6 +1462,9 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             described_text_exception=(
                 _DESCRIBED_TEXT_EXCEPTION if settings.clip_intents_enabled else ""
             ),
+            boundary_evidence_keys=(
+                _BOUNDARY_EVIDENCE_KEYS if settings.planner_boundary_honest_enabled else ""
+            ),
             # KRI-118 item 1: only mention story shapes when they could
             # actually render this turn (rollout flag + guided proposal
             # capability + no recorded voiceover) -- defense in depth, since
@@ -1803,7 +1668,18 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         }
                     else:
                         raise ValueError("propose_strategy must explain its duration in rationale")
-            action = CREATOR_AGENT_OUTPUT_ADAPTER.validate_python(raw_action)
+            honest = bool(settings.planner_boundary_honest_enabled)
+            raw_action, boundary_quotes = (
+                _take_boundary_quotes(raw_action) if honest else (raw_action, {})
+            )
+            unknown_looks = (
+                _unknown_text_looks(raw_action)
+                if settings.planner_unknown_look_decline_enabled
+                else []
+            )
+            action = CREATOR_AGENT_OUTPUT_ADAPTER.validate_python(
+                raw_action, context={MODEL_OUTPUT_CONTEXT: True}
+            )
             if isinstance(action, DraftVoiceoverScript) and not input.voiceover_script_available:
                 # KRI-815: only offered with footage and no voiceover; elsewhere it is a miss.
                 raise ValueError("draft_voiceover_script is not available for this project")
@@ -1847,30 +1723,15 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     if media.kind == "video" and media.duration_s is not None
                 ]
                 cadence = None
+                reuse_policy = recognize_explicit_cadence_reuse_policy(
+                    input.user_message
+                ) or recognize_cadence_reuse_policy(combined_request)
                 if cadence_cut_s is not None and len(videos) == 2:
-                    reuse_policy = recognize_explicit_cadence_reuse_policy(
-                        input.user_message
-                    ) or recognize_cadence_reuse_policy(combined_request)
                     cadence = MontageCadenceConstraint(
                         source_media_ids=[media.media_id for media in videos],
                         cut_duration_s=cadence_cut_s,
                         reuse_policy=reuse_policy,
                     )
-                reuse = "once"
-                for message in [request_contract, *user_messages, input.user_message]:
-                    reuse = resolve_video_reuse_policy(message, reuse)
-                reuse = resolve_video_reuse_policy(input.user_message, reuse, cadence)
-                if reuse == "once":
-                    # A numeric cadence structurally requires reusing (or at
-                    # least re-cutting between) the same two sources more
-                    # than once; "once" only happens here when the creator's
-                    # own latest wording explicitly forbade any repeat/loop,
-                    # which is incompatible with that cadence. Falling back
-                    # to an ordinary montage (not erroring) mirrors the
-                    # route's identical rule (creator_agent.py, same "once"
-                    # check), so this is existing, intentional policy rather
-                    # than a silent drop of unrelated creator intent.
-                    cadence = None
                 # KRI-129 part C: the regex is evidence FOR an explicit scope,
                 # never a veto over what the model itself read from the full
                 # conversation. Regex silence must not erase a model-authored
@@ -1887,86 +1748,125 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 resolved_scope = (
                     explicit_scope if explicit_scope is not None else action.strategy.media_scope
                 )
-                strategy = action.strategy.model_copy(
-                    update={
-                        # Server-owned approval provenance.  Read this from
-                        # creator text, never from the model's always-present
-                        # planning field or its marker.
-                        "target_duration_requested": (
-                            True if requested_duration_s is not None else None
+                boundary_kwargs = {
+                    "timing": timing,
+                    "regex_cadence": cadence,
+                    "video_ids": [media.media_id for media in videos],
+                    "reuse_messages": [request_contract, *user_messages, input.user_message],
+                    "latest_message": input.user_message,
+                    "cadence_reuse": reuse_policy,
+                }
+                server_reads = _timing_cadence_reuse(action.strategy, **boundary_kwargs)
+                reads = (
+                    _timing_cadence_reuse(
+                        action.strategy,
+                        **boundary_kwargs,
+                        quoted=_creator_quote(
+                            boundary_quotes,
+                            [*user_messages, request_contract, input.user_message],
+                            action.strategy,
                         ),
-                        "creator_duration_s": requested_duration_s,
-                        # Pace provenance is server-owned too; the route re-stamps it from
-                        # the creator's words (`_apply_explicit_render_intent`).
-                        "pacing_requested": None,
-                        "selected_music_section": None,
-                        # Preserve the actual requested target rather than a
-                        # conflicting model-selected duration.
-                        "target_duration_s": (
-                            requested_duration_s
-                            if requested_duration_s is not None
-                            else action.strategy.target_duration_s
-                        ),
-                        # KRI-374: server-owned, like `resolved_clip_intents`: a
-                        # model-authored per-take song placement is never trusted.
-                        "resolved_song_takes": None,
-                        "selection_reconciliation": None,
-                        "confirmed_order_replacement": None,
-                        # KRI-578: the caption pin is the planner's call, never the model's.
-                        "song_captions": None,
-                        # KRI-476: server-owned conflict answers, never model-authored.
-                        "choice_answers": None,
-                        "mixed_media_timing": timing,
-                        "montage_cadence": cadence,
-                        "video_reuse_policy": reuse,
-                        "media_scope": resolved_scope,
-                    }
-                )
-                if strategy.execution_contract is not None and native_voiceover_only(
-                    input.capability_manifest
-                ):
-                    # KRI-598: this manifest (runtime v2) never offers the guided contract.
-                    # Repair, like KRI-586's envelope repairs, instead of refusing: every
-                    # refusal spends a retry and three end the turn. The planner's policy
-                    # check then resolves "all" to every own clip and says what the native
-                    # voiceover edit leaves out.
-                    log.info(
-                        "main_creator_contract_dropped_native_only",
-                        media_scope=strategy.media_scope,
-                        reaction_beats=len(strategy.reaction_beats or ()),
                     )
-                    strategy = strategy.model_copy(update={"execution_contract": None})
-                strategy = _repair_unrecorded_voiceover(
-                    input.capability_manifest,
-                    strategy,
-                    source_audio_stated=input.brief_enabled
-                    and _states_source_audio(
-                        data.get("brief_updates"),
-                        input.creator_request,
-                        starts_fresh=data.get("starts_fresh") is True,
-                    ),
+                    if honest
+                    else server_reads
                 )
-                strategy = normalize_creator_strategy_media(
-                    input.capability_manifest,
-                    strategy,
-                    repair_model_output=True,
-                )
-                if strategy.editorial_plan is not None:
-                    misfit = _editorial_plan_misfit(input.capability_manifest, strategy)
-                    if misfit:
-                        # KRI-806: the story plan is optional and only runs on a music-led
-                        # phone montage of the selected clips. Repair, like KRI-598, instead
-                        # of refusing: each refusal spends one of three attempts (Don Julio M1
-                        # lost its last one here). Counts only: beats carry creator wording.
-                        log.info(
-                            "main_creator_editorial_plan_dropped",
-                            reasons=misfit,
-                            beats=len(strategy.editorial_plan.beats),
-                            text_goals=sum(
-                                1 for beat in strategy.editorial_plan.beats if beat.text_goal
+
+                def finish(reads: dict[str, Any]) -> CreativeStrategy:
+                    strategy = action.strategy.model_copy(
+                        update={
+                            # Server-owned approval provenance.  Read this from
+                            # creator text, never from the model's always-present
+                            # planning field or its marker.
+                            "target_duration_requested": (
+                                True if requested_duration_s is not None else None
                             ),
+                            "creator_duration_s": requested_duration_s,
+                            # Pace provenance is server-owned too; the route re-stamps it from
+                            # the creator's words (`_apply_explicit_render_intent`).
+                            "pacing_requested": None,
+                            "selected_music_section": None,
+                            # Preserve the actual requested target rather than a
+                            # conflicting model-selected duration.
+                            "target_duration_s": (
+                                requested_duration_s
+                                if requested_duration_s is not None
+                                else action.strategy.target_duration_s
+                            ),
+                            # KRI-374: server-owned, like `resolved_clip_intents`: a
+                            # model-authored per-take song placement is never trusted.
+                            "resolved_song_takes": None,
+                            "selection_reconciliation": None,
+                            "confirmed_order_replacement": None,
+                            # KRI-578: the caption pin is the planner's call, never the model's.
+                            "song_captions": None,
+                            # KRI-476: server-owned conflict answers, never model-authored.
+                            "choice_answers": None,
+                            **reads,
+                            "media_scope": resolved_scope,
+                        }
+                    )
+                    if strategy.execution_contract is not None and native_voiceover_only(
+                        input.capability_manifest
+                    ):
+                        # KRI-598: this manifest (runtime v2) never offers the guided contract.
+                        # Repair, like KRI-586's envelope repairs, instead of refusing: every
+                        # refusal spends a retry and three end the turn. The planner's policy
+                        # check then resolves "all" to every own clip and says what the native
+                        # voiceover edit leaves out.
+                        log.info(
+                            "main_creator_contract_dropped_native_only",
+                            media_scope=strategy.media_scope,
+                            reaction_beats=len(strategy.reaction_beats or ()),
                         )
-                        strategy = strategy.model_copy(update={"editorial_plan": None})
+                        strategy = strategy.model_copy(update={"execution_contract": None})
+                    strategy = _repair_unrecorded_voiceover(
+                        input.capability_manifest,
+                        strategy,
+                        source_audio_stated=input.brief_enabled
+                        and _states_source_audio(
+                            data.get("brief_updates"),
+                            input.creator_request,
+                            starts_fresh=data.get("starts_fresh") is True,
+                        ),
+                    )
+                    strategy = normalize_creator_strategy_media(
+                        input.capability_manifest,
+                        strategy,
+                        repair_model_output=True,
+                    )
+                    if strategy.editorial_plan is not None:
+                        misfit = _editorial_plan_misfit(input.capability_manifest, strategy)
+                        if misfit:
+                            # KRI-806: the story plan is optional and only runs on a music-led
+                            # phone montage of the selected clips. Repair, like KRI-598, instead
+                            # of refusing: each refusal spends one of three attempts (Don Julio
+                            # M1 lost its last one here). Counts only: beats carry creator
+                            # wording.
+                            log.info(
+                                "main_creator_editorial_plan_dropped",
+                                reasons=misfit,
+                                beats=len(strategy.editorial_plan.beats),
+                                text_goals=sum(
+                                    1 for beat in strategy.editorial_plan.beats if beat.text_goal
+                                ),
+                            )
+                            strategy = strategy.model_copy(update={"editorial_plan": None})
+                    return strategy
+
+                unrenderable: list[str] = []
+                try:
+                    strategy = finish(reads)
+                except ValueError:
+                    if reads == server_reads:
+                        raise
+                    # KRI-1097 wave 2: a quoted ask this manifest cannot render falls back to
+                    # the server's own reading (what the parse kept before) instead of
+                    # spending a retry, and the card names it (`planner_declines`).
+                    unrenderable = [f for f in reads if reads[f] != server_reads[f]]
+                    log.info("main_creator_quoted_ask_unrenderable", fields=unrenderable)
+                    strategy = finish(server_reads)
+                declines = [*unknown_looks, *(PlannerDecline(field=f) for f in unrenderable)]
+                strategy = strategy.model_copy(update={"planner_declines": declines or None})
                 action = action.model_copy(update={"strategy": strategy})
             brief_updates = (
                 _refile_text_sequences(
@@ -2066,6 +1966,335 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             + (f"\nCorrect these schema errors: {feedback}." if feedback else "")
             + " Use only documented fields, exact enum values, and #RRGGBB colors."
         )
+
+
+def _timing_cadence_reuse(
+    strategy: CreativeStrategy,
+    *,
+    timing: MixedMediaTimingProfile | None,
+    regex_cadence: MontageCadenceConstraint | None,
+    video_ids: list[str],
+    reuse_messages: list[str],
+    latest_message: str,
+    cadence_reuse: Literal["no_repeat", "allow_repeat"],
+    quoted: Callable[[str], bool] | None = None,
+) -> dict[str, Any]:
+    """`mixed_media_timing`, `montage_cadence` and `video_reuse_policy` at the parse boundary.
+
+    The recognizers' explicit reading of the creator's words always wins. ``quoted`` None is
+    the server's reading alone: a model value they do not read is dropped. With ``quoted``
+    (``PLANNER_BOUNDARY_HONEST_ENABLED``, KRI-1097 wave 2) the model's own value stays where the
+    recognizers are silent and the model's quote of the creator's words grounds it
+    (`_creator_quote`), the rule `media_scope` follows (KRI-129 part C). An ungrounded value is
+    no creator ask, so the model still cannot grant itself repeats or a timing nobody asked for.
+    A quote grounds only its own field: a timing quote keeps the photo and video holds, never
+    grouping the model read elsewhere, and a cadence quote keeps the cut, never the model's
+    permission to repeat footage (``cadence_reuse``, the server's reading, stands unless the
+    repeat ask is grounded by its own quote). A kept cadence follows the recognizers' rule: the
+    manifest has exactly two videos (``video_ids``) and the cadence alternates those two. A
+    latest-turn "stop alternating" keeps any cadence out.
+    """
+    keep = quoted or (lambda _field: False)
+    if timing is None and strategy.mixed_media_timing is not None and keep("mixed_media_timing"):
+        model_timing = strategy.mixed_media_timing
+        timing = MixedMediaTimingProfile(
+            image_hold=model_timing.image_hold,
+            image_hold_s=model_timing.image_hold_s,
+            video_hold=model_timing.video_hold,
+            boundary_style=model_timing.boundary_style,
+        )
+    cadence = regex_cadence
+    if (
+        cadence is None
+        and strategy.montage_cadence is not None
+        and len(video_ids) == 2
+        and sorted(strategy.montage_cadence.source_media_ids) == sorted(video_ids)
+        and not rejects_round_robin_cadence(latest_message)
+        and keep("montage_cadence")
+    ):
+        cadence = strategy.montage_cadence
+        if not keep("video_reuse_policy"):
+            cadence = cadence.model_copy(update={"reuse_policy": cadence_reuse})
+    reuse = (strategy.video_reuse_policy if keep("video_reuse_policy") else None) or "once"
+    for message in reuse_messages:
+        reuse = resolve_video_reuse_policy(message, reuse)
+    reuse = resolve_video_reuse_policy(latest_message, reuse, cadence)
+    if reuse == "once":
+        # A numeric cadence structurally requires reusing (or at
+        # least re-cutting between) the same two sources more
+        # than once; "once" only happens here when the creator's
+        # own latest wording explicitly forbade any repeat/loop,
+        # which is incompatible with that cadence. Falling back
+        # to an ordinary montage (not erroring) mirrors the
+        # route's identical rule (creator_agent.py, same "once"
+        # check), so this is existing, intentional policy rather
+        # than a silent drop of unrelated creator intent.
+        cadence = None
+    return {"mixed_media_timing": timing, "montage_cadence": cadence, "video_reuse_policy": reuse}
+
+
+# KRI-1097 wave 2: the `render_intent_evidence` quotes for the three boundary fields. With
+# PLANNER_BOUNDARY_HONEST_ENABLED on they leave the raw action before validation and only
+# `_creator_quote` reads them; off they stay, and the evidence model refuses them as unknown
+# keys, as the foundation did.
+_BOUNDARY_QUOTE_FIELDS = ("mixed_media_timing", "montage_cadence", "video_reuse_policy")
+
+# Characters that end a sentence in any script. A boundary quote starts and ends at one of them
+# (or at the edge of a message), so it never leaves out words of its own sentence: a negation
+# before it reaches the quoted words across commas, semicolons, colons and asides ("No quiero
+# que, como la última vez, las fotos ...", "Lo que no quiero es esto; las fotos ..."), and a
+# later clause can turn them around. Punctuation, not words: what the sentence means is the
+# model's reading (the language policy, KRI-773).
+_SENTENCE_MARKS = frozenset(".!?\n…。！？؟।")
+# Quotation marks, brackets and opening marks stepped over on the way to a sentence edge.
+_SENTENCE_WRAPPERS = frozenset("\"'«»“”„‘’‚()[]¿¡ ")
+_WRAPPER_CHARS = "".join(_SENTENCE_WRAPPERS)
+# Marks that open a list line ("- fotos", "• fotos"), read as indent, never as words.
+_LIST_MARKS = frozenset("-*•·\u2013\u2014▪◦●")
+# How a seconds unit is written right after the digits ("2 s", "1.5-second", "2 segundos",
+# "2 saniyede"): notation read like the digits themselves, never what a sentence asks for.
+_SECOND_UNITS = frozenset(
+    {
+        "s",
+        "sec",
+        "secs",
+        "second",
+        "seconds",
+        "seg",
+        "segs",
+        "segundo",
+        "segundos",
+        "seconde",
+        "secondes",
+        "secondo",
+        "secondi",
+        "sek",
+        "sekunde",
+        "sekunden",
+        "sn",
+        "sny",
+        "saniye",
+        "saniyede",
+        "saniyelik",
+        "saniyeden",
+        "saniyeye",
+        "saniyeyi",
+        "saniyesi",
+    }
+)
+
+
+def _take_boundary_quotes(raw_action: object) -> tuple[object, dict[str, str]]:
+    """``raw_action`` without the boundary quotes in its `render_intent_evidence`, and the
+    string quotes it carried."""
+    if not isinstance(raw_action, dict):
+        return raw_action, {}
+    evidence = raw_action.get("render_intent_evidence")
+    if not isinstance(evidence, dict) or not any(f in evidence for f in _BOUNDARY_QUOTE_FIELDS):
+        return raw_action, {}
+    quotes = {
+        field: value
+        for field, value in evidence.items()
+        if field in _BOUNDARY_QUOTE_FIELDS and isinstance(value, str)
+    }
+    rest = {key: value for key, value in evidence.items() if key not in _BOUNDARY_QUOTE_FIELDS}
+    return {**raw_action, "render_intent_evidence": rest}, quotes
+
+
+def _sentence_edge(text: str, index: int, step: int) -> bool:
+    """Whether the slice boundary ``index`` of ``text`` is a sentence edge, looking left
+    (``step`` -1) or right (+1): the edge of the text, or a sentence mark past only wrappers. A
+    point between two digits is a decimal point ("0.5"), not an edge."""
+    at = index - 1 if step < 0 else index
+    while 0 <= at < len(text) and text[at] in _SENTENCE_WRAPPERS:
+        at += step
+    if not 0 <= at < len(text):
+        return True
+    mark = text[at]
+    if mark not in _SENTENCE_MARKS:
+        return False
+    decimal = mark == "." and 0 < at < len(text) - 1
+    return not (decimal and text[at - 1].isdecimal() and text[at + 1].isdecimal())
+
+
+def _list_mark_width(line: str) -> int:
+    """How many leading characters of ``line`` are a list mark ("- ", "• ", "1. ", "2) ")."""
+    if line[:1] in _LIST_MARKS and line[1:2] == " ":
+        return 1
+    digits = len(line) - len(line.lstrip("0123456789"))
+    if (
+        0 < digits <= 3
+        and line[digits : digits + 1] in (".", ")")
+        and line[digits + 1 : digits + 2] == " "
+    ):
+        return digits + 1
+    return 0
+
+
+def _sentence_text(source: str) -> tuple[str, str]:
+    """``source`` with its lines joined, spacing aside, as ``(flat, marks)`` of one length:
+    ``flat`` holds the words, ``marks`` the same text where a line break that ends a sentence
+    is "\\n", any other a space, and each list mark ("- ", "1. ") is blanked.
+
+    A line break ends a sentence, except inside a list a line introduces, which belongs to
+    that line's sentence so its negation reaches every item ("No quiero:\\n- fotos muy rápido
+    ..."): a line ending with ":" introduces every line after it up to a blank line, and a line
+    with no end mark followed by list items introduces those items. A list with no such line
+    is one sentence per item."""
+    flat: list[str] = []
+    marks: list[str] = []
+    to_blank = items = False
+    previous = None
+    for raw in source.splitlines():
+        line = " ".join(raw.split())
+        if not line:
+            previous, to_blank, items = None, False, False
+            continue
+        width = _list_mark_width(line)
+        if flat:
+            joined = False
+            if previous is not None:
+                end = previous.rstrip(_WRAPPER_CHARS)[-1:]
+                to_blank = to_blank or end in (":", "：")
+                items = width > 0 and (
+                    items or (not _list_mark_width(previous) and end not in _SENTENCE_MARKS)
+                )
+                joined = to_blank or items
+            flat.append(" ")
+            marks.append(" " if joined else "\n")
+        flat.append(line)
+        marks.append(" " * width + line[width:])
+        previous = line
+    return "".join(flat), "".join(marks)
+
+
+def _whole_sentences_in(source: str, quote: str) -> bool:
+    """Whether ``quote`` is found in ``source`` (spacing aside) as one or more whole
+    sentences (`_sentence_text`). A quote that carries its own closing mark ("... 2
+    segundos.") ends one."""
+    flat, marks = _sentence_text(unicodedata.normalize("NFC", source))
+    start = flat.find(quote)
+    while start >= 0:
+        end = start + len(quote)
+        closed = _sentence_edge(marks, end, 1) or _sentence_edge(marks, end, -1)
+        if closed and _sentence_edge(marks, start, -1):
+            return True
+        start = flat.find(quote, start + 1)
+    return False
+
+
+def _unit_after(text: str, index: int) -> str:
+    """The word starting at ``index`` past spaces and hyphens, casefolded ("" for none)."""
+    while index < len(text) and text[index] in " -\u00a0":
+        index += 1
+    end = index
+    while end < len(text) and text[end].isalpha():
+        end += 1
+    return text[index:end].casefold()
+
+
+def _seconds_written(text: str) -> list[float]:
+    """The numbers written with digits and a seconds unit right after them in ``text`` ("2
+    segundos", "0,5 s", "1.5-second"); the 2 of "Somos 2 amigos" is none."""
+    out: list[float] = []
+    run = ""
+    for index, char in enumerate(f"{text} "):
+        if char.isdecimal():
+            run += char
+        elif char in ".," and run and text[index + 1 : index + 2].isdecimal() and "." not in run:
+            run += "."
+        elif run:
+            if _unit_after(text, index) in _SECOND_UNITS:
+                out.append(float(run))
+            run = ""
+    return out
+
+
+def _value_seconds(field: str, strategy: CreativeStrategy) -> list[float]:
+    """The seconds the model wrote for ``field``: a cadence's cut, a photo hold."""
+    if field == "montage_cadence" and strategy.montage_cadence is not None:
+        return [strategy.montage_cadence.cut_duration_s]
+    timing = strategy.mixed_media_timing
+    if field == "mixed_media_timing" and timing is not None and timing.image_hold_s is not None:
+        return [timing.image_hold_s]
+    return []
+
+
+def _creator_quote(
+    quotes: Mapping[str, str], creator_texts: list[str], strategy: CreativeStrategy
+) -> Callable[[str], bool]:
+    """Whether a field's boundary quote grounds the model's value (KRI-1097 wave 2).
+
+    Language-neutral checks only (the language policy, KRI-773/786: the model that reads the
+    message records its meaning, the server checks the record and never guesses meaning from
+    words):
+    - the quote is the creator's own words, two words or more found verbatim (spacing aside)
+      in what they wrote, the rule the title and pinned-text quotes follow;
+    - it is whole sentences of that text, never a part, so it cannot leave out words of its own
+      sentence, even across commas and asides ("las fotos pasen muy rápido" out of "No quiero
+      que, como la última vez, las fotos pasen muy rápido", "montaje lento" out of "Crea un
+      montaje lento del verano en Madrid");
+    - each number of seconds the model wrote (a cadence's cut, a photo hold) is written in it
+      with digits and a seconds unit right after them: "cada 2 segundos" grounds no 1 s cut,
+      and "Somos 2 amigos" no 2 s photo hold;
+    - a repeat quote is not the cadence quote or a part of it: alternating two videos is no
+      ask to play a moment twice.
+    Both sides are compared in Unicode NFC, so an accent typed as two code points still matches.
+    Each check fails toward the server's own reading, the foundation's behaviour.
+
+    Limits of the design (agents/DECISIONS.md "Prompt fidelity wave 2: planner"): the server
+    checks provenance, not meaning. A whole sentence about something else (a slow montage
+    quoted for very fast photos, an unrelated sentence quoted for repeats, a title's seconds
+    quoted for a cut), a reversal in the next sentence, or a later turn that withdraws the ask
+    in words the recognizers do not read keeps the model's value.
+    """
+
+    def text(field: str) -> str:
+        return " ".join(unicodedata.normalize("NFC", str(quotes.get(field) or "")).split())
+
+    def quoted(field: str) -> bool:
+        quote = text(field)
+        if len(quote.split()) < 2:
+            return False
+        if field == "video_reuse_policy" and quote in text("montage_cadence"):
+            return False
+        written = _seconds_written(quote)
+        if any(
+            all(abs(value - number) > 0.02 for number in written)
+            for value in _value_seconds(field, strategy)
+        ):
+            return False
+        return any(_whole_sentences_in(str(text or ""), quote) for text in creator_texts)
+
+    return quoted
+
+
+# A title animation / label position value that asks for no look at all.
+_LOOK_OFF_WORDS = frozenset({"none", "null", "no", "off", "default", "static"})
+
+
+def _unknown_text_looks(raw_action: object) -> list[PlannerDecline]:
+    """Title animation / label position words the renderer has no name for (KRI-1097 wave 2,
+    PLANNER_UNKNOWN_LOOK_DECLINE_ENABLED).
+
+    The strategy's validators read such a word as unset, the default look. The model fills
+    these fields only when the creator named a look, so the word is kept for the card to say
+    it is not used instead of vanishing. A known word, an empty value or an "off" word is none.
+    """
+    strategy = raw_action.get("strategy") if isinstance(raw_action, dict) else None
+    if not isinstance(strategy, dict):
+        return []
+    out: list[PlannerDecline] = []
+    for field, known in (
+        ("title_animation", normalize_title_animation),
+        ("label_position", normalize_label_position),
+    ):
+        value = strategy.get(field)
+        word = " ".join(value.split()) if isinstance(value, str) else ""
+        if not word or word.casefold() in _LOOK_OFF_WORDS or known(word) is not None:
+            continue
+        out.append(PlannerDecline(field=field, value=word[:80]))
+    return out
 
 
 def _editorial_plan_misfit(

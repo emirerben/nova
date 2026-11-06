@@ -123,6 +123,29 @@ def test_main_creator_eval(
         assert result.output is not None
         assert not restart_brief_failures(result.output.get("brief_updates") or [], restart)
 
+    caption_cleanup = fixture.meta.get("caption_cleanup_brief")
+    if caption_cleanup:
+        # Qendresa says-done cases 6-8: her caption count / box sit on the one captions
+        # requirement and "all my pauses" is `pauses: "tight"`, read by the product's own typed
+        # readers. Replay = the hand-authored golden; the paid live run measures the model.
+        from .runners.caption_cleanup_brief import caption_cleanup_brief_failures
+
+        assert result.output is not None
+        failures = caption_cleanup_brief_failures(
+            result.output.get("brief_updates") or [], caption_cleanup
+        )
+        assert not failures, failures
+
+    moment_hold = fixture.meta.get("moment_hold_brief")
+    if moment_hold:
+        # Qendresa says-done case 10: a title / ending held for N seconds is not the video's
+        # length, read by the product's own `creator_duration`. Replay = the hand-authored golden.
+        from .runners.moment_hold_brief import moment_hold_brief_failures
+
+        assert result.output is not None
+        failures = moment_hold_brief_failures(result.output.get("brief_updates") or [], moment_hold)
+        assert not failures, failures
+
     copy_meta = fixture.meta.get("creative_copy_decision")
     if copy_meta:
         assert result.output is not None
@@ -679,3 +702,107 @@ def test_main_creator_eval(
         else:
             assert not re.search(r"\blip", summary)
             assert any(word in summary for word in ("background", "music", "beat"))
+
+
+def test_the_caption_cleanup_check_rejects_the_answers_that_said_done_wrongly():
+    """Wrong-content controls for Qendresa says-done cases 6-8: answers that keep her asks in
+    words but drop the typed facts must fail the `caption_cleanup_brief` check.
+
+    - Q2: item 23's hand-authored golden for her exact Q2 prompt (`kria_replay/q2-long-prompt`)
+      splits the captions from their look, drops `caption_box`, and files "Cut all my pauses"
+      as the plain cleanup.
+    - Q1: the facts the kit's bug tests file for her Q1 sentences (`test_q1_caption_two_words`,
+      `kria_check/Q1/run_receipts.py`): no `caption_words`, no `pauses`.
+    """
+    import json
+
+    from .runners.caption_cleanup_brief import caption_cleanup_brief_failures
+
+    fixtures = Path(__file__).parents[1] / "fixtures"
+    q2_path = fixtures / "kria_replay" / "q2-long-prompt" / "fixture.json"
+    q2_golden = json.loads(q2_path.read_text())
+    q2_updates = json.loads(q2_golden["main_creator_raw_text"])["brief_updates"]
+    q2_expect = load_fixture(
+        fixtures / "agent_evals" / "main_creator" / "qendresa_q2_caption_box_all_pauses.json"
+    ).meta["caption_cleanup_brief"]
+
+    q2_failures = caption_cleanup_brief_failures(q2_updates, q2_expect)
+
+    assert any("caption look box None" in failure for failure in q2_failures), q2_failures
+    assert any("apart from the captions requirement" in failure for failure in q2_failures)
+    assert any("pauses tight is False" in failure for failure in q2_failures), q2_failures
+
+    q1_updates = [
+        {
+            "kind": "style",
+            "scope": "global",
+            "description": "Captions word by word in the middle of the screen, white, two words "
+            "at a time",
+            "facts": {
+                "captions": "word_by_word",
+                "caption_position": "middle",
+                "caption_color": "#FFFFFF",
+            },
+        },
+        {
+            "kind": "audio",
+            "scope": "global",
+            "description": "Cut out all my pauses and mistakes so it's tight",
+            "facts": {"speech_cleanup": True, "cut_restarts": True},
+        },
+    ]
+    q1_expect = load_fixture(
+        fixtures / "agent_evals" / "main_creator" / "qendresa_q1_caption_two_words_tight.json"
+    ).meta["caption_cleanup_brief"]
+
+    q1_failures = caption_cleanup_brief_failures(q1_updates, q1_expect)
+
+    assert any("caption look words None" in failure for failure in q1_failures), q1_failures
+    assert any("pauses tight is False" in failure for failure in q1_failures), q1_failures
+
+
+def test_the_moment_hold_check_rejects_a_hold_filed_as_the_video_length():
+    """Wrong-content control for Qendresa says-done case 10: her title and ending holds filed as
+    `timing` / `duration_s: 3` make the product reader take 3 seconds as the whole video."""
+    from .runners.moment_hold_brief import moment_hold_brief_failures
+
+    fixtures = Path(__file__).parents[1] / "fixtures"
+    expect = load_fixture(
+        fixtures / "agent_evals" / "main_creator" / "qendresa_q1_caption_two_words_tight.json"
+    ).meta["moment_hold_brief"]
+    updates = [
+        {
+            "kind": "timing",
+            "scope": "global",
+            "description": "Big title for the first 3 seconds",
+            "facts": {"duration_s": 3},
+        },
+        {
+            "kind": "timing",
+            "scope": "global",
+            "description": 'End with "comment READ" and an arrow for the last 3 seconds',
+            "facts": {"duration_s": 3},
+        },
+        {
+            "kind": "text",
+            "scope": "title",
+            "literal": "lets build an agent that reads an APP before I trust it!!",
+            "description": "a big opening title",
+            "facts": {},
+        },
+        {
+            "kind": "text",
+            "scope": "global",
+            "literal": "comment READ",
+            "description": "end with comment READ and an arrow",
+            "facts": {},
+        },
+    ]
+
+    failures = moment_hold_brief_failures(updates, expect)
+
+    assert any("video length" in failure and "3.0" in failure for failure in failures), failures
+    assert any("duration_s 3" in failure for failure in failures), failures
+    # the ending row above carries `facts` {} (no typed "closing"), so #2129 reads it as a line
+    # for the whole video: the checker must say so
+    assert any("whole-video line" in failure for failure in failures), failures

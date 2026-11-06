@@ -2,6 +2,96 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.37.0] - 2026-11-06
+
+### Changed
+- fix(kria): the planner names unknown looks on the card; the quote rule for timing, cadence and repeats ships dark (KRI-1097 wave 2, planner) (#2049) <!-- release-pr: 2049 -->
+
+## [0.88.36.0] - 2026-11-06
+
+### Changed
+- Classify stopped release-command machines in deployment guard (#1978) <!-- release-pr: 1978 -->
+
+## [0.88.35.0] - 2026-11-06
+
+### Changed
+- Recover automatic result updates without replaying uncertain work (#2137) <!-- release-pr: 2137 -->
+
+## [0.88.34.0] - 2026-11-06
+
+### Added
+- feat(ios): re-record a Talking take from the ready video (KRI-1187) (#2123) <!-- release-pr: 2123 -->
+
+## [0.88.33.0] - 2026-11-06
+
+### Changed
+- chore(research): weekly TikTok artifact refresh 2026-11-01 (#2043) <!-- release-pr: 2043 -->
+
+## [0.88.32.0] - 2026-11-06
+
+### Changed
+- fix(ios): a late AVPlayer .playing report no longer undoes an explicit pause (KRI-1087) (#2024) <!-- release-pr: 2024 -->
+
+## [0.88.31.0] - 2026-11-06
+
+### Changed
+- fix(ios): fence stale device-render reset cleanup and admission (#2134) <!-- release-pr: 2134 -->
+
+## [0.88.30.0] - 2026-11-06
+
+### Changed
+- ci: warm Xcode cache for PRs and queue the iPhone job right after selection (KRI-1232) (#2136) <!-- release-pr: 2136 -->
+
+## [0.88.29.0] - 2026-11-06
+
+### Changed
+- fix(kria): brief writer records her caption count, grey box, all-pauses and title/ending holds as typed facts (Qendresa says-done 6, 7, 8, 10) (#2131) <!-- release-pr: 2131 -->
+
+## [0.88.28.0] - 2026-11-06
+
+### Changed
+- fix(kria): every served suggestion card executes (follow-up to #2109) (#2135) <!-- release-pr: 2135 -->
+
+## [0.88.27.0] - 2026-11-06
+
+### Changed
+- fix(kria): an ending's words are never the opening title or a whole-video pin (says-done B follow-up to #2130) (#2138) <!-- release-pr: 2138 -->
+
+## [0.88.26.0] - 2026-11-06
+
+### Changed
+- perf(ios): live green-screen preview lag, four independent levers (KRI-1183) (#2121) <!-- release-pr: 2121 -->
+
+## [0.88.25.0] - 2026-11-06
+
+### Changed
+- Prompt versions for Main Creator and brief extractor are computed from their source files (no more version-line conflicts) (#2133) <!-- release-pr: 2133 -->
+
+## [0.88.24.0] - 2026-11-06
+
+### Changed
+- fix(ios): make New Chat immediate and reduce save/share waits (#2125) <!-- release-pr: 2125 -->
+
+## [0.88.23.0] - 2026-11-06
+
+### Changed
+- fix(receipts): Kria's review matches the video for unheard recordings, whole-video text and kept clips (Qendresa says-done C) (#2129) <!-- release-pr: 2129 -->
+
+## [0.88.22.0] - 2026-11-06
+
+### Changed
+- fix(kria): the video does what the brief asked for keep-whole, mute, whole-video text and title holds (Qendresa says-done group B) (#2130) <!-- release-pr: 2130 -->
+
+## [0.88.21.0] - 2026-11-06
+
+### Changed
+- fix(text-style): "no captions" no longer takes her text's place and colour (Qendresa case 3) (#2128) <!-- release-pr: 2128 -->
+
+## [0.88.20.0] - 2026-11-06
+
+### Changed
+- fix(captions): keep captions off the speaker's face when she is small in a corner (Qendresa case 1) (#2127) <!-- release-pr: 2127 -->
+
 ## [0.88.19.0] - 2026-11-06
 
 ### Changed

@@ -268,15 +268,31 @@ def test_a_chapter_list_filed_as_the_title_is_still_chapters() -> None:
     assert _receipts(brief, plan)["r2"] == ("met", "checked")
 
 
-def test_a_literal_that_is_not_only_the_clip_labels_still_stands() -> None:
-    # One name is on no clip: the literal is not just the chapter labels, so it is unchanged.
+def _pinned(plan) -> list[tuple[str, bool]]:  # noqa: ANN001
+    return [(pin.text, pin.is_whole_video) for pin in plan.snapshot.pinned_texts or []]
+
+
+def test_a_literal_that_is_not_only_the_clip_labels_still_stands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # One name is on no clip: the literal is not just the chapter labels, so it stays on screen.
+    # A `text/global` literal is the brief's whole-video line (Qendresa case 9,
+    # WHOLE_VIDEO_TEXT_PIN_ENABLED): pinned for the whole video, not a 2.2 s opening title.
     plan = _plan(_strategy(), _brief(literal="Sabah, Üniversite, Gece"))
-    assert plan.title == "Sabah, Üniversite, Gece" and plan.title_source == "brief"
-    # Without chapter labels the literal keeps its old place as the title.
+    assert plan.title is None and _pinned(plan) == [("Sabah, Üniversite, Gece", True)]
+    # Without chapter labels the literal is that whole-video line too.
     plan = _plan({}, _brief())
-    assert plan.title == CHAPTERS and _labels(plan) == {}
+    assert plan.title is None and _pinned(plan) == [(CHAPTERS, True)] and _labels(plan) == {}
     # A plan that prints no labels (the lip-sync montage) passes none and is unchanged.
     assert _title({}, brief_view(_brief()))[0] == CHAPTERS
+    # Switch off: the literal keeps its old place as the opening title.
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "whole_video_text_pin_enabled", False)
+    plan = _plan(_strategy(), _brief(literal="Sabah, Üniversite, Gece"))
+    assert plan.title == "Sabah, Üniversite, Gece" and plan.title_source == "brief"
+    plan = _plan({}, _brief())
+    assert plan.title == CHAPTERS and _labels(plan) == {} and _pinned(plan) == []
 
 
 def test_the_title_gate_does_not_take_the_chapter_list_for_the_titles_words() -> None:

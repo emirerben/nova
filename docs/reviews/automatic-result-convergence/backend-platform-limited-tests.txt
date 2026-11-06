@@ -1,0 +1,10 @@
+Same seven failed on current and immutable05d9720d8 runtime under identical private test infrastructure.
+macOS cannot execute the decoder's required non-root Linux resource sandbox.
+
+FAILED tests/kria/test_initial_render_review_admission_postgres.py::test_initial_strategy_admitted_and_captured_without_editor_prep - AssertionError: {'review_id': '0a89a124-3598-4fd5-be50-75e867514978', 'status': 'unavailable'}
+FAILED tests/kria/test_render_review_admission_postgres.py::test_real_storage_frames_final_fence_and_duplicate_delivery[None] - AssertionError: assert 'pending' == 'evidence_ready'
+FAILED tests/kria/test_render_review_admission_postgres.py::test_real_storage_frames_final_fence_and_duplicate_delivery[generation] - AssertionError: assert 'pending' == 'stale'
+FAILED tests/kria/test_render_review_admission_postgres.py::test_real_storage_frames_final_fence_and_duplicate_delivery[ownership] - AssertionError: assert 'pending' == 'stale'
+FAILED tests/kria/test_render_review_admission_postgres.py::test_real_storage_frames_final_fence_and_duplicate_delivery[binding] - AssertionError: assert 'pending' == 'stale'
+FAILED tests/kria/test_render_review_admission_postgres.py::test_real_storage_frames_final_fence_and_duplicate_delivery[recipe] - AssertionError: assert 'pending' == 'stale'
+FAILED tests/kria/test_render_review_admission_postgres.py::test_real_storage_frames_final_fence_and_duplicate_delivery[dispatch_settings] - AssertionError: assert 'pending' == 'stale'

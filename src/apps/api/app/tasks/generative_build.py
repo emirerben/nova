@@ -125,6 +125,8 @@ from app.schemas.montage_preset import (
     coerce_montage_preset,
     is_collage_montage_preset,
 )
+from app.services import slide_post_generation_delivery as slide_delivery
+from app.services import slide_post_render_revisions as slide_revisions
 from app.services.creator_song_rule import catalog_song_match_blocked
 from app.services.generative_jobs import (
     CONTENT_PLAN_ORIGINAL_VARIANT_POLICY,
@@ -1570,6 +1572,8 @@ def _cancelled_job_write_rejected(job: Job, *, operation: str, db=None) -> bool:
             operation=operation,
         )
         return True
+    if db is not None and slide_delivery.write_rejected(db, job):
+        return True
     return bool(db is not None and _content_plan_write_rejected(db, job, operation=operation))
 
 
@@ -2235,6 +2239,7 @@ def _store_hdr_pretonemap_cache(
     soft_time_limit=1740,
     time_limit=1800,
 )
+@slide_delivery.with_first_render_claim
 @_with_required_speech_upload_deadline
 @_with_owned_job_fence
 def orchestrate_generative_job(self, job_id: str) -> None:
@@ -5151,14 +5156,18 @@ def _run_phone_guided_job(
     # promise refuses steps down to the next; the last one is the plan as it was.
     from app.services.phone_clip_sound_toggle import (  # noqa: PLC0415
         conflict_reasons,
+        mute_relaxed_contract,
         plan_toggle_lane,
         sound_contract_conflict,
+        stage_contract_revision,
         toggle_record,
     )
     from app.services.phone_rollout import phone_clip_sound_windows_supported  # noqa: PLC0415
 
     toggle_receipt: dict | None = None
     toggle_changed = False
+    # (approved contract, its relaxed revision) when a whole-video mute cleared a camera pin.
+    relaxed_pin: tuple[Any, Any] | None = None
     toggle_lane = plan_toggle_lane(
         snapshot,
         raw_plan=raw_plan,
@@ -5202,15 +5211,36 @@ def _run_phone_guided_job(
                 )
                 continue
             if sound_contract_conflict(contract, candidate_compiled.recipe, bindings):
-                conflicted = conflict_reasons(toggle_lane)
-                continue
+                # Qendresa case 4: a whole-video mute outranks a camera-audio pin the approval
+                # took from the planner's audio strategy; anything else steps down as before.
+                relaxed = mute_relaxed_contract(
+                    contract, toggle_lane, snapshot, variant_id="guided_story"
+                )
+                if relaxed is None or sound_contract_conflict(
+                    relaxed, candidate_compiled.recipe, bindings
+                ):
+                    conflicted = conflict_reasons(toggle_lane)
+                    continue
+                relaxed_pin = (contract, relaxed)
+                contract = relaxed
             raw_plan, plan, compiled = candidate.raw_plan, candidate_plan, candidate_compiled
             recipe, repair_notes = compiled.recipe, list(compiled.notes)
             toggle_changed = True
             toggle_receipt = toggle_record(toggle_lane, candidate, recipe, bindings)
             break
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(timed_cards))
-    repair_notes = _phone_repair_notes(snapshot, contract, recipe.duration, repair_notes)
+    repair_notes = _phone_repair_notes(
+        (
+            stage_contract_revision(
+                snapshot, *relaxed_pin, creator_strategy or {}, variant_id="guided_story"
+            )
+            if relaxed_pin is not None
+            else snapshot
+        ),
+        contract,
+        recipe.duration,
+        repair_notes,
+    )
     # The editor's Save recompiles from this private plan, so it must hold the moments' sound
     # and (KRI-1027) their vertical framing.
     repaired_plan_payload = (
@@ -5330,6 +5360,11 @@ def _run_phone_guided_job(
             # Private receipts the editor recompiles from; each row keeps
             # gcs_path so pool deletion still sees the photo as referenced.
             current[PHONE_VISUALS_FIELD] = visual_rows
+        if relaxed_pin is not None:
+            # The pin verifies this variant against the relaxed revision (KRI-736 shape).
+            current = stage_contract_revision(
+                current, *relaxed_pin, creator_strategy or {}, variant_id="guided_story"
+            )
         job.assembly_plan = current
         narration_binding = None
         if plan.narration is not None and plan.narration.speech_cleanup is not None:
@@ -7429,6 +7464,11 @@ def _run_phone_unified_montage_job(
     # layout, the fast montage the route always made is composed instead and the note says why.
     plan = _composed_plan(plan, assignments, all_candidates, compose)
     record = plan.record()
+    from app.kria.brief_checks import FINAL_SOURCE_CUTS, montage_final_source_cuts  # noqa: PLC0415
+
+    # Review of #2129: the plan's FINAL cuts (after freezes, speeds and slides), so keep-whole
+    # is judged on what plays.
+    record[FINAL_SOURCE_CUTS] = montage_final_source_cuts(plan)
     from app.pipeline.story_direction import fallback_note, says_fallback  # noqa: PLC0415
 
     if (requested := (strategy or {}).get("direction")) and says_fallback(
@@ -8256,6 +8296,48 @@ def _strategy_background_request(all_candidates: dict) -> dict[str, Any] | None:
     return request
 
 
+def _unshown_background_entries(
+    entries: Sequence[Mapping[str, Any]],
+    background: Any,
+    lane_drops: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Qendresa case 5: the strategy's background entries the COMPILED lane never shows.
+
+    ``entries`` are `_resolve_strategy_background`'s ``entries_out`` rows. A recording counts as
+    shown when its pool row id is on any compiled window (two entries naming one photo are one
+    photo), or, with no windows at all, when it is the fill. A ``phrase_not_heard`` note alone
+    is not "never shown": the cadence fallback still gives such an entry a window. Each row is
+    ``{"window": i}`` plus ``phrase`` (the entry's spoken phrase) and ``reason`` (its drop note)
+    when known.
+    """
+    windows = tuple(getattr(background, "windows", None) or ())
+    shown = {str(window.media_id) for window in windows}
+    fill = getattr(background, "media_id", None)
+    if not windows and fill:
+        shown.add(str(fill))
+    reasons: dict[int, str] = {}
+    for note in lane_drops:
+        window = note.get("window") if isinstance(note, Mapping) else None
+        if (
+            isinstance(window, int)
+            and not isinstance(window, bool)
+            and note.get("lane") == "background"
+            and "part" not in note
+        ):
+            reasons.setdefault(window, str(note.get("reason") or "")[:120])
+    out: list[dict[str, Any]] = []
+    for entry in entries:
+        if entry.get("media_id") and str(entry["media_id"]) in shown:
+            continue
+        row: dict[str, Any] = {"window": entry["window"]}
+        if entry.get("phrase"):
+            row["phrase"] = entry["phrase"]
+        if reasons.get(entry["window"]):
+            row["reason"] = reasons[entry["window"]]
+        out.append(row)
+    return out
+
+
 def _resolve_strategy_background(
     request: dict[str, Any],
     *,
@@ -8267,6 +8349,7 @@ def _resolve_strategy_background(
     creator_client_protocol: int | None = None,
     title_end_s: float | None = None,
     layout_out: dict[str, Any] | None = None,
+    entries_out: list[dict[str, Any]] | None = None,
 ) -> tuple[Any, frozenset[str]]:
     """The ``SubtitledBackground`` lane the approved strategy names, and the pool spellings
     that stay out of every mid-talk placement (KRI-1117).
@@ -8301,6 +8384,11 @@ def _resolve_strategy_background(
     against all the names in the list; ``layout_out["entry_media"]`` maps an entry index to the
     pool row id its windows carry. A phone gate that strips the windows clears all three: no
     recording is shown, so none is followed. ``None``: untouched.
+
+    Qendresa case 5: given ``entries_out``, every sequence entry is appended as ``{"window": i,
+    "phrase": <spoken_phrase or None>, "media_id": <pool row id, or None when it did not
+    resolve>}`` so the lane receipt can name an asked recording the compiled windows never show
+    (`_unshown_background_entries`).
     """
     import app.services.phone_overlay_grounding as pool_mod  # noqa: PLC0415
     from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
@@ -8355,6 +8443,15 @@ def _resolve_strategy_background(
         if row is not None:
             entry_rows.append((index, entry, row))
             reserved = reserved | _pool_media_keys(str(row["id"]))
+        if entries_out is not None:
+            phrase = str(entry.get("spoken_phrase") or "").strip()
+            entries_out.append(
+                {
+                    "window": index,
+                    "phrase": phrase or None,
+                    "media_id": str(row["id"]) if row is not None else None,
+                }
+            )
 
     fill_row: dict | None = None
     fill_start = 0.0
@@ -10783,6 +10880,8 @@ def _run_phone_subtitled_job(
                 # becomes of the lane, the photo stays out of every mid-talk card below.
                 strategy_background_lane: Any = None
                 background_reserved: frozenset[str] = frozenset()
+                # Qendresa case 5: every asked recording, so the receipt names one never shown.
+                background_entries: list[dict[str, Any]] = []
                 background_request = _strategy_background_request(all_candidates)
                 if background_request is not None:
                     if ending_lane_only:
@@ -10817,6 +10916,7 @@ def _run_phone_subtitled_job(
                                     else (3.0 if talking_title_text else None)
                                 ),
                                 layout_out=list_label_layout if list_label_asks else None,
+                                entries_out=background_entries,
                             )
                         )
 
@@ -11647,6 +11747,11 @@ def _run_phone_subtitled_job(
                             lane_receipt["background"]["media"] = len(
                                 {w.media_id for w in _bg.windows}
                             )
+                        # Qendresa case 5: an asked recording the compiled windows never show
+                        # (its phrase was never heard on the word), so the review names it.
+                        _unshown = _unshown_background_entries(background_entries, _bg, lane_drops)
+                        if _unshown:
+                            lane_receipt["background"]["unshown"] = _unshown
                         # Qendresa item 16: how long the finished video really is full screen
                         # from 0 s, read off the COMPILED recipe (a speech cut is accounted for).
                         _opening_end = next(
@@ -16260,6 +16365,7 @@ def _resolve_slide_post_draft_and_assets(
     job_id: str,  # noqa: ANN001
     *,
     approved: bool = False,
+    revision_id: str | None = None,
 ) -> tuple[uuid.UUID, uuid.UUID, SlidePostDraft, list[dict[str, Any]]]:  # noqa: F821
     """Load the job's plan item, its `slide_post` draft, and every slide's
     resolved (ownership-checked) `PlanItemAsset` row, as plain dicts.
@@ -16296,6 +16402,23 @@ def _resolve_slide_post_draft_and_assets(
             pinned = approved_slide_post(getattr(job, "assembly_plan", None))
         except PreparedExecutionError as exc:
             raise SlidePostPolicyError(exc.code, str(exc)) from exc
+    receipt_assets = None
+    if approved:
+        from app.services.slide_post_generation_receipts import (  # noqa: PLC0415
+            ReceiptConflict,
+            first_render_snapshot,
+        )
+
+        try:
+            receipt_snapshot = first_render_snapshot(db, job)
+        except ReceiptConflict as exc:
+            raise SlidePostPolicyError("slide_post_input_changed", str(exc)) from exc
+        if receipt_snapshot is not None:
+            draft, receipt_assets = receipt_snapshot
+            pinned = (draft, {key: value["generation"] for key, value in receipt_assets.items()})
+    if revision_id is not None:
+        draft, receipt_assets = slide_revisions.revision_snapshot(db, job, revision_id)
+        pinned = (draft, {key: value["generation"] for key, value in receipt_assets.items()})
     if pinned is not None:
         draft, pinned_generations = pinned
     else:
@@ -16321,6 +16444,15 @@ def _resolve_slide_post_draft_and_assets(
             if asset_id not in live
             or live[asset_id].media_status != "ready"
             or generation != live[asset_id].gcs_generation
+            or (
+                receipt_assets is not None
+                and (
+                    live[asset_id].gcs_path != receipt_assets[asset_id]["path"]
+                    or live[asset_id].kind != receipt_assets[asset_id]["kind"]
+                    or live[asset_id].user_id != job_user_id
+                    or live[asset_id].plan_item_id != content_plan_item_id
+                )
+            )
         ]
         if moved:
             from app.kria.prepared_execution import STALE  # noqa: PLC0415
@@ -16391,7 +16523,7 @@ def _resolve_slide_post_draft_and_assets(
 
 
 def _download_slide_sticker_sources(
-    stickers: dict[str, dict[str, Any]], *, tmpdir: str, slide_index: int
+    stickers: dict[str, dict[str, Any]], *, tmpdir: str, slide_index: int, strict: bool = False
 ) -> dict[str, str]:
     """Download one slide's (already ownership-checked) sticker originals; sticker id -> path.
 
@@ -16414,6 +16546,8 @@ def _download_slide_sticker_sources(
                 storage.download_to_file(row["gcs_path"], local)
         except Exception as exc:  # noqa: BLE001
             log.warning("slide_sticker_download_failed", sticker_id=sticker_id, error=str(exc))
+            if strict:
+                raise
             continue
         sources[sticker_id] = local
     return sources
@@ -16428,6 +16562,8 @@ def _build_slide_post_result(
     caption: str,
     render_trace_id: str,
     aspect: str | None = None,
+    artifact_generation: str | None = None,
+    strict_inputs: bool = False,
 ) -> dict[str, Any]:
     """Normalize every slide, stitch the preview, build the export bundle,
     and return the full variant payload. No DB access — pure render + upload.
@@ -16456,7 +16592,8 @@ def _build_slide_post_result(
         ],
     )
 
-    render_generation_id = uuid.uuid4().hex
+    render_generation_id = artifact_generation or uuid.uuid4().hex
+    output_prefix = slide_revisions.artifact_prefix(job_id, artifact_generation)
     # A drawn post is stamped by the drawing renderer (KRI-589), everything else by
     # the sizes renderer exactly as before.
     has_drawing = any(
@@ -16502,8 +16639,12 @@ def _build_slide_post_result(
             kind = asset["kind"]
             ext = "jpg" if kind == "image" else "mp4"
             fingerprint = (
-                asset["content_fingerprint"]
-                or hashlib.sha256(asset["gcs_path"].encode("utf-8")).hexdigest()
+                slide_revisions.source_identity(asset)
+                if artifact_generation
+                else (
+                    asset["content_fingerprint"]
+                    or hashlib.sha256(asset["gcs_path"].encode("utf-8")).hexdigest()
+                )
             )
             edits = asset.get("edits")
             # A slide's edits (text overlay, look preset) must be part of the
@@ -16516,7 +16657,9 @@ def _build_slide_post_result(
             edits_digest = slide_build.edits_cache_digest(
                 edits,
                 {
-                    sid: row["content_fingerprint"] or row["gcs_path"]
+                    sid: slide_revisions.source_identity(row)
+                    if artifact_generation
+                    else row["content_fingerprint"] or row["gcs_path"]
                     for sid, row in stickers.items()
                 },
             )
@@ -16534,7 +16677,7 @@ def _build_slide_post_result(
             wm_suffix += slide_build.tilt_key_suffix(edits)
             export_canvas = slide_build.slide_canvas(platform_profile, edits, aspect)
             normalized_key = (
-                f"generative-jobs/{job_id}/slides/normalized/"
+                f"{slide_revisions.normalized_prefix(job_id, strict=strict_inputs)}/"
                 f"{fingerprint}_{export_canvas[0]}x{export_canvas[1]}_"
                 f"{edits_digest}{norm_suffix}{wm_suffix}.{ext}"
             )
@@ -16553,7 +16696,7 @@ def _build_slide_post_result(
                 else:
                     storage.download_to_file(asset["gcs_path"], source_local)
                 sticker_sources = _download_slide_sticker_sources(
-                    stickers, tmpdir=tmpdir, slide_index=index
+                    stickers, tmpdir=tmpdir, slide_index=index, strict=strict_inputs
                 )
                 if kind == "image":
                     slide_build.normalize_image_slide(
@@ -16620,13 +16763,13 @@ def _build_slide_post_result(
 
         preview_local = os.path.join(tmpdir, "preview.mp4")
         slide_build.concat_preview_segments(preview_segments, preview_local, canvas=canvas)
-        preview_key = f"generative-jobs/{job_id}/slides/preview.mp4"
+        preview_key = f"{output_prefix}/preview.mp4"
         storage.upload_local_file(preview_local, preview_key, "video/mp4")
 
         cover_local = os.path.join(tmpdir, "cover.jpg")
         assert cover_local_path is not None  # ordered_assets is non-empty, cover_index is clamped
         slide_build.extract_cover(cover_local_path, cover_kind, cover_local)
-        cover_key = f"generative-jobs/{job_id}/slides/cover.jpg"
+        cover_key = f"{output_prefix}/cover.jpg"
         storage.upload_local_file(cover_local, cover_key, "image/jpeg")
 
         manifest = slide_build.build_post_manifest(
@@ -16640,7 +16783,7 @@ def _build_slide_post_result(
         slide_build.build_bundle_zip(
             bundle_local, slides=bundle_slides, manifest=manifest, caption=caption
         )
-        bundle_key = f"generative-jobs/{job_id}/slides/bundle.zip"
+        bundle_key = f"{output_prefix}/bundle.zip"
         storage.upload_local_file(bundle_local, bundle_key, "application/zip")
 
     return {
@@ -16777,12 +16920,20 @@ def _run_slide_post_job(job_id: str, *, render_trace_id: str) -> None:
         caption=caption,
         render_trace_id=render_trace_id,
         aspect=aspect,
+        **(
+            {"artifact_generation": str(slide_delivery.active_job.get()), "strict_inputs": True}
+            if slide_delivery.active_job.get()
+            else {}
+        ),
     )
+    if not slide_delivery.stage_result(job_id, result):
+        return
     if _upsert_variant_entry(job_id, result) is False:
         return
     if _finalize_job(job_id, [result]) is False:
         return
-    _stamp_slide_post_rendered_version(content_plan_item_id, draft_version)
+    if slide_delivery.active_job.get() != uuid.UUID(job_id):
+        _stamp_slide_post_rendered_version(content_plan_item_id, draft_version)
 
 
 @celery_app.task(
@@ -16796,8 +16947,11 @@ def _run_slide_post_job(job_id: str, *, render_trace_id: str) -> None:
     soft_time_limit=1740,
     time_limit=1800,
 )
+@slide_revisions.with_revision_claim
 @_with_owned_job_fence
-def rebuild_slide_post_variant(self, job_id: str, render_gen_id: str | None = None) -> None:
+def rebuild_slide_post_variant(
+    self, job_id: str, render_gen_id: str | None = None, revision_id: str | None = None
+) -> None:
     """Re-render the "slides" variant after a post-render draft edit.
 
     The route side mints `render_gen_id`, calls `stamp_variant_attempt` on
@@ -25847,6 +26001,16 @@ def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> bool:
         variants = list(plan.get("variants") or [])
         for i, v in enumerate(variants):
             if v.get("variant_id") == variant_id:
+                claimed_job_id = slide_delivery.active_job.get()
+                if (
+                    claimed_job_id is not None
+                    and claimed_job_id == job.id
+                    and v.get("render_status") in {"pending", "rendering"}
+                    and v.get("render_generation_id")
+                    and result.get("render_generation_id")
+                    and v["render_generation_id"] != result["render_generation_id"]
+                ):
+                    return False
                 previous_variant = dict(v)
                 if result.get("render_status") == "pending":
                     # Pending is an announcement/recovery state, not an output
@@ -39993,7 +40157,16 @@ def _set_status(
         )
 
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        keyed_graph = None
+        if slide_delivery.active_job.get() == uuid.UUID(job_id):
+            keyed_graph = slide_delivery.lock_graph(db, uuid.UUID(job_id))
+            job = (
+                keyed_graph[1]
+                if keyed_graph and keyed_graph[2].execution_state == "running"
+                else None
+            )
+        else:
+            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
             return _finish(
                 JobFinalizationResult(
@@ -40173,6 +40346,23 @@ def _set_status(
                     existing.get("variants"),
                     finalized_input,
                 )
+                if keyed_graph is not None:
+                    newer = {
+                        row.get("variant_id"): row
+                        for row in existing.get("variants") or []
+                        if isinstance(row, dict)
+                        and row.get("render_status") in {"pending", "rendering"}
+                    }
+                    finalized_variants = [
+                        copy.deepcopy(newer[row["variant_id"]])
+                        if isinstance(row, dict)
+                        and row.get("variant_id") in newer
+                        and newer[row["variant_id"]].get("render_generation_id")
+                        and newer[row["variant_id"]].get("render_generation_id")
+                        != row.get("render_generation_id")
+                        else row
+                        for row in finalized_variants
+                    ]
                 plan_patch = {
                     **extra_plan,
                     "variants": finalized_variants,
@@ -40309,6 +40499,8 @@ def _set_status(
             "accepted",
             variants=tuple(variant_decisions),
         )
+        if keyed_graph is not None:
+            slide_delivery.finish_locked(*keyed_graph)
         db.commit()
     if expected_speech_cut_operation_id and expected_speech_cut_attempt_id:
         # Speech-cut ``_set_status`` is only an intermediate commit: compose and

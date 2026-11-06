@@ -51,6 +51,7 @@ final class TalkBench: @unchecked Sendable {
         }
         bench.fact("env.background", ProcessInfo.processInfo.environment["KRIA_TALK_BENCH_BACKGROUND"] ?? "none")
         bench.fact("env.cinematic", ProcessInfo.processInfo.environment["KRIA_TALK_BENCH_CINEMATIC"] ?? "0")
+        bench.fact("live.tuning", LiveBackgroundTuning.current.summary)
         var system = utsname()
         uname(&system)
         bench.fact("device.machine", withUnsafeBytes(of: &system.machine) { String(decoding: $0.prefix(while: { $0 != 0 }), as: UTF8.self) })

@@ -23,6 +23,7 @@ from app.agents.slide_post_composer import (
 from app.models import PlanItem, PlanItemAsset
 from app.pipeline.slide_post.profiles import PlatformProfile
 from app.schemas.slide_post import SlidePostDraft, SlideRef
+from app.services.slide_post_ai_prepared import prepared_context as _prepared_context
 
 log = structlog.get_logger()
 
@@ -57,6 +58,7 @@ async def propose_slide_post_draft(
     instruction: str = "",
     run_context: RunContext | None = None,
     aspect: str | None = None,
+    paid_execution=None,
 ) -> SlidePostProposalResult:
     """Return a new `SlidePostDraft` ordering `assets` — AI-proposed when
     possible, pool order as the fail-open fallback. Never raises."""
@@ -115,35 +117,62 @@ async def propose_slide_post_draft(
                 for asset in assets
             ],
         )
-        result = await asyncio.to_thread(
-            SlidePostComposerAgent(default_client()).run,
-            agent_input,
-            ctx=run_context,
-        )
+
+        async def invoke():
+            return await asyncio.to_thread(
+                SlidePostComposerAgent(default_client()).run,
+                agent_input,
+                ctx=run_context,
+            )
+
+        if paid_execution is None:
+            result = await invoke()
+        else:
+            result = await paid_execution.run(
+                {
+                    "agent_input": agent_input.model_dump(mode="json"),
+                    "baseline": current_draft.model_dump(mode="json") if current_draft else None,
+                    "previous_version": previous_version,
+                    "fallback": fallback.model_dump(mode="json"),
+                    "context": _prepared_context(run_context),
+                },
+                invoke,
+            )
     except TerminalError as exc:
+        if paid_execution is not None:
+            raise
         log.warning("slide_post_compose_failed", plan_item_id=str(item.id), error=str(exc)[:200])
         return SlidePostProposalResult(fallback, fallback_used=True)
     except Exception as exc:  # noqa: BLE001 - a bad compose must never block assembly
+        if paid_execution is not None:
+            raise
         log.warning(
             "slide_post_compose_unexpected_error", plan_item_id=str(item.id), error=str(exc)[:200]
         )
         return SlidePostProposalResult(fallback, fallback_used=True)
 
-    by_id = {str(asset.id): asset for asset in assets}
+    return finish_prepared_composition(fallback, result)
+
+
+def finish_prepared_composition(fallback: SlidePostDraft, result) -> SlidePostProposalResult:
+    """Only immutable admission data participates in result compilation."""
+    assets = fallback.slides
+    previous_by_asset = {ref.asset_id: ref for ref in assets}
+    by_id = {str(ref.asset_id): ref for ref in assets}
     ordered_slides = [
         SlideRef(
             # Keep client keys and manual per-slide edits across an AI proposal.
             id=(
-                previous_by_asset.get(by_id[asset_id].id).id
-                if by_id[asset_id].id in previous_by_asset
+                previous_by_asset.get(by_id[asset_id].asset_id).id
+                if by_id[asset_id].asset_id in previous_by_asset
                 else asset_id
             ),
-            asset_id=by_id[asset_id].id,
+            asset_id=by_id[asset_id].asset_id,
             kind=by_id[asset_id].kind,
             alt=result.alt_text.get(asset_id),
             edits=(
-                previous_by_asset.get(by_id[asset_id].id).edits
-                if by_id[asset_id].id in previous_by_asset
+                previous_by_asset.get(by_id[asset_id].asset_id).edits
+                if by_id[asset_id].asset_id in previous_by_asset
                 else None
             ),
         )
@@ -155,7 +184,7 @@ async def propose_slide_post_draft(
         # the second, independent check at the boundary where the agent's
         # output crosses into the render-affecting draft — never trust a
         # single validation layer for "every id, exactly once".
-        log.warning("slide_post_compose_incomplete_order", plan_item_id=str(item.id))
+        log.warning("slide_post_compose_incomplete_order")
         return SlidePostProposalResult(fallback, fallback_used=True)
 
     cover_index = next(
@@ -167,13 +196,13 @@ async def propose_slide_post_draft(
     # without becoming executable prompt content.
     return SlidePostProposalResult(
         SlidePostDraft(
-            platform_profile=platform_profile,
+            platform_profile=fallback.platform_profile,
             slides=ordered_slides,
             cover_index=cover_index,
             caption=result.caption,
-            version=previous_version + 1,
+            version=fallback.version,
             user_edited=False,
-            aspect=aspect,
+            aspect=fallback.aspect,
         ),
         fallback_used=False,
     )

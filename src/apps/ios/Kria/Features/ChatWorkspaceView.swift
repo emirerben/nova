@@ -92,7 +92,7 @@ struct ChatWorkspaceView: View {
     /// The camera roll sits outside the chat's NavigationStack. It has its own, and a nested stack pushes its pages
     /// onto the outer one, where they outlive the switch to a chat.
     @ViewBuilder private var workspace: some View {
-        if model.showsCameraRoll, let cameraRoll {
+        if model.showsCameraRoll, model.pendingNewChat == nil, let cameraRoll {
             WorkspaceCrossfade(dismiss: {}) { _ in
                 CameraRollSurfaceView(model: cameraRoll, openProjects: { setDrawerOpen(!showsProjects) }, onSelected: { thread in
                     await model.loadProjects()
@@ -107,7 +107,7 @@ struct ChatWorkspaceView: View {
     private var chatWorkspace: some View {
         NavigationStack {
             Group {
-                if let project = model.selectedProject {
+                if let project = model.selectedProject, model.pendingNewChat == nil {
                     CreationWorkspaceView(
                         project: project,
                         openProjects: { setDrawerOpen(!showsProjects) },
@@ -117,7 +117,9 @@ struct ChatWorkspaceView: View {
                     .id(project.id)
                 } else {
                     Group {
-                        if model.isLoading || model.projectsState == .loading || model.projectsState == .idle {
+                        if let pending = model.pendingNewChat {
+                            PendingNewChatView(pending: pending)
+                        } else if model.isLoading || model.projectsState == .loading || model.projectsState == .idle {
                             WorkspaceLoadingView()
                         } else if model.projectsState == .empty {
                             WorkspaceEmptyView { Task { await model.createProject() } }
@@ -405,6 +407,46 @@ private struct WorkspaceEmptyView: View {
     }
 }
 
+/// The new conversation, shown the moment New chat is tapped while the server makes the real one. It has
+/// no thread id yet: the creator can type, but sending and attaching wait for the real one.
+private struct PendingNewChatView: View {
+    let pending: AppModel.PendingNewChat
+    @EnvironmentObject private var model: AppModel
+    @FocusState private var focus: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 14) {
+                if let failure = pending.failure {
+                    Text("Your chat couldn’t be created.").font(KriaFont.headline(22))
+                    Text(failure).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc).multilineTextAlignment(.center)
+                    Button("Try again") { model.startNewChat() }
+                        .buttonStyle(CanonicalPrimaryButtonStyle())
+                        .accessibilityIdentifier("pending-new-chat-retry")
+                    Button("Back to my chats") { model.cancelPendingNewChat() }
+                        .font(KriaFont.body(14))
+                        .accessibilityIdentifier("pending-new-chat-cancel")
+                } else {
+                    ProgressView().tint(KriaColor.ink)
+                    Text("Starting your chat…").font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("pending-new-chat")
+            // Typing works at once; sending and attaching wait for the real thread, so nothing typed can
+            // reach any other conversation.
+            ChatComposer(
+                text: Binding(get: { pending.draft }, set: { model.setPendingNewChatDraft($0) }),
+                isSending: false, canAttach: false, blocksSubmission: true,
+                isFocused: $focus, attach: {}, send: {}
+            )
+        }
+        .background(WorkspaceSurface())
+    }
+}
+
 private struct WorkspaceLoadingView: View {
     @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     var body: some View {
@@ -602,6 +644,10 @@ private struct CreationWorkspaceView: View {
     /// The server's reason the last confirmation was rejected, shown inside the card.
     @State private var confirmationConflict: CreationConfirmationConflict?
     @State private var showsAttachments = false
+    /// The creator's own re-record steps; the rest of the flow is read from uploads and the thread (`rerecordPhase`).
+    @State private var rerecordLocal: RerecordPhase.Local = .none
+    /// The camera for a re-record. Open independently of `rerecordLocal` so it is not torn down by the flow moving on.
+    @State private var rerecordCamera: RerecordTarget?
     /// KRI-815: the script the attachment sheet shows on its voiceover step; nil = the sheet as before.
     @State private var attachmentScript: VoiceoverScript?
     @State private var attachmentLaunch: AttachmentLaunch?
@@ -636,8 +682,70 @@ private struct CreationWorkspaceView: View {
     private var canAttachMedia: Bool {
         selectedFormat != nil && !isSending && !isActing && !isThinking
             && (selectedFormat != .slides || hasDedicatedSlideWorkspace)
-            && currentProject.status != .rendering && (selectedFormat == .slides || currentProject.status != .ready)
+            && currentProject.status != .rendering
     }
+
+    private var rerecordFacts: RerecordPhase.Facts {
+        let swapping = uploadRecords.contains { $0.projectID == project.id && $0.replacesMediaID != nil && $0.uploadFailed != true }
+            || uploadInFlight.values.contains { $0.projectID == project.id && $0.replacesMediaID != nil }
+        let failure = uploadFailures.first { $0.projectID == project.id && $0.replacesMediaID != nil }
+        let offer: RerecordOffer = workspaceStage == .ready && currentProject.status == .ready && !isSending && !isActing && !isThinking
+            ? .resolve(thread: fullThread) : .none
+        return RerecordPhase.Facts(
+            offer: offer, replaceInFlight: swapping,
+            failure: failure.map { RerecordFailure(code: nil, message: $0.message, retryable: $0.cause == .uploadFailed) },
+            debt: RerecordPlanDebt.owed(state: threadState, activeJobID: fullThread?.activeJobID ?? currentProject.activeJobID?.uuidString, events: events)
+        )
+    }
+
+    private var rerecordPhase: RerecordPhase { .resolve(local: rerecordLocal, facts: rerecordFacts) }
+
+    private var rerecordActions: RerecordActions {
+        RerecordActions(
+            start: {
+                switch rerecordFacts.offer {
+                case .none: break
+                case let .one(target): rerecordLocal = .confirming([target])
+                case let .choose(targets): rerecordLocal = .confirming(targets)
+                }
+            },
+            retry: { if let id = rerecordFacts.failureRecordID(in: uploadFailures, project: project.id) { Task { await model.uploads.retryUpload(recordID: id) } } },
+            dismissFailure: {
+                guard let id = rerecordFacts.failureRecordID(in: uploadFailures, project: project.id) else { return }
+                Task { await model.uploads.cancel(recordID: id); model.uploads.dismissFailure(id: id) }
+            },
+            makeAgain: { if let debt = rerecordFacts.debt { Task { await sendRerecordPlan(debt) } } }
+        )
+    }
+
+    /// The fresh-plan turn the swap owes. A failed send leaves the swap owed, so the button is still there to retry.
+    private func sendRerecordPlan(_ debt: SourceReplacement) async {
+        rerecordLocal = .planning(debt)
+        for _ in 0..<30 where isSending || isActing || isThinking || pendingUploadCount > 0 { try? await Task.sleep(for: .milliseconds(100)) }
+        // `send` returns silently while a turn runs or an earlier receipt is pending; staying `.planning` then would
+        // hide the Make it again button with nothing left to send the turn.
+        guard !isSending, !isActing, !isThinking, sendReceipt == nil else { rerecordLocal = .none; return }
+        await send(message: RerecordPlanDebt.message, keepsDraft: true)
+        if rerecordFacts.debt == debt, !isThinking, sendReceipt == nil { rerecordLocal = .none }
+    }
+
+    private func rerecordCameraClosed() {
+        // Nothing was handed over: the creator backed out, so this session has no swap to follow.
+        if case .swapping = rerecordLocal, !rerecordFacts.replaceInFlight, rerecordFacts.debt == nil { rerecordLocal = .none }
+    }
+
+    private func rerecordDebtChanged(_ debt: SourceReplacement?) {
+        guard let debt else { return }
+        if case .swapping = rerecordLocal { Task { await sendRerecordPlan(debt) } }
+    }
+
+    private var rerecordConfirmation: Binding<Bool> {
+        Binding(
+            get: { if case .confirming = rerecordLocal { true } else { false } },
+            set: { if !$0, case .confirming = rerecordLocal { rerecordLocal = .none } }
+        )
+    }
+
 
     private var readyMediaCount: Int {
         guard workspaceStage == .footage else { return 0 }
@@ -824,69 +932,110 @@ private struct CreationWorkspaceView: View {
     private func reviewActions() -> ReviewPlanActions {
         let api = model.api
         let threadID = project.id
+        let account = ReviewAccountScope(uiOwner: auth.localStorageIdentity, transportOwner: api.mediaLibraryOwner)
+        let environment = (api as? KriaAPI)?.baseURL
+        let checkScope: @MainActor () throws -> Void = {
+            guard let account, reviewScopeIsCurrent(threadID: threadID, account: account, environment: environment) else { throw CancellationError() }
+        }
         return ReviewPlanActions(
-            loadSnapshot: { try await api.planSnapshot(threadID: threadID) },
-            update: { scope, edits, message in try await submitReviewTurn(scope: scope, edits: edits, message: message) },
-            undoSection: { section, blockRevision, draftRevision in
-                try await undoReviewSection(section, blockRevision: blockRevision, draftRevision: draftRevision)
+            loadSnapshot: {
+                guard let account, reviewScopeIsCurrent(threadID: threadID, account: account, environment: environment) else { throw CancellationError() }
+                let snapshot = try await api.planSnapshot(threadID: threadID, expectedOwner: account.transportOwner)
+                guard reviewScopeIsCurrent(threadID: threadID, account: account, environment: environment) else { throw CancellationError() }
+                return snapshot
             },
-            undoAll: { draftRevision in try await undoAllReview(draftRevision: draftRevision) }
+            update: { scope, edits, message in
+                guard let account, reviewScopeIsCurrent(threadID: threadID, account: account, environment: environment) else { throw CancellationError() }
+                try await submitReviewTurn(scope: scope, edits: edits, message: message, expectedOwner: account.transportOwner, checkScope: checkScope)
+            },
+            undoSection: { section, blockRevision, draftRevision in
+                guard let account, reviewScopeIsCurrent(threadID: threadID, account: account, environment: environment) else { throw CancellationError() }
+                return try await undoReviewSection(section, blockRevision: blockRevision, draftRevision: draftRevision, expectedOwner: account.transportOwner, checkScope: checkScope)
+            },
+            undoAll: { draftRevision in
+                guard let account, reviewScopeIsCurrent(threadID: threadID, account: account, environment: environment) else { throw CancellationError() }
+                try await undoAllReview(draftRevision: draftRevision, expectedOwner: account.transportOwner, checkScope: checkScope)
+            }
         )
+    }
+
+    private func reviewScopeIsCurrent(threadID: UUID, account: ReviewAccountScope?, environment: URL?) -> Bool {
+        model.selectedProject?.id == threadID && project.id == threadID && account?.matches(uiOwner: auth.localStorageIdentity, transportOwner: model.api.mediaLibraryOwner) == true && (model.api as? KriaAPI)?.baseURL == environment
+    }
+
+    private var reviewScopeToken: String {
+        "\(project.id):\(auth.localStorageIdentity ?? "signed-out"):\(model.api.mediaLibraryOwner ?? "no-token"):\((model.api as? KriaAPI)?.baseURL.absoluteString ?? "fixture")"
     }
 
     /// "Update video": a turn scoped to the flagged sections (planned as editor operations only), then the
     /// approval it produces is approved at once. Tapping Update video is the consent.
-    private func submitReviewTurn(scope: [PlanSectionID], edits: [ManualPlanEdit], message: String) async throws {
+    private func submitReviewTurn(scope: [PlanSectionID], edits: [ManualPlanEdit], message: String, expectedOwner: String, checkScope: @escaping @MainActor () throws -> Void) async throws {
+        let threadID = project.id
+        try checkScope()
         _ = try? await refreshDelta()
+        try checkScope()
         let startSequence = afterSequence
         let accepted = try await model.api.submitScopedTurn(
-            threadID: project.id, message: message, expectedRevision: threadRevision,
-            clientEventID: UUID().uuidString, scope: scope, manualEdits: edits
+            threadID: threadID, message: message, expectedRevision: threadRevision,
+            clientEventID: UUID().uuidString, scope: scope, manualEdits: edits, expectedOwner: expectedOwner
         )
+        try checkScope()
+        guard project.id == threadID, let identity = ReviewApprovalIdentity(threadID: threadID, turnID: accepted.turnID) else { throw ReviewPlanError.timedOut }
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
-        try await approveReviewDraft(turnID: accepted.turnID, afterSequence: startSequence)
+        try await approveReviewDraft(identity: identity, afterSequence: startSequence, expectedOwner: expectedOwner, checkScope: checkScope)
     }
 
-    private func undoReviewSection(_ section: PlanSectionID, blockRevision: Int, draftRevision: Int) async throws -> Bool {
+    private func undoReviewSection(_ section: PlanSectionID, blockRevision: Int, draftRevision: Int, expectedOwner: String, checkScope: @escaping @MainActor () throws -> Void) async throws -> Bool {
+        let threadID = project.id
+        try checkScope()
         _ = try? await refreshDelta()
+        try checkScope()
         let startSequence = afterSequence
         let result = try await model.api.undoPlanSection(
-            threadID: project.id, sectionID: section, expectedThreadRevision: threadRevision,
-            expectedBlockRevision: blockRevision, expectedDraftRevision: draftRevision
+            threadID: threadID, sectionID: section, expectedThreadRevision: threadRevision,
+            expectedBlockRevision: blockRevision, expectedDraftRevision: draftRevision, expectedOwner: expectedOwner
         )
+        try checkScope()
+        guard project.id == threadID else { throw ReviewPlanError.timedOut }
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: result.threadRevision)
         // A null successor turn means nothing was queued to render: there is no approval to wait for.
         guard let turnID = result.turnID else { return false }
-        try await approveReviewDraft(turnID: turnID, afterSequence: startSequence)
+        guard let identity = ReviewApprovalIdentity(threadID: threadID, turnID: turnID) else { throw ReviewPlanError.timedOut }
+        try await approveReviewDraft(identity: identity, afterSequence: startSequence, expectedOwner: expectedOwner, checkScope: checkScope)
         return true
     }
 
-    private func undoAllReview(draftRevision: Int) async throws {
+    private func undoAllReview(draftRevision: Int, expectedOwner: String, checkScope: @escaping @MainActor () throws -> Void) async throws {
+        let threadID = project.id
+        try checkScope()
         _ = try? await refreshDelta()
+        try checkScope()
         let startSequence = afterSequence
-        _ = try await model.api.undoDraft(threadID: project.id, expectedRevision: draftRevision, render: true)
-        try await approveReviewDraft(turnID: "", afterSequence: startSequence)
+        let restored = try await model.api.undoDraft(threadID: threadID, expectedRevision: draftRevision, render: true, expectedOwner: expectedOwner)
+        try checkScope()
+        guard project.id == threadID,
+              let identity = ReviewApprovalIdentity(threadID: threadID, draftID: restored.draftID, draftRevision: restored.draftRevision) else { throw ReviewPlanError.timedOut }
+        try await approveReviewDraft(identity: identity, afterSequence: startSequence, expectedOwner: expectedOwner, checkScope: checkScope)
     }
 
-    /// Waits for the approval the review turn produces (matched by turn id, else the newest one after
-    /// `startSequence`) and approves it. A reply that is not an approval (Kria declined or found nothing to
+    /// Waits for the exact review turn or restored draft's approval after `startSequence`.
+    /// A reply that is not an approval (Kria declined or found nothing to
     /// change) ends the wait with its text.
-    private func approveReviewDraft(turnID: String, afterSequence startSequence: Int) async throws {
+    private func approveReviewDraft(identity: ReviewApprovalIdentity, afterSequence startSequence: Int, expectedOwner: String, checkScope: @escaping @MainActor () throws -> Void) async throws {
         var repliesWithoutApproval = 0
         for _ in 0..<150 {
+            try checkScope()
             _ = try? await refreshDelta()
+            try checkScope()
+            guard project.id == identity.threadID else { throw ReviewPlanError.timedOut }
             let fresh = events.filter { $0.sequence > startSequence }
-            let request = fresh.last {
-                $0.eventType == "approval_requested"
-                    && (turnID.isEmpty || $0.payload?["turn_id"]?.stringValue == nil || $0.payload?["turn_id"]?.stringValue == turnID)
-            }
-            if let request, let approvalID = request.payload?["approval_id"]?.stringValue.flatMap(UUID.init(uuidString:)) {
-                try await approveReviewApproval(approvalID)
+            if let selected = fresh.compactMap({ identity.select($0, threadID: project.id) }).last {
+                try await approveReviewApproval(selected, expectedOwner: expectedOwner, checkScope: checkScope)
                 return
             }
             let reply = fresh.last {
                 $0.role == "assistant" && $0.eventType.hasPrefix("assistant")
-                    && (turnID.isEmpty || $0.payload?["turn_id"]?.stringValue == turnID)
+                    && identity.matchesReply($0, threadID: project.id)
             }
             if let reply {
                 repliesWithoutApproval += 1
@@ -897,31 +1046,41 @@ private struct CreationWorkspaceView: View {
         throw ReviewPlanError.timedOut
     }
 
-    private func approveReviewApproval(_ approvalID: UUID) async throws {
-        let snapshot = try await model.api.approval(threadID: project.id, approvalID: approvalID)
-        guard snapshot.status == "pending", let draftRevision = snapshot.draftRevision else { throw ReviewPlanError.timedOut }
+    private func approveReviewApproval(_ selected: ReviewApprovalIdentity.Selection, expectedOwner: String, checkScope: @escaping @MainActor () throws -> Void) async throws {
+        try checkScope()
+        let approvalID = selected.approvalID
+        let snapshot = try await model.api.approval(threadID: selected.threadID, approvalID: approvalID, expectedOwner: expectedOwner)
+        try checkScope()
+        guard selected.matches(snapshot, threadID: project.id), snapshot.status == "pending", let draftRevision = snapshot.draftRevision else { throw ReviewPlanError.timedOut }
         func decide() async throws {
-            try await model.api.decideApproval(
-                threadID: project.id, approvalID: approvalID, decision: "approve",
+            try checkScope()
+            guard selected.matches(snapshot, threadID: project.id) else { throw ReviewPlanError.timedOut }
+            try await model.api.decideReviewApproval(
+                threadID: project.id, approvalID: approvalID,
                 expectedThreadRevision: threadRevision, expectedDraftRevision: draftRevision,
-                fingerprint: snapshot.approvalFingerprint, speechCleanupAware: true,
-                speechCleanupAnalysisID: nil, speechCleanupChoice: nil
+                fingerprint: snapshot.approvalFingerprint, expectedOwner: expectedOwner
             )
         }
         do {
             try await decide()
         } catch let error as APIError where error.isConflict {
             // The revision moved (every plan_block event bumps it): take the newest and try once more.
+            try checkScope()
             _ = try? await refreshDelta()
+            try checkScope()
             try await decide()
         }
+        try checkScope()
         approval = nil
         thinkingAnchor = afterSequence
         thinkingTurnID = snapshot.turnID
         thinkingSettlesOnJobStatus = true
         isThinking = true
+        try checkScope()
         _ = try? await refreshDelta()
+        try checkScope()
     }
+
 
     /// Cancels the render behind the feed. Always sends the newest thread revision: every `plan_block`
     /// event bumps it, so the revision the feed was drawn with is usually stale.
@@ -1617,6 +1776,27 @@ private struct CreationWorkspaceView: View {
         suggestionLedger.requestRefresh()
     }
 
+    private func attachmentSheet(rerecordTarget: RerecordTarget?) -> some View {
+        AttachmentSheet(
+            projectID: project.id,
+            maximumClipCount: selectedMaximumClipCount,
+            attachedClipCount: attachedClipCount,
+            format: selectedFormat,
+            thread: fullThread,
+            capabilities: capabilities,
+            capabilitiesLoaded: capabilitiesAreAuthoritative,
+            voiceoverScript: rerecordTarget == nil ? attachmentScript : nil,
+            launch: rerecordTarget == nil ? attachmentLaunch : nil,
+            rerecordTarget: rerecordTarget,
+            refresh: {
+                if !capabilitiesAreAuthoritative { await refreshCapabilities() }
+                await refreshNow()
+            }
+        )
+            .environmentObject(model)
+            .environment(\.dynamicTypeSize, dynamicTypeSize)
+    }
+
     private func openAttachments(launch: AttachmentLaunch? = nil) {
         guard canAttachMedia else { return }
         attachmentLaunch = launch
@@ -1914,32 +2094,36 @@ private struct CreationWorkspaceView: View {
             apply(thread)
         }
         .sheet(isPresented: $showsAttachments) {
-            AttachmentSheet(
-                projectID: project.id,
-                maximumClipCount: selectedMaximumClipCount,
-                attachedClipCount: attachedClipCount,
-                format: selectedFormat,
-                thread: fullThread,
-                capabilities: capabilities,
-                capabilitiesLoaded: capabilitiesAreAuthoritative,
-                voiceoverScript: attachmentScript,
-                launch: attachmentLaunch,
-                refresh: {
-                    if !capabilitiesAreAuthoritative { await refreshCapabilities() }
-                    await refreshNow()
-                }
-            )
-                .environmentObject(model)
-                .environment(\.dynamicTypeSize, dynamicTypeSize)
+            attachmentSheet(rerecordTarget: nil)
                 .presentationDetents([.large])
         }
+        .fullScreenCover(item: $rerecordCamera, onDismiss: rerecordCameraClosed) { target in
+            attachmentSheet(rerecordTarget: target)
+        }
+        .confirmationDialog("Re-record your take?", isPresented: rerecordConfirmation, titleVisibility: .visible) {
+            if case let .confirming(targets) = rerecordLocal {
+                ForEach(targets) { target in
+                    Button(targets.count == 1 ? "Record new take" : "Re-record \(target.displayName)") { rerecordLocal = .swapping; rerecordCamera = target }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Kria keeps your script, background and other clips, then makes the video again from your new take. Text and caption changes you made to this video won’t carry over. Your current video stays until the new one is ready.")
+        }
+        .onChange(of: rerecordFacts.debt) { _, debt in rerecordDebtChanged(debt) }
         .sheet(item: $reviewPresentation) { presentation in
             ReviewPlanView(
                 seed: presentation.seed, initialFlag: presentation.initialFlag,
                 actions: reviewActions(),
+                refreshToken: "\(afterSequence):\(threadRevision):\(currentProject.activeJobID?.uuidString ?? ""):\(currentProject.status):\(failure == nil)",
+                expectedThreadID: project.id.uuidString,
+                isCurrentScope: { [threadID = project.id, account = ReviewAccountScope(uiOwner: auth.localStorageIdentity, transportOwner: model.api.mediaLibraryOwner), environment = (model.api as? KriaAPI)?.baseURL] in
+                    reviewScopeIsCurrent(threadID: threadID, account: account, environment: environment)
+                },
                 dictation: dictationForComposer, dictationTerms: dictationContextTerms,
                 close: { reviewPresentation = nil }
             )
+            .id(reviewScopeToken)
             .presentationDetents([.large])
             .presentationDragIndicator(.hidden)
             .presentationBackground(KriaColor.paper)
@@ -2194,7 +2378,9 @@ private struct CreationWorkspaceView: View {
                 // ones). Capability off: nil, the fixed chips.
                 serverSuggestions: SuggestionChipsPolicy.isEnabled(capabilities) ? suggestionChips(for: .ready) : nil,
                 sendSuggestion: { sendSuggestion($0) },
-                suggestionCards: readyCardsPresentation
+                suggestionCards: readyCardsPresentation,
+                rerecord: rerecordPhase,
+                rerecordActions: rerecordActions
             )
             .id("ready")
             if capabilities?.livePlanReviewAvailable == true, currentProject.runtimeVersion == 2,
@@ -2274,12 +2460,9 @@ private struct CreationWorkspaceView: View {
                         title: fullThread?.lastAssistantErrorTitle ?? "Your video wasn’t made",
                         bodyText: fullThread?.lastAssistantErrorContent
                             ?? fullThread?.job?.failureMessage
-                            ?? "Your direction and footage are safe. Refresh the project or tell me what you want to change.",
-                        retryLabel: fullThread?.failedRenderExecutionID == nil ? "Refresh project" : "Retry approved edit",
-                        retry: { Task {
-                            if fullThread?.failedRenderExecutionID != nil { await retryApprovedRender() }
-                            else { await refreshNow() }
-                        } },
+                            ?? "Your direction and footage are saved. Send a message to try again or change direction.",
+                        retryLabel: "Retry approved edit",
+                        retry: fullThread?.failedRenderExecutionID != nil ? { Task { await retryApprovedRender() } } : nil,
                         nonRetryableReasonCode: fullThread?.lastAssistantErrorCode,
                         declineReason: fullThread?.lastAssistantDeclineReason,
                         replyInChat: { composerFocused = true }
@@ -2972,7 +3155,9 @@ private struct CreationWorkspaceView: View {
         defer { isActing = false }
         if fullThread?.failedRenderExecutionID == nil { await refreshNow() }
         guard let executionID = fullThread?.failedRenderExecutionID else {
-            failure = ChatFailure("The render status is still updating. Your edit is saved. Refresh the project before retrying.")
+            // The authoritative projection may already have moved on. Its
+            // existing live poll follows the result; there is no exact failed
+            // execution to retry or a manual reload the creator must perform.
             return
         }
         do {

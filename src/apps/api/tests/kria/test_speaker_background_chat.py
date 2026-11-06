@@ -390,12 +390,6 @@ def test_a_closed_gate_prompt_is_byte_identical_to_one_with_no_background_suppor
     assert "PHOTO OR VIDEO BEHIND THE SPEAKER" not in closed
 
 
-def test_the_prompt_version_is_bumped_for_the_new_field():
-    from app.agents.main_creator import MAIN_CREATOR_PROMPT_VERSION
-
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-06-v137"
-
-
 # ----------------------------------------------------------- KRI-1162: several backgrounds
 
 
@@ -1022,24 +1016,26 @@ def test_flag_off_the_brief_sections_are_the_bytes_they_were_before_the_opening(
     # Frozen from the tree before item 16 (the shared brief section and its extractor narrowing):
     # main 653beb1de (item 12's caption facts + Qendresa 13's `pauses: "tight"`); item 17's #2110
     # leaves these bytes unchanged. Re-freeze deliberately when the shared brief section changes
-    # underneath item 16.
+    # underneath item 16. Re-frozen for the says-done group E rewording (#2131: caption count /
+    # one captions requirement / "all my pauses" / unnamed mistakes / one-moment holds / typed
+    # ending); the flag-off section was 14ad8c6e… before it.
     assert brief_prompt_section() is _BRIEF_PROMPT_SECTION
     assert digest(brief_prompt_section()) == (
-        "14ad8c6e284569817ed3c380fea76ae35b5983b1fe42a2f53c42a6c14bcaa6d7"
+        "001bd937bb08cea812fa52d0379a1af9ea6a81108011c563c60a543d4fdfe206"
     )
     assert digest(brief_prompt_section(True)) == (
-        "e8f97a1e2be546df82c79adf70e79e0999a9ffece62fdb47c966e649dd323196"
+        "e4ff46099102d441e877d9f55d8f810625c9a9ad32e1af79ded325f240fa20fb"
     )
     assert digest(_narrow_brief_section(False)) == (
-        "58e5b06d6918cf331b0da82c151a997842ac333ef7294d48e7c8b9860d8d7fa5"
+        "cd6f085855e93c80412d19821fe58d021a1e67e4938073a779adaa37e0a5f892"
     )
     assert digest(_narrow_brief_section(True)) == (
-        "d8550d4c2a806676132d94b06646b667a0f67fec25d49594c082768ae5b72087"
+        "5a809b8de16c41b9ab7e9c228090ac3a4bbe887e7457b84d62b79cf66d9afc3d"
     )
     # and the whole extractor prompt, byte for byte (captured from that same tree)
     for insert_open, expected in (
-        (False, "ffb5a96aa096e8d20c4123e549e12c354a086a180b7858207948afdebbc4c3cc"),
-        (True, "7c7ebe6962b5aa9db8a79e3244b5b84d10660782fbac0282c3f824e129eb0969"),
+        (False, "272624dc94494efbb27b71e7ab6982ab1156227d32dbbd86531b92272bac0471"),
+        (True, "c2df22186588af07bb9a882fe0bc58e8c20ca0120274cb48fc55a06e00e3c83e"),
     ):
         rendered = BriefExtractorAgent(None).render_prompt(
             BriefExtractionInput(

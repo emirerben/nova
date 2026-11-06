@@ -41,6 +41,7 @@ import pytest
 
 from app.kria.brief import BriefUpdate
 from app.services import suggestion_serve
+from app.services.suggestions import restate_judgment
 from tests.e2e_suggestions import threads
 from tests.e2e_suggestions.driver import Phone
 from tests.e2e_suggestions.report import Recorder
@@ -248,8 +249,8 @@ async def test_c6_a_check_that_cannot_be_made_leaves_out_only_the_cards_it_judge
     async def broken(*_args, **_kwargs):  # noqa: ANN002, ANN003
         raise RuntimeError("the database went away")
 
-    restate_held = suggestion_serve._restate_held
-    monkeypatch.setattr(suggestion_serve, "_restate_held", broken)
+    restate_problem = restate_judgment.restate_problem
+    monkeypatch.setattr(restate_judgment, "restate_problem", broken)
     served = [c.kind for c in (await phone.get()).suggestions]
     rec.negative(
         "the readiness read raises: the restating card is out, the others stay",
@@ -258,7 +259,7 @@ async def test_c6_a_check_that_cannot_be_made_leaves_out_only_the_cards_it_judge
         "filler_words" in before and served == [x for x in before if x != "filler_words"],
         f"before {before}; served {served}",
     )
-    monkeypatch.setattr(suggestion_serve, "_restate_held", restate_held)
+    monkeypatch.setattr(restate_judgment, "restate_problem", restate_problem)
 
     async def broken_gate(*_args, **_kwargs):  # noqa: ANN002, ANN003
         raise RuntimeError("the events could not be read")

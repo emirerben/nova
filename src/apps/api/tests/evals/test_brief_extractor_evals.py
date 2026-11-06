@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from .runners.caption_cleanup_brief import caption_cleanup_brief_failures
 from .runners.eval_runner import discover_fixtures, load_fixture, run_eval
 from .runners.restart_brief import restart_brief_failures
 
@@ -35,6 +36,15 @@ def test_brief_extractor_eval(fixture_path: Path, eval_mode: str, live_model_cli
             assert result.output.get("starts_fresh") is True or (
                 result.output.get("request_scope") == "rebuild"
             ), result.output
+
+    caption_cleanup = fixture.meta.get("caption_cleanup_brief")
+    if caption_cleanup:
+        # Qendresa says-done cases 6-8 on a follow-up turn (the extractor shares the section).
+        assert result.output is not None
+        failures = caption_cleanup_brief_failures(
+            result.output.get("brief_updates") or [], caption_cleanup
+        )
+        assert not failures, failures
 
 
 def test_the_restart_check_rejects_the_prod_green3_row():

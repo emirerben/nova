@@ -1645,7 +1645,7 @@
     {
       "id": "kri-756-suggestion-chips",
       "needs_native": true,
-      "api_tests": "tests/e2e_suggestions/test_creators_word.py tests/e2e_suggestions/test_first_prompt.py tests/e2e_suggestions/test_kill_and_stale.py tests/e2e_suggestions/test_negative_cases.py tests/e2e_suggestions/test_probe_gaps.py tests/e2e_suggestions/test_r4_serve_copy_gate.py tests/e2e_suggestions/test_r4_serve_kill_switch.py tests/e2e_suggestions/test_r4_serve_lookalike.py tests/e2e_suggestions/test_r4_serve_refresh_flags.py tests/e2e_suggestions/test_r4_serve_restate_ready.py tests/e2e_suggestions/test_r4_serve_turkish_fold.py tests/e2e_suggestions/test_ring_consumed.py tests/e2e_suggestions/test_ring_flag_off.py tests/e2e_suggestions/test_ring_restate_offer.py tests/e2e_suggestions/test_ring_store.py tests/e2e_suggestions/test_tap_every_card.py tests/e2e_suggestions/test_undo_retap.py tests/evals/test_edit_improver_skill.py tests/evals/test_suggestion_agent_evals.py tests/evals/test_suggestion_chips_evals.py tests/evals/test_suggestion_freshness.py tests/evals/test_suggestion_freshness_postgres.py tests/evals/test_suggestion_gates_agent.py tests/evals/test_suggestion_gates_brief.py tests/evals/test_suggestion_gates_ci_guard.py tests/evals/test_suggestion_gates_hook_copy.py tests/evals/test_suggestion_kind_dupes.py tests/evals/test_suggestion_kind_filler.py tests/evals/test_suggestion_kind_hook.py tests/evals/test_suggestion_kind_mute.py tests/kria/test_request_digest_pin.py tests/kria/test_single_text_fold.py tests/scripts/test_suggestion_chip_funnel.py tests/services/test_suggestion_chips_guards.py tests/services/test_suggestion_registry_guards.py tests/services/test_suggestion_serve_wiring.py tests/services/test_suggestion_serve_wiring_postgres.py tests/signals/test_audio_quality.py tests/signals/test_near_dup_hash.py tests/signals/test_near_dup_store_postgres.py tests/tasks/test_kria_pinned_kinds.py tests/tasks/test_kria_pinned_refusals.py tests/tasks/test_kria_pinned_suggestion.py tests/tasks/test_kria_pinned_turkish.py tests/tasks/test_kria_pinned_undo.py tests/test_raw_chat_text_readers.py",
+      "api_tests": "tests/e2e_suggestions/test_creators_word.py tests/e2e_suggestions/test_first_prompt.py tests/e2e_suggestions/test_kill_and_stale.py tests/e2e_suggestions/test_negative_cases.py tests/e2e_suggestions/test_probe_gaps.py tests/e2e_suggestions/test_r4_serve_copy_gate.py tests/e2e_suggestions/test_r4_serve_kill_switch.py tests/e2e_suggestions/test_r4_serve_lookalike.py tests/e2e_suggestions/test_r4_serve_refresh_flags.py tests/e2e_suggestions/test_r4_serve_restate_ready.py tests/e2e_suggestions/test_r4_serve_turkish_fold.py tests/e2e_suggestions/test_r5_copy_states.py tests/e2e_suggestions/test_r5_kill.py tests/e2e_suggestions/test_r5_lifecycle.py tests/e2e_suggestions/test_r5_matrix.py tests/e2e_suggestions/test_r5_save.py tests/e2e_suggestions/test_r5_serve_brief_asks.py tests/e2e_suggestions/test_r5_serve_copy_gate.py tests/e2e_suggestions/test_r5_serve_evidence.py tests/e2e_suggestions/test_r5_serve_identity.py tests/e2e_suggestions/test_r5_serve_receipts.py tests/e2e_suggestions/test_r5_serve_strip.py tests/e2e_suggestions/test_r5_turkish_asks.py tests/e2e_suggestions/test_r6_brief_asks.py tests/e2e_suggestions/test_r6_duplicates_length.py tests/e2e_suggestions/test_r6_orders.py tests/e2e_suggestions/test_r6_restate_drift.py tests/e2e_suggestions/test_r6_scenarios.py tests/e2e_suggestions/test_r7_flag_off_brief_asks.py tests/e2e_suggestions/test_r7_serve_proof.py tests/e2e_suggestions/test_r8_partial_ring.py tests/e2e_suggestions/test_r8_request_budget.py tests/e2e_suggestions/test_ring_consumed.py tests/e2e_suggestions/test_ring_flag_off.py tests/e2e_suggestions/test_ring_restate_offer.py tests/e2e_suggestions/test_ring_store.py tests/e2e_suggestions/test_tap_every_card.py tests/e2e_suggestions/test_undo_retap.py tests/evals/test_edit_improver_skill.py tests/evals/test_suggestion_agent_evals.py tests/evals/test_suggestion_chips_evals.py tests/evals/test_suggestion_freshness.py tests/evals/test_suggestion_freshness_postgres.py tests/evals/test_suggestion_gates_agent.py tests/evals/test_suggestion_gates_brief.py tests/evals/test_suggestion_gates_ci_guard.py tests/evals/test_suggestion_gates_hook_copy.py tests/evals/test_suggestion_kind_dupes.py tests/evals/test_suggestion_kind_filler.py tests/evals/test_suggestion_kind_hook.py tests/evals/test_suggestion_kind_mute.py tests/kria/test_request_digest_pin.py tests/kria/test_single_text_fold.py tests/scripts/test_suggestion_chip_funnel.py tests/services/test_suggestion_chips_guards.py tests/services/test_suggestion_registry_guards.py tests/services/test_suggestion_serve_wiring.py tests/services/test_suggestion_serve_wiring_postgres.py tests/signals/test_audio_quality.py tests/signals/test_near_dup_hash.py tests/signals/test_near_dup_store_postgres.py tests/tasks/test_kria_pinned_kinds.py tests/tasks/test_kria_pinned_r4_marks.py tests/tasks/test_kria_pinned_r4_save.py tests/tasks/test_kria_pinned_r4_withdraw.py tests/tasks/test_kria_pinned_r5_ci_wiring.py tests/tasks/test_kria_pinned_r5_lifecycle.py tests/tasks/test_kria_pinned_r5_readiness.py tests/tasks/test_kria_pinned_r5_save.py tests/tasks/test_kria_pinned_refusals.py tests/tasks/test_kria_pinned_suggestion.py tests/tasks/test_kria_pinned_turkish.py tests/tasks/test_kria_pinned_undo.py tests/test_raw_chat_text_readers.py",
       "xctests": [
         "KriaTests/SuggestionChipsTests/testContractResponseDecodesInRankOrderAndDropsOnlyTheBrokenChip",
         "KriaTests/SuggestionChipsTests/testADeliveredSetIsNeverReRankedOrRelabelledUnderTheSameSetID",
@@ -1677,6 +1677,7 @@
         "src/apps/api/app/agents/chip_suggester.py",
         "src/apps/api/app/agents/suggestion_agent.py",
         "src/apps/api/app/cli/kria_contracts.py",
+        "src/apps/api/app/kria/request_budget.py",
         "src/apps/api/app/services/creative_copy_gate.py",
         "src/apps/api/app/services/suggestion_chip_copy.py",
         "src/apps/api/app/services/suggestion_chips.py",
@@ -2136,6 +2137,7 @@
         "src/apps/api/tests/fixtures/agent_evals/brief_extractor/kri1189_followup_cut_restart_en.json",
         "src/apps/api/tests/fixtures/agent_evals/brief_extractor/kri1189_followup_start_over_en.json",
         "src/apps/api/tests/fixtures/agent_evals/brief_extractor/kri1189_followup_tekrar_aldigim_tr.json",
+        "src/apps/api/tests/fixtures/agent_evals/brief_extractor/qendresa_followup_two_words_all_pauses_en.json",
         "src/apps/api/tests/evals/test_brief_extractor_evals.py",
         "src/apps/api/tests/evals/runners/restart_brief.py"
       ]
@@ -3040,7 +3042,13 @@
         "KriaTests/DeviceRenderExecutionTests/testCreatorResumeQueuedBehindAutomaticReadKeepsTypedConsent",
         "KriaTests/DeviceRenderExecutionTests/testFailedStopWriteDoesNotLetRelinkRestartAfterStorageRecovers",
         "KriaTests/DeviceRenderExecutionTests/testStopWithOnlyPersistedObservedTargetDoesNotInventAcknowledgement",
-        "KriaTests/DeviceRenderExecutionTests/testLegacyServerPauseRejectsAutomaticRelinkAndAcceptsTypedResume"
+        "KriaTests/DeviceRenderExecutionTests/testLegacyServerPauseRejectsAutomaticRelinkAndAcceptsTypedResume",
+        "KriaTests/DeviceRenderResetOwnershipTests/testOlderResetCannotClearNewOwnerReplacement",
+        "KriaTests/DeviceRenderResetOwnershipTests/testRepeatedSameOwnerResetPreservesReplacement",
+        "KriaTests/DeviceRenderResetOwnershipTests/testNewerResetStillOwnsCleanupWhenOlderReturnsFirst",
+        "KriaTests/DeviceRenderResetOwnershipTests/testStaleOwnerSynchronizationCannotAdmitDuringNewerReset",
+        "KriaTests/DeviceRenderResetOwnershipTests/testLogoutDuringOwnerSynchronizationRejectsAdmissionAndAllowsLaterReturn",
+        "KriaTests/DeviceRenderResetOwnershipTests/testMissingOwnerDoesNotFetchOrCreateCoordinator"
       ],
       "paths": [
         "src/apps/ios/Kria/Core/DeviceRenderIntentPersistence.swift",
@@ -3051,7 +3059,8 @@
         "src/apps/ios/Kria/KriaApp.swift",
         "src/apps/ios/Tests/KriaTests/DeviceRenderExecutionTests.swift",
         "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderIntent.swift",
-        "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/DeviceRenderIntentTests.swift"
+        "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/DeviceRenderIntentTests.swift",
+        "src/apps/ios/Tests/KriaTests/DeviceRenderResetOwnershipTests.swift"
       ]
     },
     {
@@ -3367,6 +3376,66 @@
         "src/apps/api/tests/tasks/test_phone_tight_pauses.py",
         "src/apps/api/tests/routes/test_creation_thread_cleanup_requested.py",
         "scripts/ios/qendresa-13-tight-pauses-e2e.py"
+      ]
+    },
+    {
+      "id": "saved-song-render-recovery",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_saved_user_song_state.py::test_status_and_timeline_expose_saved_intent_despite_old_song_plan tests/routes/test_saved_user_song_state.py::test_marker_requires_current_generation_and_valid_persisted_approval tests/routes/test_saved_user_song_state.py::test_missing_revision_cannot_echo_a_stored_or_client_marker",
+      "xctests": [
+        "KriaTests/NativeEditorSessionTests/testFreshLoadRestoresSavedSongRemovalFromBoundServerIntentWithoutResending",
+        "KriaTests/NativeEditorSessionTests/testSavedSongRemovalSurvivesExactGenerationRenderRecoveryProjectionWithoutResending",
+        "KriaTests/NativeEditorSessionTests/testFreshLoadIgnoresSavedSongMarkerForAnotherTargetGenerationOrRevision",
+        "KriaTests/NativeEditorSessionTests/testCoalescedSaveCannotExportDuringRequestReplacement",
+        "KriaTests/NativeEditorSessionTests/testFailedStatusReadAfterANewSaveDoesNotLinkThePreviousRenderToIt",
+        "KriaTests/NativeEditorSessionTests/testSaveStartsThePhoneRenderWhileTheCommittedVariantReadIsStillOut"
+      ],
+      "paths": [
+        "src/apps/api/app/schemas/saved_user_song.py",
+        "src/apps/api/app/services/saved_user_song.py",
+        "src/apps/api/tests/routes/test_saved_user_song_state.py",
+        "src/apps/api/app/routes/generative_jobs.py",
+        "src/apps/ios/Kria/Core/Services.swift",
+        "src/apps/ios/Kria/Features/NativeEditorSession.swift",
+        "src/apps/ios/Kria/Core/DeviceRenderSessions.swift"
+      ]
+    },
+    {
+      "id": "slide-post-generation-receipt-recovery",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_slide_post_generation_receipts_postgres.py::test_lost_response_retry_returns_original_receipt_after_newer_target tests/routes/test_slide_post_generation_receipts_postgres.py::test_receipt_get_observes_same_version_successor_without_rewinding tests/routes/test_slide_post_generation_receipts_postgres.py::test_receipt_get_survives_deleted_job_without_any_mutation tests/routes/test_slide_post_generation_receipts_postgres.py::test_receipt_get_checks_current_item_access_and_key_scope tests/routes/test_slide_post_generation_receipts_postgres.py::test_new_uuid_cannot_replace_same_version_successor_from_stale_target tests/routes/test_slide_post_delivery_postgres.py::test_commit_before_first_publish_is_recovered_with_same_receipt tests/routes/test_slide_post_delivery_postgres.py::test_two_deliveries_claim_once_and_redelivery_never_recomputes tests/routes/test_slide_post_delivery_postgres.py::test_successor_target_rejects_staged_completion",
+      "xctests": [
+        "KriaTests/SlidePostSessionRecoveryTests/testCommittedLostResponseAcrossSessionRecreationReusesOneServerJob",
+        "KriaTests/SlidePostSessionRecoveryTests/testFreshReceiptReleasesSameVersionSupersededIntentWithoutSubmitting",
+        "KriaTests/SlidePostSessionRecoveryTests/testUnrelatedFailedJobDoesNotReleaseUnconfirmedIntent",
+        "KriaTests/SlidePostSessionRecoveryTests/testOldServerCannotResumePreparedIntentOrReceiveLegacyFallback",
+        "KriaTests/SlidePostSubmissionRecoveryTests/testReceiptStatusCanChangeButPinnedJobCannot"
+      ],
+      "paths": [
+        "src/apps/api/app/schemas/slide_post_generation.py",
+        "src/apps/api/app/services/slide_post_generation_receipts.py",
+        "src/apps/api/app/services/slide_post_generation_delivery.py",
+        "src/apps/api/app/services/slide_post_render_revisions.py",
+        "src/apps/api/tests/services/test_slide_post_generation_receipts.py",
+        "src/apps/api/tests/routes/test_slide_post_generation_receipts_postgres.py",
+        "src/apps/api/tests/routes/test_slide_post_delivery_postgres.py",
+        "src/apps/api/app/migrations/versions/0133_slide_post_generation_receipts.py",
+        "src/apps/api/app/migrations/versions/0134_slide_post_delivery_claim.py",
+        "src/apps/api/app/migrations/versions/0135_slide_post_finalize_budget.py",
+        "src/apps/api/app/migrations/versions/0136_slide_post_render_revisions.py",
+        "src/apps/ios/Kria/Core/SlidePostSubmissionJournal.swift",
+        "src/apps/ios/Kria/Core/SlidePost.swift",
+        "src/apps/ios/Tests/KriaTests/SlidePostSubmissionRecoveryTests.swift"
+      ]
+    },
+    {
+      "id": "kri-1097-planner-boundary",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_planner_boundary_replay.py tests/agents/test_main_creator_agent.py tests/agents/test_main_creator_user_song.py",
+      "paths": [
+        "src/apps/api/app/kria/planner_declines.py",
+        "src/apps/api/tests/kria/test_planner_boundary_replay.py",
+        "src/apps/api/tests/fixtures/kria_replay/planner_boundary/"
       ]
     },
     {

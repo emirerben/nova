@@ -718,8 +718,14 @@ Both API-URL build-setting queries use the same cached DerivedData directory as
 compilation. Previously these queries resolved packages through Xcode's default,
 uncached directory before the actual cached build began.
 
-The main push gate seeds the shared cache. CI now saves the compiled build as
+The main push gate seeds the shared cache. `ios.yml` saves the compiled build as
 soon as unit tests pass, before UI execution, so this seed is available earlier.
+PR runs in `ci.yml` only restore it and never save their own: the repo cache is
+capped at 10 GB and was full, and each PR push saved ~0.9 GB that only later
+pushes to the same PR could use. On 2026-11-04..06 that churn evicted main's
+fresh seed within 30-46 minutes; 70 of 97 PR iPhone runs compiled cold
+(compilation 13.1 vs 5.0 min median, first build-settings query 2.8 vs 0.7 min),
+and only 6 of 27 hits came from a PR's own earlier save.
 Cache hit/miss and the restored key are shown in the job summary. The key still
 isolates Xcode, runner architecture and project/package configuration; a cache
 hit never bypasses compilation or selected tests.

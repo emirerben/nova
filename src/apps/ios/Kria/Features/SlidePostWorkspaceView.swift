@@ -126,7 +126,7 @@ struct SlidePostWorkspaceView: View {
         return nil
     }
 
-    private var pollingKey: String { "\(itemID ?? "")-\(session.state?.renderStatus ?? "")-\(hasPendingAssets)-\(session.isBusy)" }
+    private var pollingKey: String { "\(itemID ?? "")-\(session.state?.renderStatus ?? "")-\(hasPendingAssets)-\(session.isBusy)-\(session.isRendering)-\(session.needsSubmissionObservation)-\(session.needsStateObservation)" }
     /// The selected video plays only while the app is active and nothing covers the preview (a sheet, an export).
     private var videoPlaybackAllowed: Bool {
         scenePhase == .active && !showsConversation && !showsAttachments && !showsCaption && !showsSize
@@ -149,7 +149,7 @@ struct SlidePostWorkspaceView: View {
         // The workspace draws its own back circle; the system bar would add a second back button.
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
-        .onDisappear { exportTask?.cancel() }
+        .onDisappear { exportTask?.cancel(); session.stopObserving() }
         .sheet(isPresented: $showsCaption) { captionSheet }
         .sheet(item: $pictureDraft, onDismiss: { session.endPictureGeneration(); Task { await refresh() } }) { draft in
             if let itemID {
@@ -201,21 +201,25 @@ struct SlidePostWorkspaceView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in clipboardHasContent = Self.pasteboardHasContent }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardUp = true }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardUp = false }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { session.startObserving(); Task { await refresh() } }
+            else { session.stopObserving() }
+        }
         .onChange(of: conversationAcceptedID) { _, _ in showsConversation = false }
         .onChange(of: conversationCloseID) { _, _ in showsConversation = false }
         .onChange(of: videoPlaybackAllowed, initial: true) { _, allowed in videoPlayback.setAllowed(allowed) }
         .onChange(of: mode) { _, next in if next != .browse { session.selectedStickerID = nil } }
         // Media that finishes importing joins the post by itself; it waits out saves and AI edits.
         .onChange(of: autoAppendKey) { _, _ in seedAndAppend() }
-        .onAppear { seedAndAppend() }
+        .onAppear { session.startObserving(); seedAndAppend() }
         .task(id: itemID) { await refreshOwner(); await refresh() }
         // Capabilities only decide optional AI behaviour, never the layout; ask early and keep trying.
         .task(id: capabilities == nil) { await loadCapabilitiesWithRetry() }
         .task(id: pollingKey) {
-            guard (isRendering || hasPendingAssets) && itemID != nil else { return }
-            while !Task.isCancelled && (session.isRendering || hasPendingAssets) {
+            guard session.terminalStateReadError == nil, (isRendering || session.needsSubmissionObservation || session.needsStateObservation || hasPendingAssets) && itemID != nil else { return }
+            while !Task.isCancelled && session.terminalStateReadError == nil && (session.isRendering || session.needsSubmissionObservation || session.needsStateObservation || hasPendingAssets) {
                 do { try await Task.sleep(for: .seconds(3)) } catch { return }
-                await refresh()
+                await refresh(readOnlyObservation: true)
             }
         }
     }
@@ -537,16 +541,42 @@ struct SlidePostWorkspaceView: View {
     }
 
     @ViewBuilder private var statusBanner: some View {
-        if let notice = session.pasteNotice {
+        if session.hasConflict {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("This post also changed elsewhere.").font(.headline)
+                Text(session.conflictExplanation).font(.subheadline)
+                HStack {
+                    Button(session.conflictLocalActionTitle) {
+                        guard let itemID else { return }
+                        Task { await session.resolveConflict(preference: .local, api: model.api, itemID: itemID) }
+                    }
+                    Button(session.conflictRemoteActionTitle) {
+                        guard let itemID else { return }
+                        Task { await session.resolveConflict(preference: .remote, api: model.api, itemID: itemID) }
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
+            .padding().accessibilityIdentifier("slidepost-merge-conflict")
+        } else if let notice = session.pasteNotice {
             Button { session.pasteNotice = nil } label: {
                 NativeEditorBannerRow(title: "Paste", detail: notice, systemImage: "doc.on.clipboard", tint: KriaColor.ink, identifier: "slidepost-paste-notice")
             }
             .buttonStyle(.plain).accessibilityHint("Dismiss")
         } else if let error = session.error {
-            Button { session.error = nil } label: {
-                NativeEditorBannerRow(title: "Something went wrong", detail: error, systemImage: "exclamationmark.triangle", tint: .red, identifier: "slidepost-error")
+            VStack(alignment: .leading, spacing: 8) {
+                Button { session.error = nil } label: {
+                    NativeEditorBannerRow(title: session.canCheckAIResult ? "Checking your result" : "Something went wrong", detail: error, systemImage: "exclamationmark.triangle", tint: .red, identifier: "slidepost-error")
+                }
+                .buttonStyle(.plain).accessibilityHint("Dismiss")
+                if session.canCheckAIResult {
+                    Button(session.originalAIActionTitle) {
+                        guard let itemID else { return }
+                        Task { await session.checkAIResult(api: model.api, itemID: itemID) }
+                    }
+                    .buttonStyle(.bordered).accessibilityIdentifier("slidepost-check-ai-result")
+                }
             }
-            .buttonStyle(.plain).accessibilityHint("Dismiss")
         } else if let issue = session.state?.validationErrors.first {
             NativeEditorBannerRow(title: "Needs attention", detail: issue.message, systemImage: "exclamationmark.triangle", tint: .red, identifier: "slidepost-validation")
         } else if let notice = session.autoAppendNotice {
@@ -763,9 +793,9 @@ struct SlidePostWorkspaceView: View {
         .presentationDetents([.medium])
     }
 
-    private func refresh() async {
+    private func refresh(readOnlyObservation: Bool = false) async {
         guard let itemID else { return }
-        await session.refresh(api: model.api, itemID: itemID)
+        await session.refresh(api: model.api, itemID: itemID, projectID: uploadProjectID, readOnlyObservation: readOnlyObservation)
         seedAndAppend()
     }
     private func refreshOwner() async {

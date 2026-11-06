@@ -119,7 +119,7 @@ import XCTest
     // MARK: Session
 
     private func session(slides: Int = 3, profile: String = "tiktok_photo") -> SlidePostSession {
-        let session = SlidePostSession(defaults: defaults)
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
         session.draft = SlidePostDraft(version: 1, platformProfile: profile,
                                        slides: (1...slides).map { SlidePostSlide(id: "s\($0)", assetID: "a\($0)", kind: "image") })
         return session
@@ -194,7 +194,7 @@ import XCTest
 
     func testAnAssetUsedAsAStickerIsNeverAutoAppendedAsASlide() async throws {
         var draft = SlidePostDraft(version: 1, platformProfile: "tiktok_photo", slides: [.init(id: "s1", assetID: "a1", kind: "image")])
-        let session = SlidePostSession(defaults: defaults)
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await refresh(session, assets: [asset("a1")], draft: draft)
         session.appendNewlyReadyAssets()      // the session has now looked at the pool
         // The pool gains the picture; the sticker that uses it is in the unsaved draft.
@@ -207,7 +207,7 @@ import XCTest
     }
 
     func testASlideAssetIsStillAppendedAndSeededNormally() async throws {
-        let session = SlidePostSession(defaults: defaults)
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await refresh(session, assets: [asset("a1"), asset("a2")], draft: nil)
         XCTAssertTrue(session.seedDraftIfNeeded())
         XCTAssertEqual(session.draft?.slides.map(\.assetID), ["a1", "a2"])
@@ -219,7 +219,7 @@ import XCTest
 
     private func slidePost(assets: [SlidePostAsset]) async -> SlidePostSession {
         let draft = SlidePostDraft(version: 1, platformProfile: "tiktok_photo", slides: [.init(id: "s1", assetID: "a1", kind: "image")])
-        let session = SlidePostSession(defaults: defaults)
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await refresh(session, assets: assets, draft: draft)
         session.appendNewlyReadyAssets()      // the session has now looked at the pool
         return session
@@ -295,7 +295,7 @@ import XCTest
         }
         let pool = Pool()
         pool.assets = [asset("a1"), asset("a2")]
-        let session = SlidePostSession(defaults: defaults)
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await refresh(session, assets: pool.assets, draft: base)
         session.appendNewlyReadyAssets()
         let uploader = FakeUploader { name in pool.assets.append(self.asset("pic", name: name, status: "processing")) }
@@ -317,7 +317,7 @@ import XCTest
                                                   projectID: UUID(), stickerUploadNames: session.stickerUploadNames).contains { $0.id == "asset-pic" })
 
         // Relaunch: a new session restores the stored names, so even a draft that lost the sticker never offers the picture.
-        let reopened = SlidePostSession(defaults: defaults)
+        let reopened = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await refresh(reopened, assets: pool.assets, draft: base)
         XCTAssertEqual(reopened.stickerUploadNames, ["pasted-ab12cd34.png"])
         XCTAssertEqual(reopened.appendNewlyReadyAssets(), 0)

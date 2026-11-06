@@ -168,7 +168,9 @@ def montage_blockers(
     worker would refuse on, in brief order, in the current reply language.
     """
     from app.kria.brief_checks import (  # noqa: PLC0415
+        FINAL_SOURCE_CUTS,
         build_receipts,
+        montage_final_source_cuts,
         needs_creator_choice,
         plan_facts_from_unified_montage,
         undrawable_phone_text,
@@ -219,6 +221,9 @@ def montage_blockers(
         return None
     plan, aliases = planned
     record = plan.record()
+    # Review of #2129: the plan's FINAL cuts (after freezes, speeds and slides), so keep-whole
+    # is judged on what plays.
+    record[FINAL_SOURCE_CUTS] = montage_final_source_cuts(plan)
     record.update(montage_record_fields(aliases))
     receipts = build_receipts(
         brief.live(), plan_facts_from_unified_montage(record), include_unchecked=True

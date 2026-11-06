@@ -7,6 +7,7 @@ from typing import ClassVar
 
 from pydantic import ValidationError
 
+from app.agents._prompt_fingerprint import prompt_fingerprint
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.brief_extractor import (
     BriefExtractionInput,
@@ -30,77 +31,18 @@ from app.kria.brief import (
 )
 from app.pipeline.prompt_loader import load_prompt
 
-# v9 (KRI-667/KRI-669): shared brief preserves heading and language-neutral ask facts.
-# v10 (KRI-700): shared brief records `footage_light` for brighten / darken asks.
-# v11 (KRI-674 follow-up): timing examples satisfy the non-empty content contract.
-# v12 (KRI-721 live check): shared brief carries unprocessed source-audio intent.
-# v13 (KRI-793): shared brief records the words to spell in the captions (`spellings`).
-# v14 (KRI-791 + KRI-793): retain spellings and record text `triggers` + `speaker`.
-# v14 (KRI-792): named spoken cuts carry cut_lines as well as caption spellings.
-# v15 (KRI-789): shared brief records quoted start / end lines as a `timing` trim.
-# v16 shares the complete caption/spoken-trigger/quoted-trim/named-cut instruction union.
-# v17 (KRI-814): shared brief section teaches the typed `delegates_all_choices` declaration.
-# v18 (KRI-814): earlier creator lines never read into the brief are read with the current one.
-# v20 combines delegation v18 with subtitle-semantics v19 in the shared brief.
-# v21 (KRI-816): shared brief section teaches the typed `starts_fresh` declaration.
-# v22 (KRI-827): the shared brief section also records `keep_text_off` facts.
-# v21 (KRI-724): shared brief records `speech_remove` {quote, occurrence} and
-# `noise_reduction: "engine"`, on top of v20.
-# v21 (KRI-840): shared brief records `display_mode` ("fullscreen" / "pip") for a timed photo ask.
-# v21 (KRI-841): shared brief records a video added after the talk as `ending_clip` + `keep_audio`.
-# v21 (KRI-842): the shared brief records `clip_sound` (one clip's sound under / after a voice).
-# v21 (KRI-847): shared brief records a ceiling length as `duration_bound: "at_most"`.
-# v21 (KRI-849): shared brief records `ask_if_unclear` and the creator's `unclear_answer`.
-# v34 (KRI-881): main's v33 plus the shared brief section typing a research ask
-# (`facts.research`).
-# v35 (KRI-689): the shared brief section records a clip-speed ask as `facts.playback_rate`.
-# v36: the shared brief section records a `timed_card` fact (a photo as a small card at an
-# exact second / clip) for phone Montage and Voiceover edits.
-# v37 (KRI-942): the shared brief section records clip sound on / off (`clip_sound` "on"/"off").
-# v38 (KRI-957): an after-voice clip ask's `triggers` is the line said in that clip, never the
-# creator's own last voiceover words.
-# v39 (KRI-994): the shared brief section records `only_media_kind` / `include_media_kind` on a
-# select ask.
-# v41 (29 Ekim lane D, KRI-1038): the shared brief section records words shown a piece at a
-# time as a `text_sequence` requirement, not `captions: word_by_word`. (v40 is lane B's.)
-# v42 (KRI-1027): the shared brief section records `landscape_fit` ("fill" / "fit") on a style
-# ask about how sideways clips sit in a vertical video.
-# v45 (prompt fidelity, animation): the shared brief section records an unnamed animation ask
-# as a `text` requirement with `animation: "any"`.
-# v46 (parent KRI-1151): the shared brief section records `insert_clip` / `insert_at_phrase`.
-# v47 (KRI-1162 / KRI-1161): the shared brief section records a photo or video behind the
-# speaker as a `style` fact `speaker_background` (+ `background_changes`, `speaker_small`).
-# v48 (parent KRI-1151): "place them in between my speech" for clips with their own sound is an
-# `insert_clip` fact with no position (the server picks the sentence); "over my speech" stays
-# display_mode / clip_sound, and the sound words never decide the route ("use their audio" is
-# listed on the overlay side only; a clip with no sound said "in between my speech" is the same
-# insert). Only the insert paragraph (shown while inserts are open) changes.
-# v49 (generated-image grounding): the extractor records "the <generated image> when I say W" as a
-# typed `triggers` ask, and says which videos that does NOT cover (the creator's own footage
-# clips). Extractor-only section; the shared brief section is untouched.
-# v50 (KRI-1177 / KRI-1164, Green 3): the shared brief section records the creator's caption look
-# (`caption_size`, `caption_position`, `caption_color`, `caption_case`) and "no music" as
-# `audio_intent: no_music`; the speaker's own corner is never a caption position.
-# v52 (KRI-1189, Green 3; v51 is #2088's): the shared brief section records an unquoted restart ask
-# as `cut_restarts: true`, with no transcript words in `cut_lines`.
-# v53 (KRI-1173; v51-v52 are held by #2092 and others): the brief section also records
-# `background_color` on a plain-colour background ask.
-# v54 (KRI-1189 lands after #2088): v52's `cut_restarts` teaching on top of v53. The
-# KRI-1189 replay fixtures keep the `2026-11-03-v52` label they were recorded under.
-# v55 (Qendresa item 12): the shared brief section records `caption_words` and `caption_box`.
-# v56 (Qendresa 13, tight pauses; v55 is reserved by another open item): the shared brief section
-# records an "all my pauses / tight pace" ask as `pauses: "tight"` beside `speech_cleanup`.
-# v60 (Qendresa item 16; v56 is Qendresa 13; v57-v59 are reserved for items 14, 15 and 17): with
-# SPEAKER_FULL_OPENING_ENABLED the shared brief section records `speaker_full_opening` /
-# `speaker_full_opening_s` ("start with me full screen"). The extractor has no manifest, so the
-# flag alone gates it; the main planner also needs the capability, and a fact recorded where the
-# phone cannot start full screen is answered honestly by the receipt. Flag off: unchanged bytes.
-# v66 (item 23, Related KRI-1129), on top of v55 (Qendresa 12 caption shape): with
-# BRIEF_LONG_REQUEST_ENABLED the shared brief section says "at most 32 objects" instead of 16.
-# Flag off: byte-identical.
-# v68 (Qendresa item 16 after main reached v66; v67 is held by item 24): v60's full-screen-opening
-# fact on top of v66. Flag off: unchanged bytes.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-11-06-v68"
+# A fingerprint of these files (app/agents/_prompt_fingerprint.py): main_creator.py is listed
+# because the shared brief section lives there. Don't bump or pin it; the hand-numbered
+# history (to v68) is frozen in docs/pipelines/prompt-version-history.md.
+BRIEF_EXTRACTOR_PROMPT_SOURCES = (
+    "app/agents/brief_extractor.py",
+    "app/agents/main_creator.py",
+    "app/kria/brief.py",
+    "app/agents/prompt_vocab.py",
+    "app/agents/_schemas/text_animation_phases.py",  # {{TEXT_ANIMATION_EDGES}}
+    "prompts/brief_extractor.txt",
+)
+BRIEF_EXTRACTOR_PROMPT_VERSION = prompt_fingerprint("be", BRIEF_EXTRACTOR_PROMPT_SOURCES)
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")

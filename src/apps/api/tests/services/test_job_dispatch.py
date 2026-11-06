@@ -197,6 +197,22 @@ def test_enqueue_orchestrator_sync_publish_failure_recovers_after_broker_io() ->
     recovery_session.commit.assert_called_once()
 
 
+def test_keyed_claim_dispatch_preserves_unknown_broker_acceptance() -> None:
+    task = MagicMock(name="task")
+    task.name = "orchestrate_generative_job"
+    task.apply_async.side_effect = RuntimeError("ack lost")
+    context = MagicMock()
+    context.__enter__.return_value.execute.return_value.scalar_one_or_none.return_value = "queued"
+    with (
+        patch("app.database.sync_session", return_value=context),
+        patch("app.services.job_dispatch._recover_sync_publish_failure") as recover,
+        pytest.raises(RuntimeError, match="ack lost"),
+    ):
+        enqueue_orchestrator_sync(task, uuid.uuid4(), preserve_unknown=True)
+    task.apply_async.assert_called_once()
+    recover.assert_not_called()
+
+
 def test_claim_and_enqueue_sync_persists_claim_before_next_sweep() -> None:
     """A queued broker message is not republished by the next recovery tick."""
 

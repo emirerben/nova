@@ -57,6 +57,7 @@ import UIKit
     private let downloadFile: Download
     private let authorizePhotos: PhotosAuthorization
     private let writePhotos: AtomicPhotoWrite
+    private let readWait: (Duration) async throws -> Void
     private let now: () -> Date
     private let onDeviceRender: OnDeviceRender
     private let onDeviceVideoRender: OnDeviceVideoRender
@@ -90,6 +91,7 @@ import UIKit
                 }
             }
         },
+        readWait: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
         now: @escaping () -> Date = Date.init,
         onDeviceRender: @escaping OnDeviceRender = { slide, asset, profile, aspect, stickers in
             try await SlidePostOnDeviceRender.renderSlide(slide: slide, asset: asset, profile: profile, aspect: aspect, stickers: stickers)
@@ -101,6 +103,7 @@ import UIKit
             try await SlidePostStickerStore.shared.prepared(for: slide, assets: assets)
         }
     ) {
+        self.readWait = readWait
         self.downloadFile = downloadFile; self.authorizePhotos = authorizePhotos
         self.writePhotos = writePhotos; self.now = now; self.onDeviceRender = onDeviceRender
         self.onDeviceVideoRender = onDeviceVideoRender; self.prepareStickers = prepareStickers
@@ -132,41 +135,77 @@ import UIKit
         guard !isBusy else { return }
         isFlowActive = true; defer { isFlowActive = false }
         session.error = nil
+        let isCurrent = session.exportObservationGuard(api: api, itemID: itemID)
         // Ask for Photos access BEFORE the (possibly long) render so a first-time prompt or a denial
         // never comes after the user has already waited for it.
         if destination == .photos {
             let permission = await authorizePhotos()
             guard permission == .authorized || permission == .limited else { set(.photosDenied); return }
         }
+        guard !Task.isCancelled, isCurrent() else { set(.idle); return }
         // Supported posts render on the phone from original media: the live draft (unsaved edits
         // included) goes straight to Photos / the share sheet, no save, generate or poll.
         if SlidePostOnDeviceRender.supports(session.draft, assets: session.state?.assets ?? [], extended: extendedOnDevice) {
-            await exportOnDevice(destination, session: session, api: api, itemID: itemID)
+            await exportOnDevice(destination, session: session, api: api, itemID: itemID, isCurrent: isCurrent)
             return
         }
-        var generated = 0
+        var requestedRender = (session.isRendering || session.hasPendingRenderSubmission) && !session.hasUnsavedChanges
+        var expectedDraft = session.draft
+        var expectedJob = (requestedRender || session.canExport) ? session.exportObservationJobID : nil
         var polls = 0
         while !session.canExport {
             // The caller cancels this task when the editor goes away; stop instead of finishing in the background.
-            if Task.isCancelled { set(.idle); return }
-            if session.hasUnsavedChanges || (!session.isRendering && generated < 2) {
+            if Task.isCancelled || !isCurrent() { set(.idle); return }
+            if requestedRender, let expectedDraft, let current = session.draft,
+               (current.version != expectedDraft.version || !current.hasSameContent(as: expectedDraft)) { set(.failed(SlidePostExportError.draftChanged.localizedDescription)); return }
+            if let expectedJob, let current = session.exportObservationJobID, current != expectedJob { set(.idle); return }
+            if expectedJob == nil { expectedJob = session.exportObservationJobID }
+            if requestedRender && session.hasUnsavedChanges { set(.failed(SlidePostExportError.draftChanged.localizedDescription)); return }
+            if !requestedRender && (session.hasUnsavedChanges || !session.isRendering) {
                 // `create` saves a dirty draft first, then dispatches the render.
                 set(session.hasUnsavedChanges ? .saving : .rendering)
-                if !session.hasUnsavedChanges { generated += 1 }
+                requestedRender = true
                 await session.create(api: api, itemID: itemID)
-                if let error = session.error { set(.failed(error)); return }
+                guard !Task.isCancelled, isCurrent() else { set(.idle); return }
+                if let error = session.error, !session.hasPendingRenderSubmission && !session.isRendering { set(.failed(error)); return }
+                expectedDraft = session.draft; expectedJob = session.exportObservationJobID
                 continue
             }
-            guard polls < maxPolls else { set(.failed("Your post is still rendering. Try again in a moment.")); return }
-            polls += 1
+            let delay = polls < maxPolls ? pollInterval : max(pollInterval, .seconds(30))
+            polls = min(polls + 1, max(maxPolls, 0))
             set(.rendering)
-            try? await Task.sleep(for: pollInterval)
-            if Task.isCancelled { set(.idle); return }
-            await session.refresh(api: api, itemID: itemID)
-            if let error = session.error { set(.failed(error)); return }
-            if session.state?.renderStatus == "failed" { set(.failed("Rendering failed. Try again.")); return }
+            do { try await readWait(delay) } catch { set(.idle); return }
+            guard !Task.isCancelled, isCurrent() else { set(.idle); return }
+            await session.refresh(api: api, itemID: itemID, readOnlyObservation: true)
+            guard !Task.isCancelled, isCurrent() else { set(.idle); return }
+            if let error = session.terminalStateReadError { set(.failed(error)); return }
+            if session.hasConfirmedRenderFailure { set(.failed("Rendering failed. Try again.")); return }
         }
-        let revalidate: Revalidate = { try await session.revalidateForExport(api: api, itemID: itemID) }
+        if expectedJob == nil { expectedJob = session.exportObservationJobID }
+        guard !Task.isCancelled, isCurrent(), let current = session.draft,
+              expectedDraft.map({ $0.version == current.version && $0.hasSameContent(as: current) }) ?? false,
+              expectedJob == nil || expectedJob == session.exportObservationJobID else { set(.idle); return }
+        let revalidate: Revalidate = {
+            guard !Task.isCancelled, isCurrent() else { throw CancellationError() }
+            while true {
+                do { try await session.revalidateForExport(api: api, itemID: itemID); break }
+                catch {
+                    guard !Task.isCancelled, isCurrent(), let current = session.draft,
+                          expectedDraft.map({ $0.version == current.version && $0.hasSameContent(as: current) }) ?? false,
+                          expectedJob == nil || expectedJob == session.exportObservationJobID else { throw CancellationError() }
+                    let delay: Duration
+                    if case let APIError.requestFailed(status, detail) = error,
+                       status == 408 || status == 429 || (500...599).contains(status) {
+                        delay = SlidePostSession.readObservationDelay(detail.retryAfter)
+                    } else if error is URLError { delay = .seconds(30) }
+                    else { throw error }
+                    try await self.readWait(delay)
+                }
+            }
+            guard !Task.isCancelled, isCurrent(), let current = session.draft,
+                  expectedDraft.map({ $0.version == current.version && $0.hasSameContent(as: current) }) ?? false,
+                  expectedJob == nil || expectedJob == session.exportObservationJobID else { throw CancellationError() }
+        }
         switch destination {
         case .photos: await saveToPhotos(session: session, revalidate: revalidate)
         case .share: await prepareShare(session: session, revalidate: revalidate)
@@ -176,7 +215,7 @@ import UIKit
     /// Renders every slide of the current draft into a temp directory, then hands it to Photos or the share sheet.
     /// A render error fails the export (no mid-way server fallback); an expired signed URL refreshes the
     /// session once and retries that slide.
-    private func exportOnDevice(_ destination: Destination, session: SlidePostSession, api: any KriaAPIClient, itemID: String) async {
+    private func exportOnDevice(_ destination: Destination, session: SlidePostSession, api: any KriaAPIClient, itemID: String, isCurrent: () -> Bool) async {
         guard let draft = session.draft else { return }
         isWorking = true; defer { isWorking = false }
         let directory = FileManager.default.temporaryDirectory.appending(path: "kria-slide-post-\(itemID)-\(draft.version)-\(UUID().uuidString)")
@@ -201,7 +240,7 @@ import UIKit
                 files.append(PhotoResource(url: file, kind: slide.kind, creationDate: dates[index]))
             }
             try Task.checkCancellation()
-            guard session.draft == draft else { throw SlidePostExportError.draftChanged }
+            guard isCurrent(), session.draft == draft else { throw SlidePostExportError.draftChanged }
             switch destination {
             case .photos:
                 try await writePhotos(files)

@@ -135,11 +135,37 @@ struct KeychainError: Error, LocalizedError { let status: OSStatus; init(_ statu
 /// The two calls needed while a slide-post proposal is in flight. Keeping
 /// this narrow lets fixtures control the reply and live poll independently.
 protocol SlidePostProposalClient: Sendable {
+    func submitSlidePostAI(itemID: String, body: SlidePostAIRequest, expectedOwner: String) async throws -> SlidePostAIReceipt
+    func slidePostAIReceipt(itemID: String, requestID: UUID, expectedOwner: String) async throws -> SlidePostAIReceipt
     func proposeSlidePost(itemID: String, request: SlidePostProposalRequest) async throws -> SlidePostProposal
     func slidePostThoughtSummaries(itemID: String, clientRequestID: String) async throws -> KriaThoughtSummaryResponse
 }
 
-protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgroundClient, CameraRollItemsClient, Sendable {
+extension SlidePostProposalClient {
+    func submitSlidePostAI(itemID: String, body: SlidePostAIRequest, expectedOwner: String) async throws -> SlidePostAIReceipt { throw APIError.unsupported }
+    func slidePostAIReceipt(itemID: String, requestID: UUID, expectedOwner: String) async throws -> SlidePostAIReceipt { throw APIError.unsupported }
+}
+
+/// Review carries the account captured when its sheet opened through transport refresh/send.
+protocol ReviewPlanTransport: Sendable {
+    func undoDraft(threadID: UUID, expectedRevision: Int, render: Bool, expectedOwner: String) async throws -> DraftSnapshot
+    func planSnapshot(threadID: UUID, expectedOwner: String) async throws -> PlanSnapshot
+    func submitScopedTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, scope: [PlanSectionID], manualEdits: [ManualPlanEdit], expectedOwner: String) async throws -> TurnAccepted
+    func undoPlanSection(threadID: UUID, sectionID: PlanSectionID, expectedThreadRevision: Int, expectedBlockRevision: Int, expectedDraftRevision: Int, expectedOwner: String) async throws -> PlanSectionUndoResult
+    func approval(threadID: UUID, approvalID: UUID, expectedOwner: String) async throws -> ApprovalSnapshot
+    func decideReviewApproval(threadID: UUID, approvalID: UUID, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, expectedOwner: String) async throws
+}
+
+extension ReviewPlanTransport {
+    func undoDraft(threadID: UUID, expectedRevision: Int, render: Bool, expectedOwner: String) async throws -> DraftSnapshot { throw APIError.unsupported }
+    func planSnapshot(threadID: UUID, expectedOwner: String) async throws -> PlanSnapshot { throw APIError.unsupported }
+    func submitScopedTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, scope: [PlanSectionID], manualEdits: [ManualPlanEdit], expectedOwner: String) async throws -> TurnAccepted { throw APIError.unsupported }
+    func undoPlanSection(threadID: UUID, sectionID: PlanSectionID, expectedThreadRevision: Int, expectedBlockRevision: Int, expectedDraftRevision: Int, expectedOwner: String) async throws -> PlanSectionUndoResult { throw APIError.unsupported }
+    func approval(threadID: UUID, approvalID: UUID, expectedOwner: String) async throws -> ApprovalSnapshot { throw APIError.unsupported }
+    func decideReviewApproval(threadID: UUID, approvalID: UUID, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, expectedOwner: String) async throws { throw APIError.unsupported }
+}
+
+protocol KriaAPIClient: ReviewPlanTransport, SlidePostProposalClient, SongRangeClient, SpeakerBackgroundClient, CameraRollItemsClient, Sendable {
     func editorialTaste() async throws -> EditorialTasteProfile
     func saveEditorialTaste(_ body: EditorialTasteWrite) async throws -> EditorialTasteProfile
     func forgetEditorialTaste(revision: Int, eventID: String) async throws -> EditorialTasteProfile
@@ -186,9 +212,15 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgro
     func creationThoughtSummaryHistory(threadID: UUID) async throws -> KriaThoughtSummaryResponse
     func slidePostThoughtSummaryHistory(itemID: String) async throws -> KriaThoughtSummaryResponse
     func slidePost(itemID: String) async throws -> SlidePostState
+    func slidePost(itemID: String, expectedOwner: String?) async throws -> SlidePostState
     func slidePostChatEdit(itemID: String, body: SlidePostChatEditRequest) async throws -> SlidePostChatEditResponse
     func saveSlidePost(itemID: String, request: SlidePostSaveRequest) async throws -> SlidePostDraft
+    func saveSlidePost(itemID: String, request: SlidePostSaveRequest, expectedOwner: String?) async throws -> SlidePostDraft
     func generateSlidePost(itemID: String, expectedVersion: Int) async throws
+    func generateSlidePost(itemID: String, expectedVersion: Int, clientRequestID: UUID, expectedCurrentJobID: UUID?) async throws -> SlidePostGenerationReceipt
+    func generateSlidePost(itemID: String, expectedVersion: Int, clientRequestID: UUID, expectedCurrentJobID: UUID?, expectedOwner: String?) async throws -> SlidePostGenerationReceipt
+    func slidePostGenerationReceipt(itemID: String, clientRequestID: UUID) async throws -> SlidePostGenerationReceipt
+    func slidePostGenerationReceipt(itemID: String, clientRequestID: UUID, expectedOwner: String?) async throws -> SlidePostGenerationReceipt
     func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse
     func downloadDeviceAsset(_ body: DeviceAssetDownloadBody) async throws -> DeviceAssetDownloadTarget
     func reserveDeviceExport(_ body: DeviceExportUploadBody) async throws -> DeviceExportUploadTarget
@@ -347,6 +379,12 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgro
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, role: CreationMediaRole) async throws -> ProjectUploadReservation
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
+    /// Re-record: the same reservations, naming the attached clip the new take replaces so it does not count against
+    /// the clip limit. Only a server that advertises `media_capabilities.clips.replace` accepts the field.
+    func reserveProjectReplacementUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, replacing mediaID: String) async throws -> ProjectUploadReservation
+    func reserveProjectReplacementProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract, replacing mediaID: String) async throws -> ProjectUploadReservation
+    /// Swaps one attached video for a reserved one in a single server transaction (`POST creation-threads/{id}/media/replace`).
+    func replaceProjectMedia(threadID: UUID, replacedMediaID: String, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread
     /// KRI-189: the same attach, plus when/where the clip was filmed. `capture` is nil when the user turned
     /// the setting off or nothing could be read; a client that does not implement this drops it.
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread
@@ -436,11 +474,29 @@ extension KriaAPIClient {
         return try await undoDraft(threadID: threadID, expectedRevision: expectedRevision)
     }
     func refreshLibraryPosters(jobIDs: [UUID], brokenJobIDs: [UUID]) async throws -> [LibraryPoster] { throw APIError.unsupported }
+    func slidePost(itemID: String, expectedOwner: String?) async throws -> SlidePostState {
+        guard expectedOwner == nil else { throw APIError.unsupported }
+        return try await slidePost(itemID: itemID)
+    }
+    func saveSlidePost(itemID: String, request: SlidePostSaveRequest, expectedOwner: String?) async throws -> SlidePostDraft {
+        guard expectedOwner == nil else { throw APIError.unsupported }
+        return try await saveSlidePost(itemID: itemID, request: request)
+    }
+    func generateSlidePost(itemID: String, expectedVersion: Int, clientRequestID: UUID, expectedCurrentJobID: UUID?, expectedOwner: String?) async throws -> SlidePostGenerationReceipt {
+        guard expectedOwner == nil else { throw APIError.unsupported }
+        return try await generateSlidePost(itemID: itemID, expectedVersion: expectedVersion, clientRequestID: clientRequestID, expectedCurrentJobID: expectedCurrentJobID)
+    }
+    func slidePostGenerationReceipt(itemID: String, clientRequestID: UUID, expectedOwner: String?) async throws -> SlidePostGenerationReceipt {
+        guard expectedOwner == nil else { throw APIError.unsupported }
+        return try await slidePostGenerationReceipt(itemID: itemID, clientRequestID: clientRequestID)
+    }
     func slidePost(itemID: String) async throws -> SlidePostState { throw APIError.unsupported }
     func proposeSlidePost(itemID: String, request: SlidePostProposalRequest) async throws -> SlidePostProposal { throw APIError.unsupported }
     func slidePostChatEdit(itemID: String, body: SlidePostChatEditRequest) async throws -> SlidePostChatEditResponse { throw APIError.unsupported }
     func saveSlidePost(itemID: String, request: SlidePostSaveRequest) async throws -> SlidePostDraft { throw APIError.unsupported }
     func generateSlidePost(itemID: String, expectedVersion: Int) async throws { throw APIError.unsupported }
+    func generateSlidePost(itemID: String, expectedVersion: Int, clientRequestID: UUID, expectedCurrentJobID: UUID?) async throws -> SlidePostGenerationReceipt { throw APIError.unsupported }
+    func slidePostGenerationReceipt(itemID: String, clientRequestID: UUID) async throws -> SlidePostGenerationReceipt { throw APIError.unsupported }
     func creationThoughtSummaries(threadID: UUID, clientRequestID: String) async throws -> KriaThoughtSummaryResponse { throw APIError.unsupported }
     func slidePostThoughtSummaries(itemID: String, clientRequestID: String) async throws -> KriaThoughtSummaryResponse { throw APIError.unsupported }
     func creationThoughtSummaryHistory(threadID: UUID) async throws -> KriaThoughtSummaryResponse { throw APIError.unsupported }
@@ -451,6 +507,9 @@ extension KriaAPIClient {
     func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws { throw APIError.unsupported }
     func reportRecorderDiagnostic(_ report: RecorderDiagnosticReport) async throws { throw APIError.unsupported }
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation { throw APIError.invalidResponse }
+    func reserveProjectReplacementUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, replacing mediaID: String) async throws -> ProjectUploadReservation { throw APIError.unsupported }
+    func reserveProjectReplacementProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract, replacing mediaID: String) async throws -> ProjectUploadReservation { throw APIError.unsupported }
+    func replaceProjectMedia(threadID: UUID, replacedMediaID: String, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread { throw APIError.unsupported }
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, role: CreationMediaRole) async throws -> ProjectUploadReservation {
         try await reserveProjectUpload(threadID: threadID, clientUploadID: clientUploadID, filename: filename, contentType: contentType, size: size)
     }
@@ -1729,6 +1788,9 @@ struct KriaAPI: KriaAPIClient {
             if timeline["base_generation"] == .string(generation) {
                 variant["user_timeline"] = .object(timeline)
                 variant["editor_revision_number"] = timeline["revision_number"]
+                // This same-generation timeline owns the saved edit baseline;
+                // do not retain a marker from an older status read.
+                variant["saved_user_song"] = timeline["saved_user_song"]
                 return variant
             }
             if attempt < 2 { try await Task.sleep(for: .milliseconds(150 * (attempt + 1))) }
@@ -1840,6 +1902,25 @@ struct KriaAPI: KriaAPIClient {
         guard reservations.count == 1, let reservation = reservations.first,
               reservation.mediaID.hasPrefix("analysis-proxy-") else { throw APIError.invalidResponse }
         return reservation
+    }
+    func reserveProjectReplacementUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, replacing mediaID: String) async throws -> ProjectUploadReservation {
+        let body = ProjectUploadReservationRequest(files: [.init(filename: filename, contentType: contentType, fileSizeBytes: size, clientUploadID: clientUploadID, replacesMediaID: mediaID)])
+        let reservations = try await request(path: "creation-threads/\(threadID.uuidString)/upload-urls", method: "POST", bodyData: try JSONEncoder().encode(body), decode: [ProjectUploadReservation].self)
+        guard let reservation = reservations.first, reservations.count == 1 else { throw APIError.invalidResponse }
+        return reservation
+    }
+    func reserveProjectReplacementProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract, replacing mediaID: String) async throws -> ProjectUploadReservation {
+        guard contract.purpose == .analysisProxy, contract.proxy != nil else { throw APIError.invalidResponse }
+        let body = ProjectUploadReservationRequest(files: [.init(filename: filename, contentType: "video/mp4", fileSizeBytes: size, clientUploadID: clientUploadID, uploadContract: contract, replacesMediaID: mediaID)])
+        let reservations = try await request(path: "creation-threads/\(threadID.uuidString)/upload-urls", method: "POST", bodyData: try JSONEncoder().encode(body), decode: [ProjectUploadReservation].self)
+        guard reservations.count == 1, let reservation = reservations.first,
+              reservation.mediaID.hasPrefix("analysis-proxy-") else { throw APIError.invalidResponse }
+        return reservation
+    }
+    func replaceProjectMedia(threadID: UUID, replacedMediaID: String, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread {
+        let media = ProjectMediaInput(mediaID: mediaID, gcsPath: gcsPath, kind: "video", filename: filename, contentType: contentType, capture: capture)
+        let body = ProjectMediaReplacementRequest(replacedMediaID: replacedMediaID, media: media, clientEventID: clientEventID, expectedRevision: expectedRevision)
+        return try await request(path: "creation-threads/\(threadID.uuidString)/media/replace", method: "POST", bodyData: try JSONEncoder().encode(body), decode: CreationThread.self)
     }
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread {
         try await attachProjectMedia(threadID: threadID, mediaID: mediaID, gcsPath: gcsPath, filename: filename, contentType: contentType, expectedRevision: expectedRevision, clientEventID: clientEventID, capture: nil)
@@ -2566,7 +2647,15 @@ struct ProjectUploadFileRequest: Encodable {
     var uploadContract: ProjectMediaUploadContract? = nil
     /// KRI-374: `"song"` for a creator-uploaded song; nil (omitted from the JSON) for footage and voiceover.
     var role: String? = nil
-    enum CodingKeys: String, CodingKey { case uploadContract = "upload_contract"; case filename; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes"; case clientUploadID = "client_upload_id"; case role }
+    /// Re-record: the attached clip this file replaces. Omitted for every ordinary reservation.
+    var replacesMediaID: String? = nil
+    enum CodingKeys: String, CodingKey { case uploadContract = "upload_contract"; case filename; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes"; case clientUploadID = "client_upload_id"; case role; case replacesMediaID = "replaces_media_id" }
+}
+/// `reason` is the route's only value today, sent explicitly so a later reason is a new case, not a changed meaning.
+struct ProjectMediaReplacementRequest: Encodable {
+    let replacedMediaID: String; let media: ProjectMediaInput; let clientEventID: String; let expectedRevision: Int
+    var reason = "retake"
+    enum CodingKeys: String, CodingKey { case media, reason; case replacedMediaID = "replaced_media_id"; case clientEventID = "client_event_id"; case expectedRevision = "expected_revision" }
 }
 struct ProjectMediaAttachmentRequest: Encodable { let media: [ProjectMediaInput]; let clientEventID: String; let expectedRevision: Int; enum CodingKeys: String, CodingKey { case media; case clientEventID = "client_event_id"; case expectedRevision = "expected_revision" } }
 /// One attached media item. The three optional filming-context fields (KRI-189) are omitted from the JSON
@@ -3330,3 +3419,22 @@ struct UploadCoordinator: Sendable {
     }
 }
 
+
+extension KriaAPI {
+    func undoDraft(threadID: UUID, expectedRevision: Int, render: Bool, expectedOwner: String) async throws -> DraftSnapshot {
+        try await request(path: "creation-threads/\(threadID.uuidString)/draft/undo", method: "POST", bodyData: try JSONEncoder().encode(DraftUndoRequest(expectedRevision: expectedRevision, render: render)), decode: DraftSnapshot.self, expectedOwner: expectedOwner)
+    }
+    func planSnapshot(threadID: UUID, expectedOwner: String) async throws -> PlanSnapshot {
+        try await request(path: "creation-threads/\(threadID.uuidString)/plan", method: "GET", bodyData: nil, decode: PlanSnapshot.self, expectedOwner: expectedOwner)
+    }
+    func submitScopedTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, scope: [PlanSectionID], manualEdits: [ManualPlanEdit], expectedOwner: String) async throws -> TurnAccepted {
+        try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(ScopedSubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision, scope: scope, manualEdits: manualEdits)), decode: TurnAccepted.self, expectedOwner: expectedOwner)
+    }
+    func undoPlanSection(threadID: UUID, sectionID: PlanSectionID, expectedThreadRevision: Int, expectedBlockRevision: Int, expectedDraftRevision: Int, expectedOwner: String) async throws -> PlanSectionUndoResult {
+        try await request(path: "creation-threads/\(threadID.uuidString)/plan/sections/\(sectionID.rawValue)/undo", method: "POST", bodyData: try JSONEncoder().encode(PlanSectionUndoRequest(expectedThreadRevision: expectedThreadRevision, expectedBlockRevision: expectedBlockRevision, expectedDraftRevision: expectedDraftRevision)), decode: PlanSectionUndoResult.self, expectedOwner: expectedOwner)
+    }
+    func approval(threadID: UUID, approvalID: UUID, expectedOwner: String) async throws -> ApprovalSnapshot { try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)", method: "GET", bodyData: nil, decode: ApprovalSnapshot.self, expectedOwner: expectedOwner) }
+    func decideReviewApproval(threadID: UUID, approvalID: UUID, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, expectedOwner: String) async throws {
+        _ = try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)/approve", method: "POST", bodyData: try JSONEncoder().encode(ApprovalDecisionRequest(expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: true, speechCleanupRetakesAware: nil, speechCleanupAnalysisID: nil, speechCleanupChoice: nil, outputOrientation: nil, landscapeFit: nil, automaticRepairAttempts: nil)), decode: ApprovalResponse.self, expectedOwner: expectedOwner)
+    }
+}

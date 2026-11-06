@@ -148,7 +148,7 @@ import XCTest
     private func strokes(_ count: Int, points: Int) -> [DrawingStroke] { (0..<count).map { stroke(points: points, seed: $0) } }
 
     private func session(slides: Int = 3, profile: String = "tiktok_photo") -> SlidePostSession {
-        let session = SlidePostSession(defaults: defaults)
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
         session.draft = SlidePostDraft(version: 1, platformProfile: profile,
                                        slides: (1...slides).map { SlidePostSlide(id: "s\($0)", assetID: "a\($0)", kind: "image") })
         return session
@@ -224,11 +224,11 @@ import XCTest
         let saved = SlidePostState(itemID: itemID, title: "Post", draft: SlidePostDraft(version: 1, platformProfile: "tiktok_photo", slides: refs),
                                    assets: [.init(id: "a1", kind: "image", status: "ready")])
         NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(saved)) }
-        let first = SlidePostSession(defaults: defaults)
+        let first = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await first.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
         XCTAssertTrue(first.addDrawingStrokes(slideID: "s1", strokes: strokes(2, points: 6), canvas: portrait))
         XCTAssertTrue(first.hasUnsavedChanges)
-        let reopened = SlidePostSession(defaults: defaults)
+        let reopened = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await reopened.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
         XCTAssertEqual(reopened.draft?.slides[0].edits?.drawing, first.draft?.slides[0].edits?.drawing)
         XCTAssertTrue(reopened.hasUnsavedChanges, "unsaved ink is still unsaved after a reopen")

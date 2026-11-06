@@ -171,7 +171,9 @@
         "cover_index",
         "caption",
         "render_trace_id",
-        "aspect"
+        "aspect",
+        "artifact_generation",
+        "strict_inputs"
       ],
       "recipe": {}
     }

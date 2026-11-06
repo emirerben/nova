@@ -782,6 +782,17 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "licensed_sfx.max_placements",
         note="a named licensed effect is required but no verifier proves its placement",
     ),
+    **_rules(
+        "upstream_resolved",
+        "planner_boundary",
+        "planner_declines[]",
+        "planner_declines[].field",
+        "planner_declines[].value",
+        note=(
+            "KRI-1097 wave 2: what the Main Creator parse could not keep, written there and read "
+            "only by the approval card (route_disclosure); the render never reads it"
+        ),
+    ),
 }
 
 
@@ -789,6 +800,8 @@ def field_matrix_for_strategy(strategy: Mapping[str, Any]) -> dict[str, FieldRul
     unused = set()
     if not strategy.get("confirmed_order_replacement"):
         unused.add("confirmed_order_replacement")
+    if not strategy.get("planner_declines"):
+        unused.add("planner_declines[]")
     if not strategy.get("selection_reconciliation"):
         unused.add("selection_reconciliation")
     if not any(
@@ -1481,6 +1494,18 @@ def _one_unkeyed_clip(
     return len(selected) == 1 and len(rows) == 1 and not rows[0].get("media_id")
 
 
+def creator_mutes_whole_video(brief: CreativeBrief | None) -> bool:
+    """The brief silences every clip's own sound and ``CREATOR_MUTE_WINS_ENABLED`` is on.
+
+    Typed facts only (`clip_sound_toggle_ask.brief_mutes_whole_video`, KRI-667): a partial mute
+    or any "on" ask keeps whatever camera audio the contract pins.
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.kria.clip_sound_toggle_ask import brief_mutes_whole_video  # noqa: PLC0415
+
+    return bool(settings.creator_mute_wins_enabled) and brief_mutes_whole_video(brief)
+
+
 def build_render_contract(
     strategy: Mapping[str, Any] | None,
     *,
@@ -2011,6 +2036,11 @@ def build_render_contract(
             tuple(str(value) for value in ids) if typed.montage_audio.preserve_source_audio else ()
         )
         original_audio = "require" if typed.montage_audio.preserve_source_audio else "forbid"
+    if (original_audio == "require" or source_ids) and creator_mutes_whole_video(brief):
+        # Qendresa case 4: the creator's typed whole-video mute outranks the strategy's camera
+        # audio (`original_audio` is the planner's pick when no song fits). Pinning it would
+        # refuse the muted recipe the draft already promised; "forbid" already agrees.
+        original_audio, source_ids = None, ()
     data: dict[str, Any] = dict(
         version=1,
         generation_id=generation_id,

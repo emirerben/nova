@@ -1375,6 +1375,147 @@ extension ChatDraftStagingTests {
         XCTAssertTrue(opened)
     }
 
+    func testFirstOpenRecoversAfterFastBudgetAndWaitsWhileHidden() async throws {
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.variant())
+        fake.editorVariantScript = Array(repeating: .failure(.offline), count: 6)
+        let session = NativeEditorSession()
+        session.loadRetryDelays = [.zero]
+        var now = ContinuousClock.now
+        var paused = false
+        session.loadReadNow = { now }
+        session.loadReadSleep = { delay in
+            now = now.advanced(by: delay)
+            if delay >= .seconds(300), !paused { paused = true; session.setObserversVisible(false) }
+            await Task.yield()
+        }
+        await session.load(api: fake, threadID: UUID())
+        let reachedPause = await settle { paused }; XCTAssertTrue(reachedPause)
+        let reads = fake.editorVariantJobIDs.count
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(fake.editorVariantJobIDs.count, reads)
+        session.setObserversVisible(true)
+        let opened = await settle { session.loadState == .loaded }; XCTAssertTrue(opened)
+        XCTAssertEqual(fake.commitCount, 0)
+    }
+
+    func testLateOldLoadRetryAfterCannotDelayAnotherTargetOrAccount() async throws {
+        for (changeAccount, sameTarget) in [(false, false), (true, true), (false, true)] {
+            let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.variant())
+            fake.mediaLibraryOwner = "first"
+            fake.suspendNextEditorVariant = true
+            let session = NativeEditorSession()
+            var delays: [Duration] = []
+            var now = ContinuousClock.now
+            session.loadReadNow = { now }
+            session.loadReadSleep = { delay in delays.append(delay); now = now.advanced(by: delay); await Task.yield() }
+            let oldLoad = Task { await session.load(api: fake, threadID: UUID(), variantID: "initial") }
+            let suspended = await settle { fake.editorVariantIsSuspended }; XCTAssertTrue(suspended)
+            fake.editorVariantScript = [.failure(.requestFailed(status: 429, detail: .init("old target", retryAfter: 600)))]
+            if changeAccount { fake.mediaLibraryOwner = "second" }
+            let newVariant = sameTarget ? "initial" : "other"
+            let newLoad = Task { await session.load(api: fake, threadID: UUID(), variantID: newVariant) }
+            for _ in 0..<20 { await Task.yield() }
+            XCTAssertEqual(fake.editorVariantJobIDs.count, 1, "the new lifetime still waits for the old transport")
+            fake.resumeEditorVariant()
+            await oldLoad.value; await newLoad.value
+            XCTAssertEqual(session.loadState, .loaded)
+            XCTAssertEqual(fake.lastVariantID, newVariant)
+            XCTAssertEqual(delays, sameTarget && !changeAccount ? [.seconds(600)] : [],
+                "only the same account/environment/request target inherits the late deadline across lifetimes")
+        }
+    }
+
+    func testObserverCooldownKeysSeparateOwnerEnvironmentAndTargetButNotLifetime() {
+        let a = NativeEditorSession.ObservationScope(owner: "owner", environment: "https://a.test", target: "variant:A")
+        XCTAssertEqual(a, NativeEditorSession.ObservationScope(owner: "owner", environment: "https://a.test", target: "variant:A"))
+        XCTAssertNotEqual(a, NativeEditorSession.ObservationScope(owner: "other", environment: "https://a.test", target: "variant:A"))
+        XCTAssertNotEqual(a, NativeEditorSession.ObservationScope(owner: "owner", environment: "https://b.test", target: "variant:A"))
+        XCTAssertNotEqual(a, NativeEditorSession.ObservationScope(owner: "owner", environment: "https://a.test", target: "variant:B"))
+    }
+
+    func testFirstOpenRetainsSixHundredSecondReadDeadline() async throws {
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.variant())
+        fake.editorVariantScript = [.failure(.requestFailed(status: 429, detail: .init("wait", retryAfter: 600)))]
+        let session = NativeEditorSession()
+        var now = ContinuousClock.now
+        var waits: [Duration] = []
+        session.loadReadNow = { now }
+        session.loadReadSleep = { delay in waits.append(delay); now = now.advanced(by: delay); await Task.yield() }
+        await session.load(api: fake, threadID: UUID())
+        let opened = await settle { session.loadState == .loaded }; XCTAssertTrue(opened)
+        XCTAssertTrue(waits.contains(.seconds(600)))
+        XCTAssertEqual(fake.commitCount, 0)
+    }
+
+    func testAcknowledgedGalleryPromotionUsesOnlyGETsAfterReadExhaustion() async throws {
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(),
+            openReceipt: OpenInEditorResponse(planItemID: "item", variantID: "initial"), authoritativeVariant: Self.variant())
+        fake.editorVariantScript = Array(repeating: .failure(.offline), count: 6)
+        let session = NativeEditorSession()
+        session.loadRetryDelays = [.zero]
+        var now = ContinuousClock.now
+        session.loadReadNow = { now }
+        session.loadReadSleep = { delay in now = now.advanced(by: delay); await Task.yield() }
+        await session.load(libraryJobID: UUID(uuidString: Self.jobID)!, api: fake)
+        let opened = await settle { session.loadState == .loaded }; XCTAssertTrue(opened)
+        XCTAssertEqual(fake.openCallCount, 1)
+        XCTAssertEqual(fake.commitCount, 0)
+    }
+
+    func testKnownNotReadyGalleryOpenObservesPastEightyChecksBeforeFinishingPromotion() async throws {
+        let job = UUID(uuidString: Self.jobID)!
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(),
+            openReceipt: OpenInEditorResponse(planItemID: "item", variantID: "initial"), authoritativeVariant: Self.variant())
+        fake.openErrors = [.editorNotReady]
+        fake.editorVariantsByJob[job] = [["variant_id": .string("initial"), "render_status": .string("rendering")]]
+        let session = NativeEditorSession()
+        session.loadRenderingDelays = [.zero]
+        var now = ContinuousClock.now
+        var reachedSlow = false
+        session.loadReadNow = { now }
+        session.loadReadSleep = { delay in
+            now = now.advanced(by: delay)
+            if delay >= .seconds(300) {
+                reachedSlow = true
+                fake.editorVariantsByJob[job] = [Self.variant()]
+            }
+            await Task.yield()
+        }
+        await session.load(libraryJobID: job, api: fake)
+        let opened = await settle { session.loadState == .loaded }; XCTAssertTrue(opened)
+        XCTAssertTrue(reachedSlow)
+        XCTAssertGreaterThanOrEqual(fake.editorVariantsCallCount, 80)
+        XCTAssertEqual(fake.openCallCount, 2, "one rejected attempt, then one original authorized open after GET readiness")
+        XCTAssertEqual(fake.commitCount, 0)
+    }
+
+    func testGalleryReadinessStopsForTerminalVariantsButReadyStillWins() async throws {
+        let job = UUID(uuidString: Self.jobID)!
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.variant())
+        for status in ["failed", "cancelled", "superseded", "needs_attention"] {
+            fake.editorVariantsByJob[job] = [["variant_id": .string("initial"), "render_status": .string(status)]]
+            let terminal = await NativeEditorSession.readiness(ofJob: job, preferredVariantID: nil, api: fake)
+            XCTAssertEqual(terminal, .failed, status)
+            fake.editorVariantsByJob[job]?.append(["variant_id": .string("other"), "render_status": .string("ready")])
+            let ready = await NativeEditorSession.readiness(ofJob: job, preferredVariantID: nil, api: fake)
+            XCTAssertEqual(ready, .ready, status)
+            let selectedTerminal = await NativeEditorSession.readiness(ofJob: job, preferredVariantID: "initial", api: fake)
+            XCTAssertEqual(selectedTerminal, .failed, "another ready variant cannot replace the selected terminal one")
+        }
+    }
+
+    func testUncertainGalleryPromotionDoesNotAutomaticallyReplayPOST() async throws {
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(),
+            openReceipt: OpenInEditorResponse(planItemID: "item", variantID: "initial"), authoritativeVariant: Self.variant())
+        fake.openErrors = [.offline]
+        let session = NativeEditorSession()
+        session.loadReadSleep = { _ in await Task.yield() }
+        await session.load(libraryJobID: UUID(uuidString: Self.jobID)!, api: fake)
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(fake.openCallCount, 1)
+        guard case .failed = session.loadState else { return XCTFail("unknown promotion must remain explicit") }
+    }
+
     func testFirstOpenOfAGenuinelyUnopenableVideoStillSaysSo() async throws {
         let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(),
             openReceipt: OpenInEditorResponse(planItemID: "item", variantID: "initial"), authoritativeVariant: Self.variant())
@@ -1459,6 +1600,43 @@ extension ChatDraftStagingTests {
         fake.authoritativeVariant = Self.variant(generation: "g2")
         let saved = await settle { session.saveState == .saved }
         XCTAssertTrue(saved, "four offline polls with a budget of two must still reach the ready preview: \(session.saveState)")
+    }
+
+    func testExhaustedSavedPreviewRecoversWithoutCheckAndPausesWhileHidden() async throws {
+        let (session, fake) = await savedSession()
+        session.previewPollBudget = 2
+        var now = ContinuousClock.now
+        var paused = false
+        session.previewReadNow = { now }
+        session.previewReadSleep = { delay in
+            now = now.advanced(by: delay)
+            if delay >= .seconds(300), !paused { paused = true; session.setObserversVisible(false) }
+            await Task.yield()
+        }
+        session.retryPreviewRefresh()
+        let reachedPause = await settle { paused }; XCTAssertTrue(reachedPause)
+        let reads = fake.editorVariantJobIDs.count
+        fake.authoritativeVariant = Self.variant(generation: "g2")
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(fake.editorVariantJobIDs.count, reads)
+        session.setObserversVisible(true)
+        let ready = await settle { session.saveState == .saved }; XCTAssertTrue(ready)
+        XCTAssertEqual(fake.commitCount, 1)
+    }
+
+    func testSavedPreviewRetainsSixHundredSecondReadDeadline() async throws {
+        let (session, fake) = await savedSession()
+        session.previewPollInterval = .zero
+        var now = ContinuousClock.now
+        var waits: [Duration] = []
+        session.previewReadNow = { now }
+        session.previewReadSleep = { delay in waits.append(delay); now = now.advanced(by: delay); await Task.yield() }
+        fake.editorVariantScript = [.failure(.requestFailed(status: 429, detail: .init("wait", retryAfter: 600)))]
+        fake.authoritativeVariant = Self.variant(generation: "g2")
+        session.retryPreviewRefresh()
+        let ready = await settle { session.saveState == .saved }; XCTAssertTrue(ready)
+        XCTAssertTrue(waits.contains(.seconds(600)))
+        XCTAssertEqual(fake.commitCount, 1)
     }
 
     func testPreviewPollErrorsNeverShowConflictCopy() async throws {

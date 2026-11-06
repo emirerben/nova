@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-25-research-19",
+  "version": "2026-11-01-research-20",
   "examples": [
     {
       "id": "pov-surprise-karaoke-01",
@@ -387,6 +387,19 @@
       "highlight_color": "#FFE08A",
       "niche": "lifestyle & fashion",
       "source": "https://www.tiktok.com/@nermozdemir/video/7674217682970905874 (snapshot 2026-10-25T20:01:19.977705+00:00; observed caption and counts; visual treatment and causal effect unmeasured)"
+    },
+    {
+      "id": "product-review-warm-fadein-01",
+      "content_profile": "honest personal product review — creator uses the product in their real life and shares findings warmly; the tone is helpful friend not pitch",
+      "effect": "fade-in",
+      "text": "my honest review — hope it helps",
+      "highlight_word": "honest",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#A3E635",
+      "niche": "lifestyle & product reviews",
+      "source": "tiktok market research 2026-11-01"
     }
   ]
 }
