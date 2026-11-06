@@ -1164,6 +1164,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         return true
     }
     private var pendingRenderRetrySections: Set<EditorSection> = []
+    /// Pending render intent survives a failed commit without becoming an authored edit.
+    var hasPendingRenderRetry: Bool { !pendingRenderRetrySections.isEmpty }
     private var clipIDsBySlot: [String: UUID] = [:]
     private var compatibilityClipMetadata: [UUID: (sourceClipIndex: Int?, slotID: String?)] = [:]
     private var compatibilitySnapshot: [String: JSONValue] = [:]

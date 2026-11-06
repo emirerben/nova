@@ -197,6 +197,7 @@ final class SavedEditorRecoveryTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(5))
         }
         XCTAssertTrue(fake.commitIsSuspended)
+        XCTAssertFalse(NativeEditorSaveBanner(session: session).showsRenderRetryAction)
         session.updateTextContent(id: "saved-title", content: "A correction during retry")
         await session.retryRender()
         XCTAssertEqual(fake.commitCount, 1, "a second tap while saving must not duplicate dispatch")
@@ -258,6 +259,7 @@ final class SavedEditorRecoveryTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(5))
         }
         XCTAssertTrue(fake.commitIsSuspended)
+        XCTAssertFalse(NativeEditorSaveBanner(session: session).showsRenderRetryAction)
         session.transactDocument(section: .timeline) { $0.clips[0].durationS = 1.5 }
         session.updateTextContent(id: "saved-title", content: "Concurrent local work")
         await session.retryRender()
@@ -279,6 +281,101 @@ final class SavedEditorRecoveryTests: XCTestCase {
         XCTAssertEqual(session.document.clips.last?.inS, 1.25)
         XCTAssertEqual(session.document.textElements.first?.text, "My unsaved title")
         XCTAssertTrue(session.hasUnsavedChanges)
+    }
+
+    func testTransientRetryFailuresKeepVisibleActionWithoutDirtyingLanes() async throws {
+        for error: APIError in [.offline, .requestFailed(status: 503)] {
+            for dirtyText in [false, true] {
+                let (session, fake, _) = try await conflictingRetryFixture()
+                if dirtyText { session.updateTextContent(id: "saved-title", content: "Local title") }
+                fake.commitErrorQueue = [error, error]
+                let before = session.document
+                for count in 1...2 {
+                    await session.retryRender()
+                    XCTAssertEqual(fake.commitCount, count)
+                    XCTAssertEqual(fake.lastRequest?.baseGeneration, "saved-generation")
+                    XCTAssertEqual(session.document, before)
+                    XCTAssertEqual(session.hasUnsavedChanges, dirtyText)
+                    guard case .failed = session.saveState else { return XCTFail("failure must remain truthful") }
+                    XCTAssertTrue(NativeEditorSaveBanner(session: session).showsRenderRetryAction)
+                    XCTAssertFalse(session.isSaving)
+                }
+            }
+        }
+    }
+
+    func testRetryConflictFailedReloadKeepsActionAndGenerationFence() async throws {
+        let (session, fake, _) = try await conflictingRetryFixture()
+        fake.editorVariantError = .offline
+        let before = session.document
+        await session.retryRender()
+        XCTAssertEqual(fake.commitCount, 1)
+        XCTAssertEqual(session.document, before)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        guard case .failed = session.saveState else { return XCTFail("reload failure is not a saved result") }
+        XCTAssertTrue(NativeEditorSaveBanner(session: session).showsRenderRetryAction)
+        fake.editorVariantError = nil
+        fake.commitErrorQueue = [.conflict]
+        await session.retryRender()
+        XCTAssertEqual(fake.commitCount, 2, "the explicit retry cannot automatically resubmit after reloading")
+        XCTAssertEqual(fake.lastRequest?.baseGeneration, "saved-generation")
+        XCTAssertEqual(session.document.revision.baseGeneration, "newer-generation")
+        XCTAssertEqual(session.document.clips.map(\.id), ["second-clip", "saved-clip"])
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertTrue(NativeEditorSaveBanner(session: session).showsRenderRetryAction)
+    }
+
+    func testUncertainRetryResponseRetainsExplicitActionAndReconcilesCommittedGeneration() async throws {
+        for error: any Error in [CancellationError(), URLError(.timedOut)] {
+            let (session, fake, _) = try await conflictingRetryFixture()
+            fake.commitErrorQueue = []; fake.commitThrow = error
+            let before = session.document
+            await session.retryRender()
+            XCTAssertEqual(fake.commitCount, 1, "uncertain results never auto-resend")
+            XCTAssertEqual(session.document, before)
+            XCTAssertFalse(session.hasUnsavedChanges)
+            guard case .failed = session.saveState else { return XCTFail("unknown outcome cannot claim success") }
+            XCTAssertTrue(NativeEditorSaveBanner(session: session).showsRenderRetryAction)
+            fake.commitThrow = nil; fake.commitErrorQueue = [.conflict]
+            await session.retryRender()
+            XCTAssertEqual(fake.commitCount, 2)
+            XCTAssertEqual(fake.lastRequest?.baseGeneration, "saved-generation")
+            XCTAssertEqual(session.document.revision.baseGeneration, "newer-generation")
+            XCTAssertEqual(session.document.clips.map(\.id), ["second-clip", "saved-clip"])
+            XCTAssertFalse(session.hasUnsavedChanges)
+        }
+    }
+
+    func testRetrySuccessAndDurableRecoveryHaveAccurateActions() async throws {
+        for renderStarted in [false, true] {
+            let (session, fake, _) = try await conflictingRetryFixture()
+            fake.commitErrorQueue = []
+            fake.commitResponse = EditorCommitResponse(ok: true, generation: "next",
+                sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false),
+                revisionNumber: nil, revisionHash: nil, expectedDuration: nil, renderStarted: renderStarted)
+            let clips = session.document.clips
+            await session.retryRender()
+            XCTAssertEqual(fake.commitCount, 1)
+            XCTAssertEqual(session.document.clips, clips)
+            XCTAssertFalse(session.hasUnsavedChanges)
+            XCTAssertEqual(session.document.revision.baseGeneration, "next")
+            XCTAssertEqual(NativeEditorSaveBanner(session: session).showsRenderRetryAction, !renderStarted)
+            if renderStarted { XCTAssertEqual(session.saveState, .previewPending) }
+            else if case .renderRetryNeeded = session.saveState {} else { XCTFail("durable render recovery must remain retryable") }
+        }
+    }
+
+    func testOrdinaryFailedSaveDoesNotInventRenderRetryIntent() async throws {
+        let t = try thread()
+        let fake = EditorCommitSpy(draftSnapshot: snapshot(), draftError: .unsupported,
+                                   authoritativeVariant: variant(), commitError: .offline)
+        let session = NativeEditorSession(project: t.summary)
+        await session.load(project: t.summary, api: fake)
+        session.updateTextContent(id: "saved-title", content: "Local title")
+        await session.save()
+        XCTAssertEqual(fake.commitCount, 1)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertFalse(NativeEditorSaveBanner(session: session).showsRenderRetryAction)
     }
 
     func testGenuineTimelineSaveRetainsExistingConflictRebaseContract() async throws {

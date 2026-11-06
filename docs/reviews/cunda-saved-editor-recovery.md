@@ -162,3 +162,47 @@ The corrected compiler suite then passed all 73 tests in
 `/tmp/cunda-conflict-compiler-green.{log,xcresult}`. This closes the sole assertion
 failure from the 383-test run; final integrated-head verification remains a separate
 run after local main integration.
+
+## Explicit retry failure-state matrix (before failure-action correction)
+
+| Result | Content/dirty state | Visible action | Dispatch/reconciliation |
+| --- | --- | --- | --- |
+| Successful commit | Acknowledge submitted lanes; preserve in-flight edits | Existing pending/ready render UI | One commit per explicit tap; matching generation required |
+| Durable commit with render recovery | Saved baseline stays clean unless genuinely edited | Retry render | Existing acknowledged sections and generation fence |
+| Offline or 503 | Preserve lanes and genuine dirty state; no success claim | Failure banner must retain Retry render | No automatic retry; one commit per subsequent explicit tap |
+| 409, reload succeeds | Latest baseline plus genuine local work | Explicit review/retry | No automatic resubmit of the stale generation |
+| 409, reload fails | Preserve original document/local work | Failure banner must retain Retry render | A later explicit attempt retains the old generation fence; another 409 reloads, never overwrites |
+| Cancellation/interrupted/uncertain response | No inferred success or loss of local work | Failure banner retains explicit retry while intent exists | No automatic resend; a later tap uses the existing base generation, so an already committed request conflicts and reconciles instead of replaying on a newer generation |
+
+The recovery action is presentation of pending intent, not an authored edit or a
+successful-save state. Ordinary failed Saves without pending render intent keep
+their existing Save behavior. Existing duplicate-tap and generation guards remain.
+
+Failure-action red control: the banner's existing action condition was extracted
+without changing its behavior, then the new state-machine tests ran. They produced
+11 missing-action assertions across 18 tests in `/tmp/cunda-action-red.{log,xcresult}`.
+Content, dirty-state, request-count and generation assertions passed in that red run.
+The same presentation condition drives the actual SwiftUI Retry render button.
+
+The correction exposes read-only pending retry intent to the failure banner; it
+keeps `.failed` and its failure copy, and never marks a lane dirty. Existing render
+retry, device retry and ordinary Save behavior retain their own states/actions.
+Offline/503, failed conflict reload, cancellation and timeout keep the explicit
+action; no automatic dispatch is added. A later tap keeps the original generation
+fence, including an uncertain response followed by a 409 for an already-committed
+newer generation. Tests also cover successful/durable recovery, genuine local text,
+ordinary failed Save without retry intent, and action hiding while a retry is in flight.
+
+The failure-action correction passed all 500 native tests (zero failures) in
+`/tmp/cunda-action-green.{log,xcresult}`: the same eight-class selection as the prior
+495-test run, with five new failure-state tests. This is simulator integration and
+SwiftUI presentation-condition evidence, not physical-device interaction or Photos
+export. No backend production code or retry dispatch/reconciliation logic changed
+in this correction. The prior main integration remains `ad2f4af1c`; later exact-head
+backend/preship results are recorded in the local PR body and logs.
+
+500-test source binding: application tree
+`23c65d5dbaf88241389ecf09206e293ba7064f60`, tests/fixtures tree
+`392d47eec278eefaba3fe4ec1ae6dd62028d1a36`, packages tree
+`a8ae4da503f219d9e6d1573556d68dcd7eb64af5`. Only this evidence document changed
+after the test run; the committed native trees contain the exact tested bytes.
