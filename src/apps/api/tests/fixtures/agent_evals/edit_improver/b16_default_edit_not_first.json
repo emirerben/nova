@@ -1,0 +1,72 @@
+{
+  "id": "b16_default_edit_not_first",
+  "why_bad": "default_edit ranked after another card",
+  "expect": "fail",
+  "expect_failures": [
+    "default_not_first"
+  ],
+  "input": {
+    "state": "first_prompt",
+    "language": "en",
+    "creator_request": "",
+    "issued": [
+      {
+        "kind": "default_edit",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e0"
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "captions",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      }
+    ],
+    "evidence": {
+      "e0": {
+        "signal": "media",
+        "fact": "5 clips uploaded"
+      },
+      "e1": {
+        "signal": "speech",
+        "fact": "creator talks to camera in clip 1"
+      }
+    },
+    "already_in_edit": [],
+    "dismissed": [],
+    "untrusted_texts": []
+  },
+  "output": {
+    "ranked": [
+      {
+        "kind": "captions",
+        "target_ids": [
+          "all"
+        ],
+        "why": "Speech to camera in clip 1",
+        "copy": null,
+        "rank": 1
+      },
+      {
+        "kind": "default_edit",
+        "target_ids": [
+          "all"
+        ],
+        "why": "5 clips, ready to cut",
+        "copy": null,
+        "rank": 2
+      }
+    ]
+  }
+}

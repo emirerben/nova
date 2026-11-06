@@ -1,0 +1,13 @@
+{
+ "id": "prose_instead_of_json",
+ "description": "The model refuses in prose.",
+ "context": "nermin-matcha-update::first_prompt",
+ "raw_text": "Sorry, I can't help with that request.",
+ "expect": {
+  "fallback_reason": "schema_error",
+  "stored_status": "fallback"
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

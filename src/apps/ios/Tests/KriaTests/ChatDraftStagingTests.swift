@@ -602,7 +602,7 @@ final class ChatDraftStagingTests: XCTestCase {
         }
     }
 
-    func testReopenKeepsManualEditsThroughADroppedConnectionButNotThroughASupersededJob() async throws {
+    func testReopenKeepsManualEditsThroughDroppedConnectionAndSupersededJob() async throws {
         let id = UUID()
         let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.variant())
         let session = NativeEditorSession(project: threadProject(id, revision: 5))
@@ -618,7 +618,7 @@ final class ChatDraftStagingTests: XCTestCase {
         for superseded in [APIError.contentPlanUnavailable, APIError.conflict] {
             fake.editorVariantError = superseded
             let handled = await session.reconcileOnOpen(project: threadProject(id, revision: 7), api: fake)
-            XCTAssertFalse(handled, "a superseded job takes the full path that follows the thread")
+            XCTAssertTrue(handled, "a superseded read cannot authorize discarding manual edits")
         }
     }
 

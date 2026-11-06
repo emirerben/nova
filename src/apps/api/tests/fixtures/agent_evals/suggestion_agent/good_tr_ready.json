@@ -1,0 +1,36 @@
+{
+ "id": "good_tr_ready",
+ "description": "A Turkish ready set (east-run-brief) with a Turkish why that names the footage.",
+ "context": "east-run-brief::ready",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "music",
+    "target_ids": [
+     "all"
+    ],
+    "why": "Kameraya konuşan koşucu müzikle karışıyor",
+    "copy": null,
+    "rank": 1
+   },
+   {
+    "kind": "sfx",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 2
+   }
+  ]
+ },
+ "expect": {
+  "wording": "agent",
+  "why": {
+   "music": true
+  }
+ },
+ "tags": [
+  "natural"
+ ]
+}
