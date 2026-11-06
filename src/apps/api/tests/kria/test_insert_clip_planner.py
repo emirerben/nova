@@ -422,6 +422,8 @@ def _extractor_prompt(**kw) -> str:
 # Qendresa 13 (creator v121, on top of Qendresa 12's v120 caption facts) adds the `pauses: "tight"`
 # clause to the cleanup sentence; without both
 # it the digest is 562441ab494ae1bf4c0f79dd9811163c782b8548712f05ed7334ceaba675ffe6.
+# Qendresa item 17 (creator v123, on top of v121) leaves the brief section unchanged: the pin
+# covers v121 + v123.
 _BRIEF_SECTION_BEFORE_INSERTS = "14ad8c6e284569817ed3c380fea76ae35b5983b1fe42a2f53c42a6c14bcaa6d7"
 
 
