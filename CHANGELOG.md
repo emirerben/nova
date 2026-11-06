@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.19.0] - 2026-11-06
+
+### Changed
+- feat(ios): Talk to Camera instrumentation and device bench (KRI-1181) (#2120) <!-- release-pr: 2120 -->
+
 ## [0.88.18.0] - 2026-11-06
 
 ### Changed

@@ -9,8 +9,14 @@ import UIKit
 protocol LiveFrameConsumer: AnyObject, Sendable {
     /// `mirrored`: the preview must flip this frame to look like the selfie-mirrored camera preview.
     func consume(_ frame: CVPixelBuffer, mirrored: Bool)
+    /// `capturedAt`: the frame's presentation time on the host clock (`CACurrentMediaTime` scale), nil when unknown.
+    func consume(_ frame: CVPixelBuffer, mirrored: Bool, capturedAt: Double?)
     /// The capture session stopped or its graph was rebuilt. Drop anything that depends on the last frame.
     func sessionDidStop()
+}
+
+extension LiveFrameConsumer {
+    func consume(_ frame: CVPixelBuffer, mirrored: Bool, capturedAt: Double?) { consume(frame, mirrored: mirrored) }
 }
 
 /// A looping, muted video as the background. Decoded by `AVPlayerItemVideoOutput`, pulled one frame per camera frame.
@@ -166,23 +172,29 @@ final class LiveBackgroundPreview: NSObject, LiveFrameConsumer, @unchecked Senda
         current?.setActive(false)
     }
 
-    func consume(_ frame: CVPixelBuffer, mirrored: Bool) {
-        lock.lock()
-        stats.framesConsumed += 1
-        let resume = !providerActive ? provider : nil
-        providerActive = true
-        lock.unlock()
-        resume?.setActive(true)
-        lock.lock(); let background = provider?.frame(); lock.unlock()
-        var matte: CVPixelBuffer?
-        if background != nil {
-            do { matte = try segmenter.mask(for: frame) } catch { matte = nil }
+    func consume(_ frame: CVPixelBuffer, mirrored: Bool) { consume(frame, mirrored: mirrored, capturedAt: nil) }
+
+    func consume(_ frame: CVPixelBuffer, mirrored: Bool, capturedAt: Double?) {
+        Perf.measure("talk.live.consume") {
+            lock.lock()
+            stats.framesConsumed += 1
+            let resume = !providerActive ? provider : nil
+            providerActive = true
+            lock.unlock()
+            resume?.setActive(true)
+            lock.lock(); let background = provider?.frame(); lock.unlock()
+            var matte: CVPixelBuffer?
+            if background != nil {
+                matte = Perf.measure("talk.live.segment") { try? segmenter.mask(for: frame) }
+            }
+            Perf.measure("talk.live.render") {
+                let image = composite(frame: frame, matte: matte, background: background, mirrored: mirrored)
+                lock.lock()
+                if matte != nil { stats.framesMatted += 1 } else { stats.framesRaw += 1 }
+                lock.unlock()
+                present(image, capturedAt: capturedAt)
+            }
         }
-        let image = composite(frame: frame, matte: matte, background: background, mirrored: mirrored)
-        lock.lock()
-        if matte != nil { stats.framesMatted += 1 } else { stats.framesRaw += 1 }
-        lock.unlock()
-        present(image)
     }
 
     /// The composite exactly as `consume` draws it, in Core Image space. Split out so a test can send it through the same
@@ -208,7 +220,7 @@ final class LiveBackgroundPreview: NSObject, LiveFrameConsumer, @unchecked Senda
         return buffer
     }
 
-    private func present(_ image: CIImage) {
+    private func present(_ image: CIImage, capturedAt: Double?) {
         guard let buffer = render(image), let surface = CVPixelBufferGetIOSurface(buffer)?.takeUnretainedValue() else { return }
         lock.lock()
         recent.append(buffer)
@@ -217,6 +229,9 @@ final class LiveBackgroundPreview: NSObject, LiveFrameConsumer, @unchecked Senda
         CATransaction.begin(); CATransaction.setDisableActions(true)
         layer.contents = surface
         CATransaction.commit()
+        Perf.count("talk.live.presented")
+        // Stops at the layer-contents hand-off, so the compositor and the panel add to what the creator actually sees.
+        if let capturedAt { Perf.sample("talk.live.captureToLayer", milliseconds: (CACurrentMediaTime() - capturedAt) * 1000) }
     }
 }
 
