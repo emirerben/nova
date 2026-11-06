@@ -3,6 +3,105 @@ import UIKit
 
 @MainActor
 final class NativeEditorInspectorUITests: XCTestCase {
+    func testSplitPanelReplacesVideoWithUnusedPhotoAndKeepsCrop() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-split-mixed-media", "-ui-testing-editor-live-preview"]
+        app.launch()
+        let clip = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        XCTAssertTrue(clip.waitForExistence(timeout: 30))
+        clip.tap()
+        app.buttons["native-editor-adjust"].tap()
+        let create = app.buttons["native-editor-split-create-2"]
+        XCTAssertTrue(create.waitForExistence(timeout: 5))
+        create.tap()
+        app.buttons["native-editor-inspector-done"].tap()
+        app.descendants(matching: .any)["native-editor-clip-2"].firstMatch.tap()
+        app.buttons["native-editor-adjust"].tap()
+        let replace = app.buttons["native-editor-split-replace"]
+        for _ in 0..<8 where !replace.isHittable { app.swipeUp() }
+        XCTAssertTrue(replace.isHittable)
+        replace.tap()
+        app.buttons["Clip 2"].tap()
+        let photoSpeed = app.staticTexts["Photos do not have playback speed."]
+        for _ in 0..<5 where !photoSpeed.isHittable { app.swipeUp() }
+        XCTAssertTrue(photoSpeed.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["native-editor-footage-crop"].exists)
+        app.buttons["native-editor-inspector-done"].tap()
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Video top panel and unused photo replacement below"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    func testOrdinaryFootageCanDuplicateBeforeCreatingSplitScreen() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-split-screen"]
+        app.launch()
+        let clip = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        XCTAssertTrue(clip.waitForExistence(timeout: 20))
+        clip.tap()
+        app.buttons["native-editor-adjust"].tap()
+        let duplicate = app.buttons["native-editor-split-duplicate"]
+        for _ in 0..<5 where !duplicate.isHittable { app.swipeUp() }
+        XCTAssertTrue(duplicate.isHittable)
+        XCTAssertTrue(app.buttons["native-editor-split-cut"].exists)
+        XCTAssertTrue(app.buttons["native-editor-split-replace"].exists)
+        duplicate.tap()
+        app.buttons["native-editor-inspector-done"].tap()
+        let timeline = app.descendants(matching: .any)["native-editor-timeline-content"].firstMatch
+        XCTAssertTrue((timeline.value as? String)?.contains("of 0:10.0") == true)
+    }
+
+    func testSplitScreenCreationKeepsOrdinaryClipControlsAndPanelRows() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-split-screen"]
+        app.launch()
+        let clip = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        XCTAssertTrue(clip.waitForExistence(timeout: 20))
+        clip.tap()
+        app.buttons["native-editor-adjust"].tap()
+        let create = app.buttons["native-editor-split-create-2"]
+        XCTAssertTrue(create.waitForExistence(timeout: 5))
+        create.tap()
+        let count = app.segmentedControls["native-editor-split-count"]
+        XCTAssertTrue(count.waitForExistence(timeout: 5))
+        count.buttons["3 panels"].tap()
+        XCTAssertTrue(count.buttons["3 panels"].isSelected)
+        let height = app.sliders["native-editor-split-weight-0"]
+        for _ in 0..<5 where !height.isHittable { app.swipeUp() }
+        XCTAssertTrue(height.isHittable)
+        height.adjust(toNormalizedSliderPosition: 0.7)
+        let gutter = app.sliders["native-editor-split-gutter"]
+        for _ in 0..<5 where !gutter.isHittable { app.swipeUp() }
+        XCTAssertTrue(gutter.isHittable)
+        gutter.adjust(toNormalizedSliderPosition: 0.5)
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-split-background"].firstMatch.exists)
+        let crop = app.buttons["native-editor-footage-crop"]
+        for _ in 0..<5 where !crop.isHittable { app.swipeUp() }
+        XCTAssertTrue(crop.isHittable)
+        app.buttons["native-editor-inspector-done"].tap()
+        for title in ["Top", "Middle", "Bottom"] {
+            XCTAssertTrue(app.staticTexts["native-editor-lane-label-split-" + title.lowercased()].waitForExistence(timeout: 5))
+        }
+        app.descendants(matching: .any)["native-editor-clip-2"].firstMatch.tap()
+        app.buttons["native-editor-adjust"].tap()
+        XCTAssertTrue(app.segmentedControls["native-editor-split-position"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.segmentedControls["native-editor-split-position"].buttons["Middle"].isSelected)
+        app.segmentedControls["native-editor-split-position"].buttons["Top"].tap()
+        XCTAssertTrue(app.segmentedControls["native-editor-split-position"].buttons["Top"].isSelected)
+        let replace = app.buttons["native-editor-split-replace"]
+        for _ in 0..<8 where !replace.isHittable { app.swipeUp() }
+        XCTAssertTrue(replace.isHittable)
+        replace.tap()
+        app.buttons["Clip 2"].tap()
+        XCTAssertTrue(app.staticTexts["Clip 2"].exists)
+        app.buttons["native-editor-inspector-done"].tap()
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Three independently editable split-screen panels"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     func testTimelineSelectionShowsIncomingClipAndTextAtSubframeStart() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-selection-boundary", "-ui-testing-editor-color-cuts"]

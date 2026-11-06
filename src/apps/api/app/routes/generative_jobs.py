@@ -61,6 +61,8 @@ from app.config import settings
 from app.database import get_db
 from app.kria.draft_schemas import DraftSnapshotOut
 from app.kria.media_sources import OriginalMediaDescriptor
+from app.kria.recipes import MediaTransform
+from app.kria.split_screen import SplitScreenSection, layout_split_timeline
 from app.limiter import limiter
 from app.models import (
     AgentRun,
@@ -960,7 +962,7 @@ def visual_block_variant_duration(variant: dict) -> float:
         return explicit
     timeline = variant.get("user_timeline") or variant.get("ai_timeline") or {}
     slots = [slot for slot in timeline.get("slots") or [] if not slot.get("removed")]
-    slot_total = _active_timeline_duration_s(slots)
+    slot_total = _active_timeline_duration_s(slots, timeline.get("split_screen_sections"))
     if slot_total > 0:
         return slot_total
     timed_rows = (
@@ -984,6 +986,9 @@ class TimelineSlotEdit(BaseModel):
 
     slot_id: str | None = None
     parent_segment_id: str | None = None
+    split_section_id: str | None = Field(default=None, min_length=1, max_length=160)
+    split_panel_index: int | None = Field(default=None, ge=0, le=2, strict=True)
+    split_offset_s: float | None = Field(default=None, ge=0, allow_inf_nan=False, strict=True)
     clip_index: int
     in_s: float
     duration_beats: int | None = None
@@ -1008,6 +1013,13 @@ class TimelineSlotEdit(BaseModel):
     # Explicit selected source edge for source-preserving speed edits. Omission
     # retains the legacy duration * rate window contract.
     source_end_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    speaker_subject: bool | None = None
+    media_transform: MediaTransform | None = None
+    source_audio_volume: float | None = Field(default=None, ge=0, le=2, allow_inf_nan=False)
+    audio_fade_in: float | None = Field(default=None, ge=0, le=60, allow_inf_nan=False)
+    audio_fade_out: float | None = Field(default=None, ge=0, le=60, allow_inf_nan=False)
+    freeze_hold_s: float | None = Field(default=None, ge=0, le=1800, allow_inf_nan=False)
+    freeze_frame_s: float | None = Field(default=None, ge=0, le=1800, allow_inf_nan=False)
     # Camera sound for this occurrence: True silences it. None = an older client omitted
     # the field; the saved value is kept. Honoured on phone-rendered guided edits only.
     muted: bool | None = None
@@ -1101,7 +1113,7 @@ class TimelineSlotOut(BaseModel):
     duration_s: float | None = None
     # Unit per-occurrence marker for selected source audio under a recorded
     # narration. The global bed gain remains on the recipe's audio mix.
-    source_audio_volume: float | None = Field(default=None, ge=0.0, le=1.0)
+    source_audio_volume: float | None = Field(default=None, ge=0.0, le=2.0)
     duration_beats: int | None = None
     order: int | None = None
     moment_energy: float | None = None
@@ -1156,6 +1168,7 @@ class TimelineResponse(BaseModel):
     total_duration_s: float
     has_user_edits: bool
     slots: list[TimelineSlotOut]
+    split_screen_sections: list[SplitScreenSection] = Field(default_factory=list)
     clips: list[TimelineClipOut]
     edit_wide_look_presets: list[LookPreset] = Field(default_factory=list)
     look_presets: list[LookPreset] = Field(default_factory=list)
@@ -1433,6 +1446,7 @@ class EditorCommitRequest(BaseModel):
     caption_cues: list[dict] | None = None
     caption_meta: EditorCommitCaptionMeta | None = None
     timeline_slots: list[TimelineSlotEdit] | None = None
+    split_screen_sections: list[SplitScreenSection] | None = Field(default=None, max_length=100)
     mix: EditorCommitMix | None = None
     music_track_id: str | None = None
     # Explicit music removal. Deliberately NOT an overloaded nullable
@@ -7665,6 +7679,33 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         **_device_clamped_editor_capabilities(job, variant),
         "drawings": _drawing_capabilities(job, variant),
     }
+    from app.services.phone_rollout import split_screen_supported
+
+    if (
+        variant.get("render_destination") == "device"
+        and capabilities.get("timeline") is True
+        and split_screen_supported()
+    ):
+        capabilities["split_screen"] = True
+    if (
+        variant.get("editor_timeline_mode") == "authored"
+        and variant.get("render_destination") == "device"
+    ):
+        song = _variant_user_song(job, variant)
+        if song is not None and settings.guided_story_editor_v2_enabled:
+            background = song["mode"] == "background"
+            capabilities["user_song"] = {
+                "volume": {"editable": True, "reason": None},
+                "window": {
+                    "editable": background,
+                    "reason": None if background else "user_song_lipsync_locked",
+                },
+                "remove": {"editable": True, "reason": None},
+                "trim": {
+                    "editable": background,
+                    "reason": None if background else "user_song_lipsync_locked",
+                },
+            }
     if "original_audio" not in capabilities:
         original_audio = _voiceover_original_audio_capability(variant)
         if original_audio is not None:
@@ -9114,6 +9155,12 @@ def _dispatch_rendered_timeline(
         # The pinned recipe's own length is authoritative (it already accounts for
         # montage crossfade overlaps and retimed clips).
         total = phone_total_duration_s
+    split_sections = (variant.get("user_timeline") or {}).get("split_screen_sections") or []
+    if split_sections:
+        starts, _, total = layout_split_timeline(active, split_sections)
+        for row, start in zip(active, starts, strict=True):
+            row["output_start_s"] = start
+            row["output_end_s"] = start + row["duration_s"]
     used_indices = {s.get("clip_index") for s in active}
 
     # Source durations are only known where the worker probed them (ai_timeline).
@@ -9148,6 +9195,7 @@ def _dispatch_rendered_timeline(
             "reason": reason,
             "beat_grid": beat_grid,
             "total_duration_s": round(total, 3),
+            "split_screen_sections": split_sections,
             "has_user_edits": has_user_edits,
             "edit_wide_look_presets": (
                 list(EDIT_WIDE_LOOK_PRESETS)
@@ -9344,7 +9392,9 @@ _TIMELINE_REASSEMBLY_SENTINEL = {
 }
 
 
-def _active_timeline_duration_s(slots: list[dict]) -> float:
+def _active_timeline_duration_s(slots: list[dict], split_sections: list | None = None) -> float:
+    if split_sections:
+        return layout_split_timeline(slots, split_sections)[2]
     active = [slot for slot in slots if not slot.get("removed")]
     total = sum(float(slot.get("duration_s") or 0.0) for slot in active)
     if settings.edit_transitions_enabled:
@@ -10327,6 +10377,10 @@ async def dispatch_edit_timeline(
     if any(v.get("render_status") == "rendering" for v in _variants_of(job)):
         raise _timeline_error(status.HTTP_409_CONFLICT, "JOB_BUSY")
 
+    if (variant.get("user_timeline") or {}).get("split_screen_sections") or any(
+        row.split_section_id for row in payload.slots
+    ):
+        raise HTTPException(422, detail={"code": "split_screen_requires_atomic_commit"})
     resolved = resolve_timeline_slots_for_edit(job, variant, payload.slots)
 
     render_gen_id = uuid.uuid4().hex
@@ -11024,9 +11078,7 @@ def require_guided_story_editor_commit(
         # KRI-428: the creator's own song is not catalog music, so the reference-only
         # gate above never applies to it -- but it only exists on a phone guided-v2
         # variant whose current plan actually carries one.
-        if variant.get("editor_timeline_mode") == "authored" or not getattr(
-            settings, "guided_story_editor_v2_enabled", False
-        ):
+        if not getattr(settings, "guided_story_editor_v2_enabled", False):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=_GUIDED_STORY_EDIT_ERROR,
@@ -11163,6 +11215,9 @@ def prepare_editor_commit(
     )
     variant = _find_variant(job, variant_id)
     if variant is not None:
+        from app.services.split_screen_editor import require_split_screen_commit
+
+        require_split_screen_commit(variant, payload)
         _require_render_affecting_mutation_allowed(
             job, variant, allow_authored=payload.editor_state_version in (1, 2)
         )
@@ -11191,8 +11246,12 @@ def prepare_editor_commit(
                 raise HTTPException(422, detail={"code": "phone_editor_media_unavailable"})
 
         if (
-            variant.get("editor_timeline_mode") == "authored"
-            and variant.get("resolved_archetype") == "subtitled"
+            (
+                variant.get("editor_timeline_mode") == "authored"
+                and variant.get("resolved_archetype") == "subtitled"
+            )
+            or payload.split_screen_sections
+            or (variant.get("user_timeline") or {}).get("split_screen_sections")
         ):
             from app.services.authored_editor import prepare_authored_editor_commit
 
@@ -12044,6 +12103,9 @@ def _prepare_editor_commit(
 
     require_editor_clock_reader(job, variant)
     require_phone_text_style_client(variant.get(PHONE_TEXT_STYLE_FIELD))
+    from app.services.split_screen_editor import require_split_screen_commit
+
+    require_split_screen_commit(variant, payload)
     payload = normalize_editor_deletion_request(job, variant_id, payload)
     require_guided_story_editor_commit(job, variant_id, payload)
 
@@ -13004,7 +13066,9 @@ def _prepare_editor_commit(
                 )["segments"]
             )
         elif resolved_slots is not None:
-            drawing_duration_s = _active_timeline_duration_s(resolved_slots)
+            drawing_duration_s = _active_timeline_duration_s(
+                resolved_slots, (variant.get("user_timeline") or {}).get("split_screen_sections")
+            )
         else:
             drawing_duration_s = visual_block_variant_duration(variant)
         validated_drawings = _validate_drawings_section(
@@ -13167,6 +13231,24 @@ def _prepare_editor_commit(
         if v.get("variant_id") != variant_id:
             continue
         updated = dict(v)
+        if payload.user_song is not None and v.get("editor_timeline_mode") == "authored":
+            from app.schemas.user_song import UserSongPlan
+            from app.services.user_song_projection import _current_plan
+
+            plan = copy.deepcopy(_current_plan(job, v) or {})
+            song = _merge_user_song_edit(job, v, plan.get("user_song"), payload)
+            if song.pop("removed", False):
+                plan.pop("user_song", None)
+                if updated.get("original_audio_level_source") != "editor":
+                    updated["original_audio_level"] = 1.0
+                updated["source_audio_preserved"] = True
+            else:
+                song.setdefault("window_end_s", song["duration_s"])
+                try:
+                    plan["user_song"] = UserSongPlan.model_validate(song).model_dump(mode="json")
+                except ValueError as exc:
+                    raise _timeline_error(422, "user_song_window_out_of_range") from exc
+            updated["_phone_editor_saved_plan_v1"] = plan
         if validated_elements is not None:
             updated["text_elements"] = validated_elements
             updated["text_elements_user_edited"] = True
@@ -13181,6 +13263,14 @@ def _prepare_editor_commit(
                 del updated["caption_animation_phases"]
         if resolved_slots is not None:
             updated["user_timeline"] = {"slots": resolved_slots}
+            split_sections = (
+                [section.model_dump(mode="json") for section in payload.split_screen_sections]
+                if payload.split_screen_sections is not None
+                else (variant.get("user_timeline") or {}).get("split_screen_sections", [])
+            )
+            if split_sections:
+                layout_split_timeline(resolved_slots, split_sections)
+                updated["user_timeline"]["split_screen_sections"] = split_sections
         if payload.mix is not None:
             if payload.mix.music_level is not None:
                 updated["mix"] = float(payload.mix.music_level)
@@ -13237,7 +13327,9 @@ def _prepare_editor_commit(
             else:
                 updated.pop("user_timeline", None)
         if resolved_slots is not None and updated.get("music_track_id"):
-            active_duration_s = _active_timeline_duration_s(resolved_slots)
+            active_duration_s = _active_timeline_duration_s(
+                resolved_slots, (variant.get("user_timeline") or {}).get("split_screen_sections")
+            )
             if active_duration_s > 0:
                 # The editor commit persists before enqueue. Keep the duration
                 # beside those cuts so an older worker cannot reuse a stale
@@ -13375,7 +13467,9 @@ def _prepare_editor_commit(
             for segment in guided_revision.get("segments") or []
         )
     elif resolved_slots is not None:
-        expected_duration_s = _active_timeline_duration_s(resolved_slots)
+        expected_duration_s = _active_timeline_duration_s(
+            resolved_slots, (variant.get("user_timeline") or {}).get("split_screen_sections")
+        )
     else:
         expected_duration_s = float(updated.get("duration_s") or variant.get("duration_s") or 0.0)
 

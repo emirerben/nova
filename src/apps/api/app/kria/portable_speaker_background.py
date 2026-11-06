@@ -156,6 +156,7 @@ class SpeakerBackgroundLayer(BaseModel):
     source_start: float = Field(default=0.0, ge=0, le=MAX_SOURCE_START_S)
     loop: bool = True
     subject_track_id: str = Field(default=DEFAULT_SUBJECT_TRACK_ID, min_length=1, max_length=160)
+    subject_clip_ids: list[str] | None = Field(default=None, max_length=500)
     # KRI-1162, both omitted from the wire while unused (never ``[]`` / ``null``).
     windows: list[SpeakerBackgroundWindow] | None = Field(
         default=None, min_length=1, max_length=MAX_BACKGROUND_WINDOWS
@@ -178,6 +179,14 @@ class SpeakerBackgroundLayer(BaseModel):
 
     @model_validator(mode="after")
     def fill_matches_its_kind(self) -> SpeakerBackgroundLayer:
+        if self.subject_clip_ids is not None and (
+            len(set(self.subject_clip_ids)) != len(self.subject_clip_ids)
+            or any(
+                not key or len(key) > 160 or any(char.isspace() for char in key)
+                for key in self.subject_clip_ids
+            )
+        ):
+            raise ValueError("speaker subject clip ids must be unique and nonempty")
         if self.media_kind == "color":
             if self.color is None:
                 raise ValueError("a colour background needs a color")
@@ -242,6 +251,8 @@ class SpeakerBackgroundLayer(BaseModel):
     @model_serializer(mode="wrap")
     def _omit_unused(self, handler):  # noqa: ANN001, ANN202
         data = handler(self)
+        if self.subject_clip_ids is None:
+            data.pop("subject_clip_ids", None)
         if data.get("asset_id") is None:
             data.pop("asset_id", None)
         if data.get("color") is None:

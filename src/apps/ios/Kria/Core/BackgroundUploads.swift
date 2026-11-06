@@ -59,21 +59,24 @@ struct PendingEditorSourcePlacement: Codable, Identifiable, Sendable {
     let lane: Lane
     let visual: CreationVisual?
     let localDurationS: Double?
+    let replacingSlotID: String?
     var status: String
     var error: String?
     var retryable: Bool
 
-    init(id: UUID, target: EditorSourceRegistrationTarget, lane: Lane, visual: CreationVisual?, localDurationS: Double?, status: String = "preparing", error: String? = nil, retryable: Bool = true) {
+    init(id: UUID, target: EditorSourceRegistrationTarget, lane: Lane, visual: CreationVisual?, localDurationS: Double?, replacingSlotID: String? = nil, status: String = "preparing", error: String? = nil, retryable: Bool = true) {
         self.id = id; self.target = target; self.lane = lane; self.visual = visual; self.localDurationS = localDurationS
+        self.replacingSlotID = replacingSlotID
         self.status = status; self.error = error; self.retryable = retryable
     }
 
-    enum CodingKeys: String, CodingKey { case id, target, lane, visual, localDurationS, status, error, retryable }
+    enum CodingKeys: String, CodingKey { case id, target, lane, visual, localDurationS, replacingSlotID, status, error, retryable }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id); target = try c.decode(EditorSourceRegistrationTarget.self, forKey: .target)
         lane = try c.decode(Lane.self, forKey: .lane); visual = try c.decodeIfPresent(CreationVisual.self, forKey: .visual)
         localDurationS = try c.decodeIfPresent(Double.self, forKey: .localDurationS)
+        replacingSlotID = try c.decodeIfPresent(String.self, forKey: .replacingSlotID)
         status = try c.decodeIfPresent(String.self, forKey: .status) ?? "preparing"
         error = try c.decodeIfPresent(String.self, forKey: .error)
         retryable = try c.decodeIfPresent(Bool.self, forKey: .retryable) ?? true

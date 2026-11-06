@@ -64,6 +64,20 @@ enum NativeEditorUITestFixtures {
     }
 
     static func fixture(arguments: [String]) -> Fixture {
+        if arguments.contains("-ui-testing-editor-split-mixed-media") {
+            var value = splitScreenControls
+            value.clips = Array(value.clips.prefix(1))
+            var document = EditorDocument(snapshot: value.serverSnapshot)
+            document.clips = Array(document.clips.prefix(1))
+            value.serverSnapshot = document.encodeSnapshot()
+            return Fixture(shape: .reorderClips, draft: value)
+        }
+        if arguments.contains("-ui-testing-editor-split-speaker") {
+            return Fixture(shape: .speakerBackground, draft: splitSpeaker)
+        }
+        if arguments.contains("-ui-testing-editor-split-screen") {
+            return Fixture(shape: .reorderClips, draft: splitScreenControls)
+        }
         if arguments.contains("-ui-testing-editor-speed") {
             return Fixture(shape: .reorderClips, draft: speedControls)
         }
@@ -765,6 +779,45 @@ enum NativeEditorUITestFixtures {
         do { return try JSONDecoder().decode(EditorDraft.self, from: data) }
         catch { preconditionFailure("KRI-524 captured editor fixture is invalid: \(error)") }
     }()
+
+    static let splitScreenControls: EditorDraft = {
+        let clips = [clip(989, start: 0, duration: 4, sourceDuration: 20),
+                     clip(990, start: 4, duration: 2, sourceDuration: 20)]
+        return draft(clips: clips, text: [], captions: false, music: false,
+                     sections: ["timeline_slots": slots(for: clips)], rootExtras: [
+                        "render_destination": .string("device"),
+                        "editor_timeline_mode": .string("authored"),
+                        "editor_capabilities": .object([
+                            "timeline": .bool(true),
+                            "split_screen": .object(["editable": .bool(true)]),
+                            "clips": .object([
+                                "source_crop": .object(["editable": .bool(true)]),
+                                "playback_rate": .object(["editable": .bool(true)])
+                            ])
+                        ])
+                     ])
+    }()
+
+    static var splitSpeaker: EditorDraft {
+        var value = speakerBackground
+        var document = EditorDocument(snapshot: value.serverSnapshot)
+        guard var top = document.clips.first else { return value }
+        top.id = "split-speaker-top"
+        top.durationS = 4
+        top.raw["speaker_subject"] = .bool(true)
+        top.setSplitMembership(sectionID: "speaker-panels", panelIndex: 0, offset: 0)
+        var bottom = top
+        bottom.id = "split-speaker-bottom"
+        bottom.setSplitMembership(sectionID: "speaker-panels", panelIndex: 1, offset: 0)
+        document.clips = [top, bottom]
+        document.splitScreenSections = [EditorSplitScreenSection(id: "speaker-panels", durationS: 4, panelCount: 2)]
+        document.captionCues = []
+        document.textElements = []
+        document.captionMeta["enabled"] = .bool(false)
+        document.capabilities["split_screen"] = EditorCapability(editable: true)
+        value.serverSnapshot = document.encodeSnapshot()
+        return value
+    }
 
     static let speedControls: EditorDraft = {
         let clips = [clip(960, start: 0, duration: 6, sourceDuration: 20)]

@@ -15,6 +15,7 @@ from pydantic import (
 )
 
 from app.kria.portable_visual import AudioMuteWindow, VisualMediaPlacement
+from app.kria.split_screen import SplitScreenMembership
 
 
 class _RecipeModel(BaseModel):
@@ -129,6 +130,7 @@ class ClipBackdrop(_RecipeModel):
 
 
 class TimelineClip(_RecipeModel):
+    split_screen: SplitScreenMembership | None = None
     id: str = Field(min_length=1, max_length=160)
     source_asset_id: str = Field(min_length=1, max_length=160)
     source_start: float = Field(ge=0)
@@ -170,6 +172,7 @@ class TimelineClip(_RecipeModel):
     def _optional_look(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         result = handler(self)
         for key in (
+            "split_screen",
             "overlay_dissolve_seed",
             "visual_placement",
             "hold_duration",
@@ -286,6 +289,7 @@ MediaCapability = Literal[
     # Qendresa item 18: `speaker_background.focus` / `.windows[].focus` -- a background picture
     # aimed at its readable text ({x, y, zoom}). Derived from the layer; own verified token.
     "backgroundFocus",
+    "splitScreen",
     # A tilted clip (`transform.rotation_degrees != 0`) and/or a `backdrop` under a main-track
     # clip, drawn on device by `KriaMediaEngine`'s compositor (KRI-1134).
     "clipTilt",
@@ -336,6 +340,10 @@ class EditRecipeV1(_RecipeModel):
         clips = [clip for track in self.tracks for clip in track.clips]
         for track in self.tracks:
             for clip in track.clips:
+                if clip.split_screen is not None and (
+                    self.schema_version != 2 or track.kind != "video"
+                ):
+                    raise ValueError("split panels require a V2 video track")
                 if clip.visual_placement is not None:
                     placement = clip.visual_placement
                     if (

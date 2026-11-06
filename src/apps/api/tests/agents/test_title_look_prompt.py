@@ -21,7 +21,9 @@ def _manifest() -> ResolvedCreatorManifest:
 
 
 def test_prompt_version_is_bumped() -> None:
-    assert main_creator.MAIN_CREATOR_PROMPT_VERSION == "2026-11-06-v136"  # 20 v135, 18 v136
+    assert (
+        main_creator.MAIN_CREATOR_PROMPT_VERSION == "2026-11-06-v137"
+    )  # Title look, background focus, and split screen.
 
 
 def test_flag_off_section_is_the_old_bytes(monkeypatch: pytest.MonkeyPatch) -> None:

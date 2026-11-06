@@ -706,8 +706,59 @@ SPEECH_EDITOR_LANES = (
 )
 
 
-def speech_basis_entry(record: dict, slots: Sequence[dict]) -> dict:
+def canvas_speech_slots(slots: Sequence[dict], sections: Sequence[dict]) -> list[dict]:
+    """A split section owns one canvas interval, including empty panel time."""
+    from app.kria.split_screen import layout_split_timeline
+
+    active = [row for row in slots if not row.get("removed")]
+    starts, projected, _ = layout_split_timeline(active, sections)
+    groups = {section.id: section for section in projected}
+    emitted = set()
+    result = []
+    for row, start in zip(active, starts, strict=True):
+        section_id = row.get("split_section_id")
+        if section_id:
+            if section_id in emitted:
+                continue
+            emitted.add(section_id)
+            section = groups[section_id]
+            result.append(
+                {
+                    "slot_id": f"split-section:{section_id}",
+                    "clip_index": -1,
+                    "in_s": 0,
+                    "duration_s": section.end - section.start,
+                    "_speech_output_start_s": section.start,
+                    "_canvas_members": [
+                        r.get("slot_id") for r in active if r.get("split_section_id") == section_id
+                    ],
+                }
+            )
+        else:
+            result.append(
+                {
+                    **row,
+                    "in_s": 0,
+                    "playback_rate": 1,
+                    "source_end_s": row["duration_s"],
+                    "_speech_output_start_s": start,
+                    "_canvas_members": [row.get("slot_id")],
+                }
+            )
+    return result
+
+
+def _record_segment_id(record: dict) -> str | None:
+    return record.get("segment_id") or (record.get("source_params") or {}).get("segment_id")
+
+
+def speech_basis_entry(
+    record: dict, slots: Sequence[dict], *, canvas_slots: Sequence[dict] | None = None
+) -> dict:
     """Retain source provenance, never paths, URLs or another asset authority."""
+    canvas = canvas_slots is not None and not _record_segment_id(record)
+    if canvas:
+        slots = canvas_slots
     keys = (
         "slot_id",
         "clip_index",
@@ -718,12 +769,16 @@ def speech_basis_entry(record: dict, slots: Sequence[dict]) -> dict:
         "transition_duration_s",
         "removed",
         "source_end_s",
+        "_canvas_members",
     )
     start = record.get("start_s", record.get("start", record.get("at_s")))
     end = record.get("end_s", record.get("end", record.get("at_s")))
     windows = authored_speech_windows(slots)
     anchors = []
     for row, window in zip((r for r in slots if not r.get("removed")), windows, strict=True):
+        owner = _record_segment_id(record)
+        if owner and row.get("slot_id") != owner and row.get("parent_segment_id") != owner:
+            continue
         if start is not None and end is not None:
             if "at_s" in record:
                 if not window["start"] <= float(start) < window["end"]:
@@ -733,20 +788,89 @@ def speech_basis_entry(record: dict, slots: Sequence[dict]) -> dict:
         anchors.append(
             {**{k: row[k] for k in keys if k in row}, "_speech_output_start_s": window["start"]}
         )
-    return {"record": deepcopy(record), "slots": anchors}
+    return {
+        "record": deepcopy(record),
+        "slots": anchors,
+        **({"anchor_space": "canvas"} if canvas else {}),
+    }
+
+
+def _project_canvas_basis(entry: dict, slots: Sequence[dict]) -> list[dict]:
+    # Structural create/unstack replaces a unit's ID; member occurrence IDs
+    # retain its location without borrowing either panel's source clock.
+    targets = list(slots)
+    ids = {row.get("slot_id") for row in targets}
+    for old in entry["slots"]:
+        if old.get("slot_id") in ids:
+            continue
+        members = set(old.get("_canvas_members") or [old.get("slot_id")])
+        matches = [
+            row
+            for row in slots
+            if members.intersection(row.get("_canvas_members") or [row.get("slot_id")])
+        ]
+        if matches:
+            start = min(float(row["_speech_output_start_s"]) for row in matches)
+            end = max(
+                float(row["_speech_output_start_s"]) + float(row["duration_s"]) for row in matches
+            )
+            targets.append(
+                {
+                    "slot_id": old["slot_id"],
+                    "clip_index": old["clip_index"],
+                    "in_s": 0,
+                    "duration_s": end - start,
+                    "_speech_output_start_s": start,
+                }
+            )
+    parts = reproject_authored_speech_records(
+        [entry["record"]], old_slots=entry["slots"], new_slots=targets
+    )
+    if len(parts) <= 1:
+        return parts
+    # Canvas objects stay one object even when their interval crosses units.
+    raw = deepcopy(entry["record"])
+    start_key = "start_s" if "start_s" in raw else "start"
+    end_key = "end_s" if "end_s" in raw else "end"
+    raw[start_key] = min(part[start_key] for part in parts)
+    raw[end_key] = max(part[end_key] for part in parts)
+    if "words" in raw:
+        raw["words"] = [word for part in parts for word in part.get("words", [])]
+    if "word_timings" in raw:
+        raw["word_timings"] = [
+            {
+                **word,
+                "start_s": _round_time(word["start_s"] + part[start_key] - raw[start_key]),
+                "end_s": _round_time(word["end_s"] + part[start_key] - raw[start_key]),
+            }
+            for part in parts
+            for word in part.get("word_timings", [])
+        ]
+    return [raw]
 
 
 def project_speech_basis(
-    entries: list[dict], slots: Sequence[dict], *, captions: bool
+    entries: list[dict],
+    slots: Sequence[dict],
+    *,
+    captions: bool,
+    canvas_slots: Sequence[dict] | None = None,
 ) -> list[dict]:
     rows = []
     for entry in entries:
         if "source_groups" in entry:
             rows.extend(_project_source_caption_group(entry, slots))
+        elif entry.get("anchor_space") == "canvas" and canvas_slots is not None:
+            rows.extend(_project_canvas_basis(entry, canvas_slots))
         else:
             rows.extend(
                 reproject_authored_speech_records(
-                    [entry["record"]], old_slots=entry["slots"], new_slots=slots, captions=captions
+                    [entry["record"]],
+                    old_slots=entry["slots"],
+                    new_slots=canvas_slots
+                    if entry.get("anchor_space") == "canvas" and canvas_slots is not None
+                    else slots,
+                    captions=captions,
                 )
             )
     return sorted(rows, key=lambda r: float(r.get("start_s", r.get("start", r.get("at_s", 0)))))
@@ -759,6 +883,7 @@ def sync_speech_basis(
     *,
     captions: bool,
     deleted_ids: set[str] | None = None,
+    canvas_slots: Sequence[dict] | None = None,
 ) -> list[dict]:
     """Update visible authored edits while retaining temporarily trimmed content.
 
@@ -767,8 +892,19 @@ def sync_speech_basis(
     only if untouched. A changed/deleted record is replaced/removed explicitly;
     hidden records survive a window move, but explicit deletion wins everywhere.
     """
+    if captions:
+        canvas_slots = None
     if entries is None:
-        return [speech_basis_entry(row, slots) for row in records]
+        return [speech_basis_entry(row, slots, canvas_slots=canvas_slots) for row in records]
+    if canvas_slots is not None:
+        entries = [
+            speech_basis_entry(entry["record"], slots, canvas_slots=canvas_slots)
+            if "source_groups" not in entry
+            and entry.get("anchor_space") != "canvas"
+            and not _record_segment_id(entry["record"])
+            else entry
+            for entry in entries
+        ]
     remaining = list(records)
     kept = []
     deleted = deleted_ids or set()
@@ -788,7 +924,7 @@ def sync_speech_basis(
         identifier = str(entry["record"].get("id") or "")
         if identifier in deleted:
             continue
-        visible = project_speech_basis([entry], slots, captions=captions)
+        visible = project_speech_basis([entry], slots, captions=captions, canvas_slots=canvas_slots)
         if not visible:
             kept.append(deepcopy(entry))
         elif all(row in remaining for row in visible):
@@ -797,7 +933,7 @@ def sync_speech_basis(
                 remaining.remove(row)
         # Otherwise a visible record was edited/deleted. The current replacement
         # below becomes its new authored source anchor (no resurrection later).
-    return kept + [speech_basis_entry(row, slots) for row in remaining]
+    return kept + [speech_basis_entry(row, slots, canvas_slots=canvas_slots) for row in remaining]
 
 
 def initial_speech_timing_basis(variant: dict, slots: Sequence[dict]) -> dict:

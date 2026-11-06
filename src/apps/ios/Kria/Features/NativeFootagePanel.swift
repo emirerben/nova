@@ -8,6 +8,9 @@ struct NativeFootagePanel: View {
 
     var body: some View {
         Group {
+            if selection.kind == .clip {
+                NativeSplitScreenControls(session: session, selection: selection)
+            }
             if session.rendersOnDevice {
                 deviceControls
             } else {
@@ -96,6 +99,164 @@ struct NativeFootagePanel: View {
         // A clip is cropped only where the server explicitly lists `clips.source_crop`; an overlay or visual keeps its section gate.
         if selection.kind != .clip || session.serverOffersClipCrop || session.footageCrop(for: selection) != nil {
             Section("Crop") { cropRow }
+        }
+    }
+}
+
+struct NativeSplitScreenControls: View {
+    @ObservedObject var session: NativeEditorSession
+    let selection: EditorSelection
+
+    private var slot: EditorTimelineSlot? {
+        guard let clip = session.timelineClips.first(where: { $0.id.uuidString == selection.id }) else { return nil }
+        return session.document.clips.first { $0.id == clip.slotID }
+    }
+
+    private var section: EditorSplitScreenSection? {
+        session.document.splitScreenSections.first { $0.id == slot?.splitSectionID && $0.isValid }
+    }
+
+    var body: some View {
+        if let section {
+            Section("Split screen") {
+                if let error = session.splitScreenActionError {
+                    Text(error).foregroundStyle(KriaColor.failureText)
+                        .accessibilityIdentifier("native-editor-split-error")
+                }
+                Picker("Layout", selection: Binding(
+                    get: { self.section?.panelCount ?? section.panelCount },
+                    set: { session.setSplitScreenPanelCount($0) }
+                )) {
+                    Text("2 panels").tag(2)
+                    Text("3 panels").tag(3)
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("native-editor-split-count")
+
+                Picker("Panel position", selection: Binding(
+                    get: { slot?.splitPanelIndex ?? 0 },
+                    set: { session.moveSelectedSplitScreenPanel(to: $0) }
+                )) {
+                    ForEach(0..<section.panelCount, id: \.self) { index in
+                        Text(NativeSplitScreenRows.panelTitle(index: index, count: section.panelCount)).tag(index)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("native-editor-split-position")
+                .accessibilityHint("Swaps this panel with the chosen position")
+
+                Stepper(value: Binding(
+                    get: { self.section?.durationS ?? section.durationS },
+                    set: { session.setSplitScreenDuration($0) }
+                ), in: 0.1...1800, step: 0.1) {
+                    LabeledContent("Section duration", value: String(format: "%.1f s", section.durationS))
+                }
+                .accessibilityIdentifier("native-editor-split-duration")
+                .accessibilityValue(String(format: "%.1f seconds", section.durationS))
+
+                Stepper(value: Binding(
+                    get: { slot?.splitOffsetS ?? 0 },
+                    set: { session.setSelectedSplitScreenOffset($0) }
+                ), in: 0...max(0, section.durationS - (slot?.durationS ?? 0.1)), step: 0.1) {
+                    LabeledContent("Clip starts after", value: String(format: "%.1f s", slot?.splitOffsetS ?? 0))
+                }
+                .accessibilityIdentifier("native-editor-split-offset")
+
+                Button("Keep this panel full screen") { session.removeSelectedSplitScreen() }
+                    .accessibilityIdentifier("native-editor-split-remove")
+                Text("Each panel has its own clips, crop, speed and audio. Changing position swaps the complete panels.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            .disabled(!session.canEditSplitScreen)
+
+            Section("Panel layout") {
+                ForEach(0..<section.panelCount, id: \.self) { index in
+                    let title = NativeSplitScreenRows.panelTitle(index: index, count: section.panelCount)
+                    let weight = section.panelWeights[index]
+                    LabeledContent(title + " height", value: String(format: "%.0f%%", weight / section.panelWeights.reduce(0, +) * 100))
+                    NativeEditorSlider(session: session, value: Binding(
+                        get: {
+                            guard let current = self.section, current.panelWeights.indices.contains(index) else { return weight }
+                            return current.panelWeights[index]
+                        },
+                        set: { session.setSplitScreenPanelWeight(index: index, weight: $0) }
+                    ), in: 0.1...max(5, weight), step: 0.05) { Text(title + " panel height") }
+                    .accessibilityIdentifier("native-editor-split-weight-\(index)")
+                }
+                Button("Equal panel heights") {
+                    session.beginTransaction()
+                    for index in 0..<section.panelCount { session.setSplitScreenPanelWeight(index: index, weight: 1) }
+                    session.endTransaction()
+                }
+                .accessibilityIdentifier("native-editor-split-equal-heights")
+                LabeledContent("Divider spacing", value: String(format: "%.1f%%", section.gutter * 100))
+                NativeEditorSlider(session: session, value: Binding(
+                    get: { self.section?.gutter ?? section.gutter },
+                    set: { session.setSplitScreenGutter($0) }
+                ), in: 0...0.1, step: 0.005) { Text("Divider spacing") }
+                .accessibilityIdentifier("native-editor-split-gutter")
+                ColorPicker("Background color", selection: Binding(
+                    get: { nativeEditorColor(self.section?.backgroundColor ?? section.backgroundColor) },
+                    set: { session.setSplitScreenBackgroundColor(nativeEditorHex($0)) }
+                ), supportsOpacity: false)
+                .accessibilityIdentifier("native-editor-split-background")
+                .accessibilityValue(section.backgroundColor)
+            }
+            .disabled(!session.canEditSplitScreen)
+
+            Section("Section order") {
+                Button("Move section earlier") { session.moveSelectedSplitScreenSection(by: -1) }
+                    .accessibilityIdentifier("native-editor-split-section-earlier")
+                Button("Move section later") { session.moveSelectedSplitScreenSection(by: 1) }
+                    .accessibilityIdentifier("native-editor-split-section-later")
+            }
+            .disabled(!session.canEditSplitScreen)
+
+            Section("Panel clip") {
+                Button("Move clip earlier in panel") { session.moveSelectedSplitScreenClip(by: -1) }
+                    .accessibilityIdentifier("native-editor-split-clip-earlier")
+                Button("Move clip later in panel") { session.moveSelectedSplitScreenClip(by: 1) }
+                    .accessibilityIdentifier("native-editor-split-clip-later")
+                clipActions
+            }
+            .disabled(!session.canEditSplitScreen)
+        } else {
+            if session.canCreateSplitScreen {
+                Section("Split screen") {
+                    Button("Create 2 panels") { session.createSplitScreen(panelCount: 2) }
+                        .accessibilityIdentifier("native-editor-split-create-2")
+                    Button("Create 3 panels") { session.createSplitScreen(panelCount: 3) }
+                        .accessibilityIdentifier("native-editor-split-create-3")
+                    Text("Start with this clip in each panel, then replace the footage or adjust each panel separately.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            Section("Clip") { clipActions }
+                .disabled(!session.canEditTimeline)
+        }
+    }
+
+    @ViewBuilder private var clipActions: some View {
+        LabeledContent("Footage", value: session.splitScreenSourceChoices.first { $0.clipIndex == slot?.clipIndex }?.label ?? "Clip")
+            .accessibilityIdentifier("native-editor-split-source")
+        Button("Cut at playhead") { session.splitSelectedClip() }
+            .disabled(!session.canSplitSelectedClip)
+            .accessibilityIdentifier("native-editor-split-cut")
+            .accessibilityHint("Move the playhead inside this clip to cut it into two clips")
+        Button("Duplicate clip") { session.duplicateSelectedClip() }
+            .disabled(!session.canDuplicateSelectedClip)
+            .accessibilityIdentifier("native-editor-split-duplicate")
+            .accessibilityHint(section == nil ? "Adds another copy after this clip" : "Requires enough unused time after this clip in the same panel")
+        Menu("Replace footage") {
+            ForEach(session.splitScreenSourceChoices, id: \.clipIndex) { source in
+                Button(source.label) { session.replaceSelectedClipSource(clipIndex: source.clipIndex) }
+            }
+        }
+        .disabled(session.splitScreenSourceChoices.isEmpty)
+        .accessibilityIdentifier("native-editor-split-replace")
+        if session.splitScreenSourceChoices.isEmpty {
+            Text("Replacement footage is not available yet.")
+                .font(.footnote).foregroundStyle(.secondary)
         }
     }
 }

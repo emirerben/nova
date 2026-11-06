@@ -211,6 +211,10 @@ def stage_saved_draft_baseline(job: Job, variant_id: str, body: Any) -> _StagedJ
         # The saved snapshot is the authoritative baseline for a second
         # delete; the public empty projection intentionally exposes no clips.
         effective["user_timeline"] = {"slots": copy.deepcopy(sections["timeline_slots"])}
+        if sections.get("split_screen_sections"):
+            effective["user_timeline"]["split_screen_sections"] = copy.deepcopy(
+                sections["split_screen_sections"]
+            )
     # Retain the last nonempty render recipe solely as a source/identity
     # baseline. Callers must explicitly provide a new timeline to render.
     effective.pop("editor_state", None)
@@ -609,4 +613,8 @@ def public_saved_editor_variant(job: Job, variant: dict[str, Any]) -> dict[str, 
             result[key] = copy.deepcopy(sections[key])
     if "timeline_slots" in sections:
         result["user_timeline"] = {"slots": copy.deepcopy(sections["timeline_slots"])}
+        if sections.get("split_screen_sections"):
+            result["user_timeline"]["split_screen_sections"] = copy.deepcopy(
+                sections["split_screen_sections"]
+            )
     return result

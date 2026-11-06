@@ -481,6 +481,8 @@ def _editor_snapshot(variant: dict[str, Any], generation_id: str | None) -> dict
     timeline = variant.get("user_timeline") or variant.get("ai_timeline")
     if isinstance(timeline, dict) and isinstance(timeline.get("slots"), list):
         sections["timeline_slots"] = timeline["slots"]
+        if timeline.get("split_screen_sections"):
+            sections["split_screen_sections"] = timeline["split_screen_sections"]
     return {"base_generation": generation_id or "", "sections": sections}
 
 

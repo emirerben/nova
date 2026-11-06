@@ -172,6 +172,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     @Published var isSaving = false
     @Published var hasUnsavedChanges = false
     @Published var saveState: NativeEditorSaveState = .idle
+    @Published var splitScreenActionError: String?
     @Published private(set) var refreshSync: NativeEditorRefreshSync = .idle
     /// Waits between background refresh retries; the last one repeats. Internal so tests can shorten it.
     var refreshRetryDelays: [Duration] = [.seconds(1), .seconds(3), .seconds(9), .seconds(27), .seconds(60)]
@@ -276,8 +277,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         case .mediaOverlay: mediaID = "overlay:" + selection.id
         case .visualBlock: mediaID = "visual-\(selection.id)-\(selection.id)"
         case .speaker:
-            guard canMoveSpeakerOnPreview else { return }
-            mediaID = EditorSelection.speakerID
+            guard canMoveSpeakerOnPreview, document.splitScreenSections.isEmpty else { return }
+            mediaID = selection.id
         default: return
         }
         let sequence = textInteractionSequence
@@ -290,7 +291,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 // The framed speaker splits around the cut-out instead of a media layer (SF4).
                 let layers: (below: AVVideoComposition, above: AVVideoComposition, media: AVVideoComposition, rect: CGRect)
                 if selection.kind == .speaker {
-                    let split = try preview.speakerInteractionLayers(time: time)
+                    let split = try preview.speakerInteractionLayers(time: time, clipID: selection.id == EditorSelection.speakerID ? nil : selection.id)
                     layers = (split.below, split.above, split.speaker, split.rect)
                 } else {
                     layers = try preview.mediaInteractionLayers(id: mediaID, time: time)
@@ -1088,7 +1089,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// must fall back to the legacy save-then-send flow. A clean editor exports
     /// request metadata without changed lanes, meaning "no unsaved edits".
     func exportEditorState(maxBytes: Int? = nil) -> EditorStateRequest? {
-        guard loadState == .loaded, !isSaving else { return nil }
+        guard loadState == .loaded, !isSaving, document.splitScreenIsValid else { return nil }
         // A text field still being typed is part of the creator's current state.
         _ = finishTextCreation()
         refreshDirtyState()
@@ -1145,6 +1146,9 @@ struct NativeEditorTemporaryVideo: Sendable {
         let text = ids("text"), cues = ids("caption_cue"), sounds = ids("sound_effect")
         let overlays = ids("media_overlay"), blocks = ids("visual_block")
         var kept = value
+        let clips = ids("clip")
+        kept.clips.removeAll { clips.contains($0.id ?? "") }
+        kept.splitScreenSections.removeAll { section in !kept.clips.contains { $0.splitSectionID == section.id } }
         kept.textElements.removeAll { text.contains($0.id) || ($0.isCaption && cues.contains($0.id)) }
         kept.captionCues.removeAll { cues.contains($0.id) }
         kept.soundEffects.removeAll { sounds.contains($0.id) }
@@ -1584,7 +1588,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         // tab's device-only Media restriction is exactly the thing this
         // ticket needs regression coverage against on the real (device)
         // rendering path, not just the untested cloud one.
-        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-device") {
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-device") || draft.serverSnapshot["render_destination"] == .string("device") {
             rendersOnDevice = true
         }
         // KRI-211: a project whose originals live on another device. The recovery sheet derives its
@@ -1846,7 +1850,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         if let timelineProjectionCache { return timelineProjectionCache }
         let value = NativeEditorInteraction.timelineProjection(
             slots: document.clips,
-            carousel: document.carouselMoment
+            carousel: document.carouselMoment, splitSections: document.splitScreenSections
         )
         timelineProjectionCache = value
         return value
@@ -3764,7 +3768,7 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     func previewSelectionBounds(for selection: EditorSelection, at time: Double) -> TextSelectionBounds? {
         guard sourcePreviewState == .ready else { return nil }
-        if selection.kind == .speaker { return canMoveSpeakerOnPreview ? sourcePreview?.speakerSelectionBounds(time: time) : nil }
+        if selection.kind == .speaker { return canMoveSpeakerOnPreview ? sourcePreview?.speakerSelectionBounds(time: time, clipID: selection.id == EditorSelection.speakerID ? nil : selection.id) : nil }
         if selection.kind == .mediaOverlay { return sourcePreview?.mediaSelectionBounds(id: "overlay:" + selection.id, time: time) }
         if selection.kind == .visualBlock,
            document.visualBlocks.first(where: { $0.id == selection.id })?.kind == "media" {
@@ -4116,7 +4120,16 @@ struct NativeEditorTemporaryVideo: Sendable {
         // and mirrors the server's bound. A drag is in output seconds, so it moves the source by `* rate`.
         let rate = Self.explicitPlaybackRate(slot)
         let window = KriaSourceWindowGeometry.Window(start: sourceIn, length: currentDuration)
-        let resized: KriaSourceWindowGeometry.Window
+        var resized: KriaSourceWindowGeometry.Window
+        if slot.raw["freeze_frame_s"]?.numberValue != nil {
+            switch active.edge {
+            case .leading:
+                let delta = min(max(translation, -sourceIn / rate), currentDuration - minimumClipDuration)
+                resized = .init(start: sourceIn + delta * rate, length: currentDuration - delta)
+            case .trailing:
+                resized = .init(start: sourceIn, length: min(1800, max(minimumClipDuration, currentDuration + translation)))
+            }
+        } else {
         switch active.edge {
         case .leading:
             // Left trim preserves the source Out point. A negative translation restores earlier source frames
@@ -4134,6 +4147,21 @@ struct NativeEditorTemporaryVideo: Sendable {
             let end = KriaSourceWindowGeometry.sourceEnd(window, rate: rate)
             resized = KriaSourceWindowGeometry.resizedTrailing(window, by: translation * rate, rate: rate, sourceDuration: sourceDuration ?? end)
         }
+        }
+        if let id = slot.splitSectionID, let section = next.splitScreenSections.first(where: { $0.id == id }) {
+            let offset = slot.splitOffsetS
+            let peers = next.clips.filter { $0.id != slot.id && $0.splitSectionID == id && $0.splitPanelIndex == slot.splitPanelIndex }
+            let previousEnd = peers.filter { $0.splitOffsetS < offset }.map { $0.splitOffsetS + ($0.durationS ?? 0) }.max() ?? 0
+            let nextStart = peers.filter { $0.splitOffsetS >= offset }.map(\.splitOffsetS).min() ?? section.durationS
+            switch active.edge {
+            case .leading:
+                let delta = min(max((resized.start - sourceIn) / rate, previousEnd - offset), currentDuration - minimumClipDuration)
+                resized = .init(start: sourceIn + delta * rate, length: currentDuration - delta)
+                slot.raw["split_offset_s"] = .number(offset + delta)
+            case .trailing:
+                resized.length = min(resized.length, nextStart - offset)
+            }
+        }
         // A gesture that lands back on the baseline must compare equal to it (no phantom undo step).
         if abs(resized.start - slot.inS) >= 1e-9 { slot.raw["source_start_locked"] = .bool(true) }
         slot.inS = abs(resized.start - slot.inS) < 1e-9 ? slot.inS : resized.start
@@ -4142,9 +4170,17 @@ struct NativeEditorTemporaryVideo: Sendable {
         if slot.raw["source_end_s"] != nil {
             slot.raw["source_end_s"] = .number(resized.start + resized.length * rate)
         }
+        if active.baseline.clips[index].raw["freeze_frame_s"]?.numberValue != nil {
+            let baseline = active.baseline.clips[index]
+            let clock = NativeClipSourceClock(slot: baseline)
+            let delta = active.edge == .leading ? (resized.start - sourceIn) / rate : 0
+            let end = active.edge == .leading ? currentDuration : resized.length
+            slot = clock.sliced(from: delta, to: end).applying(to: slot)
+        }
         slot.durationBeats = nil; next.clips[index] = slot
         // Later clips ripple by construction (windows are a walk of the slot durations); the
         // per-clip labels must ripple with them, derived from the gesture baseline every update.
+        guard next.splitScreenIsValid else { return }
         rebaseGuidedLabels(&next, from: active.baseline)
 
         if next == active.baseline {
@@ -4186,6 +4222,10 @@ struct NativeEditorTemporaryVideo: Sendable {
     var canReorderClips: Bool { canEditTimeline && canEditOperation(["clips.reorder"], section: .timeline) }
 
     func moveSelected(by offset: TimeInterval) {
+        if selectedSplitScreenSectionID != nil {
+            if abs(offset) > 0.000001 { moveSelectedSplitScreenSection(by: offset < 0 ? -1 : 1) }
+            return
+        }
         guard canReorderClips, let id = selectedClipID, abs(offset) > 0.000001 else { return }
         let ordered = timelineClips
         guard let index = ordered.firstIndex(where: { $0.id == id }) else { return }
@@ -4200,7 +4240,9 @@ struct NativeEditorTemporaryVideo: Sendable {
         guard ordered.indices.contains(toIndex),
               let from = clipSlotIndex(id.uuidString),
               let to = clipSlotIndex(ordered[toIndex].id.uuidString), from != to else { return }
-        transactDocument(section: .timeline) { $0.clips = NativeEditorInteraction.reorderedSlots($0.clips, from: from, to: to) }
+        transactDocument(section: .timeline) { value in
+            value.clips = NativeEditorInteraction.reorderedSlots(value.clips, from: from, to: to)
+        }
     }
 
     func slideSourceWindow(by offset: TimeInterval) {
@@ -4261,7 +4303,22 @@ struct NativeEditorTemporaryVideo: Sendable {
         // larger) -- clamp here, at the mutation, so no caller can produce a
         // value that only gets shrunk later at Save.
         let duration = transition == "cut" ? nil : durationS.map { min(max(0.1, $0), 0.3) }
-        mutateClip(clipID: clipID) { $0.transitionAfter = transition; $0.transitionDurationS = duration }
+        guard let index = clipSlotIndex(clipID) else { return }
+        transactDocument(section: .timeline) { value in
+            let slot = value.clips[index]
+            value.clips[index].transitionAfter = transition; value.clips[index].transitionDurationS = duration
+            if let id = slot.splitSectionID,
+               let next = value.clips.indices.filter({ value.clips[$0].splitSectionID == id && value.clips[$0].splitPanelIndex == slot.splitPanelIndex && value.clips[$0].splitOffsetS > slot.splitOffsetS })
+                .min(by: { value.clips[$0].splitOffsetS < value.clips[$1].splitOffsetS }) {
+                let end = slot.splitOffsetS + (slot.durationS ?? 0)
+                let oldOverlap = max(0, end - value.clips[next].splitOffsetS)
+                let overlap = transition == "cut" ? 0 : min(0.3, duration ?? 0.3, (slot.durationS ?? 0) * 0.3, (value.clips[next].durationS ?? 0) * 0.3)
+                // A deliberate gap stays a gap; transitions only join touching/overlapping members.
+                if value.clips[next].splitOffsetS <= end + 0.000001 {
+                    value.clips[next].raw["split_offset_s"] = .number(value.clips[next].splitOffsetS + oldOverlap - overlap)
+                }
+            }
+        }
     }
     func setClipTransition(clipID: UUID, transition: String, durationS: Double? = nil) { setClipTransition(clipID: clipID.uuidString, transition: transition, durationS: durationS) }
     /// Sets the same transition on every boundary in one transaction (one
@@ -4309,7 +4366,12 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
     func restoreClip(clipID: String) {
         guard canEditSection(.timeline), let index = document.tombstones.firstIndex(where: { $0.id == clipID }) else { return }
-        transactDocument(section: .timeline) { doc in var restored = doc.tombstones.remove(at: index); restored.removed = false; doc.clips.append(restored) }
+        transactDocument(section: .timeline) { doc in
+            var restored = doc.tombstones.remove(at: index); restored.removed = false
+            if let id = restored.splitSectionID, let position = doc.clips.lastIndex(where: { $0.splitSectionID == id }) {
+                doc.clips.insert(restored, at: position + 1)
+            } else { restored.clearSplitMembership(); doc.clips.append(restored) }
+        }
     }
 
     private func mutateClip(clipID: String, gatedByTimeline: Bool = true, _ body: (inout EditorTimelineSlot) -> Void) {
@@ -5055,6 +5117,17 @@ struct NativeEditorTemporaryVideo: Sendable {
             resolvedSources = sources; sourceCompiler = compiler
             sourcePreviewGeneration = placement.target.baseGeneration
             sourcePreviewState = .preparing
+            if let targetID = placement.replacingSlotID {
+                guard let targetIndex = clipSlotIndex(targetID), document.clips[targetIndex].splitSectionID != nil else {
+                    throw APIError.conflict
+                }
+                replaceClipSource(slotID: targetID, clipIndex: index, placementID: placementID)
+                guard document.clips.contains(where: { $0.raw["editor_source_placement_id"] == .string(placementID) }) else { throw APIError.invalidResponse }
+                select(.init(kind: .clip, id: targetID))
+                mediaUploads?.acknowledgeEditorPlacement(placement.id)
+                await sourcePreviewTask?.value
+                return
+            }
             transactDocument(section: .timeline) {
                 $0.clips.append(EditorTimelineSlot(id: placementID, clipIndex: index, inS: 0, durationS: min(Self.addedClipDurationS, duration), raw: [
                     "source_duration_s": .number(sourceDuration(response) ?? placement.localDurationS ?? duration + 0.05),
@@ -5160,6 +5233,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         if !alreadyPreparing { isAddingClip = true }
         addClipError = nil
         defer { if !alreadyPreparing { isAddingClip = false } }
+        let replacingSlotID = selectedSplitScreenSectionID == nil ? nil : selection?.id
         var importID: UUID?
         do {
             let values = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
@@ -5176,7 +5250,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             let target = editorSourceTarget(kind: kind)!
             let recordID = UUID()
             let placement = PendingEditorSourcePlacement(id: recordID, target: target, lane: .timeline, visual: nil,
-                                                         localDurationS: localDuration)
+                                                         localDurationS: localDuration, replacingSlotID: replacingSlotID)
             uploads.beginEditorPlacement(placement)
             importID = placement.id
             pendingPlacementIDs.insert(placement.id)
@@ -5215,7 +5289,7 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     var canGenerateOverlayPlan: Bool { rendersOnDevice && canImportVisuals }
 
-    var overlayBaseDuration: Double { timelineProjection.baseClipWindows.last?.end ?? 0 }
+    var overlayBaseDuration: Double { NativeEditorInteraction.timelineProjection(slots: document.clips, carousel: nil, splitSections: document.splitScreenSections).totalDuration }
 
     func overlayOutputTime(_ baseTime: Double) -> Double { timelineProjection.projectBaseTime(baseTime) }
 
@@ -7011,7 +7085,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// Whether this clip's own sound is heard right now: the whole-video level is up and the clip is not muted.
     func isClipAudioOn(clipID: String) -> Bool {
         guard let index = clipSlotIndex(clipID) else { return false }
-        return originalAudioLevel > 0 && document.clips[index].raw["muted"] != .bool(true)
+        return originalAudioLevel > 0 && document.clips[index].raw["muted"] != .bool(true) && (document.clips[index].raw["source_audio_volume"]?.numberValue ?? 1) > 0
     }
 
     /// The per-clip audio button. Turning a clip on while the whole video's original audio is off
@@ -7022,6 +7096,9 @@ struct NativeEditorTemporaryVideo: Sendable {
         let turningOn = !isClipAudioOn(clipID: clipID)
         let levelIsOff = originalAudioLevel <= 0
         transactDocument(sections: [.timeline, .mix]) { doc in
+            if turningOn, (doc.clips[target].raw["source_audio_volume"]?.numberValue ?? 1) <= 0 {
+                doc.clips[target].raw["source_audio_volume"] = .number(1)
+            }
             if turningOn && levelIsOff {
                 doc.mix["original_level"] = .number(1)
                 for index in doc.clips.indices where !doc.clips[index].removed {
@@ -7120,6 +7197,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     private func saveOnce() async {
         defer { userSongRetry = nil }
         guard !isSaving, hasUnsavedChanges else { return }
+        guard document.splitScreenIsValid else { saveState = .failed("This split-screen layout cannot be saved. Your edits are still here."); return }
         guard let api, let itemID, let variantKey else { saveState = .failed("Load the project before saving edits."); return }
         isSaving = true; saveState = .saving
         defer { isSaving = false }
@@ -7427,9 +7505,12 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     private func transactDocument(sections: Set<EditorSection>, _ body: (inout EditorDocument) -> Void) {
         var next = document; body(&next)
+        next.splitScreenSections.removeAll { section in !next.clips.contains { !$0.removed && $0.splitSectionID == section.id } }
+        guard next.splitScreenIsValid else { return }
         if !next.clips.isEmpty { next.editorState = "renderable" }
         guard next != document else { return }
         NativeSpeechTimelineProjection.acknowledgeCaptionEdits(&next, from: document)
+        NativeSplitTimelineRebase.rebase(&next, from: document)
         rebaseGuidedLabels(&next, from: document)
         invalidateDurationSources(for: sections)
         if transactionBaseline == nil { appendUndo(document); redoStack.removeAll() }
@@ -7498,7 +7579,13 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     /// What the crop is shown in: the video canvas.
     var cropOutputAspect: CGFloat {
-        EditorDocument.canonicalOrientation(document.orientation) == "landscape" ? 16.0 / 9.0 : 9.0 / 16.0
+        let canvas = NativeEditorRenderCompiler.canvas(for: document)
+        let aspect = CGFloat(canvas.width) / CGFloat(canvas.height)
+        guard let selection, let index = clipSlotIndex(selection.id), let id = document.clips[index].splitSectionID,
+              let panel = document.clips[index].splitPanelIndex,
+              let section = document.splitScreenSections.first(where: { $0.id == id }) else { return aspect }
+        let height = (1 - section.gutter * Double(section.panelCount - 1)) * section.panelWeights[panel] / section.panelWeights.reduce(0, +)
+        return aspect / CGFloat(height)
     }
 
     /// The real upright frame a crop is drawn on: the clip's source at its source-in time (a photo's own pixels).
@@ -7628,6 +7715,9 @@ struct NativeEditorTemporaryVideo: Sendable {
         // A pure slide writes `in_s` alone, so a beat-bound slot keeps `duration_beats`; a new length is a fixed length.
         // A Talking segment goes through the leaf gate (checked above), not the closed timeline section, but still
         // through `.timeline` so the speech projection moves the captions and Save sends the rows.
+        if let sectionID = found.slot.splitSectionID,
+           let section = document.splitScreenSections.first(where: { $0.id == sectionID }),
+           found.slot.splitOffsetS + window.length > section.durationS + 0.000001 { return false }
         mutateClip(clipID: selection.id, gatedByTimeline: !talking) { slot in
             slot.inS = max(0, window.start)
             if moved { slot.raw["source_start_locked"] = .bool(true) }
@@ -7998,7 +8088,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             // differ in shape without representing a user edit.
             let differs: Bool
             switch section {
-            case .timeline: differs = document.clips != cleanDocument.clips || document.tombstones != cleanDocument.tombstones
+            case .timeline: differs = document.clips != cleanDocument.clips || document.tombstones != cleanDocument.tombstones || document.splitScreenSections != cleanDocument.splitScreenSections
             case .text: differs = document.textElements != cleanDocument.textElements
             case .captions: differs = document.captionCues != cleanDocument.captionCues
             case .captionMeta: differs = document.captionMeta != cleanDocument.captionMeta
@@ -8041,6 +8131,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         var payload = object(root["editor_payload"]) ?? [:]
         var sections = object(payload["sections"]) ?? [:]
         let isIntentionalEmpty = sourcePayload?["editor_state"]?.stringValue == "empty"
+        if let splits = sourceSections["split_screen_sections"] { sections["split_screen_sections"] = splits }
         if draft.text.isEmpty, sourceSections["text_elements"] != nil { sections["text_elements"] = sourceSections["text_elements"] }
         if draft.clips.isEmpty, !isIntentionalEmpty, sourceSections["timeline_slots"] != nil { sections["timeline_slots"] = sourceSections["timeline_slots"] }
         if draft.music == nil {
@@ -8074,11 +8165,12 @@ struct NativeEditorTemporaryVideo: Sendable {
             baseJobID: jobID?.uuidString, baseGenerationID: value.revision.baseGeneration.nilIfEmpty,
             snapshot: value.encodeSnapshot(), canUndo: canUndo, createdAt: .now
         ).editorDraft(projectID: projectID)
+        let windows = value.splitScreenSections.isEmpty ? [] : NativeEditorInteraction.timelineProjection(slots: value.clips, carousel: value.carouselMoment, splitSections: value.splitScreenSections).clipWindows
         for (index, slot) in value.clips.enumerated() where projected.clips.indices.contains(index) {
             guard let slotID = slot.id else { continue }
             let stableID = clipID(for: slotID)
             let clip = projected.clips[index]
-            projected.clips[index] = EditorClip(id: stableID, assetID: clip.assetID, sourceClipIndex: clip.sourceClipIndex, start: clip.start, end: clip.end, trimIn: clip.trimIn, trimOut: clip.trimOut, sourceDuration: clip.sourceDuration, muted: clip.muted, slotID: slotID)
+            projected.clips[index] = EditorClip(id: stableID, assetID: clip.assetID, sourceClipIndex: clip.sourceClipIndex, start: windows.first(where: { $0.sourceIndex == index })?.start ?? clip.start, end: windows.first(where: { $0.sourceIndex == index })?.end ?? clip.end, trimIn: clip.trimIn, trimOut: clip.trimOut, sourceDuration: clip.sourceDuration, muted: clip.muted, slotID: slotID)
         }
         projected.captions.enabled = Self.bool(value.captionMeta["enabled"]) ?? projected.captions.enabled
         projected.captions.style = value.captionMeta["style"]?.stringValue ?? projected.captions.style
@@ -8181,6 +8273,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
         return EditorCommitRequest(
             timelineSlots: array("timeline_slots", .timeline),
+            splitScreenSections: changedSections.contains(.timeline) && (!document.splitScreenSections.isEmpty || !cleanDocument.splitScreenSections.isEmpty) ? document.splitScreenSections.map(\.json) : nil,
             // A guided timeline commit always carries the rebased label lane, like the server's
             // copilot path: the server then treats text as authored and skips its own
             // (right-biased, label-unaware) projection.
@@ -8315,6 +8408,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     private func copy(_ section: EditorSection, from submitted: EditorDocument, into baseline: inout EditorDocument) {
         switch section {
         case .timeline:
+            baseline.splitScreenSections = submitted.splitScreenSections
+            baseline.unreadableSplitScreen = submitted.unreadableSplitScreen
             baseline.clips = submitted.clips
             baseline.tombstones = submitted.tombstones
             baseline.editorState = submitted.editorState
@@ -8356,14 +8451,14 @@ struct NativeEditorTemporaryVideo: Sendable {
         if NativeSpeechTimelineProjection.rebase(&next, from: previous) { return }
         let freeText = ridesGuidedTimeline
         guard GuidedLabelRebase.hasLabels(next.textElements, includeFreeText: freeText), canEditSection(.text),
-              previous.clips != next.clips else { return }
+              previous.clips != next.clips || previous.splitScreenSections != next.splitScreenSections else { return }
         let media = mediaIDsByClipIndex
-        guard GuidedLabelRebase.windows(of: previous.clips, mediaByClipIndex: media)
-                != GuidedLabelRebase.windows(of: next.clips, mediaByClipIndex: media) else { return }
+        guard GuidedLabelRebase.windows(of: previous.clips, mediaByClipIndex: media, splitSections: previous.splitScreenSections)
+                != GuidedLabelRebase.windows(of: next.clips, mediaByClipIndex: media, splitSections: next.splitScreenSections) else { return }
         let before = Dictionary(next.textElements.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         next.textElements = GuidedLabelRebase.rebase(
             next.textElements, oldSlots: previous.clips, newSlots: next.clips,
-            mediaByClipIndex: media, includeFreeText: freeText
+            mediaByClipIndex: media, includeFreeText: freeText, oldSplitSections: previous.splitScreenSections, newSplitSections: next.splitScreenSections
         ).map { element in
             // A text the edit did not move stays byte-identical: stamping its segment_id alone
             // would mark the text lane dirty (and send it) for a clip edit that never touched it.
@@ -9368,6 +9463,9 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func selectionExists(_ value: EditorSelection) -> Bool {
+        if value.kind == .speaker {
+            return speakerFrame != nil && (value.id == EditorSelection.speakerID || document.clips.contains { $0.id == value.id })
+        }
         if value.kind == .clip, let id = UUID(uuidString: value.id) { return draft.clips.contains { $0.id == id } }
         return timelineItems.contains { $0.selection == value }
     }
@@ -9377,3 +9475,332 @@ private extension String { var nilIfEmpty: String? { isEmpty ? nil : self } }
 
 // Declared here, in the scanned session file, so the editor capability parity test sees every extension.
 extension NativeEditorSession: NativeEditorExportSource {}
+
+extension NativeEditorSession {
+    var selectedSplitScreenSectionID: String? {
+        guard let selection, selection.kind == .clip, let index = clipSlotIndex(selection.id) else { return nil }
+        return document.clips[index].splitSectionID
+    }
+
+    var canEditSplitScreen: Bool {
+        canEditTimeline && rendersOnDevice && document.splitScreenIsValid
+            && (document.capabilities["split_screen"] ?? document.capabilities["clips.split_screen"])?.editable == true
+    }
+
+    var canCreateSplitScreen: Bool {
+        canEditSplitScreen && selectedSplitScreenSectionID == nil && selection?.kind == .clip
+    }
+
+    var canSplitSelectedClip: Bool {
+        guard canEditTimeline, let selection, let found = sourceWindowSlot(for: selection) else { return false }
+        let offset = currentTime - found.clip.start
+        return offset >= minimumClipDuration && found.clip.end - currentTime >= minimumClipDuration
+    }
+
+    var canDuplicateSelectedClip: Bool {
+        guard canEditTimeline, let selection, let index = clipSlotIndex(selection.id) else { return false }
+        let slot = document.clips[index]
+        guard let id = slot.splitSectionID else { return true }
+        guard let section = document.splitScreenSections.first(where: { $0.id == id }) else { return false }
+        let start = slot.splitOffsetS + (slot.durationS ?? 0)
+        let end = start + (slot.durationS ?? 0)
+        return end <= section.durationS + 0.000001 && !document.clips.contains {
+            $0.id != slot.id && $0.splitSectionID == id && $0.splitPanelIndex == slot.splitPanelIndex
+                && $0.splitOffsetS < end && $0.splitOffsetS + ($0.durationS ?? 0) > start
+        }
+    }
+
+    var splitScreenSourceChoices: [(clipIndex: Int, label: String)] {
+        let measured = Set((resolvedSources ?? [:]).keys).union(document.clips.filter {
+            Self.number($0.raw["source_duration_s"] ?? $0.raw["source_duration"]) != nil
+        }.map(\.clipIndex))
+        let admitted = Set((sourcePool?.clips ?? []).filter { $0.nativeSource != nil }.map(\.clipIndex))
+        return measured.union(admitted).sorted().map { ($0, "Clip \($0 + 1)") }
+    }
+
+    func createSplitScreen(panelCount: Int) {
+        guard canCreateSplitScreen, (2...3).contains(panelCount), let selection,
+              let index = clipSlotIndex(selection.id) else { return }
+        let original = document.clips[index]
+        let id = UUID().uuidString
+        let duration = original.durationS ?? 0
+        guard duration >= minimumClipDuration else { return }
+        transactDocument(section: .timeline) { value in
+            value.splitScreenSections.append(EditorSplitScreenSection(id: id, durationS: duration, panelCount: panelCount))
+            var members: [EditorTimelineSlot] = []
+            for panel in 0..<panelCount {
+                var member = original
+                if member.raw["speaker_subject"] == nil, NativePhoneTalkingSource.isSourceSlot(original) {
+                    member.raw["speaker_subject"] = .bool(true)
+                }
+                if panel > 0 { member.id = UUID().uuidString; member.parentSegmentID = nil }
+                member.setSplitMembership(sectionID: id, panelIndex: panel, offset: 0)
+                members.append(member)
+            }
+            value.clips.replaceSubrange(index...index, with: members)
+        }
+    }
+
+    func setSplitScreenPanelCount(_ count: Int) {
+        guard canEditSplitScreen, (2...3).contains(count), let id = selectedSplitScreenSectionID,
+              let sectionIndex = document.splitScreenSections.firstIndex(where: { $0.id == id }),
+              document.splitScreenSections[sectionIndex].panelCount != count else { return }
+        transactDocument(section: .timeline) { value in
+            let previous = value.splitScreenSections[sectionIndex].panelCount
+            value.splitScreenSections[sectionIndex].panelCount = count
+            value.splitScreenSections[sectionIndex].panelWeights = Array(repeating: 1, count: count)
+            if count < previous {
+                value.clips.removeAll { $0.splitSectionID == id && ($0.splitPanelIndex ?? 0) >= count }
+            } else {
+                let templates = value.clips.filter { $0.splitSectionID == id && $0.splitPanelIndex == 0 }
+                guard let insertion = value.clips.lastIndex(where: { $0.splitSectionID == id }) else { return }
+                let copies = templates.map { slot -> EditorTimelineSlot in
+                    var copy = slot; copy.id = UUID().uuidString; copy.parentSegmentID = nil
+                    copy.setSplitMembership(sectionID: id, panelIndex: 2, offset: slot.splitOffsetS)
+                    return copy
+                }
+                value.clips.insert(contentsOf: copies, at: insertion + 1)
+            }
+        }
+        if let selection, clipSlotIndex(selection.id) == nil,
+           let slot = document.clips.first(where: { $0.splitSectionID == id }) { select(.init(kind: .clip, id: clipID(for: slot.id).uuidString)) }
+    }
+
+    func setSplitScreenDuration(_ duration: Double) {
+        guard canEditSplitScreen, duration.isFinite, (minimumClipDuration...1800).contains(duration),
+              let id = selectedSplitScreenSectionID,
+              let index = document.splitScreenSections.firstIndex(where: { $0.id == id }) else { return }
+        guard document.clips.contains(where: { $0.splitSectionID == id && $0.splitOffsetS <= duration - minimumClipDuration + 0.000001 }) else {
+            splitScreenActionError = "Keep at least one clip inside the section. Move a clip earlier before shortening it."
+            return
+        }
+        splitScreenActionError = nil
+        transactDocument(section: .timeline) { value in
+            value.splitScreenSections[index].durationS = duration
+            value.clips.removeAll { $0.splitSectionID == id && $0.splitOffsetS >= duration - minimumClipDuration + 0.000001 }
+            for i in value.clips.indices where value.clips[i].splitSectionID == id {
+                let length = min(value.clips[i].durationS ?? duration, duration - value.clips[i].splitOffsetS)
+                if value.clips[i].raw["freeze_frame_s"]?.numberValue != nil {
+                    value.clips[i] = NativeClipSourceClock(slot: value.clips[i]).sliced(from: 0, to: length).applying(to: value.clips[i])
+                    continue
+                }
+                value.clips[i].durationS = length; value.clips[i].durationBeats = nil
+                if value.clips[i].raw["source_end_s"] != nil {
+                    value.clips[i].raw["source_end_s"] = .number(value.clips[i].inS + length * Self.explicitPlaybackRate(value.clips[i]))
+                }
+            }
+        }
+    }
+
+    func moveSelectedSplitScreenPanel(to index: Int) {
+        guard canEditSplitScreen, let id = selectedSplitScreenSectionID, let selection,
+              let slotIndex = clipSlotIndex(selection.id), let from = document.clips[slotIndex].splitPanelIndex,
+              let section = document.splitScreenSections.first(where: { $0.id == id }),
+              (0..<section.panelCount).contains(index), from != index else { return }
+        transactDocument(section: .timeline) { value in
+            for i in value.clips.indices where value.clips[i].splitSectionID == id {
+                let panel = value.clips[i].splitPanelIndex
+                if panel == from { value.clips[i].raw["split_panel_index"] = .number(Double(index)) }
+                else if panel == index { value.clips[i].raw["split_panel_index"] = .number(Double(from)) }
+            }
+        }
+    }
+
+    func setSelectedSplitScreenOffset(_ offset: Double) {
+        guard canEditSplitScreen, offset.isFinite, offset >= 0, let selection,
+              let index = clipSlotIndex(selection.id), document.clips[index].splitSectionID != nil else { return }
+        transactDocument(section: .timeline) { $0.clips[index].raw["split_offset_s"] = .number(offset) }
+    }
+
+    func splitSelectedClip() {
+        guard canSplitSelectedClip, let selection, let index = clipSlotIndex(selection.id),
+              let found = sourceWindowSlot(for: selection) else { return }
+        let local = currentTime - found.clip.start
+        let rate = effectiveSourceRate(slot: found.slot, clip: found.clip)
+        transactDocument(section: .timeline) { value in
+            var left = value.clips[index], right = left
+            let duration = left.durationS ?? (found.clip.end - found.clip.start)
+            right.id = UUID().uuidString; right.parentSegmentID = left.id
+            left.durationS = local; right.durationS = duration - local
+            left.durationBeats = nil; right.durationBeats = nil
+            if left.raw["freeze_frame_s"]?.numberValue != nil {
+                let clock = NativeClipSourceClock(slot: value.clips[index])
+                left = clock.sliced(from: 0, to: local).applying(to: left)
+                right = clock.sliced(from: local, to: duration).applying(to: right)
+            } else { right.inS = left.inS + local * rate }
+            right.raw["source_start_locked"] = .bool(true)
+            if value.clips[index].raw["freeze_frame_s"]?.numberValue == nil, left.raw["source_end_s"] != nil { left.raw["source_end_s"] = .number(right.inS) }
+            left.transitionAfter = "cut"; left.transitionDurationS = nil
+            if right.splitSectionID != nil { right.raw["split_offset_s"] = .number(right.splitOffsetS + local) }
+            value.clips.replaceSubrange(index...index, with: [left, right])
+        }
+    }
+
+    func duplicateSelectedClip() {
+        guard canDuplicateSelectedClip, let selection, let index = clipSlotIndex(selection.id) else { return }
+        transactDocument(section: .timeline) { value in
+            var copy = value.clips[index]
+            copy.parentSegmentID = nil; copy.id = UUID().uuidString
+            if copy.splitSectionID != nil { copy.raw["split_offset_s"] = .number(copy.splitOffsetS + (copy.durationS ?? 0)) }
+            value.clips.insert(copy, at: index + 1)
+        }
+    }
+
+    func replaceSelectedClipSource(clipIndex: Int) {
+        guard canEditTimeline, let selection,
+              splitScreenSourceChoices.contains(where: { $0.clipIndex == clipIndex }) else { return }
+        let slotID = selection.id
+        if resolvedSources?[clipIndex] == nil, let pool = sourcePool, let resolver = sourceResolver {
+            let generation = document.revision.baseGeneration
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    let sources = try await resolver.resolve(pool, generation: generation, requiredIndices: Set([clipIndex]))
+                    guard self.document.revision.baseGeneration == generation, self.canEditTimeline,
+                          self.clipSlotIndex(slotID) != nil else { return }
+                    self.resolvedSources = (self.resolvedSources ?? [:]).merging(sources) { _, new in new }
+                    self.replaceClipSource(slotID: slotID, clipIndex: clipIndex)
+                } catch { self.splitScreenActionError = "This media could not be opened. Try again." }
+            }
+            return
+        }
+        replaceClipSource(slotID: slotID, clipIndex: clipIndex)
+    }
+
+    private func replaceClipSource(slotID: String, clipIndex: Int, placementID: String? = nil) {
+        guard canEditTimeline, let index = clipSlotIndex(slotID) else { return }
+        let template = document.clips.first(where: { $0.clipIndex == clipIndex })
+        let measured = resolvedSources?[clipIndex]?.asset.duration
+            ?? template.flatMap { Self.number($0.raw["source_duration_s"] ?? $0.raw["source_duration"]) }
+        let isPhoto = resolvedSources?[clipIndex].map { isStill($0.url) } ?? false
+        guard isPhoto || (measured ?? 0) >= minimumClipDuration else { return }
+        transactDocument(section: .timeline) { value in
+            var slot = value.clips[index]
+            slot.clipIndex = clipIndex; slot.inS = 0
+            if let placementID { slot.raw["editor_source_placement_id"] = .string(placementID) }
+            slot.raw["speaker_subject"] = .bool(false)
+            for key in ["asset_id", "media_id", "source_end_s", "native_source_span_s", "native_composite_source", "freeze_frame_s", "freeze_hold_s"] { slot.raw.removeValue(forKey: key) }
+            if let template {
+                for key in ["asset_id", "media_id", "media_kind"] { slot.raw[key] = template.raw[key] }
+            }
+            if let measured { slot.raw["source_duration_s"] = .number(measured) }
+            if isPhoto { slot.raw.removeValue(forKey: "playback_rate") }
+            else if let measured { slot.durationS = min(slot.durationS ?? measured, measured / Self.explicitPlaybackRate(slot)) }
+            slot.durationBeats = nil; slot.raw["source_start_locked"] = .bool(true)
+            value.clips[index] = slot
+        }
+    }
+
+    func removeSelectedSplitScreen() {
+        guard canEditSplitScreen, let id = selectedSplitScreenSectionID, let selection,
+              let index = clipSlotIndex(selection.id), let panel = document.clips[index].splitPanelIndex else { return }
+        transactDocument(section: .timeline) { value in
+            guard let insertion = value.clips.firstIndex(where: { $0.splitSectionID == id }) else { return }
+            let kept = value.clips.filter { $0.splitSectionID == id && $0.splitPanelIndex == panel }
+                .sorted { $0.splitOffsetS < $1.splitOffsetS }.map { slot -> EditorTimelineSlot in
+                    var result = slot; result.clearSplitMembership(); return result
+                }
+            value.clips.removeAll { $0.splitSectionID == id }
+            value.clips.insert(contentsOf: kept, at: insertion)
+            value.splitScreenSections.removeAll { $0.id == id }
+        }
+    }
+
+
+}
+
+extension NativeEditorSession {
+    func setSplitScreenPanelWeight(index: Int, weight: Double) {
+        guard canEditSplitScreen, weight.isFinite, weight > 0, let id = selectedSplitScreenSectionID,
+              let i = document.splitScreenSections.firstIndex(where: { $0.id == id }),
+              document.splitScreenSections[i].panelWeights.indices.contains(index) else { return }
+        transactDocument(section: .timeline) { $0.splitScreenSections[i].panelWeights[index] = weight }
+    }
+
+    func setSplitScreenGutter(_ value: Double) {
+        guard canEditSplitScreen, value.isFinite, (0...0.1).contains(value), let id = selectedSplitScreenSectionID,
+              let i = document.splitScreenSections.firstIndex(where: { $0.id == id }) else { return }
+        transactDocument(section: .timeline) { $0.splitScreenSections[i].gutter = value }
+    }
+
+    func setSplitScreenBackgroundColor(_ hex: String) {
+        guard canEditSplitScreen, let color = EditorSpeakerBackground.normalizedColor(hex), let id = selectedSplitScreenSectionID,
+              let i = document.splitScreenSections.firstIndex(where: { $0.id == id }) else { return }
+        transactDocument(section: .timeline) { $0.splitScreenSections[i].backgroundColor = color }
+    }
+
+    func moveSelectedSplitScreenSection(by delta: Int) {
+        guard canEditSplitScreen, delta != 0, let id = selectedSplitScreenSectionID,
+              let first = document.clips.firstIndex(where: { $0.splitSectionID == id }),
+              let last = document.clips.lastIndex(where: { $0.splitSectionID == id }) else { return }
+        let target = delta < 0 ? first - 1 : last + 1
+        guard document.clips.indices.contains(target) else { return }
+        transactDocument(section: .timeline) { $0.clips = NativeEditorInteraction.reorderedSlots($0.clips, from: first, to: target) }
+    }
+
+    func moveSelectedSplitScreenClip(by delta: Int) {
+        guard canEditSplitScreen, delta != 0, let selection, let index = clipSlotIndex(selection.id),
+              let id = document.clips[index].splitSectionID, let panel = document.clips[index].splitPanelIndex else { return }
+        let ordered = document.clips.indices.filter { document.clips[$0].splitSectionID == id && document.clips[$0].splitPanelIndex == panel }
+            .sorted { document.clips[$0].splitOffsetS < document.clips[$1].splitOffsetS }
+        guard let position = ordered.firstIndex(of: index), ordered.indices.contains(position + (delta < 0 ? -1 : 1)) else { return }
+        let other = ordered[position + (delta < 0 ? -1 : 1)]
+        let a = document.clips[index], b = document.clips[other]
+        let earlier = a.splitOffsetS < b.splitOffsetS ? a : b
+        let later = a.splitOffsetS < b.splitOffsetS ? b : a
+        let gap = max(0, later.splitOffsetS - earlier.splitOffsetS - (earlier.durationS ?? 0))
+        transactDocument(section: .timeline) { value in
+            if a.splitOffsetS < b.splitOffsetS {
+                value.clips[other].raw["split_offset_s"] = .number(a.splitOffsetS)
+                value.clips[index].raw["split_offset_s"] = .number(a.splitOffsetS + (b.durationS ?? 0) + gap)
+            } else {
+                value.clips[index].raw["split_offset_s"] = .number(b.splitOffsetS)
+                value.clips[other].raw["split_offset_s"] = .number(b.splitOffsetS + (a.durationS ?? 0) + gap)
+            }
+        }
+    }
+}
+
+extension NativeEditorSession {
+    var selectedClipSourceVolume: Double {
+        guard let selection, let index = clipSlotIndex(selection.id) else { return 1 }
+        return document.clips[index].raw["source_audio_volume"]?.numberValue ?? 1
+    }
+
+    func setSelectedClipSourceVolume(_ volume: Double) {
+        guard canEditClipAudio, volume.isFinite, (0...2).contains(volume), let selection,
+              let index = clipSlotIndex(selection.id) else { return }
+        transactDocument(section: .timeline) { value in
+            value.clips[index].raw["source_audio_volume"] = .number(volume)
+        }
+    }
+}
+
+extension NativeEditorSession {
+    var previewSpeakerItems: [NativeEditorTimelineItem] {
+        guard canMoveSpeakerOnPreview else { return [] }
+        guard !document.splitScreenSections.isEmpty else {
+            return [.init(selection: .speaker, start: 0, end: SpeakerBackgroundLimits.maxTimeline, zIndex: -1_000)]
+        }
+        return timelineProjection.clipWindows.compactMap { window in
+            let slot = document.clips[window.sourceIndex]
+            let subject = slot.raw["speaker_subject"]?.boolValue
+                ?? (NativePhoneTalkingSource.isSourceSlot(slot) || slot.parentSegmentID?.hasPrefix(NativePhoneTalkingSource.slotID) == true)
+            guard subject, let id = slot.id else { return nil }
+            return .init(selection: .init(kind: .speaker, id: id), start: window.start, end: window.end, zIndex: -1_000, sourceIndex: window.sourceIndex)
+        }
+    }
+
+    func speakerViewport(for selected: EditorSelection, at time: Double) -> CGRect? {
+        guard selected.kind == .speaker, canMoveSpeakerOnPreview else { return nil }
+        return sourcePreview?.speakerViewport(time: time, clipID: selected.id == EditorSelection.speakerID ? nil : selected.id)
+    }
+
+    func speakerFrameRect(for selected: EditorSelection, at time: Double) -> CGRect? {
+        guard let frame = speakerFrame, let viewport = speakerViewport(for: selected, at: time) else { return nil }
+        let local = frame.layerFrame.canvasRect
+        return CGRect(x: viewport.minX + local.minX * viewport.width, y: viewport.minY + local.minY * viewport.height,
+                      width: local.width * viewport.width, height: local.height * viewport.height)
+            .intersection(viewport)
+    }
+}

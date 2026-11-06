@@ -72,6 +72,23 @@ struct NativeSpeakerPanel: View {
 }
 
 /// Geometry and face lookup shared by the preview's speaker gesture.
+enum NativeSpeakerPanelGeometry {
+    static func pixelRect(_ rect: CGRect, canvas: CGSize) -> CGRect {
+        CGRect(x: rect.minX * canvas.width, y: rect.minY * canvas.height,
+               width: rect.width * canvas.width, height: rect.height * canvas.height)
+    }
+
+    static func canvasPoint(_ point: CGPoint, viewport: CGRect, canvas: CGSize) -> CGPoint {
+        CGPoint(x: (viewport.minX + point.x * viewport.width) * canvas.width,
+                y: (viewport.minY + point.y * viewport.height) * canvas.height)
+    }
+
+    static func movedPosition(from point: CGPoint, translation: CGSize, canvas: CGSize, viewport: CGRect) -> CGPoint {
+        NativeTextTransformMath.movedPosition(from: point, translation: translation,
+                                            canvas: CGSize(width: canvas.width * viewport.width, height: canvas.height * viewport.height))
+    }
+}
+
 enum NativeSpeakerFrameGesture {
     /// How close (canvas fraction) the speaker's centre must come to the middle line before it snaps there.
     static let centerSnap = 0.02

@@ -55,6 +55,8 @@ _PATCH_KEYS = frozenset(
         "source_crop",
         "tilt",
         "removed",
+        "muted",
+        "source_audio_volume",
     }
 )
 _TILT_KEYS = frozenset({"rotation_deg", "rotation_delta_deg", "zoom", "zoom_delta", "backdrop"})
@@ -292,8 +294,10 @@ def _coerce_patch_slots(name: str, payload: dict, snapshot: dict, state: Any) ->
             cleaned = value if value in LOOK_PRESETS else None
         elif key == "transition_after":
             cleaned = value if value in TRANSITIONS else None
-        elif key == "removed":
+        elif key in {"removed", "muted"}:
             cleaned = value if isinstance(value, bool) else None
+        elif key == "source_audio_volume":
+            cleaned = _num(value, 0.0, 2.0)
         elif key == "tilt":
             # None is a valid value here ("straighten"), so it cannot ride the check below.
             valid, tilt = _clean_tilt(value, state, snapshot)
@@ -308,6 +312,15 @@ def _coerce_patch_slots(name: str, payload: dict, snapshot: dict, state: Any) ->
             return None
         clean[key] = cleaned
     capabilities = snapshot.get("timeline_patch_capabilities")
+    if {"muted", "source_audio_volume"}.intersection(clean) and not (
+        isinstance(capabilities, dict) and capabilities.get("muted") is True
+    ):
+        state.reject(
+            op=name,
+            reason="capability_unavailable",
+            detail="Source audio is unavailable for these clips",
+        )
+        return None
     if "tilt" in clean and not (
         isinstance(capabilities, dict) and capabilities.get("tilt") is True
     ):
@@ -637,7 +650,16 @@ def _slide_floor(rows: list[dict[str, Any]], row: dict[str, Any], ops: Any) -> f
     ends = [
         float(other.get("in_s") or 0.0) + ops._slot_duration(other) * ops._slot_rate(other)
         for other in rows
-        if other is not row and not other.get("removed") and other.get("clip_index") == key
+        if other is not row
+        and not other.get("removed")
+        and other.get("clip_index") == key
+        and (
+            not row.get("split_section_id")
+            or (
+                other.get("split_section_id") == row.get("split_section_id")
+                and other.get("split_panel_index") == row.get("split_panel_index")
+            )
+        )
     ]
     return max((end for end in ends if end <= start + 1e-6), default=0.0)
 
@@ -712,6 +734,10 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
     source_window_timeline = ops._is_guided_native(
         state.job, state.variant
     ) or ops._is_authored_phone_native(state.job, state.variant)
+    if {"muted", "source_audio_volume"}.intersection(patch) and not _clip_capability(
+        state, "audio", default=False
+    ):
+        raise _err("Source audio is not available for these clips")
     if "look_preset" in patch and (on_device or not _clip_capability(state, "looks")):
         raise _err("Looks are not available for this edit")
     if "playback_rate" in patch and (
@@ -750,61 +776,109 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
             applied += 1
             continue
         image = _is_image(row)
-        touched = False
-        rate_old = ops._slot_rate(row)
-        rate = float(patch["playback_rate"]) if "playback_rate" in patch and not image else rate_old
-        duration = ops._slot_duration(row)
-        in_s = float(row.get("in_s") or 0.0)
-        source_span = (
-            float(row["source_end_s"]) - in_s
-            if row.get("source_end_s") is not None
-            else duration * rate_old
-        )
-        if "in_s" in patch and not image:
-            in_s = float(patch["in_s"])
-            row["in_s"] = in_s
-            touched = True
-        if "playback_rate" in patch and not image:
-            row["playback_rate"] = rate
-            if "duration_s" not in patch:
-                # "speed up clip 2" keeps the same footage, so the clip gets shorter.
-                duration = source_span / rate
-            row["source_end_s"] = in_s + source_span
-            touched = True
-        if "duration_s" in patch:
-            duration = float(patch["duration_s"])
-            touched = True
-        if touched and "source_end_s" in row:
-            row["source_end_s"] = in_s + (duration * rate if "duration_s" in patch else source_span)
-        if touched:
-            requested_duration = duration
-            source = row.get("source_duration_s")
-            if not image and isinstance(source, (int, float)) and source > 0:
-                # A start point the creator (or model) chose is kept; otherwise a clip
-                # that outgrows the footage after its start reaches back into the footage
-                # before it.
-                slide = "in_s" not in patch and "playback_rate" not in patch
-                if not slide and (float(source) - in_s) / rate < MIN_CLIP_S:
-                    raise _err("That start point leaves too little footage in the clip")
-                new_in, duration = _fit_window(
-                    float(source),
-                    in_s,
-                    duration,
-                    rate,
-                    slide=slide,
-                    floor=_slide_floor(rows, row, ops) if slide else 0.0,
-                )
-                if new_in != in_s:
-                    row["in_s"] = round(new_in, 3)
-            if duration < MIN_CLIP_S:
-                raise _err("A clip cannot be shorter than 0.1 seconds")
-            row["duration_beats"] = None
-            row["duration_s"] = round(duration, 6 if "source_end_s" in row else 3)
-            if "source_end_s" in row and (
-                duration != requested_duration or float(row.get("in_s") or 0) != in_s
-            ):
-                row["source_end_s"] = float(row.get("in_s") or 0) + duration * rate
+        if not image and "source_audio_volume" in patch:
+            value = patch["source_audio_volume"]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise _err("Source audio volume must be a number between 0 and 2")
+            gain = float(value)
+            if not math.isfinite(gain) or not 0 <= gain <= 2:
+                raise _err("Source audio volume must be between 0 and 2")
+            row["source_audio_volume"] = gain
+            if gain > 0 and "muted" not in patch:
+                row["muted"] = False
             applied += 1
+        if not image and "muted" in patch:
+            if not isinstance(patch["muted"], bool):
+                raise _err("Muted must be true or false")
+            row["muted"] = patch["muted"]
+            if (
+                not patch["muted"]
+                and row.get("source_audio_volume") == 0
+                and "source_audio_volume" not in patch
+            ):
+                row["source_audio_volume"] = 1.0
+            applied += 1
+        frozen_patch = row.get("freeze_hold_s") and {
+            "duration_s",
+            "in_s",
+            "playback_rate",
+        }.intersection(patch)
+        if frozen_patch:
+            from app.kria.clip_source_clock import (
+                resize_source_window,
+                retime_source_window,
+                set_source_start,
+            )
+
+            if "in_s" in patch:
+                row.update(set_source_start(row, float(patch["in_s"])))
+            if "playback_rate" in patch:
+                row.update(retime_source_window(row, float(patch["playback_rate"])))
+            if "duration_s" in patch:
+                row.update(resize_source_window(row, float(patch["duration_s"])))
+            applied += 1
+        touched = False
+        if not frozen_patch:
+            rate_old = ops._slot_rate(row)
+            rate = (
+                float(patch["playback_rate"])
+                if "playback_rate" in patch and not image
+                else rate_old
+            )
+            duration = ops._slot_duration(row)
+            in_s = float(row.get("in_s") or 0.0)
+            source_span = (
+                float(row["source_end_s"]) - in_s
+                if row.get("source_end_s") is not None
+                else duration * rate_old
+            )
+            if "in_s" in patch and not image:
+                in_s = float(patch["in_s"])
+                row["in_s"] = in_s
+                touched = True
+            if "playback_rate" in patch and not image:
+                row["playback_rate"] = rate
+                if "duration_s" not in patch:
+                    # "speed up clip 2" keeps the same footage, so the clip gets shorter.
+                    duration = source_span / rate
+                row["source_end_s"] = in_s + source_span
+                touched = True
+            if "duration_s" in patch:
+                duration = float(patch["duration_s"])
+                touched = True
+            if touched and "source_end_s" in row:
+                row["source_end_s"] = in_s + (
+                    duration * rate if "duration_s" in patch else source_span
+                )
+            if touched:
+                requested_duration = duration
+                source = row.get("source_duration_s")
+                if not image and isinstance(source, (int, float)) and source > 0:
+                    # A start point the creator (or model) chose is kept; otherwise a clip
+                    # that outgrows the footage after its start reaches back into the footage
+                    # before it.
+                    slide = "in_s" not in patch and "playback_rate" not in patch
+                    if not slide and (float(source) - in_s) / rate < MIN_CLIP_S:
+                        raise _err("That start point leaves too little footage in the clip")
+                    new_in, duration = _fit_window(
+                        float(source),
+                        in_s,
+                        duration,
+                        rate,
+                        slide=slide,
+                        floor=_slide_floor(rows, row, ops) if slide else 0.0,
+                    )
+                    if new_in != in_s:
+                        row["in_s"] = round(new_in, 3)
+                if duration < MIN_CLIP_S:
+                    raise _err("A clip cannot be shorter than 0.1 seconds")
+                row["duration_beats"] = None
+                row["duration_s"] = round(duration, 6 if "source_end_s" in row else 3)
+                if "source_end_s" in row and (
+                    duration != requested_duration or float(row.get("in_s") or 0) != in_s
+                ):
+                    row["source_end_s"] = float(row.get("in_s") or 0) + duration * rate
+                applied += 1
         if "look_preset" in patch:
             row["look_preset"] = patch["look_preset"]
             row["look_adjustments"] = None
@@ -969,6 +1043,11 @@ def _trim_tail(state: Any, ops: Any, target: float, active_idx: list[int]) -> No
 
 
 def _op_set_total_duration(state: Any, op: dict[str, Any]) -> None:
+    if state.split_screen_sections or any(row.get("freeze_hold_s") for row in state.slots):
+        from app.agents.editor_ops_v2.split_screen import retarget_output
+
+        retarget_output(state, float(op["target_s"]), str(op.get("strategy") or "proportional"))
+        return
     ops = _ops()
     target = float(op["target_s"])
     strategy = str(op.get("strategy") or "proportional")

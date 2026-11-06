@@ -22,6 +22,7 @@ struct RecipeVideoLayer: @unchecked Sendable {
     var overlayPopIn: Bool = false
     var overlayPreserveAlpha: Bool? = nil
     var overlayCenter: CGPoint = .zero
+    var panelViewport: CGRect? = nil
     var visualPlacement: VisualMediaPlacement? = nil
     /// Clockwise degrees a PLACED card (a clip with a `visualPlacement`) is turned about its centre: the clip's
     /// `transform.rotationDegrees`, which the placement path otherwise ignores. See `TimelineClip.placementTiltDegrees`.
@@ -40,6 +41,7 @@ struct RecipeVideoLayer: @unchecked Sendable {
     var speakerRole: SpeakerBackgroundRole? = nil
     /// A timed speaker-background window (KRI-1162); the fill background leaves this false.
     var speakerBackgroundWindow: Bool = false
+    var speakerBackgroundFocus: SpeakerBackgroundFocus? = nil
     /// Paint the canvas the fitted source leaves uncovered with the source's own edge pixels. Only the Kria
     /// outro sets it: a flat paper card fitted to a non-9:16 canvas, whose edges ARE the paper (KRI-1154).
     var extendsEdgesToCanvas: Bool = false
@@ -182,10 +184,12 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
     let fullScreenWindows: [SpeakerFullScreenWindow]
     /// `.whole` everywhere except the editor's speaker-manipulation stills.
     let speakerSlice: SpeakerSlice
+    let speakerSliceClipID: String?
     let canvas: CGRect
     let transparentBackground: Bool
-    init(timeRange: CMTimeRange, layers: [RecipeVideoLayer], text: [RecipeTextLayer], canvas: CGSize, cameraPulses: [CameraPulse] = [], motionScenes: NativeMotionPainter? = nil, textStore: NativeTextLayerStore? = nil, drawings: NativeDrawingStore? = nil, transparentBackground: Bool = false, subjectMatte: NativeSubjectMatte? = nil, speakerMatte: SpeakerMatte? = nil, speakerFrame: SpeakerFrame? = nil, fullScreenWindows: [SpeakerFullScreenWindow] = [], speakerSlice: SpeakerSlice = .whole) {
+    init(timeRange: CMTimeRange, layers: [RecipeVideoLayer], text: [RecipeTextLayer], canvas: CGSize, cameraPulses: [CameraPulse] = [], motionScenes: NativeMotionPainter? = nil, textStore: NativeTextLayerStore? = nil, drawings: NativeDrawingStore? = nil, transparentBackground: Bool = false, subjectMatte: NativeSubjectMatte? = nil, speakerMatte: SpeakerMatte? = nil, speakerFrame: SpeakerFrame? = nil, fullScreenWindows: [SpeakerFullScreenWindow] = [], speakerSlice: SpeakerSlice = .whole, speakerSliceClipID: String? = nil) {
         self.speakerSlice = speakerSlice
+        self.speakerSliceClipID = speakerSliceClipID
         self.transparentBackground = transparentBackground
         self.drawings = drawings
         self.subjectMatte = subjectMatte
@@ -208,12 +212,12 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
     /// This instruction painting only `part` of the scene around the framed speaker. The speaker slice and the
     /// part above it draw on a clear canvas; the part above drops the text-behind-subject matte, whose mask would be
     /// read from a scene without the speaker (the dragged scene paints such text plain while the finger is down).
-    func slicedAroundSpeaker(_ part: SpeakerSlice) -> RecipeVideoInstruction {
+    func slicedAroundSpeaker(_ part: SpeakerSlice, clipID: String? = nil) -> RecipeVideoInstruction {
         RecipeVideoInstruction(timeRange: timeRange, layers: layers, text: text, canvas: canvas.size,
             cameraPulses: cameraPulses, motionScenes: motionScenes, textStore: textStore, drawings: drawings,
             transparentBackground: part == .speakerOnly || part == .aboveSpeaker,
             subjectMatte: part == .aboveSpeaker ? nil : subjectMatte, speakerMatte: speakerMatte,
-            speakerFrame: speakerFrame, fullScreenWindows: fullScreenWindows, speakerSlice: part)
+            speakerFrame: speakerFrame, fullScreenWindows: fullScreenWindows, speakerSlice: part, speakerSliceClipID: clipID)
     }
     /// The framed speaker is on screen at `time`: a frame is set and one of this range's speaker clips is active
     /// (an ending clip on the speaker track, or a stretch with no speaker clip, has nothing to select; SF2).
@@ -302,6 +306,9 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
     private func composeBelowText(_ candidates: [RecipeVideoLayer], onto canvas: CIImage, instruction: RecipeVideoInstruction,
                                   request: AVAsynchronousVideoCompositionRequest, time: Double) throws -> CIImage {
         let layers = candidates.filter { $0.backdropAssetID == nil }
+        if layers.contains(where: { $0.speakerRole == .speaker && $0.panelViewport != nil }) {
+            return try composePanelSpeakers(layers, onto: canvas, instruction: instruction, request: request, time: time)
+        }
         var frame = canvas
         func compose(_ layer: RecipeVideoLayer) throws { frame = try composeVideoLayer(layer, onto: frame, instruction: instruction, request: request, time: time) }
         // `layers` holds only what is active at `time`: the one window covering it (windows are disjoint), else the fill (S28).
@@ -368,6 +375,60 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         return frame
     }
 
+    private func composePanelSpeakers(_ layers: [RecipeVideoLayer], onto initial: CIImage,
+                                      instruction: RecipeVideoInstruction, request: AVAsynchronousVideoCompositionRequest,
+                                      time: Double) throws -> CIImage {
+        var frame = initial
+        var drawn = Set<String>()
+        let backgrounds = layers.filter { $0.speakerRole == .background }
+        let firstSpeaker = layers.firstIndex(where: { $0.speakerRole == .speaker }) ?? layers.endIndex
+        for (index, layer) in layers.enumerated() where layer.speakerRole != .background {
+            guard layer.speakerRole == .speaker, let viewport = layer.panelViewport else {
+                let drawsBelow = index < firstSpeaker && instruction.speakerSlice == .belowSpeaker
+                let drawsAbove = index >= firstSpeaker && instruction.speakerSlice == .aboveSpeaker
+                if instruction.speakerSlice == .whole || drawsBelow || drawsAbove {
+                    frame = try composeVideoLayer(layer, onto: frame, instruction: instruction, request: request, time: time)
+                }
+                continue
+            }
+            let key = "\(viewport.minX),\(viewport.minY),\(viewport.width),\(viewport.height)"
+            guard drawn.insert(key).inserted else { continue }
+            let localCanvas = CGRect(origin: .zero, size: viewport.size)
+            let speakers = layers.filter { $0.speakerRole == .speaker && $0.panelViewport == viewport }.map { layer in
+                var local = layer
+                local.panelViewport = nil
+                return local
+            }
+            let localBackgrounds = backgrounds.map { background in
+                var local = background
+                if let focus = local.speakerBackgroundFocus, let size = local.naturalSize {
+                    let upright = CGRect(origin: .zero, size: size).applying(local.preferredTransform).size
+                    local.visualPlacement = focus.placement(canvas: viewport.size, uprightSize: upright,
+                        start: local.start, end: local.end)
+                }
+                if local.visualPlacement == nil, let size = local.naturalSize {
+                    local.transform = AVPlayerPreviewComposer.transform(naturalSize: size,
+                        preferred: local.preferredTransform, canvas: viewport.size, media: .identity)
+                }
+                return local
+            }
+            let ownsSelection = instruction.speakerSliceClipID.map { selected in speakers.contains { $0.clipID == selected } } ?? true
+            if !ownsSelection && instruction.speakerSlice != .whole && instruction.speakerSlice != .belowSpeaker { continue }
+            let localSlice: SpeakerSlice = ownsSelection ? instruction.speakerSlice : .whole
+            let localInstruction = RecipeVideoInstruction(timeRange: instruction.timeRange,
+                layers: localBackgrounds + speakers + instruction.layers.filter { $0.backdropAssetID != nil }, text: [], canvas: viewport.size,
+                cameraPulses: instruction.cameraPulses, transparentBackground: true,
+                speakerMatte: instruction.speakerMatte?.forPanel(key), speakerFrame: instruction.speakerFrame,
+                fullScreenWindows: instruction.fullScreenWindows, speakerSlice: localSlice)
+            let picture = try composeBelowText(localBackgrounds + speakers,
+                onto: CIImage(color: .clear).cropped(to: localCanvas), instruction: localInstruction, request: request, time: time)
+            frame = picture.cropped(to: localCanvas)
+                .transformed(by: CGAffineTransform(translationX: viewport.minX, y: viewport.minY))
+                .cropped(to: viewport).composited(over: frame).cropped(to: instruction.canvas)
+        }
+        return frame
+    }
+
     /// `image` (a canvas-sized speaker layer) scaled uniformly so its width is `widthFraction` of the canvas
     /// width, centred at (`xFraction`, `yFraction`). Fractions use the top-left origin of
     /// `VisualMediaPlacement`; Core Image's origin is bottom-left, so the centre sits at `height * (1 - yFraction)`.
@@ -398,31 +459,37 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
     /// The canvas-sized pool photo or video a clip's `.media` backdrop shows, cover-fit like a fullscreen cutaway.
     /// nil (nothing drawn) when no backdrop layer carries `poolID`, which a built composition never lacks.
     private func mediaBackdropImage(_ poolID: String, instruction: RecipeVideoInstruction,
-                                    request: AVAsynchronousVideoCompositionRequest, time: Double) throws -> CIImage? {
+                                    request: AVAsynchronousVideoCompositionRequest, time: Double, canvas: CGRect) throws -> CIImage? {
         guard let backdropLayer = instruction.layers.first(where: { $0.backdropAssetID == poolID }),
               let source = try sourceImage(of: backdropLayer, request: request) else { return nil }
-        return Self.positionedSource(source, layer: backdropLayer, canvas: instruction.canvas, time: time).cropped(to: instruction.canvas)
+        var local = backdropLayer
+        local.transform = AVPlayerPreviewComposer.transform(naturalSize: local.naturalSize ?? source.extent.size,
+            preferred: local.preferredTransform, canvas: canvas.size, media: .identity)
+        return Self.positionedSource(source, layer: local, canvas: canvas, time: time).cropped(to: canvas)
     }
 
     private func composeVideoLayer(_ layer: RecipeVideoLayer, onto background: CIImage,
                                    instruction: RecipeVideoInstruction, request: AVAsynchronousVideoCompositionRequest,
                                    time: Double) throws -> CIImage {
-        var frame = background
-        guard var source = try sourceImage(of: layer, request: request) else { return frame }
+        let canvas = layer.panelViewport.map { CGRect(origin: .zero, size: $0.size) } ?? instruction.canvas
+        var frame = layer.panelViewport.map { viewport in
+            background.transformed(by: CGAffineTransform(translationX: -viewport.minX, y: -viewport.minY)).cropped(to: canvas)
+        } ?? background
+        guard var source = try sourceImage(of: layer, request: request) else { return background }
         // Clamped BEFORE the transform, on the decoded frame's whole-pixel extent: clamping after it would
         // repeat the resampled, partly transparent edge column and leave grey bars over the black canvas.
         if layer.extendsEdgesToCanvas { source = source.clampedToExtent() }
         var alpha = layer.visualPlacement?.alpha(at: time) ?? (layer.fadeIn > 0 ? min(1, max(0, (time - layer.start) / layer.fadeIn)) : 1)
         if layer.visualPlacement == nil, let fade = layer.overlayFade { alpha *= fade.alpha(at: time) }
-        var positioned = Self.positionedSource(source, layer: layer, canvas: instruction.canvas, time: time)
+        var positioned = Self.positionedSource(source, layer: layer, canvas: canvas, time: time)
         if let backdrop = layer.backdrop {
             let under: CIImage?
             if case .media(let poolID) = backdrop {
-                under = try mediaBackdropImage(poolID, instruction: instruction, request: request, time: time)
+                under = try mediaBackdropImage(poolID, instruction: instruction, request: request, time: time, canvas: canvas)
             } else {
-                under = Self.backdropImage(backdrop, source: source, layer: layer, canvas: instruction.canvas, time: time)
+                under = Self.backdropImage(backdrop, source: source, layer: layer, canvas: canvas, time: time)
             }
-            if let under { positioned = positioned.composited(over: under).cropped(to: instruction.canvas) }
+            if let under { positioned = positioned.composited(over: under).cropped(to: canvas) }
         }
         if layer.overlayPopIn {
             let scale = 0.82 + 0.18 * min(1, max(0, (time - layer.start) / 0.18))
@@ -431,19 +498,19 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                 .transformed(by: CGAffineTransform(translationX: layer.overlayCenter.x, y: layer.overlayCenter.y))
         }
         if let dissolve = layer.overlayDissolve {
-            positioned = try dissolve.image(source: positioned.cropped(to: instruction.canvas), localTime: floor((time - layer.start) * 30 + 0.000_001) / 30, duration: layer.end - layer.start)
+            positioned = try dissolve.image(source: positioned.cropped(to: canvas), localTime: floor((time - layer.start) * 30 + 0.000_001) / 30, duration: layer.end - layer.start)
         }
         if layer.isPrimary && !instruction.cameraPulses.isEmpty {
-            let sx = CameraPulse.scale(pulses: instruction.cameraPulses, time: time, dimension: Int(instruction.canvas.width))
-            let sy = CameraPulse.scale(pulses: instruction.cameraPulses, time: time, dimension: Int(instruction.canvas.height))
-            positioned = positioned.cropped(to: instruction.canvas)
-                .transformed(by: CGAffineTransform(translationX: -instruction.canvas.midX, y: -instruction.canvas.midY))
+            let sx = CameraPulse.scale(pulses: instruction.cameraPulses, time: time, dimension: Int(canvas.width))
+            let sy = CameraPulse.scale(pulses: instruction.cameraPulses, time: time, dimension: Int(canvas.height))
+            positioned = positioned.cropped(to: canvas)
+                .transformed(by: CGAffineTransform(translationX: -canvas.midX, y: -canvas.midY))
                 .transformed(by: CGAffineTransform(scaleX: sx, y: sy))
-                .transformed(by: CGAffineTransform(translationX: instruction.canvas.midX, y: instruction.canvas.midY))
+                .transformed(by: CGAffineTransform(translationX: canvas.midX, y: canvas.midY))
         }
         if alpha < 1 && layer.transitionKind != .crossfade {
             do {
-                frame = try NativeClipTransitionPainter.image(incoming: positioned, outgoing: frame, kind: layer.transitionKind, progress: alpha, canvas: instruction.canvas)
+                frame = try NativeClipTransitionPainter.image(incoming: positioned, outgoing: frame, kind: layer.transitionKind, progress: alpha, canvas: canvas)
             } catch {
                 throw error
             }
@@ -454,9 +521,14 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
             frame = Self.opacity(positioned.applyingFilter("CILinearToSRGBToneCurve"), alpha)
                 .composited(over: frame.applyingFilter("CILinearToSRGBToneCurve"))
                 .applyingFilter("CISRGBToneCurveToLinear")
-                .cropped(to: instruction.canvas)
+                .cropped(to: canvas)
         } else {
-            frame = positioned.composited(over: frame).cropped(to: instruction.canvas)
+            frame = positioned.composited(over: frame).cropped(to: canvas)
+        }
+        if let viewport = layer.panelViewport {
+            return frame.cropped(to: canvas)
+                .transformed(by: CGAffineTransform(translationX: viewport.minX, y: viewport.minY))
+                .cropped(to: viewport).composited(over: background).cropped(to: instruction.canvas)
         }
         return frame
     }

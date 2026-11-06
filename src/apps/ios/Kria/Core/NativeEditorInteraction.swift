@@ -243,6 +243,23 @@ enum NativeEditorInteraction {
     /// about 1 s can shift the total by a few milliseconds.)
     static func reorderedSlots(_ slots: [EditorTimelineSlot], from: Int, to: Int) -> [EditorTimelineSlot] {
         guard slots.indices.contains(from), slots.indices.contains(to), from != to else { return slots }
+        if slots.contains(where: { $0.splitSectionID != nil }) {
+            var groups: [[EditorTimelineSlot]] = []
+            for slot in slots {
+                if let id = slot.splitSectionID, groups.last?.first?.splitSectionID == id { groups[groups.count - 1].append(slot) }
+                else { groups.append([slot]) }
+            }
+            var cursor = 0
+            var source = 0, destination = 0
+            for i in groups.indices {
+                if (cursor..<(cursor + groups[i].count)).contains(from) { source = i }
+                if (cursor..<(cursor + groups[i].count)).contains(to) { destination = i }
+                cursor += groups[i].count
+            }
+            guard source != destination else { return slots }
+            groups.insert(groups.remove(at: source), at: destination)
+            return groups.flatMap { $0 }
+        }
         let transitions = slots.map { ($0.transitionAfter, $0.transitionDurationS) }
         var moved = slots
         moved.insert(moved.remove(at: from), at: to)
@@ -289,7 +306,8 @@ enum NativeEditorInteraction {
 
     static func timelineProjection(
         slots: [EditorTimelineSlot],
-        carousel: [String: JSONValue]?
+        carousel: [String: JSONValue]?,
+        splitSections: [EditorSplitScreenSection] = []
     ) -> NativeEditorTimelineProjection {
         let speech = slots.contains { $0.id?.hasPrefix("native-phone-talking-source") == true }
         let renderedClock = slots.contains { !$0.removed && $0.raw["timing_mode"]?.stringValue == "rendered" }
@@ -300,6 +318,7 @@ enum NativeEditorInteraction {
         // must share it or millisecond rounding accumulates frame drift.
         let usesSourceFrameClock = !continuousClock && slots.contains { !$0.removed && sourcePreservingOutputDuration($0) != nil }
         var cursor: TimeInterval = 0
+        var sectionStarts: [String: Double] = [:]
         var previous: (slot: EditorTimelineSlot, duration: TimeInterval)?
         for (index, slot) in slots.enumerated() where !slot.removed {
             // KRI-852: source-backed speech must use the same continuous source clock as
@@ -313,6 +332,17 @@ enum NativeEditorInteraction {
                 ? max(minimum, slot.durationS ?? minimum)
                 : sourcePreservingOutputDuration(slot) ?? max(0.1, slot.durationS ?? 0.1)
             let duration = usesSourceFrameClock ? roundedFrame(rawDuration) : rawDuration
+            if let id = slot.splitSectionID, let section = splitSections.first(where: { $0.id == id }) {
+                let start: Double
+                if let existing = sectionStarts[id] { start = existing }
+                else { start = cursor; sectionStarts[id] = start; cursor += section.durationS }
+                let memberStart = start + slot.splitOffsetS
+                let memberDuration = slot.durationS ?? duration
+                baseWindows.append(NativeEditorClipWindow(sourceIndex: index, start: memberStart,
+                    end: min(start + section.durationS, memberStart + memberDuration), overlapBefore: 0))
+                previous = nil
+                continue
+            }
             let overlap = previous.map { prior -> Double in
                 if continuousClock {
                     guard prior.slot.transitionAfter != "cut" else { return 0 }
@@ -335,7 +365,7 @@ enum NativeEditorInteraction {
             previous = (slot, duration)
         }
 
-        let baseDuration = baseWindows.last?.end ?? 0
+        let baseDuration = cursor
         guard let carousel,
               let carouselDuration = carouselDuration(carousel),
               carouselDuration > 0 else {

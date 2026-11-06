@@ -7,6 +7,36 @@ import XCTest
 /// saved lane across relaunches.
 @MainActor
 final class SpeakerFrameDirectManipulationUITests: XCTestCase {
+    func testRepeatedSpeakerPanelsSelectAndDragTheChosenOccurrence() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-split-speaker",
+                               "-ui-testing-editor-speaker-background", "-ui-testing-editor-speaker-background-windows",
+                               "-ui-testing-editor-speaker-frame", "-ui-testing-editor-speaker-background-reset",
+                               "-ui-testing-editor-live-preview"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+        let top = app.descendants(matching: .any)["native-editor-preview-speaker-split-speaker-top"].firstMatch
+        let bottom = app.descendants(matching: .any)["native-editor-preview-speaker-split-speaker-bottom"].firstMatch
+        XCTAssertTrue(top.waitForExistence(timeout: 30))
+        XCTAssertTrue(bottom.waitForExistence(timeout: 30))
+        XCTAssertLessThan(top.frame.maxY, bottom.frame.minY)
+        top.tap()
+        XCTAssertTrue((top.value as? String)?.hasSuffix("selected") == true)
+        bottom.tap()
+        XCTAssertTrue((bottom.value as? String)?.hasSuffix("selected") == true)
+        XCTAssertFalse((top.value as? String)?.hasSuffix("selected") == true)
+        let before = bottom.value as? String
+        let start = bottom.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.15, thenDragTo: start.withOffset(CGVector(dx: -20, dy: -20)))
+        XCTAssertNotEqual(bottom.value as? String, before)
+        XCTAssertTrue((bottom.value as? String)?.hasSuffix("selected") == true)
+        XCTAssertLessThan(top.frame.midY, bottom.frame.midY)
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Selected lower speaker occurrence after panel-local drag"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     private struct Placement: Equatable { var x: Int; var y: Int; var size: Int }
 
     private func launch(reset: Bool) -> XCUIApplication {

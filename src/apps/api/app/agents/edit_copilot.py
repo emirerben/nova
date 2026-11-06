@@ -108,7 +108,8 @@ log = structlog.get_logger()
 # the server measured it); the BACKGROUND block prints each aimed window as `aim=left zoom=0.8x`.
 # Taught in speaker_background_focus.txt only where the snapshot offers the `background_focus`
 # family (flag + verified token + protocol 42), so every other prompt is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-05-v116"
+# v117: editable split-screen sections and per-clip audio gain on top of v116.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-06-v117"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1367,6 +1368,31 @@ def _format_snapshot(snapshot: dict) -> str:
     timeline_fields = snapshot.get("timeline_patch_capabilities")
     if isinstance(timeline_fields, dict):
         lines.append("timeline_patch_capabilities: " + json.dumps(timeline_fields, sort_keys=True))
+    if snapshot.get("split_screen_available"):
+        lines.append("split_screen_available: true")
+    if snapshot.get("split_screen_sections"):
+        lines.append(
+            "split_screen_sections: "
+            + json.dumps(snapshot["split_screen_sections"], sort_keys=True)
+        )
+    for slot in slots:
+        if isinstance(slot, dict) and slot.get("split_section_id"):
+            lines.append(
+                "split member: "
+                + json.dumps(
+                    {
+                        key: slot.get(key)
+                        for key in (
+                            "slot_id",
+                            "clip_index",
+                            "split_section_id",
+                            "split_panel_index",
+                            "split_offset_s",
+                        )
+                    },
+                    sort_keys=True,
+                )
+            )
     appearance = _text_appearance_inventory(snapshot)
     if snapshot.get("text_appearance_version") == 1 or appearance["targets"]:
         lines.append("TEXT APPEARANCE: version=1; targets=")

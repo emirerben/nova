@@ -85,6 +85,7 @@ enum NativeEditorRenderError: Error, Equatable {
                  songCaptionShift: NativeSongCaptionShift? = nil,
                  skippedMediaOverlayIDs: Set<String> = [],
                  talkingCutaways: [NativePhoneTalkingSource.Cutaway] = []) throws -> NativeEditorRenderProgram {
+        guard document.splitScreenIsValid else { throw RecipeError.invalidTimeline }
         if NativeSpeechTimelineProjection.requiresCaptionTiming(document) {
             throw NativeEditorRenderError.missingSpeechCaptionTiming
         }
@@ -108,7 +109,7 @@ enum NativeEditorRenderError: Error, Equatable {
         /// while a song bed is actually applied (KRI-428); removing the song, or a bed that cannot
         /// play, restores these levels.
         var cameraLevelWithoutSong: [Double] = []
-        let requestedOriginalGain = document.mix["original_level"]?.numberValue ?? 1
+        let requestedOriginalGain = document.mix["original_level"]?.numberValue ?? (audioSources["narration"] != nil ? 0 : 1)
         let originalGain = requestedOriginalGain.isFinite ? min(max(0, requestedOriginalGain), 1) : 1
         let hasExplicitOriginalGain = document.mix["original_level"] != nil
         let activeSlots = document.clips.filter { !$0.removed }
@@ -117,9 +118,6 @@ enum NativeEditorRenderError: Error, Equatable {
         // the clip-level half of the mix, while `originalGain` below remains
         // the global creator-controlled bed gain. Its *presence* is the
         // feature gate so older narrated documents stay byte-for-byte silent.
-        let hasExplicitNarratedSourceAudio = activeSlots.contains {
-            $0.raw["source_audio_volume"]?.numberValue != nil
-        }
         // The creator's song replaces the camera audio unless they explicitly turned the original
         // audio up (Sounds > Original audio): then the camera plays WITH the song at that level
         // (the song keeps its own level). An unset level, or an explicit 0, keeps the camera silent.
@@ -139,15 +137,12 @@ enum NativeEditorRenderError: Error, Equatable {
                                                    source: .original(mediaID: source.mediaID))
             urls[id] = source.url
             let authoredSlot = slot(for: clip, index: index)
-            guard authoredSlot?.raw["layout"]?.stringValue != "supporting_card" else {
-                throw NativeEditorRenderError.unsupportedLane("supporting card")
-            }
             guard authoredSlot?.lookAdjustments == nil || authoredSlot?.lookAdjustments?.isEmpty == true,
                   [nil, "none", "golden_hour"].contains(authoredSlot?.lookPreset) else {
                 throw NativeEditorRenderError.unsupportedLane("look")
             }
             var transition: Transition?
-            if index > 0, let previous = slot(for: clips[index - 1], index: index - 1),
+            if index > 0, authoredSlot?.splitSectionID == nil, let previous = slot(for: clips[index - 1], index: index - 1), previous.splitSectionID == nil,
                previous.transitionAfter != "cut" {
                 let kind: Transition.Kind
                 switch previous.transitionAfter {
@@ -167,6 +162,24 @@ enum NativeEditorRenderError: Error, Equatable {
                 // transition when it actually left room for one.
                 let overlap = clips[index - 1].end - clip.start
                 if overlap > 0.000_001 { transition = Transition(kind: kind, duration: overlap) }
+            }
+            if let section = authoredSlot?.splitSectionID, let panel = authoredSlot?.splitPanelIndex,
+               let prior = clips.enumerated().filter({ pair in
+                   let candidate = slot(for: pair.element, index: pair.offset)
+                   return candidate?.splitSectionID == section && candidate?.splitPanelIndex == panel && pair.element.start < clip.start
+               }).max(by: { $0.element.start < $1.element.start }),
+               let priorSlot = slot(for: prior.element, index: prior.offset), priorSlot.transitionAfter != "cut" {
+                let overlap = prior.element.end - clip.start
+                if overlap > 0.000001 {
+                    let kind: Transition.Kind
+                    switch priorSlot.transitionAfter {
+                    case "crossfade": kind = .crossfade
+                    case "dip_to_black": kind = .fadeBlack
+                    case "flash": kind = .fadeWhite
+                    default: throw NativeEditorRenderError.unsupportedLane("transition")
+                    }
+                    transition = Transition(kind: kind, duration: overlap)
+                }
             }
             let explicitRate = authoredSlot?.raw["playback_rate"]?.numberValue
             if let explicitRate {
@@ -198,15 +211,16 @@ enum NativeEditorRenderError: Error, Equatable {
             // room to move (the leading half of a split) plays with no hold.
             var freezeHold = authoredSlot?.raw["freeze_hold_s"]?.numberValue ?? 0
             if freezeHold > 0, let frame = authoredSlot?.raw["freeze_frame_s"]?.numberValue, frame.isFinite {
-                let motion = frame - sourceStart
+                let motion = (frame - sourceStart) / (explicitRate ?? 1)
                 let hold = ((authoredMovingDuration - motion) * 30).rounded() / 30
-                freezeHold = motion >= 0.1 - 0.000_001 && hold >= 1.0 / 30 - 0.000_001 ? hold : 0
+                let minimumMotion = authoredSlot?.parentSegmentID != nil ? 1.0 / 30 : 0.1
+                freezeHold = motion >= minimumMotion - 0.000_001 && hold >= 1.0 / 30 - 0.000_001 ? hold : 0
             }
-            let freezes = explicitRate == nil && freezeHold.isFinite && freezeHold > 0
+            let freezes = freezeHold.isFinite && freezeHold > 0
                 && authoredMovingDuration - freezeHold > 0
             if freezes {
-                requestedRate = 1
-                sourceSpan = authoredMovingDuration - freezeHold
+                requestedRate = explicitRate ?? 1
+                sourceSpan = (authoredMovingDuration - freezeHold) * requestedRate
             }
             // Narration and legacy projections can intentionally carry a
             // shorter moving span plus a hold. Only an unchanged authored
@@ -249,15 +263,14 @@ enum NativeEditorRenderError: Error, Equatable {
             let hasExplicitClipAudio = authoredSlot?.raw["muted"] != nil
             let sourceGain: Double = hasExplicitOriginalGain || hasExplicitClipAudio || sourceAudioPreserved ? 1 : 0
             let narratedSourceLevel: Double
-            if audioSources["narration"] != nil, hasExplicitNarratedSourceAudio {
-                let requested = authoredSlot?.raw["source_audio_volume"]?.numberValue ?? 0
+            if let requested = authoredSlot?.raw["source_audio_volume"]?.numberValue {
                 // Selected sources carry unit gains; clip-scoped sound may
                 // carry a fractional gain. Clamp rather than fail a preview;
                 // AudioMixRecipe.originalVolume applies the global
                 // original-audio gain exactly once after this value.
-                narratedSourceLevel = requested.isFinite ? min(max(0, requested), 1) : 0
+                narratedSourceLevel = requested.isFinite ? min(max(0, requested), 2) : 0
             } else {
-                narratedSourceLevel = audioSources["narration"] != nil ? 0 : sourceGain
+                narratedSourceLevel = sourceGain
             }
             let cameraLevel: Double = clip.muted || authoredSlot?.raw["muted"] == .bool(true) ? 0 : narratedSourceLevel
             cameraLevelWithoutSong.append(cameraLevel)
@@ -267,16 +280,39 @@ enum NativeEditorRenderError: Error, Equatable {
                 volume: audioSources[Self.songSourceKey] != nil && !creatorHearsCameraWithSong ? 0 : cameraLevel, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil,
                 holdDuration: holdDuration > 0 ? holdDuration : nil,
                 sourceCrop: try Self.sourceCrop(authoredSlot?.raw["source_crop"])))
+            if authoredSlot?.raw["layout"]?.stringValue == "supporting_card" {
+                video[video.count - 1].stillLayout = .supportingCard
+            }
+            if let sectionID = authoredSlot?.splitSectionID, let panel = authoredSlot?.splitPanelIndex {
+                video[video.count - 1].splitScreen = SplitScreenMembership(sectionID: sectionID, panelIndex: panel)
+            }
             // KRI-306: letterbox a sideways clip when the creator chose black
             // bars. Cropped and graded clips keep the engine's cover-fill: the
             // engine rejects a look combined with a non-identity transform, and
             // the backend refuses that combination for the same reason.
             // Guided stories apply their authored fit before adding a final-frame hold
             // (`phone_guided_plan`); other formats retain `_fit_eligible` behavior.
-            if document.previewLetterboxesSidewaysClips, canvas.height > canvas.width, (guidedStory || holdDuration <= 0),
-               authoredSlot?.lookPreset != "golden_hour", video[video.count - 1].sourceCrop == nil {
-                video[video.count - 1].transform = Self.fitTransform(display: source.asset.naturalSize, canvas: canvas, landscapeFit: "fit")
+            var footageCanvas = canvas
+            if let sectionID = authoredSlot?.splitSectionID, let panel = authoredSlot?.splitPanelIndex,
+               let section = document.splitScreenSections.first(where: { $0.id == sectionID }) {
+                let height = (1 - section.gutter * Double(section.panelCount - 1)) * section.panelWeights[panel] / section.panelWeights.reduce(0, +)
+                footageCanvas = .init(width: canvas.width, height: max(16, Int((Double(canvas.height) * height).rounded())))
             }
+            if video[video.count - 1].stillLayout == nil, document.previewLetterboxesSidewaysClips, footageCanvas.height > footageCanvas.width, (guidedStory || holdDuration <= 0),
+               authoredSlot?.lookPreset != "golden_hour", video[video.count - 1].sourceCrop == nil {
+                video[video.count - 1].transform = Self.fitTransform(display: source.asset.naturalSize, canvas: footageCanvas, landscapeFit: "fit")
+            }
+            if let raw = authoredSlot?.raw["media_transform"]?.objectValue {
+                let transform = MediaTransform(scale: raw["scale"]?.numberValue ?? 1,
+                    rotationDegrees: raw["rotation_degrees"]?.numberValue ?? 0,
+                    positionX: raw["position_x"]?.numberValue ?? 0, positionY: raw["position_y"]?.numberValue ?? 0)
+                video[video.count - 1].transform.scale = transform.scale
+                video[video.count - 1].transform.rotationDegrees = transform.rotationDegrees
+                video[video.count - 1].transform.positionX = transform.positionX
+                video[video.count - 1].transform.positionY = transform.positionY
+            }
+            video[video.count - 1].audioFadeIn = authoredSlot?.raw["audio_fade_in"]?.numberValue
+            video[video.count - 1].audioFadeOut = authoredSlot?.raw["audio_fade_out"]?.numberValue
             // KRI-1136: the creator's tilt turns the clip about the canvas centre AFTER the letterbox scale, so a
             // tilted sideways clip keeps its bars. A graded clip stays upright, like the server's refusal.
             // KRI-1169: the zoom multiplies that letterbox scale (never replaces it).
@@ -294,7 +330,9 @@ enum NativeEditorRenderError: Error, Equatable {
         // No editor document legitimately previews without a video clip.
         guard !video.isEmpty else { throw NativeEditorRenderError.missingVideoTrack }
         var audioTracks: [TimelineTrack] = []
-        let total = video.map { $0.timelineStart + $0.duration }.max() ?? 0
+        let splitProjection = NativeEditorInteraction.timelineProjection(slots: document.clips, carousel: document.carouselMoment, splitSections: document.splitScreenSections)
+        let videoEnd = video.map { $0.timelineStart + $0.duration }.max() ?? 0
+        let total = document.splitScreenSections.isEmpty ? videoEnd : max(videoEnd, splitProjection.totalDuration)
         func addAudio(id: String, lane: String, start: Double, length: Double, gain: Double, timelineStart: Double = 0, catalog: RenderAssetCatalog = .music) throws {
             guard length > 0, let source = audioSources[id], let fingerprint = source.asset.fingerprint,
                   let available = source.asset.duration, start >= 0, start + length <= available + 0.01 else {
@@ -957,7 +995,14 @@ enum NativeEditorRenderError: Error, Equatable {
         // that name; under any other name the preview drew the room with no background and no error.
         var speakerBackground: SpeakerBackgroundLayer?
         if let background = document.speakerBackground {
-            let layer = background.layer
+            let explicitSubjects = !document.splitScreenSections.isEmpty || document.clips.contains { $0.raw["speaker_subject"] != nil }
+            let subjectIDs: [String]? = explicitSubjects ? video.compactMap { clip in
+                guard let slot = document.clips.first(where: { $0.id == clip.id }) else { return nil }
+                let isSpeaker = slot.raw["speaker_subject"]?.boolValue
+                    ?? (NativePhoneTalkingSource.isSourceSlot(slot) || slot.parentSegmentID?.hasPrefix(NativePhoneTalkingSource.slotID) == true)
+                return isSpeaker ? clip.id : nil
+            } : nil
+            let layer = background.layer(subjectClipIDs: subjectIDs)
             // KRI-1162: the fill and every window visual are pinned pool assets (one entry per media id, however
             // many windows reuse it).
             // KRI-1173: a solid-colour fill has no pool visual, so `mediaRequirements` lists only the windows and the
@@ -989,10 +1034,26 @@ enum NativeEditorRenderError: Error, Equatable {
         }
         // Past the cap `recipe.validate()` would throw a bare `invalidTimeline`, which reads as a transient failure.
         guard text.count <= Self.maxTextLayers else { throw NativeEditorRenderError.tooManyTextLayers }
+        var videoTracks: [TimelineTrack] = []
+        let fullScreen = video.filter { $0.splitScreen == nil }
+        if !fullScreen.isEmpty { videoTracks.append(TimelineTrack(id: speakerBackground?.subjectTrackID ?? "video", kind: .video, clips: fullScreen)) }
+        for section in document.splitScreenSections {
+            for panel in 0..<section.panelCount {
+                let members = video.filter { $0.splitScreen?.sectionID == section.id && $0.splitScreen?.panelIndex == panel }
+                if !members.isEmpty { videoTracks.append(TimelineTrack(id: "split-\(section.id)-\(panel)", kind: .video, clips: members)) }
+            }
+        }
         var recipe = KriaMediaEngine.EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: canvas,
-            assets: assets.values.sorted { $0.id < $1.id }, tracks: [TimelineTrack(id: speakerBackground?.subjectTrackID ?? "video", kind: .video, clips: video)] + (overlays.isEmpty ? [] : [TimelineTrack(id: "overlays", kind: .overlay, clips: overlays)]) + audioTracks,
+            assets: assets.values.sorted { $0.id < $1.id }, tracks: videoTracks + (overlays.isEmpty ? [] : [TimelineTrack(id: "overlays", kind: .overlay, clips: overlays)]) + audioTracks,
             audio: AudioMixRecipe(originalVolume: originalGain, muteWindows: muteWindows),
             assetManifest: RenderAssetManifest(assets: references.values.sorted { $0.id < $1.id }), textLayers: text, cameraPulses: cameraPulses, motionScenes: motionProgram, visualFills: visualFills, speakerBackground: speakerBackground)
+        recipe.splitScreenSections = document.splitScreenSections.compactMap { section in
+            guard let index = document.clips.firstIndex(where: { $0.splitSectionID == section.id }),
+                  let window = splitProjection.clipWindows.first(where: { $0.sourceIndex == index }) else { return nil }
+            let start = window.start - document.clips[index].splitOffsetS
+            return SplitScreenSection(id: section.id, start: start, end: start + section.durationS,
+                                      panelWeights: section.panelWeights, gutter: section.gutter, backgroundColor: section.backgroundColor)
+        }
         // KRI-589: drawings follow the timeline the cuts left them (the projected window), then take the
         // same clamp the server's `compile_drawing_layers` applies; both are pinned by compile_v1.json.
         recipe.drawingLayers = NativeDrawingCompile.layers(document.drawings.map { drawing in

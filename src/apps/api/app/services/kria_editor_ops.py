@@ -79,6 +79,21 @@ _PORTABLE_FAMILIES = {
 }
 
 
+def split_screen_available(job: Any, variant: dict[str, Any]) -> bool:
+    from app.services.phone_rollout import split_screen_supported
+
+    return bool(
+        variant.get("render_destination") == "device"
+        and _editor_capabilities(job, variant).get("timeline") is True
+        and split_screen_supported()
+    )
+
+
+def _variant_split_sections(variant: dict[str, Any]) -> list[dict[str, Any]]:
+    timeline = variant.get("user_timeline") or variant.get("ai_timeline") or {}
+    return copy.deepcopy(timeline.get("split_screen_sections") or [])
+
+
 def timeline_patch_capabilities(job: Any, variant: dict[str, Any]) -> dict[str, bool]:
     """Project field-level timeline support from the same predicates as compile.
 
@@ -111,6 +126,9 @@ def timeline_patch_capabilities(job: Any, variant: dict[str, Any]) -> dict[str, 
         "playback_rate": enabled("playback_rate", default=not device) and source_window_timeline,
         "source_crop": enabled("source_crop", default=False),
     }
+    if enabled("audio", default=False):
+        fields["muted"] = True
+        fields["source_audio_volume"] = True
     if enabled("tilt", default=False):
         # KRI-1137: present only while open, so every other snapshot and prompt is unchanged.
         fields["tilt"] = True
@@ -295,6 +313,23 @@ def _safe_slot(
         "look_preset": row.get("look_preset", "none"),
         "media_kind": row.get("media_kind"),
     }
+    for key in (
+        "split_section_id",
+        "split_panel_index",
+        "split_offset_s",
+        "source_crop",
+        "layout",
+        "muted",
+        "freeze_hold_s",
+        "freeze_frame_s",
+        "source_audio_volume",
+        "audio_fade_in",
+        "audio_fade_out",
+        "speaker_subject",
+        "media_transform",
+    ):
+        if key in row:
+            slot[key] = copy.deepcopy(row[key])
     media_id = row.get("media_id")
     if isinstance(media_id, str) and media_id:
         slot["media_id"] = media_id
@@ -1311,6 +1346,14 @@ def build_editor_snapshot(
             )
         )
     duration = visual_block_variant_duration(variant)
+    sections = _variant_split_sections(variant)
+    if sections:
+        from app.kria.split_screen import layout_split_timeline
+
+        starts, _, duration = layout_split_timeline(slot_rows, sections)
+        for slot, start in zip((s for s in slots if not s.get("removed")), starts, strict=True):
+            slot["output_start_s"] = start
+            slot["output_end_s"] = start + float(slot["duration_s"])
     text_bars = [
         {
             **{
@@ -1399,6 +1442,10 @@ def build_editor_snapshot(
         # that the web drawer's snapshot never carries, so the parser refuses the
         # op unless this marker is present.
         snapshot["label_facts"] = True
+    if sections:
+        snapshot["split_screen_sections"] = sections
+    if split_screen_available(job, variant):
+        snapshot["split_screen_available"] = True
     timeline_max_slots = caps.get("timeline_max_slots")
     if isinstance(timeline_max_slots, int) and timeline_max_slots > 0:
         snapshot["editor_limits"] = {"max_timeline_slots": timeline_max_slots}
@@ -1613,33 +1660,33 @@ def _slot_rate(row: dict[str, Any]) -> float:
 
 def _timeline_models(rows: list[dict[str, Any]]) -> list[TimelineSlotEdit]:
     return [
-        TimelineSlotEdit(
-            slot_id=row.get("slot_id"),
-            parent_segment_id=row.get("parent_segment_id"),
-            clip_index=int(row.get("clip_index")),
-            in_s=float(row.get("in_s") or 0.0),
-            duration_beats=row.get("duration_beats"),
-            duration_s=row.get("duration_s"),
-            removed=bool(row.get("removed")),
-            transition_after=row.get("transition_after") or "cut",
-            transition_duration_s=row.get("transition_duration_s"),
-            look_preset=row.get("look_preset") or "none",
-            look_adjustments=row.get("look_adjustments"),
-            # Only guided rows carry these; omission on the wire means "inherit".
-            **{
-                key: row[key]
-                for key in (
-                    "playback_rate",
-                    "source_crop",
-                    "tilt",
-                    "source_start_locked",
-                    "source_end_s",
-                )
-                if key in row
-            },
+        TimelineSlotEdit.model_validate(
+            {
+                **{
+                    key: value for key, value in row.items() if key in TimelineSlotEdit.model_fields
+                },
+                "clip_index": int(row["clip_index"]),
+                "in_s": float(row.get("in_s") or 0),
+                "transition_after": row.get("transition_after") or "cut",
+                "look_preset": row.get("look_preset") or "none",
+            }
         )
         for row in rows
     ]
+
+
+def _split_timeline_segments(rows: list[dict], sections: list[dict]) -> tuple[list[dict], float]:
+    from app.kria.split_screen import layout_split_timeline
+    from app.services.authored_text_fit import _segments
+
+    if not sections:
+        segments = _segments(rows)
+        return segments, max((float(s["output_end_s"]) for s in segments), default=0.0)
+    starts, _, total = layout_split_timeline(rows, sections)
+    projected = copy.deepcopy([row for row in rows if not row.get("removed")])
+    for row, start in zip(projected, starts, strict=True):
+        row["_speech_output_start_s"] = start
+    return _segments(projected), total
 
 
 def _require_index(rows: list[Any], index: object, label: str) -> int:
@@ -1772,6 +1819,7 @@ def project_editor_draft(
         payload.get("timeline_slots") is not None
         and job is not None
         and _is_guided_native(job, variant)
+        and not payload.get("split_screen_sections")
     )
     if guided_draft:
         from app.services.kria_editor_timeline import (  # noqa: PLC0415
@@ -1783,15 +1831,36 @@ def project_editor_draft(
         if total > 0:
             projected["duration_s"] = total
     elif payload.get("timeline_slots") is not None:
-        originals = {
-            row.get("slot_id"): row for row in _variant_slots(variant) if row.get("slot_id")
+        source_rows = _variant_slots(variant, job)
+        originals = {row.get("slot_id"): row for row in source_rows if row.get("slot_id")}
+        source_metadata = {
+            row.get("clip_index"): {
+                key: copy.deepcopy(row[key])
+                for key in ("source_duration_s", "source_gcs_path", "media_id", "media_kind")
+                if key in row
+            }
+            for row in source_rows
         }
+        projected.pop("guided_draft_slots", None)
         projected["user_timeline"] = {
             "slots": [
-                {**originals.get(row.get("slot_id"), {}), **copy.deepcopy(row)}
+                {
+                    **originals.get(row.get("slot_id"), {}),
+                    **source_metadata.get(row.get("clip_index"), {}),
+                    **copy.deepcopy(row),
+                }
                 for row in payload["timeline_slots"]
-            ]
+            ],
+            "split_screen_sections": copy.deepcopy(
+                payload.get("split_screen_sections", _variant_split_sections(variant))
+            ),
         }
+    if payload.get("timeline_slots") is not None and "split_screen_sections" in payload:
+        section_ids = {section["id"] for section in payload["split_screen_sections"] or []}
+        for row in projected.get("user_timeline", {}).get("slots", []):
+            if row.get("split_section_id") not in section_ids:
+                for key in ("split_section_id", "split_panel_index", "split_offset_s"):
+                    row.pop(key, None)
     # KRI-219: full-replacement lanes (same wire shape the snapshot/compile read)
     # so a turn-2 add/patch/remove indexes the turn-1 draft, not the pre-draft list.
     # KRI-589: `drawings` rides along read-only: no op edits it, but a turn-2 snapshot (and the
@@ -2210,6 +2279,8 @@ class _DraftState:
     slots: list[dict[str, Any]]
     base_generation: Any
     # Slots as they were before this bundle's ops (guided label rebase reads it).
+    split_screen_sections: list[dict[str, Any]] = field(default_factory=list)
+    initial_split_screen_sections: list[dict[str, Any]] = field(default_factory=list)
     initial_slots: list[dict[str, Any]] = field(default_factory=list)
     # Snapshot indices keep targeting these objects after a reorder, like the web drawer.
     slot_targets: list[dict[str, Any]] = field(default_factory=list)
@@ -2474,7 +2545,8 @@ def _fit_slots_to_footage(state: _DraftState, before: list[dict[str, Any]]) -> N
             continue
         rate = _slot_rate(row)
         in_s = max(0.0, float(row.get("in_s") or 0.0))
-        duration = _slot_duration(row)
+        hold = float(row.get("freeze_hold_s") or 0)
+        duration = max(0.0, _slot_duration(row) - hold)
         if duration <= 0 or in_s + duration * rate <= source + SOURCE_BOUNDS_TOLERANCE_S:
             continue
         if previous.get(row.get("slot_id") or id(row)) == (row.get("in_s"), row.get("duration_s")):
@@ -2487,7 +2559,7 @@ def _fit_slots_to_footage(state: _DraftState, before: list[dict[str, Any]]) -> N
             fitted_in = max(0.0, source - fitted * rate)
         fitted = math.floor(fitted * 1e6) / 1e6
         row["in_s"] = round(fitted_in, 6)
-        row["duration_s"] = fitted
+        row["duration_s"] = fitted + hold
         row["duration_beats"] = None
         if "source_end_s" in row:
             row["source_end_s"] = round(fitted_in + fitted * rate, 6)
@@ -2500,6 +2572,24 @@ def _op_set_clip_duration(state: _DraftState, op: dict[str, Any]) -> None:
     name = str(op.get("op") or "")
     index = _snapshot_slot_index(state, op.get("slot_index"))
     row = state.slots[index]
+    if row.get("freeze_hold_s") and name in {"set_clip_duration", "set_clip_in", "trim_clip_start"}:
+        from app.kria.clip_source_clock import (
+            resize_source_window,
+            set_source_start,
+            slice_source_window,
+        )
+
+        if name == "set_clip_duration":
+            row.update(resize_source_window(row, float(op["duration_s"])))
+        elif name == "set_clip_in":
+            row.update(set_source_start(row, float(op["in_s"])))
+        else:
+            amount = min(float(op["start_s"]), max(0.0, _slot_duration(row) - 0.1))
+            row.update(slice_source_window(row, amount, _slot_duration(row)))
+            if row.get("split_section_id"):
+                row["split_offset_s"] += amount
+        state.changed.add("timeline")
+        return
     if name == "set_clip_duration":
         row["duration_beats"] = None
         row["duration_s"] = float(op["duration_s"])
@@ -2521,6 +2611,8 @@ def _op_set_clip_duration(state: _DraftState, op: dict[str, Any]) -> None:
         amount = min(float(op["start_s"]), max(0.0, _slot_duration(row) - 0.1))
         row["in_s"] = float(row.get("in_s") or 0.0) + amount * _slot_rate(row)
         row["source_start_locked"] = True
+        if row.get("split_section_id"):
+            row["split_offset_s"] += amount
         row["duration_beats"] = None
         row["duration_s"] = _slot_duration(row) - amount
     else:
@@ -2530,6 +2622,11 @@ def _op_set_clip_duration(state: _DraftState, op: dict[str, Any]) -> None:
 
 
 def _op_trim_output_start(state: _DraftState, op: dict[str, Any]) -> None:
+    if state.split_screen_sections or any(row.get("freeze_hold_s") for row in state.slots):
+        from app.agents.editor_ops_v2.split_screen import trim_output_start
+
+        trim_output_start(state, float(op["start_s"]))
+        return
     remaining = float(op["start_s"])
     if remaining <= 0:
         raise KriaEditorOpError("The requested output trim has no effect")
@@ -2574,20 +2671,26 @@ def _op_split_clip(state: _DraftState, op: dict[str, Any]) -> None:
     duration = _slot_duration(row)
     split_at = float(op["at_s"])
     output_start = float(row.get("output_start_s") or 0.0)
-    local = split_at - output_start if split_at > duration else split_at
+    if row.get("split_section_id"):
+        from app.kria.split_screen import layout_split_timeline
+
+        starts, _, _ = layout_split_timeline(state.slots, state.split_screen_sections)
+        active = [candidate for candidate in state.slots if not candidate.get("removed")]
+        output_start = starts[next(i for i, candidate in enumerate(active) if candidate is row)]
+        local = split_at - output_start
+    else:
+        local = split_at - output_start if split_at > duration else split_at
     if local < 0.1 or local > duration - 0.1:
         raise KriaEditorOpError("The split point is outside the clip")
-    left = {**row, "duration_beats": None, "duration_s": local}
-    right = {
-        **row,
-        "slot_id": None,
-        "parent_segment_id": row.get("slot_id"),
-        "in_s": float(row.get("in_s") or 0.0) + local * _slot_rate(row),
-        "duration_beats": None,
-        "duration_s": duration - local,
-    }
-    if "source_end_s" in row:
-        left["source_end_s"] = right["in_s"]
+    from uuid import uuid4
+
+    from app.kria.clip_source_clock import slice_source_window
+
+    left = slice_source_window(row, 0, local)
+    right = slice_source_window(row, local, duration)
+    right.update(slot_id=str(uuid4()), parent_segment_id=row.get("slot_id"))
+    if row.get("split_section_id"):
+        right["split_offset_s"] = float(row["split_offset_s"]) + local
     state.slots[index : index + 1] = [left, right]
     state.changed.add("timeline")
 
@@ -2931,6 +3034,15 @@ def compile_editor_ops(
             [row for row in variant.get("media_overlays") or [] if isinstance(row, dict)]
         ),
     )
+    state.split_screen_sections = _variant_split_sections(variant)
+    state.initial_split_screen_sections = copy.deepcopy(state.split_screen_sections)
+    if state.split_screen_sections:
+        from app.kria.split_screen import layout_split_timeline
+
+        try:
+            layout_split_timeline(state.slots, state.split_screen_sections)
+        except (ValueError, TypeError) as exc:
+            raise KriaEditorOpError(str(exc)) from exc
     state.initial_slots = copy.deepcopy(state.slots)
     state.slot_targets = list(state.slots)
     initial_text = copy.deepcopy(state.text)
@@ -2957,7 +3069,21 @@ def compile_editor_ops(
             sequence_ops.append(op)
             continue
         before_ids = _text_ids(state.text)
-        handler(state, op)
+        try:
+            handler(state, op)
+        except ValueError as exc:
+            if isinstance(exc, KriaEditorOpError):
+                raise
+            raise KriaEditorOpError(str(exc)) from exc
+        if state.split_screen_sections and name in {
+            "patch_slots",
+            "set_clip_duration",
+            "set_clip_in",
+            "trim_clip_start",
+        }:
+            from app.agents.editor_ops_v2.split_screen import fit_panel_coverage
+
+            fit_panel_coverage(state)
         state.explicit_text_ids.update(_text_ids(state.text) - before_ids)
         if name in {"set_texts_timing", "retime_text_sequence"}:
             state.explicit_text_ids.update(
@@ -2968,6 +3094,10 @@ def compile_editor_ops(
 
     if "timeline" in state.changed:
         _fit_slots_to_footage(state, state.initial_slots)
+        if state.split_screen_sections or state.initial_split_screen_sections:
+            from app.agents.editor_ops_v2.split_screen import validate_state
+
+            validate_state(state)
 
     if sequence_ops:
         from app.services.authored_text_fit import _segments
@@ -2980,6 +3110,8 @@ def compile_editor_ops(
             else _segments(state.slots)
         )
         total = max((float(row["output_end_s"]) for row in segments), default=0.0)
+        if state.split_screen_sections:
+            segments, total = _split_timeline_segments(state.slots, state.split_screen_sections)
         canonical_duration_s = total
         for op in sequence_ops:
             effective_op = dict(op)
@@ -3019,7 +3151,30 @@ def compile_editor_ops(
         "preserve_all" if preserve_text else "preserve_absolute" if duration_edit else "follow"
     )
     guided = _guided_v2_revision(job, variant)
-    if "timeline" in changed and guided is not None and _is_guided_native(job, variant):
+    if "timeline" in changed and (
+        state.split_screen_sections or state.initial_split_screen_sections
+    ):
+        from app.services.kria_editor_timeline import rebase_guided_text
+
+        old_segments, old_total = _split_timeline_segments(
+            state.initial_slots, state.initial_split_screen_sections
+        )
+        new_segments, new_total = _split_timeline_segments(state.slots, state.split_screen_sections)
+        state.explicit_text_ids.update(_explicit_text_timing_ids(initial_text, state.text))
+        rebase_guided_text(
+            state,
+            guided,
+            old_segments_override=old_segments,
+            new_segments_override=new_segments,
+            old_total_override=old_total,
+            new_total_override=new_total,
+            text_timing=(
+                "preserve_absolute"
+                if text_timing == "follow" and abs(old_total - new_total) < 1e-6
+                else text_timing
+            ),
+        )
+    elif "timeline" in changed and guided is not None and _is_guided_native(job, variant):
         from app.services.kria_editor_timeline import rebase_guided_text  # noqa: PLC0415
 
         # Invariant: a guided payload carrying timeline_slots ALWAYS carries the
@@ -3066,6 +3221,10 @@ def compile_editor_ops(
             else _segments(state.slots)
         )
         total = max((float(row["output_end_s"]) for row in final_segments), default=0.0)
+        if state.split_screen_sections:
+            final_segments, total = _split_timeline_segments(
+                state.slots, state.split_screen_sections
+            )
         for row in state.text:
             if (
                 str(row.get("id") or "") in state.explicit_text_ids
@@ -3092,6 +3251,12 @@ def compile_editor_ops(
             EditorCommitCaptionMeta(**state.caption_patch) if "caption_meta" in changed else None
         ),
         timeline_slots=_timeline_models(state.slots) if "timeline" in changed else None,
+        **(
+            {"split_screen_sections": state.split_screen_sections}
+            if "timeline" in changed
+            and (state.split_screen_sections or state.initial_split_screen_sections)
+            else {}
+        ),
         mix=(
             EditorCommitMix(
                 music_level=state.mix_level,
@@ -3180,6 +3345,8 @@ def _before_lanes(
             if key != "font_set"
         }
     if "timeline" in changed:
+        if state.split_screen_sections or state.initial_split_screen_sections:
+            before["split_screen_sections"] = copy.deepcopy(state.initial_split_screen_sections)
         before["timeline_slots"] = [
             row.model_dump(mode="json", exclude_none=True)
             for row in _timeline_models(state.initial_slots)
