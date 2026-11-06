@@ -485,17 +485,21 @@ struct NativeEditorView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 5)
-                .overlay(alignment: .bottomTrailing) {
-                    if conversation != nil, session.pendingText == nil, !lineEditing {
-                        KriaAIButton(
-                            identifier: "native-editor-conversation", activity: aiStatus,
-                            animatesActivity: scenePhase == .active && !showsConversation && !previewFullscreen
-                        ) { showsConversation = true }
-                    }
-                }
-                .overlay(alignment: .bottomLeading) {
-                    if let improve, session.pendingText == nil, !lineEditing {
-                        ImproveEntryButton(count: improve.cards.count) { showsImprove = true }
+                .overlay(alignment: .bottom) {
+                    if session.pendingText == nil, !lineEditing {
+                        HStack(alignment: .bottom, spacing: 0) {
+                            if let improve {
+                                ImproveEntryButton(count: improve.cards.count) { showsImprove = true }
+                                    .layoutPriority(1)
+                            }
+                            Spacer(minLength: 8)
+                            if conversation != nil {
+                                KriaAIButton(
+                                    identifier: "native-editor-conversation", activity: aiStatus,
+                                    animatesActivity: scenePhase == .active && !showsConversation && !showsImprove && !previewFullscreen
+                                ) { showsConversation = true }
+                            }
+                        }
                     }
                 }
                 // The centered preview leaves horizontal editor margins on

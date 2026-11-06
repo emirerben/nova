@@ -2,6 +2,58 @@ import XCTest
 
 @MainActor
 final class CreationUITests: XCTestCase {
+    func testEditorAIActivityCompletingLifecycleCapture() {
+        captureEditorAIActivity(variant: "normal", reduceMotion: false)
+    }
+
+    func testEditorAIActivityCompletingReducedMotionCapture() {
+        captureEditorAIActivity(variant: "reduced-motion", reduceMotion: true)
+    }
+
+    func testEditorAIActivityCompletingOpaqueCapture() {
+        captureEditorAIActivity(variant: "opaque", reduceMotion: false, opaque: true)
+    }
+
+    func testImproveAndAIActivityStaySeparateWhileARequestIsWorking() {
+        let app = launchSuggestionCards("ready", extra: ["KRIA_CHAT_SEND_DELAY": "15"])
+        XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30))
+        app.buttons["Open editor"].tap()
+        XCTAssertTrue(app.buttons["native-editor-conversation"].waitForExistence(timeout: 15))
+        sendFromEditorConversation("Review the title while I keep editing", app: app)
+        let activity = app.buttons["native-editor-conversation"]
+        waitForEditorActivity("Sending your message…", control: activity)
+        let improve = app.buttons["native-editor-improve"]
+        XCTAssertTrue(improve.exists)
+        XCTAssertFalse(activity.frame.intersects(improve.frame), "The expanded activity control must not cover Improve")
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(activity.frame))
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(improve.frame))
+        XCTAssertTrue(activity.isHittable)
+        XCTAssertTrue(improve.isHittable)
+        improve.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["improve-sheet"].firstMatch.waitForExistence(timeout: 5))
+        app.terminate()
+    }
+
+    private func captureEditorAIActivity(variant: String, reduceMotion: Bool, opaque: Bool = false) {
+        let app = launchEditorAIActivityFixture(reduceMotion: reduceMotion, opaque: opaque, completingFollowup: true)
+        defer { app.terminate() }
+        let control = app.buttons["native-editor-conversation"]
+        XCTAssertTrue((control.value as? String ?? "").isEmpty)
+        attach(app, "KRI-1230 \(variant) idle")
+        sendFromEditorConversation("Review the title while I keep editing", app: app)
+        waitForEditorActivity("Sending your message…", control: control)
+        attach(app, "KRI-1230 \(variant) sending")
+        waitForEditorActivity("Kria is working…", control: control)
+        attach(app, "KRI-1230 \(variant) working")
+        let settled = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND (value == nil OR value == %@)", ""), object: control)
+        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 45), .completed)
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.exists)
+        XCTAssertTrue(app.buttons["native-editor-play-pause"].isEnabled)
+        XCTAssertFalse(app.staticTexts["native-editor-previous-preview-status"].exists)
+        attach(app, "KRI-1230 \(variant) settled")
+    }
+
     func testEditorAIActivityUsesTheLiveRequestAcrossRepeatedPromptsAndBackgrounding() {
         let app = launchEditorAIActivityFixture(reduceMotion: true)
         let control = app.buttons["native-editor-conversation"]
@@ -56,7 +108,8 @@ final class CreationUITests: XCTestCase {
     }
 
     private func launchEditorAIActivityFixture(reduceMotion: Bool, opaque: Bool = false,
-                                               rejects: Bool = false, holdsTurn: Bool = false) -> XCUIApplication {
+                                               rejects: Bool = false, holdsTurn: Bool = false,
+                                               completingFollowup: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
         app.launchEnvironment = [
@@ -66,9 +119,9 @@ final class CreationUITests: XCTestCase {
             "UI_TEST_REDUCE_TRANSPARENCY": opaque ? "1" : "0",
         ]
         if rejects { app.launchEnvironment["KRIA_CHAT_SEND_FAILURE"] = "reject" }
-        if holdsTurn {
+        if holdsTurn || completingFollowup {
             app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS_FOLLOWUP"] = "1"
-            app.launchEnvironment["KRIA_CHAT_THOUGHTS"] = "hold"
+            app.launchEnvironment["KRIA_CHAT_THOUGHTS"] = holdsTurn ? "hold" : "1"
         }
         app.launch()
         let open = app.buttons["Open editor"]

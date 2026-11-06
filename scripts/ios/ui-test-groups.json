@@ -268,7 +268,11 @@
       "KriaUITests/TalkRerecordUITests/testRefusedSwapKeepsTheOldTakeAndStartsNoPlan",
       "KriaUITests/TalkRerecordUITests/testBusyServerOffersRetryThenSwapsWithTheSameTake",
       "KriaUITests/TalkRerecordUITests/testFullSlotOffersReplaceInsteadOfRefusing",
-      "KriaUITests/TalkRerecordUITests/testFlagOffHidesReRecord"
+      "KriaUITests/TalkRerecordUITests/testFlagOffHidesReRecord",
+      "KriaUITests/CreationUITests/testEditorAIActivityCompletingLifecycleCapture",
+      "KriaUITests/CreationUITests/testEditorAIActivityCompletingReducedMotionCapture",
+      "KriaUITests/CreationUITests/testEditorAIActivityCompletingOpaqueCapture",
+      "KriaUITests/CreationUITests/testImproveAndAIActivityStaySeparateWhileARequestIsWorking"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
