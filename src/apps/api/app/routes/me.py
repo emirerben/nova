@@ -975,6 +975,17 @@ class RecorderDiagnostic(BaseModel):
     app_build: str | None = Field(default=None, max_length=32)
     # TakeStopReason raw value on the app: "user", "backgrounded", "audio_interruption_began", ...
     stop_reason: str | None = Field(default=None, max_length=40)
+    # take_finished only, all optional so builds that predate them still validate.
+    # finalize_ms: Stop to the movie output closing the file. finish_ms: everything after
+    # that (validation, Cinematic bake, level measurement) before the take reached Review.
+    finalize_ms: int | None = Field(default=None, ge=0, le=3_600_000)
+    finish_ms: int | None = Field(default=None, ge=0, le=3_600_000)
+    # What separates the "constant odd sound" hypotheses: the audio session sample rate,
+    # the active microphone mode (standard / wide_spectrum / voice_isolation) and the
+    # audio track count of the finished file.
+    audio_sample_rate_hz: float | None = Field(default=None, ge=0, le=384_000)
+    microphone_mode: str | None = Field(default=None, max_length=40)
+    audio_track_count: int | None = Field(default=None, ge=0, le=16)
 
 
 class LibraryPosterRefreshRequest(BaseModel):

@@ -104,7 +104,7 @@ final class SpeakerMatte: @unchecked Sendable {
             trace.record(tick.outcome, at: time, backgroundDrawn: backgroundStaysDrawn)
             return tick.answer
         }
-        let (answer, outcome) = segment(speaker, at: time, canvas: canvas)
+        let (answer, outcome) = EngineSignpost.measure("talk.matte.segment") { segment(speaker, at: time, canvas: canvas) }
         trace.record(outcome, at: time, backgroundDrawn: backgroundStaysDrawn)
         if let index { tick = (index, answer, outcome) }
         return answer
@@ -137,12 +137,14 @@ final class SpeakerMatte: @unchecked Sendable {
             }
         }
         if let lastGood, abs(time - lastGood.time) <= config.holdGrace {
+            EngineSignpost.count("talk.matte.held")
             switch failure {
             case .originalCoverage: return (lastGood.answer, .heldCoverage)
             case .originalUnreadable: return (lastGood.answer, .heldUnreadable)
             default: return (lastGood.answer, .heldError)
             }
         }
+        EngineSignpost.count("talk.matte.original")
         return (.original, failure)
     }
 
