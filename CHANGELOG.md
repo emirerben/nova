@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.20.0] - 2026-11-06
+
+### Changed
+- fix(captions): keep captions off the speaker's face when she is small in a corner (Qendresa case 1) (#2127) <!-- release-pr: 2127 -->
+
 ## [0.88.19.0] - 2026-11-06
 
 ### Changed
