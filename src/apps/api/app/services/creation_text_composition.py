@@ -13,6 +13,7 @@ import json
 import math
 import re
 import unicodedata
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any
@@ -397,6 +398,39 @@ def _ask_words(text: str) -> tuple[str, ...]:
     return tuple(loose_words(text))
 
 
+# The emoji presentation selectors only pick how a mark is drawn: "❤" and "❤️" are one heart.
+_PRESENTATION_SELECTORS = str.maketrans("", "", chr(0xFE0E) + chr(0xFE0F))
+
+
+def _ask_marks(text: str) -> list[tuple[str, ...]]:
+    """Her emoji and punctuation, in order, in runs that a word ends (whitespace does not).
+
+    One mark per grapheme cluster, split as the renderer splits text (``regex`` ``\\X``),
+    so a skin-toned or ZWJ emoji is one mark and a piece of it is a different one. A
+    cluster with a letter or digit is part of a word (``_ask_words``), never a mark.
+    """
+    import regex  # noqa: PLC0415 - Unicode graphemes
+
+    from app.text_fold import fold_text  # noqa: PLC0415
+
+    runs: list[tuple[str, ...]] = []
+    run: list[str] = []
+    for grapheme in regex.findall(r"\X", fold_text(text)):
+        if grapheme.isspace():
+            continue
+        if _ask_words(grapheme):
+            if run:
+                runs.append(tuple(run))
+                run = []
+            continue
+        mark = grapheme.translate(_PRESENTATION_SELECTORS)
+        if mark:
+            run.append(mark)
+    if run:
+        runs.append(tuple(run))
+    return runs
+
+
 def _screen_start(op: dict) -> float:
     """When an added line appears; a bad time sorts first (the replay rejects it later)."""
     try:
@@ -467,8 +501,8 @@ def _exact_covers(
     return best[1]
 
 
-def _planned_bar_words(composed: list[dict], owners: set) -> dict[tuple[str, ...], int]:
-    """Which planned bars still show which words once the program ran."""
+def _planned_bar_lines(composed: list[dict], owners: set) -> list[str]:
+    """The line each planned bar still shows once the program ran (one per bar)."""
     groups: dict[str, list[dict]] = {}
     for row in composed:
         if row.get("removed") or is_caption_text_bar(row):
@@ -477,17 +511,22 @@ def _planned_bar_words(composed: list[dict], owners: set) -> dict[tuple[str, ...
         owner = row.get("id") if row.get("id") in owners else params.get("sequence_source_id")
         if owner in owners:
             groups.setdefault(owner, []).append(row)
-    shown: dict[tuple[str, ...], int] = {}
+    lines: list[str] = []
     for rows in groups.values():
         ordered = sorted(rows, key=lambda row: row["start_s"])
         cumulative = len(ordered) > 1 and all(
             (row.get("source_params") or {}).get("sequence_mode") == "cumulative" for row in ordered
         )
-        words = _ask_words(
+        lines.append(
             ordered[-1]["text"] if cumulative else " ".join(row["text"] for row in ordered)
         )
-        shown[words] = shown.get(words, 0) + 1
-    return shown
+    return lines
+
+
+def _holds(run: tuple[str, ...], marks: tuple[str, ...]) -> bool:
+    """Whether ``marks`` sit together, in this order, inside her ``run``."""
+    width = len(marks)
+    return any(run[k : k + width] == marks for k in range(len(run) - width + 1))
 
 
 def _drop_unasked_added_text(
@@ -506,6 +545,10 @@ def _drop_unasked_added_text(
     "Just this text, nothing else" must not render an invented line or a second copy of
     hers, and her line must read exactly as she wrote it (``_exact_covers``): a line that
     skips, repeats or reorders her words, or leaves her line unfinished, is dropped.
+    Her emoji and punctuation (``_ask_marks``) share one budget: a line of only marks stays
+    when they sit together, in her order, in one of her literals, and each is still left
+    after the planned bars and kept lines showing her words used theirs. A literal of only
+    marks authorizes those marks, never a word.
     It drops instead of raising: raising fails the creator's whole video, so a drop
     that would stop the program replaying is skipped. Research ops are always kept (her
     own research ask), as are described asks (the composer writes the copy), a missing
@@ -517,17 +560,28 @@ def _drop_unasked_added_text(
         _check_added_text(operations, requirements)
         return operations
     asks = _authorizing_asks(requirements)
-    if any(not _ask_words(req.literal or "") for req in asks):
-        return operations
     from app.text_fold import fold_text  # noqa: PLC0415
 
+    # A described ask (no literal) lets the composer write the copy. A literal of only emoji
+    # or punctuation is still checked below: its marks are budgeted and it adds no words.
+    if any(not fold_text(req.literal or "") for req in asks):
+        return operations
     literals = [_ask_words(req.literal or "") for req in asks]
-    folded = [fold_text(req.literal or "") for req in asks]
     unbounded = {lit for req, lit in zip(asks, literals, strict=True) if req.scope == "per_clip"}
     allowed: dict[tuple[str, ...], int] = {}
     for req, lit in zip(asks, literals, strict=True):
         allowed[lit] = allowed.get(lit, 0) + (req.scope != "per_clip")
-    distinct = list(allowed)
+    distinct = [lit for lit in allowed if lit]
+    # Each of her marks, as often as her literals have it in total (uncapped for a per-clip
+    # ask), and the runs a line of marks must sit in.
+    marks_left: dict[str, float] = {}
+    her_runs: list[tuple[str, ...]] = []
+    for req in asks:
+        for run in _ask_marks(req.literal or ""):
+            her_runs.append(run)
+            for mark in run:
+                per_clip = req.scope == "per_clip"
+                marks_left[mark] = math.inf if per_clip else marks_left.get(mark, 0) + 1
     digest = _digest(texts, slots)
 
     def replay(ops: list[dict]) -> list[dict]:
@@ -544,11 +598,11 @@ def _drop_unasked_added_text(
             composed = replay(operations)
     except CreationTextCompositionError:
         return operations  # the real replay right after raises exactly as it does today
-    shown = _planned_bar_words(composed, {row.get("id") for row in texts})
+    planned = _planned_bar_lines(composed, {row.get("id") for row in texts})
+    shown = Counter(_ask_words(line) for line in planned)
     # A planned bar that still shows her line is one of its copies.
     budget = [
-        math.inf if lit in unbounded else max(0, allowed[lit] - shown.get(lit, 0))
-        for lit in distinct
+        math.inf if lit in unbounded else max(0, allowed[lit] - shown[lit]) for lit in distinct
     ]
     added = [
         (index, _ask_words(str(op.get("text") or "")))
@@ -561,22 +615,33 @@ def _drop_unasked_added_text(
     )
     covers = _exact_covers([words for _, words in worded], distinct, budget)
     keep = {worded[k][0] for k in covers}
-    # Emoji or punctuation only: hers when it sits inside one of her literals, and on
-    # screen no more often than her literals have it.
-    symbol_budget: dict[str, float] = {}
-    for index, words in added:
-        symbols = "" if words else fold_text(str(operations[index].get("text") or ""))
-        if not symbols:
+
+    def spend(text: str) -> None:
+        for mark in (mark for run in _ask_marks(text) for mark in run):
+            if mark in marks_left:
+                marks_left[mark] = max(0, marks_left[mark] - 1)
+
+    # Her marks already on screen: a planned bar showing her line, and each kept line of her
+    # words (emoji there never drop the line, the word fold ignores them, but they use hers).
+    for line in planned:
+        if _ask_words(line) in allowed:
+            spend(line)
+    for index in keep:
+        spend(str(operations[index].get("text") or ""))
+    # A line of only marks, first on screen first: hers when its marks sit together, in her
+    # order, in one of her literals, and each is still left.
+    marked = sorted(
+        (index for index, words in added if not words),
+        key=lambda index: (_screen_start(operations[index]), index),
+    )
+    for index in marked:
+        runs = _ask_marks(str(operations[index].get("text") or ""))
+        if len(runs) != 1 or not any(_holds(run, runs[0]) for run in her_runs):
             continue
-        if symbols not in symbol_budget:
-            symbol_budget[symbols] = sum(
-                math.inf
-                if req.scope == "per_clip" and symbols in literal
-                else literal.count(symbols)
-                for req, literal in zip(asks, folded, strict=True)
-            )
-        if symbol_budget[symbols] >= 1:
-            symbol_budget[symbols] -= 1
+        need = Counter(runs[0])
+        if all(marks_left.get(mark, 0) >= count for mark, count in need.items()):
+            for mark, count in need.items():
+                marks_left[mark] -= count
             keep.add(index)
     kept, dropped = [], []
     for index, op in enumerate(operations):

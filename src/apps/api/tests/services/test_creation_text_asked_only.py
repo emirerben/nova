@@ -744,3 +744,174 @@ def test_review_planned_bar_counts_as_her_one_use(monkeypatch, switch_on):
     result = compose(snapshot, reqs)
     assert len(client.calls) == 1
     assert texts_of(result) == [T3]
+
+
+# --- review (Emir, head 19f3538): her emoji and punctuation share one budget ---------
+# A line of only emoji or punctuation stays only while her literals still have each mark,
+# counted once per mark across every added line and every planned bar that shows her line.
+# Ways this can fail:
+# 1. a planned bar that already shows her emoji is not counted, so an extra emoji repeats it;
+# 2. "🔥🔥" and "🔥" are budgeted as separate strings, so together they show more than she typed;
+# 3. a literal with no words ("🔥") lets every added line through, words included;
+# 4. a line with her words that also carries her emoji is not counted, so an emoji line repeats it;
+# 5. her emoji reordered ("👀🔥" for "🔥👀") passes;
+# 6. a piece of one emoji passes ("👍" of "👍🏽", "👩" of "👨‍👩‍👧"), or one is counted as several;
+# 7. too strict: her split emoji, a heart typed with or without its emoji selector, a per-clip
+#    emoji on every clip, her punctuation, or a planned bar cased differently are lost.
+
+
+def pinned_plan(literal, pinned=None):
+    """A planned bar (the planner's pin) that already shows her line, plus her literal ask.
+
+    The pin sits top_center while the brief says "middle", so the composer is really called.
+    """
+    reqs = [
+        req(
+            "r1",
+            "text",
+            "global",
+            literal=literal,
+            description="her line in the middle",
+            facts={"position": "middle"},
+        )
+    ]
+    brief = CreativeBrief(version=1, requirements=reqs)
+    strategy = {
+        "edit_format": "montage",
+        "audio_strategy": "original_audio",
+        "direction": "fast_montage",
+        "pinned_texts": [{"text": pinned or literal, "corner": "top_center"}],
+    }
+    plan = plan_unified_montage(
+        clips(), brief_view(brief), strategy=strategy, font_covers=skia_font_covers
+    )
+    return plan.snapshot, brief.live()
+
+
+@pytest.mark.parametrize(
+    ("literal", "pinned"),
+    [
+        pytest.param("Best day ever 🔥", None, id="control-1"),
+        pytest.param("Kahvaltı İstanbul'da 🔥", "KAHVALTI İSTANBUL'DA 🔥", id="turkish-cased-pin"),
+    ],
+)
+def test_review_planned_bar_emoji_counts_against_her_emoji(monkeypatch, switch_on, literal, pinned):
+    snapshot, reqs = pinned_plan(literal, pinned)
+    shown = pinned or literal
+    assert texts_of(snapshot) == [shown]
+    client = transport(monkeypatch, [add("🔥", 3, 5)])
+    result = compose(snapshot, reqs)
+    assert len(client.calls) == 1
+    assert texts_of(result) == [shown]
+
+
+@pytest.mark.parametrize(
+    ("literals", "written", "expected"),
+    [
+        pytest.param(
+            ["Best day ever 🔥🔥"],
+            [("Best day ever", 0, 3), ("🔥🔥", 3, 5), ("🔥", 5, 7)],
+            ["Best day ever", "🔥🔥"],
+            id="control-2-pair-then-single",
+        ),
+        pytest.param(
+            ["Best day ever 🔥🔥"],
+            [("Best day ever", 0, 3), ("🔥", 3, 5), ("🔥🔥", 5, 7)],
+            ["Best day ever", "🔥"],
+            id="control-2-single-then-pair",
+        ),
+        pytest.param(
+            ["Best day ever 🔥🔥"],
+            [("🔥🔥", 0, 2), ("🔥", 2, 4)],
+            ["🔥🔥"],
+            id="control-2-emoji-lines-only",
+        ),
+        pytest.param(
+            ["🔥"],
+            [("🔥", 0, 2), ("Wait till the end 👀", 2, 4)],
+            ["🔥"],
+            id="control-3-emoji-literal-drops-words",
+        ),
+        pytest.param(
+            ["🔥"], [("Best day ever 🔥", 0, 3)], [], id="control-3-emoji-literal-drops-mixed-line"
+        ),
+        pytest.param(["🔥"], [("Kahvaltı", 0, 3)], [], id="control-3-emoji-literal-drops-turkish"),
+        pytest.param(
+            ["Best day ever 🔥"],
+            [("Best day ever 🔥", 0, 3), ("🔥", 3, 5)],
+            ["Best day ever 🔥"],
+            id="her-line-with-its-emoji-uses-it",
+        ),
+        pytest.param(
+            ["Best day ever 🔥👀"],
+            [("Best day ever", 0, 3), ("👀🔥", 3, 5)],
+            ["Best day ever"],
+            id="emoji-out-of-order",
+        ),
+        pytest.param(
+            ["Best day ever 🔥👀"],
+            [("Best day ever", 0, 3), ("🔥👀", 3, 5)],
+            ["Best day ever", "🔥👀"],
+            id="emoji-in-her-order",
+        ),
+        pytest.param(
+            ["Best day ever 👍🏽"],
+            [("Best day ever", 0, 3), ("👍", 3, 5)],
+            ["Best day ever"],
+            id="skin-tone-piece",
+        ),
+        pytest.param(
+            ["Best day ever 👍🏽"],
+            [("Best day ever", 0, 3), ("👍🏽", 3, 5)],
+            ["Best day ever", "👍🏽"],
+            id="skin-tone-whole",
+        ),
+        pytest.param(
+            ["Family day 👨‍👩‍👧"],
+            [("Family day", 0, 3), ("👩", 3, 5)],
+            ["Family day"],
+            id="zwj-piece",
+        ),
+        pytest.param(
+            ["Family day 👨‍👩‍👧"],
+            [("Family day", 0, 3), ("👨‍👩‍👧", 3, 5), ("👨‍👩‍👧", 5, 7)],
+            ["Family day", "👨‍👩‍👧"],
+            id="zwj-whole-once",
+        ),
+        pytest.param(
+            ["Best day ever ❤️"],
+            [("Best day ever", 0, 3), ("❤", 3, 5)],
+            ["Best day ever", "❤"],
+            id="heart-without-selector",
+        ),
+        pytest.param(
+            ["Best day ever ❤"],
+            [("Best day ever", 0, 3), ("❤️", 3, 5)],
+            ["Best day ever", "❤️"],
+            id="heart-with-selector",
+        ),
+        pytest.param(
+            ["Wait... what?!"],
+            [("Wait", 0, 1), ("...", 1, 2), ("what", 2, 3), ("?!", 3, 4), ("!", 4, 5)],
+            ["Wait", "...", "what", "?!"],
+            id="punctuation-once",
+        ),
+    ],
+)
+def test_review_her_emoji_share_one_budget(monkeypatch, switch_on, literals, written, expected):
+    snapshot = bare_plan()
+    reqs = [req(f"r{i}", "text", "global", literal=lit) for i, lit in enumerate(literals)]
+    client = transport(monkeypatch, [add(text, start, end) for text, start, end in written])
+    result = compose(snapshot, reqs)
+    assert len(client.calls) == 1
+    assert sorted(texts_of(result)) == sorted(expected)
+
+
+def test_review_per_clip_emoji_shows_on_every_clip(monkeypatch, switch_on):
+    snapshot = bare_plan(2)
+    reqs = [req("r1", "text", "per_clip", literal="Shot one 🔥", description="on each clip")]
+    written = [("Shot one", 0, 2), ("🔥", 2, 3), ("Shot one", 4, 6), ("🔥", 6, 7)]
+    client = transport(monkeypatch, [add(text, start, end) for text, start, end in written])
+    result = compose(snapshot, reqs)
+    assert len(client.calls) == 1
+    assert sorted(texts_of(result)) == sorted(text for text, _, _ in written)
