@@ -165,7 +165,7 @@ import UIKit
             if Task.isCancelled { set(.idle); return }
             await session.refresh(api: api, itemID: itemID)
             if let error = session.error { set(.failed(error)); return }
-            if session.state?.renderStatus == "failed", !session.isRendering { set(.failed("Rendering failed. Try again.")); return }
+            if SlidePostState.isTerminalRenderFailure(session.state?.renderStatus), !session.isRendering { set(.failed("Rendering failed. Try again.")); return }
         }
         let revalidate: Revalidate = { try await session.revalidateForExport(api: api, itemID: itemID) }
         switch destination {

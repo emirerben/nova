@@ -169,9 +169,31 @@ struct NativeEditorTemporaryVideo: Sendable {
         return player?.currentItem === sourcePreview.preview.playerItem
     }
     @Published var isPlaying = false
-    @Published var isSaving = false
+    @Published var isSaving = false {
+        didSet { if oldValue && !isSaving { drainPendingLatestJob() } }
+    }
     @Published var hasUnsavedChanges = false
     @Published var saveState: NativeEditorSaveState = .idle
+    @Published private(set) var mergeConflictMessage: String?
+    @Published private(set) var canKeepLocalMergeConflicts = true
+    private struct PendingMerge {
+        let base: EditorDocument
+        let clean: EditorDocument
+        let remote: EditorDocument
+        let baseSong: JSONValue?
+        let variant: [String: JSONValue]?
+        let forcePreview: Bool
+        let thread: UUID?
+        let originalJob: UUID?
+        let originalVariant: String?
+        let destinationJob: UUID?
+        let destinationVariant: String?
+        let destinationItem: String?
+        let stagedRevision: Int?
+        let remoteETag: String?
+        let legacySnapshot: [String: JSONValue]?
+    }
+    private var pendingMerge: PendingMerge?
     @Published private(set) var refreshSync: NativeEditorRefreshSync = .idle
     /// Waits between background refresh retries; the last one repeats. Internal so tests can shorten it.
     var refreshRetryDelays: [Duration] = [.seconds(1), .seconds(3), .seconds(9), .seconds(27), .seconds(60)]
@@ -182,6 +204,12 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// Polls for a new job that the thread points at but that is not ready to edit yet.
     private var newVersionWatchTask: Task<Void, Never>?
     private var newVersionWatchTarget: UUID?
+    private var latestJobGate = NativeEditorLatestGate()
+    private var latestJobDrainTask: Task<Void, Never>?
+    var latestJobRetryDelays: [Duration] = [.seconds(1), .seconds(3), .seconds(9)]
+    private var latestJobCooldowns: [UUID: NativeEditorReadCooldown] = [:]
+    private var newVersionWatchAttempts = 0
+    @Published private(set) var latestJobRefreshMessage: String?
     /// Shown on the opening screen while a first open waits for its video or for a connection.
     @Published private(set) var loadWaitingMessage: String?
     private var loadRetryTask: Task<Void, Never>?
@@ -425,6 +453,16 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// variant loaded (a refresh of the variant resets the acknowledged edits, see `configureCapabilities`).
     /// The unsaved edits in `document.userSong` are relative to this. Nil once a removal was saved.
     private var savedUserSong: NativeUserSong? { baseUserSong?.applying(acknowledgedUserSong) }
+    private static func mergeSongAuthority(variant: [String: JSONValue], effective: NativeUserSong?, job: UUID?, generation: String) -> JSONValue? {
+        guard var raw = variant["user_song"]?.objectValue, let effective else { return nil }
+        raw["volume"] = .number(effective.volume)
+        raw["window_start_s"] = .number(effective.windowStartS)
+        raw["window_end_s"] = .number(effective.windowEndS)
+        // The public song projection has no asset pin. A different generation
+        // cannot prove that equal title/window metadata still names this song.
+        let fence = job.flatMap { id in generation.isEmpty ? nil : "\(id.uuidString):\(generation)" } ?? UUID().uuidString
+        return .object(["source_fence": .string(fence), "song": .object(raw)])
+    }
     /// The latest start: it must leave `NativeUserSong.minPlayableS` of song. The video no longer bounds it;
     /// a song that runs out before the video does simply stops.
     private func maxUserSongStart(for song: NativeUserSong) -> Double? { NativeUserSong.maxStart(for: song) }
@@ -1004,6 +1042,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// still the newest step. A count can't: it saturates at `historyLimit`.
     private(set) var undoHistoryVersion = 0
     private var redoStack: [EditorDocument] = []
+    private var saveHistory: EditorSaveHistory<EditorDocument>?
     private var cleanDocument: EditorDocument
     private var api: (any KriaAPIClient)?
     private weak var mediaUploads: BackgroundUploadCoordinator?
@@ -1668,6 +1707,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         if let itemFailureObserver { NotificationCenter.default.removeObserver(itemFailureObserver) }
         finishedRenderRecoveryTask?.cancel()
         sourcePreviewQuietRetryTask?.cancel()
+        latestJobDrainTask?.cancel()
     }
 
     var canUndo: Bool { !undoStack.isEmpty }
@@ -1716,7 +1756,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         transactionBaseline = nil
     }
 
-    private func appendUndo(_ value: EditorDocument) {
+    private func appendUndo(_ value: EditorDocument, isRedo: Bool = false) {
+        saveHistory?.appendUndo(value, isRedo: isRedo)
         undoStack.append(value)
         if undoStack.count > historyLimit {
             undoStack.removeFirst(undoStack.count - historyLimit)
@@ -1904,6 +1945,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func load(api: any KriaAPIClient, threadID: UUID, variantID: String? = nil, allowPlaybackFallback: Bool = true) async {
+        resetLatestJobDrain()
+        saveHistory = nil
         conversationRuntimeVersion = 2
         resetBackgroundRefresh()
         self.api = api; self.threadID = threadID; isSaving = true; saveState = .saving; loadState = .loading
@@ -2125,11 +2168,10 @@ struct NativeEditorTemporaryVideo: Sendable {
                 // (the newest edit, which the creator asked for); one Undo restores
                 // the creator's own version (KRI-935).
                 if let staged, variantUnchanged(variant) {
-                    appendUndo(document); redoStack.removeAll()
-                    var merged = document
-                    for section in staged.sections { copy(section, from: staged.document, into: &merged) }
-                    document = Self.honoringDeletions(Set(merged.deletions), in: merged)
-                    changedSections.formUnion(staged.sections)
+                    var remote = nextDocument
+                    for section in staged.sections { copy(section, from: staged.document, into: &remote) }
+                    guard rebaseLocalEdits(onto: nextDocument, variant: variant, forcePreviewRebuild: false, remoteEdits: remote,
+                        destination: (nextJobID, nextVariantKey, snapshot.itemID), stagedRevision: snapshot.draftRevision) else { return }
                     appliedChatDraftRevision = snapshot.draftRevision
                     chatStagedDocument = nil
                     refreshDirtyState(); refreshDuration()
@@ -2145,17 +2187,14 @@ struct NativeEditorTemporaryVideo: Sendable {
                 Self.stagingLog.debug("sync rebase: newer version under local edits rev=\(snapshot.draftRevision, privacy: .public)")
                 if !sameTarget { appliedChatDraftRevision = nil }
                 if conversationRuntimeVersion == 1 { legacyPromptSnapshot = nextDraft.serverSnapshot }
-                jobID = nextJobID; variantKey = nextVariantKey; itemID = snapshot.itemID
-                rebaseLocalEdits(onto: nextDocument, variant: variant, forcePreviewRebuild: !sameTarget)
+                var remote = nextDocument
                 if let staged {
-                    appendUndo(document); redoStack.removeAll()
-                    var merged = document
-                    for section in staged.sections { copy(section, from: staged.document, into: &merged) }
-                    document = Self.honoringDeletions(Set(merged.deletions), in: merged)
-                    changedSections.formUnion(staged.sections)
-                    appliedChatDraftRevision = snapshot.draftRevision
-                    refreshDirtyState(); refreshDuration()
+                    for section in staged.sections { copy(section, from: staged.document, into: &remote) }
                 }
+                guard rebaseLocalEdits(onto: nextDocument, variant: variant, forcePreviewRebuild: !sameTarget,
+                    remoteEdits: remote, destination: (nextJobID, nextVariantKey, snapshot.itemID),
+                    stagedRevision: staged == nil ? nil : snapshot.draftRevision) else { return }
+                if staged != nil { appliedChatDraftRevision = snapshot.draftRevision }
                 return
             }
             let selected = selection
@@ -2337,19 +2376,21 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// newest chat draft in place instead. A different job, a different variant or a newer
     /// render returns false, and the caller keeps the full reload (which swaps the video).
     ///
-    /// KRI-535: the creator's own unsaved edits are never dropped by this path. A newer render of
-    /// the same job raises `newerJobPrompt` ("Switch" discards, "Keep editing" stays), and a
-    /// transient failure to read the variant keeps the session as it is.
+    /// A newer render merges against the clean baseline. Only overlapping authored
+    /// changes need a choice; a transient read failure keeps the working session.
     func reconcileOnOpen(project: ProjectSummary, api: any KriaAPIClient) async -> Bool {
         guard loadState == .loaded, !isSaving, project.runtimeVersion == 2, conversationRuntimeVersion == 2,
               let jobID, let variantKey,
               project.activeJobID.map({ $0 == jobID }) ?? true,
               project.outputVariantID.map({ $0 == variantKey }) ?? true else { return false }
         let hasOwnEdits = hasUnsavedChanges && !hasOnlyChatStagedChanges
+        let lifetime = latestJobGate.loadLifetime
+        let openedThread = threadID
         let current: [String: JSONValue]
         do {
             current = try await api.editorVariant(jobID: jobID, variantID: variantKey)
         } catch {
+            guard latestJobGate.loadLifetime == lifetime, threadID == openedThread else { return true }
             // Superseded (re-plan) keeps the full path, which follows the thread to its new job.
             // Anything else (a dropped connection) must not wipe local edits or error the editor.
             switch Self.refreshFailure(error) {
@@ -2366,19 +2407,21 @@ struct NativeEditorTemporaryVideo: Sendable {
                 return hasOwnEdits
             }
         }
+        guard !Task.isCancelled, latestJobGate.loadLifetime == lifetime, threadID == openedThread,
+              self.jobID == jobID, self.variantKey == variantKey, !isSaving else { return true }
         if variantUnchanged(current) {
             loadedServerRevision = project.serverRevision
             await synchronizePromptRevision()
             return true
         }
         guard hasOwnEdits, !isSaving else { return false }
-        // A newer render exists and reloading would discard the creator's work: ask first.
-        // `loadedServerRevision` stays put, so the next open asks again until they decide.
-        newerJobPrompt = project
+        _ = await reloadLatestKeepingLocalEdits()
         return true
     }
 
     func load(project: ProjectSummary, api: any KriaAPIClient) async {
+        resetLatestJobDrain()
+        let lifetime = latestJobGate.loadLifetime
         loadState = .loading
         var resolvedProject = project
         if project.activeJobID != nil,
@@ -2386,6 +2429,7 @@ struct NativeEditorTemporaryVideo: Sendable {
            let refreshed = try? await api.project(threadID: project.id) {
             resolvedProject = refreshed.summary
         }
+        guard !Task.isCancelled, latestJobGate.loadLifetime == lifetime else { return }
         loadedServerRevision = resolvedProject.serverRevision
         conversationRuntimeVersion = resolvedProject.runtimeVersion
         if let jobID = resolvedProject.activeJobID,
@@ -2424,35 +2468,171 @@ struct NativeEditorTemporaryVideo: Sendable {
         return target != jobID
     }
 
-    /// The thread's active job changed (a re-plan rendered a new video). Edits
-    /// staged from chat belong to the old job and are obsolete, so they are
-    /// dropped and the new job loads automatically. The creator's own unsaved
-    /// edits are never discarded silently: they raise `newerJobPrompt` instead.
+    /// Coalesce active-job notifications until Save settles. A fresh authoritative
+    /// read then follows a clean job or merges the creator's unsaved changes;
+    /// only overlapping changes or an unavailable editable base need a choice.
     func adoptLatestJob(_ project: ProjectSummary, api: any KriaAPIClient) async {
-        guard isBehindActiveJob(project), !isSaving, let target = project.activeJobID else { return }
+        guard project.id == threadID, isBehindActiveJob(project) else { return }
+        _ = latestJobGate.enqueue(threadID: project.id)
+        drainPendingLatestJob()
+    }
+
+    private func resetLatestJobDrain() {
+        latestJobGate.reset()
+        latestJobDrainTask?.cancel()
+        latestJobDrainTask = nil
+        pendingMerge = nil
+        mergeConflictMessage = nil
+        canKeepLocalMergeConflicts = true
+        latestJobRefreshMessage = nil
+    }
+
+    private func drainPendingLatestJob() {
+        guard !isSaving, let ticket = latestJobGate.pending,
+              ticket.threadID == threadID, let api else { return }
+        latestJobDrainTask?.cancel()
+        let expectedJob = jobID
+        latestJobDrainTask = Task { [weak self] in
+            guard let self else { return }
+            // Notifications may be coalesced or reordered while Save is running.
+            // Resolve the active target now rather than adopting the saved event.
+            for attempt in 0...self.latestJobRetryDelays.count {
+                guard !Task.isCancelled, self.latestJobGate.matches(ticket), self.threadID == ticket.threadID,
+                      self.jobID == expectedJob, !self.isSaving else { return }
+                do {
+                    guard try await self.allowLatestJobRead(ticket) else { return }
+                    let latest = try await api.project(threadID: ticket.threadID)
+                    guard !Task.isCancelled, self.latestJobGate.matches(ticket), self.threadID == ticket.threadID,
+                          self.jobID == expectedJob, !self.isSaving else { return }
+                    self.latestJobCooldowns[ticket.threadID]?.prune(now: ContinuousClock.now)
+                    self.latestJobRefreshMessage = nil
+                    try await self.adoptResolvedLatestJob(latest.summary, api: api, ticket: ticket)
+                    return
+                } catch {
+                    // Retry-After applies to later tickets too, even if this
+                    // response lost content ownership while the request ran.
+                    if case let APIError.requestFailed(status, detail) = error,
+                       status == 408 || status == 429 || status >= 500, let seconds = detail.retryAfter {
+                        self.latestJobCooldowns[ticket.threadID, default: NativeEditorReadCooldown()].record(seconds: seconds, now: ContinuousClock.now)
+                    }
+                    guard !Task.isCancelled, self.latestJobGate.matches(ticket), self.threadID == ticket.threadID,
+                          self.jobID == expectedJob, !self.isSaving else { return }
+                    guard case .transient = Self.refreshFailure(error), attempt < self.latestJobRetryDelays.count else {
+                        self.latestJobRefreshMessage = "The latest version could not be checked. Your edits are still here; the next project update will check again."
+                        return
+                    }
+                    do { try await Task.sleep(for: self.latestJobRetryDelays[attempt]) } catch { return }
+                }
+            }
+        }
+    }
+
+    private func allowLatestJobRead(_ ticket: NativeEditorLatestGate.Ticket) async throws -> Bool {
+        let started = ContinuousClock.now
+        while true {
+            guard !Task.isCancelled, latestJobGate.matches(ticket), ticket.threadID == threadID, !isSaving else { return false }
+            let cooldown = latestJobCooldowns[ticket.threadID] ?? NativeEditorReadCooldown()
+            let wait = cooldown.delay(now: ContinuousClock.now)
+            guard !cooldown.isPaused, started.duration(to: ContinuousClock.now) + wait <= .seconds(30) else {
+                latestJobRefreshMessage = "The server asked this editor to wait before checking again. Your edits are still here."
+                return false
+            }
+            if wait <= .zero { return true }
+            try await Task.sleep(for: wait)
+            // Another in-flight response may have extended the deadline while asleep.
+        }
+    }
+
+    private func adoptResolvedLatestJob(_ project: ProjectSummary, api: any KriaAPIClient, ticket: NativeEditorLatestGate.Ticket) async throws {
+        guard latestJobGate.matches(ticket), project.id == threadID, !isSaving else { return }
+        guard isBehindActiveJob(project), let target = project.activeJobID else {
+            latestJobGate.finish(ticket)
+            return
+        }
+        let expectedJob = jobID
         // A re-plan points the thread at its new job before that job has a video. Loading it then
         // threw away the working video for "The editor couldn't open", and the prompt claimed a new
         // version was ready while it was still rendering. Keep editing the current video until then.
-        switch await Self.readiness(ofJob: target, preferredVariantID: project.outputVariantID, api: api) {
+        guard try await allowLatestJobRead(ticket) else { return }
+        let variants = try await api.editorVariants(jobID: target)
+        switch Self.readiness(variants: variants, preferredVariantID: project.outputVariantID) {
         case .ready:
             break
         case .rendering:
+            guard !Task.isCancelled, latestJobGate.matches(ticket), jobID == expectedJob, threadID == ticket.threadID else { return }
             refreshSync = .newVersionRendering
             watchNewVersion(project, api: api)
+            latestJobGate.finish(ticket)
             return
         case .failed:
+            guard !Task.isCancelled, latestJobGate.matches(ticket), jobID == expectedJob, threadID == ticket.threadID else { return }
             // The new render failed; the chat says so. The current video stays as it is.
             newVersionWatchTask?.cancel(); newVersionWatchTask = nil
             if refreshSync == .newVersionRendering { refreshSync = .idle }
+            latestJobGate.finish(ticket)
             return
         }
-        guard isBehindActiveJob(project), !isSaving else { return }
+        guard !Task.isCancelled, latestJobGate.matches(ticket), jobID == expectedJob,
+              threadID == ticket.threadID, isBehindActiveJob(project), !isSaving else { return }
         newVersionWatchTask?.cancel(); newVersionWatchTask = nil
+        newVersionWatchAttempts = 0
         if refreshSync == .newVersionRendering { refreshSync = .idle }
         if hasUnsavedChanges, !hasOnlyChatStagedChanges {
-            newerJobPrompt = project
+            if project.runtimeVersion == 1 {
+                // Legacy conversations have no runtime-v2 draft endpoint. Their
+                // selected variant is the authoritative editable snapshot.
+                guard let item = project.activePlanItemID, let variantID = project.outputVariantID else {
+                    newerJobPrompt = project
+                    latestJobGate.finish(ticket)
+                    return
+                }
+                guard try await allowLatestJobRead(ticket) else { return }
+                let variant = try await api.editorVariant(jobID: target, variantID: variantID)
+                guard !Task.isCancelled, latestJobGate.matches(ticket), jobID == expectedJob,
+                      threadID == ticket.threadID, !isSaving else { return }
+                let generation = variant["render_generation_id"]?.stringValue ?? variant["render_finished_at"]?.stringValue
+                let snapshot = DraftSnapshot(draftID: "latest-\(target.uuidString)", itemID: item, variantKey: variantID,
+                    draftRevision: 0, snapshotHash: "", etag: "", baseJobID: target.uuidString,
+                    baseGenerationID: generation, snapshot: [:], canUndo: false, createdAt: .now)
+                let draft = snapshot.editorDraft(projectID: ticket.threadID, authoritativeVariant: variant)
+                var clean = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(draft))
+                clean.revision.baseGeneration = generation ?? ""
+                latestJobGate.finish(ticket)
+                newerJobPrompt = nil
+                _ = rebaseLocalEdits(onto: clean, variant: variant, forcePreviewRebuild: true,
+                    destination: (target, variantID, item), remoteETag: "", legacySnapshot: draft.serverSnapshot)
+                return
+            }
+            guard try await allowLatestJobRead(ticket) else { return }
+            let snapshot = try await api.draft(threadID: ticket.threadID)
+            guard !Task.isCancelled, latestJobGate.matches(ticket), jobID == expectedJob,
+                  threadID == ticket.threadID, !isSaving else { return }
+            guard snapshot.baseJobID.flatMap(UUID.init) == target,
+                  project.activePlanItemID.map({ $0 == snapshot.itemID }) ?? true,
+                  project.outputVariantID.map({ $0 == snapshot.variantKey }) ?? true else {
+                // There is no authoritative editable base for this target yet.
+                // Keep the existing explicit switch choice instead of guessing.
+                newerJobPrompt = project
+                latestJobGate.finish(ticket)
+                return
+            }
+            guard try await allowLatestJobRead(ticket) else { return }
+            let variant = try await api.editorVariant(jobID: target, variantID: snapshot.variantKey)
+            guard !Task.isCancelled, latestJobGate.matches(ticket), jobID == expectedJob,
+                  threadID == ticket.threadID, !isSaving else { return }
+            let latestDraft = snapshot.editorDraft(projectID: ticket.threadID, authoritativeVariant: variant)
+            let latestClean = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(latestDraft))
+            latestJobGate.finish(ticket)
+            newerJobPrompt = nil
+            if rebaseLocalEdits(onto: latestClean, variant: variant, forcePreviewRebuild: true,
+                destination: (target, snapshot.variantKey, snapshot.itemID), remoteETag: snapshot.etag,
+                legacySnapshot: conversationRuntimeVersion == 1 ? latestDraft.serverSnapshot : nil) { latestJobRefreshMessage = nil }
             return
         }
+        latestJobGate.finish(ticket)
+        // Loading resets the drain lifetime. Do not cancel this task from its
+        // own load entrypoint after the target has already been fenced.
+        latestJobDrainTask = nil
         await switchToLatestJob(project, api: api)
     }
 
@@ -2462,6 +2642,10 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// hiccup) counts as still rendering: the watch asks again, and nothing is discarded meanwhile.
     static func readiness(ofJob jobID: UUID, preferredVariantID: String?, api: any KriaAPIClient) async -> JobReadiness {
         guard let variants = try? await api.editorVariants(jobID: jobID) else { return .rendering }
+        return readiness(variants: variants, preferredVariantID: preferredVariantID)
+    }
+
+    private static func readiness(variants: [[String: JSONValue]], preferredVariantID: String?) -> JobReadiness {
         let identified = variants.filter { $0["variant_id"]?.stringValue != nil }
         let candidates = preferredVariantID.flatMap { id in
             let matching = identified.filter { $0["variant_id"]?.stringValue == id }
@@ -2477,26 +2661,21 @@ struct NativeEditorTemporaryVideo: Sendable {
         guard let target = project.activeJobID else { return }
         if newVersionWatchTask != nil, newVersionWatchTarget == target { return }
         newVersionWatchTask?.cancel()
+        if newVersionWatchTarget != target { newVersionWatchAttempts = 0 }
         newVersionWatchTarget = target
         let delays = newVersionPollDelays
+        guard newVersionWatchAttempts < 64, !delays.isEmpty else {
+            latestJobRefreshMessage = "The latest version is still rendering. Your current edits are still here."
+            return
+        }
+        let delay = delays[min(newVersionWatchAttempts, delays.count - 1)]
+        newVersionWatchAttempts += 1
         newVersionWatchTask = Task { [weak self] in
-            var attempt = 0
-            // About 15 minutes at the default cadence, longer than any render the server allows.
-            while attempt < 64, !delays.isEmpty {
-                try? await Task.sleep(for: delays[min(attempt, delays.count - 1)])
-                attempt += 1
-                guard !Task.isCancelled, let self, self.isBehindActiveJob(project) else { return }
-                let readiness = await Self.readiness(ofJob: target, preferredVariantID: project.outputVariantID, api: api)
-                guard !Task.isCancelled else { return }
-                if readiness != .rendering {
-                    self.newVersionWatchTask = nil
-                    await self.adoptLatestJob(project, api: api)
-                    return
-                }
-            }
-            guard !Task.isCancelled, let self else { return }
+            do { try await Task.sleep(for: delay) } catch { return }
+            guard !Task.isCancelled, let self, self.isBehindActiveJob(project) else { return }
             self.newVersionWatchTask = nil
-            if self.refreshSync == .newVersionRendering { self.refreshSync = .idle }
+            // Every GET, including readiness, goes through the same paced drain.
+            await self.adoptLatestJob(project, api: api)
         }
     }
 
@@ -2509,8 +2688,9 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     /// Ask the server which job the thread points at now, then run the adopt decision.
     func adoptActiveJobFromThread(api: any KriaAPIClient, threadID: UUID) async {
-        guard let thread = try? await api.project(threadID: threadID) else { return }
-        await adoptLatestJob(thread.summary, api: api)
+        guard self.threadID == threadID else { return }
+        _ = latestJobGate.enqueue(threadID: threadID)
+        drainPendingLatestJob()
     }
 
     func keepEditingCurrentJob() { newerJobPrompt = nil }
@@ -2562,6 +2742,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         threadID: UUID?,
         api: any KriaAPIClient
     ) async {
+        resetLatestJobDrain()
+        saveHistory = nil
         self.api = api
         self.threadID = threadID
         resetBackgroundRefresh()
@@ -4149,6 +4331,7 @@ struct NativeEditorTemporaryVideo: Sendable {
 
         if next == active.baseline {
             if active.recordedUndo {
+                saveHistory?.cancelLastCheckpoint(matching: active.baseline)
                 undoStack.removeLast()
                 redoStack = active.redoBaseline
                 active.recordedUndo = false
@@ -7077,12 +7260,13 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     func undo() {
         guard let previous = undoStack.popLast() else { return }
+        saveHistory?.recordUndo(to: previous, from: document)
         appendRedo(document); document = previous; refreshDirtyState(); refreshDuration()
     }
 
     func redo() {
         guard let next = redoStack.popLast() else { return }
-        appendUndo(document); document = next; refreshDirtyState(); refreshDuration()
+        appendUndo(document, isRedo: true); document = next; refreshDirtyState(); refreshDuration()
     }
 
     func save() async {
@@ -7093,6 +7277,8 @@ struct NativeEditorTemporaryVideo: Sendable {
             saveHitNewerVersion = false
             let reload = await reloadLatestKeepingLocalEdits()
             switch reload {
+            case .needsResolution:
+                return
             case .reloaded:
                 // The newest version may already contain everything the creator changed.
                 guard hasUnsavedChanges else { saveState = .saved; return }
@@ -7119,15 +7305,26 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     private func saveOnce() async {
         defer { userSongRetry = nil }
+        guard pendingMerge == nil else {
+            saveState = .failed("Resolve the conflicting changes before saving.")
+            return
+        }
         guard !isSaving, hasUnsavedChanges else { return }
         guard let api, let itemID, let variantKey else { saveState = .failed("Load the project before saving edits."); return }
         isSaving = true; saveState = .saving
-        defer { isSaving = false }
         let submittedDocument = document
+        let journal = EditorSaveHistory(submitted: submittedDocument, limit: historyLimit)
+        let saveHistoryID = journal.id
+        saveHistory = journal
+        defer {
+            if saveHistory?.id == saveHistoryID {
+                saveHistory = nil
+                isSaving = false
+            }
+        }
         // KRI-576: the song window this save asks the server to project the lyric rows against.
         let submittedSongStartS = trueSongWindowStartS
         let submittedSections = changedSections
-        let submittedUndoCount = undoStack.count
         let saveItemID = itemID
         let saveJobID = jobID
         let saveVariantKey = variantKey
@@ -7138,13 +7335,16 @@ struct NativeEditorTemporaryVideo: Sendable {
         let request = commitRequest(sections: sections, baseGeneration: payload?["base_generation"]?.stringValue ?? document.revision.baseGeneration)
         do {
             let response = try await api.editorCommit(itemID: itemID, variantID: variantKey, request: request)
+            guard saveHistory?.id == saveHistoryID else { return }
             // A committed save proves the connection works: drop the offline hint. Any pending
             // retry stays scheduled so the catch-up read still runs.
             refreshFailureStreak = 0
             if refreshSync == .reconnecting { refreshSync = .idle }
-            guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
+            guard saveHistory?.id == saveHistoryID, saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             let acknowledged = acknowledgedSections(response.sections, submittedSections: submittedSections)
-            let postSubmitUndo = Array(undoStack.dropFirst(submittedUndoCount))
+            guard let journal = saveHistory, journal.id == saveHistoryID else { return }
+            let postSubmitUndo = journal.undoCheckpoints(current: document)
+            let postSubmitRedo = journal.redoCheckpoints
             let hasPostSubmitEdits = document != submittedDocument
             // A durable commit fences the previous render even when this
             // response saves an empty draft and does not start a new poll.
@@ -7171,24 +7371,24 @@ struct NativeEditorTemporaryVideo: Sendable {
                     document = acknowledgedEmpty
                     cleanDocument = acknowledgedEmpty
                     changedSections.removeAll(); explicitlyDirtySections.removeAll()
-                    undoStack.removeAll(); redoStack.removeAll()
                 } else {
                     // The empty commit is durable, but a later local edit was
                     // staged while it was in flight. Move both bases to the
                     // new generation and retain that edit and its undo entry.
                     document.revision.baseGeneration = response.generation
                     cleanDocument = acknowledgedEmpty
-                    let acknowledgedRevision = document.revision
-                    undoStack = postSubmitUndo.map { value in
-                        var rebased = value
-                        rebased.revision = acknowledgedRevision
-                        return rebased
-                    }
-                    redoStack.removeAll()
                     if !document.clips.isEmpty { document.editorState = "renderable" }
-                    consumeSubmittedDeletions(from: submittedDocument)
                     explicitlyDirtySections.subtract(acknowledged)
                 }
+                let acknowledgedRevision = document.revision
+                let rebaseHistory: (EditorDocument) -> EditorDocument = { value in
+                    var rebased = value
+                    rebased.revision = acknowledgedRevision
+                    return rebased
+                }
+                undoStack = postSubmitUndo.map(rebaseHistory)
+                redoStack = postSubmitRedo.map(rebaseHistory)
+                consumeSubmittedDeletions(from: submittedDocument)
                 pendingRenderRetrySections.removeAll()
                 rebaseActiveGestureHistoryAfterDurableSave()
                 refreshDirtyState()
@@ -7216,19 +7416,16 @@ struct NativeEditorTemporaryVideo: Sendable {
                 }
             }
             acknowledge(acknowledged, generation: response.generation, submittedDocument: savedSubmission)
-            if hasPostSubmitEdits {
-                let acknowledgedRevision = document.revision
-                let rebaseSong = userSongRebase
-                undoStack = postSubmitUndo.map { value in
-                    var rebased = value
-                    rebased.revision = acknowledgedRevision
-                    if acknowledged.contains(.userSong) { rebased.userSong = rebaseSong(rebased.userSong) }
-                    return rebased
-                }
-                redoStack.removeAll()
-            } else {
-                undoStack.removeAll(); redoStack.removeAll()
+            let acknowledgedRevision = document.revision
+            let rebaseSong = userSongRebase
+            let rebaseHistory: (EditorDocument) -> EditorDocument = { value in
+                var rebased = value
+                rebased.revision = acknowledgedRevision
+                if acknowledged.contains(.userSong) { rebased.userSong = rebaseSong(rebased.userSong) }
+                return rebased
             }
+            undoStack = postSubmitUndo.map(rebaseHistory)
+            redoStack = postSubmitRedo.map(rebaseHistory)
             userSongRebase = { $0 }
             // A successful response has durably applied the exact deletion
             // intent sent with this commit. Remove only those IDs: a later
@@ -7263,7 +7460,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                     // read-after-write reconciliation is temporarily down.
                 }
             }
-            guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
+            guard saveHistory?.id == saveHistoryID, saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
             if response.renderStarted ?? response.ok {
                 // The commit is durable even while its render is pending. Keep
                 // the acknowledged sections retryable until a matching ready
@@ -7271,7 +7468,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 pendingRenderRetrySections = acknowledged
                 saveState = .previewPending
                 await refreshDeviceRender()
-                guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
+                guard saveHistory?.id == saveHistoryID, saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
                 pendingDeviceRenderIdentity = deviceRenderKey.flatMap { deviceRenders?.request(for: $0)?.identity }
                 previewSupersededGeneration = saveDocumentGeneration
                 startPreviewRefresh(generation: response.generation)
@@ -7280,13 +7477,13 @@ struct NativeEditorTemporaryVideo: Sendable {
                 saveState = .renderRetryNeeded(response.renderRecovery ?? "Your edit is saved. Its preview render did not start, so you can retry it safely.")
             }
         } catch APIError.conflict {
-            guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
+            guard saveHistory?.id == saveHistoryID, saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             // `save()` loads the newer version and sends this edit again.
             saveHitNewerVersion = true
         } catch EditorSaveError.userSongUnavailable where submittedDocument.userSong?.removed == true {
             // The song is already gone on the server (an earlier removal reached it): that is what the
             // creator asked for. Fold the removal in locally and carry on with whatever else is pending.
-            guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
+            guard saveHistory?.id == saveHistoryID, saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             foldAcknowledgedUserSong(submittedDocument.userSong)
             let rebaseSong = userSongRebase
             undoStack = undoStack.map { var value = $0; value.userSong = rebaseSong(value.userSong); return value }
@@ -7297,7 +7494,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             songRemovalAlreadyApplied = true
             saveState = hasUnsavedChanges ? .idle : .saved
         } catch {
-            guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
+            guard saveHistory?.id == saveHistoryID, saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             saveState = .failed(error.localizedDescription)
         }
     }
@@ -7328,7 +7525,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// reloading forever; Retry clears it.
     private var previewConflictReloadGeneration: String?
 
-    private enum LatestReload { case reloaded, alreadyTried, failed(Error) }
+    private enum LatestReload { case reloaded, needsResolution, alreadyTried, failed(Error) }
 
     /// KRI-935: load the newest renderer-owned version of this edit without asking the
     /// creator. It becomes the clean base and their unsaved lanes are replayed on top
@@ -7338,11 +7535,14 @@ struct NativeEditorTemporaryVideo: Sendable {
         guard !isSaving, let api, let jobID, let variantKey, let itemID else {
             return .failed(APIError.invalidResponse)
         }
+        let lifetime = latestJobGate.loadLifetime
+        let reloadThread = threadID
         isSaving = true
-        defer { isSaving = false }
+        defer { if latestJobGate.loadLifetime == lifetime { isSaving = false } }
         do {
             let variant = try await api.editorVariant(jobID: jobID, variantID: variantKey)
-            guard self.jobID == jobID, self.variantKey == variantKey else { return .failed(CancellationError()) }
+            guard !Task.isCancelled, latestJobGate.loadLifetime == lifetime, threadID == reloadThread,
+                  self.jobID == jobID, self.variantKey == variantKey, self.itemID == itemID else { return .failed(CancellationError()) }
             let generation = variant["render_generation_id"]?.stringValue
                 ?? variant["render_finished_at"]?.stringValue
                 ?? document.revision.baseGeneration
@@ -7372,41 +7572,82 @@ struct NativeEditorTemporaryVideo: Sendable {
             if conversationRuntimeVersion == 1 { legacyPromptSnapshot = latestDraft.serverSnapshot }
             var latestClean = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(latestDraft))
             latestClean.revision.baseGeneration = generation
-            rebaseLocalEdits(onto: latestClean, variant: variant, forcePreviewRebuild: fencingPreviewConflict)
-            return .reloaded
+            return rebaseLocalEdits(onto: latestClean, variant: variant, forcePreviewRebuild: fencingPreviewConflict)
+                ? .reloaded : .needsResolution
         } catch {
             return .failed(error)
         }
     }
 
-    /// Make `latestClean` the clean baseline and replay only the locally dirty
-    /// sections on top, as one undoable change. Nothing the creator changed is lost.
-    private func rebaseLocalEdits(onto latestClean: EditorDocument, variant: [String: JSONValue]?, forcePreviewRebuild: Bool) {
-        let localDocument = document
-        let localSections = changedSections
-        let localExplicitSections = explicitlyDirtySections
+    /// Retain both sides until every overlapping authored change is resolved.
+    @discardableResult
+    private func rebaseLocalEdits(onto latestClean: EditorDocument, variant: [String: JSONValue]?, forcePreviewRebuild: Bool,
+                                 remoteEdits: EditorDocument? = nil,
+                                 destination: (job: UUID?, variant: String?, item: String?)? = nil,
+                                 stagedRevision: Int? = nil, remoteETag: String? = nil,
+                                 legacySnapshot: [String: JSONValue]? = nil) -> Bool {
+        let context = PendingMerge(base: cleanDocument, clean: latestClean, remote: remoteEdits ?? latestClean,
+            baseSong: Self.mergeSongAuthority(variant: previewVariant, effective: savedUserSong, job: jobID, generation: cleanDocument.revision.baseGeneration), variant: variant, forcePreview: forcePreviewRebuild,
+            thread: threadID, originalJob: jobID, originalVariant: variantKey,
+            destinationJob: destination?.job ?? jobID, destinationVariant: destination?.variant ?? variantKey,
+            destinationItem: destination?.item ?? itemID, stagedRevision: stagedRevision,
+            remoteETag: remoteETag, legacySnapshot: legacySnapshot)
+        pendingMerge = context
+        return applyMerge(context, preference: nil)
+    }
+
+    func resolveMergeConflicts(keepingLocal: Bool) {
+        guard let context = pendingMerge, !isSaving else { return }
+        guard !keepingLocal || canKeepLocalMergeConflicts else { return }
+        _ = applyMerge(context, preference: keepingLocal ? .local : .remote)
+    }
+
+    private func applyMerge(_ context: PendingMerge, preference: AuthoredJSONMerge.Preference?) -> Bool {
+        guard threadID == context.thread, jobID == context.originalJob, variantKey == context.originalVariant else { return false }
+        let remoteSong = context.variant.map { Self.mergeSongAuthority(variant: $0, effective: NativeUserSong(variant: $0), job: context.destinationJob, generation: context.clean.revision.baseGeneration) } ?? context.baseSong
+        let result = NativeEditorMerge.documents(base: context.base, local: document, remote: context.remote,
+            baseSong: context.baseSong, remoteSong: remoteSong,
+            preference: preference)
+        let rebased: EditorDocument
+        switch result {
+        case .resolved(let value): rebased = value
+        case .conflicts(let conflicts):
+            let connected = conflicts.contains(where: { $0.path.first == "dependent" })
+            canKeepLocalMergeConflicts = context.baseSong == remoteSong || (document.userSong?.isEmpty != false && !connected)
+            mergeConflictMessage = !canKeepLocalMergeConflicts
+                ? "The latest version may use a different song. Use the latest conflicting changes, then edit the song. Your current edits remain here until you choose."
+                : connected
+                ? "Timing or deletion changes affect connected content. Choose which version of that connected content to keep; unrelated changes are preserved."
+                : "Your edits and the latest version changed the same content. Choose which conflicting changes to keep; other changes are preserved."
+            return false
+        case .unsupported(let message):
+            canKeepLocalMergeConflicts = false
+            mergeConflictMessage = message
+            return false
+        }
         let selected = selection
-        var rebased = latestClean
-        for section in localSections {
-            copy(section, from: localDocument, into: &rebased)
-        }
-        // Deletion intents travel with the replayed lanes, so Save still sends them.
-        for deletion in localDocument.deletions where !rebased.deletions.contains(deletion) {
-            rebased.deletions.append(deletion)
-        }
+        if context.originalJob != context.destinationJob { discardPlaybackForNewJob() }
         document = rebased
-        cleanDocument = latestClean
-        changedSections = localSections
-        explicitlyDirtySections = localExplicitSections.intersection(localSections)
+        cleanDocument = context.clean
+        jobID = context.destinationJob; variantKey = context.destinationVariant; itemID = context.destinationItem
+        if let value = context.remoteETag { etag = value }
+        if let value = context.legacySnapshot { legacyPromptSnapshot = value }
+        pendingMerge = nil
+        mergeConflictMessage = nil
+        canKeepLocalMergeConflicts = true
+        if let revision = context.stagedRevision { appliedChatDraftRevision = revision }
+        chatStagedDocument = nil; chatStagedSections = []
         redoStack.removeAll()
-        configureCapabilities(from: variant)
-        refreshRebasedSourcePreview(force: forcePreviewRebuild)
+        configureCapabilities(from: context.variant)
+        refreshRebasedSourcePreview(force: context.forcePreview)
         refreshDirtyState()
-        undoStack = hasUnsavedChanges ? [latestClean] : []
+        explicitlyDirtySections.formIntersection(changedSections)
+        undoStack = hasUnsavedChanges ? [context.clean] : []
         if let selected, selectionExists(selected) { selection = selected } else { selection = nil }
         durationSourcesInvalidated = hasUnsavedChanges && (changedSections.contains(.timeline) || changedSections.contains(.carouselMoment))
-        setAuthoritativeDuration(Self.number(variant?["duration_s"]))
+        setAuthoritativeDuration(Self.number(context.variant?["duration_s"]))
         refreshDuration()
+        return true
     }
 
     private func transact(section: EditorSection, _ body: (inout EditorDraft) -> Void) {
@@ -7781,6 +8022,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
         guard next != active.baseline else {
             if active.recordedUndo {
+                saveHistory?.cancelLastCheckpoint(matching: active.baseline)
                 undoStack.removeLast()
                 redoStack = active.redoBaseline
                 active.recordedUndo = false
@@ -8310,6 +8552,11 @@ struct NativeEditorTemporaryVideo: Sendable {
             rebased.deletions.removeAll { submittedDocument.deletions.contains($0) }
             return rebased
         }
+        redoStack = redoStack.map { snapshot in
+            var rebased = snapshot
+            rebased.deletions.removeAll { submittedDocument.deletions.contains($0) }
+            return rebased
+        }
     }
 
     private func copy(_ section: EditorSection, from submitted: EditorDocument, into baseline: inout EditorDocument) {
@@ -8475,6 +8722,8 @@ struct NativeEditorTemporaryVideo: Sendable {
             guard let self, !Task.isCancelled, self.jobID == jobID, self.sourcePreviewSequence == sequence else { return }
             guard !self.isSaving else { return self.failSourcePreview(error, reloadsLatestOnConflict: false) }
             switch await self.reloadLatestKeepingLocalEdits(fencingPreviewConflict: true) {
+            case .needsResolution:
+                return
             case .reloaded:
                 return
             case .failed(let failure) where failure is CancellationError:

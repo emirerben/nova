@@ -57,7 +57,10 @@ struct ChatUITestTokenStore: TokenStore {
     // `KRIA_FIXTURE_EXPIRED_TOKEN=1` (perf): an in-memory expired session, so the 401 -> refresh path runs.
     func read() throws -> MobileSession? {
         if PerfFixture.expiredToken { return PerfTokenState.shared.current }
-        return nil
+        // A synthetic account identity scopes offline durable render recovery without Keychain access.
+        let payload = Data("{\"sub\":\"chat-ui-fixture\"}".utf8).base64EncodedString()
+            .replacingOccurrences(of: "=", with: "").replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+        return MobileSession(accessToken: "fixture.\(payload).fixture", refreshToken: "fixture-refresh", expiresIn: 3600)
     }
     func updateSession(_ replacement: MobileSession?, ifCurrent expected: MobileSession) throws -> SessionStoreUpdate {
         guard PerfFixture.expiredToken else { throw APIError.unsupported }
@@ -152,6 +155,8 @@ final class CreationChatFixture: @unchecked Sendable {
     private var sendRefused = false
     private var slideDrafts: [String: [String: Any]] = [:]
     private var slideRendered: Set<String> = []
+    private var slideGenerationReceipts: [String: [String: Any]] = [:]
+    private var slideGenerationTargets: [String: String] = [:]
     private var generatedMediaOperations: [String: [String: Any]] = [:]
     private var generatedMediaAssets: [String: [[String: Any]]] = [:]
     private var generatedMediaPostCount = 0
@@ -1750,6 +1755,31 @@ final class CreationChatFixture: @unchecked Sendable {
             slideDrafts[itemID] = draft
             return response(["slide_post": draft])
         }
+        if parts.contains("generation-requests"), let operation = parts.last, operation != "generation-requests" {
+            guard let receipt = slideGenerationReceipts[operation] else { return response(["detail": "receipt missing"], status: 404) }
+            return response(receipt)
+        }
+        if parts.last == "generation-requests" {
+            guard let operation = body["client_request_id"] as? String, UUID(uuidString: operation) != nil,
+                  let version = body["expected_version"] as? Int else { return response(["detail": "invalid request"], status: 422) }
+            guard body.keys.contains("expected_current_job_id") else { return response(["detail": "target required"], status: 422) }
+            let expectedTarget = (body["expected_current_job_id"] as? String).flatMap(UUID.init(uuidString:))
+            let targetKey = expectedTarget?.uuidString ?? "null"
+            if let receipt = slideGenerationReceipts[operation] {
+                guard slideGenerationTargets[operation] == targetKey else { return response(["detail": "request conflict"], status: 409) }
+                return response(["generation_receipt": receipt])
+            }
+            let currentTarget = slideRendered.contains(itemID) ? UUID(uuidString: itemID) : nil
+            guard currentTarget == expectedTarget else { return response(["detail": "target changed"], status: 409) }
+            guard version == slideDrafts[itemID]?["version"] as? Int else { return response(["detail": "version conflict"], status: 409) }
+            let receipt: [String: Any] = ["client_request_id": operation, "item_id": itemID, "draft_version": version,
+                "job_id": itemID, "dispatch_state": "published", "job_status": "variants_ready", "is_current_target": true]
+            slideGenerationReceipts[operation] = receipt
+            slideGenerationTargets[operation] = targetKey
+            slideRendered.insert(itemID)
+            slideDrafts[itemID]?["rendered_version"] = version
+            return response(["generation_receipt": receipt])
+        }
         if parts.last == "generate" {
             slideRendered.insert(itemID)
             let version = slideDrafts[itemID]?["version"]
@@ -1761,7 +1791,7 @@ final class CreationChatFixture: @unchecked Sendable {
             lateAssetPolls[itemID] = polls
             assets.append(lateAsset(status: polls <= 2 ? "processing" : "ready"))
         }
-        var state: [String: Any] = ["schema_version": 1, "item_id": itemID, "title": "Three connected moments", "assets": assets, "render_status": "not_rendered", "slides": [], "validation_errors": []]
+        var state: [String: Any] = ["schema_version": 1, "generation_idempotency_version": 1, "item_id": itemID, "title": "Three connected moments", "assets": assets, "render_status": "not_rendered", "slides": [], "validation_errors": []]
         if let draft = slideDrafts[itemID] { state["draft"] = draft }
         if slideRendered.contains(itemID), let draft = slideDrafts[itemID] {
             state["job_id"] = itemID; state["render_status"] = "ready"; state["rendered_version"] = draft["version"]

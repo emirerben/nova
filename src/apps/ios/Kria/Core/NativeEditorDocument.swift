@@ -1017,6 +1017,31 @@ struct EditorDocument: Equatable, Sendable {
 
     func serializedSnapshot() -> [String: JSONValue] { encodeSnapshot() }
 
+    /// Validation-only serialization for a proposed three-way merge. Unlike the
+    /// normal save encoder this exercises typed writers even for a fresh decode.
+    /// A malformed known row must not masquerade as a preserved opaque extension.
+    func mergeValidationSnapshot(preservingOpaqueFrom remote: EditorDocument? = nil) -> [String: JSONValue]? {
+        let knownRowFields: Set<String> = ["id", "slot_id", "text", "start_s", "end_s", "source_start_s", "source_end_s"]
+        for section in EditorSection.allCases {
+            guard let rows = Self.array(rawSections[section.wireKey]) else { continue }
+            for key in ["id", "slot_id"] {
+                let ids = rows.compactMap { Self.object($0).flatMap { Self.string($0[key]) } }
+                if ids.contains(where: { $0.isEmpty }) || Set(ids).count != ids.count { return nil }
+            }
+        }
+        for (section, records) in opaqueRecords {
+            for record in records where !knownRowFields.isDisjoint(with: record.raw.keys) {
+                let contentFields = knownRowFields.subtracting(["id", "slot_id"])
+                let unchangedFuture = contentFields.isDisjoint(with: record.raw.keys)
+                    && remote?.opaqueRecords[section]?.contains(where: { $0.raw == record.raw }) == true
+                if !unchangedFuture { return nil }
+            }
+        }
+        var validation = self
+        validation.loadedState = nil
+        return validation.encodeSnapshot()
+    }
+
     func snapshot(for section: EditorSection) -> JSONValue? {
         let encoded = encodeSnapshot(); let payload = Self.object(encoded["editor_payload"]); let sections = Self.object(payload?["sections"])
         if section == .music {

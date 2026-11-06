@@ -537,7 +537,24 @@ struct SlidePostWorkspaceView: View {
     }
 
     @ViewBuilder private var statusBanner: some View {
-        if let notice = session.pasteNotice {
+        if session.hasConflict {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("This post also changed elsewhere.").font(.headline)
+                Text(session.conflictExplanation).font(.subheadline)
+                HStack {
+                    Button(session.conflictLocalActionTitle) {
+                        guard let itemID else { return }
+                        Task { await session.resolveConflict(preference: .local, api: model.api, itemID: itemID) }
+                    }
+                    Button(session.conflictRemoteActionTitle) {
+                        guard let itemID else { return }
+                        Task { await session.resolveConflict(preference: .remote, api: model.api, itemID: itemID) }
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
+            .padding().accessibilityIdentifier("slidepost-merge-conflict")
+        } else if let notice = session.pasteNotice {
             Button { session.pasteNotice = nil } label: {
                 NativeEditorBannerRow(title: "Paste", detail: notice, systemImage: "doc.on.clipboard", tint: KriaColor.ink, identifier: "slidepost-paste-notice")
             }

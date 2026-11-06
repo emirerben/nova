@@ -7,6 +7,63 @@ import XCTest
 
 @MainActor
 final class NativeEditorSessionTests: XCTestCase {
+    func testReadyJobReceivedDuringSaveIsRecheckedAfterSaveAndTransientReadFailure() async throws {
+        try await exerciseLatestJobDuringSave(runtimeVersion: 2)
+    }
+
+    func testLegacyDirtyLatestJobDoesNotRequireUnavailableDraftEndpoint() async throws {
+        try await exerciseLatestJobDuringSave(runtimeVersion: 1)
+    }
+
+    private func exerciseLatestJobDuringSave(runtimeVersion: Int) async throws {
+        let thread = UUID(), oldJob = UUID(), newJob = UUID()
+        let snapshot: [String: JSONValue] = ["editor_payload": .object(["sections": .object([
+            "text_elements": .array([.object(["id": .string("text"), "text": .string("Original"),
+                "start_s": .number(0), "end_s": .number(2)])])
+        ])])]
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant",
+            draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: oldJob.uuidString,
+            baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
+            authoritativeVariant: ["resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"),
+                "editor_capabilities": .object(["text_elements": .bool(true)])], suspendNextCommit: true)
+        let session = NativeEditorSession()
+        session.latestJobRetryDelays = [.zero]
+        await session.load(api: fake, threadID: thread)
+        if runtimeVersion == 1 { fake.draftError = .unsupported }
+        let draftReadsBefore = fake.draftCallCount
+        session.updateTextContent(id: "text", content: "Submitted")
+        let saving = Task { await session.save() }
+        _ = await waitUntil { fake.commitIsSuspended }
+        XCTAssertTrue(fake.commitIsSuspended)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        fake.refreshedThread = try decoder.decode(CreationThread.self, from: Data(#"""
+        {"id":"\#(thread.uuidString)","title":"Latest","status":"active","revision":2,"runtime_version":\#(runtimeVersion),
+         "active_job_id":"\#(newJob.uuidString)","active_plan_item_id":"item",
+         "state":{"selected_variant_id":"variant"},
+         "job":{"id":"\#(newJob.uuidString)","status":"variants_ready","variants":[{"variant_id":"variant","render_status":"ready"}]},
+         "updated_at":"2026-09-09T08:00:00Z"}
+        """#.utf8))
+        fake.editorVariantsByJob[newJob] = [["variant_id": .string("variant"), "render_status": .string("ready")]]
+        let newest = try XCTUnwrap(fake.refreshedThread?.summary)
+        let readsBefore = fake.projectCallCount
+        fake.projectErrorQueue = [.requestFailed(status: 503, detail: .init("Temporary"))]
+        await session.adoptLatestJob(newest, api: fake)
+        XCTAssertEqual(fake.projectCallCount, readsBefore, "Save owns the document until its response settles")
+        session.updateTextContent(id: "text", content: "Still editing")
+        fake.resumeCommit()
+        await saving.value
+        _ = await waitUntil { runtimeVersion == 1 ? session.mergeConflictMessage != nil : session.newerJobPrompt?.activeJobID == newJob }
+        XCTAssertGreaterThanOrEqual(fake.projectCallCount, readsBefore + 2)
+        if runtimeVersion == 1 {
+            XCTAssertNotNil(session.mergeConflictMessage)
+            XCTAssertEqual(fake.draftCallCount, draftReadsBefore)
+        } else { XCTAssertEqual(session.newerJobPrompt?.activeJobID, newJob) }
+        XCTAssertEqual(session.document.textElements.first?.text, "Still editing")
+        XCTAssertTrue(session.hasUnsavedChanges)
+    }
+
     func testDeviceNarrationRequestUsesPublishedGenerationAndExactTarget() throws {
         let jobID = UUID()
         let base = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
@@ -6889,6 +6946,7 @@ final class EditorCommitSpy: KriaAPIClient {
     /// What `editorSourcePool` throws instead of answering (e.g. a 409 for a newer version).
     var sourcePoolError: APIError?
     var refreshedThread: CreationThread?
+    var projectErrorQueue: [APIError] = []
     private(set) var commitIsSuspended = false
     private var commitContinuation: CheckedContinuation<Void, Never>?
     private var commitResumeRequested = false
@@ -6959,6 +7017,7 @@ final class EditorCommitSpy: KriaAPIClient {
     }
     func project(threadID: UUID) async throws -> CreationThread {
         projectCallCount += 1
+        if !projectErrorQueue.isEmpty { throw projectErrorQueue.removeFirst() }
         guard let refreshedThread else { throw APIError.unsupported }
         return refreshedThread
     }

@@ -189,6 +189,8 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgro
     func slidePostChatEdit(itemID: String, body: SlidePostChatEditRequest) async throws -> SlidePostChatEditResponse
     func saveSlidePost(itemID: String, request: SlidePostSaveRequest) async throws -> SlidePostDraft
     func generateSlidePost(itemID: String, expectedVersion: Int) async throws
+    func generateSlidePost(itemID: String, expectedVersion: Int, clientRequestID: UUID, expectedCurrentJobID: UUID?) async throws -> SlidePostGenerationReceipt
+    func slidePostGenerationReceipt(itemID: String, clientRequestID: UUID) async throws -> SlidePostGenerationReceipt
     func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse
     func downloadDeviceAsset(_ body: DeviceAssetDownloadBody) async throws -> DeviceAssetDownloadTarget
     func reserveDeviceExport(_ body: DeviceExportUploadBody) async throws -> DeviceExportUploadTarget
@@ -438,6 +440,8 @@ extension KriaAPIClient {
     func slidePostChatEdit(itemID: String, body: SlidePostChatEditRequest) async throws -> SlidePostChatEditResponse { throw APIError.unsupported }
     func saveSlidePost(itemID: String, request: SlidePostSaveRequest) async throws -> SlidePostDraft { throw APIError.unsupported }
     func generateSlidePost(itemID: String, expectedVersion: Int) async throws { throw APIError.unsupported }
+    func generateSlidePost(itemID: String, expectedVersion: Int, clientRequestID: UUID, expectedCurrentJobID: UUID?) async throws -> SlidePostGenerationReceipt { throw APIError.unsupported }
+    func slidePostGenerationReceipt(itemID: String, clientRequestID: UUID) async throws -> SlidePostGenerationReceipt { throw APIError.unsupported }
     func creationThoughtSummaries(threadID: UUID, clientRequestID: String) async throws -> KriaThoughtSummaryResponse { throw APIError.unsupported }
     func slidePostThoughtSummaries(itemID: String, clientRequestID: String) async throws -> KriaThoughtSummaryResponse { throw APIError.unsupported }
     func creationThoughtSummaryHistory(threadID: UUID) async throws -> KriaThoughtSummaryResponse { throw APIError.unsupported }

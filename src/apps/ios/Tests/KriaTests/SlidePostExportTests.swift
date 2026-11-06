@@ -1,7 +1,7 @@
 import XCTest
 @testable import Kria
 
-private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
+final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var handler: ((URLRequest, SlidePostRetryAfterURLProtocol) -> Void)?
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -26,20 +26,28 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
     private let itemID = "11111111-1111-1111-1111-111111111111"
     private var defaults: UserDefaults!
     private var suite = ""
+    private var journalRoot: URL { FileManager.default.temporaryDirectory.appending(path: suite) }
 
     override func setUp() { super.setUp(); suite = "SlidePostExportTests.\(UUID())"; defaults = UserDefaults(suiteName: suite) }
-    override func tearDown() { SlidePostRetryAfterURLProtocol.handler = nil; NativeEditorURLProtocol.handler = nil; defaults.removePersistentDomain(forName: suite); super.tearDown() }
+    override func tearDown() { SlidePostRetryAfterURLProtocol.handler = nil; NativeEditorURLProtocol.handler = nil; defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: journalRoot); super.tearDown() }
+
+    private func makeSession(readRetrySleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }, readNow: @escaping () -> ContinuousClock.Instant = { .now }) -> SlidePostSession {
+        SlidePostSession(defaults: defaults, readRetrySleep: readRetrySleep, readNow: readNow,
+            submissionJournal: .init(root: journalRoot), submissionScope: { _, id in
+                .init(owner: "test-owner", environment: "https://native-editor.test", itemID: id)
+            })
+    }
 
     private func state(version: Int = 1) -> SlidePostState {
         let refs = [SlidePostSlide(id: "one", assetID: "a", kind: "image"), SlidePostSlide(id: "two", assetID: "b", kind: "video")]
         let draft = SlidePostDraft(version: version, platformProfile: "instagram_carousel", slides: refs, caption: "Caption", renderedVersion: version)
         return SlidePostState(itemID: itemID, title: "Post", jobID: UUID(), draft: draft,
             assets: refs.map { .init(id: $0.assetID, kind: $0.kind, status: "ready") }, renderStatus: "ready", renderedVersion: version,
-            slides: refs.map { .init(id: $0.id, assetID: $0.assetID, kind: $0.kind, url: URL(string: "https://test/\($0.id).\($0.kind == "video" ? "mp4" : "jpg")")) })
+            slides: refs.map { .init(id: $0.id, assetID: $0.assetID, kind: $0.kind, url: URL(string: "https://test/\($0.id).\($0.kind == "video" ? "mp4" : "jpg")")) }, generationIdempotencyVersion: 1)
     }
     private func session(_ value: SlidePostState) async -> SlidePostSession {
         NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(value)) }
-        let result = SlidePostSession(defaults: defaults)
+        let result = makeSession()
         await result.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
         return result
     }
@@ -178,7 +186,7 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
     func testSecondRevalidationWithNewerServerDraftBlocksPhotoCommit() async {
         let box = StateBox(state())
         NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(box.value)) }
-        let session = SlidePostSession(defaults: defaults)
+        let session = makeSession()
         await session.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
         var checks = 0
         var writes = 0
@@ -235,11 +243,16 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
         var calls: [String] = []
         var generated = false
         var pollsSinceGenerate = 0
+        var receipts: [UUID: SlidePostGenerationReceipt] = [:]
         init(_ state: SlidePostState) { self.state = state }
 
         func handle(_ request: URLRequest) throws -> (Int, Data) {
             let path = request.url?.path ?? ""
             let method = request.httpMethod ?? "GET"
+            if method == "GET", path.contains("/generation-requests/"),
+               let operation = UUID(uuidString: request.url!.lastPathComponent), let receipt = receipts[operation] {
+                return (200, try JSONEncoder().encode(receipt))
+            }
             if method == "PUT" {
                 calls.append("save")
                 var draft = state.draft!
@@ -247,10 +260,19 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
                 state.draft = draft; state.renderStatus = "not_rendered"; state.renderedVersion = nil; state.slides = []
                 return (200, try JSONEncoder().encode(["slide_post": draft]))
             }
-            if method == "POST", path.hasSuffix("/generate") {
-                calls.append("generate")
-                generated = true; pollsSinceGenerate = 0
-                return (200, try JSONEncoder().encode(["slide_post": state.draft!]))
+            if method == "POST", path.hasSuffix("/generation-requests") {
+                let body = try JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request)) as! [String: Any]
+                let operation = UUID(uuidString: body["client_request_id"] as! String)!
+                XCTAssertNotNil(body["expected_current_job_id"])
+                let expectedTarget = (body["expected_current_job_id"] as? String).flatMap(UUID.init(uuidString:))
+                if receipts[operation] == nil {
+                    guard state.jobID == expectedTarget else { return (409, Data()) }
+                    calls.append("generate")
+                    generated = true; pollsSinceGenerate = 0
+                    receipts[operation] = .init(clientRequestID: operation, itemID: UUID(uuidString: state.itemID)!,
+                        draftVersion: state.draft!.version, jobID: state.jobID!, dispatchState: .published, jobStatus: nil, isCurrentTarget: true)
+                }
+                return (200, try JSONEncoder().encode(["generation_receipt": receipts[operation]!]))
             }
             if generated {
                 pollsSinceGenerate += 1
@@ -276,7 +298,7 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
         let server = FakeServer(unrenderedState())
         NativeEditorURLProtocol.handler = { try server.handle($0) }
         let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
         session.draft?.caption = "Edited"
         XCTAssertTrue(session.hasUnsavedChanges)
@@ -298,7 +320,7 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
         let server = FakeServer(unrenderedState())
         NativeEditorURLProtocol.handler = { try server.handle($0) }
         let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
         session.draft?.caption = "Edited"
         var writes = 0
@@ -314,7 +336,7 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
         let server = FakeServer(unrenderedState())
         NativeEditorURLProtocol.handler = { try server.handle($0) }
         let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
         var writes = 0
         let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 })
@@ -330,7 +352,7 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
         let server = FakeServer(unrenderedState())
         NativeEditorURLProtocol.handler = { try server.handle($0) }
         let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
         var writes = 0
         let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 })
@@ -343,7 +365,7 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
         let server = FakeServer(state())
         NativeEditorURLProtocol.handler = { try server.handle($0) }
         let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
         var writes = 0
         let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 })
@@ -362,7 +384,7 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
             return (status, data)
         }
         let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
         var writes = 0
         let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 })
@@ -377,11 +399,11 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
         let server = FakeServer(unrenderedState())
         NativeEditorURLProtocol.handler = { try server.handle($0) }
         let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
         var failed = false
         NativeEditorURLProtocol.handler = { request in
-            if request.httpMethod == "GET", server.generated, !failed {
+            if request.httpMethod == "GET", !request.url!.path.contains("/generation-requests/"), server.generated, !failed {
                 failed = true
                 return (503, Data())
             }
@@ -416,11 +438,11 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
         let server = FakeServer(unrenderedState())
         NativeEditorURLProtocol.handler = { try server.handle($0) }
         let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
         var reads = 0
         NativeEditorURLProtocol.handler = { request in
-            if request.httpMethod == "GET" { reads += 1; return (503, Data()) }
+            if request.httpMethod == "GET", !request.url!.path.contains("/generation-requests/"), server.generated { reads += 1; return (503, Data()) }
             return try server.handle(request)
         }
         let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { _ in XCTFail("Must not export stale state") })
@@ -434,7 +456,7 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
         let server = FakeServer(unrenderedState())
         NativeEditorURLProtocol.handler = { try server.handle($0) }
         let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
         let lagging = unrenderedState()
         var reads = 0
@@ -453,8 +475,13 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
 
     func testUncertainGenerateFailureIsNeverReplayed() async {
         let session = await session(unrenderedState())
+        let current = unrenderedState()
         var mutations = 0
-        NativeEditorURLProtocol.handler = { _ in mutations += 1; return (503, Data()) }
+        NativeEditorURLProtocol.handler = { request in
+            if request.httpMethod == "GET" { return (200, try JSONEncoder().encode(current)) }
+            mutations += 1
+            return (503, Data())
+        }
         let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { _ in XCTFail("Must not write") })
         await exporter.export(.photos, session: session, api: NativeEditorTestSupport.api(), itemID: itemID, pollInterval: .milliseconds(1), maxPolls: 5)
         XCTAssertEqual(mutations, 1)
@@ -482,7 +509,7 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
 
     func testCancelledRefreshDuringBackoffStopsWithoutPublishingError() async {
         let waiting = expectation(description: "Read entered backoff")
-        let session = SlidePostSession(defaults: defaults, readRetrySleep: { _ in
+        let session = makeSession(readRetrySleep: { _ in
             waiting.fulfill()
             try await Task.sleep(for: .seconds(60))
         })
@@ -500,7 +527,7 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
     func testNewerRefreshSupersedesRetryWithoutPublishingOldFailure() async {
         let waiting = expectation(description: "Old read entered backoff")
         var resume: CheckedContinuation<Void, Never>?
-        let session = SlidePostSession(defaults: defaults, readRetrySleep: { _ in
+        let session = makeSession(readRetrySleep: { _ in
             await withCheckedContinuation { resume = $0; waiting.fulfill() }
         })
         NativeEditorURLProtocol.handler = { _ in (503, Data()) }
@@ -520,7 +547,7 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
     func testItemSwitchDuringBackoffCannotRestoreTheOldItem() async {
         let waiting = expectation(description: "Old item entered backoff")
         var resume: CheckedContinuation<Void, Never>?
-        let session = SlidePostSession(defaults: defaults, readRetrySleep: { _ in
+        let session = makeSession(readRetrySleep: { _ in
             await withCheckedContinuation { resume = $0; waiting.fulfill() }
         })
         NativeEditorURLProtocol.handler = { _ in (503, Data()) }
@@ -578,7 +605,7 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
         let server = FakeServer(unrenderedState())
         NativeEditorURLProtocol.handler = { try server.handle($0) }
         let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
         let lagging = unrenderedState()
         var reads = 0
@@ -625,11 +652,11 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
         let server = FakeServer(unrenderedState())
         NativeEditorURLProtocol.handler = { try server.handle($0) }
         let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
         let lagging = unrenderedState()
         NativeEditorURLProtocol.handler = { request in
-            if request.httpMethod == "GET" { return (200, try JSONEncoder().encode(lagging)) }
+            if request.httpMethod == "GET", !request.url!.path.contains("/generation-requests/") { return (200, try JSONEncoder().encode(lagging)) }
             return try server.handle(request)
         }
         await session.create(api: api, itemID: itemID)
@@ -652,11 +679,11 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
         let server = FakeServer(current)
         NativeEditorURLProtocol.handler = { try server.handle($0) }
         let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
         let old = unrenderedState()
         NativeEditorURLProtocol.handler = { request in
-            if request.httpMethod == "GET" { return (200, try JSONEncoder().encode(old)) }
+            if request.httpMethod == "GET", !request.url!.path.contains("/generation-requests/"), server.generated { return (200, try JSONEncoder().encode(old)) }
             return try server.handle(request)
         }
         await session.create(api: api, itemID: itemID)
@@ -672,13 +699,13 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
         let server = FakeServer(unrenderedState())
         NativeEditorURLProtocol.handler = { try server.handle($0) }
         let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
         var failed = unrenderedState()
-        failed.jobID = UUID()
+        failed.jobID = server.state.jobID
         failed.renderStatus = "failed"
         NativeEditorURLProtocol.handler = { request in
-            if request.httpMethod == "GET" { return (200, try JSONEncoder().encode(failed)) }
+            if request.httpMethod == "GET", !request.url!.path.contains("/generation-requests/") { return (200, try JSONEncoder().encode(failed)) }
             return try server.handle(request)
         }
         await session.create(api: api, itemID: itemID)
@@ -692,19 +719,20 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
         let server = FakeServer(unrenderedState())
         NativeEditorURLProtocol.handler = { try server.handle($0) }
         let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
         var failed = unrenderedState()
-        failed.jobID = UUID()
+        failed.jobID = server.state.jobID
         failed.renderStatus = "failed"
         NativeEditorURLProtocol.handler = { request in
-            if request.httpMethod == "GET" { return (200, try JSONEncoder().encode(failed)) }
+            if request.httpMethod == "GET", !request.url!.path.contains("/generation-requests/") { return (200, try JSONEncoder().encode(failed)) }
             return try server.handle(request)
         }
         await session.create(api: api, itemID: itemID)
         XCTAssertNotNil(session.error)
         XCTAssertFalse(session.isRendering)
-        let ready = state()
+        var ready = state()
+        ready.jobID = server.state.jobID
         NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(ready)) }
         await session.refresh(api: api, itemID: itemID)
         XCTAssertTrue(session.canExport)
@@ -718,7 +746,7 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
         let server = FakeServer(unrenderedState())
         NativeEditorURLProtocol.handler = { try server.handle($0) }
         let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
         let lagging = unrenderedState()
         var reads = 0
@@ -749,7 +777,7 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
         let server = FakeServer(unrenderedState())
         NativeEditorURLProtocol.handler = { try server.handle($0) }
         let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
         NativeEditorURLProtocol.handler = { request in
             if request.httpMethod == "POST" {
@@ -770,8 +798,10 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
 
     func testDefinitiveGenerateRejectionAllowsALaterExplicitAttempt() async {
         let session = await session(unrenderedState())
+        let current = unrenderedState()
         var posts = 0
         NativeEditorURLProtocol.handler = { request in
+            if request.httpMethod == "GET" { return (200, try JSONEncoder().encode(current)) }
             XCTAssertEqual(request.httpMethod, "POST")
             posts += 1
             return (403, Data())
@@ -787,10 +817,10 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
         let server = FakeServer(unrenderedState())
         NativeEditorURLProtocol.handler = { try server.handle($0) }
         let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
         NativeEditorURLProtocol.handler = { request in
-            if request.httpMethod == "GET" { return (403, Data()) }
+            if request.httpMethod == "GET", !request.url!.path.contains("/generation-requests/"), server.generated { return (403, Data()) }
             return try server.handle(request)
         }
         await session.create(api: api, itemID: itemID)
@@ -808,7 +838,7 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
     func testRetryAfterSurvivesLaterPollsAndDoesNotBlockAnotherItem() async throws {
         let origin = ContinuousClock.now
         var now = origin
-        let session = SlidePostSession(defaults: defaults, readRetrySleep: { _ in XCTFail("A long hint ends this bounded attempt without sleeping") }, readNow: { now })
+        let session = makeSession(readRetrySleep: { _ in XCTFail("A long hint ends this bounded attempt without sleeping") }, readNow: { now })
         let api = retryAfterAPI()
         let ready = try JSONEncoder().encode(state())
         let otherID = "22222222-2222-2222-2222-222222222222"
@@ -846,7 +876,7 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
 
     func testFinalReadAttemptRetainsRetryAfterForTheNextInvocation() async throws {
         var now = ContinuousClock.now
-        let session = SlidePostSession(defaults: defaults, readRetrySleep: { now = now.advanced(by: $0) }, readNow: { now })
+        let session = makeSession(readRetrySleep: { now = now.advanced(by: $0) }, readNow: { now })
         let api = retryAfterAPI()
         let ready = try JSONEncoder().encode(state())
         var reads = 0
@@ -875,7 +905,7 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
         var now = origin
         let sleeping = expectation(description: "First refresh reached retry wait")
         var resume: CheckedContinuation<Void, Never>?
-        let session = SlidePostSession(defaults: defaults, readRetrySleep: { _ in
+        let session = makeSession(readRetrySleep: { _ in
             await withCheckedContinuation { resume = $0; sleeping.fulfill() }
         }, readNow: { now })
         let api = retryAfterAPI()
@@ -909,7 +939,7 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
         var now = origin
         let firstStarted = expectation(description: "First GET in flight")
         var firstTransport: SlidePostRetryAfterURLProtocol?
-        let session = SlidePostSession(defaults: defaults, readRetrySleep: { _ in XCTFail("No bounded retry is eligible") }, readNow: { now })
+        let session = makeSession(readRetrySleep: { _ in XCTFail("No bounded retry is eligible") }, readNow: { now })
         let api = retryAfterAPI()
         let ready = try JSONEncoder().encode(state())
         var reads = 0
@@ -941,7 +971,7 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
         // First launch: the post has no server draft, so the editor seeds an unsaved local one.
         var empty = state(); empty.draft = nil; empty.renderStatus = "not_rendered"; empty.renderedVersion = nil; empty.slides = []
         NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(empty)) }
-        let first = SlidePostSession(defaults: defaults)
+        let first = makeSession()
         await first.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
         first.seedDraftIfNeeded()
         let seeded = try! XCTUnwrap(first.draft)
@@ -950,7 +980,7 @@ private final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Send
         // Later the same post has that draft on the server (saved elsewhere); a fresh session opens it.
         var saved = state(); saved.draft = seeded; saved.draft?.version = 1
         NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(saved)) }
-        let reopened = SlidePostSession(defaults: defaults)
+        let reopened = makeSession()
         await reopened.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
         XCTAssertFalse(reopened.hasUnsavedChanges, "the server draft is the baseline, not an unsaved edit")
     }

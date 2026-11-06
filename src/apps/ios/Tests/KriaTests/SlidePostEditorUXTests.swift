@@ -308,7 +308,7 @@ final class SlidePostPendingMediaTests: XCTestCase {
     }
     private func openSession() async -> SlidePostSession {
         NativeEditorURLProtocol.handler = { [unowned self] _ in (200, try JSONEncoder().encode(self.remote)) }
-        let session = SlidePostSession(defaults: defaults)
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await session.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
         _ = session.appendNewlyReadyAssets()   // first look: seeds the seen set
         return session
@@ -411,7 +411,7 @@ final class SlidePostPendingMediaTests: XCTestCase {
         await poll(session)
         XCTAssertEqual(session.appendNewlyReadyAssets(), 1)
         session.undoEdit()
-        let reopened = SlidePostSession(defaults: defaults)
+        let reopened = SlidePostTestSubmissionStorage.session(defaults: defaults)
         NativeEditorURLProtocol.handler = { [unowned self] _ in (200, try JSONEncoder().encode(self.remote)) }
         await reopened.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
         XCTAssertEqual(reopened.appendNewlyReadyAssets(), 0)

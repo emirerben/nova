@@ -156,7 +156,7 @@ import XCTest
     // MARK: Editing
 
     private func session(profile: String, kinds: [String] = ["image", "image", "image"]) -> SlidePostSession {
-        let session = SlidePostSession()
+        let session = SlidePostTestSubmissionStorage.session()
         let slides = kinds.enumerated().map { SlidePostSlide(id: "s\($0.offset + 1)", assetID: "a\($0.offset + 1)", kind: $0.element) }
         session.draft = SlidePostDraft(version: 1, platformProfile: profile, slides: slides)
         return session

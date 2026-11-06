@@ -226,7 +226,23 @@ struct NativeEditorView: View {
             // A re-plan can finish as a NEW job while this editor is open: show it.
             .onChange(of: project.activeJobID) { _, _ in Task { await loadEditor() } }
             .safeAreaInset(edge: .top) {
-                if let newer = session.newerJobPrompt {
+                if let conflict = session.mergeConflictMessage {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Review conflicting changes").font(KriaFont.body().weight(.semibold))
+                        Text(conflict).font(.footnote)
+                        HStack {
+                            Button("Keep my conflicting changes") { session.resolveMergeConflicts(keepingLocal: true) }
+                                .accessibilityIdentifier("native-editor-merge-local")
+                                .disabled(!session.canKeepLocalMergeConflicts)
+                            Button("Use latest conflicting changes") { session.resolveMergeConflicts(keepingLocal: false) }
+                                .accessibilityIdentifier("native-editor-merge-remote")
+                        }
+                        .disabled(session.isSaving)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(KriaColor.paper)
+                } else if let newer = session.newerJobPrompt {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("A new version of your video is ready")
                             .font(KriaFont.body().weight(.semibold))
@@ -242,6 +258,10 @@ struct NativeEditorView: View {
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(KriaColor.paper)
+                } else if let message = session.latestJobRefreshMessage {
+                    Text(message).font(.footnote).padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(KriaColor.paper)
                 }
             }
             .sheet(isPresented: $exporter.isSharing, onDismiss: exporter.removeSharedFile) {
@@ -257,7 +277,7 @@ struct NativeEditorView: View {
                 Button("Discard changes", role: .destructive, action: leave)
                 Button("Stay", role: .cancel) {}
             } message: {
-                Text("Unsaved editor changes are stored only on this device until you save.")
+                Text("Stay in the editor to keep working, or save before leaving. Discarding loses your unsaved changes.")
             }
             .modifier(NativeCaptionGestureScopeModifier(session: session))
             #if DEBUG

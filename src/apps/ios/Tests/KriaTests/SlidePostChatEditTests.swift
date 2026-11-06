@@ -53,7 +53,7 @@ import XCTest
         return (200, try JSONSerialization.data(withJSONObject: object))
     }
     private func session(remote: SlidePostState) async -> SlidePostSession {
-        let session = SlidePostSession(defaults: defaults)
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await session.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
         return session
     }
@@ -109,13 +109,13 @@ import XCTest
             return (200, try JSONEncoder().encode(remote))
         }
         let api = NativeEditorTestSupport.api()
-        let session = SlidePostSession(defaults: defaults)
+        let session = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await session.refresh(api: api, itemID: itemID)
         await session.chatEdit(api: api, itemID: itemID, message: "Update the caption")
         XCTAssertEqual(session.chat.last?.thoughts.map(\.text), ["Checked the requested caption."])
         XCTAssertEqual(session.chat.last?.thoughts.first?.durationLabel, "Thought for 2s")
 
-        let reopened = SlidePostSession(defaults: defaults)
+        let reopened = SlidePostTestSubmissionStorage.session(defaults: defaults)
         await reopened.refresh(api: api, itemID: itemID)
         XCTAssertEqual(reopened.chat.last?.text, "Which caption?")
         XCTAssertEqual(reopened.chat.last?.thoughts.map(\.text), ["Checked the requested caption."])
