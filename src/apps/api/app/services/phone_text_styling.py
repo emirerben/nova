@@ -25,6 +25,9 @@ log = structlog.get_logger()
 PHONE_TEXT_STYLE_FIELD = "phone_text_style"
 PHONE_TEXT_STYLE_CLIENT_PROTOCOL = 10
 _POLICY: ContextVar[dict | None] = ContextVar("phone_text_style", default=None)
+# WCAG AA for body text, the bar a caption over a speaker background must reach (Green 5).
+READABLE_CONTRAST = 4.5
+BACKGROUND_OUTLINE_PX = 4
 
 
 def require_phone_text_style_client(policy, *, require_header=False):
@@ -133,6 +136,13 @@ def stamp_phone_text_style(job) -> None:
     }
     # KRI-1177: the look the creator typed onto the brief rides beside the parsed `requested`.
     ask = _brief_caption_ask(current)
+    if ask is not None and ask.has_shape:
+        # Qendresa item 12: the shape is drawn only for the approving app build that can edit it.
+        from app.services.phone_rollout import caption_shape_planned_for, stamped_client_protocol
+
+        protocol = stamped_client_protocol(candidates.get("creator_client_protocol"))
+        if not caption_shape_planned_for(protocol):
+            ask = ask.without_shape()
     if ask is not None:
         stamped["caption_ask"] = ask.as_dict()
     current[PHONE_TEXT_STYLE_FIELD] = stamped
@@ -360,6 +370,9 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
     if ask is not None:
         if ask.color is not None:
             rule["color"] = ask.color
+        elif ask.box is not None:
+            # Text on the box, in the ink that reads on it; the contrast colour never repaints it.
+            rule["color"] = _readable_on(ask.box)
         if ask.position is not None:
             rule["position"] = ask.position
     if (
@@ -522,23 +535,25 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
                 text_anchor=row["alignment"],
                 max_width_frac=row["max_width_frac"],
             )
-            if "color" not in rule and policy.get("_background_frames"):
-                from app.pipeline.phone_text_background import automatic_fill
-
-                fill, _score = automatic_fill(
-                    measure_box(row, canvas),
-                    [
-                        frame
-                        for frame in policy["_background_frames"]
-                        if frame["start_s"] < row["end_s"] and row["start_s"] < frame["end_s"]
-                    ],
-                )
-                resolved = replace(resolved, text_color=fill)
+            if "color" not in rule:
+                # Green 5: kept so a background that arrives later re-picks the colour.
+                policy["_caption_auto_fill"] = {
+                    "box": list(measure_box(row, canvas)),
+                    "start_s": row["start_s"],
+                    "end_s": row["end_s"],
+                    "outline_asked": "stroke_width" in rule,
+                }
+                if policy.get("_background_frames"):
+                    resolved = _auto_caption_colour(resolved, policy)
             if ask is not None:
                 over_face = _caption_over_face(row, rows, policy.get("_face_boxes") or [], canvas)
+    resolved, over_face = _apply_caption_shape(resolved, ask, over_face, cues, canvas)
     if ask is not None:
         policy["_caption_look_receipt"] = {
             **ask.as_dict(),
+            **(
+                {"words": policy["_caption_shape"]["words"]} if policy.get("_caption_shape") else {}
+            ),
             "size_px": resolved.text_size_px,
             # Where the block was drawn, so a later move (a KRI-827 mark, an editor Save) is seen.
             "position_x_frac": round(float(resolved.position_x_frac), 5),
@@ -547,6 +562,138 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
         }
     policy["caption_look"] = resolved
     return resolved
+
+
+def _apply_caption_shape(resolved, ask, over_face: bool, cues: list[dict], canvas):
+    """Qendresa item 12: the look of the caption SHAPE the stamp kept (words and / or box).
+
+    A box look: bold text that reads on a rounded box (black on her light grey, white on a dark
+    box, or her colour, outlined when it would vanish), low (0.79) or middle (0.62). A words-only
+    look: the not-yet-spoken word dimmed, no lime, under the face (0.62) or low (0.79). Records
+    the shape on the policy for `generation_style_fields` and the receipt; ``resolved`` and
+    ``over_face`` come back unchanged when the stamped ask carries no shape.
+
+    Faces: an asked spot is the creator's (KRI-1177) and ``over_face`` says what it covers. A
+    box with no asked spot takes the low spot only when it covers no sampled face; otherwise it
+    stays where the face-aware placement put it (text never covers a face)."""
+    from dataclasses import replace
+
+    if ask is None or not ask.has_shape:
+        return resolved, over_face
+    policy = _POLICY.get()
+    words = int(policy.get("_caption_shape_words") or ask.shape_words)
+    # Her spots: under the face (V4/V7 0.61-0.62) for "middle", low (V5/V6 0.76-0.77, V1 0.87)
+    # for "bottom" and for a box with no spot. A words-only ask with no spot keeps today's
+    # face-aware placement.
+    spot = ask.position or ("bottom" if ask.box is not None else None)
+    placed_y = {"middle": 0.62, "bottom": 0.79}.get(spot) if spot is not None else None
+    updates: dict = {}
+    if ask.box is not None:
+        # No colour asked: black or white, whichever reads on her box (black on light grey).
+        fill = ask.color or _readable_on(ask.box)
+        updates.update(text_color=fill, outline_px=0, shadow_enabled=False, box_color=ask.box)
+        if _contrast(fill, ask.box) < _CAPTION_BOX_MIN_CONTRAST:
+            # Her colour stays hers (KRI-1177) but would vanish into her box ("white captions in
+            # a light grey box"): an outline in the ink that reads on the box keeps it legible.
+            from app.pipeline.phone_captions import _CAPTION_OUTLINE_PX
+
+            updates.update(outline_px=_CAPTION_OUTLINE_PX, stroke_color=_readable_on(ask.box))
+        if ask.size is None:
+            updates["text_size_px"] = 64
+        policy["_caption_shape"] = {"words": words, "box": ask.box}
+    else:
+        updates.update(dim_words=True, highlight_color=resolved.text_color)
+        policy["_caption_shape"] = {"words": words, "dim": True}
+    moved = {}
+    if placed_y is not None:
+        moved["position_y_frac"] = placed_y
+        if ask.box is not None and ask.position in (None, "bottom", "middle"):
+            moved.update(position_x_frac=0.5, text_anchor="center")
+    shaped = replace(resolved, **updates)
+    faces = policy.get("_face_boxes") or []
+    if not moved:
+        return shaped, _shape_over_face(shaped, cues, faces, canvas) if faces else over_face
+    candidate = replace(shaped, **moved)
+    covers = _shape_over_face(candidate, cues, faces, canvas) if faces else False
+    if covers and ask.position is None:
+        # Not her spot: keep the face-aware one (`_place` already dodged the faces).
+        return shaped, _shape_over_face(shaped, cues, faces, canvas)
+    return candidate, covers
+
+
+# Text on an asked caption box must read against the box: WCAG's minimum contrast for large
+# text (captions draw at 52-96 px). Black or white always reaches at least 4.5:1 on any fill.
+_CAPTION_BOX_MIN_CONTRAST = 3.0
+
+
+def _relative_luminance(color: str) -> float:
+    """WCAG relative luminance of a ``#RRGGBB`` colour (the curve `automatic_fill` uses)."""
+    channels = [int(color[i : i + 2], 16) / 255 for i in (1, 3, 5)]
+    r, g, b = (c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contrast(a: str, b: str) -> float:
+    """WCAG contrast ratio of two ``#RRGGBB`` colours (1 = same, 21 = black on white)."""
+    high, low = sorted((_relative_luminance(a), _relative_luminance(b)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+def _readable_on(fill: str) -> str:
+    """Black or white, whichever has more contrast on ``fill``."""
+    return max(("#000000", "#FFFFFF"), key=lambda ink: _contrast(ink, fill))
+
+
+def _shape_over_face(look, cues: list[dict], faces: list, canvas) -> bool:
+    """Does the shaped caption block (its box included) overlap a sampled face while a cue is
+    on? The block is the widest cue measured at the look's size and width, centred where the
+    look draws it (``position_x_frac`` / ``position_y_frac`` are the block centre; a left /
+    right anchor puts its edge there)."""
+    from app.agents._schemas.text_element import TextElement
+    from app.pipeline.canvas import PORTRAIT
+    from app.pipeline.phone_text_style import _overlap, _same_window, measure_box
+
+    canvas = canvas or PORTRAIT
+    timed = [c for c in cues if str(c.get("text") or "").strip()]
+    if not timed or not faces:
+        return False
+    widest = max(timed, key=lambda c: len(str(c["text"])))
+    row = TextElement(
+        id="caption-shape",
+        text=str(widest["text"]),
+        start_s=min(float(c.get("start_s", 0)) for c in timed),
+        end_s=max(float(c.get("end_s", 0)) for c in timed),
+        font_family=look.font_family,
+        size_px=look.text_size_px,
+        color=look.text_color,
+        stroke_width=look.outline_px,
+        shadow_enabled=look.shadow_enabled,
+        max_width_frac=look.max_width_frac,
+        effect="pop-in",
+    ).model_dump(mode="json", exclude_none=True)
+    x0, y0, x1, y1 = measure_box(dict(row), canvas)  # its size; the spot is set below
+    width, height = x1 - x0, y1 - y0
+    cx, cy = float(look.position_x_frac), float(look.position_y_frac)
+    left = (
+        cx
+        if look.text_anchor == "left"
+        else cx - width
+        if look.text_anchor == "right"
+        else (cx - width / 2)
+    )
+    block = [left, cy - height / 2, left + width, cy + height / 2]
+    if look.box_color is not None:
+        from app.pipeline.phone_captions import _CAPTION_BOX_PAD_X_EM, _CAPTION_BOX_PAD_Y_EM
+
+        pad_x = _CAPTION_BOX_PAD_X_EM * look.text_size_px / canvas.width
+        pad_y = _CAPTION_BOX_PAD_Y_EM * look.text_size_px / canvas.height
+        block = [block[0] - pad_x, block[1] - pad_y, block[2] + pad_x, block[3] + pad_y]
+    windows = [{"start_s": c.get("start_s", 0), "end_s": c.get("end_s", 0)} for c in timed]
+    return any(
+        _overlap(block, face["box"] if isinstance(face, dict) else face)
+        and (not isinstance(face, dict) or any(_same_window(face, w) for w in windows))
+        for face in faces
+    )
 
 
 def _caption_over_face(row: dict, rows: list[dict], faces: list, canvas) -> bool:
@@ -568,10 +715,27 @@ def generation_caption_cues(cues: list[dict], *, language: str | None = None) ->
     shows it and a Save keeps it); ``cues`` unchanged when no case was asked."""
     from app.kria.caption_look_ask import CaptionLookAsk, apply_caption_case
 
-    ask = CaptionLookAsk.from_dict((_POLICY.get() or {}).get("caption_ask"))
-    if ask is None or ask.case is None:
+    policy = _POLICY.get() or {}
+    ask = CaptionLookAsk.from_dict(policy.get("caption_ask"))
+    if ask is None:
         return cues
-    return apply_caption_case(cues, ask.case, language)
+    if ask.case is not None:
+        cues = apply_caption_case(cues, ask.case, language)
+    words = ask.shape_words
+    if words is None:
+        return cues
+    # Qendresa item 12: one or two words at a time. Splitting here, after the sentence re-split
+    # (which would re-merge short cues), keeps every later step on the split cues.
+    from app.pipeline.captions import split_cues_by_words
+    from app.pipeline.phone_captions import MAX_CAPTION_LAYERS
+
+    used = words
+    split = split_cues_by_words(cues, used)
+    while len(split) > MAX_CAPTION_LAYERS and used < 8:
+        used += 1
+        split = split_cues_by_words(cues, used)
+    policy["_caption_shape_words"] = used
+    return split
 
 
 def remember_caption_bounds(layers, *, canvas):
@@ -598,6 +762,10 @@ def remember_caption_bounds(layers, *, canvas):
     for layer in layers:
         ink = [caption_ink_box(run, typeface) for run in layer.runs]
         ink = [box for box in ink if box is not None]
+        if ink and getattr(layer, "background", None) is not None:
+            # A caption box is part of the caption: titles and cards avoid the whole box.
+            back = layer.background
+            ink.append((back.left, back.top, back.left + back.width, back.top + back.height))
         if ink:
             boxes.append(
                 {
@@ -646,6 +814,236 @@ def register_generation_timeline(clips):
         }
         for clip in clips
     ]
+
+
+def _auto_caption_colour(look, policy: dict):
+    """``look`` with the automatic caption colour for the frames behind the caption block
+    (`automatic_fill`). Green 5: over a speaker background no plain colour may be readable
+    everywhere (bright terraces and a dark shirt behind one caption): then white with a black
+    outline, unless the creator chose the outline themselves."""
+    from dataclasses import replace
+
+    from app.pipeline.phone_text_background import automatic_fill
+
+    auto = policy["_caption_auto_fill"]
+    fill, score = automatic_fill(
+        tuple(auto["box"]),
+        [
+            frame
+            for frame in policy.get("_background_frames") or []
+            if frame["start_s"] < auto["end_s"] and auto["start_s"] < frame["end_s"]
+        ],
+    )
+    look = replace(look, text_color=fill)
+    outline_needed = score < READABLE_CONTRAST and not auto["outline_asked"]
+    if policy.get("_speaker_background") and outline_needed:
+        look = replace(
+            look,
+            text_color="#FFFFFF",
+            outline_px=max(look.outline_px, BACKGROUND_OUTLINE_PX),
+            stroke_color="#000000",
+        )
+    return look
+
+
+def register_generation_background(background, canvas=None) -> None:
+    """Green 5: on a Talk-to-camera edit with a speaker background, the pixels behind a caption
+    are the background (the fill, or a timed window's photo or video) with the speaker take drawn
+    in its frame, not the take filling the canvas. Recorded on the policy so the environment
+    sampler judges text colour against that (`_background_frames`). A colour fill, no background,
+    no policy or the switch off records nothing (byte-identical)."""
+    from app.config import settings
+
+    policy = _POLICY.get()
+    if (
+        not policy
+        or background is None
+        or getattr(background, "kind", None) == "color"
+        or not settings.caption_background_contrast_enabled
+    ):
+        return
+    frame = getattr(background, "speaker_frame", None)
+    policy["_speaker_background"] = {
+        "fill": {
+            "path": background.gcs_path,
+            "kind": background.kind,
+            "source_start": float(background.source_start_s or 0.0),
+        },
+        "windows": [
+            {
+                "path": window.gcs_path,
+                "kind": window.kind,
+                "source_start": float(window.source_start_s or 0.0),
+                "start_s": float(window.start_s),
+                "end_s": float(window.end_s),
+            }
+            for window in background.windows
+        ],
+        "frame": None
+        if frame is None
+        else {"width": frame.width_fraction, "x": frame.x_fraction, "y": frame.y_fraction},
+    }
+    full_screen = getattr(background, "full_screen_windows", None) or ()
+    if full_screen:
+        # Qendresa item 16 (S86): inside these spans her take fills the canvas (no background,
+        # no frame), so the text there is judged against the take. Same timeline as `windows`.
+        policy["_speaker_background"]["full_screen"] = [
+            {"start_s": float(span.start_s), "end_s": float(span.end_s)} for span in full_screen
+        ]
+    if policy.get("_environment_sampled"):
+        # Text was already styled (an earlier compile pass, before the background was known):
+        # the frames change for what comes next, and an automatic caption colour is chosen
+        # again over them; its font, size and spot stay.
+        from app.pipeline.canvas import PORTRAIT
+
+        policy["_background_frames"] = _background_frames(
+            policy["_speaker_background"],
+            policy.get("_background_frames") or [],
+            canvas or PORTRAIT,
+        )
+        if policy.get("caption_look") is not None and policy.get("_caption_auto_fill"):
+            policy["caption_look"] = _auto_caption_colour(policy["caption_look"], policy)
+
+
+def _segments(spec: dict, until: float) -> list[tuple[float, float, dict]]:
+    """``(start, end, media)``: every timed window, and the fill wherever no window covers."""
+    windows = sorted(spec["windows"], key=lambda w: w["start_s"])
+    out: list[tuple[float, float, dict]] = []
+    cursor = 0.0
+    for window in windows:
+        if window["start_s"] > cursor + 1e-6:
+            out.append((cursor, window["start_s"], spec["fill"]))
+        out.append((window["start_s"], window["end_s"], window))
+        cursor = max(cursor, window["end_s"])
+    if cursor < until - 1e-6:
+        out.append((cursor, until, spec["fill"]))
+    return out
+
+
+def _outside(start: float, end: float, spans: list[dict]) -> list[tuple[float, float]]:
+    """``[start, end)`` without any full-screen span, as the pieces left (Qendresa item 16)."""
+    pieces = [(start, end)]
+    for span in spans:
+        cut_from, cut_to = span["start_s"], span["end_s"]
+        kept: list[tuple[float, float]] = []
+        for a, b in pieces:
+            if cut_to <= a or b <= cut_from:
+                kept.append((a, b))
+                continue
+            if cut_from > a:
+                kept.append((a, cut_from))
+            if cut_to < b:
+                kept.append((cut_to, b))
+        pieces = kept
+    return [(a, b) for a, b in pieces if b - a > 1e-3]
+
+
+def _framed(background: bytes, take: bytes | None, frame: dict | None) -> bytes:
+    """``background`` with ``take`` drawn small in the speaker ``frame`` (canvas fractions, the
+    centre at x/y, uniform scale by width). Unmatted: the speaker's whole frame counts, the
+    conservative case for contrast."""
+    from app.pipeline.phone_text_background import HEIGHT, WIDTH
+
+    if take is None or frame is None:
+        return background
+    pixels = bytearray(background)
+    scale = frame["width"]
+    left, top = frame["x"] - scale / 2, frame["y"] - scale / 2
+    for y in range(HEIGHT):
+        fy = (y / HEIGHT - top) / scale
+        if not 0 <= fy < 1:
+            continue
+        for x in range(WIDTH):
+            fx = (x / WIDTH - left) / scale
+            if 0 <= fx < 1:
+                pixels[y * WIDTH + x] = take[int(fy * HEIGHT) * WIDTH + int(fx * WIDTH)]
+    return bytes(pixels)
+
+
+def _background_frames(spec: dict, take_frames: list[dict], canvas) -> list[dict]:
+    """The frames behind text on a speaker-background edit, one per background segment: its photo
+    or video sampled at its start, the take sampled at that time drawn in the speaker frame. With
+    no frame (a full-size matted speaker) both the background and the take count. Any media that
+    cannot be read, or nothing to time the segments by (no take frames, no windows), keeps
+    ``take_frames`` (fail-open: the colour is chosen as before)."""
+    import tempfile
+    from pathlib import Path
+
+    from app.pipeline.phone_text_background import sample_background
+    from app.services.pipeline_trace import record_pipeline_event
+    from app.storage import download_to_file
+
+    ends = [float(f["end_s"]) for f in take_frames] + [w["end_s"] for w in spec["windows"]]
+    if not ends:
+        # A fill-only background with no take frames: nothing times its segments, so sampling
+        # is unavailable, the same as an unreadable background (fail-open, never a failed job).
+        record_pipeline_event("text", "styling_background_sample_failed", {"reason": "no_samples"})
+        return take_frames
+    full_screen = spec.get("full_screen") or []
+    if full_screen and not take_frames:
+        # Qendresa item 16 (S86): her take fills the screen in the opening and cannot be read, so
+        # nothing says what is behind those captions; never judge them by a room that is not on
+        # screen. Unavailable, like an unreadable background (fail-open, the safe look).
+        record_pipeline_event(
+            "text", "styling_background_sample_failed", {"reason": "no_take_for_full_screen"}
+        )
+        return take_frames
+    until = max(ends)
+    until = min(until, 1800.0) if until > 0 else 1800.0
+    frames: list[dict] = []
+    try:
+        with tempfile.TemporaryDirectory(prefix="phone-text-background-") as directory:
+            local: dict[str, str] = {}
+            for index, (start, end, media) in enumerate(_segments(spec, until)):
+                pieces = _outside(start, end, full_screen) if full_screen else [(start, end)]
+                if not pieces:
+                    continue
+                path = local.get(media["path"])
+                if path is None:
+                    # The media's own extension, so the decoder is chosen by it (a photo's jpg).
+                    suffix = Path(str(media["path"])).suffix[:8]
+                    path = str(Path(directory) / f"background-{len(local)}{suffix}")
+                    download_to_file(media["path"], path, timeout_s=10)
+                    local[media["path"]] = path
+                at = media["source_start"] if media["kind"] == "video" else None
+                pixels = sample_background(path, at, canvas=canvas)
+                if pixels is None:
+                    raise ValueError(f"segment {index} unreadable")
+                for piece_start, piece_end in pieces:
+                    take = next(
+                        (
+                            f["pixels"]
+                            for f in take_frames
+                            if f["start_s"] < piece_end and piece_start < f["end_s"]
+                        ),
+                        take_frames[0]["pixels"] if take_frames else None,
+                    )
+                    piece = {"start_s": piece_start, "end_s": piece_end}
+                    frames.append({**piece, "pixels": _framed(pixels, take, spec["frame"])})
+                    if spec["frame"] is None and take is not None:
+                        frames.append({**piece, "pixels": take})
+            for span in full_screen:
+                # Her take, full-frame: what the phone draws behind the opening's text.
+                inside = [
+                    {
+                        "start_s": max(f["start_s"], span["start_s"]),
+                        "end_s": min(f["end_s"], span["end_s"]),
+                        "pixels": f["pixels"],
+                    }
+                    for f in take_frames
+                    if f["start_s"] < span["end_s"] and span["start_s"] < f["end_s"]
+                ]
+                frames.extend(inside or [{**span, "pixels": take_frames[0]["pixels"]}])
+    except Exception as exc:  # noqa: BLE001 - never fail styling; no paths in the trace
+        record_pipeline_event(
+            "text", "styling_background_sample_failed", {"reason": type(exc).__name__}
+        )
+        return take_frames
+    detail = {"segments": len(frames), "speaker_frame": spec["frame"] is not None}
+    if full_screen:
+        detail["full_screen"] = len(full_screen)
+    record_pipeline_event("text", "styling_background_sample", detail)
+    return frames
 
 
 def _ensure_generation_environment(canvas):
@@ -775,6 +1173,8 @@ def _ensure_generation_environment(canvas):
             except Exception:  # noqa: BLE001 - no source paths/private text in receipts
                 source_errors += 1
                 continue
+    if policy.get("_speaker_background"):
+        frames = _background_frames(policy["_speaker_background"], frames, canvas)
     policy["_face_boxes"], policy["_background_frames"] = boxes, frames
     record_pipeline_event(
         "text",
@@ -806,13 +1206,18 @@ def generation_style_fields() -> dict:
     look = policy.get("caption_look")
     if policy.get("_caption_look_receipt") is not None:
         result["caption_look_receipt"] = copy.deepcopy(policy["_caption_look_receipt"])
+    shape = policy.get("_caption_shape")
+    if shape and look is not None:
+        result["caption_shape"] = {"version": 1, **shape}
     if look is not None:
         result.update(
             voiceover_caption_font=look.font_family,
             caption_stroke_width=look.outline_px,
             caption_shadow_enabled=look.shadow_enabled,
             caption_text_color=look.text_color,
-            caption_highlight_color=look.highlight_color,
+            # The dimmed look's spoken word is the text colour, even when a later background
+            # pass re-picked that colour: the editor reads this field for it.
+            caption_highlight_color=look.text_color if look.dim_words else look.highlight_color,
             caption_size_px=look.text_size_px,
             caption_margin_v=round(1920 * (1 - max(0.30, min(0.90, look.position_y_frac)))),
             caption_editor_style={
@@ -820,6 +1225,10 @@ def generation_style_fields() -> dict:
                 "position_x_frac": look.position_x_frac,
                 "position_y_frac": look.position_y_frac,
                 "max_width_frac": look.max_width_frac,
+                # Only when the look set one (Green 5's outline over a background, or the caption
+                # box's legibility outline), so every other variant keeps its exact fields; a Save
+                # and the editor keep it.
+                **({"stroke_color": look.stroke_color} if look.stroke_color is not None else {}),
             },
         )
     return result

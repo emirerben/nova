@@ -311,6 +311,11 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgro
     func undoDraft(threadID: UUID, expectedRevision: Int, render: Bool) async throws -> DraftSnapshot
     /// KRI-443: Stop on the live plan feed. A 409 `turn_not_cancellable` means the render can no longer be stopped.
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled
+    /// Steer now: stop the running turn `turnID` so the message waiting behind it runs now.
+    func steerNow(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled
+    /// Steer now's trash and Edit: cancel the waiting message `turnID` only while it still waits. A 409
+    /// `turn_no_longer_queued` means Kria already picked it up; it is never stopped by this call.
+    func removeWaitingMessage(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot
     func retryApprovedRender(threadID: UUID, executionID: UUID, expectedRevision: Int) async throws -> RenderRetryAccepted
     /// `speechCleanupAware` must always be sent `true` from this client build --
@@ -416,6 +421,8 @@ extension KriaAPIClient {
 /// implemented by a substitute.
 extension KriaAPIClient {
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
+    func steerNow(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
+    func removeWaitingMessage(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
     func creationSuggestions(threadID: UUID) async throws -> SuggestionSet? { nil }
     func transcribeDictation(audio: Data, contextTerms: [String]) async throws -> DictationTranscriptResponse { throw APIError.unsupported }
     func planSnapshot(threadID: UUID) async throws -> PlanSnapshot { throw APIError.unsupported }
@@ -1265,7 +1272,18 @@ enum KriaClientProtocolContract {
     /// 35 (KRI-1192): bundles Noto Sans KR / Noto Sans Arabic script-fallback faces and draws Greek, Cyrillic, Hangul
     /// and Arabic captions in one covering face (`scriptFonts`). The server sends a recipe naming those faces only to
     /// this protocol and answers 426 `client_update_required` (`script_fonts`) to an older build.
-    static let version = 35
+    /// 36 (Qendresa item 12): the editor reads `caption_meta.shape` (`caption_shape`) and draws the creator's typed
+    /// caption box / dimmed-word look exactly like the cloud recipe. The server renders a shaped caption only for this
+    /// protocol (`CAPTION_SHAPE_PROTOCOL`).
+    /// 37-39 are unused (held for items 14, 16 and 18 while they were in review).
+    /// 40 (Qendresa item 15): the editor keeps a picture card marked `caption_clear` in the top or bottom band instead of
+    /// clamping its centre above y 0.62, matching the cloud recipe. The server places such cards only for this protocol.
+    /// 41 (Qendresa item 16): decodes and draws `speaker_background.full_screen_windows` (the speaker's own take full-frame,
+    /// unmasked, with no background or corner frame, for an opening or ending) and the `speakerFrameWindows` capability, and
+    /// round-trips them in the editor. The server offers `editor_capabilities.speaker_full_opening` only to this protocol (and
+    /// only with `speakerFrameWindows` verified) and answers 426 `client_update_required` (`speaker_full_opening`) to an
+    /// older build polling or saving a recipe that already carries them.
+    static let version = 41
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -1701,6 +1719,14 @@ struct KriaAPI: KriaAPIClient {
     }
     func undoPlanSection(threadID: UUID, sectionID: PlanSectionID, expectedThreadRevision: Int, expectedBlockRevision: Int, expectedDraftRevision: Int) async throws -> PlanSectionUndoResult {
         try await request(path: "creation-threads/\(threadID.uuidString)/plan/sections/\(sectionID.rawValue)/undo", method: "POST", bodyData: try JSONEncoder().encode(PlanSectionUndoRequest(expectedThreadRevision: expectedThreadRevision, expectedBlockRevision: expectedBlockRevision, expectedDraftRevision: expectedDraftRevision)), decode: PlanSectionUndoResult.self)
+    }
+    func steerNow(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled {
+        try await request(path: "creation-threads/\(threadID.uuidString)/turns/\(turnID)/cancel", method: "POST",
+            bodyData: try JSONEncoder().encode(SteerNowRequest(expectedThreadRevision: revision)), decode: TurnCancelled.self)
+    }
+    func removeWaitingMessage(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled {
+        try await request(path: "creation-threads/\(threadID.uuidString)/turns/\(turnID)/cancel", method: "POST",
+            bodyData: try JSONEncoder().encode(RemoveWaitingMessageRequest(expectedThreadRevision: revision)), decode: TurnCancelled.self)
     }
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled {
         try await request(path: "creation-threads/\(threadID.uuidString)/turns/\(turnID)/cancel-render", method: "POST", bodyData: try JSONEncoder().encode(CancelRenderRequest(expectedThreadRevision: revision)), decode: TurnCancelled.self)
@@ -2164,6 +2190,8 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "speaker_background_color_disabled": "A plain colour behind you isn’t available on this edit yet. Pick a photo or video, or remove the background, then save again. Your edits are still here.",
             "speaker_background_color_invalid": "That colour can’t be used. Pick a swatch or a solid colour, then save again. Your edits are still here.",
             "speaker_background_windows_disabled": "Timed backgrounds aren’t available right now. Remove them and save again. Your edits are still here.",
+            "speaker_full_opening_disabled": "Starting full screen isn’t available right now. Remove it and save again. Your edits are still here.",
+            "speaker_full_opening_invalid": "The full-screen opening doesn’t fit this video. Remove it and save again. Your edits are still here.",
             "speaker_background_window_invalid": "The timed backgrounds overlap or one is too short. Give each at least half a second without overlap, then save again. Your edits are still here.",
             // 426 from the editor-commit route: this build is older than the feature the edit uses (see the call site).
             "client_update_required": "Update Kria to save this edit. Your edits are still here.",
@@ -2491,6 +2519,19 @@ struct ProjectMediaInput: Encodable {
 }
 private struct CreateThreadRequest: Encodable { let message: String?; let clientEventID: String; let runtimeVersion: Int; enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case runtimeVersion = "runtime_version" } }
 private struct DraftWriteRequest: Encodable { let expectedRevision: Int; let snapshot: [String: JSONValue]; enum CodingKeys: String, CodingKey { case expectedRevision = "expected_draft_revision"; case snapshot } }
+/// `POST …/turns/{id}/cancel` with `steer: true` (docs/pipelines/steer-now.md).
+private struct SteerNowRequest: Encodable {
+    let expectedThreadRevision: Int
+    var steer = true
+    enum CodingKeys: String, CodingKey { case steer; case expectedThreadRevision = "expected_thread_revision" }
+}
+/// `POST …/turns/{id}/cancel` with `only_if_queued: true`: the server cancels the turn only while it still waits, in the
+/// same statement that locks it, so a retry that raced Kria picking the message up never stops it.
+private struct RemoveWaitingMessageRequest: Encodable {
+    let expectedThreadRevision: Int
+    var onlyIfQueued = true
+    enum CodingKeys: String, CodingKey { case onlyIfQueued = "only_if_queued"; case expectedThreadRevision = "expected_thread_revision" }
+}
 private struct CancelRenderRequest: Encodable { let expectedThreadRevision: Int; enum CodingKeys: String, CodingKey { case expectedThreadRevision = "expected_thread_revision" } }
 private struct DraftUndoRequest: Encodable {
     let expectedRevision: Int

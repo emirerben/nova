@@ -5,7 +5,7 @@ import SwiftUI
 /// behind the speaker for the whole video (the Fill); "None" clears it. The pool grid is the editor's shared
 /// `NativeVisualPoolPicker`; this panel decides what a tap writes: the `speaker_background` lane, never a visual block.
 /// KRI-1162: while the server opens `speaker_background_windows`, a Sequence of pool photos and videos takes turns
-/// over the Fill, and a Speaker control draws the speaker small in a corner (presets only).
+/// over the Fill, and a Speaker control draws the speaker small in a corner (presets; the preview gesture places them freely).
 /// KRI-1173: while the server opens `speaker_background_color`, a Colour section puts a plain colour behind the speaker
 /// instead of a photo or video (five swatches and a custom colour); picking one replaces a media fill and vice versa.
 struct NativeBackgroundPanel: View {
@@ -22,6 +22,7 @@ struct NativeBackgroundPanel: View {
     var body: some View {
         NativeEditorLanePanel(title: "Background", tabs: [Tab](), tab: $tab, onDone: { session.endTransaction(); onDone() }) {
             VStack(spacing: 12) {
+            if let opening = session.speakerFullScreenOpening { fullScreenOpeningRow(opening) }
             if session.canEditSpeakerBackgroundColor { colorSection }
             if session.canEditSpeakerBackgroundWindows { sectionTitle("Fill", id: "native-editor-background-fill-title") }
             else if session.canEditSpeakerBackgroundColor { sectionTitle("Photo or video", id: "native-editor-background-media-title") }
@@ -44,6 +45,30 @@ struct NativeBackgroundPanel: View {
         }
         .onAppear { panelLifecycle?.register(owner: lifecycleOwner) { session.endTransaction() } }
         .onDisappear { panelLifecycle?.unregister(owner: lifecycleOwner); session.endTransaction() }
+    }
+
+    // MARK: Full-screen opening (Qendresa item 16)
+
+    /// "Starts full screen · 7.2 s" with a remove control; shown only while the edit has an opening. Taking it away puts the
+    /// speaker in the corner from the first frame (one undo step). Read-only while the server does not open the capability.
+    private func fullScreenOpeningRow(_ opening: EditorFullScreenWindow) -> some View {
+        let length = ((opening.endS - opening.startS) * 10).rounded() / 10
+        let text = "Starts full screen · " + (length == length.rounded() ? String(Int(length)) : String(format: "%.1f", length)) + " s"
+        return HStack(spacing: 8) {
+            Text(text).font(KriaFont.body(13)).foregroundStyle(KriaColor.ink)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("background.fullScreenOpening")
+            Button { session.endTransaction(); _ = session.removeFullScreenOpening() } label: {
+                Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
+                    .frame(width: 20, height: 20).background(KriaColor.ink.opacity(0.8), in: Circle())
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!session.canEditSpeakerFullOpening)
+            .accessibilityLabel("Remove the full screen start")
+            .accessibilityIdentifier("background.fullScreenOpening.remove")
+        }
     }
 
     // MARK: Colour (KRI-1173)
@@ -239,9 +264,15 @@ struct NativeBackgroundPanel: View {
                 }
             }
             if speakerSelection == "custom" {
-                Text("Custom position. Pick a corner to replace it.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                Text("Placed by hand. Pick a corner to replace it.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("native-editor-background-speaker-custom")
+            }
+            if session.canMoveSpeakerOnPreview {
+                Label("Tap yourself on the video to move or resize.", systemImage: "hand.tap")
+                    .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("native-editor-background-speaker-hint")
             }
         }
     }

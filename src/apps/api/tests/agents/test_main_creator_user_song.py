@@ -83,12 +83,20 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v119 (KRI-1189, was v117 on its branch) teaches `cut_restarts` in the brief section's
 # cleanup sentence: the two brief-on hashes re-pinned (v118's sentence restores ea4b279f /
 # a855f01d); brief-off unchanged.
+# v121 (Qendresa 13) teaches `pauses: "tight"` in the same cleanup sentence, on top of v120
+# (Qendresa 12, `caption_words` / `caption_box`): the two brief-on hashes re-pinned for both
+# (v119's: 10202eb7… / d3a50520…; v120 alone: ad987056 / 6c9afec6); brief-off unchanged.
+# v123 (Qendresa item 17, on top of v121): its paragraph renders only with
+# BACKGROUND_FOLLOWS_TALK_ENABLED and the windows capability, which these renders never have, so
+# all four hashes are v121's, unchanged (the pins cover v121 + v123).
+# v125 (Qendresa item 16): its teachings render only with SPEAKER_FULL_OPENING_ENABLED and the
+# `speaker_full_opening` capability, so the pins cover v125 too (renumbered v133 on top of v131).
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "10202eb7ab0d90f34a6463517c176093a3e1eccc3ebf61c191d925676e583b0b",
+    (True, True): "b4ebb285ecf45439fac6a6ef12251cfe6ee507d8f8c7760a0a37de07c7753b26",
     (True, False): "e3de37c194b88bd906568375111a33a5d8ec8bdab981a29ff6f377162710e87e",
-    (False, True): "d3a50520d939eacc8dda736ad774546ef7892d6808b6b9ac0692f21e83af5285",
+    (False, True): "bbccdc9144d5257ecbe3e647d944c970665902b7f8afe7f0ea8e5388992f9e52",
     (False, False): "e804c3135cb2e6eae9093216bee3ee0d97159aa120c2b1eef8e34e61a3d37240",
 }
 
@@ -170,7 +178,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-04-v119"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-06-v133"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

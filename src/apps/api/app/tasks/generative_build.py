@@ -8163,6 +8163,13 @@ def _names_pool_media(visual_id: object, media_id: str) -> bool:
     )
 
 
+def _stamped_protocol(value: object) -> int | None:
+    """The app-protocol stamp the approving build left on the job, or ``None``."""
+    from app.services.phone_rollout import stamped_client_protocol  # noqa: PLC0415
+
+    return stamped_client_protocol(value)
+
+
 def _strategy_background_request(all_candidates: dict) -> dict[str, Any] | None:
     """The approved strategy's ``background_media`` as ``{"media_id", "source_start_s"}``.
 
@@ -8224,6 +8231,13 @@ def _strategy_background_request(all_candidates: dict) -> dict[str, Any] | None:
     frame = raw.get("speaker_frame")
     if isinstance(frame, str) and frame in SPEAKER_FRAME_PRESETS:
         request["speaker_frame"] = frame
+    # Qendresa item 16: the speaker full screen before the background / corner. Carried only while
+    # the kill switch is on (off = a request byte-identical to today's), with or without a sequence.
+    if raw.get("full_screen_opening") is True and settings.speaker_full_opening_enabled:
+        request["full_screen_opening"] = True
+        opening_s = raw.get("full_screen_opening_s")
+        if isinstance(opening_s, (int, float)) and not isinstance(opening_s, bool):
+            request["full_screen_opening_s"] = float(opening_s)
     return request
 
 
@@ -8235,6 +8249,9 @@ def _resolve_strategy_background(
     words: list[dict] | None = None,
     keep_segments: list[tuple[float, float]] | None = None,
     take_s: float | None = None,
+    creator_client_protocol: int | None = None,
+    title_end_s: float | None = None,
+    layout_out: dict[str, Any] | None = None,
 ) -> tuple[Any, frozenset[str]]:
     """The ``SubtitledBackground`` lane the approved strategy names, and the pool spellings
     that stay out of every mid-talk placement (KRI-1117).
@@ -8255,16 +8272,32 @@ def _resolve_strategy_background(
     (`remap_lanes_for_cut` moves it into cut time). Every window's pool id joins the
     reservation (S43); a window gate closed alone strips the windows and the frame again in
     `strip_unsupported_background`, and only what survives is reserved.
+
+    Qendresa item 16: a request with ``full_screen_opening`` starts the speaker full screen until
+    X (picked on the kept take by `phone_background_sequence.full_screen_opening_end`, written
+    back in original time like every window) when the approving build (``creator_client_protocol``)
+    can decode it; no window starts before X. ``title_end_s`` is when the hook title leaves (output
+    seconds). Otherwise the layout is today's and a ``part: full_screen_opening`` drop says why.
+
+    Item 19: given ``layout_out``, a laid-out sequence leaves ``layout_out["anchors"]`` -- a
+    ``phone_list_labels.LabelAnchor`` per anchored entry (where it is said, and where its first
+    window ending after that opens), on the kept take's clock. ``layout_out["phrases"]`` is every
+    phrased sequence entry ``(index, spoken_phrase)``, anchored or not, so a label is paired
+    against all the names in the list; ``layout_out["entry_media"]`` maps an entry index to the
+    pool row id its windows carry. A phone gate that strips the windows clears all three: no
+    recording is shown, so none is followed. ``None``: untouched.
     """
     import app.services.phone_overlay_grounding as pool_mod  # noqa: PLC0415
     from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
         PhoneSubtitledLaneRequest,
         SubtitledBackground,
         SubtitledBackgroundWindow,
+        SubtitledFullScreenWindow,
         SubtitledSpeakerFrame,
         strip_unsupported_background,
     )
     from app.services import phone_background_sequence as sequence_mod  # noqa: PLC0415
+    from app.services.phone_rollout import speaker_full_opening_planned_reason  # noqa: PLC0415
 
     sequence_request: list[dict[str, Any]] = list(request.get("sequence") or [])
     # KRI-1173: a plain colour names no pool media -- nothing is looked up for the fill and
@@ -8336,6 +8369,50 @@ def _resolve_strategy_background(
             lane_drops.append({"lane": "background", "reason": "missing_generation"})
             return None, reserved
 
+    opening_end_s: float | None = None
+    full_screen_windows: tuple[Any, ...] = ()
+    if request.get("full_screen_opening"):
+        opening_reason = speaker_full_opening_planned_reason(creator_client_protocol)
+        if opening_reason == "disabled":
+            pass  # the kill switch is off: nothing new anywhere
+        elif opening_reason is not None:
+            lane_drops.append(
+                {"lane": "background", "part": "full_screen_opening", "reason": opening_reason}
+            )
+        else:
+            opening_end_s, why_not = sequence_mod.full_screen_opening_end(
+                words=words,
+                keep_segments=keep_segments,
+                take_s=float(take_s) if take_s is not None else 0.0,
+                stated_s=request.get("full_screen_opening_s"),
+                first_heard_s=sequence_mod.first_heard_at(
+                    [
+                        sequence_mod.SequenceEntry(
+                            index=index,
+                            spoken_phrase=entry.get("spoken_phrase"),
+                            hold_s=entry.get("hold_s"),
+                        )
+                        for index, entry, _row in entry_rows
+                    ],
+                    words,
+                    keep_segments,
+                ),
+                title_end_s=title_end_s,
+            )
+            if opening_end_s is None:
+                lane_drops.append(
+                    {"lane": "background", "part": "full_screen_opening", "reason": why_not}
+                )
+            else:
+                full_screen_windows = (
+                    SubtitledFullScreenWindow(
+                        start_s=0.0,
+                        end_s=sequence_mod.to_source_time(
+                            opening_end_s, keep_segments, as_end=True
+                        ),
+                    ),
+                )
+
     windows: list[SubtitledBackgroundWindow] = []
     if entry_rows:
         by_index = {index: (entry, row) for index, entry, row in entry_rows}
@@ -8345,15 +8422,47 @@ def _resolve_strategy_background(
                     index=index,
                     spoken_phrase=entry.get("spoken_phrase"),
                     hold_s=entry.get("hold_s"),
+                    # S57/S59: the pool row is the photo; two entries naming it are one photo.
+                    media_key=str(row["id"]),
                 )
-                for index, entry, _row in entry_rows
+                for index, entry, row in entry_rows
             ],
             cadence_s=float(request.get("cadence_s") or 4.0),
             take_s=float(take_s) if take_s is not None else 0.0,
             words=words,
             keep_segments=keep_segments,
+            # A colour fill is a base outside the sequence; a pool fill may be one of its photos.
+            fill_key=str(fill_row["id"]) if fill_row is not None else None,
+            **({"opening_s": opening_end_s} if opening_end_s is not None else {}),
         )
         lane_drops.extend(layout.notes)
+        if layout_out is not None:
+            layout_out["phrases"] = [
+                (index, str(entry.get("spoken_phrase")))
+                for index, entry in enumerate(sequence_request)
+                if str(entry.get("spoken_phrase") or "").strip()
+            ]
+            layout_out["entry_media"] = {index: str(row["id"]) for index, _e, row in entry_rows}
+        if layout_out is not None and layout.anchor_s:
+            from app.pipeline.phone_list_labels import LabelAnchor  # noqa: PLC0415
+
+            layout_out["anchors"] = [
+                LabelAnchor(
+                    index=index,
+                    spoken_phrase=str(by_index[index][0].get("spoken_phrase") or ""),
+                    anchor_s=float(at),
+                    window_start_s=next(
+                        (
+                            float(w.start_s)
+                            for w in layout.windows
+                            if w.index == index and w.end_s > at
+                        ),
+                        None,
+                    ),
+                )
+                for index, at in sorted(layout.anchor_s.items())
+                if index in by_index
+            ]
         for placed in layout.windows:
             entry, row = by_index[placed.index]
             kind = row["kind"]
@@ -8386,7 +8495,11 @@ def _resolve_strategy_background(
     try:
         if fill_row is None:
             background = SubtitledBackground(
-                kind="color", color=fill_color, windows=tuple(windows), speaker_frame=frame
+                kind="color",
+                color=fill_color,
+                windows=tuple(windows),
+                speaker_frame=frame,
+                full_screen_windows=full_screen_windows,
             )
         else:
             background = SubtitledBackground(
@@ -8397,6 +8510,7 @@ def _resolve_strategy_background(
                 source_start_s=fill_start if fill_kind == "video" else 0.0,
                 windows=tuple(windows),
                 speaker_frame=frame,
+                full_screen_windows=full_screen_windows,
             )
     except ValueError as exc:
         lane_drops.append({"lane": "background", "reason": str(exc)[:300]})
@@ -8405,9 +8519,15 @@ def _resolve_strategy_background(
     if stripped is None or stripped.background is None:
         # A closed gate renders exactly what a strategy that never asked renders: no lane and no
         # reservation (the trace `speaker_background_phone_fallback` says why).
+        if layout_out is not None:
+            for key in ("anchors", "phrases", "entry_media"):
+                layout_out.pop(key, None)
         return None, frozenset()
     kept = stripped.background
     if windows and not kept.windows:
+        if layout_out is not None:
+            for key in ("anchors", "phrases", "entry_media"):
+                layout_out.pop(key, None)
         # Only the windows gate is closed: the render equals a single-background ask, so only
         # the fill is reserved (S33).
         reserved = (
@@ -8691,6 +8811,105 @@ def _approved_capture_order(snapshot: dict, all_candidates: dict) -> bool:
     return isinstance(strategy, dict) and strategy.get("ordering_choice") == "chronological"
 
 
+def _take_window_to_source(
+    start_s: float, end_s: float, keep_segments: list[tuple[float, float]]
+) -> tuple[float, float] | None:
+    """Map a window on the kept (cut) take timeline to the speaker clip's source seconds.
+
+    ``keep_segments`` are the kept source spans in play order. A window that starts beyond the
+    kept span is dropped (None); one that ends beyond it is clamped to the last segment end.
+    A window straddling a removed span maps to its source start and end (it covers the cut).
+    """
+    total = sum(max(0.0, float(b) - float(a)) for a, b in keep_segments)
+    if not keep_segments or float(start_s) >= total or float(end_s) <= float(start_s):
+        return None
+
+    def at(t: float, *, is_end: bool) -> float:
+        cursor = 0.0
+        for a, b in keep_segments:
+            length = max(0.0, float(b) - float(a))
+            if t < cursor + length or (is_end and t <= cursor + length):
+                return float(a) + max(0.0, t - cursor)
+            cursor += length
+        return float(keep_segments[-1][1])
+
+    src_start = at(max(0.0, float(start_s)), is_end=False)
+    src_end = at(float(end_s), is_end=True)
+    return (src_start, src_end) if src_end > src_start else None
+
+
+def _card_layout_framing_ok(
+    *,
+    face_filled: bool,
+    landscape_fit: str,
+    display_width: int,
+    display_height: int,
+) -> bool:
+    """Is the speaker framed so source-frame face boxes map exactly (in y) to the canvas?
+
+    Ways it goes wrong: (a) a KRI-547 face fill crops to a close-up where only the
+    eyes-nose-mouth core is protected, so a full-width card could cover forehead or chin;
+    (b) a letterboxed ("fit") take moves the face in y; (c) a source taller than 9:16 is
+    cropped top and bottom. Only a plain cover-fill of a source at least as wide as 9:16
+    keeps the grounding's face boxes exact.
+    """
+    return bool(
+        not face_filled
+        and landscape_fit == "fill"
+        and display_height > 0
+        and display_width / display_height >= 9 / 16 - 0.01
+    )
+
+
+def _card_layout_planned(all_candidates: dict) -> bool:
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        stamped_client_protocol,
+        talking_card_layout_planned_for,
+    )
+
+    return talking_card_layout_planned_for(
+        stamped_client_protocol(all_candidates.get("creator_client_protocol"))
+    )
+
+
+def _card_layout_context(
+    *,
+    open_: bool,
+    policy: dict | None,
+    text_rows: list[dict],
+    keep_segments: list[tuple[float, float]],
+) -> Any:
+    """Qendresa item 15: the caption band and title / listed-text windows for card layout.
+
+    None when closed. The band is the measured span of the compiled caption boxes (never a
+    constant); None without a policy or boxes. Text windows are mapped to source seconds.
+    """
+    if not open_:
+        return None
+    from app.services.phone_card_layout import CardLayoutContext  # noqa: PLC0415
+
+    boxes = [
+        item["box"]
+        for item in ((policy or {}).get("_caption_boxes") or [])
+        if item.get("kind", "caption") == "caption" and item.get("box")
+    ]
+    band = (min(b[1] for b in boxes), max(b[3] for b in boxes)) if boxes else None
+    windows: list[tuple[float, float]] = []
+    for row in text_rows:
+        try:
+            mapped = _take_window_to_source(
+                float(row["start_s"]), float(row["end_s"]), keep_segments
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+        if mapped is not None:
+            windows.append(mapped)
+    return CardLayoutContext(
+        caption_band=(float(band[0]), float(band[1])) if band else None,
+        text_windows=tuple(windows),
+    )
+
+
 @phone_text_generation
 def _run_phone_subtitled_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
@@ -8747,6 +8966,7 @@ def _run_phone_subtitled_job(
         SilentAudioPlanDeclined,
         UnsupportedPhonePlan,
     )
+    from app.pipeline.phone_list_labels import LIST_LABEL_FIELD  # noqa: PLC0415
     from app.pipeline.phone_spoken_text import SPOKEN_TEXT_FIELD  # noqa: PLC0415
     from app.pipeline.phone_subtitled_lanes import remap_lanes_for_cut  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
@@ -8777,6 +8997,7 @@ def _run_phone_subtitled_job(
     )
     from app.services.phone_rollout import (  # noqa: PLC0415
         TALKING_MULTI_CLIP_MAX_CLIPS,
+        phone_list_labels_supported,
         phone_subtitled_closing_title_supported,
         phone_subtitled_overlays_supported,
         phone_subtitled_reaction_beats_supported,
@@ -9016,7 +9237,23 @@ def _run_phone_subtitled_job(
             if isinstance(_raw_closing_title, str) and _raw_closing_title.strip()
             else None
         )
+    # Item 14: "comment <keyword>" drawn as her ending (two text rows and an optional arrow).
+    # Computed only for a confirmed closing text, and False while the switch is off.
+    cta_planned = False
+    cta_arrow = False
+    if talking_closing_text:
+        from app.pipeline.phone_cta_text import closing_arrow_asked  # noqa: PLC0415
+        from app.services.phone_rollout import (  # noqa: PLC0415
+            cta_ending_planned_for,
+            stamped_client_protocol,
+        )
+
+        cta_planned = cta_ending_planned_for(
+            stamped_client_protocol(all_candidates.get("creator_client_protocol"))
+        )
+        cta_arrow = cta_planned and closing_arrow_asked(talking_requirements, talking_closing_text)
     closing_text_rows: list[dict] = []
+    closing_drawings: list[dict] = []
     closing_text_receipt: dict[str, Any] | None = None
     # KRI-707: the creator's text on a word they say ("big 'ATAKAN' when I say 'Atakan'"),
     # read off the pinned brief. Read only while its rollout is on, so the flag-off recipe
@@ -9026,6 +9263,17 @@ def _run_phone_subtitled_job(
     )
     spoken_text_rows: list[dict] = []
     spoken_text_receipt: dict[str, Any] | None = None
+    # Item 19: numbered list labels ("1. Spec-kit") the take or its recordings introduce. Read
+    # only while the flag and the spoken-text gate are on: flag off, nothing below runs.
+    list_label_asks: tuple = ()
+    list_label_layout: dict[str, Any] = {}
+    list_label_receipt: dict[str, Any] | None = None
+    if phone_list_labels_supported():
+        from app.pipeline.phone_list_labels import (
+            list_label_asks as _list_label_asks,  # noqa: PLC0415
+        )
+
+        list_label_asks = _list_label_asks(_phone_brief_live_requirements(snapshot))
     # KRI-827: what the creator asked to keep text off (None without such an ask).
     protected_plan: Any = None
     protected_caption_look: Any = None
@@ -9465,6 +9713,7 @@ def _run_phone_subtitled_job(
             speech_cleanup_snapshot: HydratedSpeechCleanupSnapshot | None = None
             cut_plan: CutPlan | None = None
             speech_cleanup_outcome_context: dict[str, Any] | None = None
+            tight_pauses_report: dict[str, Any] | None = None
             if cleanup_required:
                 try:
                     speech_cleanup_snapshot = hydrate_job_speech_cleanup_snapshot(
@@ -9487,6 +9736,26 @@ def _run_phone_subtitled_job(
                 speech_cleanup_outcome_context = speech_cleanup_snapshot.outcome_context(
                     analysis_view="full_clip"
                 )
+                if not multi_clip:
+                    # Qendresa 13: "cut all my pauses so it's tight" -- extra pause cuts on top
+                    # of the consented plan, before the opening cut and before the outcome
+                    # bookkeeping below, so they count as cleanup.
+                    consented_plan = cut_plan
+                    cut_plan, tight_pauses_report = _phone_tight_pause_cut(
+                        snapshot,
+                        cut_plan,
+                        speech_cleanup_snapshot.source_words(),
+                        clip_path=clip_path,
+                        duration_s=float(probe.duration_s),
+                    )
+                    if cut_plan is not consented_plan:
+                        # The public receipt reads only these two counts: report what was cut.
+                        speech_cleanup_outcome_context["output_removal_count"] = (
+                            _merged_removal_count(cut_plan.removed)
+                        )
+                        speech_cleanup_outcome_context["output_removed_ms"] = max(
+                            0, int(round(cut_plan.time_saved_s * 1000))
+                        )
             # KRI-628: "start the video at '...'" cuts the speech before that line out of
             # the cleanup plan (the plan's keep segments are the only trim this render has).
             # KRI-790: "...and end right after '...'" cuts everything after that line too.
@@ -9773,7 +10042,7 @@ def _run_phone_subtitled_job(
                     )
                     cut_words, detected_lang = ensured.words, ensured.language
                 cues = build_plain_cues(cut_words, attach_words=True, budget=PHONE_CUE_BUDGET)
-                if spoken_text_asks:
+                if spoken_text_asks or list_label_asks:
                     # KRI-707: the SPOKEN words (never a requested caption language), cut.
                     timeline_words = remap_words(words, cut_plan)
                 if insert_asks:
@@ -9891,7 +10160,7 @@ def _run_phone_subtitled_job(
                     )
                     caption_words, detected_lang = ensured.words, ensured.language
                 cues = build_plain_cues(caption_words, attach_words=True, budget=PHONE_CUE_BUDGET)
-                if spoken_text_asks:
+                if spoken_text_asks or list_label_asks:
                     timeline_words = list(transcript.words)
                 if insert_asks:
                     insert_spoken_words = list(transcript.words)
@@ -9933,7 +10202,7 @@ def _run_phone_subtitled_job(
                         cues = cues + build_plain_cues(
                             extra_caption_words, attach_words=True, budget=PHONE_CUE_BUDGET
                         )
-                        if spoken_text_asks:
+                        if spoken_text_asks or list_label_asks:
                             timeline_words.extend(extra_words)
                         if mention_ask is not None:
                             mention_words.extend(extra_words)
@@ -10162,6 +10431,7 @@ def _run_phone_subtitled_job(
                 )
 
             def _closing_rows_for(photo_card: Any) -> tuple[list[dict], dict[str, Any] | None]:
+                closing_drawings[:] = []
                 if not talking_closing_text:
                     return [], None
                 if extra_speaker_bindings:
@@ -10169,7 +10439,7 @@ def _run_phone_subtitled_job(
                     # face on its own clock, then move it to where it plays.
                     last = extra_speaker_bindings[-1]
                     last_duration_s = float(last.original.duration_s)
-                    rows, receipt = _phone_talking_closing_rows(
+                    rows, receipt, drawings = _phone_talking_closing_rows(
                         talking_closing_text,
                         photo_card=None,
                         photo_aspect=None,
@@ -10177,9 +10447,25 @@ def _run_phone_subtitled_job(
                         clip_path=clip_id_to_local.get(extra_speaker_ids[-1]),
                         keep_segments=[(0.0, last_duration_s)],
                         landscape_fit=landscape_fit,
+                        cta=cta_planned,
+                        arrow=cta_arrow,
+                        cues=cues,
+                        caption_style=caption_style,
+                        # The captions run on the whole timeline; this ending's window is
+                        # on the last speaker's own clock.
+                        caption_offset_s=talking_timeline_s - last_duration_s,
+                        caption_look=protected_caption_look,
                         **text_canvas,
                     )
                     offset_s = talking_timeline_s - last_duration_s
+                    closing_drawings[:] = [
+                        {
+                            **drawing,
+                            "start_s": float(drawing["start_s"]) + offset_s,
+                            "end_s": float(drawing["end_s"]) + offset_s,
+                        }
+                        for drawing in drawings
+                    ]
                     return [
                         {
                             **row,
@@ -10188,7 +10474,7 @@ def _run_phone_subtitled_job(
                         }
                         for row in rows
                     ], receipt
-                return _phone_talking_closing_rows(
+                rows, receipt, drawings = _phone_talking_closing_rows(
                     talking_closing_text,
                     photo_card=photo_card,
                     photo_aspect=beat_closing_aspect,
@@ -10199,8 +10485,16 @@ def _run_phone_subtitled_job(
                     position_x=speaker_position_x or 0.0,
                     protected=protected_plan,
                     caption_avoid=protected_caption_avoid,
+                    cta=cta_planned,
+                    arrow=cta_arrow,
+                    cues=cues,
+                    caption_style=caption_style,
+                    caption_look=protected_caption_look,
+                    insert_points=tuple(float(i.at_take_s) for i in inserts),
                     **text_canvas,
                 )
+                closing_drawings[:] = drawings
+                return rows, receipt
 
             def _schedule_talking_footage(blocked: list[tuple[float, float]]) -> tuple:
                 """KRI-719: the footage clips as muted full-frame cutaways over
@@ -10472,6 +10766,15 @@ def _run_phone_subtitled_job(
                                 words=raw_words,
                                 keep_segments=_bg_keep,
                                 take_s=_background_take_s(_bg_keep, float(probe.duration_s)),
+                                creator_client_protocol=_stamped_protocol(
+                                    all_candidates.get("creator_client_protocol")
+                                ),
+                                title_end_s=(
+                                    max(float(row["end_s"]) for row in title_rows)
+                                    if title_rows
+                                    else (3.0 if talking_title_text else None)
+                                ),
+                                layout_out=list_label_layout if list_label_asks else None,
                             )
                         )
 
@@ -10633,10 +10936,37 @@ def _run_phone_subtitled_job(
                             "wishlist": [],
                         }
                     else:
+                        # Qendresa item 15: lay the cards out against the measured caption
+                        # band and the title / listed-text windows. Closed (kwarg omitted,
+                        # byte-identical call) unless every gate holds.
+                        from app.pipeline.phone_recipe_shared import (  # noqa: PLC0415
+                            display_dims,
+                        )
                         from app.services.phone_overlay_grounding import (  # noqa: PLC0415
                             ground_phone_subtitled_overlays,
                         )
 
+                        card_layout = _card_layout_context(
+                            open_=(
+                                overlay_layout == "pip"
+                                # The switch first: with it closed nothing below is evaluated.
+                                and _card_layout_planned(all_candidates)
+                                and not landscape_canvas
+                                and _card_layout_framing_ok(
+                                    face_filled=bool(
+                                        framed_grounding or speaker_position_x is not None
+                                    ),
+                                    landscape_fit=landscape_fit,
+                                    display_width=display_dims(binding.original)[0],
+                                    display_height=display_dims(binding.original)[1],
+                                )
+                                and strategy_background_lane is None
+                                and not (lane_request is not None and lane_request.background)
+                            ),
+                            policy=current_phone_text_policy(),
+                            text_rows=title_rows + spoken_text_rows,
+                            keep_segments=speaker_keep_segments,
+                        )
                         try:
                             grounded = ground_phone_subtitled_overlays(
                                 _sync_session,
@@ -10678,6 +11008,7 @@ def _run_phone_subtitled_job(
                                     else {}
                                 ),
                                 **framed_grounding,
+                                **({"card_layout": card_layout} if card_layout is not None else {}),
                             )
                         except OperationalError:
                             raise  # transient DB -> Celery autoretry, never a lane drop
@@ -11052,6 +11383,62 @@ def _run_phone_subtitled_job(
                         **framed_compile,
                     )
 
+                if list_label_asks:
+                    # Item 19: the labels, once the lanes are final. Anchors, `timeline_words`
+                    # and the rows are all on the cut timeline (the kept take's clock; the
+                    # insert warp below moves the rows with the other spoken-text rows).
+                    _label_frame = (
+                        lanes.background.speaker_frame
+                        if lanes is not None and lanes.background is not None
+                        else None
+                    )
+                    _label_anchors, _label_phrases = _phone_list_label_follow(
+                        list_label_layout,
+                        lanes,
+                        follows_talk=settings.background_follows_talk_enabled,
+                    )
+                    list_label_rows, list_label_receipt = _phone_talking_list_label_rows(
+                        list_label_asks,
+                        anchors=_label_anchors,
+                        phrases=_label_phrases,
+                        words=timeline_words,
+                        cues=cues,
+                        caption_style=caption_style,
+                        caption_look=protected_caption_look,
+                        shown_rows=title_rows + spoken_text_rows,
+                        cards=_phone_list_label_card_boxes(
+                            lanes, visuals, text_canvas.get("canvas")
+                        ),
+                        timeline_duration_s=talking_timeline_s,
+                        binding=binding,
+                        clip_path=clip_path,
+                        keep_segments=speaker_keep_segments,
+                        landscape_fit=framed_fit,
+                        position_x=speaker_position_x or 0.0,
+                        speaker_frame=(
+                            (
+                                _label_frame.width_fraction,
+                                _label_frame.x_fraction,
+                                _label_frame.y_fraction,
+                            )
+                            if _label_frame is not None
+                            else None
+                        ),
+                        # Qendresa item 16: she is full-frame inside the opening (cut time, as the
+                        # lanes were remapped above), so a label there keeps off that face.
+                        full_screen_windows=(
+                            tuple(
+                                (float(span.start_s), float(span.end_s))
+                                for span in lanes.background.full_screen_windows
+                            )
+                            if lanes is not None and lanes.background is not None
+                            else ()
+                        ),
+                        protected=protected_plan,
+                        **text_canvas,
+                    )
+                    spoken_text_rows = spoken_text_rows + list_label_rows
+
                 recipe = None
                 attempts_remaining = 3
                 while True:
@@ -11079,8 +11466,14 @@ def _run_phone_subtitled_job(
                             take_duration - 1e-3
                         ):
                             # An ending clip plays after the speaker: closing text
-                            # runs to the very end, which the contract checks.
-                            closing_text_rows = [{**closing_text_rows[0], "end_s": take_duration}]
+                            # (every row, and the arrow) runs to the very end, which the
+                            # contract checks.
+                            closing_text_rows = [
+                                {**row, "end_s": take_duration} for row in closing_text_rows
+                            ]
+                            closing_drawings[:] = [
+                                {**drawing, "end_s": take_duration} for drawing in closing_drawings
+                            ]
                             recipe = _compile_lanes(
                                 title_rows + spoken_text_rows + closing_text_rows
                             )
@@ -11139,7 +11532,12 @@ def _run_phone_subtitled_job(
                     # KRI-1161: what the finished video really has behind the speaker, so the
                     # render-ready review judges the ask (omitted while the background is plain).
                     _bg = lanes.background
-                    if _bg.windows or _bg.speaker_frame is not None or _bg.uses_color:
+                    if (
+                        _bg.windows
+                        or _bg.speaker_frame is not None
+                        or _bg.uses_color
+                        or _bg.uses_full_screen
+                    ):
                         lane_receipt["background"] = {
                             # KRI-1173: a plain colour names itself; a media fill adds no key.
                             **({"color": _bg.color} if _bg.uses_color else {}),
@@ -11160,6 +11558,25 @@ def _run_phone_subtitled_job(
                             lane_receipt["background"]["media"] = len(
                                 {w.media_id for w in _bg.windows}
                             )
+                        # Qendresa item 16: how long the finished video really is full screen
+                        # from 0 s, read off the COMPILED recipe (a speech cut is accounted for).
+                        _opening_end = next(
+                            (
+                                round(float(span.end), 2)
+                                for span in (
+                                    getattr(
+                                        getattr(recipe, "speaker_background", None),
+                                        "full_screen_windows",
+                                        None,
+                                    )
+                                    or ()
+                                )
+                                if span.start <= 1e-6
+                            ),
+                            None,
+                        )
+                        if _opening_end is not None:
+                            lane_receipt["background"]["full_screen_opening_s"] = _opening_end
                 try:
                     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -11230,6 +11647,7 @@ def _run_phone_subtitled_job(
                 except Exception:  # noqa: BLE001
                     pass
 
+            closing_drawings_final: list[dict] = [dict(d) for d in closing_drawings]
             insert_receipt: dict[str, Any] | None = None
             if insert_clips_enabled and (inserts or insert_drops):
                 # Parent KRI-1151: from here on the persisted set (captions, text rows,
@@ -11243,6 +11661,22 @@ def _run_phone_subtitled_job(
                     title_rows = _inserted((), title_rows).text_rows
                     spoken_text_rows = _inserted((), spoken_text_rows).text_rows
                     closing_text_rows = _inserted((), closing_text_rows).text_rows
+                    if closing_drawings_final:
+                        from app.pipeline.phone_talking_inserts import (  # noqa: PLC0415
+                            shift_time as _shift_drawing_time,
+                        )
+
+                        closing_drawings_final = [
+                            {
+                                **drawing,
+                                "start_s": _shift_drawing_time(float(drawing["start_s"]), inserts),
+                                "end_s": _shift_drawing_time(
+                                    float(drawing["end_s"]) - 1e-3, inserts
+                                )
+                                + 1e-3,
+                            }
+                            for drawing in closing_drawings_final
+                        ]
                     if talking_cutaway_windows:
                         talking_cutaway_windows[:] = [
                             {
@@ -11297,6 +11731,11 @@ def _run_phone_subtitled_job(
                 multiple_sources=multi_clip,
             )
 
+    if closing_drawings_final:
+        # Item 14: her ending's arrow is an ordinary freehand drawing layer.
+        from app.pipeline.phone_recipe_shared import with_drawings  # noqa: PLC0415
+
+        recipe = with_drawings(recipe, closing_drawings_final)
     if not media_lanes_enabled:
         validate_phone_pilot_recipe(recipe, allow_editor_media=bool(cutaways))
     else:
@@ -11471,8 +11910,13 @@ def _run_phone_subtitled_job(
             # KRI-707: where each text-on-a-word ask landed, or why not; the brief
             # receipt's evidence at render-ready.
             new_entry[SPOKEN_TEXT_FIELD] = spoken_text_receipt
+        if list_label_receipt is not None:
+            # Item 19: where each numbered list label landed, or why not.
+            new_entry[LIST_LABEL_FIELD] = list_label_receipt
         if closing_text_rows:
             new_entry["closing_title_placement"] = closing_text_receipt
+        if closing_drawings_final:
+            new_entry["drawings"] = closing_drawings_final
         if protected_caption_look is not None:
             # KRI-827: the captions moved off the marked object; the saved geometry makes
             # every later compile of this variant (the editor's Save/reopen,
@@ -11503,6 +11947,8 @@ def _run_phone_subtitled_job(
                             for row in (spoken_text_receipt or {}).get("rows", [])
                             if row.get("status") == "placed"
                         },
+                        # Item 19: a list label (and each item found on the take) is text too.
+                        **_list_label_protected_placements(list_label_receipt),
                         "captions": protected_caption_receipt,
                     },
                 ),
@@ -11582,6 +12028,8 @@ def _run_phone_subtitled_job(
                 probe_s=float(probe.duration_s),
                 original_s=float(binding.original.duration_s),
             )
+        if tight_pauses_report is not None:
+            new_entry["tight_pauses"] = tight_pauses_report
         if cut_plan is not None and not opening_cut_only:
             # The source `_speech_cleanup_outcome_context` the device-export completion route
             # (`app.routes.device_render._device_speech_cleanup_outcome`) reads to publish the
@@ -11912,6 +12360,79 @@ def _phone_opening_cut(
     return cut_plan, receipts
 
 
+def _merged_removal_count(removed: Sequence[Any], *, join_s: float = 0.001) -> int:
+    """Removals counted as the creator sees them: ones touching within ``join_s`` are one cut."""
+    count = 0
+    last_end: float | None = None
+    for row in sorted(removed, key=lambda r: r.start_s):
+        if last_end is None or row.start_s > last_end + join_s:
+            count += 1
+        last_end = row.end_s if last_end is None else max(last_end, row.end_s)
+    return count
+
+
+def _phone_tight_pause_cut(
+    snapshot: dict,
+    cut_plan: CutPlan,
+    words: Sequence[Any],
+    *,
+    clip_path: str,
+    duration_s: float,
+) -> tuple[CutPlan, dict[str, Any] | None]:
+    """Qendresa 13: layer tight-pause cuts on the consented speech-cleanup plan.
+
+    Runs only with ``TIGHT_PAUSE_CUT_ENABLED`` and an approved brief (``creator_brief_binding``)
+    that asks to cut every pause (``brief_tight_pauses``). Otherwise ``(cut_plan, None)`` with the
+    SAME plan object, so the render is byte-identical. Returns the plan plus the
+    ``variant["tight_pauses"]`` receipt. Never raises: a failure keeps the consented plan and
+    reports ``unavailable`` (the render is never failed for a pause the creator did not consent
+    to by name)."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.tight_pause_ask import brief_tight_pauses  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    if not settings.tight_pause_cut_enabled:
+        return cut_plan, None
+    raw_binding = snapshot.get("creator_brief_binding")
+    if not raw_binding:
+        return cut_plan, None
+    try:
+        brief = BriefBinding.model_validate(raw_binding).resolve()
+        if not brief_tight_pauses(brief):
+            return cut_plan, None
+    except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
+        log.warning("phone_tight_pauses.binding_unreadable", error=str(exc)[:200])
+        return cut_plan, None
+    try:
+        from app.pipeline.tight_pause_cut import apply_tight_pauses  # noqa: PLC0415
+
+        new_plan, report = apply_tight_pauses(cut_plan, clip_path, list(words), duration_s)
+        receipt = report.to_variant()
+    except Exception as exc:  # noqa: BLE001 - the consented plan stands
+        log.warning("phone_tight_pauses.failed", error=str(exc)[:200])
+        new_plan = cut_plan
+        receipt = {
+            "version": 1,
+            "status": "unavailable",
+            "target_s": None,
+            "limit_s": None,
+            "added_cuts": 0,
+            "added_removed_ms": 0,
+            "longest_pause_s": None,
+            "longest_pause_before_s": None,
+            "pauses_over_limit": None,
+            "guard_dropped": 0,
+            "guard_trimmed": 0,
+            "capped": False,
+            "reason": "failed",
+        }
+    try:
+        record_pipeline_event("phone", "tight_pauses", receipt)
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return new_plan, receipt
+
+
 def _phone_speaker_framing(
     snapshot: dict,
     *,
@@ -12022,7 +12543,17 @@ def _protected_style_rows(
 ) -> list[dict]:
     """`generation_style_rows`, then (KRI-827) any restyle that moved or grew a protected
     row onto a face or the marked object is undone, so the placement receipt stays true."""
-    styled = generation_style_rows(rows, job_id=job_id)
+    # Item 14: her ending's two rows keep their fonts and colours; the others are restyled.
+    fixed = {i for i, row in enumerate(rows) if "cta_part" in (row.get("source_params") or {})}
+    if fixed:
+        rest = generation_style_rows(
+            [row for i, row in enumerate(rows) if i not in fixed], job_id=job_id
+        )
+        rest_iter = iter(rest)
+        styled = [row if i in fixed else next(rest_iter) for i, row in enumerate(rows)]
+        # The protected-clear pass below sees these rows unchanged.
+    else:
+        styled = generation_style_rows(rows, job_id=job_id)
     if protected is None:
         return styled
     from app.pipeline.phone_protected_text import keep_styled_rows_clear  # noqa: PLC0415
@@ -12202,10 +12733,18 @@ def _phone_talking_closing_rows(
     protected: Any = None,
     caption_avoid: Any = None,
     canvas: Any = None,
-) -> tuple[list[dict], dict[str, Any] | None]:
+    cta: bool = False,
+    arrow: bool = False,
+    cues: Any = (),
+    caption_style: str = "",
+    caption_look: Any = None,
+    caption_offset_s: float = 0.0,
+    insert_points: tuple[float, ...] = (),
+) -> tuple[list[dict], dict[str, Any] | None, list[dict]]:
     """The phone Talking edit's closing text row (KRI-514) plus its placement
-    receipt; ``([], None)`` when the text is empty or the clip has no time for
-    it. ``photo_card`` is the closing photo's `SubtitledOverlayCard` on the cut
+    receipt and its drawings (item 14's arrow; ``[]`` for the tag); ``([], None, [])``
+    when the text is empty or the clip has no time for it. ``photo_card`` is the closing
+    photo's `SubtitledOverlayCard` on the cut
     timeline (``None`` without one): the text appears with it and sits on it.
     Without one it holds for the last 3 s at the title's top spot, off the
     speaker's face."""
@@ -12231,11 +12770,60 @@ def _phone_talking_closing_rows(
     )
     row = talking_closing_element(closing_title, start_s=start_s, end_s=end_s, photo=photo)
     if row is None:
-        return [], None
+        return [], None, []
+    cta_attempted = False
     if photo is not None:
         placed, receipt = place_closing_on_photo(row, photo, canvas=canvas)
     else:
         display_width, display_height = display_dims(binding.original)
+        fit_scale = fit_transform(display_width, display_height, canvas, landscape_fit).scale
+        # An inserted clip (take-timeline ``insert_points``) inside the ending pauses the
+        # take and would split the two rows and play the arrow over the clip: keep the tag.
+        insert_in_ending = any(start_s + 1e-3 < point < end_s - 1e-3 for point in insert_points)
+        if (
+            cta
+            and not insert_in_ending
+            and (protected is None or not _protected_placement_kwargs(protected))
+        ):
+            from app.pipeline.phone_cta_ending import build_cta_ending  # noqa: PLC0415
+            from app.pipeline.phone_cta_text import cta_ending_parts  # noqa: PLC0415
+
+            if cta_ending_parts(closing_title) is not None:
+                cta_attempted = True
+
+                def _cta_caption_boxes(window: tuple[float, float]) -> Any:
+                    from app.pipeline.phone_spoken_text import caption_boxes  # noqa: PLC0415
+
+                    return caption_boxes(
+                        list(cues),
+                        window=(window[0] + caption_offset_s, window[1] + caption_offset_s),
+                        caption_style=caption_style,
+                        canvas=canvas,
+                        look=caption_look,
+                    )
+
+                ending = build_cta_ending(
+                    closing_title,
+                    arrow=arrow,
+                    start_s=start_s,
+                    end_s=end_s,
+                    canvas=canvas,
+                    clip_path=clip_path,
+                    keep_segments=keep_segments,
+                    display_width=display_width,
+                    display_height=display_height,
+                    scale=fit_scale,
+                    position_x=position_x,
+                    caption_boxes=_cta_caption_boxes,
+                )
+                if ending is not None:
+                    try:
+                        record_pipeline_event(
+                            "phone", "subtitled_closing_title_placement", ending.receipt
+                        )
+                    except Exception:  # noqa: BLE001 - observability only
+                        pass
+                    return list(ending.rows), ending.receipt, list(ending.drawings)
         placed, receipt = place_talking_title(
             row,
             clip_path=clip_path,
@@ -12243,18 +12831,20 @@ def _phone_talking_closing_rows(
             display_width=display_width,
             display_height=display_height,
             canvas=canvas,
-            scale=fit_transform(display_width, display_height, canvas, landscape_fit).scale,
+            scale=fit_scale,
             position_x=position_x,
             avoid=(
                 caption_avoid((float(row["start_s"]), float(row["end_s"]))) if caption_avoid else ()
             ),
             **_protected_placement_kwargs(protected),
         )
+    if cta_attempted:
+        receipt = {**receipt, "cta_fallback": True}
     try:
         record_pipeline_event("phone", "subtitled_closing_title_placement", receipt)
     except Exception:  # noqa: BLE001 - observability only
         pass
-    return [placed], receipt
+    return [placed], receipt, []
 
 
 def _phone_caption_spellings(snapshot: dict, quoted: tuple[str, ...]) -> tuple[str, ...]:
@@ -12543,6 +13133,178 @@ def _phone_talking_spoken_text_rows(
     except Exception:  # noqa: BLE001 - observability only
         pass
     return rows, receipt
+
+
+def _phone_talking_list_label_rows(
+    asks: Any,
+    *,
+    anchors: Any,
+    words: list[Any],
+    cues: list[dict],
+    caption_style: str,
+    caption_look: Any,
+    shown_rows: list[dict],
+    cards: Any,
+    timeline_duration_s: float,
+    binding: Any,
+    clip_path: str | None,
+    keep_segments: list[tuple[float, float]],
+    landscape_fit: str,
+    position_x: float = 0.0,
+    speaker_frame: tuple[float, float, float] | None = None,
+    protected: Any = None,
+    canvas: Any = None,
+    phrases: Any = None,
+    full_screen_windows: tuple[tuple[float, float], ...] = (),
+) -> tuple[list[dict], dict[str, Any] | None]:
+    """Item 19: one text row per numbered list label that has its moment, plus the receipt.
+
+    Modelled on `_phone_talking_spoken_text_rows`. ``anchors`` (`LabelAnchor`) and ``words``
+    are on the cut timeline the recipe plays; ``cards`` are ``(start_s, end_s, NormalizedBox)``
+    of the cards on screen. ``speaker_frame`` maps the sampled face to where the matted speaker
+    is drawn, so a label stays off the corner face. ``full_screen_windows`` (Qendresa item 16, the
+    cut timeline like the rows) are where she is drawn full-frame instead: a label's time inside
+    one keeps off her full-frame face. The receipt keeps every ask that is a list item; ``None``
+    when none is."""
+    from app.pipeline.phone_list_labels import list_label_rows  # noqa: PLC0415
+    from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
+    from app.pipeline.phone_spoken_text import _text_boxes, caption_boxes  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_title import place_talking_title  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    canvas = canvas if canvas is not None else _STORY_CANVAS
+    display_width, display_height = display_dims(binding.original)
+    scale = fit_transform(display_width, display_height, canvas, landscape_fit).scale
+    speaker_span_s = sum(max(0.0, end - start) for start, end in keep_segments)
+
+    def place(row: dict, avoid: Any) -> tuple[dict, dict[str, Any]]:
+        return place_talking_title(
+            row,
+            clip_path=clip_path if float(row["start_s"]) < speaker_span_s else None,
+            keep_segments=keep_segments,
+            display_width=display_width,
+            display_height=display_height,
+            canvas=canvas,
+            scale=scale,
+            position_x=position_x,
+            avoid=avoid,
+            speaker_frame=speaker_frame,
+            **({"full_screen_windows": full_screen_windows} if full_screen_windows else {}),
+            **_protected_placement_kwargs(protected),
+        )
+
+    def avoid_for(window: tuple[float, float], rows_so_far: list[dict]) -> list[Any]:
+        avoid = [*_text_boxes([*shown_rows, *rows_so_far], window=window, canvas=canvas)]
+        try:
+            avoid += caption_boxes(
+                cues,
+                window=window,
+                caption_style=caption_style,
+                canvas=canvas,
+                look=caption_look,
+            )
+        except Exception as exc:  # noqa: BLE001 - the captions are a nicety; the face is not
+            log.warning("phone_list_labels.caption_boxes_failed", error=str(exc)[:200])
+        avoid += [
+            box
+            for card_start, card_end, box in cards
+            if card_start < window[1] and card_end > window[0]
+        ]
+        return avoid
+
+    rows, receipt = list_label_rows(
+        asks,
+        anchors=anchors,
+        words=[
+            {"text": w.text, "start_s": w.start_s, "end_s": w.end_s}
+            if not isinstance(w, dict)
+            else w
+            for w in words
+        ],
+        timeline_duration_s=timeline_duration_s,
+        canvas=canvas,
+        place=place,
+        avoid_for=avoid_for,
+        phrases=phrases,
+    )
+    receipt_rows = [row for row in receipt["rows"] if row.get("status") != "not_a_list_item"]
+    if not receipt_rows:
+        return rows, None
+    receipt = {**receipt, "rows": receipt_rows}
+    try:
+        record_pipeline_event("phone", "subtitled_list_labels", receipt)
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return rows, receipt
+
+
+def _phone_list_label_follow(
+    layout: Mapping[str, Any], lanes: Any, *, follows_talk: bool
+) -> tuple[list[Any], list[tuple[int, str]] | None]:
+    """(anchors, phrases) the list labels may follow, from `_resolve_strategy_background`'s
+    ``layout_out`` and the FINAL lanes (item 19).
+
+    Recordings are followed only with item 17 (background follows the talk) on; otherwise nothing
+    is passed and every marked label grounds on its own words. An anchor counts only when its
+    entry's media still has a window in ``lanes.background.windows`` (a later drop removes it);
+    no lanes, no background or no windows leave no anchor. ``phrases`` is every phrased entry."""
+    if not follows_talk:
+        return [], None
+    background = lanes.background if lanes is not None else None
+    shown = {window.media_id for window in (background.windows if background is not None else ())}
+    entry_media = layout.get("entry_media") or {}
+    anchors = [
+        anchor for anchor in layout.get("anchors") or [] if entry_media.get(anchor.index) in shown
+    ]
+    return anchors, list(layout.get("phrases") or [])
+
+
+def _list_label_protected_placements(receipt: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The placed list labels (and the items found on the take) as ``protected_text_receipt``
+    placements, so "text kept off X" is never claimed while one of them sits on X."""
+    return {
+        f"list:{row.get('requirement_id')}-{row.get('list_item', 1)}": row.get("placement")
+        for row in (receipt or {}).get("rows", [])
+        if row.get("status") == "placed"
+    }
+
+
+def _phone_list_label_card_boxes(lanes: Any, visuals: Any, canvas: Any) -> list[Any]:
+    """``(start_s, end_s, NormalizedBox)`` of every pip card on the lanes (cut-timeline).
+
+    Computed as the compiler will draw it (`_card_placement`); a full-screen cutaway has nothing
+    to keep clear of, so it is left out."""
+    from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
+        _STORY_CANVAS,
+        _card_aspect_h_over_w,
+        _card_placement,
+    )
+    from app.pipeline.render_geometry import NormalizedBox  # noqa: PLC0415
+
+    canvas = canvas if canvas is not None else _STORY_CANVAS
+    by_media = {v.media_id: v for v in visuals}
+    boxes: list[Any] = []
+    for card in lanes.overlays if lanes is not None else []:
+        visual = by_media.get(card.media_id)
+        if card.display_mode != "pip" or visual is None:
+            continue
+        try:
+            width_frac, x_frac, y_frac = _card_placement(card, visual, canvas)
+            half_w = width_frac / 2
+            half_h = width_frac * _card_aspect_h_over_w(visual) * canvas.width / canvas.height / 2
+            boxes.append(
+                (
+                    float(card.start_s),
+                    float(card.end_s),
+                    NormalizedBox(
+                        x_frac - half_w, y_frac - half_h, x_frac + half_w, y_frac + half_h
+                    ),
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - a card we cannot measure is not avoided
+            log.warning("phone_list_labels.card_box_failed", error=str(exc)[:200])
+    return boxes
 
 
 def _phone_narrated_cleaned_narration(

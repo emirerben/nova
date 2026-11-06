@@ -462,6 +462,15 @@ FIELD_MATRIX: dict[str, FieldRule] = {
     **_rules(
         "upstream_resolved",
         "render_contract:text",
+        "pinned_texts[].look",
+        note=(
+            "the pinned-text compiler resolves the look into the row's font, colour, size and "
+            "shadow; the contract still verifies the pin's exact text"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
+        "render_contract:text",
         "pinned_texts[].start_s",
         "pinned_texts[].end_s",
         "pinned_texts[].clip",
@@ -718,6 +727,8 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "background_media.sequence[].spoken_phrase",
         "background_media.sequence[].hold_s",
         "background_media.cadence_s",
+        "background_media.full_screen_opening",
+        "background_media.full_screen_opening_s",
         "background_media.speaker_frame",
         note=(
             "KRI-1117: kept, filled from the creator's camera pick, or dropped by "
@@ -1094,6 +1105,29 @@ def _digest(data: Mapping[str, Any]) -> str:
             and not (key in _POST_V1_FIELD_DEFAULTS and value == _POST_V1_FIELD_DEFAULTS[key])
         }
     )
+
+
+def _talking_list_label(requirement: Any, raw: Mapping[str, Any]) -> bool:
+    """Item 19: flag on and the Talking worker would read this whole-video text as a list label."""
+    from app.pipeline.phone_list_labels import is_list_label_candidate  # noqa: PLC0415
+    from app.services.phone_rollout import phone_list_labels_supported  # noqa: PLC0415
+
+    if requirement.scope != "global" or not phone_list_labels_supported():
+        return False
+    from app.config import settings  # noqa: PLC0415
+
+    # Like the worker (`_phone_list_label_follow`): a label follows a recording only with item
+    # 17's windows; without them only a marked label is one.
+    background = raw.get("background_media") if settings.background_follows_talk_enabled else None
+    sequence = background.get("sequence") if isinstance(background, Mapping) else None
+    phrases = tuple(
+        entry["spoken_phrase"].strip()
+        for entry in sequence or ()
+        if isinstance(entry, Mapping)
+        and isinstance(entry.get("spoken_phrase"), str)
+        and entry["spoken_phrase"].strip()
+    )
+    return is_list_label_candidate(requirement, phrases)
 
 
 def _strategy(raw: Mapping[str, Any] | None) -> CreativeStrategy | None:
@@ -1636,6 +1670,12 @@ def build_render_contract(
                     # take says it (`phone_spoken_text`). Its own receipt answers it ("not
                     # heard" / "can't"), so pinning it would refuse an honest render.
                     # KRI-791: so does one whose word the ask doesn't name ("which word?").
+                    continue
+                if talking_edit and _talking_list_label(requirement, raw):
+                    # Item 19: a Talking edit draws a numbered list label (or the name of a
+                    # planned recording) only where its item's part starts
+                    # (`phone_list_labels`). An item never heard gets no label and its own
+                    # receipt says so, so pinning it would refuse an honest render.
                     continue
                 shot_index = None
                 if requirement.is_shot_text:
@@ -2574,6 +2614,12 @@ def _verify_hidden_parts(
                 )
 
 
+def _text_layer_index(layer_id: str) -> int | None:
+    """N of a compiled `text-N` layer id (None for any other id)."""
+    head, _, tail = layer_id.rpartition("-")
+    return int(tail) if head == "text" and tail.isdigit() else None
+
+
 def verify_phone_recipe(
     contract: CreatorRenderContract,
     recipe: EditRecipeV2,
@@ -2754,6 +2800,35 @@ def verify_phone_recipe(
         {"element_id": layer_id, "text": text, "start_s": start, "end_s": end}
         for layer_id, text, start, end in rendered
     ]
+    # Item 14: Qendresa's "comment READ" ending is drawn as two layers (a small "comment"
+    # over a big keyword) in the same window, so the confirmed closing text is never ONE
+    # layer. A recipe carries only `text-<index>` layer ids (no element ids), so the pair is
+    # recognised structurally: two visible layers that follow each other in the text lane,
+    # share a window (within a frame), and read "comment <keyword>". One joined row is added.
+    from app.pipeline.phone_cta_text import cta_ending_parts  # noqa: PLC0415
+
+    for (lead_id, lead_text, lead_start, lead_end), (
+        key_id,
+        key_text,
+        key_start,
+        key_end,
+    ) in zip(rendered, rendered[1:], strict=False):
+        lead_index = _text_layer_index(lead_id)
+        if (
+            lead_index is not None  # `text-0` is a real layer: never `or` the index
+            and _text_layer_index(key_id) == lead_index + 1
+            and abs(lead_start - key_start) <= frame
+            and abs(lead_end - key_end) <= frame
+            and cta_ending_parts(f"{lead_text} {key_text}") == (lead_text, key_text)
+        ):
+            rendered_evidence.append(
+                {
+                    "element_id": f"{lead_id}+{key_id}",
+                    "text": _normal(f"{lead_text} {key_text}"),
+                    "start_s": lead_start,
+                    "end_s": lead_end,
+                }
+            )
     for requirement in contract.exact_texts:
         matches = text_matches(
             rendered_evidence,

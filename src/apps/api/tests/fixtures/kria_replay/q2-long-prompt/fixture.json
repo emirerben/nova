@@ -1,0 +1,70 @@
+{
+  "fixture_id": "q2-long-prompt",
+  "schema_version": 1,
+  "source": "AUTHORED Main Creator answer, not a live recording: no model was called. Written by hand from the prompt text of the Q2 screen-recording-and-cutout test kit, following what main_creator._BRIEF_PROMPT_SECTION teaches (one add per separate ask, kinds/scopes/facts from its examples). It is a 17-entry answer (the model's job in item 23); the action is a propose_strategy montage that the real MainCreatorAgent.parse accepts against the manifest below. Two asks are merged to reach exactly 17: 'end with comment REPO' and 'an arrow' share one text entry. Facts keys beyond the prompt's taught ones (display_mode, speaker_first, above_text, position on title) are free-form facts the real parse accepts; the scorecard compares kind/scope/literal/description only.",
+  "user_message": "Start with me full screen and the title \"5 PROJECTS / the AI builder community / can't stop talking about!!!!\" with the GitHub logo above it. After that, put my screen recordings full screen and me cut out (no background) small in the bottom right corner while I talk. Zoom into the recordings so the text is readable, and show the right one when I talk about each repo. Add a label when each one starts: \"1. Spec-kit\", \"2. Impeccable\", \"3. TradingAgents\", \"4. Agents\", \"5. Claude code game studio\". Captions word by word in a light grey box near the bottom. Cut all my pauses. End with \"comment REPO\" and an arrow. Only my voice.",
+  "clips": [
+    {
+      "id": "talk-01",
+      "kind": "video",
+      "duration_s": 74.0,
+      "label": "talking to camera, with audio"
+    },
+    {
+      "id": "rec-01",
+      "kind": "video",
+      "duration_s": 22.0,
+      "label": "screen recording, landscape"
+    },
+    {
+      "id": "rec-02",
+      "kind": "video",
+      "duration_s": 20.0,
+      "label": "screen recording, landscape"
+    },
+    {
+      "id": "rec-03",
+      "kind": "video",
+      "duration_s": 24.0,
+      "label": "screen recording, landscape"
+    },
+    {
+      "id": "rec-04",
+      "kind": "video",
+      "duration_s": 18.0,
+      "label": "screen recording, landscape"
+    },
+    {
+      "id": "rec-05",
+      "kind": "video",
+      "duration_s": 26.0,
+      "label": "screen recording, landscape"
+    },
+    {
+      "id": "logo-01",
+      "kind": "image",
+      "duration_s": null,
+      "label": "GitHub logo, PNG"
+    }
+  ],
+  "expected_asks": [
+    "open_speaker_fullscreen",
+    "title_three_lines",
+    "github_logo_above_title",
+    "recordings_fullscreen",
+    "speaker_cutout_small_bottom_right",
+    "zoom_text_readable",
+    "show_recording_when_repo_mentioned",
+    "label_1",
+    "label_2",
+    "label_3",
+    "label_4",
+    "label_5",
+    "captions_word_by_word",
+    "caption_light_grey_box_bottom",
+    "cut_all_pauses",
+    "end_comment_repo_with_arrow",
+    "only_my_voice"
+  ],
+  "main_creator_raw_text": "{\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"guided_story\",\n      \"edit_format\": \"montage\",\n      \"audio_strategy\": \"original_audio\",\n      \"media_scope\": \"all\",\n      \"story_structure\": [\n        \"Speaker full screen with the title\",\n        \"Screen recordings with the speaker cut out small\",\n        \"Closing call to action\"\n      ],\n      \"pacing\": \"balanced\",\n      \"target_duration_s\": 45,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"rationale\": \"Opens on the speaker with the title, then shows each screen recording while the speaker talks about it.\",\n      \"summary\": \"I will open on you with the title, show each repo's recording with you cut out in the corner, add the labels and word-by-word captions, cut your pauses and end with the comment prompt.\"\n    }\n  },\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"Start with me full screen\",\n      \"facts\": {\n        \"display_mode\": \"fullscreen\",\n        \"speaker_first\": true\n      }\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"title\",\n      \"literal\": \"5 PROJECTS\\nthe AI builder community\\ncan't stop talking about!!!!\",\n      \"description\": \"the opening title, on three lines\",\n      \"facts\": {\n        \"position\": \"middle\"\n      }\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"title\",\n      \"literal\": null,\n      \"description\": \"the GitHub logo above the title\",\n      \"facts\": {\n        \"above_text\": \"5 PROJECTS\"\n      }\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"after the intro, my screen recordings full screen\",\n      \"facts\": {\n        \"display_mode\": \"fullscreen\"\n      }\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"me cut out with no background, small in the bottom right corner while I talk\",\n      \"facts\": {\n        \"speaker_background\": true,\n        \"speaker_small\": true,\n        \"position\": \"bottom_right\"\n      }\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"zoom into the recordings so the text is readable\",\n      \"facts\": {}\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"timing\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"show the right recording when I talk about each repo\",\n      \"facts\": {\n        \"triggers\": [\n          \"spec-kit\",\n          \"impeccable\",\n          \"trading agents\",\n          \"agents\",\n          \"claude code game studio\"\n        ]\n      }\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": \"1. Spec-kit\",\n      \"description\": \"a label when Spec-kit starts\",\n      \"facts\": {\n        \"triggers\": [\n          \"Spec-kit\"\n        ]\n      }\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": \"2. Impeccable\",\n      \"description\": \"a label when Impeccable starts\",\n      \"facts\": {\n        \"triggers\": [\n          \"Impeccable\"\n        ]\n      }\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": \"3. TradingAgents\",\n      \"description\": \"a label when TradingAgents starts\",\n      \"facts\": {\n        \"triggers\": [\n          \"TradingAgents\"\n        ]\n      }\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": \"4. Agents\",\n      \"description\": \"a label when Agents starts\",\n      \"facts\": {\n        \"triggers\": [\n          \"Agents\"\n        ]\n      }\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": \"5. Claude code game studio\",\n      \"description\": \"a label when Claude code game studio starts\",\n      \"facts\": {\n        \"triggers\": [\n          \"Claude code game studio\"\n        ]\n      }\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"captions word by word\",\n      \"facts\": {\n        \"captions\": \"word_by_word\"\n      }\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"captions in a light grey box near the bottom\",\n      \"facts\": {\n        \"caption_position\": \"bottom\"\n      }\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"audio\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"cut all my pauses\",\n      \"facts\": {\n        \"speech_cleanup\": true\n      }\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": \"comment REPO\",\n      \"description\": \"end with this text and an arrow\",\n      \"facts\": {\n        \"closing\": \"comment REPO with an arrow\"\n      }\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"audio\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"only my voice\",\n      \"facts\": {\n        \"audio_intent\": \"source_unchanged\",\n        \"no_music\": true\n      }\n    }\n  ],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": false\n}"
+}

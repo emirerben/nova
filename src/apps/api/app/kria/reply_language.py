@@ -190,13 +190,17 @@ def resolve_reply_language(
     *,
     previous: str | None = None,
     locale: str | None = None,
+    typed_elsewhere: str | None = None,
 ) -> str | None:
     """The chat's reply language after ``message``.
 
     ``previous`` is the chat's language before this message; ``locale`` is the
     raw ``Accept-Language`` header. A message that clearly reads as one language
     sets it; leaving an established language needs at least three clear words, so
-    "make it pop" inside a Turkish chat keeps Turkish.
+    "make it pop" inside a Turkish chat keeps Turkish. ``typed_elsewhere`` is the
+    language the creator last typed in another chat (`creator_typed_language`): for a
+    chat nothing has told yet it comes before the device (Green 5: a "Suggest an edit."
+    tap on a Turkish phone by a creator who types English).
     """
     previous = previous if previous in SUPPORTED_REPLY_LANGUAGES else None
     detected, strength = _detect(message)
@@ -206,7 +210,63 @@ def resolve_reply_language(
         return detected
     if previous is not None:
         return previous
+    if typed_elsewhere in SUPPORTED_REPLY_LANGUAGES:
+        return typed_elsewhere
     return locale_language(locale)
+
+
+def history_enabled() -> bool:
+    from app.config import settings  # noqa: PLC0415
+
+    return enabled() and bool(getattr(settings, "kria_reply_language_history_enabled", True))
+
+
+def needs_typed_history(message: str | None, previous: str | None) -> bool:
+    """Only a chat nothing has told yet, on a message that does not say, reads the history."""
+    return (
+        history_enabled()
+        and previous not in SUPPORTED_REPLY_LANGUAGES
+        and _detect(message)[0] is None
+    )
+
+
+# How many of the creator's latest messages in other chats are read for their language.
+_HISTORY_MESSAGES = 20
+
+
+async def creator_typed_language(db: Any, *, creator_id: Any, exclude_thread_id: Any) -> str | None:
+    """The language of the creator's most recent message they typed in another chat, or None.
+
+    Stock sentences and taps never count (`detect_chat_language` ignores them), nor do
+    messages too short to tell. Only this creator's own chats are read."""
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.models import CreationThread, CreationThreadEvent  # noqa: PLC0415
+
+    statement = (
+        select(CreationThreadEvent.content)
+        .join(CreationThread, CreationThread.id == CreationThreadEvent.thread_id)
+        .where(
+            CreationThread.creator_id == creator_id,
+            CreationThread.id != exclude_thread_id,
+            CreationThreadEvent.role == "user",
+            CreationThreadEvent.event_type == "user_message",
+            CreationThreadEvent.content.is_not(None),
+        )
+        .order_by(CreationThreadEvent.created_at.desc())
+        .limit(_HISTORY_MESSAGES)
+    )
+    try:
+        rows = list((await db.execute(statement)).scalars())
+    except Exception:  # noqa: BLE001 - a language hint never fails a chat: the device decides
+        return None
+    for content in rows:
+        if not isinstance(content, str):
+            continue
+        language = detect_chat_language(content)
+        if language is not None:
+            return language
+    return None
 
 
 def enabled() -> bool:

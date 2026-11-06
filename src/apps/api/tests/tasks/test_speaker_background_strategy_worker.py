@@ -199,9 +199,12 @@ def test_unheard_phrase_falls_back_to_cadence_with_a_note(monkeypatch):
 
     assert job.status == "awaiting_device"
     windows = _windows(job)
-    # Laid out as unanchored: from the start, alternating, 6 s each.
-    assert windows[0] == (f"visual-{COTOPAXI}", 0.0, 6.0)
-    assert windows[1] == (f"visual-{OBLEA}", 6.0, 12.0)
+    # Laid out as unanchored: from the start, each photo once (S57, 2026-11-05: it used to
+    # alternate 6 s each to the end), stretched to cover the take.
+    assert [asset for asset, _s, _e in windows] == [f"visual-{COTOPAXI}", f"visual-{OBLEA}"]
+    assert windows[0][1] == 0.0
+    assert windows[0][2] == pytest.approx(TAKE_S / 2, abs=1e-3)
+    assert windows[1][2] == pytest.approx(TAKE_S, abs=1e-3)
     assert {"lane": "background", "window": 0, "reason": "phrase_not_heard"} in _dropped(job)
 
 
@@ -222,16 +225,17 @@ def test_an_anchored_phrase_starts_its_window_on_the_spoken_word(monkeypatch):
     assert not [d for d in _dropped(job) if d.get("reason") == "phrase_not_heard"]
 
 
-def test_sequence_cycles_to_the_take_end(monkeypatch):
+def test_a_short_sequence_shows_each_photo_once_to_the_take_end(monkeypatch):
+    """S39 as changed 2026-11-05 (S57, S4 "fb 1"): two photos on a longer take used to cycle three
+    times at 4 s; now each shows once, stretched to cover the take, and the same photo never
+    comes up twice."""
     job = _windows_job(monkeypatch, [f"asset-{COTOPAXI}", f"asset-{OBLEA}"], cadence_s=4.0)
     gb._run_generative_job(str(job.id))
 
     windows = _windows(job)
-    assert [asset for asset, _s, _e in windows] == [
-        f"visual-{COTOPAXI}",
-        f"visual-{OBLEA}",
-    ] * 3
+    assert [asset for asset, _s, _e in windows] == [f"visual-{COTOPAXI}", f"visual-{OBLEA}"]
     assert windows[0][1] == 0.0
+    assert windows[0][2] == pytest.approx(TAKE_S / 2, abs=1e-3)
     assert windows[-1][2] == pytest.approx(TAKE_S, abs=1e-3)
     assert all(
         later[1] == pytest.approx(earlier[2], abs=1e-3)
@@ -373,8 +377,9 @@ def test_a_window_across_a_removal_remaps_to_the_span_laid_out(monkeypatch):
 
     keep = [(0.0, 5.0), (7.0, 12.0)]
     plan = CutPlan(keep_segments=keep, removed=[Removal(5.0, 7.0, "silence")], time_saved_s=2.0)
+    # Three photos (each shown once since S57) so the middle window still straddles the removal.
     layout = seq.lay_out(
-        [seq.SequenceEntry(0), seq.SequenceEntry(1)],
+        [seq.SequenceEntry(0), seq.SequenceEntry(1), seq.SequenceEntry(2)],
         cadence_s=4.0,
         take_s=seq.kept_duration(keep, 12.0),
         words=None,
@@ -383,7 +388,7 @@ def test_a_window_across_a_removal_remaps_to_the_span_laid_out(monkeypatch):
     assert [(w.index, w.start_s, w.end_s) for w in layout.windows] == [
         (0, 0.0, 4.0),
         (1, 4.0, 8.0),
-        (0, 8.0, 10.0),
+        (2, 8.0, 10.0),
     ]
     for window in layout.windows:
         source_start = seq.to_source_time(window.start_s, keep)

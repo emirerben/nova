@@ -1719,6 +1719,21 @@
               "default": null,
               "title": "Color"
             },
+            "full_screen_windows": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/EditorCommitSpeakerFullScreenWindow"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Full Screen Windows"
+            },
             "kind": {
               "enum": [
                 "image",
@@ -1862,6 +1877,30 @@
             "y_fraction"
           ],
           "title": "EditorCommitSpeakerFrame",
+          "type": "object"
+        },
+        "EditorCommitSpeakerFullScreenWindow": {
+          "additionalProperties": false,
+          "description": "One full-screen span of the Save section (Qendresa item 16): from ``start_s`` to ``end_s``\nof the edit's timeline the speaker's own take is drawn full-frame. Order, overlap, the\n0.5 s minimum, the count and the edit end are checked by\n`_validate_speaker_full_screen_windows` so they answer with their own code.",
+          "properties": {
+            "end_s": {
+              "maximum": 1800.0,
+              "minimum": 0.0,
+              "title": "End S",
+              "type": "number"
+            },
+            "start_s": {
+              "maximum": 1800.0,
+              "minimum": 0.0,
+              "title": "Start S",
+              "type": "number"
+            }
+          },
+          "required": [
+            "start_s",
+            "end_s"
+          ],
+          "title": "EditorCommitSpeakerFullScreenWindow",
           "type": "object"
         },
         "EditorCommitUserSong": {
@@ -4445,6 +4484,16 @@
           "minimum": 0,
           "title": "Expected Thread Revision",
           "type": "integer"
+        },
+        "only_if_queued": {
+          "default": false,
+          "title": "Only If Queued",
+          "type": "boolean"
+        },
+        "steer": {
+          "default": false,
+          "title": "Steer",
+          "type": "boolean"
         }
       },
       "required": [
