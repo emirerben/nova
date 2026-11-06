@@ -10,19 +10,20 @@ moment. Behind `settings.talking_card_layout_enabled` + `cardLayout` verified +
 Run from the repo root (any worktree):
 
   src/apps/api/.venv/bin/python scripts/ios/qendresa-card-layout-e2e.py \
-    prepare OUT --foot FOOT_DIR
+    prepare OUT --foot FOOT_DIR [--landscape-fit fit|fill]
   KRIA_CARD_LAYOUT_E2E_DIR=OUT xcodebuild test ... \
     -only-testing:KriaTests/DeviceTalkingCardLayoutRenderE2ETests/testRendersEveryPreparedCardLayoutCase
   src/apps/api/.venv/bin/python scripts/ios/qendresa-card-layout-e2e.py score OUT --kit KIT_DIR
 
-prepare: FOOT_DIR holds `take.mp4` (1080x1920 talking head), `words.json` (whisper.cpp
-`-ml 1 -sow -oj`), `faces.json` (Apple Vision face boxes every 0.25 s) and
+prepare: FOOT_DIR holds `take.mp4` (a 9:16 talking head, e.g. her 720x1280 take), `words.json`
+(whisper.cpp `-ml 1 -sow -oj`), `faces.json` (Apple Vision face boxes every 0.25 s) and
 `visuals/visuals.json` + the screenshot / recording files. Runs
 `tests/tasks/test_qendresa_card_layout_device_cases.py` (the REAL worker chain, no provider
 calls, free heuristic card matcher) twice on the same footage: `q1_before` (layout off,
 `cardLayout` unverified) and `q1_after` (on, verified, protocol 40). Writes
 `cases/<name>/{recipe.json,assets.json,cards.json}` and prints one summary line per case.
-Footage is never copied; assets.json points at the real files.
+Footage is never copied; assets.json points at the real files. `--landscape-fit fit` stamps the
+content-plan default a normal chat gets (KRI-1238); without it the stamp is absent (= fill).
 
 score: runs the kit's `tools/check_result.sh MP4 Q1 --ignore-tail-s 1.6` on each
 `cases/<name>/phone.mp4`, writes `result.json`, and asserts the done check: `screen` and `hook`
@@ -94,7 +95,7 @@ def summarize(cards: list[dict[str, Any]]) -> str:
     )
 
 
-def prepare(out: Path, foot: Path) -> int:
+def prepare(out: Path, foot: Path, landscape_fit: str | None = None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     env = {
         **os.environ,
@@ -103,6 +104,8 @@ def prepare(out: Path, foot: Path) -> int:
         "KRIA_CARD_E2E_FOOT": str(foot.resolve()),
         "PYTHONPATH": ".",
     }
+    if landscape_fit:
+        env["KRIA_CARD_E2E_LANDSCAPE_FIT"] = landscape_fit
     command = [
         str(VENV_PYTHON),
         "-m",
@@ -321,12 +324,13 @@ def main() -> int:
     prep = sub.add_parser("prepare")
     prep.add_argument("out", type=Path)
     prep.add_argument("--foot", type=Path, required=True)
+    prep.add_argument("--landscape-fit", choices=("fit", "fill"))
     sc = sub.add_parser("score")
     sc.add_argument("out", type=Path)
     sc.add_argument("--kit", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "prepare":
-        return prepare(args.out, args.foot)
+        return prepare(args.out, args.foot, args.landscape_fit)
     return score(args.out, args.kit)
 
 

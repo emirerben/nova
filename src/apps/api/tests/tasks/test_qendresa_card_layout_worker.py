@@ -37,6 +37,11 @@ Ways this goes wrong (item-15 failure list F1-F32 in the PR) and the check that 
 - F21 flag off byte-identical (frozen literal of today's cards); F22 old build / token off.
 - F23/F24/F25 editor: projection marks the card, a Save keeps its spot, a recipe-derived lane
   keeps it too.
+- KRI-1238: a normal chat stamps `landscape_fit="fit"` (the content-plan default), and the gate
+  read that as a letterbox even for her 720x1280 portrait take, so her cards fell back to the
+  corner (job e7d1e06f). Her take with "fit" gets exactly the "fill" layout; a landscape take
+  with "fit" (really letterboxed, also when only its rotation flag makes it landscape) keeps
+  today's cards.
 """
 
 from __future__ import annotations
@@ -50,6 +55,7 @@ import app.services.phone_visuals as phone_visuals_mod
 from app.config import settings
 from app.kria.brief import CreativeBrief
 from app.kria.brief_binding import BriefBinding
+from app.kria.media_sources import OriginalMediaDescriptor
 from app.pipeline.phone_captions import caption_look_from_variant
 from app.pipeline.phone_spoken_text import caption_boxes
 from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes
@@ -58,7 +64,11 @@ from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion
 from app.services import phone_text_styling as styling
 from app.services.client_protocol import clear_request_context
 from app.services.phone_card_layout import WATERMARK_BOX
-from app.services.phone_sources import PhoneVisualBinding
+from app.services.phone_sources import (
+    PHONE_SOURCES_FIELD,
+    PhoneSourceBinding,
+    PhoneVisualBinding,
+)
 from app.services.phone_subtitled_editor import (
     lanes_from_editor_sections,
     lanes_from_recipe,
@@ -291,12 +301,39 @@ def _cards_job(
     captions=None,
     shape: bool = True,
     alpha: frozenset[str] = frozenset(),
+    fit: str | None = None,
+    take: tuple[int, int, int] | None = None,
 ):
-    """Her Q1 job: Q1 captions (item 12 shape on), 15 Visuals, the card layout gates as given."""
+    """Her Q1 job: Q1 captions (item 12 shape on), 15 Visuals, the card layout gates as given.
+
+    ``fit`` stamps `all_candidates["landscape_fit"]` (absent: the worker's "fill"); ``take`` is
+    the speaker's (width, height, orientation_degrees) (absent: a 1080x1920 stand-in)."""
     clear_request_context()
-    job, _snapshot, _session, _binding_ = _setup_subtitled(
+    job, snapshot, _session, _binding_ = _setup_subtitled(
         monkeypatch, transcript_words=WORDS, duration_s=TALK_S
     )
+    if take is not None:
+        width, height, degrees = take
+        row = [
+            PhoneSourceBinding(
+                media_id="c0",
+                proxy_path="user/analysis-proxy-c0.mp4",
+                generation="1",
+                original=OriginalMediaDescriptor(
+                    sha256="a" * 64,
+                    byte_count=1000,
+                    duration_s=TALK_S,
+                    width=width,
+                    height=height,
+                    orientation_degrees=degrees,
+                    has_audio=True,
+                ),
+            ).model_dump(mode="json")
+        ]
+        job.assembly_plan[PHONE_SOURCES_FIELD] = row
+        snapshot[PHONE_SOURCES_FIELD] = row
+    if fit is not None:
+        job.all_candidates["landscape_fit"] = fit
     features = ["visualVideos", "authoredText", "captionShape"] + (
         ["cardLayout"] if verified else []
     )
@@ -567,6 +604,56 @@ def test_a_closed_gate_renders_todays_cards(monkeypatch, gate):
     closed = _cards_job(monkeypatch, **gate)
     _run(closed)
     # F22: an old build, an unverified token or an unknown build gets exactly today's recipe.
+    assert _recipe(closed).model_dump_json() == _recipe(off).model_dump_json()
+    assert (
+        closed.assembly_plan["variants"][0]["phone_overlay_receipt"]
+        == off.assembly_plan["variants"][0]["phone_overlay_receipt"]
+    )
+
+
+# ------------------------------------------------------------------------------ KRI-1238
+
+
+HER_TAKE = (720, 1280, 0)  # her Q1 "Talking take" as the phone uploaded it (job e7d1e06f)
+
+
+def test_her_portrait_take_gets_her_layout_with_the_default_fit(monkeypatch):
+    # Incident replay: a normal chat stamps the content-plan default "fit". The phone draws "fit"
+    # and "fill" the same for a portrait take (no bars, no crop), so her cards are exactly the
+    # ones a "fill" job gets: wide, top or bottom band -- not today's small corner cards.
+    today = _cards_job(monkeypatch, layout=False, fit="fit", take=HER_TAKE)
+    _run(today)
+    filled = _cards_job(monkeypatch, fit="fill", take=HER_TAKE)
+    _run(filled)
+    fitted = _cards_job(monkeypatch, fit="fit", take=HER_TAKE)
+    _run(fitted)
+
+    assert _geometry(_recipe(filled)) != _geometry(_recipe(today))  # the layout is real here
+    assert _geometry(_recipe(fitted)) == _geometry(_recipe(filled))
+    assert (
+        fitted.assembly_plan["variants"][0]["phone_overlay_receipt"]
+        == filled.assembly_plan["variants"][0]["phone_overlay_receipt"]
+    )
+    wide = [c for c in _card_clips(_recipe(fitted)) if ASPECT[c.source_asset_id] >= 1.7]
+    assert wide and all(c.visual_placement.width_fraction >= 0.75 for c in wide), _geometry(
+        _recipe(fitted)
+    )
+
+
+@pytest.mark.parametrize(
+    "take",
+    [(1920, 1080, 0), (1080, 1920, 90)],
+    ids=["landscape_take", "rotation_flagged_landscape_take"],
+)
+def test_a_letterboxed_landscape_take_keeps_todays_cards(monkeypatch, take):
+    # Wrong-framing control: "fit" really letterboxes a landscape take (her face moves in y), so
+    # the layout stays closed -- judged by the size the take is SHOWN at, not its pixel size.
+    off = _cards_job(monkeypatch, layout=False, fit="fit", take=take)
+    _run(off)
+    closed = _cards_job(monkeypatch, fit="fit", take=take)
+    _run(closed)
+    speaker = next(t for t in _recipe(closed).tracks if t.id == "subtitled")
+    assert all(clip.transform.scale < 1.0 for clip in speaker.clips)  # it IS letterboxed
     assert _recipe(closed).model_dump_json() == _recipe(off).model_dump_json()
     assert (
         closed.assembly_plan["variants"][0]["phone_overlay_receipt"]

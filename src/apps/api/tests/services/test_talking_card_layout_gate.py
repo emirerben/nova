@@ -13,6 +13,19 @@ Ways this goes wrong, and the check that catches each:
 - E3 an unmarked card's section gains a key (byte-identity broken).
 - E4 a recipe-derived lane forgets a below-0.62 pip card was laid out against the captions.
 - E5 a landscape recipe derives the mark (its geometry is not the portrait band).
+
+KRI-1238 (her Q1 run, job e7d1e06f: a 720x1280 take, `landscape_fit="fit"`, small corner cards):
+- F1 a portrait take with the content-plan default "fit" stays closed, although the phone draws
+  "fit" and "fill" the same for it (no bars, no crop): truth-table rows 720x1280 / 1080x1920.
+- F2 a landscape take with "fit" opens: the letterbox moves her face in y. Stays closed.
+- F3 a square or 3:4 take with "fit" stays closed: the phone cover-fills it (sides cropped
+  only), so y is exact. Opens.
+- F4 a source taller than 9:16 opens because it is "fit": still cropped top and bottom. Closed.
+- F5 a KRI-547 face-filled close-up opens because it is portrait: still closed.
+- F6 the gate and the renderer disagree on which takes get bars (`fit_transform` changes and
+  the gate does not follow): parity test over shapes x fits.
+- F7 a rotation-flagged file is judged by its pixel size: the worker passes `display_dims`
+  (worker test `test_a_letterboxed_landscape_take_keeps_todays_cards`).
 """
 
 from __future__ import annotations
@@ -20,6 +33,8 @@ from __future__ import annotations
 import pytest
 
 from app.config import settings
+from app.pipeline.canvas import PORTRAIT
+from app.pipeline.phone_recipe_shared import fit_transform
 from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes
 from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
 from app.services.client_protocol import CARD_LAYOUT_PROTOCOL
@@ -175,6 +190,16 @@ def test_recipe_derivation_leaves_a_normal_card_unmarked():
         (False, "fit", 1920, 1080, False),  # letterboxed take moves the face in y
         (False, "fill", 1080, 2340, False),  # taller than portrait: cropped top and bottom
         (False, "fill", 100, 0, False),
+        # KRI-1238: "fit" only letterboxes a landscape take; a portrait one is cover-filled.
+        (False, "fit", 720, 1280, True),  # F1: her Q1 take with the content-plan default
+        (False, "fit", 1080, 1920, True),  # F1
+        (False, "fit", 1080, 1930, True),  # F1, within the 9:16 tolerance
+        (False, "fit", 1080, 1080, True),  # F3: square, sides cropped only
+        (False, "fit", 1080, 1440, True),  # F3: 3:4 portrait, sides cropped only
+        (False, "fit", 1281, 1280, False),  # F2: a hair wider than tall is letterboxed
+        (False, "fit", 1080, 2340, False),  # F4: taller than 9:16 is still cropped in y
+        (True, "fit", 720, 1280, False),  # F5: a face-filled close-up stays closed
+        (False, "fit", 100, 0, False),
     ],
 )
 def test_card_layout_framing_truth_table(face_filled, fit, w, h, expected):
@@ -184,3 +209,19 @@ def test_card_layout_framing_truth_table(face_filled, fit, w, h, expected):
         )
         is expected
     )
+
+
+@pytest.mark.parametrize("fit", ["fit", "fill"])
+@pytest.mark.parametrize(
+    ("w", "h"),
+    [(720, 1280), (1080, 1920), (1080, 1440), (1080, 1080), (1281, 1280), (1920, 1080)],
+)
+def test_card_layout_framing_follows_the_phone_letterbox(fit, w, h):
+    # F6: the gate closes for a speaker the phone letterboxes, and only for one -- the same
+    # rule the phone compiler draws with (`fit_transform`; iOS `fitTransform` mirrors it).
+    # Shapes within 9:16 (or wider) only, so the taller-than-9:16 crop rule stays out of it.
+    letterboxed = fit_transform(w, h, PORTRAIT, fit).scale != 1.0
+    opened = _card_layout_framing_ok(
+        face_filled=False, landscape_fit=fit, display_width=w, display_height=h
+    )
+    assert opened is not letterboxed
