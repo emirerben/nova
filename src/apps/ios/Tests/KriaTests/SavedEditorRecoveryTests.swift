@@ -664,30 +664,33 @@ final class SavedEditorRecoveryTests: XCTestCase {
     }
 
     func testDelayedDeviceCapabilityReadDoesNotDispatchForReplacement() async throws {
-        let t = try thread()
-        var deviceVariant = variant()
-        deviceVariant["render_destination"] = .string("device")
-        let old = EditorCommitSpy(draftSnapshot: snapshot(), authoritativeVariant: deviceVariant)
-        let session = NativeEditorSession(project: t.summary)
-        let renders = DeviceRenderSessions(fetch: { _, _ in
-            await MainActor.run { old.deviceFetchCount += 1 }
-            throw APIError.unsupported
-        }, factory: { _, _ in throw APIError.unsupported })
-        session.useDeviceRendering(renders)
-        await session.load(api: old, threadID: threadID, variantID: "guided_story")
-        old.suspendNextCapabilities = true
-        let refresh = Task { await session.refreshDeviceRender() }
-        for _ in 0..<200 {
-            if old.capabilitiesIsSuspended { break }
-            try await Task.sleep(for: .milliseconds(5))
+        for fails in [false, true] {
+            let t = try thread()
+            var deviceVariant = variant()
+            deviceVariant["render_destination"] = .string("device")
+            let old = EditorCommitSpy(draftSnapshot: snapshot(), authoritativeVariant: deviceVariant)
+            let session = NativeEditorSession(project: t.summary)
+            let renders = DeviceRenderSessions(fetch: { _, _ in
+                await MainActor.run { old.deviceFetchCount += 1 }
+                throw APIError.unsupported
+            }, factory: { _, _ in throw APIError.unsupported })
+            session.useDeviceRendering(renders)
+            await session.load(api: old, threadID: threadID, variantID: "guided_story")
+            old.suspendNextCapabilities = true
+            let refresh = Task { await session.refreshDeviceRender() }
+            for _ in 0..<200 {
+                if old.capabilitiesIsSuspended { break }
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            XCTAssertTrue(old.capabilitiesIsSuspended)
+            let replacement = EditorCommitSpy(draftSnapshot: snapshot(), authoritativeVariant: deviceVariant)
+            await session.load(api: replacement, threadID: threadID, variantID: "guided_story")
+            let before = session.document
+            if fails { old.capabilitiesError = .offline }
+            old.resumeCapabilities(); await refresh.value
+            XCTAssertEqual(old.deviceFetchCount, 0)
+            XCTAssertEqual(session.document, before)
         }
-        XCTAssertTrue(old.capabilitiesIsSuspended)
-        let replacement = EditorCommitSpy(draftSnapshot: snapshot(), authoritativeVariant: deviceVariant)
-        await session.load(api: replacement, threadID: threadID, variantID: "guided_story")
-        let before = session.document
-        old.resumeCapabilities(); await refresh.value
-        XCTAssertEqual(old.deviceFetchCount, 0)
-        XCTAssertEqual(session.document, before)
     }
 
     func testPromptRefreshCannotClearOrAdoptReplacementState() async throws {
