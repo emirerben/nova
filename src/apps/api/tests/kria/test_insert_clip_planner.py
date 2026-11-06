@@ -427,7 +427,7 @@ def _extractor_prompt(**kw) -> str:
 # Says-done group E (creator v137) rewords the caption-count and cleanup sentences (her Q1/Q2
 # sentences as examples); with v136's sentences the digest is
 # 14ad8c6e284569817ed3c380fea76ae35b5983b1fe42a2f53c42a6c14bcaa6d7.
-_BRIEF_SECTION_BEFORE_INSERTS = "856e1d91b5c885453e00a63383ec324e0477053c6a429337bf3af928a9ea870f"
+_BRIEF_SECTION_BEFORE_INSERTS = "e760e027cc39efb77313daa90d7e2f8192800c92bbc5e88e109a12967954274b"
 
 
 def test_a_closed_rollout_leaves_the_brief_section_byte_identical_to_before_inserts():

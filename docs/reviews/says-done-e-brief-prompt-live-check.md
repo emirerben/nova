@@ -28,6 +28,7 @@ Gemini 3.1 Pro is $2 per million input tokens and $12 per million output tokens
 included), roughly $0.10-0.17, double if the schema retry fires. Seven Main Creator turns are about
 $0.70-1.20; the extractor turn (Gemini 3.6 Flash) is about $0.02. **Expected total about $1-1.50.**
 Each command below carries its own hard cap; the caps add up to $1.90.
+The harness pre-flight assumes a 4 KB prompt, so it under-counts this ~90 KB prompt; trust the estimate above. `AI_COST_CONTROL_ENABLED=true` records the spend in the development ledger, which needs the local Postgres from the repo `.env` to be reachable.
 
 ## Commands (run from this worktree, after Yasin approves)
 
@@ -43,7 +44,7 @@ for round in 1 2 3; do
     --usage-purpose=live_eval --test-run-id="says-done-e-r${round}-20261106" \
     --max-cost-usd=0.5 --approve-reservation
   mkdir -p "$NOVA_EVAL_CAPTURE_DIR/round${round}"
-  mv "$NOVA_EVAL_CAPTURE_DIR"/main_creator/*.json "$NOVA_EVAL_CAPTURE_DIR/round${round}/" 2>/dev/null
+  mv "$NOVA_EVAL_CAPTURE_DIR"/main_creator/*.json "$NOVA_EVAL_CAPTURE_DIR/round${round}/"
 done
 PYTHONPATH=$PWD $PY -m pytest tests/evals/test_main_creator_evals.py --eval-mode=live -rA -q \
   -k "decoy_qendresa_plain_word_captions_long_pauses" \
@@ -56,7 +57,7 @@ PYTHONPATH=$PWD $PY -m pytest tests/evals/test_brief_extractor_evals.py --eval-m
 ```
 
 The harness refuses to start without all four paid-run flags and refuses any cap above $2.
-A passing case writes `<capture dir>/<agent>/<fixture>.json` with the model's raw answer; a failing
+Each answer that passes the structural check is written to `<capture dir>/<agent>/<fixture>.json` (also when a later fact check fails; an `agent.run` failure is written as `<fixture>--failed.json`); a failing
 case prints which fact was missing (for example `caption look words None ... expected 2`).
 
 ## Reading the result

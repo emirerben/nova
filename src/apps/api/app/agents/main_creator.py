@@ -1098,7 +1098,8 @@ Preserve EVERY independently requested behavior, including modifiers and relatio
 parts of a compound request. An entrance animation does not describe segmentation, ordering,
 overlap, duration, or when one text replaces another. Keep these instructions in the requirement's
 complete description and structured facts; if they need separate verification, record a separate
-style or timing requirement as well. Never shorten a compound request to the one field the
+style or timing requirement as well (never for the captions' look, which stays on the one
+captions requirement). Never shorten a compound request to the one field the
 strategy happens to expose. Descriptions may retain behavior requiring composition of operations.
 Do not duplicate an opening hook as a per-clip caption unless the creator requests both.
 
@@ -1209,11 +1210,11 @@ filler sounds from the speech => {"speech_cleanup": true}, keep them => {"speech
 every pause gone or a tight, fast pace, not only the long ones ("cut out all my pauses so it's
 tight", "cut all my pauses", "no pauses at all", "bütün boşlukları kes, sıkı olsun") =>
 {"speech_cleanup": true, "pauses": "tight"}: ALL or EVERY pause is tight even without the word
-tight, while "cut the pauses" or "cut the long pauses" is the plain cleanup;
-remove a sentence they restarted, their retakes, false starts or mistakes without quoting or
-naming which one ("the sentence I restarted", "the places I restarted", "my retakes", "all my
-mistakes", "yanlış başladığım cümleleri", "tekrar aldığım cümleyi") => {"speech_cleanup": true,
-"cut_restarts": true} and no `cut_lines` for it ("Cut out all my pauses and mistakes so it's
+tight, while "cut the pauses", "cut the long pauses" or "cut all the long pauses" is the plain
+cleanup; remove a sentence they restarted, their retakes, false starts or spoken mistakes without
+quoting or naming which one ("the sentence I restarted", "the places I restarted", "my retakes",
+"all my mistakes", "yanlış başladığım cümleleri", "tekrar aldığım cümleyi") => {"speech_cleanup":
+true, "cut_restarts": true} and no `cut_lines` for it ("Cut out all my pauses and mistakes so it's
 tight" => {"speech_cleanup": true, "pauses": "tight", "cut_restarts": true}):
 never copy words from the take or its transcript into `cut_lines`, which hold
 only the creator's own words. A restart they quote or name ("the part where I restart the

@@ -2,7 +2,7 @@
   "agent": "nova.creator.main",
   "prompt_version": "2026-11-06-v137",
   "input": {
-    "user_message": "Add word by word captions and cut the long pauses. No music.",
+    "user_message": "Add word by word captions and cut all the long pauses. No music.",
     "creator_request": "",
     "creator_context": "Tech creator who films short talking-to-camera explainers about AI tools, with screenshots and screen recordings.",
     "creator_direction": "",
@@ -121,7 +121,7 @@
       },
       {
         "role": "user",
-        "content": "Add word by word captions and cut the long pauses. No music."
+        "content": "Add word by word captions and cut all the long pauses. No music."
       }
     ],
     "capability_manifest": {
@@ -405,7 +405,7 @@
     },
     "brief_enabled": true
   },
-  "raw_text": "{\"brief_updates\": [{\"kind\": \"style\", \"scope\": \"global\", \"literal\": null, \"description\": \"word by word captions\", \"facts\": {\"captions\": \"word_by_word\"}}, {\"kind\": \"audio\", \"scope\": \"global\", \"literal\": null, \"description\": \"cut the long pauses\", \"facts\": {\"speech_cleanup\": true}}, {\"kind\": \"audio\", \"scope\": \"global\", \"literal\": null, \"description\": \"No music.\", \"facts\": {\"audio_intent\": \"no_music\"}}], \"action\": {\"kind\": \"propose_strategy\", \"strategy\": {\"direction\": \"native\", \"edit_format\": \"subtitled\", \"archetype\": null, \"audio_strategy\": \"original_audio\", \"execution_contract\": null, \"media_scope\": \"all\", \"clip_intents\": [], \"story_structure\": [\"The talk to camera, tightened, with captions\"], \"intro_hook\": null, \"pacing\": \"balanced\", \"target_duration_s\": 31.2, \"render_program\": \"native\", \"selected_media_ids\": [\"analysis-proxy-ios-4DB8A9C3-80FE-4269-9D22-7C19280DC543.mp4\"], \"optional_treatments\": [], \"rationale\": \"One talking take, kept in order, cut tight and captioned.\", \"caption_style\": \"karaoke\"}, \"summary\": \"I'll cut the long pauses and add word-by-word captions.\", \"render_intent_evidence\": {\"opening_title\": null, \"font_family\": null, \"text_color\": null, \"opening_title_duration_s\": null, \"shot_labels\": null, \"closing_title\": null, \"licensed_sfx\": null}}}",
+  "raw_text": "{\"brief_updates\": [{\"kind\": \"style\", \"scope\": \"global\", \"literal\": null, \"description\": \"word by word captions\", \"facts\": {\"captions\": \"word_by_word\"}}, {\"kind\": \"audio\", \"scope\": \"global\", \"literal\": null, \"description\": \"cut all the long pauses\", \"facts\": {\"speech_cleanup\": true}}, {\"kind\": \"audio\", \"scope\": \"global\", \"literal\": null, \"description\": \"No music.\", \"facts\": {\"audio_intent\": \"no_music\"}}], \"action\": {\"kind\": \"propose_strategy\", \"strategy\": {\"direction\": \"native\", \"edit_format\": \"subtitled\", \"archetype\": null, \"audio_strategy\": \"original_audio\", \"execution_contract\": null, \"media_scope\": \"all\", \"clip_intents\": [], \"story_structure\": [\"The talk to camera, tightened, with captions\"], \"intro_hook\": null, \"pacing\": \"balanced\", \"target_duration_s\": 31.2, \"render_program\": \"native\", \"selected_media_ids\": [\"analysis-proxy-ios-4DB8A9C3-80FE-4269-9D22-7C19280DC543.mp4\"], \"optional_treatments\": [], \"rationale\": \"One talking take, kept in order, cut tight and captioned.\", \"caption_style\": \"karaoke\"}, \"summary\": \"I'll cut the long pauses and add word-by-word captions.\", \"render_intent_evidence\": {\"opening_title\": null, \"font_family\": null, \"text_color\": null, \"opening_title_duration_s\": null, \"shot_labels\": null, \"closing_title\": null, \"licensed_sfx\": null}}}",
   "output": null,
   "meta": {
     "source": "hand_authored_golden",
@@ -414,9 +414,9 @@
       "phone_render_user_ids": [],
       "phone_subtitled_rendering_enabled": true
     },
-    "note": "Negative neighbour for Qendresa cases 6-8: plain 'word by word captions' sets no count and no box, and 'cut the long pauses' stays the plain cleanup (never tight). Hand-authored golden answer (NOT a model recording): the cassette ignores the prompt, so replay proves only the answer shape, that the v137 teaching is in the rendered prompt (`prompt_contains`) and the `caption_cleanup_brief` check. The paid live run in docs/reviews/says-done-e-brief-prompt-live-check.md measures what the model records. Input shell: kri1189_green3_restart_en (one-take iPhone Talking, prod profile; her screenshots and recordings are not attached, which the brief facts judged here do not depend on).",
+    "note": "Negative neighbour for Qendresa cases 6-8: plain 'word by word captions' sets no count and no box, and 'cut the long pauses' / 'cut all the long pauses' (an all that is limited) stay the plain cleanup (never tight). Hand-authored golden answer (NOT a model recording): the cassette ignores the prompt, so replay proves only the answer shape, that the v137 teaching is in the rendered prompt (`prompt_contains`) and the `caption_cleanup_brief` check. The paid live run in docs/reviews/says-done-e-brief-prompt-live-check.md measures what the model records. Input shell: kri1189_green3_restart_en (one-take iPhone Talking, prod profile; her screenshots and recordings are not attached, which the brief facts judged here do not depend on).",
     "prompt_contains": [
-      "while \"cut the pauses\" or \"cut the long pauses\" is the plain cleanup",
+      "while \"cut the pauses\", \"cut the long pauses\" or \"cut all the long pauses\" is the plain cleanup",
       "alone it sets no caption_words"
     ],
     "caption_cleanup_brief": {
