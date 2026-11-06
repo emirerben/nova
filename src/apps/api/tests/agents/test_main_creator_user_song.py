@@ -86,6 +86,9 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v121 (Qendresa 13) teaches `pauses: "tight"` in the same cleanup sentence, on top of v120
 # (Qendresa 12, `caption_words` / `caption_box`): the two brief-on hashes re-pinned for both
 # (v119's: 10202eb7… / d3a50520…; v120 alone: ad987056 / 6c9afec6); brief-off unchanged.
+# v123 (Qendresa item 17, on top of v121): its paragraph renders only with
+# BACKGROUND_FOLLOWS_TALK_ENABLED and the windows capability, which these renders never have, so
+# all four hashes are v121's, unchanged (the pins cover v121 + v123).
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
 PRE_CHANGE_PROMPT_SHA = {

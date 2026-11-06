@@ -230,3 +230,26 @@ and **the same photo never comes up twice**. Incident record: `docs/reviews/back
 | S62 | Phone limits: over 40 windows, under 0.5 s, past the take, gaps that flash | At most one window per entry (entries are ≤ 40), each ≥ 0.5 s, the last ends at the take end, and every second of the take is covered by a window or (only where S58/S60 allow) the fill. | every test above (`_assert_each_picture_once` checks coverage) |
 | S63 | The receipt promises "every 3–5 s" while a photo now stays longer | The receipt never names a pace: "N photos or videos take turns behind you". Gap: "Yapıldı" still sits beside the creator's own "every 3–5 seconds" wording in the requirement title (the brief has no pace fact). | `tests/kria/test_brief_checks_speaker_background.py` (unchanged wording) |
 
+## Qendresa item 17: names heard when said another way (written before the code)
+
+Flag `BACKGROUND_FOLLOWS_TALK_ENABLED` (default off, server only). Test kit run Q2 (2026-11-04,
+`kria-qendresa-test/_src/kria_check/Q2/REPORT.md` row B5): a screen walkthrough of five repos, each
+recording phrased on its name. Two problems: after the last mention earlier recordings cycled back
+(S51), and her phrases as typed missed: "Claude code game studio" is spoken "studios" and
+"TradingAgents" is spoken "trading agents" (both `phrase_not_heard`, the recording never shows), and
+"agents" anchored inside "trading agents" (recording 3 cut to 4 s).
+
+The cycling is fixed for everyone by the no-repeat decision above (S57: the last window holds to the
+take end). Item 17 first kept S51 for a creator who names a rhythm (`background_media.keep_changing`);
+that would show photos twice, so it was dropped when #2118 landed. What remains is anchoring: with the
+flag on, every phrased entry is also heard when said another way.
+
+| # | Failure mode | Treatment | Pinned by |
+|---|---|---|---|
+| S64 | Flag off changes anything | Off: `_anchor_time` runs unchanged and the prompt has no new bytes. Not inert: the Main Creator prompt version label moves to v123. | `tests/tasks/test_background_follows_talk.py::test_flag_off_windows_and_notes_are_byte_identical` (frozen), `tests/kria/test_speaker_background_chat.py` prompt bytes with the flag off |
+| S65 | A name spoken another way is never heard: a final plural "s" ("studio"/"studios"), joined or split words ("TradingAgents"/"trading agents") | After the exact and KRI-961 matchers hear nothing, a loose name match compares the words with spaces removed and a final "s" ignored on words of five or more letters (not "-ss", "-us", "-is"). Then, for names of two or more words only, the exact and KRI-961 matchers run again with the last word's plural toggled, so a sound-alike plus a plural is heard (her real walkthrough's transcript says "cloud code game studios" for "Claude code game studio"). A sound-alike KRI-961 does not know ("Clawed") stays unheard. | `::test_her_label_spellings_are_heard`, `::test_a_sound_alike_with_a_plural_is_still_heard` |
+| S66 | The loose match hears a different word ("island" in "this is land", "Notion" in "some notions", "Canva" in "canvas") | Last resort only (never when the exact or KRI-961 matcher hears the phrase); words are aligned one to one, or one word to two or three joined words of three letters or more; a single word against a single word is never loose; a name under four letters never matches loosely. | `::test_the_loose_match_never_hears_a_different_word` (negative controls) |
+| S67 | A short name inside another visual's longer name ("agents" in "trading agents") anchors there and cuts that visual short | A hearing that lies inside another entry's hearing of a longer phrase belongs to that entry and is skipped; the next hearing is used. Two visuals with the same phrase still share their mention. | `::test_a_name_inside_another_visuals_name_is_not_its_word`, S48 tests unchanged |
+| S68 | Two visuals of one thing get nested phrases ("drones" / "mounted on drones") and the shorter is never said alone, so the inside rule (S67) drops it | A hearing inside another entry's phrase is skipped only when the entry has a free hearing in the kept take; otherwise its first hearing anchors, as with the flag off. | `::test_a_name_that_only_occurs_inside_another_name_still_shows` (Green 3 words) |
+| S69 | A common word ("agents") is said again inside the previous topic, so the visual still starts early | Not solvable from the words alone. v123 teaches the planner to copy the words said only where the visual is introduced ("number four agents"). Model behaviour not proven offline (paid replay, not run). | `tests/kria/test_speaker_background_chat.py` (the paragraph teaches it, only with the flag on) |
+

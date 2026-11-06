@@ -210,6 +210,21 @@ pixels. A frame-only change updates the player in place (`updateText` accepts a 
 frame); Full ↔ corner still takes the full rebuild. The safe-zone guide follows the speaker's face (Vision, once per
 gesture) rather than the whole box. Failure modes SF1–SF13: `docs/reviews/speaker-frame-direct-manipulation-failure-modes.md`.
 
+### Names heard when said another way (`BACKGROUND_FOLLOWS_TALK_ENABLED`, Qendresa item 17)
+
+Server only, default off (off = windows and the Main Creator prompt byte-identical). On, every sequence entry's
+`spoken_phrase` is also heard when said another way (joined / split words, a final plural "s", a plural with a KRI-961
+sound-alike), as a last resort after the exact and KRI-961 matchers, and not inside another entry's longer phrase
+("agents" inside "trading agents") while it is heard elsewhere too. Main Creator v123 (only with the flag on) teaches the
+planner to write each phrase as said in the take, with the words said only where that visual is introduced. Holding the
+last visual to the take end is the no-repeat rule (S57) for everyone, not this flag. Failure modes S64-S69 in
+`docs/reviews/speaker-background-windows-failure-modes.md`.
+
+- Apply: `fly secrets set BACKGROUND_FOLLOWS_TALK_ENABLED=true --app nova-video` + restart (api + worker).
+- Rollback: `...=false` + restart; never a code revert.
+- Before turning it on: one live v123 turn on a screen walkthrough (paid, about $0.10-0.50, not run) to see the planner
+  copy the spoken names.
+
 ## Solid-colour fill (KRI-1173)
 
 The FILL may be a flat colour instead of a pool photo or video ("fully white, fully green, another colour").

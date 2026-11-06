@@ -734,6 +734,14 @@ use, leave `background_media` out rather than guess an id. Say in `summary`, in 
 the backgrounds change and where the speaker sits.
 """.strip("\n")
 
+# Qendresa item 17: appended after the windows section ONLY with BACKGROUND_FOLLOWS_TALK_ENABLED.
+_BACKGROUND_FOLLOWS_TALK_PROMPT_SECTION = """
+Write each `spoken_phrase` in a `sequence` the way the creator says the name in the take's
+transcript, not the way it is spelled on screen ("trading agents", not "TradingAgents"). When a
+name is also said elsewhere in the take (a common word such as "agents"), copy the words said only
+where that one is introduced ("number four agents").
+""".strip("\n")
+
 # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED) on a phone Montage / Voiceover
 # edit. Appended to the `$reaction_beats_section` slot ONLY when the manifest advertises
 # `timed_cards`; "" otherwise, so every other prompt stays byte-identical.
@@ -1519,6 +1527,13 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 + (
                     "\n" + _SPEAKER_BACKGROUND_WINDOWS_PROMPT_SECTION
                     if speaker_background_windows_open(input.capability_manifest)
+                    else ""
+                )
+                # Qendresa item 17: "" unless the flag is on AND the windows are advertised.
+                + (
+                    "\n" + _BACKGROUND_FOLLOWS_TALK_PROMPT_SECTION
+                    if settings.background_follows_talk_enabled
+                    and speaker_background_windows_open(input.capability_manifest)
                     else ""
                 )
             ),

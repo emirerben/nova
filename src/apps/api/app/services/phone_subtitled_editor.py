@@ -45,6 +45,7 @@ from app.kria.device_render import DeviceRenderStatus
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import LibraryRenderAsset, VisualRenderAsset
 from app.pipeline.phone_subtitled_lanes import (
+    CAPTION_BAND_TOP_FRAC,
     PhoneSubtitledLanes,
     ResolvedSoundEffect,
     SubtitledBackground,
@@ -363,6 +364,13 @@ def sections_from_lanes(
                 "start_s": card.start_s,
                 "end_s": card.end_s,
                 "z": card.z,
+                # Qendresa item 15: only a card the server laid out against the measured
+                # caption band carries the mark, so an unmarked card's section is unchanged.
+                **(
+                    {"caption_clear": True}
+                    if card.caption_clear and card.display_mode == "pip"
+                    else {}
+                ),
                 "entrance_token": entrance_token,
                 "exit_token": exit_token,
                 # KRI-1141: only a tilted card carries a style, so an untilted card's section is
@@ -530,6 +538,15 @@ def lanes_from_recipe(
                         # compiler's kind check.
                         kind="video" if visual.kind == "video" else "image",
                         source_start_s=clip.source_start if visual.kind == "video" else 0.0,
+                        # Qendresa item 15: no compiled pip card sat below the caption band
+                        # before the server's card layout, so a card below it was laid out
+                        # against the measured captions; keep it there on a later Save.
+                        **(
+                            {"caption_clear": True}
+                            if recipe.canvas.height > recipe.canvas.width
+                            and placement.y_fraction > CAPTION_BAND_TOP_FRAC + 1e-9
+                            else {}
+                        ),
                     )
                 )
         elif track.id == "sfx":
@@ -792,6 +809,15 @@ def _overlays_from_sections(
                 kind="video" if binding.kind == "video" else "image",
                 source_start_s=source_start_s,
                 **({"display_mode": "fullscreen"} if display_mode == "fullscreen" else {}),
+                # Qendresa item 15: the mark is the server's, never the client's -- it only
+                # survives on a pip card the previous lanes already marked.
+                **(
+                    {"caption_clear": True}
+                    if display_mode == "pip"
+                    and previous_card is not None
+                    and previous_card.caption_clear
+                    else {}
+                ),
             )
         )
     return cards
