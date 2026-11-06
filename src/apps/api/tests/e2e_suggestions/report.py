@@ -200,6 +200,7 @@ FAMILIES: dict[str, str] = {
     "ring": "the ring write is busy (R6-B)",
     "length": "duplicates and a stated video length (R6-D)",
     "reoffer": "a tap taken back is an offer again, with and without the brief (R6-U)",
+    "proof": "a card is served only while the tap's own proof holds: Undo, triggers off (R7)",
 }
 
 

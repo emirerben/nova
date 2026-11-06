@@ -46,8 +46,8 @@ from app.kria.brief import BriefUpdate
 from app.models import CreationThread
 from app.services.suggestions.kinds import mute_clip
 from tests.e2e_suggestions import driver as d
-from tests.e2e_suggestions import gaps, threads
 from tests.e2e_suggestions import scenes as s
+from tests.e2e_suggestions import threads
 from tests.e2e_suggestions.driver import NO_LONGER_FITS, NO_LONGER_FITS_TR, Phone
 from tests.e2e_suggestions.flow import (
     RESTATE,
@@ -550,14 +550,16 @@ async def test_u1_an_undone_tap_is_an_offer_again_with_and_without_the_brief(
         s.executed(tap) and tap.new_drafts == 1,
         f"signal={tap.refused} reply={tap.reply[:70]!r}",
     )
-    if kind == "hook" and brief:
-        # With the brief on the hook's creative-copy decision stays in the event log, so the hook
-        # is spent after Undo (documented limit: the consent gate keeps it out). Recorded.
+    if kind == "hook":
+        # The hook's creative-copy decision stays in the event log, so the hook is spent after
+        # Undo with or without the brief (documented limit): its own witness refuses it, and the
+        # serve asks that witness too (``suggestion_serve._unproven``). Recorded.
         await scene.phone.undo()
         talking_world.redis.advance(60)
         after = await scene.phone.serve()
         rec.negative(
-            "U1 hook (brief on): stays spent after Undo (its decision is in the event log)",
+            f"U1 hook (brief {'on' if brief else 'off'}): stays spent after Undo "
+            "(its decision is in the event log)",
             where,
             "hook not offered again",
             "hook" not in s.kinds_of(after),
@@ -576,13 +578,6 @@ async def test_u1_an_undone_tap_is_an_offer_again_with_and_without_the_brief(
         f"served {s.kinds_of(after)}",
     )
     if s.card_of(after, kind) is not None:
-        # A hook served again after its own tap was undone, on an account without the brief, is
-        # refused at the tap: GAP-17 (named; the cell fails the day it executes).
-        refusals = (
-            {"hook": ("base_moved", gaps.HOOK_RESERVED_AFTER_UNDO)}
-            if kind == "hook" and not brief
-            else None
-        )
         await tap_every_card(
             rec,
             scene.phone,
@@ -591,7 +586,6 @@ async def test_u1_an_undone_tap_is_an_offer_again_with_and_without_the_brief(
             expect=s.kinds_of(after),
             only=frozenset({kind}),
             state=f"undo-reoffer-brief-{'on' if brief else 'off'}",
-            refusals=refusals,
         )
     rec.finish()
 

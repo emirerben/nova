@@ -787,6 +787,36 @@ async def _restate_refused(
     return None
 
 
+async def _unproven(kind: str, ctx: SuggestionContext, card: Any | None) -> str | None:
+    """Why the card's own kind would no longer build and prove it now, or None when it would.
+
+    The tap's last word on an editor-ops or copy card is its kind's witness on the facts as they
+    are (``pinned.proves``, else the registry's rebuild, ``pinned.rebuild_action``). A set is
+    frozen for 24 h and, with the editor triggers off, nothing moves its digest when the creator
+    says something afterwards, so the consent gate above is not the whole question: a hook whose
+    own tap already wrote the title decision (Undo does not take that back, ``copy_decided``), a
+    duplicates card over a length the creator then stated, a card the creator's word now rules
+    out (KRI-129). The same rebuild answers here, on the context this GET already loaded: a card
+    is served only while its kind would still build it. Fails closed: no card to judge, or a
+    rebuild that raises, is a reason, never "fine".
+    """
+    from app.services.suggestions import pinned  # noqa: PLC0415
+
+    if card is None:
+        return "no_card"
+    rebuilt = await pinned.rebuild_action(
+        None,
+        suggestion=card,
+        thread=None,
+        item=None,
+        manifest=None,
+        target=None,
+        protocol=ctx.client_protocol,
+        ctx=ctx,
+    )
+    return None if rebuilt is not None else "unproven"
+
+
 async def dead_card_kinds(
     db: Any,
     thread: Any,
@@ -796,7 +826,8 @@ async def dead_card_kinds(
 ) -> dict[str, str]:
     """``{kind: why}`` for the card kinds in ``kinds`` whose tap would be refused right now.
 
-    ``cards`` is ``{kind: Suggestion}`` of the set (a restating tap judges the card's own action).
+    ``cards`` is ``{kind: Suggestion}`` as the tap would find them (``_offered_cards``): a
+    restating tap judges the card's own action, and every other card is proven again by its kind.
     Fails closed: a check that cannot be made leaves its cards out (a card the server cannot
     prove is not offered), never the other way round.
     """
@@ -817,6 +848,10 @@ async def dead_card_kinds(
     except Exception:  # noqa: BLE001 - what cannot be proven is not offered
         log.warning("suggestion_chips.error", stage="dead_cards", exc_info=True)
         return {**dead, **dict.fromkeys(left - dead.keys(), "check_failed")}
+    for kind in sorted((left - dead.keys()) - RESTATING_KINDS):
+        reason = await _unproven(kind, ctx, (cards or {}).get(kind))
+        if reason is not None:
+            dead[kind] = reason
     # One restating kind failing to prove itself costs that card, not the others.
     for kind in sorted((left - dead.keys()) & RESTATING_KINDS):
         try:
@@ -839,14 +874,9 @@ async def _strip_dead_cards(db: Any, thread: Any, served: Served) -> None:
     if not out.suggestions or served.ctx is None:
         return
     kinds = frozenset(c.kind for c in out.suggestions)
-    # A restating tap judges the card's own action, which the wire never carries.
-    built = await _built_set(served) if kinds & RESTATING_KINDS else None
+    # A tap judges the card's own action, which the wire never carries.
     dead = await dead_card_kinds(
-        db,
-        thread,
-        served.ctx,
-        kinds,
-        {s.kind: s for s in built.suggestions} if built is not None else None,
+        db, thread, served.ctx, kinds, await _offered_cards(thread, served)
     )
     if not dead:
         return
@@ -1381,13 +1411,8 @@ async def _server_cards(served: Served) -> list[dict[str, Any]] | None:
     return ring_suggestions(built)
 
 
-async def _built_set(served: Served) -> Any | None:
-    """The server-side set (actions included) behind the cards this read serves, or None.
-
-    Rebuilt from the same context, plan and cached picks as the wire cards. None when its ids
-    differ from the ones served. The strip and the ring write both read it, so a card is judged
-    on the very build the ring would store.
-    """
+async def _assembled(served: Served) -> Any | None:
+    """The server-side set (actions included) the context, plan and cached picks build NOW."""
     shown = served.unfiltered or served.out
     if not shown.suggestions or served.ctx is None or served.plan is None:
         return None
@@ -1400,9 +1425,50 @@ async def _built_set(served: Served) -> Any | None:
     except Exception:  # noqa: BLE001 - no cache: the deterministic order is the fallback
         picks = None
     built, _drops = assemble_suggestions(served.ctx, served.plan, picks)
+    return built
+
+
+async def _built_set(served: Served) -> Any | None:
+    """``_assembled`` when its ids are the ones served, else None.
+
+    The ring write reads it: cards whose ids differ (the picks expired from Redis in between) are
+    not stored, a tap on such a card answers "no longer fits" instead of running a different one.
+    """
+    shown = served.unfiltered or served.out
+    built = await _assembled(served)
     if built is not None and [s.id for s in built.suggestions] != [s.id for s in shown.suggestions]:
         return None
     return built
+
+
+async def _offered_cards(thread: Any, served: Served) -> dict[str, Any]:
+    """``{kind: Suggestion}`` of the cards this read serves, as the tap would find them.
+
+    The tap runs the card the ring entry stores (``pinned.stored_card``), so that is the one the
+    strip judges. A set the ring does not hold yet (its first read) is judged on the card the ring
+    write is about to store: the same build, found by id. A card neither has is left out of the
+    map, which the strip reads as "cannot be proven". One card the rebuild no longer produces
+    (the hook, once its decision is in the log) costs that card only, never its neighbours.
+    """
+    from app.services.suggestions import pinned  # noqa: PLC0415
+
+    out = served.out
+    state = getattr(thread, "state", None)
+    found: dict[str, Any] = {}
+    unstored = []
+    for card in out.suggestions:
+        stored = pinned.stored_card(state, out.set_id, card.id)
+        if stored is not None:
+            found[card.kind] = stored.suggestion
+        else:
+            unstored.append(card)
+    if unstored:
+        built = await _assembled(served)
+        by_id = {s.id: s for s in built.suggestions} if built is not None else {}
+        for card in unstored:
+            if card.id in by_id:
+                found[card.kind] = by_id[card.id]
+    return found
 
 
 async def _prepare_cards(served: Served) -> None:
