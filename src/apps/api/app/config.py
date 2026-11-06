@@ -1830,6 +1830,14 @@ class Settings(BaseSettings):
     # Kill switch: `fly secrets set CAPTION_PUNCTUATION_ENABLED=false --app nova-video`
     # + worker restart — byte-identical to pre-feature behavior.
     caption_punctuation_enabled: bool = True
+    # Green 4/5 (2026-11-04), phone Talking captions. CAPTION_REQUEST_NAMES_ENABLED: a name the
+    # creator typed in the request (capitalised mid-sentence, 5+ letters: "Kervan") joins the
+    # quoted spelling asks, so the narrow sound match respells a mishearing of it ("Curvan").
+    # CAPTION_CASE_REFERENCE_ENABLED: a mid-sentence capital whisper's full text put on an ordinary
+    # word ("a Sunrise Fashion Show") is lowered only when Gemini's own record of the take writes
+    # that word lowercase mid-sentence. Both default TRUE; false + worker restart = byte-identical.
+    caption_request_names_enabled: bool = True
+    caption_case_reference_enabled: bool = True
 
     # Self-narration for narrated walkthroughs: a NARRATED_EDIT_FORMATS item with NO
     # recorded voiceover may still generate when its footage carries the voice — the
