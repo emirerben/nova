@@ -8810,11 +8810,11 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     /// Keeps legacy UUID-backed views attached to canonical string slot IDs.
     /// Existing draft metadata wins; otherwise UUID slot IDs are reused and
-    /// opaque server IDs receive a session-stable adapter ID.
+    /// opaque server IDs receive a project-stable adapter ID.
     private func clipID(for slotID: String?) -> UUID {
-        guard let slotID else { return UUID() }
+        guard let slotID, !slotID.isEmpty else { return UUID() }
         if let id = clipIDsBySlot[slotID] { return id }
-        let id = UUID(uuidString: slotID) ?? UUID()
+        let id = EditorCompatibilityClipIdentity.id(projectID: projectID, slotID: slotID)
         clipIDsBySlot[slotID] = id
         return id
     }

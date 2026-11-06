@@ -2995,6 +2995,27 @@ struct LocalEditorOperations: EditorOperations {
     }
 }
 
+enum EditorCompatibilityClipIdentity {
+    static func id(projectID: UUID, slotID: String) -> UUID {
+        if let id = UUID(uuidString: slotID) { return id }
+        return scopedID(projectID: projectID, domain: "slot", key: slotID)
+    }
+
+    static func assetID(projectID: UUID, sourceID: String) -> UUID {
+        if let id = UUID(uuidString: sourceID) { return id }
+        return scopedID(projectID: projectID, domain: "asset", key: sourceID)
+    }
+
+    private static func scopedID(projectID: UUID, domain: String, key: String) -> UUID {
+        let input = "kria.editor-\(domain)/v1\0" + projectID.uuidString + "\0" + key
+        var bytes = Array(SHA256.hash(data: Data(input.utf8)).prefix(16))
+        bytes[6] = (bytes[6] & 0x0f) | 0x80
+        bytes[8] = (bytes[8] & 0x3f) | 0x80
+        return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                           bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
+    }
+}
+
 extension DraftSnapshot {
     /// Rebase the recoverable runtime draft onto the live render variant.
     /// Direct editor commits intentionally do not mint a runtime-draft head, so
@@ -3145,15 +3166,6 @@ extension DraftSnapshot {
         return decodedEditorDraft(projectID: projectID, document: document)
     }
 
-    private static func canonicalEditorID(projectID: UUID, kind: String, key: String) -> UUID {
-        let input = Data("kria-editor:\(projectID.uuidString):\(kind):\(key)".utf8)
-        var bytes = Array(SHA256.hash(data: input).prefix(16))
-        bytes[6] = (bytes[6] & 0x0f) | 0x80
-        bytes[8] = (bytes[8] & 0x3f) | 0x80
-        return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-                           bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
-    }
-
     private func decodedEditorDraft(projectID: UUID, document: [String: JSONValue]) -> EditorDraft {
         let editorPayload = Self.object(document["editor_payload"]) ?? [:]
         let sections = Self.object(editorPayload["sections"]) ?? [:]
@@ -3169,16 +3181,15 @@ extension DraftSnapshot {
                 return EditorClip(id: id, assetID: assetID, sourceClipIndex: Self.integer(object["clip_index"]), start: start, end: end, trimIn: trimIn, trimOut: trimOut, sourceDuration: Self.number(object["source_duration"] ?? object["source_duration_s"]), muted: object["muted"] == .bool(true))
             }
             guard let duration = Self.number(object["duration_s"]), duration > 0 else { return nil }
-            let opaqueID = [object["id"]?.stringValue, object["slot_id"]?.stringValue]
+            let canonicalID = [object["slot_id"]?.stringValue, object["id"]?.stringValue]
                 .compactMap { $0 }.first { !$0.isEmpty }
-            let key = opaqueID.map { "id:\($0)" } ?? "position:\(index)"
             let id = Self.uuid(object["id"]) ?? Self.uuid(object["slot_id"])
-                ?? Self.canonicalEditorID(projectID: projectID, kind: "slot", key: key)
+                ?? canonicalID.map { EditorCompatibilityClipIdentity.id(projectID: projectID, slotID: $0) } ?? UUID()
             let assetID: UUID
             if let explicit = Self.uuid(object["asset_id"]) {
                 assetID = explicit
             } else if let opaqueAsset = object["asset_id"]?.stringValue, !opaqueAsset.isEmpty {
-                assetID = Self.canonicalEditorID(projectID: projectID, kind: "asset", key: opaqueAsset)
+                assetID = EditorCompatibilityClipIdentity.assetID(projectID: projectID, sourceID: opaqueAsset)
             } else {
                 assetID = id
             }
