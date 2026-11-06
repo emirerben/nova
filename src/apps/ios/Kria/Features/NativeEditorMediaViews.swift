@@ -829,7 +829,13 @@ struct NativeVideoPreview: View {
                         }
                     if let previous = session.previousPreviewPresentation {
                         VStack(spacing: 8) {
-                            NativeEditorPlayerSurface(player: previous.player)
+                            Group {
+                                if let frame = previous.frame {
+                                    Image(uiImage: frame).resizable()
+                                } else {
+                                    NativeEditorPlayerSurface(player: previous.player)
+                                }
+                            }
                                 .aspectRatio(previous.aspectRatio, contentMode: .fit)
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                             Text(previous.status.message)
@@ -1120,7 +1126,7 @@ struct NativeEditorFullscreenPreview: View {
                 NativeEditorPlayerSurface(player: player, onReadyForDisplay: { ready = true })
                     .aspectRatio(previous?.aspectRatio ?? Double(session.previewAspectRatio), contentMode: .fit)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                if previous == nil, let frame = session.scrubPreviewFrame {
+                if let frame = previous?.frame ?? (previous == nil ? session.scrubPreviewFrame : nil) {
                     Image(uiImage: frame)
                         .resizable()
                         .aspectRatio(contentMode: .fit)

@@ -196,7 +196,8 @@
         "src/apps/ios/Tests/KriaTests/NativeEditorAIActivityTests.swift",
         "src/apps/ios/Kria/Core/NativeEditorPreviewHandoff.swift",
         "src/apps/ios/Tests/KriaTests/NativeEditorPreviewHandoffTests.swift",
-        "src/apps/ios/Tests/KriaTests/NativeEditorPreviewWorkSessionTests.swift"
+        "src/apps/ios/Tests/KriaTests/NativeEditorPreviewWorkSessionTests.swift",
+        "src/apps/ios/Tests/KriaTests/NativeEditorPlaybackFrameReceiptTests.swift"
       ]
     },
     {
