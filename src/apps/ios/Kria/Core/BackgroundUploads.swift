@@ -1181,7 +1181,19 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 // Nothing left to resume, so the asset is no longer on its way: release its claim, or it
                 // would count as pending forever and keep Continue disabled with no way out.
                 releaseSelection(recordID: entry.id, projectID: entry.projectID)
+                inFlight[entry.id] = nil
+                if entry.replacesMediaID != nil {
+                    recordFailure(id: entry.id, projectID: entry.projectID, role: entry.role,
+                                  filename: Self.displayFilename(entry.filename),
+                                  message: "The new take couldn’t be resumed. Record it again. \(RerecordFailure.unchanged)",
+                                  replacesMediaID: entry.replacesMediaID)
+                }
                 continue
+            }
+            // Even while backoff postpones preparation, a durable replacement owns the old clip.
+            if entry.replacesMediaID != nil {
+                inFlight[entry.id] = InFlightUpload(projectID: entry.projectID, role: entry.role,
+                                                   durationS: entry.durationS, replacesMediaID: entry.replacesMediaID)
             }
             guard now.timeIntervalSince(entry.lastHeartbeatAt) >= Self.resumeBackoffInterval else {
                 // Too soon since the last attempt/heartbeat -- leave it exactly as
@@ -1211,7 +1223,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     private func resumePreparation(_ entry: PreparingUpload) -> Task<Void, Never> {
         let recordID = entry.id
         activePreparationIDs.insert(recordID)
-        inFlight[recordID] = InFlightUpload(projectID: entry.projectID, role: entry.role, durationS: entry.durationS)
+        inFlight[recordID] = InFlightUpload(projectID: entry.projectID, role: entry.role, durationS: entry.durationS, replacesMediaID: entry.replacesMediaID)
         let backgroundTaskID = backgroundActivity.begin(name: Self.preparationBackgroundTaskName) { [weak self] in
             Task { @MainActor in self?.markPreparationExpired(recordID: recordID) }
         }
@@ -1220,7 +1232,11 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             guard let self else { return }
             defer {
                 self.activePreparationIDs.remove(recordID)
-                self.inFlight[recordID] = nil
+                // A transient failure leaves a staged retry. Keep its replacement lock until that
+                // entry is consumed or discarded; ordinary uploads retain their existing cleanup.
+                let waitingReplacement = entry.replacesMediaID != nil
+                    && Self.restorePreparingUploads(key: self.defaultsKey).contains { $0.id == recordID }
+                if !waitingReplacement { self.inFlight[recordID] = nil }
                 self.resumeTasks[recordID] = nil
                 self.backgroundActivity.end(backgroundTaskID)
             }
@@ -1312,7 +1328,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 // Otherwise the claim survives with nothing behind it: it keeps counting as pending
                 // (Continue stays disabled) and the picker keeps showing the asset as chosen.
                 releaseSelection(recordID: recordID, projectID: entry.projectID)
-                recordFailure(id: recordID, projectID: entry.projectID, role: entry.role, filename: Self.displayFilename(entry.filename), message: "It couldn’t be resumed. Choose it again.")
+                recordFailure(id: recordID, projectID: entry.projectID, role: entry.role, filename: Self.displayFilename(entry.filename),
+                              message: entry.replacesMediaID == nil ? "It couldn’t be resumed. Choose it again." : RerecordFailure(error).message,
+                              replacesMediaID: entry.replacesMediaID)
             }
         }
     }
