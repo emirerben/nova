@@ -8973,13 +8973,17 @@ def _card_layout_framing_ok(
 
     Ways it goes wrong: (a) a KRI-547 face fill crops to a close-up where only the
     eyes-nose-mouth core is protected, so a full-width card could cover forehead or chin;
-    (b) a letterboxed ("fit") take moves the face in y; (c) a source taller than 9:16 is
+    (b) a letterboxed take moves the face in y -- the phone letterboxes only a LANDSCAPE
+    take with ``"fit"`` (`phone_recipe_shared.fit_transform`), and cover-fills a portrait or
+    square one whatever the fit, so ``"fit"`` (the content-plan default every normal chat
+    stamps, KRI-1238) closes only a landscape take; (c) a source taller than 9:16 is
     cropped top and bottom. Only a plain cover-fill of a source at least as wide as 9:16
     keeps the grounding's face boxes exact.
     """
+    letterboxed = display_width > display_height and landscape_fit != "fill"
     return bool(
         not face_filled
-        and landscape_fit == "fill"
+        and not letterboxed
         and display_height > 0
         and display_width / display_height >= 9 / 16 - 0.01
     )
