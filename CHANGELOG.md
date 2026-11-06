@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.39.0] - 2026-11-06
+
+### Changed
+- fix(kria): item 15 card layout opens for a portrait take stamped "fit" (KRI-1238) (#2140) <!-- release-pr: 2140 -->
+
 ## [0.88.38.0] - 2026-11-06
 
 ### Changed
