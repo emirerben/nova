@@ -147,7 +147,11 @@ Code: `services/suggestions/pinned.py` (ring reads, lane allow-list, rebuild),
   finds the video moved) takes back the same footprint, but only when the tap wrote a requirement
   or a setting: the draft of an editor tap that wrote neither is still the head, so its card stays
   spent until Undo. Limit: a hook's creative-copy decision stays in the event log
-  (`fold_creative_copy(include_suggestions=True)`), so the hook card is still spent after Undo.
+  (`fold_creative_copy(include_suggestions=True)`), so the hook card is still spent after Undo,
+  with the creative brief or without it: the hook kind's own witness refuses it (`copy_decided`)
+  and the serve asks that witness too (step 7 below). Without the brief nothing else moves the
+  digest when the tap is undone, so the frozen set comes back as it was and only that re-proof
+  keeps the card off the wire.
 - **Undo puts the session's pointer back.** An editor-op draft is built on the saved video, so its
   commit moves `session.target_generation_id` (the video the agent last read) onto it. The draft
   keeps the value it replaced (`result["pointer_sync"]`, written behind
@@ -235,6 +239,20 @@ cards out (what cannot be proven is not offered). The questions, in the tap's or
    guard yet.
 6. **A plan to restate** (`pinned.restate_base`): no strategy draft, or a head that is newer
    editor work, leaves the restating cards out.
+7. **The card's own proof** (`suggestion_serve._unproven`; every card that is not a restating one:
+   the editor-ops cards and the hook). The tap's last word on such a card is its kind's witness on
+   the facts as they are, else the registry's rebuild (`pinned.rebuild_action`: still switched on,
+   still available, not already in the edit, built again, proven). The serve runs that rebuild on
+   the context this GET already loaded, on the card the tap would run: the ring's stored card, or
+   on the first read of a set the card the ring write is about to store (`_offered_cards`). A card
+   its kind would no longer build is left out: a hook whose own tap already wrote the title
+   decision (Undo does not take it back), a duplicates card over a length the creator then stated,
+   any card the creator's word now rules out (KRI-129). It is what keeps a frozen set honest with
+   `KRIA_SUGGESTION_EDITOR_TRIGGERS_ENABLED` off (nothing then moves the digest when the creator
+   speaks after the serve) and after an Undo without the brief (the digest returns to its first
+   value). One card the rebuild cannot make costs that card only, never its neighbours. A card
+   with no stored or rebuilt copy, or a rebuild that raises, is left out. Pinned by
+   `tests/e2e_suggestions/test_r7_serve_proof.py` (GAP-17 closed by it).
 
 `refresh_for_item` / `refresh_for_thread` (the editor-triggers refresh) do nothing without the chip
 capability: no thread lookup, no Redis debounce key, no run, for everyone or for this creator.
@@ -284,8 +302,9 @@ creator's words, because every word list needs a twin per language and misses a 
   exception is the footage's own sound lane: a requirement whose typed `clip_sound` facts
   `clip_sound_toggle_ask` reads (a clip's sound turned on or off, what a mute-clip tap writes and
   what "clip sound off except that last line" is) is about what a clip plays and withholds neither
-  card. A `clip_sound` fact that reader cannot parse is not that lane, so the requirement still
-  speaks. An `audio` requirement with no such fact withholds in any wording (GAP-15 stays closed);
+  card, but only while `KRIA_SUGGESTION_PINNED_TAPS_ENABLED` is on: with it off every `audio`
+  requirement speaks, exactly as on main (`test_r7_flag_off_brief_asks.py` compares both). A
+  `clip_sound` fact that reader cannot parse is not that lane, so the requirement still speaks. An `audio` requirement with no such fact withholds in any wording (GAP-15 stays closed);
   a mis-kinded ask the writer files as `audio` withholds too, which is the safe direction.
 - **facts**: `caption*` (captions), `animation` / `text_animation` (title animation),
   `audio_intent: no_music` and `music*` (music), `sfx` / `sound_effect*` / `licensed_sfx*` (sound
@@ -354,4 +373,4 @@ The end-to-end proof (`tests/e2e_suggestions`, `tests/e2e_suggestions/README.md`
 path for every kind in English and Turkish: GET -> the real worker body with a cassette -> GET ->
 `submit_turn` -> `run_kria_turn`. A check that fails because of a defect in code the proof does not
 own carries a named `Gap`; the day it passes the run fails with "gap closed, remove the marker".
-GAP-4 was closed by the typed duplicate-send signal; GAP-5, GAP-10 and GAP-11 were closed by the serve strip and the Turkish word list above.
+GAP-4 was closed by the typed duplicate-send signal; GAP-5, GAP-10 and GAP-11 were closed by the serve strip and the Turkish word list above; GAP-17 (a hook served again after its own Undo, refused at the tap) by the card's own proof (step 7).

@@ -58,7 +58,7 @@ set, and after Undo: the draft, the approval, the brief and the item settings ar
 | `test_first_prompt.py` | N7: before any render only chips; each chip tap stays on the KRI-756 path |
 | `test_kill_and_stale.py` | S1/S2/K1/K3: the change already in the edit, a Save that moved the video, per-kind and master switches, for every kind |
 | `test_creators_word.py` | W1/W2: the creator's request withholds the card (EN and TR), and hook copy gates |
-| `test_undo_retap.py` | U1: Undo gives the card back exactly once (a hook stays spent: documented) |
+| `test_undo_retap.py` | U1: Undo gives the card back exactly once (a hook stays spent, brief on or off: documented) |
 | `test_r4_serve_*.py` | the serve lane's fixtures: consent gate, kill switches, restate readiness, Turkish fold, look-alike letters, flag subordination |
 | `test_r5_save.py` | V1-V7: a native Save through the REAL editor-commit route, cards served before and after it, the fence in front of the filler card |
 | `test_r5_lifecycle.py` | L1-L5: a staged filler/mute render that is denied, lapses (lazily and by the sweep), is cancelled, outlived by a newer video or undone; then the card is tapped again |
@@ -69,6 +69,8 @@ set, and after Undo: the draft, the approval, the brief and the item settings ar
 | `test_r5_serve_*.py`, `test_r6_brief_asks.py`, `test_r6_duplicates_length.py`, `test_r6_restate_drift.py` | the serve lanes' fixtures: identity, evidence, strip, brief asks (KRI-667), a stated length, serve-and-tap never part |
 | `test_r6_orders.py` | O1-O6: a native Save, an editor card and Undo in six orders (also with the brief off); a readiness account after a Save. Every tap sits on the saved video, an Undo never takes a Save, the held filler card is refused `base_moved` |
 | `test_r6_scenarios.py` | M (the mark gate, four states, both languages), R (approval readiness with a 6 s / 8 s / 20 s length ask, pinned plan or not, the east-run brief), B (a busy ring write: chips alone, then every card; held cards survive), D (duplicates and a stated length, before and after the serve), U (a taken-back tap is an offer again, brief on and off) |
+| `test_r7_serve_proof.py` | A: the hook after its own Undo (brief on/off x triggers on/off, both languages) is not served, and everything served executes. B: every other kind undone without the brief is an offer again and every served card executes. C: with the editor triggers off, a card the creator's word has since ruled out (a stated length, a title requirement, a captions / music / sound-effects / transition ask) is not served |
+| `test_r7_flag_off_brief_asks.py` | F1/F2: with pinned taps off, `brief_asks` and the real GET read the brief exactly as origin/main does (a verbatim copy of main's rule is the oracle) |
 | `scenes.py` | the state helpers: `route_save`, `decide`, `lapse_approval`, `sweep_expired_approvals`, `agent_reads_video` |
 
 ## States, not just footage
@@ -91,9 +93,10 @@ A check that fails because of code outside this directory carries a `Gap` (`gaps
 prints it, the run stays green, and the day the check passes the run fails with "gap closed, remove
 the marker". Gaps closed upstream have no marker, so they are ordinary failing checks now.
 `test_probe_gaps.py` keeps the minimal repros of the closed GAP-1 and GAP-2 as plain regression tests.
-Open now: GAP-17 (a hook card is served again after its own Undo on an account without the creative
-brief, and its tap is refused). A gap whose card was served and refused is a `serves_dead_card`
-gap: `kinds_proven` reports `tap_executes: false` for its kind whatever the other cells did.
+Open now: none (GAP-17, a hook card served again after its own Undo on an account without the
+creative brief and refused at the tap, was closed in round 7). A gap whose card was served and
+refused is a `serves_dead_card` gap: `kinds_proven` reports `tap_executes: false` for its kind
+whatever the other cells did.
 
 The cassette is a preference list, not a recorded model answer: the call's own strict
 `response_schema` decides which of its kinds and clip handles are possible answers, so one file
