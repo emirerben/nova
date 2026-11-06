@@ -26,12 +26,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-import structlog
 from pydantic import ValidationError
 
 from app.config import settings
-
-log = structlog.get_logger()
 
 # What the live planner adds to the media (``planner._enrich_best_parts_snapshot``); a test pins
 # that it adds these keys and no others.
