@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.38.0] - 2026-11-06
+
+### Changed
+- fix(render): pin qualified Unicode graphemes for native timing parity (#2141) <!-- release-pr: 2141 -->
+
 ## [0.88.37.0] - 2026-11-06
 
 ### Changed
