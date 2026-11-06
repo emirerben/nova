@@ -3145,6 +3145,15 @@ extension DraftSnapshot {
         return decodedEditorDraft(projectID: projectID, document: document)
     }
 
+    private static func canonicalEditorID(projectID: UUID, kind: String, key: String) -> UUID {
+        let input = Data("kria-editor:\(projectID.uuidString):\(kind):\(key)".utf8)
+        var bytes = Array(SHA256.hash(data: input).prefix(16))
+        bytes[6] = (bytes[6] & 0x0f) | 0x80
+        bytes[8] = (bytes[8] & 0x3f) | 0x80
+        return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                           bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
+    }
+
     private func decodedEditorDraft(projectID: UUID, document: [String: JSONValue]) -> EditorDraft {
         let editorPayload = Self.object(document["editor_payload"]) ?? [:]
         let sections = Self.object(editorPayload["sections"]) ?? [:]
@@ -3160,11 +3169,23 @@ extension DraftSnapshot {
                 return EditorClip(id: id, assetID: assetID, sourceClipIndex: Self.integer(object["clip_index"]), start: start, end: end, trimIn: trimIn, trimOut: trimOut, sourceDuration: Self.number(object["source_duration"] ?? object["source_duration_s"]), muted: object["muted"] == .bool(true))
             }
             guard let duration = Self.number(object["duration_s"]), duration > 0 else { return nil }
-            let id = Self.uuid(object["id"]) ?? Self.uuid(object["slot_id"]) ?? UUID()
+            let opaqueID = [object["id"]?.stringValue, object["slot_id"]?.stringValue]
+                .compactMap { $0 }.first { !$0.isEmpty }
+            let key = opaqueID.map { "id:\($0)" } ?? "position:\(index)"
+            let id = Self.uuid(object["id"]) ?? Self.uuid(object["slot_id"])
+                ?? Self.canonicalEditorID(projectID: projectID, kind: "slot", key: key)
+            let assetID: UUID
+            if let explicit = Self.uuid(object["asset_id"]) {
+                assetID = explicit
+            } else if let opaqueAsset = object["asset_id"]?.stringValue, !opaqueAsset.isEmpty {
+                assetID = Self.canonicalEditorID(projectID: projectID, kind: "asset", key: opaqueAsset)
+            } else {
+                assetID = id
+            }
             let sourceStart = Self.number(object["in_s"]) ?? 0
             let start = cursor; cursor += duration
             let sourceDuration = Self.number(object["source_duration"] ?? object["source_duration_s"]) ?? (sourceStart + duration)
-            return EditorClip(id: id, assetID: Self.uuid(object["asset_id"]) ?? id, sourceClipIndex: Self.integer(object["clip_index"]) ?? index, start: start, end: start + duration, trimIn: sourceStart, trimOut: sourceStart + duration, sourceDuration: sourceDuration, muted: object["muted"] == .bool(true), slotID: object["slot_id"]?.stringValue)
+            return EditorClip(id: id, assetID: assetID, sourceClipIndex: Self.integer(object["clip_index"]) ?? index, start: start, end: start + duration, trimIn: sourceStart, trimOut: sourceStart + duration, sourceDuration: sourceDuration, muted: object["muted"] == .bool(true), slotID: object["slot_id"]?.stringValue)
         }
         let textValues = Self.array(sections["text_elements"] ?? legacy["text"])
         let text = textValues.compactMap { value -> TextLayer? in
