@@ -1868,6 +1868,39 @@ class Settings(BaseSettings):
         "and worker restart.",
     )
 
+    # Qendresa "says done but isn't", group B: four bug-fix kill switches, default ON. Each
+    # keys on a typed brief fact (KRI-667). `false` = the previous behaviour, byte-identical.
+    # Apply: `fly secrets set <NAME>=false --app nova-video` + api and worker restart.
+    # Failure modes: docs/reviews/qendresa-says-done-b-failure-modes.md.
+    keep_whole_take_plan_enabled: bool = Field(
+        default=True,
+        description="Case 2: a one-video-clip footage-owned montage whose brief has "
+        "`timing/global {keep_whole_take: true}` and no creator length plays that clip whole "
+        "in the approval-time length plan (the worker plays the approved windows). Off: the "
+        "plan keeps the analyser's best moment, as before.",
+    )
+    creator_mute_wins_enabled: bool = Field(
+        default=True,
+        description="Case 4: a whole-video `clip_sound: off` ask (no exceptions, no `on` ask) "
+        "means the render contract pins no camera audio (`original_audio` require and "
+        "`audio_source_ids` dropped), and a phone job whose pinned contract still requires it "
+        "relaxes those two fields on a per-variant contract revision when the muted recipe "
+        "conflicts. Off: the strategy's camera-audio pin wins and the mute steps back.",
+    )
+    whole_video_text_pin_enabled: bool = Field(
+        default=True,
+        description="Case 9: on the unified montage, an opening title whose words are a live "
+        "`text/global` literal (no title-scope literal with those words, no typed title hold, "
+        "no title animation) is drawn as a whole-video pin instead of a 2.2 s title. Off: the "
+        "short opening title, as before.",
+    )
+    title_hold_not_length_enabled: bool = Field(
+        default=True,
+        description="Case 10: a requirement scoped to the title (`timing/title "
+        "{duration_s: 3}`) holds the title; `freeze_ask.times_one_moment` says so, so no "
+        "length reader takes it as the video's total. Off: read as before.",
+    )
+
     speech_cleanup_budget_clamp_enabled: bool = Field(
         default=True,
         description="Explicit-consent removal clamp for required_v1 speech cleanup "

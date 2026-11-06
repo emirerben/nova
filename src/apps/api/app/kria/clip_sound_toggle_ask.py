@@ -202,6 +202,24 @@ def brief_sound_toggle_asks(brief: CreativeBrief | None) -> tuple[SoundToggleAsk
     return sound_toggle_asks(brief.live()) if brief is not None else ()
 
 
+def mutes_whole_video(asks: Iterable[SoundToggleAsk]) -> bool:
+    """True when the asks silence the clips' own sound end to end: a whole-video ``off`` with
+    no exceptions and no ``on`` ask anywhere (Qendresa case 4, "mute my sound"). Any ask that
+    keeps some camera sound (an exception, a clip, a window, a line turned on) is not one."""
+    found = False
+    for ask in asks:
+        if ask.state == SOUND_ON:
+            return False
+        if ask.state == SOUND_OFF and ask.target.whole_video and not ask.exceptions:
+            found = True
+    return found
+
+
+def brief_mutes_whole_video(brief: CreativeBrief | None) -> bool:
+    """`mutes_whole_video` over a brief's live requirements (False without one)."""
+    return mutes_whole_video(brief_sound_toggle_asks(brief))
+
+
 __all__ = [
     "CLIP_POSITIONS",
     "SOUND_CLIP_FACT",
@@ -215,7 +233,9 @@ __all__ = [
     "SOUND_TO_FACT",
     "SoundTarget",
     "SoundToggleAsk",
+    "brief_mutes_whole_video",
     "brief_sound_toggle_asks",
+    "mutes_whole_video",
     "requirement_sound_toggle",
     "sound_toggle_asks",
 ]
