@@ -16,6 +16,8 @@ from app.services.slide_post_ai_requests import (
     AIReceiptConflict,
     SQLAIRequestStore,
     delivery_enabled,
+    unclaimed_pending,
+    unclaimed_pending_predicates,
 )
 
 log = structlog.get_logger()
@@ -23,17 +25,13 @@ log = structlog.get_logger()
 
 async def deliver(db, request_id):
     row = await db.get(SlidePostAIRequest, request_id, populate_existing=True)
-    if row is None or row.status != "pending" or row.claim_id is not None:
+    if row is None or not unclaimed_pending(row):
         return
     if not delivery_enabled(row.kind):
         return
     store = SQLAIRequestStore(db)
-    # Legacy pending input lacks the original effective snapshot. Never rebuild it.
-    if not row.prepared_input or not row.authority_snapshot:
-        await store.reject(
-            row.id, "The original AI inputs are unavailable. Send a new instruction."
-        )
-        return
+    # Missing legacy evidence is unresolved, not proof of nonexecution. Leave
+    # its durable state/token intact for observation or verified late completion.
     if "rejection" in row.prepared_input:
         await store.reject(row.id, row.prepared_input["rejection"])
         return
@@ -77,8 +75,7 @@ async def reserve_publications(db, *, request_id=None, now=None):
         return []
     now = now or datetime.now(UTC)
     statement = select(SlidePostAIRequest).where(
-        SlidePostAIRequest.status == "pending",
-        SlidePostAIRequest.claim_id.is_(None),
+        *unclaimed_pending_predicates(),
         or_(
             SlidePostAIRequest.next_delivery_at.is_(None),
             SlidePostAIRequest.next_delivery_at <= now,

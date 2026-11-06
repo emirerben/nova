@@ -595,11 +595,64 @@
     {
       "class": "SlidePostAIRecoveryTests",
       "path": "src/apps/ios/Tests/KriaTests/SlidePostAIRecoveryTests.swift",
-      "sha256": "f84fe9bccb7b4008623e64270fee1670b720eb38eaa30b30b07050cf1cec3e30",
+      "sha256": "7db3ac3c360289700bf899bbadae34ff1bf11ef42dcf1eeaa268880d9599ac20",
       "source_method_candidates": [
         "testPreparedIntentSurvivesRecreationWithExactIdentityAndInput",
         "testOldResultCannotReplaceNewExplicitIntent",
-        "testJournalFailurePreventsReservation"
+        "testJournalFailurePreventsReservation",
+        "testFailedAtomicReplacementRetainsOriginalIntent",
+        "testCrossKindNewIntentRejectsOldResult",
+        "testStaleWriterCannotShortenServerDeadlineOrResetBudget",
+        "testExhaustedAutomaticBudgetAllowsOneExplicitOriginalIntentObservation",
+        "testDeliveryV1AdmissionReservationIsAtomicAcrossStaleSessions"
+      ]
+    },
+    {
+      "class": "SlidePostAISessionRecoveryTests",
+      "path": "src/apps/ios/Tests/KriaTests/SlidePostAIRecoveryTests.swift",
+      "sha256": "7db3ac3c360289700bf899bbadae34ff1bf11ef42dcf1eeaa268880d9599ac20",
+      "source_method_candidates": [
+        "testLostResponseThenRetryReadsOriginalResultWithoutSecondPost",
+        "testProcessRecreationRecoversVisibleResultAndPreservesConflictingLocalEdit",
+        "testAccountReplacementCannotObserveOrApplyOriginalReceipt",
+        "testWrongReceiptIdentityInputOrBaselineNeverStages",
+        "testChangedDigestOfKnownReceiptNeverStages",
+        "testLocalCommitFailureRecoversPaidResultAfterRecreation",
+        "testFailedDeliveredMarkThenUndoDoesNotReapplyAfterRecreation",
+        "testCachedCompletedResultAtZeroReadBudgetRecoversWithoutNetwork",
+        "testOwnerEnvironmentAndProjectReplacementNeverRestorePrivateLocalState",
+        "testLegacyUnscopedStateIsRetainedButNeverAdopted",
+        "testPersistedRetryAfterSuppressesReadsAcrossRecreation",
+        "testOldServerCapabilityPreventsEveryPaidEndpoint",
+        "testOldServerKnownLocalProjectRestoresManualDraftWithoutAuthorizingAI",
+        "testManualOnlyUnknownProjectNeverRestoresAIProposal",
+        "testRolloutOffStillRecoversOriginalResultWithoutNewPost",
+        "testLateOldReceiptCannotConsumeNewExplicitIntent",
+        "testProjectReplacementDuringReceiptGetRejectsOldCallback",
+        "testOldSaveCompletionCannotClearNewContextBusyState",
+        "testDirtyRequestBaselineAndLaterConflictKeepManualCaptionOnApply",
+        "testCapturedOwnerStopsAllBoundMutationsBeforeTransport",
+        "testPreparedBeforePostResumesSameUUIDAndRecoversOnce",
+        "testUnknownAndRejectedChecksNeverMintReplacementButNewInstructionCan",
+        "testCompletedNoopAndFailedResponseDoNotOfferPaidRetry",
+        "testRecoveredProposalKeepsLaterLocalCaptionAndNewServerVersionOnApply",
+        "testFailedRequestReservationMakesNoPost",
+        "testAccountAndItemReplacementDuringReadDiscardOldResult",
+        "testExhaustedAutomaticObserverGetsLaterResultWithoutPostOrReopen",
+        "testStoppedObserverDoesNotReadOrApplyCompletedResult",
+        "testExhaustedMissingAIReceiptNeverResumesPostAndStopFencesLateCompletion",
+        "testLateRetryAfterSurvivesObserverStopAndRestart",
+        "testSlowObserverRejectsWrongReceiptAndChangedOwnerWithoutNewWork",
+        "testGuaranteedPendingDeliveryChecksNeverResubmitAndLaterResultApplies",
+        "testUncertainMissingReceiptExplicitCheckIsGetOnlyEvenWithFastBudget",
+        "testOldServerWithoutDeliveryCapabilityCannotAdmitNewPaidIntent",
+        "testRejectedSameInstructionExplicitSendIsNewIntentButUnknownIsObservationOnly",
+        "testLateInitialAdmissionCannotApplyAcrossStopAndResume",
+        "testLegacyUnknownSlowObservationAcceptsOriginalLateCompletionWithoutPost",
+        "testLegacyUnknownStopRejectsLateGetAndReentryOnlyObservesOriginal",
+        "testLegacyUnknownUnresolvedConflictDoesNotRejectOrReplaceOriginalReceipt",
+        "testLegacyUnknownLateCompletionDoesNotOverwriteNewerDraftOrSource",
+        "testLegacyUnknownLateReadCannotApplyAfterNewInstructionOrAccountTarget"
       ]
     },
     {
@@ -874,7 +927,7 @@
     }
   ],
   "source_candidate_counts": {
-    "app": 677,
+    "app": 723,
     "package": 39,
     "ui": 6
   },
@@ -882,7 +935,7 @@
     "src/apps/ios/Kria/Core/Services.swift": "bd078f3de4a11ac2187fd4b185239c0cf62888f0addcd810ad9aed5de0b1787f",
     "src/apps/ios/Kria/Core/ReviewPlanModel.swift": "b023701367930e7fa69406cb910e6d0093e0c5d680de4608f15245c2f1437506",
     "src/apps/ios/Kria/Core/DeviceRenderSessions.swift": "268cb0b1c2508667c6af9952bb9905133c33250ebf2e107b098b7c0619a3a678",
-    "src/apps/ios/Kria/Core/SlidePost.swift": "41d02e8b0e4950ac5211e81c718d2ce1e55697fa2b80cfa371bc2d7cf80e51c1",
+    "src/apps/ios/Kria/Core/SlidePost.swift": "6247fb92f224933707346ccb4031f5ea01011852fa8545cbaacba98f11c7ed04",
     "src/apps/ios/Kria/Core/SlidePostAIJournal.swift": "2ce60a214a27dc910b5eb2f22161582193d37b09b4ba5054bab5a8dddf698728",
     "src/apps/ios/Kria/Core/SlidePostSubmissionJournal.swift": "f10b19e23760c4a2af09d1ad609db5bbce641775719314aaedc0d39b2d32336c",
     "src/apps/ios/Kria/Features/NativeEditorSession.swift": "b6bdae27649cf2f45bafe8091b4953850d799c7993e98e20d64b3ce4076128c3",
@@ -893,5 +946,6 @@
     "src/apps/ios/Kria/Features/SlidePostExport.swift": "0a11e2778b924567d32099ae25a7b34d57bffac5fef1b2f2dbfd4ccdbcfe4a04",
     "src/apps/ios/Kria/Features/ChatUITestTransport.swift": "d10d0cb2931269eb182ad97c883b1a7490422c427db275a22a0ffd7e9d1f1b7a",
     "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift": "be2f1f133727bc843867e311a8030b2abcdb0a95bdfcd0cdaabc742173676df8"
-  }
+  },
+  "selection_revision_note": "Supersedes 51249 source selection: include XCTest classes and extensions, including SlidePostAISessionRecoveryTests. Static candidates only, no compiler discovery/execution."
 }

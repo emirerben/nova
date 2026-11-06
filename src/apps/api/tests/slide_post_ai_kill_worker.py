@@ -152,6 +152,14 @@ async def run():
     engine = create_async_engine(settings.asyncpg_database_url, poolclass=NullPool)
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+            if stage == "legacy_complete":
+                accepted = await SQLAIRequestStore(db).complete(
+                    uuid.UUID(identifier),
+                    uuid.UUID(admission["claim_id"]) if admission["claim_id"] else None,
+                    admission["result"],
+                )
+                print("COMPLETED" if accepted else "REFUSED", flush=True)
+                return
             if stage == "before_enqueue":
                 from inspect import unwrap
                 from types import SimpleNamespace

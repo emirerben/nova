@@ -156,6 +156,7 @@ private actor AIRecoveryAPI: KriaAPIClient {
     private var successful = false
     private var fault: String?
     private var receiptStatus: SlidePostAIReceipt.Status = .completed
+    private var receiptDeliveryVersion: Int? = 1
     private var readError: Error?
     private var lateReadError: Error?
     private var change = "caption"
@@ -170,8 +171,8 @@ private actor AIRecoveryAPI: KriaAPIClient {
     private var posts = 0
     private var reads = 0
     init(state: SlidePostState) { self.state = state }
-    func configure(successful: Bool = false, fault: String? = nil, status: SlidePostAIReceipt.Status = .completed, readError: Error? = nil, change: String = "caption") {
-        self.successful = successful; self.fault = fault; self.receiptStatus = status; self.readError = readError; self.change = change
+    func configure(successful: Bool = false, fault: String? = nil, status: SlidePostAIReceipt.Status = .completed, readError: Error? = nil, change: String = "caption", deliveryVersion: Int? = 1) {
+        self.successful = successful; self.fault = fault; self.receiptStatus = status; self.readError = readError; self.change = change; self.receiptDeliveryVersion = deliveryVersion
     }
     func setState(_ value: SlidePostState) { state = value }
     func slidePost(itemID: String) async throws -> SlidePostState { state }
@@ -207,7 +208,7 @@ private actor AIRecoveryAPI: KriaAPIClient {
             itemID: fault == "item" ? UUID() : receipt.itemID, projectID: fault == "project" ? UUID() : receipt.projectID,
             kind: fault == "kind" ? .propose : receipt.kind, inputDigest: fault == "digest" ? "changed" : receipt.inputDigest,
             input: fault == "input" ? .object(["message": .string("other")]) : receipt.input,
-            status: receiptStatus, result: receiptStatus == .completed ? result : nil, deliveryVersion: 1)
+            status: receiptStatus, result: receiptStatus == .completed ? result : nil, deliveryVersion: receiptDeliveryVersion)
     }
     func setLateReadError(_ error: Error?) { lateReadError = error }
     func suspendPosts() { pausePost = true }
@@ -874,5 +875,117 @@ extension SlidePostAISessionRecoveryTests {
         let counts = await h.api.counts(); XCTAssertEqual(counts.posts, 1)
         h.advance(); await value.recoverAI(api: h.api, itemID: itemID, explicit: false)
         XCTAssertEqual(value.draft?.caption, "AI caption")
+    }
+}
+
+// Unsupported legacy pending envelopes are observed as unknown, never rejected or resubmitted.
+// Written against the real client journal/recovery paths; native execution remains held.
+extension SlidePostAISessionRecoveryTests {
+    private func seedLegacyUnknown(_ h: AIHarness, session: SlidePostSession) async throws -> UUID {
+        await session.refresh(api: h.api, itemID: itemID)
+        let baseline = try XCTUnwrap(session.draft)
+        let draft = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(baseline))
+        let input: JSONValue = .object(["message": .string("caption"), "expected_version": .number(1), "draft": draft])
+        let id = UUID()
+        var record = SlidePostAIRecord(scope: h.scope, projectID: projectID, kind: .chatEdit,
+            input: input, baseline: baseline, operationID: id, deliveryVersion: 0)
+        record.remainingReads = 0; record.remainingPosts = 0
+        try h.journal.reserve(record)
+        await h.api.configure(status: .unknown, deliveryVersion: 0)
+        // Represents the original pre-upgrade provider invocation, not a client recovery POST.
+        _ = try? await h.api.submitSlidePostAI(itemID: itemID,
+            body: .init(clientRequestID: id, projectID: projectID, kind: .chatEdit, input: input), expectedOwner: h.owner)
+        h.advance(30); await session.recoverAI(api: h.api, itemID: itemID, explicit: false)
+        let observed = try XCTUnwrap(h.journal.load(scope: h.scope, projectID: projectID, kind: .chatEdit))
+        XCTAssertEqual(observed.receipt?.status, .unknown)
+        XCTAssertEqual(observed.receipt?.deliveryVersion, 0)
+        XCTAssertFalse(observed.delivered)
+        return id
+    }
+
+    func testLegacyUnknownSlowObservationAcceptsOriginalLateCompletionWithoutPost() async throws {
+        let h = AIHarness(state: remote()); defer { h.clean() }
+        let value = h.session(); defer { value.stopObserving() }
+        let id = try await seedLegacyUnknown(h, session: value)
+        h.advance(29); await value.recoverAI(api: h.api, itemID: itemID, explicit: false)
+        var counts = await h.api.counts(); XCTAssertEqual(counts.reads, 1)
+        await h.api.configure(status: .completed, deliveryVersion: 0)
+        h.advance(1); await value.recoverAI(api: h.api, itemID: itemID, explicit: false)
+        XCTAssertEqual(value.draft?.caption, "AI caption")
+        counts = await h.api.counts(); XCTAssertEqual(counts.posts, 1); XCTAssertEqual(counts.reads, 2)
+        let final = try XCTUnwrap(h.journal.load(scope: h.scope, projectID: projectID, kind: .chatEdit))
+        XCTAssertEqual(final.operationID, id); XCTAssertTrue(final.delivered)
+    }
+
+    func testLegacyUnknownStopRejectsLateGetAndReentryOnlyObservesOriginal() async throws {
+        let h = AIHarness(state: remote()); defer { h.clean() }
+        let value = h.session(); defer { value.stopObserving() }
+        let id = try await seedLegacyUnknown(h, session: value)
+        await h.api.configure(status: .completed, deliveryVersion: 0); await h.api.suspendReads()
+        h.advance(30)
+        let read = Task { await value.recoverAI(api: h.api, itemID: itemID, explicit: false) }
+        let held = await h.api.waitForSuspension(); XCTAssertTrue(held)
+        value.stopObserving(); await h.api.releaseRead(); await read.value
+        XCTAssertEqual(value.draft?.caption, "original")
+        h.advance(30); await value.recoverAI(api: h.api, itemID: itemID, explicit: false)
+        let stopped = await h.api.counts(); XCTAssertEqual(stopped.reads, 2); XCTAssertEqual(stopped.posts, 1)
+        value.startObserving(); await value.recoverAI(api: h.api, itemID: itemID, explicit: false)
+        XCTAssertEqual(value.draft?.caption, "AI caption")
+        let resumed = await h.api.counts(); XCTAssertEqual(resumed.posts, 1)
+        XCTAssertEqual(try h.journal.load(scope: h.scope, projectID: projectID, kind: .chatEdit)?.operationID, id)
+    }
+
+    func testLegacyUnknownUnresolvedConflictDoesNotRejectOrReplaceOriginalReceipt() async throws {
+        let h = AIHarness(state: remote()); defer { h.clean() }
+        let value = h.session(); defer { value.stopObserving() }
+        let id = try await seedLegacyUnknown(h, session: value)
+        await h.api.configure(status: .unknown, readError: APIError.requestFailed(status: 409, detail: .init("outcome unresolved")), deliveryVersion: 0)
+        h.advance(30); await value.checkAIResult(api: h.api, itemID: itemID)
+        let retained = try XCTUnwrap(h.journal.load(scope: h.scope, projectID: projectID, kind: .chatEdit))
+        XCTAssertEqual(retained.operationID, id); XCTAssertEqual(retained.receipt?.status, .unknown); XCTAssertFalse(retained.delivered)
+        await h.api.configure(status: .completed, deliveryVersion: 0)
+        h.advance(30); await value.recoverAI(api: h.api, itemID: itemID, explicit: false)
+        XCTAssertEqual(value.draft?.caption, "AI caption")
+        let counts = await h.api.counts(); XCTAssertEqual(counts.posts, 1)
+    }
+
+    func testLegacyUnknownLateCompletionDoesNotOverwriteNewerDraftOrSource() async throws {
+        for change in ["caption", "source"] {
+            let h = AIHarness(state: remote()); defer { h.clean() }
+            let value = h.session(); defer { value.stopObserving() }
+            _ = try await seedLegacyUnknown(h, session: value)
+            var newer = try XCTUnwrap(value.draft)
+            if change == "caption" { newer.caption = "new local caption" }
+            else { newer.slides[0].assetID = "replacement-source" }
+            value.stageDraft(newer)
+            await h.api.configure(status: .completed, deliveryVersion: 0)
+            h.advance(30); await value.recoverAI(api: h.api, itemID: itemID, explicit: false)
+            XCTAssertTrue(value.draft?.hasSameContent(as: newer) == true, "Old AI result cannot auto-adopt across replaced source bindings")
+            XCTAssertEqual(value.proposal?.draft.caption, "AI caption", "Retain paid output for explicit review")
+            let counts = await h.api.counts(); XCTAssertEqual(counts.posts, 1)
+        }
+    }
+
+    func testLegacyUnknownLateReadCannotApplyAfterNewInstructionOrAccountTarget() async throws {
+        for change in ["instruction", "account"] {
+            let h = AIHarness(state: remote()); defer { h.clean() }
+            let value = h.session(); defer { value.stopObserving() }
+            let originalScope = h.scope
+            let id = try await seedLegacyUnknown(h, session: value)
+            await h.api.configure(status: .completed, deliveryVersion: 0); await h.api.suspendReads()
+            h.advance(30)
+            let read = Task { await value.recoverAI(api: h.api, itemID: itemID, explicit: false) }
+            let held = await h.api.waitForSuspension(); XCTAssertTrue(held)
+            if change == "instruction" { _ = await value.chatEdit(api: h.api, itemID: itemID, message: "new explicit request") }
+            else { h.owner = "other-account" }
+            await h.api.releaseRead(); await read.value
+            XCTAssertNotEqual(value.draft?.caption, "AI caption")
+            XCTAssertNil(value.proposal)
+            let record = try XCTUnwrap(h.journal.load(scope: originalScope, projectID: projectID, kind: .chatEdit))
+            XCTAssertFalse(record.delivered)
+            if change == "instruction" { XCTAssertNotEqual(record.operationID, id) }
+            else { XCTAssertEqual(record.operationID, id) }
+            let counts = await h.api.counts(); XCTAssertEqual(counts.posts, change == "instruction" ? 2 : 1)
+        }
     }
 }

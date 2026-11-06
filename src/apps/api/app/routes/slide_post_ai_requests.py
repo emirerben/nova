@@ -180,8 +180,8 @@ async def cancel_ai_request(
     if row.status == "pending":
         await SQLAIRequestStore(db).cancel(row.id)
         row = await owned_receipt(item_id, request_id, user, db)
-    if row.status in {"running", "unknown"}:
+    if receipt_output(row)["status"] in {"running", "unknown"}:
         raise HTTPException(
-            409, "This original request was already claimed; its outcome remains observable."
+            409, "The original request outcome is unresolved; cancellation cannot be confirmed."
         )
     return receipt_output(row)

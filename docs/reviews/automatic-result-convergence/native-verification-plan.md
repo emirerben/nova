@@ -22,14 +22,15 @@ Run each whole class from target `KriaTests` on a fresh final-source build. This
 | ChatDraftStagingTests | 85 |
 | SavedEditorRecoveryTests | 31 |
 | DeviceRenderTransientTests | 56 |
-| SlidePostAIRecoveryTests | 3 |
+| SlidePostAIRecoveryTests | 8 |
+| SlidePostAISessionRecoveryTests | 41 |
 | SlidePostSubmissionRecoveryTests | 9 |
 | SlidePostSessionRecoveryTests | 29 |
 | SlidePostExportTests | 57 |
 | SlidePostTests | 39 |
 | SlidePostChatEditTests | 23 |
 
-Total: **677 source candidates in 16 classes**. Confirm the actual discovered and executed methods from xcresult. A selector, manifest entry or aggregate pass count cannot prove that a named critical case ran.
+Total: **723 source candidates in 17 classes**. Confirm the actual discovered and executed methods from xcresult. A selector, manifest entry or aggregate pass count cannot prove that a named critical case ran.
 
 ## Separate package selection
 
@@ -65,4 +66,6 @@ Planning estimate only: fresh serial app compilation may require 30–60 minutes
 
 ## Remaining publication gates
 
-Native/package/UI compilation and execution remain held. Preserve exact incoming speed/split semantics only after coordinated ready heads; do not stack unpublished candidates. API/worker/beat and migration 0138 must be ready before enabling durable AI admission and exposing the new client. Unknown paid outcomes never replay; legacy pending rows missing the original envelope reject explicitly. No publication/admin merge readiness follows from source review or this selection alone.
+Native/package/UI compilation and execution remain held. Preserve exact incoming speed/split semantics only after coordinated ready heads; do not stack unpublished candidates. API/worker/beat and migration 0138 must be ready before enabling durable AI admission and exposing the new client. Unknown paid outcomes never replay; legacy pending rows missing execution evidence remain unresolved and undispatched; only exact existing-token late completion may publish. No publication/admin merge readiness follows from source review or this selection alone.
+
+Selection correction after frozen 51249: the earlier 677-method selection omitted 41 existing AI tests in extensions/the separate SlidePostAISessionRecoveryTests class. The corrected selection includes those plus five new legacy controls: 723 app source candidates in 17 classes, 39 package and six UI. All remain uncompiled/undiscovered/unexecuted. Run both SlidePostAIRecoveryTests and SlidePostAISessionRecoveryTests whole classes; a file path or one class does not execute its sibling class.

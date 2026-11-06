@@ -55,7 +55,24 @@ def rig(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.slide_post_ai_authority.authority_snapshot",
-        AsyncMock(return_value={"original": True}),
+        AsyncMock(
+            return_value={
+                "plan_id": str(uuid.uuid4()),
+                "owner_id": str(user.id),
+                "ownership_epoch": 0,
+                "item_id": str(item.id),
+                "project_id": str(project.id),
+                "thread_status": "active",
+                "thread_state": {},
+                "active_item_id": str(item.id),
+                "draft": item.slide_post,
+                "format": "slides",
+                "theme": None,
+                "idea": None,
+                "notes": None,
+                "assets": [],
+            }
+        ),
     )
     monkeypatch.setattr("app.services.slide_post_ai_delivery.publish_due", AsyncMock())
     rows = {}
@@ -164,7 +181,14 @@ def rig(monkeypatch):
 
             return await gate.run(
                 {
-                    "agent_input": {"utterance": kwargs["message"], "variant_snapshot": {}},
+                    "agent_input": {
+                        "utterance": kwargs["message"],
+                        "prior_turns": [],
+                        "variant_snapshot": {},
+                    },
+                    "baseline": kwargs["draft"].model_dump(mode="json"),
+                    "server_version": 1,
+                    "binding": None,
                     "context": prepared_context(kwargs["run_context"]),
                 },
                 fake_paid,

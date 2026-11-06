@@ -252,11 +252,15 @@ def test_legacy_pending_cannot_reconstruct_from_new_metadata(client, seeded, pai
         item.slide_post = {**item.slide_post, "caption": "Changed without a version bump"}
         db.commit()
     observed = client.get(path(seeded) + "/" + body["client_request_id"])
-    assert observed.json()["status"] == "pending"
+    assert observed.json()["status"] == "unknown"
     assert paid == []
     resumed = client.post(path(seeded), json=body)
-    assert resumed.json()["status"] == "rejected", resumed.text
+    assert resumed.json()["status"] == "unknown", resumed.text
     assert paid == []
+
+    with sync_session() as db:
+        row = db.get(SlidePostAIRequest, uuid.UUID(body["client_request_id"]))
+        assert row.status == "pending" and row.result is None and row.claim_id is None
 
 
 def _pending(client, seeded, monkeypatch):
@@ -510,6 +514,7 @@ def test_publication_batch_is_bounded_fair_and_has_no_attempt_cap(
     from datetime import UTC, datetime, timedelta
 
     from app.services.slide_post_ai_delivery import publish_due
+    from app.services.slide_post_ai_requests import input_digest, unclaimed_pending
 
     _, original_key = _pending(client, seeded, monkeypatch)
     keys = [original_key]
@@ -520,6 +525,10 @@ def test_publication_batch_is_bounded_fair_and_has_no_attempt_cap(
         for _ in range(50):
             key = uuid.uuid4()
             keys.append(key)
+            request_input = copy.deepcopy(original.request_input)
+            request_input["client_request_id"] = str(key)
+            prepared_input = copy.deepcopy(original.prepared_input)
+            prepared_input["snapshot"]["context"]["request_id"] = f"slide-post-ai:{key}"
             db.add(
                 SlidePostAIRequest(
                     id=key,
@@ -527,9 +536,9 @@ def test_publication_batch_is_bounded_fair_and_has_no_attempt_cap(
                     item_id=original.item_id,
                     project_id=original.project_id,
                     kind=original.kind,
-                    input_digest=original.input_digest,
-                    request_input=copy.deepcopy(original.request_input),
-                    prepared_input=copy.deepcopy(original.prepared_input),
+                    input_digest=input_digest(original.kind, request_input),
+                    request_input=request_input,
+                    prepared_input=prepared_input,
                     authority_snapshot=copy.deepcopy(original.authority_snapshot),
                     status="pending",
                     next_delivery_at=datetime.now(UTC) - timedelta(days=1),
@@ -537,6 +546,8 @@ def test_publication_batch_is_bounded_fair_and_has_no_attempt_cap(
                 )
             )
         db.commit()
+    with sync_session() as observer:
+        assert all(unclaimed_pending(observer.get(SlidePostAIRequest, key)) for key in keys)
     published = []
 
     def enqueue(key):

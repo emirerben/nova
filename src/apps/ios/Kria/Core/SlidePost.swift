@@ -1217,6 +1217,12 @@ struct SlidePostRenderAcknowledgement {
     private func stageAIChat(_ value: SlidePostChatEditResponse, record: SlidePostAIRecord) -> Bool {
         guard value.outcome == .edited, let proposed = value.draft else { return false }
         if let current = draft, let original = record.baseline,
+           // An independent caption still describes the original media. Source replacement
+           // requires review of that paid result, even when the JSON fields do not conflict.
+           current.slides.count == original.slides.count,
+           original.slides.allSatisfy({ source in current.slides.contains {
+               $0.id == source.id && $0.assetID == source.assetID && $0.kind == source.kind
+           } }),
            let merged = try? SlidePostMerge.merge(base: original, local: proposed, remote: current), merged.conflicts.isEmpty {
             // Keep the latest committed baseline; AI's original B is only a merge ancestor.
             baseVersion = max(baseVersion, value.baseVersion)
