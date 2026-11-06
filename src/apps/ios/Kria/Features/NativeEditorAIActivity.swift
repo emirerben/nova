@@ -39,6 +39,8 @@ enum NativeEditorAIStatus: Equatable {
         if case .targetLost = refresh { return nil }
         if let conversation, conversation.projectID == projectID { return conversation.status }
         if preview == .preparing { return .preparingPreview }
+        // The displayed job can be finished while a different, newer job is still being prepared.
+        if refresh == .newVersionRendering { return .rendering }
         if let render {
             // Waiting, errors and cancellation already have their own actionable surface.
             guard render.waiting == nil else { return nil }
@@ -48,7 +50,7 @@ enum NativeEditorAIStatus: Equatable {
             case .localReady, .synced, .needsAttention, .cancelled, .superseded: return nil
             }
         }
-        return refresh == .newVersionRendering ? .rendering : nil
+        return nil
     }
 }
 

@@ -33,6 +33,12 @@ final class NativeEditorAIActivityTests: XCTestCase {
         XCTAssertNil(status(preview: .failed("Preview failed")))
         XCTAssertNil(status(preview: .originalsUnavailable))
         XCTAssertEqual(status(refresh: .newVersionRendering), .rendering)
+        // A completed old job may remain on screen while the new job is rendering.
+        for oldPhase in [DeviceRenderPhase.synced, .localReady, .superseded] {
+            XCTAssertEqual(status(refresh: .newVersionRendering, render: .init(phase: oldPhase)), .rendering)
+        }
+        XCTAssertEqual(status(refresh: .newVersionRendering,
+                              render: .init(phase: .rendering, waiting: .connection)), .rendering)
         XCTAssertNil(status(refresh: .targetLost("Project changed")))
     }
 
