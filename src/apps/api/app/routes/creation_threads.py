@@ -65,7 +65,9 @@ from app.kria.media_sources import (
 )
 from app.kria.plan_contract import CONTRACT_VERSION
 from app.kria.reply_language import (
+    creator_typed_language,
     detect_chat_language,
+    needs_typed_history,
     remember_reply_language,
     reply_language_for,
     resolve_reply_language,
@@ -433,6 +435,9 @@ class CreationCapabilitiesOut(BaseModel):
     speaker_background_color: bool = False
     # KRI-742: the chat composers show a mic button (VOICE_DICTATION_ENABLED).
     voice_dictation: bool = False
+    # Qendresa item 24: the Add media sheet shows the "screen recording belongs in Overlays"
+    # hint (UPLOAD_PLACE_HINT_ENABLED). Additive key; no client protocol gate.
+    upload_place_hint: bool = False
     slide_post_extended_device_export: bool = False
     # KRI-374: the server may ask the creator to confirm the order of takes it
     # could not place against their song (`song_order_question` on a turn plan).
@@ -463,6 +468,9 @@ class CreationCapabilitiesOut(BaseModel):
     # (KRIA_SUGGESTION_CHIPS_ENABLED or the cohort list). Clients gate on this bool; a 404 or
     # empty chips list means "render nothing". No NEXT_PUBLIC twin.
     suggestion_chips: bool = False
+    # Steer now: a message sent while Kria works waits as "Up next"; the app may cancel the
+    # running turn with `steer: true` (KRIA_STEER_NOW_ENABLED or the cohort list). iOS only.
+    steer_now: bool = False
     request_outcome_context: bool = False
     # KRI-815: a reply may carry `voiceover_script` (a footage-grounded script with a
     # record/import continuation) when KRIA_VOICEOVER_SCRIPT_ENABLED. False/absent = the app
@@ -3380,6 +3388,65 @@ async def _render_shape_projection(
         return None
 
 
+async def _cleanup_ask_projection(
+    db: AsyncSession, thread: CreationThread, item: PlanItem
+) -> tuple[bool, bool]:
+    """Qendresa 13: ``(requested_in_chat, tight)`` for the speech-cleanup card.
+
+    Read off the newest pending approval's pinned brief, the same way ``_render_shape_projection``
+    does. ``requested_in_chat``: the creator's own words ask for speech cleanup. ``tight``: they
+    ask for EVERY pause to go AND the draft is a phone Talking single-clip edit (the only render
+    that cuts pauses tight). Best-effort: anything unreadable is ``(False, False)``; it must never
+    break the thread read."""
+    from app.kria.brief_checks import defers_caption_words_to_phone_render  # noqa: PLC0415
+    from app.kria.tight_pause_ask import (  # noqa: PLC0415
+        brief_tight_pauses,
+        brief_wants_speech_cleanup,
+    )
+    from app.services import render_shape  # noqa: PLC0415
+
+    try:
+        if int(getattr(thread, "runtime_version", 1)) != 2:
+            return False, False
+        snapshot = (
+            await db.execute(
+                select(CreatorEditDraft.snapshot_json)
+                .join(CreatorAgentApproval, CreatorAgentApproval.draft_id == CreatorEditDraft.id)
+                .where(
+                    CreatorAgentApproval.thread_id == thread.id,
+                    CreatorAgentApproval.status == "pending",
+                )
+                .order_by(CreatorAgentApproval.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if not isinstance(snapshot, dict):
+            return False, False
+        brief = render_shape.readable_brief(snapshot.get("brief_binding"))
+        if brief is None or not brief_wants_speech_cleanup(brief):
+            return False, False
+        if not brief_tight_pauses(brief):
+            return True, False
+        raw_strategy = snapshot.get("strategy")
+        strategy = raw_strategy if isinstance(raw_strategy, dict) else {}
+        edit_format = strategy.get("edit_format") or getattr(item, "edit_format", None)
+        clip_paths = tuple(getattr(item, "clip_gcs_paths", None) or ())
+        phone_talking = (
+            len(clip_paths) == 1
+            and edit_format in {"subtitled", "talking_head"}
+            and defers_caption_words_to_phone_render(
+                creator_id=thread.creator_id,
+                edit_format=edit_format,
+                audio_strategy=strategy.get("audio_strategy"),
+                clip_paths=clip_paths,
+            )
+        )
+        return True, bool(phone_talking)
+    except Exception:  # noqa: BLE001 - an optional projection never breaks a read
+        log.warning("creation_thread.cleanup_ask_projection_failed", exc_info=True)
+        return False, False
+
+
 async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadOut:
     if isinstance(db, AsyncSession) and (thread.state or {}).get("title_generation") == "pending":
         start_title_generation(thread.id)
@@ -3544,6 +3611,12 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
                 # every legacy required_v1 Job. An item genuinely in the cohort
                 # still gets its card through in_cohort.
                 speech_cleanup = None
+            if settings.tight_pause_cut_enabled and isinstance(speech_cleanup, dict):
+                requested, tight = await _cleanup_ask_projection(db, thread, item)
+                if requested:
+                    speech_cleanup["requested_in_chat"] = True
+                if tight:
+                    speech_cleanup["pause_style"] = "tight"
     render_shape_projection = None
     if isinstance(db, AsyncSession) and item is not None:
         render_shape_projection = await _render_shape_projection(db, thread, item, session)
@@ -4108,6 +4181,7 @@ async def capabilities(
             settings.voice_dictation_enabled
             and (settings.openai_api_key or settings.whisper_backend != "openai-api")
         ),
+        "upload_place_hint": bool(settings.upload_place_hint_enabled),
         "creation_mode": (
             "device_only" if settings.ios_device_only_mode or native_device_only else "hybrid"
         ),
@@ -4160,6 +4234,7 @@ async def capabilities(
         "live_plan_review_enabled": bool(settings.live_plan_review_enabled),
         "live_plan_review_version": CONTRACT_VERSION if settings.live_plan_review_enabled else 1,
         "suggestion_chips": bool(settings.suggestion_chips_for(user.id)),
+        "steer_now": bool(settings.steer_now_for(user.id)),
         "request_outcome_context": True,
         "voiceover_script_cards": bool(settings.kria_voiceover_script_enabled),
     }
@@ -4278,13 +4353,24 @@ async def create_thread(
     # a short follow-up ("ok") keeps it. The device language only picks this
     # prompt's copy and is never stored.
     remember_reply_language(thread, detect_chat_language(body.message))
+    # Green 5: a new chat greets in the language the creator types in their other chats when
+    # its first message (if any) does not say; the device language is the last resort.
+    typed_elsewhere = (
+        await creator_typed_language(db, creator_id=user.id, exclude_thread_id=thread.id)
+        if needs_typed_history(body.message, None)
+        else None
+    )
     await _append(
         db,
         thread,
         event_type="format_prompt",
         role="assistant",
         content=_format_prompt_copy(
-            resolve_reply_language(body.message, locale=request.headers.get("accept-language"))
+            resolve_reply_language(
+                body.message,
+                locale=request.headers.get("accept-language"),
+                typed_elsewhere=typed_elsewhere,
+            )
         ),
         payload={
             "kind": "select_format",

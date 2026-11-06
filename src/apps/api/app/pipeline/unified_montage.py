@@ -4456,6 +4456,20 @@ def _title(
         return None, "none"
     confirmed = _nfc(strategy.get("opening_title"))
     if confirmed:
+        from app.config import settings  # noqa: PLC0415
+
+        if settings.clip_text_tiktok_look_enabled:
+            # Item 21: the same words already pinned for the whole video as a middle line or in
+            # a named look are drawn once, by the pin (KRI-523's dedup for brief literals is the
+            # model). A corner pin without a look still draws beside the title, as with the flag
+            # off.
+            whole = {
+                fold_text(pin.text)
+                for pin in _pinned_texts(strategy)
+                if pin.is_whole_video and (pin.corner == "middle_center" or pin.look is not None)
+            }
+            if fold_text(confirmed) in whole:
+                return None, "none"
         return confirmed, "creator"
 
     def titles(literal: str | None) -> bool:

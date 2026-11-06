@@ -39,10 +39,14 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     /// KRI-1119: Talk-to-camera green screen. The camera offers a live background picker only when the server advertises
     /// it (a build that speaks protocol 27 with the feature on for this account). Missing = off (no Background control).
     var speakerBackground: Bool? = nil
+    /// Item 24: the Footage step points a screen recording sitting next to a talking take to Overlays. Missing = off.
+    var uploadPlaceHint: Bool? = nil
     /// KRI-742: the chat composers show a mic button (talk instead of type). Missing = off (no mic).
     var voiceDictation: Bool? = nil
     /// KRI-756: the server offers footage-aware suggestion chips to this account. Missing = off (the old fixed chips stay).
     var suggestionChips: Bool? = nil
+    /// Steer now: a message sent while Kria works waits as "Up next" and can take over. Missing = off (today's chat).
+    var steerNow: Bool? = nil
     var requestOutcomeContext: Bool? = nil
     /// Server sends `clip_question` payloads and accepts `clip_selection` on a turn (KRI-282). Nil/false = text question only.
     var clipSelectionQuestions: Bool? = nil
@@ -98,8 +102,10 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostTiltZoomEnabled: Bool { slidePostTiltZoom == true }
     var textBendEnabled: Bool { textBend == true }
     var speakerBackgroundEnabled: Bool { speakerBackground == true }
+    var uploadPlaceHintEnabled: Bool { uploadPlaceHint == true }
     var voiceDictationEnabled: Bool { voiceDictation == true }
     var suggestionChipsEnabled: Bool { suggestionChips == true }
+    var steerNowEnabled: Bool { steerNow == true }
     var clipSelectionQuestionsEnabled: Bool { clipSelectionQuestions == true }
     var songOrderQuestionsEnabled: Bool { songOrderQuestions == true }
     /// Only meaningful together with `songOrderQuestionsEnabled`.
@@ -140,8 +146,10 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case slidePostTiltZoom = "slide_post_tilt_zoom"
         case textBend = "text_bend"
         case speakerBackground = "speaker_background"
+        case uploadPlaceHint = "upload_place_hint"
         case voiceDictation = "voice_dictation"
         case suggestionChips = "suggestion_chips"
+        case steerNow = "steer_now"
         case requestOutcomeContext = "request_outcome_context"
         case clipSelectionQuestions = "clip_selection_questions"
         case songOrderQuestions = "song_order_questions"
@@ -188,8 +196,10 @@ extension CreationCapabilities {
         slidePostTiltZoom = try container.decodeIfPresent(Bool.self, forKey: .slidePostTiltZoom)
         textBend = try container.decodeIfPresent(Bool.self, forKey: .textBend)
         speakerBackground = try container.decodeIfPresent(Bool.self, forKey: .speakerBackground)
+        uploadPlaceHint = try container.decodeIfPresent(Bool.self, forKey: .uploadPlaceHint)
         voiceDictation = try container.decodeIfPresent(Bool.self, forKey: .voiceDictation)
         suggestionChips = try container.decodeIfPresent(Bool.self, forKey: .suggestionChips)
+        steerNow = try container.decodeIfPresent(Bool.self, forKey: .steerNow)
         requestOutcomeContext = try container.decodeIfPresent(Bool.self, forKey: .requestOutcomeContext)
         clipSelectionQuestions = try container.decodeIfPresent(Bool.self, forKey: .clipSelectionQuestions)
         songOrderQuestions = try container.decodeIfPresent(Bool.self, forKey: .songOrderQuestions)

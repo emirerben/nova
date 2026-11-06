@@ -39,6 +39,16 @@ Check both EN/TR and subsequent edits. Negative controls must detect missing
 subtitles and an unexpected decorative label. Recipe checks establish layer
 separation, not live-model interpretation or a verified TestFlight export.
 
+## Only the text she asked for (`TEXT_COMPOSER_ASKED_ONLY_ENABLED`)
+
+With the switch on, the creation text pass keeps a composer `add_text` only when it spells one of the creator's literal asks exactly, alone or with the lines right after it on screen (`_exact_covers`): same words in the same order, nothing skipped, added or repeated, and the literal finished ("this is good" is not "this is not good", "go go go go" is not "go go", and "The prompt I run" alone is an unfinished line). Each literal is on screen at most as many times as she asked for it, counting a planned bar that still shows it (a per-clip ask is not capped); a piece of her line beyond that is a repeat. Words compare with the shared Turkish-aware fold, so case, accents, punctuation and emoji do not matter. Her emoji and punctuation (`_ask_marks`: one mark per grapheme cluster, so a skin-toned or ZWJ emoji is one mark and a piece of it is another; "❤" and "❤️" are one heart) share one budget: each mark is on screen at most as often as her literals have it in total (a per-clip ask's marks are not capped). A planned bar that shows her line and every kept line of her words use up the marks they show; emoji inside a line of her words never drop that line, they only use her marks. A line of only marks then stays, first on screen first, when its marks sit together in her order inside one of her literals ("👀🔥" is not "🔥👀") and each is still left ("🔥🔥" and "🔥" together are three fires). A literal of only marks ("🔥") is checked like any other: it allows its marks, never a word. An invented line or a second copy of her line is dropped, not raised (raising would fail her whole video), and logged as `creation_text_unasked_dropped`. The drop is verified: if the program would no longer replay without the dropped line, the drop is skipped (`creation_text_unasked_kept`) and the composer's ops stand, exactly as with the switch off.
+
+Exempt, unchanged: no brief bound, described asks without a literal, story/editorial builds (they keep the old unrequested-text check), research ops (always kept: her own research ask), pinned programs replayed from a stored snapshot, and chat/editor edits.
+
+With the switch on, a title-only or style-only brief's extra line is also dropped instead of failing the render, so `test_approved_hook_journey.py::test_bound_styling_composition_adds_text_only_when_live_brief_requests_it[False]` (the old raise) holds only with the switch off. Known limit: a copy the composer adds next to her planned bar is dropped even when the planned bar is shorter (a 2.2 s title); the composer must retime or move that bar, and a whole-video line belongs in the planner's pin. Known limit: an emoji the composer adds inside a line of her words is kept with that line ("best day ever 😍" for "Best day ever"); dropping it would drop her words too, and the pass drops whole lines, it never rewrites one.
+
+Default off and byte-identical off (guard: `tests/services/test_creation_text_asked_only.py::test_switch_off_keeps_the_composer_line_exactly_as_written`). Apply: fly secret `TEXT_COMPOSER_ASKED_ONLY_ENABLED=true` on api + worker, then restart. Related: KRI-767 (copy guard).
+
 ## State ownership
 
 | Concern | Authority |
@@ -157,7 +167,8 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   all stay live and restating a shot replaces only that shot. A label-every-clip
   rule (no such pair) still replaces the whole per-clip lane, shot texts
   included. The Main Creator (prompt v43) only proposes `brief_updates`, at most
-  16 per turn; unparseable entries are dropped, never fatal. Versions are written by the turn-completion
+  16 per turn (32 with `BRIEF_LONG_REQUEST_ENABLED` when the batch's JSON is within
+  9,000 chars); a larger batch is refused whole, never truncated. Versions are written by the turn-completion
   transaction under the thread lock, after the revision fence, so a requeued
   turn never persists one.
 - **Context is not a command.** The brief records requested output changes, not

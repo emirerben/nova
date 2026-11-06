@@ -251,6 +251,13 @@ def _working_document(state: Any) -> dict | None:
     return background_current(state.job, state.variant)
 
 
+def _keep_full_screen(document: dict, working: object) -> None:
+    """Carry the creator's full-screen opening (Qendresa item 16) onto a rebuilt document: every
+    background op changes the fill, the timed backgrounds or the corner, never the opening."""
+    if isinstance(working, dict) and working.get("full_screen_windows"):
+        document["full_screen_windows"] = [dict(span) for span in working["full_screen_windows"]]
+
+
 def _op_set_background(state: Any, op: dict[str, Any]) -> None:
     from app.services.kria_editor_ops import (  # noqa: PLC0415
         KriaEditorOpError,
@@ -266,6 +273,7 @@ def _op_set_background(state: Any, op: dict[str, Any]) -> None:
     # KRI-1162: one fill replaces the timed backgrounds; the corner the speaker sits in stays.
     if isinstance(working, dict) and working.get("speaker_frame"):
         document["speaker_frame"] = dict(working["speaker_frame"])
+    _keep_full_screen(document, working)
     if document == background_current(state.job, state.variant):
         raise KriaEditorOpError("That photo or video is already behind you")
     state.speaker_background = document
@@ -290,11 +298,17 @@ def _op_set_background_color(state: Any, op: dict[str, Any]) -> None:
             document["windows"] = [dict(window) for window in working["windows"]]
         if working.get("speaker_frame"):
             document["speaker_frame"] = dict(working["speaker_frame"])
+    _keep_full_screen(document, working)
     if document == background_current(state.job, state.variant):
         raise KriaEditorOpError("That colour is already behind you")
     state.speaker_background = document
     state.changed.add("speaker_background")
     state.summary = f"Put a plain {op['color']} background behind you"
+
+
+def _photo_key(media_id: object) -> str:
+    """A pool photo's identity whether it is written ``asset-<id>`` or bare (S59)."""
+    return str(media_id).removeprefix("asset-")
 
 
 def _op_set_background_sequence(state: Any, op: dict[str, Any]) -> None:
@@ -310,15 +324,6 @@ def _op_set_background_sequence(state: Any, op: dict[str, Any]) -> None:
     duration = background_duration_s(state.variant)
     if duration < sequence.MIN_WINDOW_S:
         raise KriaEditorOpError("I can't tell how long this video is, so I can't time backgrounds")
-    layout = sequence.lay_out(
-        [sequence.SequenceEntry(index=i) for i in range(len(ids))],
-        cadence_s=float(op.get("cadence_s") or DEFAULT_CADENCE_S),
-        take_s=duration,
-        words=None,
-        keep_segments=None,
-    )
-    if not layout.windows:
-        raise KriaEditorOpError("This video is too short to change backgrounds")
     working = _working_document(state)
     if isinstance(working, dict) and working.get("color"):
         fill: dict[str, Any] = {"kind": "color", "color": working["color"]}  # KRI-1173
@@ -330,6 +335,17 @@ def _op_set_background_sequence(state: Any, op: dict[str, Any]) -> None:
         }
     else:
         fill = {"media_id": ids[0], "kind": kinds[0], "source_start_s": 0.0}
+    # S57: the same rule as the render worker -- every photo once, the fill never repeating one.
+    layout = sequence.lay_out(
+        [sequence.SequenceEntry(index=i, media_key=_photo_key(ids[i])) for i in range(len(ids))],
+        cadence_s=float(op.get("cadence_s") or DEFAULT_CADENCE_S),
+        take_s=duration,
+        words=None,
+        keep_segments=None,
+        fill_key=_photo_key(fill["media_id"]) if fill.get("media_id") else None,
+    )
+    if not layout.windows:
+        raise KriaEditorOpError("This video is too short to change backgrounds")
     document: dict[str, Any] = {
         **fill,
         "windows": [
@@ -345,13 +361,14 @@ def _op_set_background_sequence(state: Any, op: dict[str, Any]) -> None:
     }
     if isinstance(working, dict) and working.get("speaker_frame"):
         document["speaker_frame"] = dict(working["speaker_frame"])
+    _keep_full_screen(document, working)
     if document == background_current(state.job, state.variant):
         raise KriaEditorOpError("Those backgrounds are already behind you")
     state.speaker_background = document
     state.changed.add("speaker_background")
     state.summary = (
         f"Put {len(set(ids))} backgrounds behind you, changing about every "
-        f"{layout.cadence_s:g} seconds"
+        f"{round(layout.cadence_s, 1):g} seconds"
         if len(set(ids)) > 1
         else "Put the photo behind you"
     )

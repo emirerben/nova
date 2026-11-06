@@ -62,6 +62,7 @@ from app.services.creator_capabilities import (
     ENDING_CLIP_NOTICES,
     SPEAKER_BACKGROUND_NOT_ALSO_A_POP_IN_NOTICE,
     SPEAKER_BACKGROUND_NOTICES,
+    SPEAKER_FULL_OPENING_NOTICES,
     TALKING_CLIP_INTENTS_DROPPED_NOTICE,
     CreatorSfxUnavailableError,
     compile_strategy_to_plan,
@@ -287,6 +288,14 @@ _KNOWN_TR: dict[str, str] = {
     SPEAKER_BACKGROUND_NOTICES["sequence_not_found"]: (
         "Değişen arka plan için söylediğin bazı fotoğraf ya da videoları bulamadım; onları "
         "çıkardım."
+    ),
+    # Qendresa item 16: the speaker full screen in their own take before the background.
+    SPEAKER_FULL_OPENING_NOTICES["app_too_old"]: (
+        "Arka plandan önce seni tam ekran başlatamadım: iPhone uygulaman bunu henüz yapamıyor. "
+        "Uygulamayı güncelleyip tekrar iste."
+    ),
+    SPEAKER_FULL_OPENING_NOTICES["unavailable"]: (
+        "Arka plandan önce seni tam ekran başlatamadım: bu şu an burada kullanılamıyor."
     ),
     # KRI-1173: a plain colour.
     SPEAKER_BACKGROUND_NOTICES["color_unavailable"]: (

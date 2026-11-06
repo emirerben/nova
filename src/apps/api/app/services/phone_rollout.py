@@ -320,6 +320,7 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         or (
             clip.hold_duration is not None
             and not _main_track_freeze(clip, track, recipe.frame_rate)
+            and not _main_track_frame_padding(clip, track, recipe.frame_rate)
         )
         or clip.overlay_above_text is not None
         or clip.overlay_pop_in is not None
@@ -386,6 +387,16 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         raise PhoneCapabilityUnavailable(
             "Timed speaker backgrounds await native parity and device qualification",
             capability="speakerBackgroundWindows",
+        )
+    # Qendresa item 16: the full-screen opening needs its own verified token (S77).
+    if (
+        recipe.speaker_background is not None
+        and recipe.speaker_background.uses_full_screen
+        and "speakerFrameWindows" not in set(settings.phone_render_verified_features)
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Full-screen speaker openings await native parity and device qualification",
+            capability="speakerFrameWindows",
         )
     # KRI-1173: a solid-colour fill needs its own verified token (S50).
     if (
@@ -586,6 +597,45 @@ def text_bend_planned_for(client_protocol: int | None) -> bool:
     )
 
 
+def caption_shape_planned_for(client_protocol: int | None) -> bool:
+    """May a phone Talking render draw the caption shape the creator typed (Qendresa item 12)?
+
+    Read like `freeze_frame_planned_for`: ``client_protocol`` is the approving app build
+    (``creator_client_protocol`` on the Job). True iff the kill switch is on, ``captionShape``
+    (device check of the editor's caption box) and ``authoredText`` (the engine's text box and
+    active-word highlight) are in ``phone_render_verified_features``, and that build declares
+    at least ``CAPTION_SHAPE_PROTOCOL``. No stamp, an older build or any gate off: captions are
+    exactly today's, and the caption receipt says the shape was not drawn.
+    """
+    from app.services.client_protocol import CAPTION_SHAPE_PROTOCOL  # noqa: PLC0415
+
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        settings.phone_caption_shape_enabled
+        and {"captionShape", "authoredText"} <= verified
+        and client_protocol is not None
+        and client_protocol >= CAPTION_SHAPE_PROTOCOL
+    )
+
+
+def talking_card_layout_planned_for(client_protocol: int | None) -> bool:
+    """May a phone Talking render lay cards out in her size and place (Qendresa item 15)?
+
+    Read like `caption_shape_planned_for`: ``client_protocol`` is the approving app build.
+    True iff the kill switch is on, ``cardLayout`` is in ``phone_render_verified_features``
+    and that build declares at least ``CARD_LAYOUT_PROTOCOL``. Any gate off: cards are
+    exactly today's.
+    """
+    from app.services.client_protocol import CARD_LAYOUT_PROTOCOL  # noqa: PLC0415
+
+    return bool(
+        settings.talking_card_layout_enabled
+        and "cardLayout" in set(settings.phone_render_verified_features)
+        and client_protocol is not None
+        and client_protocol >= CARD_LAYOUT_PROTOCOL
+    )
+
+
 def clip_speed_planned_for() -> bool:
     """May a phone montage plan retime a cut for the creator's speed ask (KRI-689)?
 
@@ -602,6 +652,15 @@ def stamped_client_protocol(value: object) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     return value
+
+
+def _main_track_frame_padding(clip: Any, track: Any, frame_rate: float) -> bool:
+    """Match recipe/native validation: at most one output frame is rounding padding."""
+    return (
+        track.kind == "video"
+        and clip.hold_duration is not None
+        and 0 <= clip.hold_duration <= 1 / frame_rate + 1e-6
+    )
 
 
 def _main_track_freeze(clip: Any, track: Any, frame_rate: float) -> bool:
@@ -985,6 +1044,95 @@ def speaker_background_color_unavailable_reason(
     if not speaker_background_color_client_supported(require_client=require_client):
         return "client_protocol_below_min"
     return None
+
+
+def speaker_full_opening_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode ``speaker_background.full_screen_windows``?
+
+    At least ``speaker_full_opening_min_client_protocol`` (41) knows the key; an older build
+    refuses the whole layer (strict decoder). Same ``require_client`` contract as
+    `speaker_background_client_supported` (Qendresa item 16).
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.speaker_full_opening_min_client_protocol
+
+
+def speaker_full_opening_supported(*, require_client: bool | None = None) -> bool:
+    """May a phone recipe carry ``full_screen_windows`` (the speaker full screen in their own
+    take before the background / corner) right now?
+
+    ``SPEAKER_FULL_OPENING_ENABLED`` AND the windows gate (`speaker_background_windows_supported`)
+    AND ``speakerFrameWindows`` in ``phone_render_verified_features`` AND the app-build gate
+    (`speaker_full_opening_client_supported`). When False, `strip_unsupported_background` drops
+    the full-screen windows and keeps everything else (Qendresa item 16, S77).
+    """
+    return bool(
+        settings.speaker_full_opening_enabled
+        and speaker_background_windows_supported(require_client=require_client)
+        and "speakerFrameWindows" in set(settings.phone_render_verified_features)
+        and speaker_full_opening_client_supported(require_client=require_client)
+    )
+
+
+def speaker_full_opening_unavailable_reason(*, require_client: bool | None = None) -> str | None:
+    """Why `speaker_full_opening_supported` is False, or None when open.
+
+    The windows gate's reasons first (`disabled`, `token_not_verified`,
+    `client_protocol_below_min`, `windows_token_not_verified`), then ``full_opening_disabled``
+    (the kill switch), ``full_opening_token_not_verified`` and ``client_protocol_below_min``.
+    Named for the job-debug trace (`speaker_full_opening_phone_fallback`) and the editor's
+    422/426 answers.
+    """
+    base = speaker_background_windows_unavailable_reason(require_client=require_client)
+    if base is not None:
+        return base
+    if not settings.speaker_full_opening_enabled:
+        return "full_opening_disabled"
+    if "speakerFrameWindows" not in set(settings.phone_render_verified_features):
+        return "full_opening_token_not_verified"
+    if not speaker_full_opening_client_supported(require_client=require_client):
+        return "client_protocol_below_min"
+    return None
+
+
+def speaker_full_opening_planned_reason(client_protocol: int | None) -> str | None:
+    """Why a plan may NOT start the speaker full screen for the app build ``client_protocol``,
+    or None when it may (the planner's twin of `speaker_full_opening_unavailable_reason`).
+
+    Read like `text_bend_planned_for`: ``client_protocol`` is the build the creator acted from
+    (the drafting message, then ``creator_client_protocol`` on the Job); there is no request
+    context here because the draft, the pre-approval check and the render all run in Celery.
+    Codes (stable, for receipts): ``disabled`` (the kill switch is off), ``unavailable`` (the
+    background / windows lane or the ``speakerFrameWindows`` token is closed), ``app_too_old``
+    (no stamp, or a build below ``speaker_full_opening_min_client_protocol``).
+    """
+    if not settings.speaker_full_opening_enabled:
+        return "disabled"
+    if not (
+        speaker_background_windows_supported(require_client=False)
+        and "speakerFrameWindows" in set(settings.phone_render_verified_features)
+    ):
+        return "unavailable"
+    if (
+        client_protocol is None
+        or client_protocol < settings.speaker_full_opening_min_client_protocol
+    ):
+        return "app_too_old"
+    return None
+
+
+def speaker_full_opening_planned_for(client_protocol: int | None) -> bool:
+    """May a plan for the app build ``client_protocol`` start the speaker full screen?"""
+    return speaker_full_opening_planned_reason(client_protocol) is None
 
 
 def recipe_has_clip_tilt(recipe: Any) -> bool:
@@ -1746,12 +1894,47 @@ def phone_subtitled_closing_title_supported() -> bool:
     )
 
 
+def cta_ending_available() -> bool:
+    """Server-wide: may a phone Talking edit draw the creator's CTA ending (item 14)?
+
+    The ending is two text rows on the closing-title lane plus a freehand arrow, so it
+    needs the flag, the closing-title lane, and the drawing lane verified on device."""
+
+    return bool(
+        settings.creator_cta_ending_enabled
+        and phone_subtitled_closing_title_supported()
+        and settings.freehand_drawing_enabled
+        and "freehandDrawing" in set(settings.phone_render_verified_features)
+    )
+
+
+def cta_ending_planned_for(client_protocol: int | None) -> bool:
+    """May this creator's phone Talking edit draw the CTA ending (item 14)?
+
+    Read like `text_bend_planned_for`: ``client_protocol`` is the app build the creator
+    acted from (``creator_client_protocol`` on the Job). No stamp, or a build below
+    ``freehand_drawing_min_client_protocol``, keeps today's lime closing tag."""
+
+    return bool(
+        cta_ending_available()
+        and client_protocol is not None
+        and client_protocol >= settings.freehand_drawing_min_client_protocol
+    )
+
+
 def phone_subtitled_spoken_text_supported() -> bool:
     """Can a phone-rendered `subtitled` (Talking) edit show a creator's text at
     the word they say (KRI-707)? It is a plain text row on the KRI-467 lane,
     drawn like the title (one fade-in positioned text layer)."""
 
     return bool(settings.phone_subtitled_spoken_text_enabled and phone_subtitled_title_supported())
+
+
+def phone_list_labels_supported() -> bool:
+    """Can a phone Talking edit show numbered list labels (Qendresa item 19)? The flag AND the
+    spoken-text gate: the rows ride the same authoredText text lane, so no new capability."""
+
+    return bool(settings.spoken_list_labels_enabled and phone_subtitled_spoken_text_supported())
 
 
 def phone_narrated_title_preview_supported() -> bool:

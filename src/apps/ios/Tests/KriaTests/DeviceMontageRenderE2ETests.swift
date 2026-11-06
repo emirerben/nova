@@ -117,6 +117,16 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         try await assertCase("subtitled_fullscreen_visuals")
     }
 
+    /// Item 17: a Talking take whose background changes recording by recording as each one is named
+    /// (`speakerBackground` windows + a corner speaker frame, the approved strategy's
+    /// `background_media.sequence` laid out by the worker). Needs a real person on screen for the
+    /// on-device matte, so the fixture is produced by `scripts/ios/phone-background-windows-e2e.py`
+    /// (never in git); the export lands in `frames/subtitled_background_windows.mp4` for the kit's
+    /// OCR scorer to compare each window with the word that names it.
+    func testSubtitledBackgroundWindowsRenderOnTheIPhone() async throws {
+        try await assertCase("subtitled_background_windows")
+    }
+
     /// KRI-257 / Plan 025 A3: multi-clip self-narrated Talking keeps the
     /// speaker's audio spine continuous, mutes the visual cutaway, draws that
     /// cutaway only in its scheduled window, and continues captions across it.
@@ -189,6 +199,22 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
     func testN2FullscreenCabinReplay() async throws {
         executionTimeAllowance = 600
         try await assertCase("n2_fullscreen")
+    }
+
+    /// Qendresa 13 proof, arm 1: one real talking take rendered with today's consented speech
+    /// cleanup. Built by `scripts/ios/qendresa-13-tight-pauses-e2e.py prepare`, scored by its
+    /// `compare` step. Skips when the case is not in e2e.json.
+    func testQendresa13ConsentedCleanupReplay() async throws {
+        executionTimeAllowance = 600
+        try await assertCase("q13_consented")
+    }
+
+    /// Qendresa 13 proof, arm 2: the same take with consented cleanup plus tight pauses. Built
+    /// by `scripts/ios/qendresa-13-tight-pauses-e2e.py prepare`, scored by its `compare` step.
+    /// Skips when the case is not in e2e.json.
+    func testQendresa13TightPausesReplay() async throws {
+        executionTimeAllowance = 600
+        try await assertCase("q13_tight")
     }
 
     private func assertCase(_ caseID: String, expectedCreationProvenance: String = "authored_model_transport_fixture") async throws {
