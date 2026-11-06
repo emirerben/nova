@@ -106,3 +106,12 @@ the plain word count is recorded too.
 - **F17 Captions and cards read the old geometry.** Text placement that avoids "screen text" or
   faces reads the full canvas, not the aimed recording. Not changed here (placement doesn't read
   the background picture today).
+- **F18 Caption colour judged against the un-aimed picture.** Since #2099 (Green 5) the automatic
+  caption colour is chosen against the background picture, sampled as the plain cover fit; an
+  aimed recording shows another part of itself (a zoomed white page where the cover fit shows a
+  dark player), so white text could land on white. Guard: the compile hands its own focus
+  resolver to `register_generation_background` (one gate question for both), each picture is
+  sampled the way the phone places it (`sample_background(focus=...)`: cover x zoom, never below
+  contain, black bands), and a closed gate records exactly #2099's spec.
+  `tests/pipeline/test_background_focus_caption_contrast.py` (failure modes listed before the
+  fix).

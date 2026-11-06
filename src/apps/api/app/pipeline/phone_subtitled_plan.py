@@ -662,8 +662,15 @@ def compile_phone_subtitled_plan(
     )
 
     register_generation_timeline(main_clips)
-    # Green 5: what is behind the captions, before their colour is chosen below.
-    register_generation_background(lanes.background if lanes is not None else None, canvas=canvas)
+    # Green 5: what is behind the captions, before their colour is chosen below. Qendresa item 18:
+    # aimed as the recipe will aim it, with the same resolver (the gate is asked once).
+    background_lane = lanes.background if lanes is not None else None
+    focus_resolver = (
+        _FocusResolver(visuals, canvas, open_=background_focus_open)
+        if background_lane is not None
+        else None
+    )
+    register_generation_background(background_lane, canvas=canvas, focus_for=focus_resolver)
     register_backdrop_visuals(main_clips, visuals=visuals, assets=assets, manifest=manifest)
 
     try:
@@ -871,6 +878,7 @@ def compile_phone_subtitled_plan(
                 timeline_duration_s=timeline_end,
                 canvas=canvas,
                 focus_open=background_focus_open,
+                focus_resolver=focus_resolver,
             )
         except UnsupportedPhonePlan:
             raise
@@ -1007,6 +1015,7 @@ def _compile_background(
     timeline_duration_s: float | None = None,
     canvas: Canvas = _STORY_CANVAS,
     focus_open: bool | None = None,
+    focus_resolver: _FocusResolver | None = None,
 ) -> SpeakerBackgroundLayer:
     """The recipe layer for the background, pinning its visuals (KRI-1117, S9; KRI-1162).
 
@@ -1023,9 +1032,10 @@ def _compile_background(
     recording (`_FocusResolver`); ``canvas`` is the recipe canvas the picture is cover-fitted
     to. ``focus_open`` is the caller's gate decision for the build that will draw the recipe (the
     worker passes `background_focus_planned_for(<the approving build's stamped protocol>)`);
-    None asks the rollout gate in this context.
+    None asks the rollout gate in this context. ``focus_resolver`` is the compile's shared one (the
+    caption colour already used it, so the gate is not asked again).
     """
-    focus_for = _FocusResolver(visuals, canvas, open_=focus_open)
+    focus_for = focus_resolver or _FocusResolver(visuals, canvas, open_=focus_open)
     # KRI-1173: a colour fill names no pool media -- nothing to pin, no manifest entry.
     fill_asset_id: str | None = None
     fill_focus: SpeakerBackgroundFocus | None = None
