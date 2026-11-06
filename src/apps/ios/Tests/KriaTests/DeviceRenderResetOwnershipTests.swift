@@ -139,19 +139,21 @@ import XCTest
     lazy var sessions = DeviceRenderSessions(fetch: { [remote] jobID, _ in
         await remote.status(for: jobID)
     }, factory: { [unowned self] _, _ in
-        let coordinator = try DeviceRenderCoordinator(directory: root.appendingPathComponent(String(coordinators.count)),
-            exporter: exporter, sources: ResetOwnershipSources(), publisher: ResetOwnershipPublisher(),
-            backgroundExecution: ResetOwnershipExecution(gate: gate))
-        coordinators.append(coordinator)
+        let coordinator = try DeviceRenderCoordinator(directory: self.root.appendingPathComponent(String(self.coordinators.count)),
+            exporter: self.exporter, sources: ResetOwnershipSources(), publisher: ResetOwnershipPublisher(),
+            backgroundExecution: ResetOwnershipExecution(gate: self.gate))
+        self.coordinators.append(coordinator)
         return coordinator
-    }, ownerIdentity: { [unowned self] in owner },
+    }, ownerIdentity: { [unowned self] in self.owner },
        environment: .init(thermalState: { .nominal }, freeStorageBytes: { Int64.max }))
 
     init(firstStarted: XCTestExpectation?, barriers: [Int: XCTestExpectation]) {
-        first = Self.request(job: UUID(), revision: 1)
-        second = Self.request(job: UUID(), revision: 2)
-        firstKey = DeviceRenderKey(projectID: UUID(), jobID: first.identity.jobID, variantID: "first")
-        remote = ResetOwnershipRemote([first, second])
+        let firstRequest = Self.request(job: UUID(), revision: 1)
+        let secondRequest = Self.request(job: UUID(), revision: 2)
+        first = firstRequest
+        second = secondRequest
+        firstKey = DeviceRenderKey(projectID: UUID(), jobID: firstRequest.identity.jobID, variantID: "first")
+        remote = ResetOwnershipRemote([firstRequest, secondRequest])
         gate = ResetOwnershipWindowGate(barriers: barriers)
         exporter = ResetOwnershipExporter(firstStarted: firstStarted)
     }
@@ -167,9 +169,11 @@ import XCTest
 
     func finish() async {
         await gate.releaseAll()
+        for coordinator in coordinators { try? await coordinator.cancel() }
         await exporter.releaseAll()
+        await exporter.waitUntilDrained()
+        await gate.waitUntilFinished()
         await sessions.stopAll()
-        for coordinator in coordinators { await coordinator.waitUntilIdle() }
         try? FileManager.default.removeItem(at: root)
     }
 
@@ -188,10 +192,27 @@ private actor ResetOwnershipWindowGate {
     private var waiting: [Int: CheckedContinuation<Void, Never>] = [:]
     private var returnedCalls: Set<Int> = []
     private(set) var cleanups = 0
+    private var openedRuns: Set<UUID> = []
+    private var finishedRuns: Set<UUID> = []
+    private var finishWaiters: [CheckedContinuation<Void, Never>] = []
     init(barriers: [Int: XCTestExpectation]) { self.barriers = barriers }
     func cleanup() { cleanups += 1 }
-    func afterCleanup(_ outcome: DeviceRenderWindowOutcome) async {
-        guard outcome == .cancelled else { return }
+    func opened(_ run: UUID) { openedRuns.insert(run) }
+    func waitUntilFinished() async {
+        if !openedRuns.isSubset(of: finishedRuns) {
+            await withCheckedContinuation { finishWaiters.append($0) }
+        }
+    }
+    func afterCleanup(_ outcome: DeviceRenderWindowOutcome, run: UUID) async {
+        guard outcome == .cancelled else {
+            finishedRuns.insert(run)
+            if openedRuns.isSubset(of: finishedRuns) {
+                let saved = finishWaiters
+                finishWaiters.removeAll()
+                for waiter in saved { waiter.resume() }
+            }
+            return
+        }
         cancelledCalls += 1
         let index = cancelledCalls
         guard let entered = barriers[index], !allReleased, !released.contains(index) else { return }
@@ -203,7 +224,7 @@ private actor ResetOwnershipWindowGate {
     func release(_ index: Int) { released.insert(index); waiting.removeValue(forKey: index)?.resume() }
     func releaseAll() {
         allReleased = true
-        let saved = waiting.values
+        let saved = Array(waiting.values)
         waiting.removeAll()
         for continuation in saved { continuation.resume() }
     }
@@ -212,8 +233,9 @@ private actor ResetOwnershipWindowGate {
 private struct ResetOwnershipExecution: DeviceRenderBackgroundExecution {
     let gate: ResetOwnershipWindowGate
     func begin(context: DeviceRenderExecutionContext, expiring: @escaping @Sendable () -> Void) async throws -> DeviceRenderExecutionWindow {
-        DeviceRenderExecutionWindow(reportProgress: { _ in }, finish: { _ in await gate.cleanup() },
-            completionBarrier: { outcome in await gate.afterCleanup(outcome) })
+        await gate.opened(context.runID)
+        return DeviceRenderExecutionWindow(reportProgress: { _ in }, finish: { _ in await gate.cleanup() },
+            completionBarrier: { outcome in await gate.afterCleanup(outcome, run: context.runID) })
     }
 }
 
@@ -222,14 +244,29 @@ private actor ResetOwnershipExporter: LocalExporting {
     private var calls = 0
     private var released = false
     private var waiting: [CheckedContinuation<Void, Never>] = []
+    private var inFlight = 0
+    private var drainWaiters: [CheckedContinuation<Void, Never>] = []
     init(firstStarted: XCTestExpectation?) { self.firstStarted = firstStarted }
     func export(recipe: KriaMediaEngine.EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String,
                 progress: (@Sendable (Double) -> Void)?) async throws -> ExportCheckpoint {
+        inFlight += 1
+        defer {
+            inFlight -= 1
+            if inFlight == 0 {
+                let saved = drainWaiters
+                drainWaiters.removeAll()
+                for waiter in saved { waiter.resume() }
+            }
+        }
         calls += 1
         if calls == 1 { firstStarted?.fulfill() }
         if !released { await withCheckedContinuation { waiting.append($0) } }
+        try Task.checkCancellation()
         try Data("fixture".utf8).write(to: outputURL)
         return ExportCheckpoint(exportID: exportID, status: .completed, progress: 1, outputURL: outputURL)
+    }
+    func waitUntilDrained() async {
+        if inFlight != 0 { await withCheckedContinuation { drainWaiters.append($0) } }
     }
     func releaseAll() {
         released = true
