@@ -2741,6 +2741,13 @@ class Settings(BaseSettings):
     # captions are white with a black outline. Edits without a background are unchanged. Default
     # TRUE; false + worker restart = byte-identical (`phone_text_styling._background_frames`).
     caption_background_contrast_enabled: bool = True
+    # Qendresa case 1 (2026-11-06): on a speaker-background edit with the speaker in a corner
+    # frame, caption and text placement dodge her face where the phone DRAWS it (the take scaled
+    # into the frame), not where it sits in the full-frame take; inside a full-screen window
+    # (item 16) the face stays full-frame. Without this, captions landed on her corner face and the
+    # review said `over_face: False`. Default TRUE (bug fix); false + worker restart = the old
+    # full-frame face boxes, byte-identical (`phone_text_styling._faces_where_drawn`).
+    speaker_frame_caption_faces_enabled: bool = True
 
     # Qendresa item 21: a pin may sit in the middle and carry TikTok's native text look.
     # Default off; with it off a stray middle_center pin is drawn as top_center, no look.

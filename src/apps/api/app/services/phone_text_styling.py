@@ -859,6 +859,10 @@ def register_generation_background(background, canvas=None, focus_for=None) -> N
     from app.config import settings
 
     policy = _POLICY.get()
+    if policy and background is not None:
+        # Qendresa case 1: where the speaker is drawn, recorded before the contrast gates below
+        # (a colour fill and the contrast switch do not move her out of the corner).
+        _record_speaker_layout(policy, background)
     if (
         not policy
         or background is None
@@ -920,6 +924,87 @@ def register_generation_background(background, canvas=None, focus_for=None) -> N
         )
         if policy.get("caption_look") is not None and policy.get("_caption_auto_fill"):
             policy["caption_look"] = _auto_caption_colour(policy["caption_look"], policy)
+
+
+def _record_speaker_layout(policy: dict, background) -> None:
+    """Qendresa case 1: the speaker's corner frame and full-screen spans, for face placement.
+
+    Recorded for every background (a colour fill too). When the environment was already sampled
+    (a compile path that registers the background after styling), the face boxes are mapped again
+    from the raw samples, never from boxes that were already mapped."""
+    frame = getattr(background, "speaker_frame", None)
+    spans = getattr(background, "full_screen_windows", None) or ()
+    policy["_speaker_layout"] = {
+        "frame": None
+        if frame is None
+        else {"width": frame.width_fraction, "x": frame.x_fraction, "y": frame.y_fraction},
+        "full_screen": [{"start_s": float(s.start_s), "end_s": float(s.end_s)} for s in spans],
+    }
+    if policy.get("_environment_sampled") and "_face_boxes_raw" in policy:
+        before = policy.get("_face_boxes")
+        policy["_face_boxes"] = _faces_where_drawn(policy["_face_boxes_raw"], policy)
+        if policy["_face_boxes"] != before and policy.get("caption_look") is not None:
+            # The worker's base pass styled the captions before this background was known, so
+            # their spot dodged her face where it is NOT drawn. Choose the caption look again on
+            # the next request (same fonts, no new model call): spot, size, colour and the review
+            # are re-judged against the faces and frames the phone really draws.
+            for key in ("caption_look", "_caption_auto_fill", "_caption_look_receipt"):
+                policy.pop(key, None)
+
+
+def _inside(start: float, end: float, spans: list[dict]) -> list[tuple[float, float]]:
+    """The pieces of ``[start, end)`` that fall inside a full-screen span (Qendresa item 16)."""
+    pieces = []
+    for span in sorted(spans, key=lambda s: s["start_s"]):
+        a, b = max(start, span["start_s"]), min(end, span["end_s"])
+        if b - a > 1e-3:
+            pieces.append((a, b))
+    return pieces
+
+
+# Air kept around a face drawn small in a corner frame (canvas fraction, ~19 px tall / 11 px wide on
+# 1080x1920). Placement measures text with its own shaper; the compiled caption ink can sit a pixel
+# or two lower, which on a small corner face reads as text touching her forehead (two of the six
+# measured real faces, 2026-11-06).
+_DRAWN_FACE_MARGIN = 0.01
+
+
+def _in_frame(box, frame: dict) -> tuple[float, float, float, float]:
+    """``box`` (canvas fractions, full-frame take) where the phone draws it in ``frame``: the
+    canvas-sized speaker layer scaled uniformly by the frame width, centred at its x/y
+    (`RecipeVideoCompositor.framed`), with `_DRAWN_FACE_MARGIN` of air around it."""
+    scale, cx, cy = frame["width"], frame["x"], frame["y"]
+    left, top, right, bottom = box
+    return (
+        cx + (left - 0.5) * scale - _DRAWN_FACE_MARGIN,
+        cy + (top - 0.5) * scale - _DRAWN_FACE_MARGIN,
+        cx + (right - 0.5) * scale + _DRAWN_FACE_MARGIN,
+        cy + (bottom - 0.5) * scale + _DRAWN_FACE_MARGIN,
+    )
+
+
+def _faces_where_drawn(boxes: list[dict], policy: dict) -> list[dict]:
+    """Qendresa case 1: ``boxes`` (full-frame take faces on the timeline) where the phone draws
+    them. With a corner frame, a face is mapped into the frame outside any full-screen span and kept
+    full-frame inside one (item 16). No frame, no layout or the switch off: ``boxes`` unchanged."""
+    from app.config import settings
+
+    layout = policy.get("_speaker_layout") or {}
+    frame = layout.get("frame")
+    if not boxes or frame is None or not settings.speaker_frame_caption_faces_enabled:
+        return list(boxes)
+    spans = layout.get("full_screen") or []
+    mapped: list[dict] = []
+    for face in boxes:
+        start, end = float(face["start_s"]), float(face["end_s"])
+        for piece_start, piece_end in _inside(start, end, spans):
+            mapped.append({**face, "start_s": piece_start, "end_s": piece_end})
+        box = _in_frame(face["box"], frame)
+        if not (box[2] > 0 and box[0] < 1 and box[3] > 0 and box[1] < 1):
+            continue
+        for piece_start, piece_end in _outside(start, end, spans) if spans else [(start, end)]:
+            mapped.append({**face, "start_s": piece_start, "end_s": piece_end, "box": box})
+    return mapped
 
 
 def _segments(spec: dict, until: float) -> list[tuple[float, float, dict]]:
@@ -1192,7 +1277,8 @@ def _ensure_generation_environment(canvas):
                 continue
     if policy.get("_speaker_background"):
         frames = _background_frames(policy["_speaker_background"], frames, canvas)
-    policy["_face_boxes"], policy["_background_frames"] = boxes, frames
+    policy["_face_boxes_raw"] = boxes
+    policy["_face_boxes"], policy["_background_frames"] = _faces_where_drawn(boxes, policy), frames
     record_pipeline_event(
         "text",
         "styling_environment_sample",
