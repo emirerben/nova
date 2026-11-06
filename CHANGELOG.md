@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.4.0] - 2026-11-06
+
+### Changed
+- feat(speaker-background): hear background names said another way (Qendresa item 17) (#2110) <!-- release-pr: 2110 -->
+
 ## [0.88.3.0] - 2026-11-05
 
 ### Changed
