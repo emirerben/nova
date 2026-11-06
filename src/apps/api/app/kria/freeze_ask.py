@@ -150,14 +150,26 @@ def _names_a_moment(tokens: Sequence[str]) -> bool:
     return bool(_TR_UNITS.intersection(tokens)) and bool(_TR_MOMENT_MARKERS.intersection(tokens))
 
 
+def _title_hold_not_length() -> bool:
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(settings.title_hold_not_length_enabled)
+
+
 def times_one_moment(req: BriefRequirement) -> bool:
     """True when ``req``'s seconds belong to one moment or an effect, never the whole video.
 
     A freeze ("freeze the frame for one second on Atakan's bite"), a clip-speed ask ("slow
-    motion for 3 seconds on the jump") and a moment's own length ("stay 2 seconds on the
-    medal") all carry ``duration_s``; none of them is how long the video should be.
+    motion for 3 seconds on the jump"), a moment's own length ("stay 2 seconds on the
+    medal") and a title's hold (scope ``title``) all carry ``duration_s``; none of them is how
+    long the video should be.
     """
     if asks_freeze_frame(req) or asks_clip_speed(req):
+        return True
+    if getattr(req, "scope", None) == "title" and _title_hold_not_length():
+        # Qendresa Q1 case 10: "Start with a big title ... for the first 3 seconds" filed as
+        # `timing/title {"duration_s": 3}` is the title's hold, never a 3 s video. The typed
+        # scope decides (KRI-667); a hold filed as `global` is the brief writer's to file here.
         return True
     if getattr(req, "authority", None) is not None and hold_seconds(req) is not None:
         # KRI-824: creator-stamped seconds on one clip ("keep the beach photo on screen for

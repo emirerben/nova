@@ -452,6 +452,18 @@ def _enrich_best_parts_snapshot(
         else None
     )
     held = _held_closing_ids(closing_quote)
+    whole_take_ids = _whole_take_ids(
+        strategy,
+        media_snapshot,
+        brief,
+        selected=selected,
+        creator_target_s=creator_target_s,
+        other_windows=bool(
+            moments is not None
+            or held
+            or (moment_pins is not None and getattr(moment_pins, "pins", None))
+        ),
+    )
     grounded = {str(row.get("quote")): row for row in named_lines or () if isinstance(row, Mapping)}
     named = [
         dict(grounded.get(row["quote"], row))
@@ -565,6 +577,7 @@ def _enrich_best_parts_snapshot(
                 [pin.json() for pin in moment_pins.skipped] if moment_pins is not None else None
             ),
             story_floor_s=story_floor_s,
+            whole_take_ids=whole_take_ids,
         )
 
     # KRI-585: the clips' words seat the welcome's line and a quiet ending. "Fast cuts" is
@@ -603,6 +616,75 @@ def _enrich_best_parts_snapshot(
         {"code": item["code"], "message": item["message"]} for item in length_plan["conflicts"]
     ]
     return enriched
+
+
+def keeps_whole_take(brief: CreativeBrief | None) -> bool:
+    """A live ``timing/global {keep_whole_take: true}`` ask with no length of its own (Qendresa
+    case 2). The typed fact only (KRI-667); a duration on the same row is a length ask."""
+    if brief is None:
+        return False
+    for req in brief.live():
+        if req.kind != "timing" or req.scope != "global":
+            continue
+        if req.facts.get("keep_whole_take") is not True:
+            continue
+        duration = req.facts.get("duration_s")
+        if isinstance(duration, (int, float)) and not isinstance(duration, bool) and duration > 0:
+            continue
+        return True
+    return False
+
+
+def _whole_take_ids(
+    strategy: Mapping[str, Any],
+    media_snapshot: Mapping[str, Any],
+    brief: CreativeBrief | None,
+    *,
+    selected: Sequence[str],
+    creator_target_s: float | None,
+    other_windows: bool,
+) -> tuple[str, ...]:
+    """The one video clip a "keep the whole clip, don't cut it" montage plays whole, else ().
+
+    Qendresa Q3 case 2: an 11 s single shot was cut to its 4 s best moment. Only where the ask
+    can name nothing else: a footage-owned ``montage`` with exactly one video clip, no creator
+    length (a stated length decides), no moment ask, named moment or closing line on the take
+    (those choose its windows), no mixed-media timing profile (its bounds cap every clip) and
+    a clip the edit cap can hold. Everything else is unchanged; the receipt says what was cut.
+    """
+    from app.pipeline.best_parts import edit_cap_s  # noqa: PLC0415
+    from app.services.length_policy import natural_length_owner  # noqa: PLC0415
+
+    if not settings.keep_whole_take_plan_enabled or not keeps_whole_take(brief):
+        return ()
+    owner = natural_length_owner(strategy)
+    if (
+        strategy.get("edit_format") != "montage"
+        or owner != "footage"
+        or creator_target_s is not None
+        or other_windows
+        or strategy.get("mixed_media_timing") is not None
+    ):
+        return ()
+    chosen = set(selected)
+    videos = [
+        row
+        for row in media_snapshot.get("clip_assignments") or []
+        if isinstance(row, Mapping)
+        and isinstance(row.get("media_id"), str)
+        and row.get("kind") != "image"
+        and (not chosen or row["media_id"] in chosen)
+    ]
+    if len(videos) != 1:
+        return ()
+    duration = videos[0].get("duration_s")
+    if (
+        not isinstance(duration, (int, float))
+        or isinstance(duration, bool)
+        or not 0 < float(duration) <= edit_cap_s(owner)
+    ):
+        return ()
+    return (str(videos[0]["media_id"]),)
 
 
 def _described_clip_texts(brief: CreativeBrief | None) -> list[str]:

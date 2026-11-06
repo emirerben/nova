@@ -251,9 +251,14 @@ def test_prod_reply_judges_order_ending_and_the_duplicate_that_stayed():
     assert receipts["r3"]["status"] == "not_possible"
     assert receipts["r4"]["status"] == "met"
     assert receipts["r4"]["target_media_ids"] == ["F0CECCF8"]
+    # Qendresa case 9: r2 is a `text/global` literal (whole-video text by the brief contract);
+    # this prod render drew it only as the 2.2 s opening title of a 25 s edit, so it is not
+    # "Done" any more: the review reads its time off the finished text lane.
+    assert receipts["r2"]["status"] == "partial"
+    assert receipts["r2"]["reason"].startswith("Yazın 25 sn'lik videonun yalnızca ilk 2.2 sn")
     for req_id in ("r1", "r2", "r3", "r4", "r5"):
         assert receipts[req_id]["verification"] == "checked"
-        assert receipts[req_id]["status"] == "met" or req_id == "r3"
+        assert receipts[req_id]["status"] == "met" or req_id in {"r2", "r3"}
         assert receipts[req_id]["brief_version"] == 1
         assert receipts[req_id]["generation_id"] == ATTEMPT
     # The receipts come back in the brief's order.
@@ -279,7 +284,8 @@ def test_a_deduped_render_meets_the_duplicate_ask():
     assert receipts["r3"]["status"] == "met"
     assert "Doğrulayamadım" not in text
     assert "Yapamadım" not in text
-    assert text.startswith(DEFAULT)
+    # Every ask is met except r2, the whole-video text this prod render held 2.2 s (case 9).
+    assert {rid for rid, row in receipts.items() if row["status"] != "met"} == {"r2"}
 
 
 def test_a_partly_deduped_render_is_partial():
