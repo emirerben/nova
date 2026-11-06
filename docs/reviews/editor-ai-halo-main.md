@@ -92,3 +92,17 @@ Only after explicit parent allocation, fresh native-process/disk/simulator check
 4. Preserve all failed results and real source/build-bound captures, inspect actual pixels/motion, and clean up only the owned recorder/simulator on every exit. No automatic retry.
 
 The local command is `KRIA_HALO_EXPECTED_HEAD=<reviewed-final-head> bash .dev/editor-ai-halo/native-slot.sh`. It is prepared, not executed. Native typechecking, actual compositor-instance delivery, paused/playing changed-document handoff, stale callback interruption, manual edits/Undo, retained failure/retry and export-current refusal remain open. The no-op completing capture alone cannot satisfy those changed-content gates.
+
+## Integration with current landed fixes
+
+Current pinned main is `f429e2a0c840e8eeba3d55c233e016d59882b8d4`, including speed #2125, re-record #2123, automatic result recovery #2137, explicit-pause #2024 and reset ownership #2134. The prior halo candidate remains on `codex/editor-ai-halo-pre-current-a243`. Only halo commits were rebased; unpublished candidates were not stacked.
+
+The four conflicted files were resolved by preserving both contracts: lifecycle parity keeps `setObserversVisible` and the halo callbacks; editor-load cleanup keeps automatic-result drain/observation/save-history resets and halo admission/work resets; export refusal for a retained previous preview remains outside speed's local-file fast paths; view disappearance ends observers and preview presentation; the UI catalog contains both re-record and halo cases. Services and DeviceRendering remain unchanged from main. Engine receipt hooks remain isolated from the landed speed changes.
+
+Independent review found one deferred-conflict integration defect: the initial prompt-sync scope retires its retained preview when a conflict pauses mutation, so the later choice must acquire a fresh retention record. Source repair **`ea2f47b0ec673831b9757e71607a93858299cbe3`** retains immediately before resolved merge mutation only for matching job/item/variant, and retires the record if no preview sequence advances. Cross-target retention remains excluded.
+
+`testDeferredSameTargetConflictRetainsItsAdmittedPreviewWhenResolved` was added before the repair. It reuses the existing overlapping-trim/generation conflict journey, prepares/adopts a fixture source preview, resolves the deferred choice and requires previous-preview status `.updating`. The manual surface-boundary callback is a state control, not physical-frame proof. The new test has not run.
+
+Both source reviewers accepted the integration and corrective fix. Passed lightweight checks: syntax of 15 changed Swift files, 300 mapped public actions with no drift, complete 417-case UI inventory with no upstream cases removed, unmapped-journey check, whitespace and the 37,999-character instruction-size guard. No native build/test/simulator/package/recording ran in this continuation.
+
+The proposed next batch adds the deferred-conflict regression plus five existing integration controls (explicit-pause KVO, ordinary pause/resume, pause during scrub handoff, local saved-render routing before/after publication, server-verification refusal) to the prior 28, for **34 state/receipt/image/integration cases and the same eight UI cases** after one build. This proposal is not a lane allocation. The combined-main iOS compile fix has priority; this task owns no native process. Publication and merge remain blocked until current-head native verification and the remaining changed-frame/export gates are satisfied.
