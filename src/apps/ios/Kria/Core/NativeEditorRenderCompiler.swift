@@ -227,11 +227,21 @@ enum NativeEditorRenderError: Error, Equatable {
                 // genuinely longer source window.
                 let sourceWindowToleranceS = 0.000_001
                 if authoredSlot.inS + requestedSpan > available + sourceWindowToleranceS {
-                    guard requestedSpan <= available + sourceWindowToleranceS,
-                          authoredSlot.raw["source_start_locked"] != .bool(true) else { throw RecipeError.invalidTimeline }
-                    requestedRate = authoredRate
-                    sourceSpan = requestedSpan
-                    sourceStart = max(0, available - requestedSpan)
+                    if requestedSpan <= available + sourceWindowToleranceS,
+                       authoredSlot.raw["source_start_locked"] != .bool(true) {
+                        requestedRate = authoredRate
+                        sourceSpan = requestedSpan
+                        sourceStart = max(0, available - requestedSpan)
+                    } else if let originalDuration = source.asset.duration,
+                              let span = NativeLegacySourceWindow.sourceSpan(
+                        start: authoredSlot.inS, duration: authoredMovingDuration,
+                        rate: authoredRate, sourceDuration: originalDuration
+                    ) {
+                        requestedRate = authoredRate
+                        sourceSpan = span
+                    } else {
+                        throw RecipeError.invalidTimeline
+                    }
                 }
             }
             guard NarratedRateGate.acceptsDerived(requestedRate, sourceSpan: sourceSpan, slot: authoredSlot),

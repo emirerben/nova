@@ -2673,6 +2673,13 @@ struct NativeEditorTemporaryVideo: Sendable {
                 // has the edit) is ready, instead of showing the old version as current.
                 finishedRenderIsCurrent = false
             }
+            if conversationRuntimeVersion == 2, variant["render_status"] == .string("failed"),
+               let data = try? JSONEncoder().encode(variant),
+               let saved = try? JSONDecoder().decode(CreationVariant.self, from: data),
+               saved.matchesSavedEditor(jobID: editorJobID.uuidString, itemID: resolvedPlanItemID) {
+                pendingRenderRetrySections = [.timeline]
+                saveState = .renderRetryNeeded("Your edit is saved. Retry its render when you’re ready.")
+            }
             loadState = .loaded
             loadSucceeded()
             await prepareSourcePreview()

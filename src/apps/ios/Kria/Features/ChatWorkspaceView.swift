@@ -1705,7 +1705,16 @@ private struct CreationWorkspaceView: View {
         SlidePostRouting.isFormatKnown(selectedFormat: selectedFormat, project: currentProject, thread: fullThread)
     }
 
+    private var hasSavedEditor: Bool {
+        guard let fullThread,
+              UUID(uuidString: fullThread.id) == currentProject.id,
+              fullThread.activeJobID.flatMap(UUID.init(uuidString:)) == currentProject.activeJobID,
+              fullThread.activePlanItemID == currentProject.activePlanItemID else { return false }
+        return fullThread.savedEditorVariant != nil
+    }
+
     private var hasAccessibleVideo: Bool {
+        if hasSavedEditor { return true }
         if currentProject.status == .ready { return true }
         guard let key = deviceRenderKey, let presentation = model.deviceRenders.presentations[key] else { return false }
         return presentation.localFile != nil && !presentation.outputVerificationPending
@@ -2224,6 +2233,11 @@ private struct CreationWorkspaceView: View {
                 deviceRenderPanel(deviceRenderKey)
             }
         case .failed:
+            if hasSavedEditor && canOpenVideoEditor {
+                Button("Open saved edit", action: openEditor)
+                    .buttonStyle(CanonicalSecondaryButtonStyle())
+                    .accessibilityIdentifier("open-saved-edit")
+            }
             if failedWorkspacePresentation == .legacyCreationConfirmation, let thread = fullThread {
                 CreationConfirmationStage(
                     recordAgain: canAttachMedia ? { openAttachmentsToReplaceFootage(launch: .record) } : nil,
