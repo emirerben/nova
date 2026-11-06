@@ -236,6 +236,12 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
             }
         ),
     ),
+    "kria/request_budget.py": (
+        "content_only",
+        "Measures how long the request a tap would pin is (the same bound_request the binding "
+        "builds); no word is read and nothing branches on what the text says.",
+        frozenset({"request_over_budget"}),
+    ),
     "services/guided_narration_labels.py": (
         "content_only",
         "narration label wording for the approved guided plan",

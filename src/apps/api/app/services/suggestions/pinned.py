@@ -802,6 +802,17 @@ def restate_updates(suggestion: Suggestion, action: Action) -> tuple[Any, ...]:
     return ()
 
 
+def tap_updates(suggestion: Suggestion, action: Action, *, language: str = "en") -> tuple[Any, ...]:
+    """The typed requirement(s) a tap of this card writes: its ops' own (``brief_updates_for``),
+    else a restating card's (``restate_updates``). What the serve measures a tap by."""
+    ops = editor_ops(action)
+    if ops is None:
+        ops = copy_ops(action)
+    if ops is not None:
+        return brief_updates_for(suggestion, ops, language=language)
+    return restate_updates(suggestion, action)
+
+
 @dataclass(frozen=True)
 class RestateBase:
     """What a strategy restate stands on: the plan it re-drafts and the head draft it replaces.

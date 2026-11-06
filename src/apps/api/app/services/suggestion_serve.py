@@ -39,7 +39,7 @@ import inspect
 import json
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -681,6 +681,58 @@ async def _copy_gate_dead(
     return dead
 
 
+async def _request_budget_dead(
+    db: Any,
+    thread: Any,
+    ctx: SuggestionContext,
+    kinds: Collection[str],
+    cards: Mapping[str, Any] | None,
+) -> dict[str, str]:
+    """Cards whose tap the draft commit would refuse ``request_too_long``.
+
+    With brief binding on, every pinned draft pins the creator's whole conversation plus the
+    brief into one request of at most ``MAX_REQUEST_CHARS``. ``request_over_budget`` is the commit's
+    own length rule over the text this thread holds now, the tap's own message and the typed
+    requirement the tap writes; a thread past it refuses every card, editor ops included. A card
+    the commit cannot be asked about is left out (fails closed), like every other check here.
+    """
+    from app.kria.brief import load_latest_brief  # noqa: PLC0415
+    from app.kria.request_budget import (  # noqa: PLC0415
+        creator_request_text_sync,
+        request_over_budget,
+    )
+    from app.services.suggestions import pinned  # noqa: PLC0415
+
+    creator_id = getattr(thread, "creator_id", None)
+    if not kinds or not settings.brief_binding_for(creator_id):
+        return {}  # no binding is built, so the length is not this commit's gate
+    thread_text = await db.run_sync(
+        lambda sync: creator_request_text_sync(sync, thread_id=thread.id, through_sequence=None)
+    )
+    brief = await load_latest_brief(db, thread.id)
+    dead: dict[str, str] = {}
+    for kind in sorted(kinds):
+        card = (cards or {}).get(kind)
+        if card is None:
+            continue  # ``_unproven`` / the restate check answer "no card"
+        try:
+            updates = (
+                pinned.tap_updates(card, card.action, language=ctx.language or "en")
+                if settings.creative_brief_for(creator_id)
+                else ()
+            )
+            over = request_over_budget(
+                thread_text, tap_message=card.prompt, brief=brief, updates=updates
+            )
+        except Exception:  # noqa: BLE001 - what cannot be measured is not offered
+            log.warning("suggestion_chips.error", stage="request_budget", kind=kind, exc_info=True)
+            dead[kind] = "check_failed"
+            continue
+        if over:
+            dead[kind] = "request_too_long"
+    return dead
+
+
 async def _filler_unoffered(db: Any, item: Any, ctx: SuggestionContext) -> str | None:
     """Why the filler card's evidence no longer supports it, or None when it still does.
 
@@ -845,6 +897,7 @@ async def dead_card_kinds(
         if item is None:
             return {**dead, **dict.fromkeys(left, "no_item")}
         dead.update(await _copy_gate_dead(db, thread, ctx, item, left))
+        dead.update(await _request_budget_dead(db, thread, ctx, left - dead.keys(), cards))
     except Exception:  # noqa: BLE001 - what cannot be proven is not offered
         log.warning("suggestion_chips.error", stage="dead_cards", exc_info=True)
         return {**dead, **dict.fromkeys(left - dead.keys(), "check_failed")}
