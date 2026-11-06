@@ -438,3 +438,54 @@ availability, explicit retry versus dirtiness, generation/load-lifetime ownershi
 and bounded original-source frame padding. Prior preship gate selection does not
 establish correspondence for those semantics. Private-project/receipt, database
 Save/reopen, physical-device/Photos export and rollout verification remain pending.
+
+## Named-journey mapping and current-main integration (2026-11-06)
+
+The hosted run for `0997d4fe7e6a7768c023cb6e7bf538e68f588d8a` passed 2653
+unit tests with 33 skips and zero failures, then four UI tests with zero failures.
+Its named-unit journey gate correctly refused the obsolete
+`testProxyRoundedVideoOverrunIsStillRejected` selector. The test rename had missed
+`scripts/ci/journey-manifest.json`; this was a verification-registration defect,
+not a new application failure. Both new exact test identifiers are recorded as
+passed in the hosted log at 12:38:45 UTC. The manifest now requires BOTH the
+bounded-hold positive and the genuine-overrun refusal. No gate is skipped.
+
+Lesson: renaming a required test must update its named journey registration in the
+same change. A new static regression inventories native unit-test declarations
+and checks every manifest `KriaTests/` selector. It failed on exactly the obsolete
+selector before the mapping correction (24 passed, one failed), then all 25
+journey-gate tests and 46 selection tests passed. This inventory is a static
+unit-selector check, not proof of execution or a Swift parser. UI selectors are
+outside this gate's unit contract; exploratory broader scanning also identified
+unrelated GeneratedMedia UI selectors requiring separate owner review.
+
+Main `21428d601323993d09dc6a2f2e27d0ac1fe5ad9c` merged cleanly. Its retake path
+preserves the old Job, records a replacement marker and retires approvals bound
+to the replaced source; the planner chooses a new strategy/job. Cunda's saved
+draft attachment, owner/item/job/variant/generation checks and source-bound helper
+are unchanged, and the creation-thread response still attaches validated drafts.
+The source-replacement feature flag was not changed. Its generated OpenAPI
+addition changes the native application tree, so the prior hosted native result
+is NOT an integrated-head native pass. Hosted validation must run again; no local
+native run was launched while another task owned the lane.
+
+Integrated-head `a113a1ab72e29fec8bfc52ad5f8449033a51f041` checks: 617 backend
+tests passed with socket I/O blocked before imports and dummy configuration
+(`/tmp/cunda-manifest-integrated-backend.log`); 25 journey-gate and 46 selection
+checks passed (`/tmp/cunda-manifest-integrated-static.log`). The backend selection
+was the eleven previously documented source-window, authored-timeline, editor
+commit, rendered-clock, empty-draft and source-registry modules. These are offline
+checks, not DB-backed retake or private-project validation. The subsequent commit
+only records evidence. Red log: `/tmp/cunda-manifest-red.log`.
+
+Hosted timing (UTC), job 127880860638 / run 42214339152:
+- job start 12:01:05; end 12:53:09: 52m04s;
+- build plus unit step 12:01:35–12:47:50: 46m15s, succeeded;
+- UI step 12:48:44–12:52:23: 3m39s, succeeded;
+- named-unit gate 12:52:23–12:52:29: 6s, failed on the stale identifier.
+The workflow job timeout is 90 minutes (`.github/workflows/ci.yml`); this result
+was not a timeout and does not establish a hang. Aggregate journey/build/test-api
+failures cascaded from that named gate; both actual API shards passed.
+No formal/model correspondence claim, production change or project recovery is
+established by these corrections. Existing physical-device, DB and rollout gaps
+remain pending.
