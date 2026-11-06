@@ -32,6 +32,18 @@ is read. Ways the review fix could fail (written before the fix):
 12. Model-owned spellings change: a quoted ask or a word the brief lists no longer respells a
     typed word (an explicit "write "Kervan"" must still win).
 13. A typed-name target respells a word that already reads as a model-owned spelling.
+
+Second review (Emir, on b101777): two inputs still respell "Curvan" into "Kervan". (a) "Do not change
+curvan to Kervan." types the old name in lowercase, and only capitalised words counted as typed.
+(b) "Do not use Kervan in the captions." excludes the name, yet it still became a target. Ways this
+fix could fail (written before the fix):
+14. A word the creator typed in lowercase is not a creator spelling, so a name target respells it.
+15. A name the creator typed only in a "don't" clause still becomes a target.
+16. A name excluded in one sentence is still taken from another sentence that types it.
+17. The cue text and the timed words disagree (one path respelled, the other not).
+18. The exclusion reads new wording: it must be the clause rule the quoted asks already use
+    (KRI-631), so "Do not write "Kervan"" drops the quoted ask and the typed name alike.
+19. Over-reach: Green 4 (no "don't" clause names "Kervan") stops respelling "Curvan" (1, 11).
 """
 
 from __future__ import annotations
@@ -230,6 +242,70 @@ def test_typed_names_never_respell_a_creator_spelling():
         [{"text": "Merope Meropa"}], ("Merope",), request_names=("Meropa",), typed=("Meropa",)
     )
     assert cue["text"] == "Merope Merope"
+
+
+@pytest.mark.parametrize(
+    "added",
+    [
+        "Do not change curvan to Kervan.",  # 14: the old name typed in lowercase
+        "curvan is the old name, Kervan the new one.",  # 14: lowercase, no "don't" clause
+        "Do not use Kervan in the captions.",  # 15, 16: Green 4 still types "Kervan" earlier
+        "Don’t use Kervan in the captions.",  # 15: the iPhone's apostrophe
+        "Kervan altyazıda olmasın.",  # 15: Turkish, the clause rule's own wording
+        'Do not write "Kervan" in the captions.',  # 18: one rule for a quoted ask and a name
+    ],
+)
+def test_a_lowercase_or_excluded_name_keeps_the_heard_word(monkeypatch, added):
+    """Second review: the cue text and every timed word keep the heard "Curvan" (14-18)."""
+    request = FIXTURE["green4_request"].replace("No music.", f"No music. {added}")
+    variant = _run(monkeypatch, request=request, binding=FIXTURE["green4_brief_binding"])
+    assert "curvan celebrated its 10th year" in _text(variant).casefold(), _text(variant)
+    # 17: the timed words are what the phone draws; they keep it too.
+    shown = [w["text"] for w in _shown(variant)]
+    assert "Curvan" in shown and "Kervan" not in shown, shown
+
+
+@pytest.mark.parametrize(
+    "request_text",
+    [
+        "Do not change curvan to Kervan.",  # the review's input (a)
+        "Do not use Kervan in the captions.",  # the review's input (b)
+        "Yorumla episode 9: Kervan x Lumo Pamukkale show. Do not use Kervan in the captions.",
+    ],
+)
+def test_the_reviews_inputs_change_neither_cue_text_nor_timed_words(request_text):
+    """14-17 on the writer's own calls, targets=() as in the review."""
+    from app.pipeline.caption_spelling import (
+        apply_spelling_to_cues,
+        creator_request_names,
+        creator_typed_words,
+    )
+
+    words = ["Curvan", "celebrated", "Curvan'ın", "Curvanın"]
+    cue = {
+        "text": " ".join(words),
+        "words": [{"text": w, "start_s": float(i), "end_s": i + 0.5} for i, w in enumerate(words)],
+    }
+    [out] = apply_spelling_to_cues(
+        [cue],
+        (),
+        request_names=creator_request_names(request_text),
+        typed=creator_typed_words(request_text),
+    )
+    assert out["text"] == cue["text"]
+    assert out["words"] == cue["words"]
+
+
+def test_an_excluded_name_is_never_a_request_name():
+    """15, 16, 18, 19 on the name list itself."""
+    from app.pipeline.caption_spelling import creator_request_names, extract_spelling_asks
+
+    green4 = "Yorumla episode 9: Kervan x Lumo Pamukkale show. No music."
+    assert creator_request_names(green4) == ("Kervan", "Pamukkale")  # 19
+    assert creator_request_names(f"{green4} Do not use Kervan in the captions.") == ("Pamukkale",)
+    quoted = f'{green4} Do not write "Kervan" in the captions.'
+    assert extract_spelling_asks(quoted) == ()  # KRI-631, unchanged
+    assert creator_request_names(quoted) == ("Pamukkale",)  # 18: the same clause rule
 
 
 def test_names_switch_off_keeps_the_heard_name(monkeypatch):
