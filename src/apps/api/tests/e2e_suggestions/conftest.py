@@ -51,6 +51,8 @@ def pytest_collection_modifyitems(config, items):  # noqa: ANN001, ARG001
         item.add_marker(pytest.mark.skip(reason=PROBLEM))
 
 
+# See driver.py: the task module must be imported before a fixture patches ``enqueue_suggester``.
+from app.tasks import kria_suggester  # noqa: E402, F401
 from tests.e2e_suggestions import fakes, report  # noqa: E402
 from tests.tasks import kria_pinned_kinds_harness as k  # noqa: E402
 from tests.tasks import kria_pinned_suggestion_harness as h  # noqa: E402

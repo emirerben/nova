@@ -18,11 +18,11 @@ Failure catalogue (written first):
       requirement alone must not take the card away.
   C4  the same footage with no brief at all serves the filler card and it executes (the east-run
       footage-only twin, in both languages).
-  C5  an account on approval readiness (KRI-721). The pinned restate never resolves the readiness
-      manifest, so every restating tap is refused "I haven't established which renderer can make
-      this edit yet". The card is not served to that account, and every card that is served
-      executes. (When the pinned planner resolves the manifest, this switch can come out; the
-      invariant, every served card executes, stays.)
+  C5  an account on approval readiness (KRI-721). The pinned restate resolves the readiness
+      manifest the way the live planner does, so the account is served the restating cards like
+      any other and every card that is served executes. (Before that, every restating tap was
+      refused "I haven't established which renderer can make this edit yet" and the serve held
+      the cards back from those accounts whole.)
 
   C6  a check that cannot be made fails closed, and only for the cards it judges: a readiness read
       that raises leaves the restating card out and the editor cards in; a consent read that raises
@@ -39,7 +39,6 @@ from pathlib import Path
 
 import pytest
 
-from app.config import settings
 from app.kria.brief import BriefUpdate
 from app.services import suggestion_serve
 from tests.e2e_suggestions import threads
@@ -195,23 +194,36 @@ async def test_c4_no_brief_serves_the_filler_card_and_it_executes(talking_world,
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("key", ["nermin-matcha-update", "nermin-matcha-update/tr"])
-async def test_c5_an_account_on_approval_readiness_is_served_no_restating_card(
+async def test_c5_an_account_on_approval_readiness_is_served_the_restating_card_and_it_runs(
     talking_world, monkeypatch, key
 ):
+    from tests.tasks.test_kria_pinned_r5_readiness import plan_names_its_clips, readiness_on
+
     rec = Recorder(f"negative C5 approval readiness {key}")
-    monkeypatch.setattr(settings, "kria_approval_readiness_enabled", True)
+    readiness_on(monkeypatch)
     scn = threads.SCENARIOS[key]
-    phone = await phone_for(talking_world, scn, key)
-    out = await phone.serve()
+
+    async def phone_on_readiness():  # noqa: ANN202
+        phone = await phone_for(talking_world, scn, key)
+        plan_names_its_clips(phone.seeded)
+        return phone
+
+    out = await (await phone_on_readiness()).serve()
     served = [c.kind for c in out.suggestions]
     rec.negative(
-        f"{key}: approval readiness on, no restating card is served",
+        f"{key}: approval readiness on, the filler card is served with the editor cards",
         key,
-        "no filler_words, no mute_clip; the editor cards stay",
-        not ({"filler_words", "mute_clip"} & set(served)) and bool(served),
+        "filler_words served, and at least one editor card",
+        "filler_words" in served and len(served) > 1,
         f"served {served}",
     )
-    results = await tap_each(talking_world, scn, key, served)
+    results: dict[str, bool] = {}
+    for kind in served:
+        phone = await phone_on_readiness()
+        twin = await phone.serve()
+        card = next(c for c in twin.suggestions if c.kind == kind)
+        tapped = await phone.tap(card, twin)
+        results[kind] = executes(tapped)
     rec.negative(
         f"{key}: approval readiness on, every served card executes",
         key,

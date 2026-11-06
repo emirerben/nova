@@ -632,8 +632,10 @@ def _pinned_undo_entry(
     setting_undo: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """The tap's own footprint, kept on the draft's execution so Undo can take it all back
-    (``kria/drafts.undo_draft``): the requirements this turn wrote and the setting it flipped.
-    Empty for any turn that is not a pinned tap, so every other execution is what it was."""
+    (``kria/drafts.undo_draft``): the requirements this turn wrote, the setting it flipped, and
+    the card's identity, so its applied mark can be cleared even when the tap wrote neither (no
+    creative brief). Empty for any turn that is not a pinned tap, so every other execution is
+    what it was."""
     if planned.suggestion_pin is None:
         return {}
     written = [
@@ -641,8 +643,6 @@ def _pinned_undo_entry(
         for req in (brief.live() if brief is not None else [])
         if req.source_turn_id == str(turn_id)
     ]
-    if not written and setting_undo is None:
-        return {}
     return {
         "pinned_undo": {
             "turn_id": str(turn_id),
@@ -701,7 +701,7 @@ def _mark_pinned_card_applied(
     thread: CreationThread,
     pin: dict[str, Any],
     turn_id: uuid.UUID,
-) -> None:
+) -> dict[str, Any]:
     """Record that the tapped card ran, in the transaction that commits its draft.
 
     ``thread.state`` was loaded before the thread row lock and can predate a newer set the
@@ -716,6 +716,7 @@ def _mark_pinned_card_applied(
     marked = _pinned.mark_consumed(current, str(pin["set_id"]), str(pin["id"]), turn_id)
     if marked is not None:
         thread.state = marked
+    return _pinned.applied_footprint(current, str(pin["set_id"]), str(pin["id"]))
 
 
 def _complete_response_turn(
@@ -1873,6 +1874,7 @@ def _complete_draft_turn(
     your_edits_snapshot: dict[str, Any] | None = None
     your_edits_hash = ""
     restore_record: dict[str, Any] | None = None  # KRI-442: pre-update lanes for Undo
+    pointer_sync: dict[str, Any] | None = None  # where an editor draft moved the session pointer
     scope_note = ""  # KRI-441: "I left X alone." for what layer 3 took back
     if apply_intent.tool_name == "draft.apply_strategy":
         changes = _strategy_changes(arguments)
@@ -2203,6 +2205,10 @@ def _complete_draft_turn(
             # session target aligned with the locked variant before minting a
             # later approval, while the existing Job -> Session lock order is
             # held. A failed transaction rolls this pointer back with the Job.
+            if settings.kria_suggestion_pinned_taps_enabled:
+                from app.kria.drafts import pointer_sync_record  # noqa: PLC0415
+
+                pointer_sync = pointer_sync_record(session, canonical_generation_id)
             session.target_generation_id = canonical_generation_id
             wants_speech_cut = any(
                 op.get("op") == "apply_speech_cut_candidate" for op in arguments.operations
@@ -3565,6 +3571,7 @@ def _complete_draft_turn(
                 **({"editor_diff": editor_diff_trace} if editor_diff_trace else {}),
                 **state_trace,
                 **({"plan_review_before": restore_record} if restore_record else {}),
+                **({"pointer_sync": pointer_sync} if pointer_sync else {}),
                 **_pinned_undo_entry(planned, turn.id, brief, setting_undo),
             },
             started_at=datetime.now(UTC),
@@ -3613,8 +3620,9 @@ def _complete_draft_turn(
         )
         db.add(draft)
         db.flush()
+        applied_marks: dict[str, Any] = {}
         if planned.suggestion_pin is not None:
-            _mark_pinned_card_applied(db, thread, planned.suggestion_pin, turn.id)
+            applied_marks = _mark_pinned_card_applied(db, thread, planned.suggestion_pin, turn.id)
         draft_execution.target_draft_id = draft.id
         draft_execution.target_draft_revision = draft.draft_revision
         draft_execution.result = {
@@ -3623,6 +3631,11 @@ def _complete_draft_turn(
             "draft_revision": draft.draft_revision,
             **applied_intent_repair_receipt(planned.intent_repair),
         }
+        if applied_marks and "pinned_undo" in draft_execution.result:
+            draft_execution.result["pinned_undo"] = {
+                **draft_execution.result["pinned_undo"],
+                **applied_marks,
+            }
 
         from app.kria.editor_repair import applied_repair_receipt
 
@@ -3993,83 +4006,12 @@ async def _plan_with_live_agent(
                     ),
                     **scoped,
                 )
-                if (
-                    settings.approval_readiness_for(snapshot["creator_id"])
-                    and planned.plan.mode == "act"
-                ):
-                    strategy_intent = next(
-                        (
-                            intent
-                            for intent in planned.plan.intents
-                            if intent.tool_name == "draft.apply_strategy"
-                        ),
-                        None,
-                    )
-                    if any(intent.tool_name == "render.request" for intent in planned.plan.intents):
-                        from app.kria.approval_readiness import (
-                            resolve_readiness_manifest,  # noqa: PLC0415
-                        )
-
-                        item = await db.get(
-                            PlanItem, uuid.UUID(str(snapshot["item_id"])), populate_existing=True
-                        )
-                        manifest = await resolve_readiness_manifest(
-                            db,
-                            item,
-                            strategy_intent.arguments["strategy"] if strategy_intent else None,
-                        )
-                        if strategy_intent is not None:
-                            from app.agents._schemas.creator_agent import (
-                                CreativeStrategy,  # noqa: PLC0415
-                            )
-                            from app.kria.strategy_policy import (  # noqa: PLC0415
-                                RefusedStrategy,
-                                check_strategy_for_runtime_v2,
-                            )
-
-                            # Resolve defaults against the PROPOSED renderer before
-                            # offering approval, then save that exact canonical strategy.
-                            # The assessor and approval reader still reject later repairs.
-                            checked = check_strategy_for_runtime_v2(
-                                manifest,
-                                CreativeStrategy.model_validate(
-                                    strategy_intent.arguments["strategy"]
-                                ),
-                                ask_before_simplifying=True,
-                                ask_about_stated_settings=True,
-                            )
-                            if not isinstance(checked, RefusedStrategy):
-                                canonical = strategy_intent.model_copy(
-                                    update={
-                                        "arguments": {
-                                            **strategy_intent.arguments,
-                                            "strategy": checked.strategy.model_dump(
-                                                mode="json", exclude_none=True
-                                            ),
-                                            "summary": " ".join(
-                                                [
-                                                    str(
-                                                        strategy_intent.arguments.get("summary")
-                                                        or ""
-                                                    ),
-                                                    *checked.notices,
-                                                ]
-                                            ).strip()[:1000],
-                                        },
-                                    }
-                                )
-                                planned = replace(
-                                    planned,
-                                    plan=planned.plan.model_copy(
-                                        update={
-                                            "intents": [
-                                                canonical if i is strategy_intent else i
-                                                for i in planned.plan.intents
-                                            ],
-                                        }
-                                    ),
-                                )
-                        planned = replace(planned, readiness_manifest=manifest)
+                planned = await _with_approval_readiness(
+                    db,
+                    planned,
+                    creator_id=snapshot["creator_id"],
+                    item_id=snapshot["item_id"],
+                )
                 return planned
     finally:
         turn_deadline.reset(deadline)
@@ -4082,6 +4024,90 @@ async def _plan_with_live_agent(
             await heartbeat
         finally:
             await engine.dispose()
+
+
+async def _with_approval_readiness(
+    db,  # noqa: ANN001 - SQLAlchemy AsyncSession
+    planned: PlannedKriaTurn,
+    *,
+    creator_id: Any,  # noqa: ANN401
+    item_id: Any,  # noqa: ANN401
+) -> PlannedKriaTurn:
+    """Resolve the renderer an approval-readiness account's draft is judged against (KRI-721).
+
+    Shared by the live planner and the pinned suggestion planner: a plan that asks for a render
+    carries ``readiness_manifest`` (and its strategy resolved against that renderer), or
+    ``assess_readiness`` can establish nothing and refuses every requirement. A plan with no
+    render request, and an account not on readiness, come back untouched.
+    """
+    if settings.approval_readiness_for(creator_id) and planned.plan.mode == "act":
+        strategy_intent = next(
+            (
+                intent
+                for intent in planned.plan.intents
+                if intent.tool_name == "draft.apply_strategy"
+            ),
+            None,
+        )
+        if any(intent.tool_name == "render.request" for intent in planned.plan.intents):
+            from app.kria.approval_readiness import (
+                resolve_readiness_manifest,  # noqa: PLC0415
+            )
+
+            item = await db.get(PlanItem, uuid.UUID(str(item_id)), populate_existing=True)
+            manifest = await resolve_readiness_manifest(
+                db,
+                item,
+                strategy_intent.arguments["strategy"] if strategy_intent else None,
+            )
+            if strategy_intent is not None:
+                from app.agents._schemas.creator_agent import (
+                    CreativeStrategy,  # noqa: PLC0415
+                )
+                from app.kria.strategy_policy import (  # noqa: PLC0415
+                    RefusedStrategy,
+                    check_strategy_for_runtime_v2,
+                )
+
+                # Resolve defaults against the PROPOSED renderer before
+                # offering approval, then save that exact canonical strategy.
+                # The assessor and approval reader still reject later repairs.
+                checked = check_strategy_for_runtime_v2(
+                    manifest,
+                    CreativeStrategy.model_validate(strategy_intent.arguments["strategy"]),
+                    ask_before_simplifying=True,
+                    ask_about_stated_settings=True,
+                )
+                if not isinstance(checked, RefusedStrategy):
+                    canonical = strategy_intent.model_copy(
+                        update={
+                            "arguments": {
+                                **strategy_intent.arguments,
+                                "strategy": checked.strategy.model_dump(
+                                    mode="json", exclude_none=True
+                                ),
+                                "summary": " ".join(
+                                    [
+                                        str(strategy_intent.arguments.get("summary") or ""),
+                                        *checked.notices,
+                                    ]
+                                ).strip()[:1000],
+                            },
+                        }
+                    )
+                    planned = replace(
+                        planned,
+                        plan=planned.plan.model_copy(
+                            update={
+                                "intents": [
+                                    canonical if i is strategy_intent else i
+                                    for i in planned.plan.intents
+                                ],
+                            }
+                        ),
+                    )
+            planned = replace(planned, readiness_manifest=manifest)
+    return planned
 
 
 async def _plan_pinned_turn(
@@ -4100,7 +4126,7 @@ async def _plan_pinned_turn(
     sender = bind_sending_build(protocol)
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
-            return await plan_pinned_suggestion_turn(
+            planned = await plan_pinned_suggestion_turn(
                 db,
                 thread_id=uuid.UUID(str(snapshot["thread_id"])),
                 item_id=uuid.UUID(str(snapshot["item_id"])),
@@ -4109,6 +4135,14 @@ async def _plan_pinned_turn(
                 pin=snapshot["pinned_suggestion"],
                 editor_state=parse_editor_state(editor_state),
                 client_protocol=protocol,
+            )
+            # A restate asks for the render approval, so it is judged like any other draft that
+            # does: against the renderer the live planner would have resolved.
+            return await _with_approval_readiness(
+                db,
+                planned,
+                creator_id=snapshot["creator_id"],
+                item_id=snapshot["item_id"],
             )
     finally:
         unbind_sending_build(sender)

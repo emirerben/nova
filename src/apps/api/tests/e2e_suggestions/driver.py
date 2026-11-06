@@ -23,6 +23,12 @@ from app.database import AsyncSessionLocal, sync_session
 from app.models import CreatorAgentApproval, PlanItem
 from app.services import creator_sessions
 from app.services import suggestion_chips as sc
+
+# Imported here, before any fixture runs: the task module binds ``enqueue_suggester`` by name when
+# it is first imported, and the harness replaces ``suggestion_serve.enqueue_suggester`` with a
+# recorder for the length of a test. Imported for the first time under that recorder, it would
+# keep the recorder for the rest of the process and break every later test of the real function.
+from app.tasks import kria_suggester  # noqa: E402
 from tests.e2e_suggestions import fakes
 from tests.tasks import kria_pinned_kinds_harness as k
 from tests.tasks import kria_pinned_suggestion_harness as h
@@ -179,7 +185,6 @@ class Phone:
     async def run_worker(self) -> int:
         """Run every suggester job the server enqueued, with the cassette as the model."""
         from app.services import ai_cost_control
-        from app.tasks import kria_suggester
 
         ran = 0
         while self.world.refreshes:
