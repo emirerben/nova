@@ -301,3 +301,50 @@ The existing stale-commit reset test now also establishes reconnecting state.
 Private-project, original receipt, DB, physical-device/export, CI and rollout
 acceptance remain pending. This audit does not claim a global review of unrelated
 editor loaders or app-owned renderer internals.
+
+## Unified load lifetime and deferred work
+
+A public load/reset now creates one epoch; project routing passes it through its
+nested draft/job loader rather than creating a competing epoch. Every asynchronous
+load read (project resolution, promotion, variants, capabilities, playback, staged
+draft) checks that epoch before applying data. Success/failure/retry scheduling
+and loading cleanup are owned by the same epoch. Capability tasks started by a
+load are cancelled on that load's exit. Source preview uses its existing sequence,
+now invalidated on every load, including same-target resets.
+
+Beginning a lifetime invalidates this session's prior poll, source-preview/quiet
+retry, applied-message delay, background/load retry and new-job watch. App-owned
+renderer sessions and durable user authoring are not cancelled. Scheduled conflict
+reload, source-preview rebuild, applied-message clearing and load retry capture
+ownership before task creation; they cannot acquire ownership merely by starting
+later. New-job readiness/watch/adoption and post-load device refresh likewise
+validate the scheduling lifetime. Existing source/permission/error behavior is
+retained; an identity match does not imply render readiness.
+
+The supplied boundary inventory is covered as follows:
+
+| Family | Ownership before mutation/cleanup | Regression evidence |
+| --- | --- | --- |
+| Save/commit/post-commit read | Attempt + epoch/target/generation | Prior cancellation matrix; replacement clean/dirty text, undo baseline and refresh hint |
+| Overlapping draft/project/job loads | One propagated epoch after all reads, catch and defer | Same target/generation and different job/variant; clean/dirty; success/failure/cancellation; replacement still loading |
+| Load capability / device capability | Epoch/identity before capability or reconciliation writes | Delayed read success/failure, permissions, loading flag, no obsolete renderer dispatch |
+| Poll read/device refresh/timeout | Captured identity + generation + cancellation | Ready-output old poll after reset with clean and dirty replacements |
+| Scheduled conflict/rebuild/load retry/applied delay | Scheduling identity/epoch, not eventual entry identity | Deferred conflict remains a passing control; existing source-preview, retry and banner neighbors pass |
+| Device retry/resume | Identity + key/generation before refresh/UI continuation | Existing device retry/session controls remain green |
+
+Grouped red against reviewed source `6b281b67`:
+`/tmp/cunda-lifetime-final-red.{log,xcresult}` ran **27 tests / 37 failures**:
+24 overlapping-load assertions, five capability-load assertions, four poll
+assertions, two post-commit reconciliation assertions, one stale refresh hint,
+and one obsolete device dispatch. The initial poll fixture omitted a ready output
+URL and was a passing negative control; the final test includes a local file URL
+and reaches output application. Earlier `/tmp/cunda-lifetime-red` (24/24) and
+`/tmp/cunda-lifetime-full-red` (26/32) logs remain preserved. The deferred-conflict
+case passed pre-fix under its existing sequence fence; it is not claimed as a red.
+
+Comprehensive green: **562 tests, zero failures** in
+`/tmp/cunda-lifetime-green.{log,xcresult}`, including 27 saved-recovery tests,
+253 session tests and the same compiler/source/clock/chat/routing/background
+neighbors. No source or test change followed this run. The original private
+project, immutable incident receipt, database Save/reopen, physical iPhone/Photos,
+hosted CI and rollout remain unverified. Speed integration remains separate.

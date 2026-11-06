@@ -1179,13 +1179,20 @@ struct NativeEditorTemporaryVideo: Sendable {
         EditorOperationIdentity(loadEpoch: editorLoadEpoch, itemID: itemID, jobID: jobID,
                                 variantKey: variantKey, threadID: threadID)
     }
-    private func beginEditorLoad() {
+    private func beginEditorLoad() -> UInt64 {
         editorLoadEpoch &+= 1
+        resetBackgroundRefresh()
+        previewRefreshTask?.cancel(); previewRefreshTask = nil; pendingPreviewGeneration = nil
+        sourcePreviewTask?.cancel(); sourcePreviewQuietRetryTask?.cancel()
+        editAppliedTask?.cancel()
+        promptRefreshSequence &+= 1; sourcePreviewSequence &+= 1
+        pendingDeviceRenderIdentity = nil
         activeSaveAttemptID = nil
         saveHitNewerVersion = false
         songRemovalAlreadyApplied = false
         userSongRetry = nil
         isSaving = true
+        return editorLoadEpoch
     }
 
     private var pendingRenderRetrySections: Set<EditorSection> = []
@@ -1930,24 +1937,28 @@ struct NativeEditorTemporaryVideo: Sendable {
         return clips
     }
 
-    func load(api: any KriaAPIClient, threadID: UUID, variantID: String? = nil, allowPlaybackFallback: Bool = true) async {
-        beginEditorLoad()
+    func load(api: any KriaAPIClient, threadID: UUID, variantID: String? = nil, allowPlaybackFallback: Bool = true, loadEpoch: UInt64? = nil) async {
+        let epoch = loadEpoch ?? beginEditorLoad()
+        guard editorLoadEpoch == epoch else { return }
         conversationRuntimeVersion = 2
         resetBackgroundRefresh()
         self.api = api; self.threadID = threadID; isSaving = true; saveState = .saving; loadState = .loading
-        defer { isSaving = false }
+        defer { if editorLoadEpoch == epoch { isSaving = false } }
         do {
             let snapshot = try await api.draft(threadID: threadID)
+            guard editorLoadEpoch == epoch else { return }
             let jobID = snapshot.baseJobID.flatMap(UUID.init)
             self.jobID = jobID
             let authoritativeVariant: [String: JSONValue]?
             let requestedVariantKey = variantID ?? snapshot.variantKey
             if let jobID { authoritativeVariant = try await api.editorVariant(jobID: jobID, variantID: requestedVariantKey) }
             else { authoritativeVariant = nil }
+            guard editorLoadEpoch == epoch else { return }
             let loadedDraft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: authoritativeVariant)
             draft = loadedDraft
             configureCapabilities(from: authoritativeVariant)
             await applyCloudReadOnlyIfNeeded(api: api, variant: authoritativeVariant)
+            guard editorLoadEpoch == epoch else { return }
             cleanDocument = document; undoStack.removeAll(); redoStack.removeAll(); changedSections.removeAll(); explicitlyDirtySections.removeAll(); pendingRenderRetrySections.removeAll(); hasUnsavedChanges = false; saveState = .idle
             appliedChatDraftRevision = nil; chatStagedDocument = nil; chatStagedSections = []
             itemID = snapshot.itemID; variantKey = requestedVariantKey
@@ -1966,13 +1977,17 @@ struct NativeEditorTemporaryVideo: Sendable {
                     isCurrent: authoritativeVariant?["render_status"]?.stringValue == "ready"
                         && chatStagedDocument == nil)
             } else if allowPlaybackFallback, let jobID, let url = try? await api.playbackURL(jobID: jobID) {
+                guard editorLoadEpoch == epoch else { return }
                 installPlayer(url: url, preferredDuration: authoritativeDuration)
             }
+            guard editorLoadEpoch == epoch else { return }
             loadState = .loaded
             loadSucceeded()
             await prepareSourcePreview()
+            guard editorLoadEpoch == epoch else { return }
             await resumePendingEditorPlacements()
         } catch {
+            guard editorLoadEpoch == epoch else { return }
             #if DEBUG
             NativePreviewDiagnostics.failure("editor-load-failed", error: error)
             NativePreviewDiagnostics.record("editor-load-context", fields: ["job": jobID?.uuidString ?? "none"])
@@ -2029,10 +2044,11 @@ struct NativeEditorTemporaryVideo: Sendable {
         // A concurrent save/hydration can change the clean baseline while this
         // suspends; a dropped sync would otherwise leave a chat edit invisible
         // until the editor is reloaded (nothing else re-polls without new events).
+        let identity = editorOperationIdentity
         for attempt in 0..<3 {
             syncNeedsRetry = false
             await runPromptRevisionSync()
-            guard syncNeedsRetry, !Task.isCancelled else { return }
+            guard editorOperationIdentity == identity, syncNeedsRetry, !Task.isCancelled else { return }
             Self.stagingLog.debug("sync retry attempt=\(attempt + 1, privacy: .public)")
         }
     }
@@ -2406,15 +2422,18 @@ struct NativeEditorTemporaryVideo: Sendable {
         return true
     }
 
-    func load(project: ProjectSummary, api: any KriaAPIClient) async {
-        beginEditorLoad()
+    func load(project: ProjectSummary, api: any KriaAPIClient, loadEpoch: UInt64? = nil) async {
+        let epoch = loadEpoch ?? beginEditorLoad()
+        guard editorLoadEpoch == epoch else { return }
         loadState = .loading
         var resolvedProject = project
         if project.activeJobID != nil,
            (project.activePlanItemID == nil || project.outputVariantID == nil),
            let refreshed = try? await api.project(threadID: project.id) {
+            guard editorLoadEpoch == epoch else { return }
             resolvedProject = refreshed.summary
         }
+        guard editorLoadEpoch == epoch else { return }
         loadedServerRevision = resolvedProject.serverRevision
         conversationRuntimeVersion = resolvedProject.runtimeVersion
         if let jobID = resolvedProject.activeJobID,
@@ -2425,7 +2444,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 planItemID: itemID,
                 preferredVariantID: variantID,
                 threadID: project.id,
-                api: api
+                api: api, loadEpoch: epoch
             )
         } else if let jobID = resolvedProject.activeJobID {
             await load(
@@ -2433,14 +2452,16 @@ struct NativeEditorTemporaryVideo: Sendable {
                 planItemID: resolvedProject.activePlanItemID,
                 preferredVariantID: resolvedProject.outputVariantID,
                 threadID: project.id,
-                api: api
+                api: api, loadEpoch: epoch
             )
         } else {
-            await load(api: api, threadID: project.id, variantID: resolvedProject.outputVariantID, allowPlaybackFallback: resolvedProject.outputURL == nil)
+            await load(api: api, threadID: project.id, variantID: resolvedProject.outputVariantID, allowPlaybackFallback: resolvedProject.outputURL == nil, loadEpoch: epoch)
         }
+        guard editorLoadEpoch == epoch else { return }
         if player == nil, let url = resolvedProject.outputURL {
             installPlayer(url: url, preferredDuration: authoritativeDuration)
         } else if player == nil, let jobID = resolvedProject.activeJobID, let url = try? await api.playbackURL(jobID: jobID) {
+            guard editorLoadEpoch == epoch else { return }
             installPlayer(url: url, preferredDuration: authoritativeDuration)
         }
     }
@@ -2462,7 +2483,10 @@ struct NativeEditorTemporaryVideo: Sendable {
         // A re-plan points the thread at its new job before that job has a video. Loading it then
         // threw away the working video for "The editor couldn't open", and the prompt claimed a new
         // version was ready while it was still rendering. Keep editing the current video until then.
-        switch await Self.readiness(ofJob: target, preferredVariantID: project.outputVariantID, api: api) {
+        let identity = editorOperationIdentity
+        let readiness = await Self.readiness(ofJob: target, preferredVariantID: project.outputVariantID, api: api)
+        guard editorOperationIdentity == identity else { return }
+        switch readiness {
         case .ready:
             break
         case .rendering:
@@ -2507,6 +2531,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         if newVersionWatchTask != nil, newVersionWatchTarget == target { return }
         newVersionWatchTask?.cancel()
         newVersionWatchTarget = target
+        let identity = editorOperationIdentity
         let delays = newVersionPollDelays
         newVersionWatchTask = Task { [weak self] in
             var attempt = 0
@@ -2514,16 +2539,16 @@ struct NativeEditorTemporaryVideo: Sendable {
             while attempt < 64, !delays.isEmpty {
                 try? await Task.sleep(for: delays[min(attempt, delays.count - 1)])
                 attempt += 1
-                guard !Task.isCancelled, let self, self.isBehindActiveJob(project) else { return }
+                guard !Task.isCancelled, let self, self.editorOperationIdentity == identity, self.isBehindActiveJob(project) else { return }
                 let readiness = await Self.readiness(ofJob: target, preferredVariantID: project.outputVariantID, api: api)
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, self.editorOperationIdentity == identity else { return }
                 if readiness != .rendering {
                     self.newVersionWatchTask = nil
                     await self.adoptLatestJob(project, api: api)
                     return
                 }
             }
-            guard !Task.isCancelled, let self else { return }
+            guard !Task.isCancelled, let self, self.editorOperationIdentity == identity else { return }
             self.newVersionWatchTask = nil
             if self.refreshSync == .newVersionRendering { self.refreshSync = .idle }
         }
@@ -2532,13 +2557,16 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// Switch now; discards any unsaved edits (caller has decided).
     func switchToLatestJob(_ project: ProjectSummary, api: any KriaAPIClient) async {
         newerJobPrompt = nil
-        await load(project: project, api: api)
+        let epoch = beginEditorLoad()
+        await load(project: project, api: api, loadEpoch: epoch)
+        guard editorLoadEpoch == epoch else { return }
         await refreshDeviceRender()
     }
 
     /// Ask the server which job the thread points at now, then run the adopt decision.
     func adoptActiveJobFromThread(api: any KriaAPIClient, threadID: UUID) async {
-        guard let thread = try? await api.project(threadID: threadID) else { return }
+        let identity = editorOperationIdentity
+        guard let thread = try? await api.project(threadID: threadID), editorOperationIdentity == identity else { return }
         await adoptLatestJob(thread.summary, api: api)
     }
 
@@ -2589,9 +2617,10 @@ struct NativeEditorTemporaryVideo: Sendable {
         planItemID: String?,
         preferredVariantID: String?,
         threadID: UUID?,
-        api: any KriaAPIClient
+        api: any KriaAPIClient, loadEpoch: UInt64? = nil
     ) async {
-        beginEditorLoad()
+        let epoch = loadEpoch ?? beginEditorLoad()
+        guard editorLoadEpoch == epoch else { return }
         self.api = api
         self.threadID = threadID
         resetBackgroundRefresh()
@@ -2601,7 +2630,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         saveState = .saving
         loadState = .loading
         Perf.begin("editor.open", id: editorJobID.uuidString)
-        defer { isSaving = false; Perf.end("editor.open", id: editorJobID.uuidString); Perf.mark("editor.open.done") }
+        defer { if editorLoadEpoch == epoch { isSaving = false }; Perf.end("editor.open", id: editorJobID.uuidString); Perf.mark("editor.open.done") }
         // Neither of these needs the job's status, so they start now and overlap it. They used to follow it one after
         // the other, three round trips in a row before the editor could show anything. The draft is compared with the
         // resolved variant only once that is known.
@@ -2611,12 +2640,14 @@ struct NativeEditorTemporaryVideo: Sendable {
         } else {
             nil
         }
+        defer { capabilitiesTask.cancel(); draftTask?.cancel() }
         do {
             let receipt: OpenInEditorResponse? = if planItemID == nil {
                 try await api.openJobInEditor(jobID: editorJobID)
             } else {
                 nil
             }
+            guard editorLoadEpoch == epoch else { return }
             self.threadID = threadID ?? receipt?.creationThreadID
             guard let resolvedPlanItemID = planItemID ?? receipt?.planItemID else {
                 throw APIError.invalidResponse
@@ -2629,6 +2660,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                         try await api.editorVariant(jobID: editorJobID, variantID: requestedVariantID)
                     )
                 } catch where receipt != nil && requestedVariantID != receipt?.variantID {
+                    guard editorLoadEpoch == epoch else { return }
                     resolved = (
                         receipt!.variantID,
                         try await api.editorVariant(jobID: editorJobID, variantID: receipt!.variantID)
@@ -2636,6 +2668,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 }
             } else {
                 let variants = try await api.editorVariants(jobID: editorJobID)
+                guard editorLoadEpoch == epoch else { return }
                 guard let variant = variants.first(where: {
                     $0["render_status"]?.stringValue == "ready" && $0["variant_id"]?.stringValue != nil
                 }) ?? variants.first(where: { $0["variant_id"]?.stringValue != nil }),
@@ -2644,6 +2677,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 }
                 resolved = (variantID, try await api.editorVariant(jobID: editorJobID, variantID: variantID))
             }
+            guard editorLoadEpoch == epoch else { return }
             let variant = resolved.variant
             let generation = variant["render_generation_id"]?.stringValue
                 ?? variant["render_finished_at"]?.stringValue
@@ -2666,6 +2700,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             legacyPromptSnapshot = loadedDraft.serverSnapshot
             configureCapabilities(from: variant)
             await applyCloudReadOnlyIfNeeded(api: api, variant: variant, capabilities: capabilitiesTask)
+            guard editorLoadEpoch == epoch else { return }
             cleanDocument = document
             undoStack.removeAll()
             redoStack.removeAll()
@@ -2687,12 +2722,16 @@ struct NativeEditorTemporaryVideo: Sendable {
                 installPlayer(url: url, preferredDuration: authoritativeDuration,
                     isCurrent: variant["render_status"]?.stringValue == "ready")
             } else if let url = try? await api.playbackURL(jobID: editorJobID) {
+                guard editorLoadEpoch == epoch else { return }
                 installPlayer(url: url, preferredDuration: authoritativeDuration)
             }
+            guard editorLoadEpoch == epoch else { return }
             // A chat turn may already have drafted edits for this render:
             // stage them as unsaved. Never let this block opening the editor.
             appliedChatDraftRevision = nil; chatStagedDocument = nil; chatStagedSections = []
-            if conversationRuntimeVersion == 2, let head = await draftTask?.value,
+            let head = await draftTask?.value
+            guard editorLoadEpoch == epoch else { return }
+            if conversationRuntimeVersion == 2, let head,
                head.itemID == resolvedPlanItemID, head.variantKey == resolved.variantID,
                head.baseJobID.flatMap(UUID.init) == editorJobID,
                let staged = stagedChatDocument(snapshot: head, draft: loadedDraft, variant: variant) {
@@ -2714,6 +2753,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             loadSucceeded()
             await prepareSourcePreview()
         } catch {
+            guard editorLoadEpoch == epoch else { return }
             #if DEBUG
             NativePreviewDiagnostics.failure("editor-load-failed", error: error)
             NativePreviewDiagnostics.record("editor-load-context", fields: ["job": jobID?.uuidString ?? "none"])
@@ -2769,9 +2809,10 @@ struct NativeEditorTemporaryVideo: Sendable {
         saveState = .idle
         loadState = .loading
         loadRetryTask?.cancel()
+        let epoch = editorLoadEpoch
         loadRetryTask = Task { [weak self] in
             try? await Task.sleep(for: delay)
-            guard !Task.isCancelled, let self else { return }
+            guard !Task.isCancelled, let self, self.editorLoadEpoch == epoch else { return }
             // Cleared first: the load cancels any pending retry, and this task must not cancel itself.
             self.loadRetryTask = nil
             await retry()
@@ -3243,8 +3284,9 @@ struct NativeEditorTemporaryVideo: Sendable {
         sourcePreviewState = .preparing
         // prepareSourcePreview owns cancellation of the rebuild task; do not
         // install this task there or it would cancel itself on entry.
+        let identity = editorOperationIdentity
         Task { @MainActor [weak self] in
-            guard let self, self.document.revision.baseGeneration == generation else { return }
+            guard let self, self.editorOperationIdentity == identity, self.document.revision.baseGeneration == generation else { return }
             await self.prepareSourcePreview()
         }
     }
@@ -8533,17 +8575,20 @@ struct NativeEditorTemporaryVideo: Sendable {
               activeSaveAttemptID == nil, pendingPreviewGeneration == nil else { return false }
         sourcePreviewState = .preparing
         NativePreviewDiagnostics.record("source-preview-conflict-reload")
+        let identity = editorOperationIdentity
         let sequence = sourcePreviewSequence
         Task { @MainActor [weak self] in
             // The editor's own load (or a Save) is still finishing; reload once it settles.
             for _ in 0..<200 {
-                guard let self, self.isSaving else { break }
+                guard let self, self.editorOperationIdentity == identity, self.isSaving else { break }
                 try? await Task.sleep(for: .milliseconds(50))
             }
             // Another job, or a newer preview build, owns the state now.
-            guard let self, !Task.isCancelled, self.jobID == jobID, self.sourcePreviewSequence == sequence else { return }
+            guard let self, self.editorOperationIdentity == identity, !Task.isCancelled, self.jobID == jobID, self.sourcePreviewSequence == sequence else { return }
             guard !self.isSaving else { return self.failSourcePreview(error, reloadsLatestOnConflict: false) }
-            switch await self.reloadLatestKeepingLocalEdits(fencingPreviewConflict: true) {
+            let result = await self.reloadLatestKeepingLocalEdits(fencingPreviewConflict: true)
+            guard self.editorOperationIdentity == identity else { return }
+            switch result {
             case .reloaded:
                 return
             case .superseded:
@@ -8977,8 +9022,10 @@ struct NativeEditorTemporaryVideo: Sendable {
             cloudEditorUnavailableMessage = nil
             return
         }
+        let epoch = editorLoadEpoch
         let loaded: CreationCapabilities?
         if let capabilities { loaded = await capabilities.value } else { loaded = try? await api.creationCapabilities() }
+        guard editorLoadEpoch == epoch else { return }
         if let loaded { lastPhoneRenderingCapabilities = loaded.phoneRendering ?? .disabled }
         let creationMode = loaded?.creationMode
         if creationMode == .deviceOnly, !rendersOnDevice {
@@ -9166,10 +9213,11 @@ struct NativeEditorTemporaryVideo: Sendable {
     private func announceEditApplied() {
         showsEditApplied = true
         editAppliedTask?.cancel()
+        let identity = editorOperationIdentity
         editAppliedTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(3))
-            guard !Task.isCancelled else { return }
-            self?.showsEditApplied = false
+            guard !Task.isCancelled, let self, self.editorOperationIdentity == identity else { return }
+            self.showsEditApplied = false
         }
     }
 

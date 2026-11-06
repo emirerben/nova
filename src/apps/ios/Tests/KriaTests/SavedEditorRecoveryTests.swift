@@ -529,6 +529,167 @@ final class SavedEditorRecoveryTests: XCTestCase {
         }
     }
 
+    func testOlderLoadsCannotApplyOrClearReplacementState() async throws {
+        for viaProject in [false, true] {
+            for outcome in ["success", "failure", "cancellation"] {
+                for dirty in [false, true] {
+                  for otherTarget in [false, true] {
+                    let t = try thread()
+                    let old = EditorCommitSpy(draftSnapshot: snapshot(), authoritativeVariant: variant())
+                    old.suspendNextEditorVariant = true
+                    let session = NativeEditorSession(project: t.summary)
+                    let load = Task {
+                        if viaProject { await session.load(project: t.summary, api: old) }
+                        else { await session.load(api: old, threadID: threadID, variantID: "guided_story") }
+                    }
+                    for _ in 0..<200 {
+                        if old.editorVariantIsSuspended { break }
+                        try await Task.sleep(for: .milliseconds(5))
+                    }
+                    XCTAssertTrue(old.editorVariantIsSuspended)
+                    let targetVariant = otherTarget ? "other-variant" : "guided_story"
+                    var nextVariant = variant(); nextVariant["variant_id"] = .string(targetVariant)
+                    let nextDraft = DraftSnapshot(draftID: draftID, itemID: itemID, variantKey: targetVariant,
+                        draftRevision: 4, snapshotHash: "replacement", etag: "replacement",
+                        baseJobID: otherTarget ? UUID().uuidString : jobID.uuidString,
+                        baseGenerationID: "saved-generation", snapshot: [:], canUndo: false, createdAt: .now)
+                    let replacement = EditorCommitSpy(draftSnapshot: nextDraft, authoritativeVariant: nextVariant)
+                    await session.load(api: replacement, threadID: threadID, variantID: targetVariant)
+                    if dirty { session.updateTextContent(id: "saved-title", content: "Replacement edit") }
+                    let before = session.document
+                    let state = session.saveState
+                    if outcome == "failure" { old.editorVariantError = .unsupported }
+                    if outcome == "cancellation" { old.editorVariantThrow = CancellationError() }
+                    old.resumeEditorVariant(); await load.value
+                    XCTAssertEqual(session.document, before, "\(viaProject) \(outcome) \(dirty)")
+                    XCTAssertEqual(session.saveState, state)
+                    XCTAssertEqual(session.loadState, .loaded)
+                    XCTAssertEqual(session.hasUnsavedChanges, dirty)
+                    XCTAssertEqual(session.canUndo, dirty)
+                    XCTAssertFalse(session.isSaving)
+                    if dirty { session.undo(); XCTAssertFalse(session.hasUnsavedChanges) }
+                  }
+                }
+            }
+        }
+    }
+
+    func testOldPreviewPollCannotApplyToResetEditor() async throws {
+        for dirty in [false, true] {
+            let (session, old, _) = try await conflictingRetryFixture()
+            old.commitErrorQueue = []
+            var rendering = variant()
+            rendering["render_generation_id"] = .string("next")
+            rendering["render_status"] = .string("rendering")
+            old.authoritativeVariant = rendering
+            session.previewPollInterval = .milliseconds(30)
+            await session.retryRender()
+            old.suspendNextEditorVariant = true
+            for _ in 0..<200 {
+                if old.editorVariantIsSuspended { break }
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            XCTAssertTrue(old.editorVariantIsSuspended)
+            let replacement = EditorCommitSpy(draftSnapshot: snapshot(), authoritativeVariant: variant())
+            await session.load(api: replacement, threadID: threadID, variantID: "guided_story")
+            if dirty { session.updateTextContent(id: "saved-title", content: "Replacement edit") }
+            let before = session.document
+            let state = session.saveState
+            rendering["render_status"] = .string("ready")
+            rendering["output_url"] = .string("file:///tmp/cunda-missing-fixture-output.mp4")
+            rendering["text_elements"] = .array([.object(["id": .string("saved-title"), "text": .string("Stale poll"), "start_s": .number(0), "end_s": .number(2)])])
+            old.authoritativeVariant = rendering
+            old.resumeEditorVariant()
+            try await Task.sleep(for: .milliseconds(100))
+            XCTAssertEqual(session.document, before)
+            XCTAssertEqual(session.saveState, state)
+            XCTAssertEqual(session.hasUnsavedChanges, dirty)
+            XCTAssertEqual(session.canUndo, dirty)
+        }
+    }
+
+    func testOldCapabilityLoadCannotChangeReplacementPermissionsOrLoading() async throws {
+        for fails in [false, true] {
+            let t = try thread()
+            let old = EditorCommitSpy(draftSnapshot: snapshot(), authoritativeVariant: variant())
+            old.suspendNextCapabilities = true
+            old.creationMode = .deviceOnly
+            let session = NativeEditorSession(project: t.summary)
+            let load = Task { await session.load(api: old, threadID: threadID, variantID: "guided_story") }
+            for _ in 0..<200 {
+                if old.capabilitiesIsSuspended { break }
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            XCTAssertTrue(old.capabilitiesIsSuspended)
+            let replacement = EditorCommitSpy(draftSnapshot: snapshot(), authoritativeVariant: variant())
+            replacement.suspendNextEditorVariant = true
+            let next = Task { await session.load(api: replacement, threadID: threadID, variantID: "guided_story") }
+            for _ in 0..<200 {
+                if replacement.editorVariantIsSuspended { break }
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            let before = session.document
+            let editable = session.canEditText
+            if fails { old.capabilitiesError = .offline }
+            old.resumeCapabilities(); await load.value
+            XCTAssertTrue(session.isSaving, "only the replacement load owns cleanup")
+            XCTAssertEqual(session.loadState, .loading)
+            XCTAssertEqual(session.document, before)
+            XCTAssertEqual(session.canEditText, editable)
+            replacement.resumeEditorVariant(); await next.value
+            XCTAssertTrue(session.canEditText)
+            XCTAssertFalse(session.isSaving)
+        }
+    }
+
+    func testDeferredConflictReloadCannotAdoptReplacementLifetime() async throws {
+        let t = try thread()
+        let old = EditorCommitSpy(draftSnapshot: snapshot(), authoritativeVariant: variant())
+        old.sourcePoolError = .conflict
+        let session = NativeEditorSession(project: t.summary)
+        await session.load(api: old, threadID: threadID, variantID: "guided_story")
+        let oldReads = old.editorVariantJobIDs.count
+        let replacement = EditorCommitSpy(draftSnapshot: snapshot(), authoritativeVariant: variant())
+        await session.load(api: replacement, threadID: threadID, variantID: "guided_story")
+        session.updateTextContent(id: "saved-title", content: "Replacement edit")
+        let before = session.document
+        let state = session.sourcePreviewState
+        let replacementReads = replacement.editorVariantJobIDs.count
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(old.editorVariantJobIDs.count, oldReads)
+        XCTAssertEqual(replacement.editorVariantJobIDs.count, replacementReads)
+        XCTAssertEqual(session.document, before)
+        XCTAssertEqual(session.sourcePreviewState, state)
+        XCTAssertTrue(session.hasUnsavedChanges)
+    }
+
+    func testDelayedDeviceCapabilityReadDoesNotDispatchForReplacement() async throws {
+        let t = try thread()
+        var deviceVariant = variant()
+        deviceVariant["render_destination"] = .string("device")
+        let old = EditorCommitSpy(draftSnapshot: snapshot(), authoritativeVariant: deviceVariant)
+        let session = NativeEditorSession(project: t.summary)
+        let renders = DeviceRenderSessions(fetch: { _, _ in
+            await MainActor.run { old.deviceFetchCount += 1 }
+            throw APIError.unsupported
+        }, factory: { _, _ in throw APIError.unsupported })
+        session.useDeviceRendering(renders)
+        await session.load(api: old, threadID: threadID, variantID: "guided_story")
+        old.suspendNextCapabilities = true
+        let refresh = Task { await session.refreshDeviceRender() }
+        for _ in 0..<200 {
+            if old.capabilitiesIsSuspended { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertTrue(old.capabilitiesIsSuspended)
+        let replacement = EditorCommitSpy(draftSnapshot: snapshot(), authoritativeVariant: deviceVariant)
+        await session.load(api: replacement, threadID: threadID, variantID: "guided_story")
+        let before = session.document
+        old.resumeCapabilities(); await refresh.value
+        XCTAssertEqual(old.deviceFetchCount, 0)
+        XCTAssertEqual(session.document, before)
+    }
+
     func testGenuineTimelineSaveRetainsExistingConflictRebaseContract() async throws {
         let (session, fake, _) = try await conflictingRetryFixture()
         session.transactDocument(section: .timeline) { $0.clips[0].durationS = 1.5 }

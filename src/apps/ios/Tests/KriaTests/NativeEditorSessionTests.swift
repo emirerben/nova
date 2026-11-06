@@ -6914,6 +6914,10 @@ final class EditorCommitSpy: KriaAPIClient {
     private var commitContinuation: CheckedContinuation<Void, Never>?
     private var commitResumeRequested = false
     private var suspendNextCommit: Bool
+    var suspendNextCapabilities = false
+    private(set) var capabilitiesIsSuspended = false
+    private var capabilitiesContinuation: CheckedContinuation<Void, Never>?
+    func resumeCapabilities() { capabilitiesContinuation?.resume(); capabilitiesContinuation = nil }
     var suspendNextEditorVariant = false
     private(set) var editorVariantIsSuspended = false
     private var editorVariantContinuation: CheckedContinuation<Void, Never>?
@@ -6975,6 +6979,12 @@ final class EditorCommitSpy: KriaAPIClient {
     func projects() async throws -> [ProjectSummary] { throw APIError.unsupported }
     func creationCapabilities() async throws -> CreationCapabilities {
         capabilitiesCallCount += 1
+        if suspendNextCapabilities {
+            suspendNextCapabilities = false
+            capabilitiesIsSuspended = true
+            await withCheckedContinuation { capabilitiesContinuation = $0 }
+            capabilitiesIsSuspended = false
+        }
         if let capabilitiesError { throw capabilitiesError }
         return CreationCapabilities(formats: [], phoneRendering: phoneRenderingCapabilities, creationMode: creationMode)
     }
