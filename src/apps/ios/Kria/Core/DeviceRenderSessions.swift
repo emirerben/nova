@@ -318,7 +318,7 @@ enum DeviceRenderGate: Equatable {
     }
     @ObservationIgnored private var rereads: [DeviceRenderKey: PendingRead] = [:]
     @ObservationIgnored private var delayedReads: [DeviceRenderKey: PendingRead] = [:]
-    private struct ResumeTarget {
+    private struct ResumeTarget: Equatable {
         let identity: DeviceRenderIdentity
         let baseGeneration: String?
     }
@@ -328,6 +328,7 @@ enum DeviceRenderGate: Equatable {
         let intentOperation: UUID?
         let target: ResumeTarget
     }
+    @ObservationIgnored private var parkedFollowTargets: [DeviceRenderKey: ResumeTarget] = [:]
     @ObservationIgnored private var observedResumeTargets: [DeviceRenderKey: ResumeTarget] = [:]
     @ObservationIgnored private var resumeAuthorizations: [DeviceRenderKey: ResumeAuthorization] = [:]
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
@@ -603,10 +604,26 @@ enum DeviceRenderGate: Equatable {
             let failure = DeviceRenderReadFailure(error)
             guard ownerIsCurrent, tickets[key] == ticket else { return }
             if let parkedTarget {
-                if case .transient = failure, canObserveParked(key, target: parkedTarget) {
+                guard canObserveParked(key, target: parkedTarget) else { return }
+                switch failure {
+                case .transient, .other:
+                    // An undecodable response does not prove generation failure.
                     scheduleRetry(key, after: Self.slowReadRecheck, observing: parkedTarget)
-                } else if failure == .inactive || failure == .jobCancelled || failure == .superseded {
+                case .inactive, .jobCancelled, .superseded:
                     await readFailed(key, failure: failure, error: error, ticket: ticket, retry: false, intentAction: .automatic)
+                case .updateRequired(let target):
+                    settle(key)
+                    presentations[key] = target?.phase == "published"
+                        ? DeviceRenderPresentation(phase: .synced)
+                        : DeviceRenderPresentation(phase: .needsAttention, reasonCode: DeviceRenderAttentionCopy.updateReason,
+                                                   requiresServerRetry: target?.phase == "needs_attention")
+                case .unreadableRecipe(let target):
+                    settle(key)
+                    presentations[key] = target.phase == "published"
+                        ? DeviceRenderPresentation(phase: .synced, publishedGeneration: target.publishedGeneration)
+                        : DeviceRenderPresentation(phase: .needsAttention, reasonCode: target.reasonCode,
+                                                   requiresServerRetry: target.phase == "needs_attention")
+                case .cancelled, .appGate: break
                 }
                 return
             }
@@ -615,7 +632,7 @@ enum DeviceRenderGate: Equatable {
         }
         guard ownerIsCurrent, tickets[key] == ticket, !Task.isCancelled else { return }
         if let parkedTarget {
-            await applyParkedStatus(status, key: key, target: parkedTarget, ticket: ticket)
+            await applyParkedStatus(status, key: key, target: parkedTarget, ticket: ticket, capabilities: capabilities)
             return
         }
         // Observed by the chat body: only write when it actually changes.
@@ -634,8 +651,8 @@ enum DeviceRenderGate: Equatable {
     }
 
     private func canObserveParked(_ key: DeviceRenderKey, target: ResumeTarget) -> Bool {
-        guard ownerIsCurrent, requests[key]?.identity == target.identity,
-              baseGenerations[key] == target.baseGeneration,
+        guard ownerIsCurrent,
+              (parkedFollowTargets[key] == target || (requests[key]?.identity == target.identity && baseGenerations[key] == target.baseGeneration)),
               pendingRetries[key] == nil, resumeAuthorizations[key] == nil else { return false }
         do {
             let storageKey = try intentKey(key)
@@ -644,38 +661,116 @@ enum DeviceRenderGate: Equatable {
         } catch { return false }
     }
 
-    /// Observe only: no factory, recover, export, upload, retry or failure-report call.
+    /// Fresh status may resume only a proven safe original attempt. Successors are GET-only.
     private func applyParkedStatus(_ status: DeviceRenderStatusResponse, key: DeviceRenderKey,
-                                   target: ResumeTarget, ticket: UUID) async {
-        guard tickets[key] == ticket, canObserveParked(key, target: target) else { return }
-        guard status.request.identity == target.identity, status.baseGeneration == target.baseGeneration else {
+                                   target: ResumeTarget, ticket: UUID,
+                                   capabilities: PhoneRenderingCapabilities) async {
+        guard tickets[key] == ticket, canObserveParked(key, target: target),
+              status.request.identity.jobID == key.jobID,
+              status.request.identity.variantID == key.variantID else { return }
+        let fresh = ResumeTarget(identity: status.request.identity, baseGeneration: status.baseGeneration)
+        if fresh != target {
+            // Drop execution authority. This subscription follows authoritative publication
+            // without creating a coordinator or inheriting the old Resume operation.
+            let previous = entries[key]
+            observations.removeValue(forKey: key)?.cancel()
+            try? await previous?.cancel()
+            guard tickets[key] == ticket, canObserveParked(key, target: target) else { return }
+            initiation.invalidate(jobID: key.jobID, variantID: key.variantID)
+            resumeAuthorizations[key] = nil
+            parkedFollowTargets[key] = fresh
+        }
+        let following = parkedFollowTargets[key] != nil
+        if status.retryRequiresApproval { retryApprovalKeys.insert(key) } else { retryApprovalKeys.remove(key) }
+        if status.outputVerificationRequired { verificationKeys.insert(key) } else { verificationKeys.remove(key) }
+        if status.pausedByUser || status.reasonCode == Self.pausedReason || status.phase == "cancelled" {
+            settle(key)
+            presentations[key] = DeviceRenderPresentation(phase: .cancelled,
+                reasonCode: status.phase == "cancelled" ? Self.jobCancelledReason : Self.pausedReason)
+        } else if status.phase == "superseded" {
             presentations[key] = DeviceRenderPresentation(phase: .superseded)
             await retire(key)
-            return
-        }
-        if status.phase == "published" {
-            let saved = await entries[key]?.snapshot()
-            guard tickets[key] == ticket, canObserveParked(key, target: target) else { return }
-            settle(key)
-            presentations[key] = DeviceRenderPresentation(phase: .synced,
-                localFile: saved?.request.identity == target.identity ? saved?.outputURL : nil,
-                publishedGeneration: status.publishedGeneration)
-        } else if status.phase == "needs_attention" {
-            settle(key)
-            var presentation = presentations[key] ?? DeviceRenderPresentation(phase: .needsAttention)
-            presentation.phase = presentation.localFile == nil ? .needsAttention : .localReady
-            presentation.reasonCode = status.reasonCode; presentation.message = status.reason
-            presentation.requiresServerRetry = true
-            presentations[key] = presentation
         } else {
-            scheduleRetry(key, after: Self.slowReadRecheck, observing: target)
+            let saved: DeviceRenderReceipt?
+            if following { saved = nil } else { saved = await entries[key]?.snapshot() }
+            guard tickets[key] == ticket, canObserveParked(key, target: fresh) else { return }
+            if status.phase == "published" {
+                settle(key)
+                presentations[key] = DeviceRenderPresentation(phase: .synced,
+                    // The server publication is authoritative; a parked local file may be corrupt.
+                    localFile: nil,
+                    publishedGeneration: status.publishedGeneration)
+                return
+            }
+            let gate = Self.gate(status.request.recipe, capabilities: capabilities, environment: environment)
+            if status.phase == "needs_attention" {
+                settle(key)
+                let value = attentionPresentation(status, saved: saved, gate: gate, capabilities: capabilities)
+                presentations[key] = value
+                if value.waiting != nil { scheduleRetry(key, after: Self.slowReadRecheck, observing: fresh) }
+                return
+            }
+            // Checking already-committed output never re-enters publication. A rollout
+            // hold, capability wait, or successor likewise confers no execution authority.
+            if !following, status.phase == "awaiting_device", !status.phoneRenderingPaused,
+               case .local = gate, let coordinator = entries[key] {
+                do {
+                    let resumed = try await coordinator.resumeParkedSafely()
+                    guard tickets[key] == ticket, canObserveParked(key, target: fresh) else { return }
+                    if resumed { await observe(key, coordinator: coordinator); return }
+                    await projectUnsafeParkedContinuation(key, coordinator: coordinator, target: fresh, ticket: ticket)
+                } catch {
+                    await projectUnsafeParkedContinuation(key, coordinator: coordinator, target: fresh, ticket: ticket)
+                }
+            }
+            scheduleRetry(key, after: Self.slowReadRecheck, observing: fresh)
         }
+    }
+
+    private func projectUnsafeParkedContinuation(_ key: DeviceRenderKey, coordinator: DeviceRenderCoordinator,
+                                                 target: ResumeTarget, ticket: UUID) async {
+        let state = await coordinator.observationSnapshot()
+        guard tickets[key] == ticket, canObserveParked(key, target: target), !state.isBusy,
+              let saved = state.receipt, saved.error == nil,
+              [.preparing, .localReady].contains(saved.phase) else { return }
+        let missingOutput = saved.outputURL != nil
+        presentations[key] = DeviceRenderPresentation(phase: .needsAttention,
+            message: missingOutput
+                ? "Your edits are saved, but this iPhone’s finished file could not be verified. Retry to render it again. Kria will keep checking the original result."
+                : "Your edits are saved. This iPhone could not confirm whether rendering finished. Retry to start a new local attempt, or wait while Kria checks the original result.",
+            reasonCode: missingOutput ? "local_output_unavailable" : "local_export_unconfirmed",
+            requiresServerRetry: false)
+    }
+
+    /// Shared projection only: no retry, decline, upload, or coordinator transition.
+    private func attentionPresentation(_ status: DeviceRenderStatusResponse, saved: DeviceRenderReceipt?,
+                                       gate: DeviceRenderGate, capabilities: PhoneRenderingCapabilities) -> DeviceRenderPresentation {
+        var reason = status.reasonCode, message = status.reason
+        if ["renderer_outdated", "device_unavailable"].contains(reason) {
+            switch gate {
+            case .local: reason = DeviceRenderAttentionCopy.renderableReason; message = nil
+            case .wait(let wait) where wait != .checking:
+                return DeviceRenderPresentation(phase: .preparing, waiting: wait)
+            case .decline(let code, _) where code != DeviceRenderAttentionCopy.updateReason
+                    && capabilities.recipeVersions.contains(status.request.recipe.schemaVersion):
+                reason = code; message = nil
+            case .wait, .decline: break
+            }
+        }
+        let kept = saved?.request == status.request && saved?.outputURL != nil
+        let unchecked = status.outputVerificationRequired && saved?.phase != .synced
+        return DeviceRenderPresentation(
+            phase: reason == Self.pausedReason && !kept ? .cancelled : kept ? .localReady : .needsAttention,
+            localFile: kept && !unchecked ? saved?.outputURL : nil,
+            message: message, reasonCode: reason, requiresServerRetry: true,
+            outputVerificationPending: unchecked)
     }
 
     private func apply(_ status: DeviceRenderStatusResponse, for key: DeviceRenderKey, ticket: UUID,
                        capabilities: PhoneRenderingCapabilities, retry: Bool, origin: DeviceRenderExecutionOrigin, intentAction: IntentAction) async throws {
         let request = status.request
         guard ownerIsCurrent else { return }
+        parkedFollowTargets[key] = nil
         // A read started before Resume cannot consume its newly captured authority.
         // The ticket's coalesced creator read will validate the exact target next.
         if intentAction == .automatic, resumeAuthorizations[key] != nil { return }
@@ -727,45 +822,9 @@ enum DeviceRenderGate: Equatable {
         if status.phase == "needs_attention" {
             settle(key)
             observations.removeValue(forKey: key)?.cancel()
-            var reasonCode = status.reasonCode, message = status.reason
-            // A decline this build reported earlier (outdated renderer, rollout
-            // paused) is replaced by what this build's gate says once it reports no
-            // version gap: renderable now (the retry tells the server this phone renders it,
-            // `renders_locally`, so the server re-pins instead of answering requires_update),
-            // a missing capability (needs a change), or a wait (too hot, too full). Never
-            // "Update Kria" on a build no update helps.
-            if ["renderer_outdated", "device_unavailable"].contains(reasonCode) {
-                switch gate {
-                case .local:
-                    reasonCode = DeviceRenderAttentionCopy.renderableReason
-                    message = nil
-                case .wait(let reason) where reason != .checking:
-                    presentations[key] = DeviceRenderPresentation(phase: .preparing, waiting: reason)
-                    scheduleRetry(key, after: Self.waitRecheck)
-                    return
-                case .decline(let code, _) where code != DeviceRenderAttentionCopy.updateReason
-                        && capabilities.recipeVersions.contains(request.recipe.schemaVersion):
-                    // A recipe schema this build doesn't list is still a version gap.
-                    reasonCode = code
-                    message = nil
-                case .wait, .decline:
-                    // Capabilities not known yet, or still a version gap: the server's answer stands.
-                    break
-                }
-            }
-            // "Ready on this iPhone" only for a finished video of this request: the receipt
-            // on disk may be an earlier request's (cancelled, never synced) export.
-            let keptHere = saved?.request == request && saved?.outputURL != nil
-            // A server from before Stop became a pause records it as a failure.
-            // It is still the creator's own pause: Resume, never "needs attention".
-            let paused = reasonCode == Self.pausedReason && !keptHere
-            presentations[key] = DeviceRenderPresentation(
-                // Server checks are advisory: a finished export stays watchable even when
-                // the server did not publish it.
-                phase: paused ? .cancelled : !keptHere ? .needsAttention : .localReady,
-                localFile: saved?.request == request ? saved?.outputURL : nil,
-                message: message, reasonCode: reasonCode, requiresServerRetry: true
-            )
+            let value = attentionPresentation(status, saved: saved, gate: gate, capabilities: capabilities)
+            presentations[key] = value
+            if value.waiting != nil { scheduleRetry(key, after: Self.waitRecheck) }
             return
         }
         guard ["awaiting_device", "syncing"].contains(status.phase) else {
@@ -1033,6 +1092,7 @@ enum DeviceRenderGate: Equatable {
         settle(key)
         observations.removeValue(forKey: key)?.cancel()
         retryApprovalKeys.remove(key); verificationKeys.remove(key)
+        parkedFollowTargets[key] = nil
         requests.removeValue(forKey: key)
         heldRequests.removeValue(forKey: key)
         if let previous = entries.removeValue(forKey: key) { try? await previous.cancel() }
@@ -1319,6 +1379,7 @@ enum DeviceRenderGate: Equatable {
     /// `cancelByUser()`. Every other cancel in this file is housekeeping and
     /// must keep calling the coordinator's plain `cancel()`.
     func cancel(_ key: DeviceRenderKey) async {
+        parkedFollowTargets[key] = nil
         guard await synchronizeOwner() else { return }
         let operation = UUID()
         let current: UUID? = keyOperations[key]
@@ -1433,6 +1494,7 @@ enum DeviceRenderGate: Equatable {
         pendingRetries.removeAll()
         baseGenerations.removeAll()
         heldRequests.removeAll()
+        parkedFollowTargets.removeAll()
         initiation.invalidate()
         tickets.removeAll()
         rereads.removeAll(); delayedReads.removeAll(); resumeAuthorizations.removeAll(); observedResumeTargets.removeAll()
@@ -1474,7 +1536,7 @@ enum DeviceRenderGate: Equatable {
                     // Chat poll. Observe that outcome without repeating uncertain work.
                     let target = ResumeTarget(identity: saved.request.identity, baseGeneration: self.baseGenerations[key])
                     if saved.error == nil, [.preparing, .localReady].contains(saved.phase),
-                       self.tickets[key] == nil, self.canObserveParked(key, target: target) {
+                       self.canObserveParked(key, target: target) {
                         self.retryTasks.removeValue(forKey: key)?.cancel()
                         self.retryTokens[key] = nil
                         self.scheduleRetry(key, after: Self.slowReadRecheck, observing: target)

@@ -107,16 +107,28 @@ private struct Publisher: DeviceRenderPublishing {
     func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication { .published }
 }
 
+private actor UnconfirmedExporter: LocalExporting {
+    private(set) var calls = 0
+    func export(recipe: KriaMediaEngine.EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String,
+                progress: (@Sendable (Double) -> Void)?) async throws -> ExportCheckpoint {
+        calls += 1
+        throw URLError(.networkConnectionLost)
+    }
+}
+
 private actor ParkedPublisher: DeviceRenderPublishing {
     let verification: Bool
     private(set) var uploads = 0
+    private var recovered = false
+    func restore() { recovered = true }
     init(verification: Bool) { self.verification = verification }
     func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool {
-        if !verification { throw URLError(.networkConnectionLost) }
+        if !verification && !recovered { throw URLError(.networkConnectionLost) }
         return true
     }
     func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication {
         uploads += 1
+        if recovered { return .published }
         throw DeviceRenderVerificationPending()
     }
 }
@@ -536,13 +548,15 @@ private final class Phone: @unchecked Sendable {
                 retryPolicy: .init(transientDelays: [], reportBackoffCap: .seconds(1), sleep: { _ in }))
             let server = Server([awaiting(pinned)])
             let sessions = DeviceRenderSessions(fetch: { _, _ in try await server.read() }, factory: { _, _ in coordinator },
-                sleep: { await clock.sleep($0) })
+                environment: Phone().environment, sleep: { await clock.sleep($0) })
             let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
             await sessions.reconcile(key, capabilities: enabled)
             let parked = await eventually { await clock.pending == 1 }; XCTAssertTrue(parked)
             let delay = await clock.delays.last; XCTAssertEqual(delay, .seconds(300))
             let exportsBefore = await exporter.calls, uploadsBefore = await publisher.uploads
-            // Still pending at the next read: observation must not call recover() or publish().
+            // A committed server check remains GET-only; pre-work outages may retry
+            // only the coordinator's proven unstarted stage.
+            if verification { await server.then([.success(DeviceRenderStatusResponse(phase: "syncing", request: pinned))]) }
             await clock.fire()
             let again = await eventually { await clock.pending == 1 }; XCTAssertTrue(again)
             await server.then([published(pinned)]); await clock.fire()
@@ -554,29 +568,191 @@ private final class Phone: @unchecked Sendable {
         }
     }
 
+    func testParkedKnownUnstartedWorkContinuesWithoutChatOnceReadRecovers() async throws {
+        let job = UUID(), pinned = request(job), clock = Clock(), exporter = Exporter()
+        let publisher = ParkedPublisher(verification: false), output = directory()
+        let coordinator = try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: NoSources(), publisher: publisher,
+            retryPolicy: .init(transientDelays: [], reportBackoffCap: .seconds(1), sleep: { _ in }))
+        let server = Server([awaiting(pinned)])
+        let sessions = DeviceRenderSessions(fetch: { _, _ in try await server.read() }, factory: { _, _ in coordinator },
+            environment: Phone().environment, sleep: { await clock.sleep($0) })
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: enabled)
+        let parked = await eventually { await clock.pending == 1 }; XCTAssertTrue(parked)
+        let original = await coordinator.snapshot()
+        await publisher.restore(); await clock.fire()
+        let synced = await eventually { sessions.presentations[key]?.phase == .synced }; XCTAssertTrue(synced)
+        let final = await coordinator.snapshot(), exports = await exporter.calls, uploads = await publisher.uploads
+        XCTAssertEqual(final?.attemptID, original?.attemptID)
+        XCTAssertEqual(exports, 1); XCTAssertEqual(uploads, 1)
+        await sessions.stopAll()
+    }
+
     func testParkedObservationCannotCrossStopShutdownOwnerOrChangedIdentity() async throws {
-        for change in ["stop", "shutdown", "owner", "identity"] {
+        for change in ["stop", "shutdown", "owner", "identity", "generation"] {
             let job = UUID(), pinned = request(job), clock = Clock(), exporter = Exporter()
             let publisher = ParkedPublisher(verification: true), output = directory()
             let coordinator = try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: NoSources(), publisher: publisher)
             let server = Server([awaiting(pinned)])
             var owner = "first"
             let sessions = DeviceRenderSessions(fetch: { _, _ in try await server.read() }, factory: { _, _ in coordinator },
-                ownerIdentity: { owner }, sleep: { await clock.sleep($0) })
+                ownerIdentity: { owner }, environment: Phone().environment, sleep: { await clock.sleep($0) })
             let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
             await sessions.reconcile(key, capabilities: enabled)
             let parked = await eventually { await clock.pending == 1 }; XCTAssertTrue(parked)
             let before = await server.reads
-            await server.then([published(change == "identity" ? request(job, revision: 2) : pinned)])
+            await server.then([.success(DeviceRenderStatusResponse(phase: "published",
+                request: change == "identity" ? request(job, revision: 2) : pinned,
+                publishedGeneration: "output", baseGeneration: change == "generation" ? "changed" : nil))])
             if change == "stop" { await sessions.cancel(key) }
             if change == "shutdown" { await sessions.stopAll() }
             if change == "owner" { owner = "replacement" }
             await clock.fire()
             for _ in 0..<30 { await Task.yield() }
             let reads = await server.reads, exports = await exporter.calls, uploads = await publisher.uploads
-            XCTAssertEqual(reads, before + (change == "identity" ? 1 : 0))
-            XCTAssertNotEqual(sessions.presentations[key]?.phase, .synced)
+            XCTAssertEqual(reads, before + (["identity", "generation"].contains(change) ? 1 : 0))
+            if ["identity", "generation"].contains(change) {
+                XCTAssertEqual(sessions.presentations[key]?.phase, .synced)
+                XCTAssertNil(sessions.presentations[key]?.localFile, "Never attach the superseded attempt's local file")
+            } else { XCTAssertNotEqual(sessions.presentations[key]?.phase, .synced) }
             XCTAssertEqual(exports, 1); XCTAssertEqual(uploads, 1)
+            await sessions.stopAll()
+        }
+    }
+
+    func testParkedObservationSettlesServerAttentionAndStopWithoutRepeatingWork() async throws {
+        for paused in [false, true] {
+            let job = UUID(), pinned = request(job), clock = Clock(), exporter = Exporter()
+            let publisher = ParkedPublisher(verification: true), output = directory()
+            let coordinator = try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: NoSources(), publisher: publisher)
+            let server = Server([awaiting(pinned)])
+            let sessions = DeviceRenderSessions(fetch: { _, _ in try await server.read() }, factory: { _, _ in coordinator }, environment: Phone().environment, sleep: { await clock.sleep($0) })
+            let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+            await sessions.reconcile(key, capabilities: enabled)
+            let parked = await eventually { await clock.pending == 1 }; XCTAssertTrue(parked)
+            await server.then([.success(DeviceRenderStatusResponse(phase: "needs_attention", request: pinned,
+                reasonCode: paused ? "cancelled_by_user" : "verification_failed", pausedByUser: paused))])
+            await clock.fire()
+            let settled = await eventually { sessions.presentations[key]?.reasonCode == (paused ? "cancelled_by_user" : "verification_failed") }; XCTAssertTrue(settled)
+            let pending = await clock.pending; XCTAssertEqual(pending, 0)
+            let exports = await exporter.calls, uploads = await publisher.uploads
+            XCTAssertEqual(exports, 1); XCTAssertEqual(uploads, 1)
+            if paused { XCTAssertTrue(sessions.isPausedByCreator(key)) }
+            else { XCTAssertTrue(sessions.presentations[key]?.requiresServerRetry == true) }
+            await sessions.stopAll()
+        }
+    }
+
+    func testUncertainParkedOutputOffersLocalRetryWhileStillObservingPublication() async throws {
+        for corrupt in [false, true] {
+            let job = UUID(), pinned = request(job), clock = Clock(), output = directory()
+            let uncertain = UnconfirmedExporter(), complete = Exporter(), publisher = ParkedPublisher(verification: true)
+            let exporter: any LocalExporting
+            if corrupt { exporter = complete } else { exporter = uncertain }
+            let coordinator = try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: NoSources(), publisher: publisher,
+                retryPolicy: .init(transientDelays: [], reportBackoffCap: .seconds(1), sleep: { _ in }))
+            let server = Server([awaiting(pinned)])
+            let sessions = DeviceRenderSessions(fetch: { _, _ in try await server.read() }, factory: { _, _ in coordinator },
+                environment: Phone().environment, sleep: { await clock.sleep($0) })
+            let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+            await sessions.reconcile(key, capabilities: enabled)
+            let parked = await eventually { await clock.pending == 1 }; XCTAssertTrue(parked)
+            let original = await coordinator.snapshot()
+            if corrupt { try Data("wrong bytes".utf8).write(to: XCTUnwrap(original?.outputURL)) }
+            await clock.fire()
+            let actionable = await eventually { sessions.presentations[key]?.phase == .needsAttention }; XCTAssertTrue(actionable)
+            let presentation = try XCTUnwrap(sessions.presentations[key])
+            XCTAssertEqual(DeviceRenderAttentionCopy.nextStep(presentation), .retry)
+            XCTAssertFalse(presentation.requiresServerRetry)
+            XCTAssertNil(presentation.localFile)
+            XCTAssertTrue(presentation.message?.contains("saved") == true)
+            let rearmed = await eventually { await clock.pending == 1 }; XCTAssertTrue(rearmed)
+            await server.then([published(pinned)]); await clock.fire()
+            let synced = await eventually { sessions.presentations[key]?.phase == .synced }; XCTAssertTrue(synced)
+            let final = await coordinator.snapshot(), attempted = await uncertain.calls, completed = await complete.calls
+            XCTAssertEqual(final?.attemptID, original?.attemptID)
+            XCTAssertEqual(corrupt ? completed : attempted, 1)
+            XCTAssertNil(sessions.presentations[key]?.localFile, "An unverified or damaged local file is never exposed")
+            await sessions.stopAll()
+        }
+    }
+
+    func testParkedUnreadableAndUpdateAnswersProjectWithoutDeclineOrWork() async throws {
+        for kind in ["update", "unreadable", "published", "malformed"] {
+            let job = UUID(), pinned = request(job), clock = Clock(), exporter = Exporter(), declines = Declines()
+            let publisher = ParkedPublisher(verification: true)
+            let coordinator = try DeviceRenderCoordinator(directory: directory(), exporter: exporter, sources: NoSources(), publisher: publisher)
+            let server = Server([awaiting(pinned)])
+            let sessions = DeviceRenderSessions(fetch: { _, _ in try await server.read() }, factory: { _, _ in coordinator },
+                reportDecline: { _, identity, code, _ in try await declines.send(identity, code) },
+                environment: Phone().environment, sleep: { await clock.sleep($0) })
+            let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+            await sessions.reconcile(key, capabilities: enabled)
+            let parked = await eventually { await clock.pending == 1 }; XCTAssertTrue(parked)
+            let error: Error
+            if kind == "update" || kind == "published" {
+                error = try updateRequired(pinned.identity, phase: kind == "published" ? "published" : "awaiting_device")
+            } else if kind == "unreadable" {
+                error = DeviceRenderRecipeUnreadable(identity: pinned.identity, phase: "awaiting_device", publishedGeneration: nil, underlying: RenderAssetError.invalidManifest)
+            } else { error = APIError.invalidResponse }
+            await server.then([.failure(error)]); await clock.fire()
+            for _ in 0..<40 { await Task.yield() }
+            if kind == "published" { XCTAssertEqual(sessions.presentations[key]?.phase, .synced) }
+            else if kind == "update" { XCTAssertTrue(DeviceRenderAttentionCopy.needsUpdate(sessions.presentations[key])) }
+            else if kind == "unreadable" { XCTAssertTrue(DeviceRenderAttentionCopy.needsChange(sessions.presentations[key])) }
+            else { let rearmed = await clock.pending; XCTAssertEqual(rearmed, 1) }
+            let codes = await declines.codes, exports = await exporter.calls, uploads = await publisher.uploads
+            XCTAssertEqual(codes, []); XCTAssertEqual(exports, 1); XCTAssertEqual(uploads, 1)
+            await sessions.stopAll()
+        }
+    }
+
+    func testParkedAttentionRetainsChangeAndApprovalPolicy() async throws {
+        for reason in ["requires_change", "contract_changed", "unsupported_recipe", "export_failed"] {
+            let job = UUID(), pinned = request(job), clock = Clock(), exporter = Exporter()
+            let publisher = ParkedPublisher(verification: true)
+            let coordinator = try DeviceRenderCoordinator(directory: directory(), exporter: exporter, sources: NoSources(), publisher: publisher)
+            let server = Server([awaiting(pinned)])
+            let sessions = DeviceRenderSessions(fetch: { _, _ in try await server.read() }, factory: { _, _ in coordinator },
+                environment: Phone().environment, sleep: { await clock.sleep($0) })
+            let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+            await sessions.reconcile(key, capabilities: enabled)
+            let parked = await eventually { await clock.pending == 1 }; XCTAssertTrue(parked)
+            await server.then([.success(DeviceRenderStatusResponse(phase: "needs_attention", request: pinned,
+                reasonCode: reason, retryRequiresApproval: true, outputVerificationRequired: true))])
+            await clock.fire()
+            let projected = await eventually { sessions.presentations[key]?.reasonCode == reason }; XCTAssertTrue(projected)
+            XCTAssertEqual(DeviceRenderAttentionCopy.needsChange(sessions.presentations[key]), reason != "export_failed")
+            XCTAssertTrue(sessions.retryNeedsApproval(key))
+            XCTAssertNil(sessions.presentations[key]?.localFile, "Unverified bytes never become the published result")
+            let exports = await exporter.calls, uploads = await publisher.uploads
+            XCTAssertEqual(exports, 1); XCTAssertEqual(uploads, 1)
+            await sessions.stopAll()
+        }
+    }
+
+    func testParkedSuccessorRemainsReadOnlyAndLaterStopCancelsObservation() async throws {
+        for stop in [false, true] {
+            let job = UUID(), pinned = request(job), successor = request(job, revision: 2), clock = Clock(), exporter = Exporter()
+            let publisher = ParkedPublisher(verification: true)
+            let coordinator = try DeviceRenderCoordinator(directory: directory(), exporter: exporter, sources: NoSources(), publisher: publisher)
+            let server = Server([awaiting(pinned)])
+            var factories = 0
+            let sessions = DeviceRenderSessions(fetch: { _, _ in try await server.read() }, factory: { _, _ in factories += 1; return coordinator },
+                environment: Phone().environment, sleep: { await clock.sleep($0) })
+            let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+            await sessions.reconcile(key, capabilities: enabled)
+            let parked = await eventually { await clock.pending == 1 }; XCTAssertTrue(parked)
+            await server.then([awaiting(successor)]); await clock.fire()
+            let following = await eventually { await clock.pending == 1 }; XCTAssertTrue(following)
+            let before = await server.reads
+            if stop { await sessions.cancel(key) }
+            await server.then([published(successor)]); await clock.fire()
+            for _ in 0..<40 { await Task.yield() }
+            let reads = await server.reads, exports = await exporter.calls, uploads = await publisher.uploads
+            XCTAssertEqual(reads, before + (stop ? 0 : 1))
+            if !stop { XCTAssertEqual(sessions.presentations[key]?.phase, .synced) }
+            XCTAssertEqual(factories, 1); XCTAssertEqual(exports, 1); XCTAssertEqual(uploads, 1)
             await sessions.stopAll()
         }
     }

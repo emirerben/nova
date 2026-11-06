@@ -82,6 +82,11 @@ public enum DeviceRenderPhase: String, Codable, Sendable {
 
 public struct DeviceExportAttemptReused: Error, Sendable { public init() {} }
 
+/// Missing in legacy receipts: absence never proves the encoder was not invoked.
+public enum DeviceRenderContinuationStage: String, Codable, Sendable {
+    case notStarted, exportStarted, outputReady
+}
+
 public struct DeviceRenderReceipt: Codable, Equatable, Sendable {
     public let request: DeviceRenderRequest
     public let attemptID: UUID
@@ -94,6 +99,7 @@ public struct DeviceRenderReceipt: Codable, Equatable, Sendable {
     /// server must never disagree about whether this render stopped. Absent in older
     /// receipts, which decode unchanged.
     public var pendingReport: DeviceRenderPendingReport? = nil
+    public var continuationStage: DeviceRenderContinuationStage? = nil
 }
 
 public struct DeviceRenderPendingReport: Codable, Equatable, Sendable {
@@ -496,6 +502,7 @@ public actor DeviceRenderCoordinator {
         let attempt = UUID()
         let phase: DeviceRenderPhase = decision.route == .local ? .preparing : .needsAttention
         receipt = DeviceRenderReceipt(request: request, attemptID: attempt, phase: phase, error: decision.reason)
+        receipt?.continuationStage = .notStarted
         try persist()
         guard phase == .preparing else {
             reportFailure(
@@ -520,6 +527,17 @@ public actor DeviceRenderCoordinator {
             return
         }
         launch(attempt: saved.attemptID)
+    }
+
+    /// A slow observer may continue only proven unstarted work or the exact intact file.
+    /// Never replaces an attempt, repairs missing bytes, or re-enters an uncertain encoder.
+    @discardableResult public func resumeParkedSafely() throws -> Bool {
+        guard pendingCommand == nil, running == nil, let saved = receipt,
+              saved.error == nil, [.preparing, .localReady].contains(saved.phase) else { return false }
+        let intact = try intactOutput(saved)
+        guard intact != nil || (saved.outputURL == nil && saved.continuationStage == .notStarted) else { return false }
+        launch(attempt: saved.attemptID, safeContinuation: true)
+        return true
     }
 
     private func replaceAttempt(output: URL?, launchImmediately: Bool = true) throws {
@@ -682,14 +700,14 @@ public actor DeviceRenderCoordinator {
         throw MediaEngineError.avFoundationUnavailable
         #endif
     }
-    private func launch(attempt: UUID, origin: DeviceRenderExecutionOrigin = .automaticRecovery) {
+    private func launch(attempt: UUID, origin: DeviceRenderExecutionOrigin = .automaticRecovery, safeContinuation: Bool = false) {
         guard pendingCommand == nil else { return }
         let run = UUID()
         runID = run
-        running = Task { await self.perform(attempt: attempt, run: run, origin: origin) }
+        running = Task { await self.perform(attempt: attempt, run: run, origin: origin, safeContinuation: safeContinuation) }
     }
 
-    private func perform(attempt: UUID, run: UUID, origin: DeviceRenderExecutionOrigin) async {
+    private func perform(attempt: UUID, run: UUID, origin: DeviceRenderExecutionOrigin, safeContinuation: Bool) async {
         guard current(attempt), runID == run, let identity = receipt?.request.identity else { return }
         var window: DeviceRenderExecutionWindow?
         do {
@@ -700,7 +718,7 @@ public actor DeviceRenderCoordinator {
             try Task.checkCancellation()
             guard runID == run else { throw CancellationError() }
             executionWindow = window
-            await performWork(attempt: attempt, run: run)
+            await performWork(attempt: attempt, run: run, safeContinuation: safeContinuation)
         } catch {
             if runID == run, current(attempt) { park(attempt, error: nil) }
         }
@@ -725,11 +743,11 @@ public actor DeviceRenderCoordinator {
         }
     }
 
-    private func performWork(attempt: UUID, run: UUID) async {
+    private func performWork(attempt: UUID, run: UUID, safeContinuation: Bool) async {
         var transientFailures = 0
         while true {
             do {
-                try await performOnce(attempt: attempt, run: run)
+                try await performOnce(attempt: attempt, run: run, safeContinuation: safeContinuation)
                 return
             } catch is CancellationError {
                 if suspendedAttempt == attempt {
@@ -740,6 +758,7 @@ public actor DeviceRenderCoordinator {
                 }
                 return
             } catch is DeviceExportAttemptReused {
+                if safeContinuation { park(attempt, error: nil); return }
                 guard current(attempt), let saved = receipt, let output = try? intactOutput(saved) else { return }
                 do { try replaceAttempt(output: output, launchImmediately: false) }
                 catch { try? update(attempt, phase: .localReady, error: error.localizedDescription) }
@@ -796,7 +815,7 @@ public actor DeviceRenderCoordinator {
             }
         }
     }
-    private func performOnce(attempt: UUID, run: UUID) async throws {
+    private func performOnce(attempt: UUID, run: UUID, safeContinuation: Bool) async throws {
         guard let saved = receipt, current(attempt) else { return }
         let serverCurrent = try await publisher.isCurrent(saved.request.identity)
         guard current(attempt) else { return }
@@ -809,6 +828,10 @@ public actor DeviceRenderCoordinator {
             try await validateOutputDuration(output, for: saved.request)
             guard current(attempt) else { return }
         } else {
+            if safeContinuation && (saved.outputURL != nil || saved.continuationStage != .notStarted) {
+                park(attempt, error: nil)
+                return
+            }
             if saved.outputURL != nil {
                 try replaceAttempt(output: nil, launchImmediately: false)
                 return
@@ -819,6 +842,8 @@ public actor DeviceRenderCoordinator {
             try update(attempt, phase: .rendering)
             exportFraction = nil
             output = directory.appendingPathComponent("\(attempt.uuidString).mp4")
+            receipt?.continuationStage = .exportStarted
+            try persist()
             _ = try await exporter.export(recipe: saved.request.recipe, assetURLs: assets, outputURL: output, exportID: attempt.uuidString,
                                      progress: { [weak self] fraction in Task { await self?.recordExport(fraction, attempt: attempt, run: run) } })
             guard current(attempt) else { return }
@@ -826,6 +851,7 @@ public actor DeviceRenderCoordinator {
             guard current(attempt) else { return }
             receipt?.outputURL = output
             receipt?.outputFingerprint = try SHA256Fingerprinter().fingerprint(file: output)
+            receipt?.continuationStage = .outputReady
             try update(attempt, phase: .localReady)
         }
         try Task.checkCancellation()

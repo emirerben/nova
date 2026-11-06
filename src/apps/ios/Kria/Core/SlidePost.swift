@@ -821,6 +821,7 @@ struct SlidePostRenderAcknowledgement {
     private var refreshSequence = 0
     private var requestedItemID: String?
     private var refreshError: String?
+    private(set) var terminalStateReadError: String?
     private var renderAcknowledgement: SlidePostRenderAcknowledgement?
     private static let renderChecking = "Kria is checking whether this render started. Your draft is still here; another render hasn’t been requested."
     private var hasRenderStatusError: Bool {
@@ -854,6 +855,8 @@ struct SlidePostRenderAcknowledgement {
     private var observationsStopped = false
     private var pendingObservationRefresh: (() async -> Void)?
     private var stateObservationNotBefore: Date?
+    private var readLeaseHeld = false
+    private var readLeaseWaiters: [(UUID, CheckedContinuation<Void, Error>)] = []
     private var refreshesInFlight = 0
     private var observationReading = false
     private var aiRecovering = false
@@ -895,7 +898,20 @@ struct SlidePostRenderAcknowledgement {
         guard let saved = state?.draft else { return true }
         return !draft.hasSameContent(as: saved)
     }
-    var canExport: Bool { state?.canExport == true && !hasUnsavedChanges && !isBusy }
+    var canExport: Bool {
+        guard state?.canExport == true, !hasUnsavedChanges, !isBusy else { return false }
+        guard let submission else { return true }
+        return submission.receipt?.isCurrentTarget == true && state?.jobID == submission.receipt?.jobID &&
+            state?.draft?.version == submission.expectedVersion
+    }
+    var originalAIActionTitle: String {
+        guard let scope = loadedSubmissionScope, let projectID = state?.aiProjectID else { return "Check original result" }
+        for kind in SlidePostAIKind.allCases {
+            if let record = try? aiJournal.load(scope: scope, projectID: projectID, kind: kind), !record.delivered,
+               record.receipt == nil || record.receipt?.status == .pending { return "Check or resume original" }
+        }
+        return "Check original result"
+    }
     var canCheckAIResult: Bool { aiRecoveryMessage != nil && !aiResultTerminal && !isBusy && !isChatting }
     /// Undo of the last SAVED change (the server's previous version).
     var canUndo: Bool { undoDraft != nil && !isBusy }
@@ -912,11 +928,12 @@ struct SlidePostRenderAcknowledgement {
     }
 
     var needsSubmissionObservation: Bool {
-        guard !observationsStopped, let submission else { return false }
+        guard !observationsStopped, terminalStateReadError == nil, let submission else { return false }
+        if submission.receipt?.isCurrentTarget == false { return true }
         return !(submission.receipt != nil && state?.jobID == submission.receipt?.jobID &&
                  (state?.canExport == true || SlidePostState.isTerminalRenderFailure(state?.renderStatus)))
     }
-    var needsStateObservation: Bool { !observationsStopped && requestedItemID != nil && (state == nil || refreshError != nil) }
+    var needsStateObservation: Bool { !observationsStopped && terminalStateReadError == nil && requestedItemID != nil && (state == nil || refreshError != nil) }
     func startObserving() { observationsStopped = false }
     func stopObserving() {
         observationsStopped = true
@@ -936,7 +953,7 @@ struct SlidePostRenderAcknowledgement {
             localUIBinding = binding
         }
         if readOnlyObservation {
-            guard !observationsStopped, !observationReading, refreshesInFlight == 0 else { return }
+            guard !observationsStopped, terminalStateReadError == nil, !observationReading, refreshesInFlight == 0 else { return }
             observationReading = true
         } else if observationReading {
             let epoch = observationEpoch
@@ -1070,21 +1087,36 @@ struct SlidePostRenderAcknowledgement {
         readCooldowns = readCooldowns.filter { $0.value.notBefore > now }
     }
 
-    private func recordReadCooldown(_ error: Error, itemID: String) {
-        let itemID = Self.readCooldownKey(itemID)
+    static func validReadRetryAfter(_ seconds: TimeInterval?) -> TimeInterval? {
+        guard let seconds, seconds.isFinite, seconds > 0 else { return nil }
+        return min(seconds, Double(Int64.max / 4))
+    }
+    /// Sleeping in representable chunks does not shorten the separately retained read deadline.
+    static func readObservationDelay(_ seconds: TimeInterval?, minimum: TimeInterval = 30) -> Duration {
+        .seconds(min(86400, max(minimum, validReadRetryAfter(seconds) ?? minimum)))
+    }
+
+    private func recordReadCooldown(_ error: Error, itemID: String, scope: SlidePostSubmissionScope?) {
+        let itemID = Self.readCooldownKey(itemID, scope: scope)
         let now = readNow()
         pruneReadCooldowns(at: now)
         guard case let APIError.requestFailed(status, detail) = error,
               status == 408 || status == 429 || (500...599).contains(status),
-              let seconds = detail.retryAfter, seconds > 0 else { return }
+              let seconds = Self.validReadRetryAfter(detail.retryAfter) else { return }
         // Keep even extreme server hints representable; this ceiling is beyond any session lifetime.
         let deadline = now.advanced(by: .seconds(min(seconds, Double(Int64.max / 4))))
         guard readCooldowns[itemID].map({ $0.notBefore >= deadline }) != true else { return }
         readCooldowns[itemID] = ReadCooldown(notBefore: deadline, error: error)
     }
 
-    private static func readCooldownKey(_ itemID: String) -> String {
-        UUID(uuidString: itemID)?.uuidString.lowercased() ?? itemID
+    private static func readCooldownKey(_ itemID: String, scope: SlidePostSubmissionScope?) -> String {
+        let item = UUID(uuidString: itemID)?.uuidString.lowercased() ?? itemID
+        return (try? JSONEncoder().encode([scope?.owner ?? "", scope?.environment ?? "", item]).base64EncodedString()) ?? item
+    }
+    private static func isTransientStateReadFailure(_ error: Error) -> Bool {
+        if RequestFailureCause(error) == .connection { return true }
+        if case let APIError.requestFailed(status, _) = error { return status == 408 || status == 429 || (500...599).contains(status) }
+        return false
     }
 
     private struct AIWaiting: LocalizedError {
@@ -1114,6 +1146,7 @@ struct SlidePostRenderAcknowledgement {
         let record = SlidePostAIRecord(scope: scope, projectID: projectID, kind: kind, input: input, baseline: baseline, operationID: operationID)
         try Task.checkCancellation()
         try aiJournal.reserve(record)
+        aiRecoveryTask?.cancel(); aiRecoveryTask = nil; aiRecoveryToken = UUID()
         aiRecoveryMessage = nil; aiResultTerminal = false
         return record
     }
@@ -1126,13 +1159,14 @@ struct SlidePostRenderAcknowledgement {
         if receipt.status == .rejected { record.remainingReads = 0 }
         try aiJournal.update(record)
     }
-    private func noteAIFailure(_ failure: Error, record: inout SlidePostAIRecord) throws {
+    private func noteAIFailure(_ failure: Error, record: inout SlidePostAIRecord, publish: Bool = true) throws {
         var delay: TimeInterval = 3
-        if case let APIError.requestFailed(_, detail) = failure { delay = max(delay, detail.retryAfter ?? 0) }
+        if case let APIError.requestFailed(_, detail) = failure { delay = max(delay, Self.validReadRetryAfter(detail.retryAfter) ?? 0) }
         let date = submissionNow().addingTimeInterval(delay)
         if record.notBefore.map({ $0 < date }) ?? true { record.notBefore = date }
         if record.serverNotBefore.map({ $0 < date }) ?? true { record.serverNotBefore = date }
         try aiJournal.update(record)
+        guard publish else { return }
         aiResultTerminal = false
         aiRecoveryMessage = "Checking the original AI request. Your draft is safe; this check will not start another AI call."
     }
@@ -1212,9 +1246,8 @@ struct SlidePostRenderAcknowledgement {
         guard record.notBefore.map({ $0 <= submissionNow() }) ?? true else { return }
         let observationOnly = !explicit && record.remainingReads == 0
         if observationOnly, let deadline = record.slowReadNotBefore, deadline > submissionNow() { return }
-        record = try aiJournal.reserveAttempt(record, post: false, explicit: explicit, now: submissionNow())
         do {
-            let receipt = try await api.slidePostAIReceipt(itemID: itemID, requestID: record.operationID, expectedOwner: record.scope.owner)
+            let receipt = try await fetchAIReceipt(api: api, itemID: itemID, record: &record, explicit: explicit, epoch: epoch)
             guard epoch == observationEpoch, aiCurrent(record, api: api, itemID: itemID), !Task.isCancelled else { throw CancellationError() }
             try acceptAIReceipt(receipt, record: &record)
             if !observationOnly, receipt.status == .pending, state?.aiRequestRecoveryVersion == 1, (record.remainingPosts > 0 || explicit) {
@@ -1223,7 +1256,14 @@ struct SlidePostRenderAcknowledgement {
                 try await postAI(api: api, itemID: itemID, record: &record, explicit: explicit, ownReadDeadline: ownDelay)
             }
         } catch {
-            guard epoch == observationEpoch, aiCurrent(record, api: api, itemID: itemID) else { throw CancellationError() }
+            let current = epoch == observationEpoch && aiCurrent(record, api: api, itemID: itemID)
+            if !current {
+                // Preserve a late server deadline for the original durable identity without publishing old UI.
+                if case let APIError.requestFailed(_, detail) = error, (detail.retryAfter ?? 0) > 0 {
+                    try? noteAIFailure(error, record: &record, publish: false)
+                }
+                throw CancellationError()
+            }
             if !observationOnly, case let APIError.requestFailed(status, _) = error, status == 404,
                record.receipt == nil, state?.aiRequestRecoveryVersion == 1, (record.remainingPosts > 0 || explicit) {
                 let ownDelay = record.notBefore
@@ -1233,6 +1273,25 @@ struct SlidePostRenderAcknowledgement {
                 throw error
             }
         }
+    }
+    private func fetchAIReceipt(api: any KriaAPIClient, itemID: String, record: inout SlidePostAIRecord, explicit: Bool, epoch: Int) async throws -> SlidePostAIReceipt {
+        try await acquireReadLease()
+        defer { releaseReadLease() }
+        try Task.checkCancellation()
+        guard epoch == observationEpoch, aiCurrent(record, api: api, itemID: itemID) else { throw CancellationError() }
+        record = try aiJournal.reserveAttempt(record, post: false, explicit: explicit, now: submissionNow())
+        return try await api.slidePostAIReceipt(itemID: itemID, requestID: record.operationID, expectedOwner: record.scope.owner)
+    }
+    private func aiRecoveryDelay(scope: SlidePostSubmissionScope, projectID: UUID) -> Duration {
+        let now = submissionNow()
+        let waits = SlidePostAIKind.allCases.compactMap { kind -> TimeInterval? in
+            guard let record = try? aiJournal.load(scope: scope, projectID: projectID, kind: kind),
+                  !record.delivered, record.receipt?.status != .rejected else { return nil }
+            let base: TimeInterval = record.remainingReads > 0 ? 3 : 30
+            let deadlines = [record.notBefore, record.serverNotBefore, record.remainingReads == 0 ? record.slowReadNotBefore : nil]
+            return max(base, deadlines.compactMap { $0?.timeIntervalSince(now) }.max() ?? 0)
+        }
+        return Self.readObservationDelay(waits.min(), minimum: 3)
     }
     private func startAIRecovery(api: any KriaAPIClient, itemID: String) {
         guard !observationsStopped, aiRecoveryTask == nil, let projectID = state?.aiProjectID,
@@ -1244,10 +1303,14 @@ struct SlidePostRenderAcknowledgement {
         let token = UUID(); aiRecoveryToken = token
         aiRecoveryTask = Task { [weak self] in
             while !Task.isCancelled {
-                guard !Task.isCancelled else { break }
-                try? await Task.sleep(for: .seconds(3))
+                let delay = self?.aiRecoveryDelay(scope: scope, projectID: projectID) ?? .seconds(30)
+                do { try await Task.sleep(for: delay) } catch { break }
                 guard let self, self.aiRecoveryToken == token, self.itemID == itemID,
-                      self.state?.aiProjectID == projectID, (try? self.submissionScope(api, itemID)) == scope else { break }
+                      self.state?.aiProjectID == projectID else { break }
+                guard (try? self.submissionScope(api, itemID)) == scope else {
+                    self.clearPrivatePresentation(); self.error = APIError.sessionExpired.localizedDescription
+                    break
+                }
                 if self.isBusy || self.isChatting { continue }
                 await self.recoverAI(api: api, itemID: itemID, explicit: false)
                 let pending = SlidePostAIKind.allCases.contains { kind in
@@ -1260,9 +1323,21 @@ struct SlidePostRenderAcknowledgement {
         }
     }
     private var aiWaitingCopy: String { "The original AI result is not available yet. Kria will keep checking without starting another AI call." }
+    private func aiWaitingCopy(for record: SlidePostAIRecord) -> String {
+        if record.receipt?.status == .pending && record.remainingPosts == 0 {
+            return "The original request has not started. Resume that request to continue. Automatic checks only read its status."
+        }
+        if record.receipt == nil && record.remainingPosts == 0 {
+            return "Kria cannot confirm whether the original request started. Check or resume that same request; automatic checks only read its status."
+        }
+        return aiWaitingCopy
+    }
     func recoverAI(api: any KriaAPIClient, itemID: String, explicit: Bool) async {
         guard !observationsStopped, !isBusy, !isChatting, !aiRecovering, let projectID = state?.aiProjectID,
               let scope = try? submissionScope(api, itemID) else { return }
+        guard loadedSubmissionScope == scope else {
+            clearPrivatePresentation(); error = APIError.sessionExpired.localizedDescription; return
+        }
         let context = contextGeneration
         aiRecovering = true; defer { if contextGeneration == context { aiRecovering = false } }
         let generation = mutationGeneration
@@ -1276,7 +1351,7 @@ struct SlidePostRenderAcknowledgement {
                     aiResultTerminal = record.receipt?.status == .rejected
                     aiRecoveryMessage = record.receipt?.status == .rejected
                         ? "Kria could not use this request. Update your instruction and send a new request."
-                        : aiWaitingCopy
+                        : aiWaitingCopy(for: record)
                     error = aiRecoveryMessage; continue
                 }
                 try validateAIResult(result, record: record)
@@ -1325,7 +1400,7 @@ struct SlidePostRenderAcknowledgement {
     private func persistReadCooldown(_ error: Error, scope: SlidePostSubmissionScope?) throws {
         guard let scope, case let APIError.requestFailed(status, detail) = error,
               status == 408 || status == 429 || (500...599).contains(status),
-              let seconds = detail.retryAfter, seconds > 0,
+              let seconds = Self.validReadRetryAfter(detail.retryAfter),
               let record = try submissionJournal.load(scope) else { return }
         let deadline = submissionNow().addingTimeInterval(seconds)
         _ = try submissionJournal.update(scope, operationID: record.operationID) { value in
@@ -1334,17 +1409,41 @@ struct SlidePostRenderAcknowledgement {
         }
     }
 
+    private func acquireReadLease() async throws {
+        try Task.checkCancellation()
+        if !readLeaseHeld { readLeaseHeld = true; return }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled { continuation.resume(throwing: CancellationError()) }
+                else { readLeaseWaiters.append((id, continuation)) }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                guard let self, let index = self.readLeaseWaiters.firstIndex(where: { $0.0 == id }) else { return }
+                self.readLeaseWaiters.remove(at: index).1.resume(throwing: CancellationError())
+            }
+        }
+    }
+    private func releaseReadLease() {
+        if readLeaseWaiters.isEmpty { readLeaseHeld = false }
+        else { readLeaseWaiters.removeFirst().1.resume() }
+    }
+
     /// Only GETs retry. A failed save or generate may already have committed on the server.
     private func readState(api: any KriaAPIClient, itemID: String, isCurrent: () -> Bool = { true }) async throws -> SlidePostState {
+        let epoch = observationEpoch
         let generation = mutationGeneration
         let requestedItem = requestedItemID
         let expectedScope = try? submissionScope(api, itemID)
+        try await acquireReadLease()
+        defer { releaseReadLease() }
         for attempt in 0..<3 {
             try Task.checkCancellation()
-            guard expectedScope == (try? submissionScope(api, itemID)) else { throw CancellationError() }
+            guard epoch == observationEpoch, expectedScope == (try? submissionScope(api, itemID)) else { throw CancellationError() }
             guard generation == mutationGeneration, requestedItem == requestedItemID, isCurrent() else { throw CancellationError() }
             pruneReadCooldowns(at: readNow())
-            if let cooldown = readCooldowns[Self.readCooldownKey(itemID)] {
+            if let cooldown = readCooldowns[Self.readCooldownKey(itemID, scope: expectedScope)] {
                 refreshError = cooldown.error.localizedDescription
                 throw cooldown.error
             }
@@ -1352,21 +1451,22 @@ struct SlidePostRenderAcknowledgement {
             do {
                 let result = try await api.slidePost(itemID: itemID, expectedOwner: expectedScope.flatMap(transportOwner))
                 try Task.checkCancellation()
-                guard expectedScope == (try? submissionScope(api, itemID)) else { throw CancellationError() }
+                guard epoch == observationEpoch, expectedScope == (try? submissionScope(api, itemID)) else { throw CancellationError() }
                 guard generation == mutationGeneration, requestedItem == requestedItemID, isCurrent() else { throw CancellationError() }
                 guard result.schemaVersion == 1, result.itemID == itemID else { throw APIError.invalidResponse }
                 if self.error == refreshError { self.error = nil }
-                refreshError = nil
+                refreshError = nil; terminalStateReadError = nil
                 return result
             } catch {
                 // Server pacing applies to future calls even when this read is final, cancelled or superseded.
-                recordReadCooldown(error, itemID: itemID)
+                recordReadCooldown(error, itemID: itemID, scope: expectedScope)
                 try persistReadCooldown(error, scope: expectedScope)
                 try Task.checkCancellation()
-                guard expectedScope == (try? submissionScope(api, itemID)) else { throw CancellationError() }
+                guard epoch == observationEpoch, expectedScope == (try? submissionScope(api, itemID)) else { throw CancellationError() }
                 guard generation == mutationGeneration, requestedItem == requestedItemID, isCurrent() else { throw CancellationError() }
                 guard attempt < 2, let delay = Self.readRetryDelay(error, attempt: attempt) else {
                     refreshError = error.localizedDescription
+                    terminalStateReadError = Self.isTransientStateReadFailure(error) ? nil : error.localizedDescription
                     throw error
                 }
                 try await readRetrySleep(delay)
@@ -1388,6 +1488,11 @@ struct SlidePostRenderAcknowledgement {
     }
 
     var hasPendingRenderSubmission: Bool { submission != nil }
+    var hasConfirmedRenderFailure: Bool {
+        guard SlidePostState.isTerminalRenderFailure(state?.renderStatus) else { return false }
+        guard let submission else { return true }
+        return submission.receipt?.isCurrentTarget == true && state?.jobID == submission.receipt?.jobID
+    }
     var exportObservationJobID: UUID? { submission == nil ? state?.jobID : submission?.receipt?.jobID }
     func exportObservationGuard(api: any KriaAPIClient, itemID: String) -> () -> Bool {
         let scope = try? submissionScope(api, itemID)
@@ -1907,8 +2012,8 @@ struct SlidePostRenderAcknowledgement {
             return
         }
         if error == nil || hasRenderStatusError {
-            if submission?.remainingReads == 0 { error = Self.renderWaitExhausted }
-            else if record.receipt != nil && result.jobID == record.receipt?.jobID && SlidePostState.isTerminalRenderFailure(result.renderStatus) { error = Self.renderFailed }
+            if record.receipt?.isCurrentTarget == true && result.jobID == record.receipt?.jobID && SlidePostState.isTerminalRenderFailure(result.renderStatus) { error = Self.renderFailed }
+            else if submission?.remainingReads == 0 { error = Self.renderWaitExhausted }
             else if record.receipt?.dispatchState != .published { error = Self.renderChecking }
         }
     }
@@ -1917,10 +2022,12 @@ struct SlidePostRenderAcknowledgement {
         guard let record = try submissionJournal.load(scope),
               (record.receipt != nil || allowExhausted), record.remainingReads > 0 || allowExhausted else { return }
         let epoch = observationEpoch
+        try await acquireReadLease()
+        defer { releaseReadLease() }
         try Task.checkCancellation()
-        guard try submissionScope(api, scope.itemID) == scope, loadedSubmissionScope == scope else { throw CancellationError() }
+        guard epoch == observationEpoch, !observationsStopped, try submissionScope(api, scope.itemID) == scope, loadedSubmissionScope == scope else { throw CancellationError() }
         pruneReadCooldowns(at: readNow())
-        if let cooldown = readCooldowns[Self.readCooldownKey(scope.itemID)] { throw cooldown.error }
+        if let cooldown = readCooldowns[Self.readCooldownKey(scope.itemID, scope: scope)] { throw cooldown.error }
         try prepareSubmissionRead(scope, operationID: record.operationID)
         do {
             let latest = try await api.slidePostGenerationReceipt(itemID: itemID ?? scope.itemID, clientRequestID: record.operationID, expectedOwner: transportOwner(scope))
@@ -1932,7 +2039,7 @@ struct SlidePostRenderAcknowledgement {
             guard try submissionJournal.update(scope, operationID: record.operationID, change: { $0.receipt = latest }) else { throw APIError.conflict }
             submission = try submissionJournal.load(scope)
         } catch {
-            recordReadCooldown(error, itemID: scope.itemID)
+            recordReadCooldown(error, itemID: scope.itemID, scope: scope)
             try persistReadCooldown(error, scope: scope)
             throw error
         }
@@ -2531,6 +2638,7 @@ struct SlidePostRenderAcknowledgement {
         } else { self.error = error.localizedDescription }
     }
     private func clearPrivatePresentation(invalidate: Bool = true) {
+        terminalStateReadError = nil
         observationEpoch += 1
         pendingObservationRefresh = nil; stateObservationNotBefore = nil
         contextGeneration += 1

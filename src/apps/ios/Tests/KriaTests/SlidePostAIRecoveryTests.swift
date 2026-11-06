@@ -157,6 +157,7 @@ private actor AIRecoveryAPI: KriaAPIClient {
     private var fault: String?
     private var receiptStatus: SlidePostAIReceipt.Status = .completed
     private var readError: Error?
+    private var lateReadError: Error?
     private var change = "caption"
     private var pauseRead = false
     private var pauseSave = false
@@ -196,6 +197,7 @@ private actor AIRecoveryAPI: KriaAPIClient {
         if let readError { throw readError }
         guard let receipt, receipt.clientRequestID == requestID else { throw APIError.requestFailed(status: 404, detail: .init("missing")) }
         if pauseRead { await withCheckedContinuation { readGate = $0 } }
+        if let lateReadError { throw lateReadError }
         var result = receipt.result
         if fault == "baseline", case var .object(fields)? = result { fields["base_version"] = .number(999); result = .object(fields) }
         return .init(clientRequestID: fault == "operation" ? UUID() : receipt.clientRequestID,
@@ -204,6 +206,7 @@ private actor AIRecoveryAPI: KriaAPIClient {
             input: fault == "input" ? .object(["message": .string("other")]) : receipt.input,
             status: receiptStatus, result: receiptStatus == .completed ? result : nil)
     }
+    func setLateReadError(_ error: Error?) { lateReadError = error }
     func suspendReads() { pauseRead = true }
     func suspendSaves() { pauseSave = true }
     func waitForSuspension(save: Bool = false) async -> Bool {
@@ -460,8 +463,10 @@ extension SlidePostAISessionRecoveryTests {
         let check = Task { await value.retryChat(api: h.api, itemID: itemID, bubble: bubble) }
         let suspended = await h.api.waitForSuspension(); XCTAssertTrue(suspended)
         var replacement = h.state; replacement.aiProjectID = UUID()
-        await h.api.setState(replacement); await value.refresh(api: h.api, itemID: itemID)
-        await h.api.releaseRead(); await check.value
+        await h.api.setState(replacement)
+        let changed = Task { await value.refresh(api: h.api, itemID: itemID, projectID: replacement.aiProjectID) }
+        await Task.yield()
+        await h.api.releaseRead(); await check.value; await changed.value
         XCTAssertEqual(value.draft?.caption, "original")
         XCTAssertTrue(value.chat.isEmpty)
         XCTAssertNil(value.proposal)
@@ -675,8 +680,10 @@ extension SlidePostAISessionRecoveryTests {
             if replacement == "account" { h.owner = "replacement" }
             let next = SlidePostState(itemID: nextID, title: "new context", draft: h.state.draft,
                 assets: h.state.assets, aiRequestRecoveryVersion: 1, aiProjectID: projectID)
-            await h.api.setState(next); await value.refresh(api: h.api, itemID: nextID)
-            await h.api.releaseRead(); await check.value
+            await h.api.setState(next)
+            let changed = Task { await value.refresh(api: h.api, itemID: nextID) }
+            await Task.yield()
+            await h.api.releaseRead(); await check.value; await changed.value
             XCTAssertEqual(value.state?.itemID, nextID)
             XCTAssertEqual(value.draft?.caption, "original")
             XCTAssertTrue(value.chat.isEmpty)
@@ -732,5 +739,44 @@ extension SlidePostAISessionRecoveryTests {
         await h.api.releaseRead(); await pending.value
         XCTAssertEqual(value.draft?.caption, "original")
         counts = await h.api.counts(); XCTAssertEqual(counts.posts, 1)
+    }
+}
+
+extension SlidePostAISessionRecoveryTests {
+    func testLateRetryAfterSurvivesObserverStopAndRestart() async throws {
+        let h = AIHarness(state: remote()); defer { h.clean() }
+        let value = h.session(); await value.refresh(api: h.api, itemID: itemID)
+        _ = await value.chatEdit(api: h.api, itemID: itemID, message: "caption")
+        var record = try XCTUnwrap(h.journal.load(scope: h.scope, projectID: projectID, kind: .chatEdit))
+        record.remainingReads = 0; record.remainingPosts = 0; try h.journal.update(record)
+        h.advance(30); await h.api.suspendReads()
+        let reading = Task { await value.recoverAI(api: h.api, itemID: itemID, explicit: false) }
+        let suspended = await h.api.waitForSuspension(); XCTAssertTrue(suspended)
+        value.stopObserving(); value.startObserving()
+        await h.api.setLateReadError(APIError.requestFailed(status: 429, detail: .init("wait", retryAfter: 60)))
+        await h.api.releaseRead(); await reading.value
+        await h.api.setLateReadError(nil)
+        h.advance(59); await value.recoverAI(api: h.api, itemID: itemID, explicit: false)
+        var counts = await h.api.counts(); XCTAssertEqual(counts.reads, 1)
+        h.advance(1); await value.recoverAI(api: h.api, itemID: itemID, explicit: false)
+        counts = await h.api.counts(); XCTAssertEqual(counts.reads, 2); XCTAssertEqual(counts.posts, 1)
+        XCTAssertEqual(value.draft?.caption, "AI caption")
+    }
+}
+
+extension SlidePostAISessionRecoveryTests {
+    func testSlowObserverRejectsWrongReceiptAndChangedOwnerWithoutNewWork() async throws {
+        for fault in ["item", "project", "operation", "owner"] {
+            let h = AIHarness(state: remote()); defer { h.clean() }
+            let value = h.session(); await value.refresh(api: h.api, itemID: itemID)
+            _ = await value.chatEdit(api: h.api, itemID: itemID, message: "caption")
+            var record = try XCTUnwrap(h.journal.load(scope: h.scope, projectID: projectID, kind: .chatEdit))
+            record.remainingReads = 0; record.remainingPosts = 0; try h.journal.update(record)
+            if fault == "owner" { h.owner = "other" } else { await h.api.configure(fault: fault) }
+            h.advance(30); await value.recoverAI(api: h.api, itemID: itemID, explicit: false)
+            let counts = await h.api.counts(); XCTAssertEqual(counts.posts, 1)
+            XCTAssertNotEqual(value.draft?.caption, "AI caption")
+            if fault == "owner" { XCTAssertNil(value.draft); XCTAssertTrue(value.chat.isEmpty); XCTAssertEqual(counts.reads, 0) }
+        }
     }
 }

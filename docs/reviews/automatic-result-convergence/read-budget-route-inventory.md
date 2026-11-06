@@ -31,6 +31,21 @@ The three already assigned fixes are RB04, RB12 and RB13. Additional definite re
 
 No source changes were made for this inventory. Root owns triage/assignment of these finite IDs; existing Native/Slide authors must not receive overlapping hot-file work without coordination. After their freezes, review RB04/RB12/RB13 against exact IDs and update evidence rather than rerunning this broad inventory.
 
+## Coordinated implementation status
+
+Root accepted the finite 18-ID boundary and assigned the following retrieval-only corrections. This table does not extend the inventory or claim runtime proof.
+
+| IDs | Owner | Status after WIP checkpoint `56b1ddc4649b2f14c95fdc1da6b5de08edc75783` |
+|---|---|---|
+| RB03 / RB04 / RB07 | `independent_review` | Native initial load/latest-job/saved-preview continuation and shared transport ownership in progress; final static cross-review by `route_audit` pending freeze. |
+| RB12 / RB13 / RB14 / RB15 | `slide_convergence` | AI/generation/initial-state GET observation plus exact active-export readiness continuation in progress; final static cross-review by `route_audit` pending freeze. No replay of completed/uncertain Photos writes. |
+| RB11 | `route_audit` | Source/tests frozen for independent root review. Coalesced 300s status observer respects longer Retry-After. Original current awaiting-device work uses dedicated safe continuation only with persisted never-started stage or intact output; verification is GET-only. Changed target follows publication read-only, with no successor factory/recover. Shared canonical attention projection preserves change/update/reapproval. Four package and eight Sessions focused methods written/updated, unexecuted. |
+| Other IDs | Root triage; existing boundary owners | Classifications above retained. No new source work assigned by this document. |
+
+RB11 now distinguishes safe continuation from uncertain work using an optional persisted coordinator stage. `exportStarted` is durable before invoking the exporter; output plus fingerprint is durable before publication. Legacy stage-less receipts without intact output, uncertain export dispatch, and missing/corrupt output are observation-only: the safe API cannot mint another attempt or regenerate bytes. Same-attempt publisher recovery retains the existing create-only upload/checksum contract; it is never invoked by the observer while the server reports syncing. No paid generation, retry endpoint, Photos write, or successor compute is authorized by the observer. Blocked unknown/invalid output is projected as actionable local attention with saved-edits copy, no exposed local file and `requiresServerRetry=false`; original-result GET observation stays active. A 426 or structured unreadable recipe projects canonical update/change/published state without reporting decline, while a generic malformed response keeps the paced observer. Existing explicit/foreground recovery APIs remain outside this narrow new API.
+
+Static validation only: `git diff --check` passed after the source changes. Native and package test execution remains held. The stage regression cases were written before implementing the stage/API. There is no executed red or green claim. Parent must preserve the incoming main instrumentation spans around source resolution, export, hash and publish during controlled integration; this patch did not move its base.
+
 ## Focused proof contract (not executed)
 
 For every assigned retrieval continuation: exhaust fast budget; keep owner/project/job/generation stable; deliver ready only after the final fast check; assert automatic adoption with no lifecycle event and no new mutation. Negative controls: later Stop, changed owner/environment/project/target, dismissal/shutdown, delayed old response, long Retry-After, and overlapping observer demand. Assert one in-flight reader. For export/Photos additionally prove no duplicate encoder/upload/library commit and distinguish known failed transaction from unknown outcome.

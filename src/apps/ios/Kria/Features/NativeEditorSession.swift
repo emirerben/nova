@@ -209,15 +209,35 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var latestJobTransport: Task<Void, Never>?
     private var observersVisible = true
     private var pendingLoadObservation: (@MainActor () async -> Void)?
-    private var loadObservationCooldown = NativeEditorReadCooldown()
-    private var previewObservationCooldown = NativeEditorReadCooldown()
+    struct ObservationScope: Hashable {
+        let owner: String?
+        let environment: String?
+        let target: String
+    }
+    private func observationScope(api: (any KriaAPIClient)?, target: String) -> ObservationScope {
+        ObservationScope(owner: api?.mediaLibraryOwner, environment: (api as? KriaAPI)?.baseURL.absoluteString, target: target)
+    }
+    private var loadObservationScope: ObservationScope?
+    private var loadObservationCooldowns: [ObservationScope: NativeEditorReadCooldown] = [:]
+    private var loadObservationCooldown: NativeEditorReadCooldown {
+        get { loadObservationScope.flatMap { loadObservationCooldowns[$0] } ?? NativeEditorReadCooldown() }
+        set { if let scope = loadObservationScope { loadObservationCooldowns[scope] = newValue } }
+    }
+    private var previewObservationCooldowns: [ObservationScope: NativeEditorReadCooldown] = [:]
+    private var previewObservationTerminal = false
+    private var previewSlowGeneration: String?
     private var previewTransport: Task<[String: JSONValue], Error>?
+    private var loadTransport: Task<Void, Never>?
+    var loadReadNow: () -> ContinuousClock.Instant = { ContinuousClock.now }
+    var loadReadSleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    var previewReadNow: () -> ContinuousClock.Instant = { ContinuousClock.now }
+    var previewReadSleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     private var watchedLatestProject: ProjectSummary?
     private static let latestJobSlowRecheck: Duration = .seconds(300)
     var latestJobRetryDelays: [Duration] = [.seconds(1), .seconds(3), .seconds(9)]
     var latestJobReadNow: () -> ContinuousClock.Instant = { ContinuousClock.now }
     var latestJobReadSleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
-    private var latestJobCooldowns: [UUID: NativeEditorReadCooldown] = [:]
+    private var latestJobCooldowns: [ObservationScope: NativeEditorReadCooldown] = [:]
     private var newVersionWatchAttempts = 0
     @Published private(set) var latestJobRefreshMessage: String?
     /// Shown on the opening screen while a first open waits for its video or for a connection.
@@ -1277,6 +1297,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     private func beginEditorLoad() -> UInt64 {
         editorLoadEpoch &+= 1
         resetLatestJobDrain()
+        pendingLoadObservation = nil
         saveHistory = nil
         resetBackgroundRefresh()
         previewRefreshTask?.cancel(); previewRefreshTask = nil; pendingPreviewGeneration = nil
@@ -2041,16 +2062,20 @@ struct NativeEditorTemporaryVideo: Sendable {
         guard editorLoadEpoch == epoch else { return }
         conversationRuntimeVersion = 2
         resetBackgroundRefresh()
+        loadObservationScope = observationScope(api: api, target: "draft:\(threadID)")
         self.api = api; self.threadID = threadID; isSaving = true; saveState = .saving; loadState = .loading
+        pendingLoadObservation = { [weak self] in
+            await self?.load(api: api, threadID: threadID, variantID: variantID, allowPlaybackFallback: allowPlaybackFallback)
+        }
         defer { if editorLoadEpoch == epoch { isSaving = false } }
         do {
-            let snapshot = try await api.draft(threadID: threadID)
+            let snapshot = try await readLoadObservation(epoch: epoch, target: "draft:\(threadID)") { try await api.draft(threadID: threadID) }
             guard editorLoadEpoch == epoch else { return }
             let jobID = snapshot.baseJobID.flatMap(UUID.init)
             self.jobID = jobID
             let authoritativeVariant: [String: JSONValue]?
             let requestedVariantKey = variantID ?? snapshot.variantKey
-            if let jobID { authoritativeVariant = try await api.editorVariant(jobID: jobID, variantID: requestedVariantKey) }
+            if let jobID { authoritativeVariant = try await readLoadObservation(epoch: epoch, target: "variant:\(jobID):\(requestedVariantKey)") { try await api.editorVariant(jobID: jobID, variantID: requestedVariantKey) } }
             else { authoritativeVariant = nil }
             guard editorLoadEpoch == epoch else { return }
             let loadedDraft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: authoritativeVariant)
@@ -2628,7 +2653,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
         drainPendingLatestJob()
         if let retry = pendingLoadObservation { scheduleLoadObservation(retry, delay: .zero) }
-        if let generation = pendingPreviewGeneration { startPreviewRefresh(generation: generation) }
+        if !previewObservationTerminal, let generation = pendingPreviewGeneration { startPreviewRefresh(generation: generation) }
     }
 
     private func resetLatestJobDrain() {
@@ -2649,6 +2674,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         latestJobDrainTask?.cancel()
         let expectedJob = jobID
         let owner = api.mediaLibraryOwner
+        let scope = observationScope(api: api, target: "latest:\(ticket.threadID)")
         let window = NativeEditorReadWindow(started: latestJobReadNow())
         let retryDelays = latestJobRetryDelays
         latestJobDrainTask = Task { [weak self] in
@@ -2663,7 +2689,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                     let latest = try await self.readLatestJob(ticket, window: window) { try await api.project(threadID: ticket.threadID) }
                     guard !Task.isCancelled, self.observersVisible, self.latestJobGate.matches(ticket), self.threadID == ticket.threadID,
                           self.jobID == expectedJob, api.mediaLibraryOwner == owner, !self.isSaving, self.activeSaveAttemptID == nil else { return }
-                    self.latestJobCooldowns[ticket.threadID]?.prune(now: self.latestJobReadNow())
+                    self.latestJobCooldowns[scope]?.prune(now: self.latestJobReadNow())
                     self.latestJobRefreshMessage = nil
                     if let currentJob = latest.job, currentJob.id == latest.activeJobID,
                        ["cancelled", "superseded", "failed", "no_labeled_tracks"].contains(currentJob.status.lowercased()) || currentJob.status.lowercased().hasSuffix("_failed") {
@@ -2677,6 +2703,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 } catch {
                     guard !Task.isCancelled, self.observersVisible, self.latestJobGate.matches(ticket), self.threadID == ticket.threadID,
                           self.jobID == expectedJob, api.mediaLibraryOwner == owner, !self.isSaving, self.activeSaveAttemptID == nil else { return }
+                    if error is CancellationError { return }
                     guard case .transient = Self.refreshFailure(error) else {
                         self.latestJobRefreshMessage = "The latest version could not be checked. Your edits are still here."
                         return
@@ -2696,11 +2723,14 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// waits for a cancellation-ignoring GET and its Retry-After before issuing another.
     private func readLatestJob<Value: Sendable>(_ ticket: NativeEditorLatestGate.Ticket, window: NativeEditorReadWindow,
                                       read: @escaping @MainActor () async throws -> Value) async throws -> Value {
+        let scope = observationScope(api: api, target: "latest:\(ticket.threadID)")
         while let active = latestJobTransport {
             await active.value
             try Task.checkCancellation()
         }
-        guard try await allowLatestJobRead(ticket, window: window), latestJobGate.matches(ticket) else { throw CancellationError() }
+        guard observationScope(api: api, target: scope.target) == scope,
+              try await allowLatestJobRead(ticket, window: window), latestJobGate.matches(ticket),
+              observationScope(api: api, target: scope.target) == scope else { throw CancellationError() }
         // A waiter may have acquired the transport while this one waited on pacing.
         if latestJobTransport != nil { return try await readLatestJob(ticket, window: window, read: read) }
         let owner = api?.mediaLibraryOwner
@@ -2711,7 +2741,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 if let self, self.api?.mediaLibraryOwner == owner,
                    case let APIError.requestFailed(status, detail) = error,
                    status == 408 || status == 429 || status >= 500, let hint = detail.retryAfter {
-                    self.latestJobCooldowns[ticket.threadID, default: NativeEditorReadCooldown()].record(seconds: hint, now: self.latestJobReadNow())
+                    self.latestJobCooldowns[scope, default: NativeEditorReadCooldown()].record(seconds: hint, now: self.latestJobReadNow())
                 }
                 throw error
             }
@@ -2724,7 +2754,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// deadlines survive bursts; a later notification replaces this ticket's wake.
     private func scheduleLatestJobRecheck(_ ticket: NativeEditorLatestGate.Ticket) {
         guard latestJobGate.matches(ticket), let api else { return }
-        let cooldown = latestJobCooldowns[ticket.threadID] ?? NativeEditorReadCooldown()
+        let scope = observationScope(api: api, target: "latest:\(ticket.threadID)")
+        let cooldown = latestJobCooldowns[scope] ?? NativeEditorReadCooldown()
         guard !cooldown.isPaused else {
             latestJobRefreshMessage = "The server supplied an unsupported retry interval. Your edits are still here."
             return
@@ -2735,7 +2766,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         latestJobDrainTask = Task { [weak self] in
             do { try await sleep(delay) } catch { return }
             guard !Task.isCancelled, let self, self.observersVisible, self.editorOperationIdentity == identity,
-                  self.latestJobGate.matches(ticket), api.mediaLibraryOwner == owner else { return }
+                  self.latestJobGate.matches(ticket), api.mediaLibraryOwner == owner,
+                  self.observationScope(api: self.api, target: scope.target) == scope else { return }
             self.latestJobDrainTask = nil
             self.drainPendingLatestJob()
         }
@@ -2743,10 +2775,11 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     private func allowLatestJobRead(_ ticket: NativeEditorLatestGate.Ticket, window: NativeEditorReadWindow) async throws -> Bool {
         let owner = api?.mediaLibraryOwner
+        let scope = observationScope(api: api, target: "latest:\(ticket.threadID)")
         while true {
             guard !Task.isCancelled, observersVisible, latestJobGate.matches(ticket), ticket.threadID == threadID,
-                  api?.mediaLibraryOwner == owner, !isSaving, activeSaveAttemptID == nil else { return false }
-            let cooldown = latestJobCooldowns[ticket.threadID] ?? NativeEditorReadCooldown()
+                  api?.mediaLibraryOwner == owner, observationScope(api: api, target: scope.target) == scope, !isSaving, activeSaveAttemptID == nil else { return false }
+            let cooldown = latestJobCooldowns[scope] ?? NativeEditorReadCooldown()
             switch window.action(cooldown: cooldown, now: latestJobReadNow()) {
             case .paused:
                 scheduleLatestJobRecheck(ticket)
@@ -2875,7 +2908,8 @@ struct NativeEditorTemporaryVideo: Sendable {
             return matching.isEmpty ? nil : matching
         } ?? identified
         if candidates.contains(where: { $0["render_status"]?.stringValue == "ready" }) { return .ready }
-        if !candidates.isEmpty, candidates.allSatisfy({ $0["render_status"]?.stringValue == "failed" }) { return .failed }
+        let terminal = Set(["failed", "cancelled", "superseded", "needs_attention"])
+        if !candidates.isEmpty, candidates.allSatisfy({ terminal.contains($0["render_status"]?.stringValue ?? "") }) { return .failed }
         return .rendering
     }
 
@@ -2975,6 +3009,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         let epoch = loadEpoch ?? beginEditorLoad()
         guard editorLoadEpoch == epoch else { return }
         self.api = api
+        loadObservationScope = observationScope(api: api, target: "job:\(editorJobID)")
         self.threadID = threadID
         resetBackgroundRefresh()
         if let previous = jobID, previous != editorJobID { discardPlaybackForNewJob() }
@@ -2989,38 +3024,49 @@ struct NativeEditorTemporaryVideo: Sendable {
         // resolved variant only once that is known.
         let capabilitiesTask = Task { try? await api.creationCapabilities() }
         let draftTask: Task<DraftSnapshot?, Never>? = if conversationRuntimeVersion == 2, let threadID {
-            Task { try? await api.draft(threadID: threadID) }
+            Task { [weak self] in
+                guard let self else { return nil }
+                return try? await self.readLoadObservation(epoch: epoch, target: "draft:\(threadID)") { try await api.draft(threadID: threadID) }
+            }
         } else {
             nil
         }
         defer { capabilitiesTask.cancel(); draftTask?.cancel() }
+        var acknowledgedOpen: OpenInEditorResponse?
         do {
             let receipt: OpenInEditorResponse? = if planItemID == nil {
                 try await api.openJobInEditor(jobID: editorJobID)
             } else {
                 nil
             }
+            acknowledgedOpen = receipt
             guard editorLoadEpoch == epoch else { return }
             self.threadID = threadID ?? receipt?.creationThreadID
             guard let resolvedPlanItemID = planItemID ?? receipt?.planItemID else {
                 throw APIError.invalidResponse
+            }
+            let retryVariant = preferredVariantID ?? receipt?.variantID
+            let retryThread = threadID ?? receipt?.creationThreadID
+            pendingLoadObservation = { [weak self] in
+                await self?.load(editorJobID: editorJobID, planItemID: resolvedPlanItemID,
+                    preferredVariantID: retryVariant, threadID: retryThread, api: api)
             }
             let resolved: (variantID: String, variant: [String: JSONValue])
             if let requestedVariantID = preferredVariantID ?? receipt?.variantID {
                 do {
                     resolved = (
                         requestedVariantID,
-                        try await api.editorVariant(jobID: editorJobID, variantID: requestedVariantID)
+                        try await readLoadObservation(epoch: epoch, target: "variant:\(editorJobID):\(requestedVariantID)") { try await api.editorVariant(jobID: editorJobID, variantID: requestedVariantID) }
                     )
                 } catch where receipt != nil && requestedVariantID != receipt?.variantID {
                     guard editorLoadEpoch == epoch else { return }
                     resolved = (
                         receipt!.variantID,
-                        try await api.editorVariant(jobID: editorJobID, variantID: receipt!.variantID)
+                        try await readLoadObservation(epoch: epoch, target: "variant:\(editorJobID):\(receipt!.variantID)") { try await api.editorVariant(jobID: editorJobID, variantID: receipt!.variantID) }
                     )
                 }
             } else {
-                let variants = try await api.editorVariants(jobID: editorJobID)
+                let variants = try await readLoadObservation(epoch: epoch, target: "variants:\(editorJobID)") { try await api.editorVariants(jobID: editorJobID) }
                 guard editorLoadEpoch == epoch else { return }
                 guard let variant = variants.first(where: {
                     $0["render_status"]?.stringValue == "ready" && $0["variant_id"]?.stringValue != nil
@@ -3028,7 +3074,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                       let variantID = variant["variant_id"]?.stringValue else {
                     throw APIError.invalidResponse
                 }
-                resolved = (variantID, try await api.editorVariant(jobID: editorJobID, variantID: variantID))
+                resolved = (variantID, try await readLoadObservation(epoch: epoch, target: "variant:\(editorJobID):\(variantID)") { try await api.editorVariant(jobID: editorJobID, variantID: variantID) })
             }
             guard editorLoadEpoch == epoch else { return }
             let variant = resolved.variant
@@ -3111,16 +3157,54 @@ struct NativeEditorTemporaryVideo: Sendable {
             NativePreviewDiagnostics.failure("editor-load-failed", error: error)
             NativePreviewDiagnostics.record("editor-load-context", fields: ["job": jobID?.uuidString ?? "none"])
             #endif
+            let retryItem = planItemID ?? acknowledgedOpen?.planItemID
+            let retryVariant = preferredVariantID ?? acknowledgedOpen?.variantID
+            let retryThread = threadID ?? acknowledgedOpen?.creationThreadID
+            if retryItem == nil {
+                if error as? APIError == .editorNotReady {
+                    if scheduleLoadRetry(after: error, { [weak self] in
+                        await self?.observeGalleryReadiness(jobID: editorJobID, api: api)
+                    }) { return }
+                }
+                // No receipt proves promotion. Do not replay an uncertain metadata POST.
+                loadSucceeded()
+                saveState = .loadFailed("The editor could not confirm opening this video. Your Gallery video is still available.")
+                loadState = .failed("The editor could not confirm opening this video. Your Gallery video is still available.")
+                return
+            }
             if scheduleLoadRetry(after: error, { [weak self] in
-                await self?.load(editorJobID: editorJobID, planItemID: planItemID, preferredVariantID: preferredVariantID,
-                                 threadID: threadID, api: api)
+                await self?.load(editorJobID: editorJobID, planItemID: retryItem, preferredVariantID: retryVariant,
+                                 threadID: retryThread, api: api)
             }) { return }
             saveState = .loadFailed(error.localizedDescription)
             loadState = .failed(error.localizedDescription)
         }
     }
 
+    /// A definitive not-ready rejection did not promote anything. Observe the
+    /// original job with GETs, then finish its already-authorized open once ready.
+    private func observeGalleryReadiness(jobID: UUID, api: any KriaAPIClient) async {
+        let epoch = editorLoadEpoch
+        do {
+            let variants = try await readLoadObservation(epoch: epoch, target: "variants:\(jobID)") { try await api.editorVariants(jobID: jobID) }
+            guard editorLoadEpoch == epoch, observersVisible else { return }
+            switch Self.readiness(variants: variants, preferredVariantID: nil) {
+            case .rendering: throw APIError.editorNotReady
+            case .failed: throw APIError.contentPlanUnavailable
+            case .ready:
+                await load(editorJobID: jobID, planItemID: nil, preferredVariantID: nil, threadID: nil, api: api)
+            }
+        } catch {
+            guard editorLoadEpoch == epoch else { return }
+            if scheduleLoadRetry(after: error, { [weak self] in await self?.observeGalleryReadiness(jobID: jobID, api: api) }) { return }
+            saveState = .loadFailed(error.localizedDescription)
+            loadState = .failed(error.localizedDescription)
+        }
+    }
+
     private func loadSucceeded() {
+        pendingLoadObservation = nil
+        loadObservationCooldown.prune(now: loadReadNow())
         loadRetryAttempt = 0
         loadWaitingMessage = nil
     }
@@ -3133,6 +3217,10 @@ struct NativeEditorTemporaryVideo: Sendable {
         let limit: Int
         let message: String
         let apiError = error as? APIError
+        if !observersVisible, error is CancellationError {
+            scheduleLoadObservation(retry, delay: .zero)
+            return true
+        }
         if apiError == .editorNotReady {
             delays = loadRenderingDelays
             limit = 80
@@ -3152,25 +3240,68 @@ struct NativeEditorTemporaryVideo: Sendable {
                 return false
             }
         }
-        guard loadRetryAttempt < limit, !delays.isEmpty else {
-            loadSucceeded()
-            return false
-        }
-        let delay = delays[min(loadRetryAttempt, delays.count - 1)]
-        loadRetryAttempt += 1
-        loadWaitingMessage = message
+        guard !delays.isEmpty else { loadSucceeded(); return false }
+        let mayRecoverSlowly: Bool = if apiError == .editorNotReady { true } else { if case .transient = Self.refreshFailure(error) { true } else { false } }
+        guard loadRetryAttempt < limit || mayRecoverSlowly else { loadSucceeded(); return false }
+        guard !loadObservationCooldown.isPaused else { loadSucceeded(); return false }
+        let exhausted = loadRetryAttempt >= limit
+        let delay = exhausted ? Self.latestJobSlowRecheck : delays[min(loadRetryAttempt, delays.count - 1)]
+        loadRetryAttempt = min(loadRetryAttempt + 1, limit)
+        loadWaitingMessage = exhausted ? "The editor will check again automatically. Your saved edit is safe." : message
         saveState = .idle
         loadState = .loading
-        loadRetryTask?.cancel()
-        let epoch = editorLoadEpoch
+        scheduleLoadObservation(retry, delay: delay)
+        return true
+    }
+
+    private func scheduleLoadObservation(_ retry: @escaping @MainActor () async -> Void, delay: Duration) {
+        pendingLoadObservation = retry
+        loadRetryTask?.cancel(); loadRetryTask = nil
+        guard observersVisible, !loadObservationCooldown.isPaused else { return }
+        let epoch = editorLoadEpoch, owner = api?.mediaLibraryOwner, sleep = loadReadSleep
+        let scope = loadObservationScope
+        let pause = max(delay, loadObservationCooldown.delay(now: loadReadNow()))
         loadRetryTask = Task { [weak self] in
-            try? await Task.sleep(for: delay)
-            guard !Task.isCancelled, let self, self.editorLoadEpoch == epoch else { return }
-            // Cleared first: the load cancels any pending retry, and this task must not cancel itself.
+            do { try await sleep(pause) } catch { return }
+            guard !Task.isCancelled, let self, self.observersVisible, self.editorLoadEpoch == epoch,
+                  self.api?.mediaLibraryOwner == owner,
+                  scope.map({ self.observationScope(api: self.api, target: $0.target) == $0 }) ?? false else { return }
             self.loadRetryTask = nil
             await retry()
         }
-        return true
+    }
+
+    private func readLoadObservation<Value: Sendable>(epoch: UInt64, target: String,
+        read: @escaping @MainActor () async throws -> Value) async throws -> Value {
+        let owner = api?.mediaLibraryOwner
+        let scope = observationScope(api: api, target: target)
+        guard editorLoadEpoch == epoch else { throw CancellationError() }
+        loadObservationScope = scope
+        while let active = loadTransport { await active.value; try Task.checkCancellation() }
+        while (loadObservationCooldowns[scope] ?? NativeEditorReadCooldown()).delay(now: loadReadNow()) > .zero {
+            try await loadReadSleep((loadObservationCooldowns[scope] ?? NativeEditorReadCooldown()).delay(now: loadReadNow()))
+            try Task.checkCancellation()
+        }
+        guard observersVisible, editorLoadEpoch == epoch, api?.mediaLibraryOwner == owner,
+              observationScope(api: api, target: target) == scope,
+              !(loadObservationCooldowns[scope]?.isPaused ?? false) else { throw CancellationError() }
+        if loadTransport != nil { return try await readLoadObservation(epoch: epoch, target: target, read: read) }
+        let transport = Task<Value, Error> { [weak self] in
+            defer { self?.loadTransport = nil }
+            do { return try await read() }
+            catch {
+                if let self, self.api?.mediaLibraryOwner == owner,
+                   case let APIError.requestFailed(_, detail) = error, let hint = detail.retryAfter {
+                    self.loadObservationCooldowns[scope, default: NativeEditorReadCooldown()].record(seconds: hint, now: self.loadReadNow())
+                }
+                throw error
+            }
+        }
+        loadTransport = Task { _ = try? await transport.value }
+        let value = try await transport.value
+        try Task.checkCancellation()
+        guard observersVisible, editorLoadEpoch == epoch, api?.mediaLibraryOwner == owner else { throw CancellationError() }
+        return value
     }
 
     #if DEBUG
@@ -9563,9 +9694,38 @@ struct NativeEditorTemporaryVideo: Sendable {
     var previewPollInterval: Duration = .seconds(1)
     var previewPollBudget = 300
 
+    private func readSavedPreview(api: any KriaAPIClient, job: UUID, variant: String,
+                                  identity: EditorOperationIdentity, generation: String) async throws -> [String: JSONValue] {
+        let owner = api.mediaLibraryOwner
+        let scope = observationScope(api: api, target: "variant:\(job):\(variant)")
+        while let active = previewTransport { _ = try? await active.value; try Task.checkCancellation() }
+        while (previewObservationCooldowns[scope] ?? NativeEditorReadCooldown()).delay(now: previewReadNow()) > .zero {
+            try await previewReadSleep((previewObservationCooldowns[scope] ?? NativeEditorReadCooldown()).delay(now: previewReadNow()))
+            try Task.checkCancellation()
+        }
+        guard observersVisible, editorOperationIdentity == identity, pendingPreviewGeneration == generation,
+              api.mediaLibraryOwner == owner, observationScope(api: self.api, target: scope.target) == scope, !(previewObservationCooldowns[scope]?.isPaused ?? false) else { throw CancellationError() }
+        if previewTransport != nil { return try await readSavedPreview(api: api, job: job, variant: variant, identity: identity, generation: generation) }
+        let task = Task<[String: JSONValue], Error> { [weak self] in
+            defer { self?.previewTransport = nil }
+            do { return try await api.editorVariant(jobID: job, variantID: variant) }
+            catch {
+                if let self, api.mediaLibraryOwner == owner,
+                   case let APIError.requestFailed(_, detail) = error, let hint = detail.retryAfter {
+                    self.previewObservationCooldowns[scope, default: NativeEditorReadCooldown()].record(seconds: hint, now: self.previewReadNow())
+                }
+                throw error
+            }
+        }
+        previewTransport = task
+        return try await task.value
+    }
+
     private func startPreviewRefresh(generation: String) {
         previewRefreshTask?.cancel()
         pendingPreviewGeneration = generation
+        previewObservationTerminal = false
+        guard observersVisible else { return }
         if surfaceDeviceRenderFailure() { return }
         guard let api, let jobID, let variantKey else {
             saveState = .previewFailed("Your edit is saved, but this device cannot check the new preview yet.")
@@ -9575,20 +9735,31 @@ struct NativeEditorTemporaryVideo: Sendable {
         let savedFrom = previewSupersededGeneration
         let interval = previewPollInterval
         let budget = previewPollBudget
+        let owner = api.mediaLibraryOwner, sleep = previewReadSleep
+        let wasSlow = previewSlowGeneration == generation
         previewRefreshTask = Task { [weak self] in
             // Only answered polls spend the budget: offline or a 5xx just waits longer between tries.
             var answered = 0
             var unreachable = 0
             var newerGeneration: String?
             var newerSightings = 0
-            while answered < budget {
+            var recovering = wasSlow
+            while true {
                 guard !Task.isCancelled else { return }
-                let backoff = unreachable == 0 ? interval : min(interval * (1 << min(unreachable, 4)), .seconds(15))
-                try? await Task.sleep(for: backoff)
+                recovering = recovering || answered >= budget || unreachable >= 12
+                let exhausted = recovering
+                let backoff = exhausted ? Self.latestJobSlowRecheck : (unreachable == 0 ? interval : min(interval * (1 << min(unreachable, 4)), .seconds(15)))
+                if exhausted, let self, self.editorOperationIdentity == identity, self.pendingPreviewGeneration == generation {
+                    self.previewSlowGeneration = generation
+                    self.saveState = .previewFailed("Your edit is saved. The preview will be checked again automatically.")
+                }
+                do { try await sleep(backoff) } catch { return }
                 guard !Task.isCancelled else { return }
                 let variant: [String: JSONValue]
                 do {
-                    variant = try await api.editorVariant(jobID: jobID, variantID: variantKey)
+                    guard let self, self.observersVisible, self.editorOperationIdentity == identity,
+                          self.pendingPreviewGeneration == generation, api.mediaLibraryOwner == owner else { return }
+                    variant = try await self.readSavedPreview(api: api, job: jobID, variant: variantKey, identity: identity, generation: generation)
                 } catch {
                     switch Self.refreshFailure(error) {
                     case .cancelled:
@@ -9596,18 +9767,21 @@ struct NativeEditorTemporaryVideo: Sendable {
                     case .appGate:
                         // Sign-in or update is shown app-wide; nothing to poll for until then.
                         return
-                    case let .transient(retryAfter):
-                        unreachable += 1
-                        if let retryAfter { try? await Task.sleep(for: .seconds(min(retryAfter, 60))) }
+                    case .transient:
+                        unreachable = min(unreachable + 1, 12)
                     case .readConflict, .targetLost, .runtimeUnavailable, .other:
-                        answered += 1
+                        guard let self, self.observersVisible, self.editorOperationIdentity == identity,
+                              self.pendingPreviewGeneration == generation, api.mediaLibraryOwner == owner else { return }
+                        self.previewObservationTerminal = true
+                        self.saveState = .previewFailed("Your edit is saved, but this preview cannot be checked right now.")
+                        return
                     }
                     continue
                 }
                 unreachable = 0
-                answered += 1
+                answered = min(answered + 1, budget)
                 guard !Task.isCancelled else { return }
-                guard let self, self.editorOperationIdentity == identity, self.pendingPreviewGeneration == generation else { return }
+                guard let self, self.observersVisible, api.mediaLibraryOwner == owner, self.editorOperationIdentity == identity, self.pendingPreviewGeneration == generation else { return }
                 // Device failures are reported on the authoritative variant;
                 // only reconcile the local renderer for that terminal status.
                 // Save-time reconciliation already covers the normal path,
@@ -9621,11 +9795,11 @@ struct NativeEditorTemporaryVideo: Sendable {
                     || variant["render_status"]?.stringValue == "needs_attention"
                     || (variant["render_status"]?.stringValue == "ready" && variantGeneration != generation)
                 )
-                if refreshDevice {
+                if refreshDevice && !exhausted {
                     await self.refreshDeviceRender()
                     guard !Task.isCancelled, self.editorOperationIdentity == identity, self.pendingPreviewGeneration == generation else { return }
                 }
-                if self.applyPreviewVariant(variant, generation: generation) { return }
+                if self.applyPreviewVariant(variant, generation: generation) { self.previewObservationTerminal = true; return }
                 // The server moved past this save: another device saved on top of it, or this
                 // iPhone published under a request the identity fence no longer recognises. Waiting
                 // for this generation can never end, so follow the newer one once it reads the same
@@ -9640,12 +9814,9 @@ struct NativeEditorTemporaryVideo: Sendable {
                 newerGeneration = current
                 guard newerSightings >= 2 else { continue }
                 self.pendingPreviewGeneration = current
-                if self.applyPreviewVariant(variant, generation: current) { return }
+                if self.applyPreviewVariant(variant, generation: current) { self.previewObservationTerminal = true; return }
                 self.pendingPreviewGeneration = generation
             }
-            guard !Task.isCancelled, let self, self.editorOperationIdentity == identity, self.pendingPreviewGeneration == generation else { return }
-            // Never reuse a read error's copy here: "This edit changed elsewhere" is a save conflict.
-            self.saveState = .previewFailed("Your edit is saved, but the preview is taking longer than expected. Try checking again.")
         }
     }
 
@@ -9711,6 +9882,14 @@ struct NativeEditorTemporaryVideo: Sendable {
             pendingPreviewGeneration = nil
             saveState = .saved
             announceEditApplied()
+            return true
+        }
+        if status == "needs_attention" {
+            saveState = .renderRetryNeeded("Your edit is saved, but its preview needs attention before rendering can continue.")
+            return true
+        }
+        if status == "cancelled" || status == "superseded" {
+            saveState = .previewFailed("Your edit is saved. This preview is no longer rendering.")
             return true
         }
         if status == "failed" {

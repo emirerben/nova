@@ -75,6 +75,10 @@ final class NativeEditorSessionTests: XCTestCase {
         session.latestJobReadNow = { now }
         session.latestJobReadSleep = { delay in
             waited += delay
+            if supersedeInFlight, delay >= .seconds(600) {
+                XCTAssertTrue(session.latestJobRefreshMessage?.contains("automatically") == true,
+                    "a paced cancellation must preserve the scheduled automatic-wait notice")
+            }
             now = now.advanced(by: delay)
             if renderingWaits > 0 {
                 watchWaits += 1
@@ -7345,6 +7349,7 @@ final class EditorCommitSpy: KriaAPIClient {
     var deviceFetchCount = 0
     var commitCount = 0
     var lastRequest: EditorCommitRequest?
+    var openCallCount = 0
     var openedJobID: UUID?
     var lastItemID: String?
     var draftCallCount = 0
@@ -7429,6 +7434,7 @@ final class EditorCommitSpy: KriaAPIClient {
     }
     func writeDraft(threadID: UUID, snapshot: [String: JSONValue], expectedRevision: Int, etag: String) async throws -> DraftSnapshot { throw APIError.unsupported }
     func openJobInEditor(jobID: UUID) async throws -> OpenInEditorResponse {
+        openCallCount += 1
         openedJobID = jobID
         if !openErrors.isEmpty { throw openErrors.removeFirst() }
         guard let openReceipt else { throw APIError.unsupported }

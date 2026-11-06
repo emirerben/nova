@@ -216,8 +216,8 @@ struct SlidePostWorkspaceView: View {
         // Capabilities only decide optional AI behaviour, never the layout; ask early and keep trying.
         .task(id: capabilities == nil) { await loadCapabilitiesWithRetry() }
         .task(id: pollingKey) {
-            guard (isRendering || session.needsSubmissionObservation || session.needsStateObservation || hasPendingAssets) && itemID != nil else { return }
-            while !Task.isCancelled && (session.isRendering || session.needsSubmissionObservation || session.needsStateObservation || hasPendingAssets) {
+            guard session.terminalStateReadError == nil, (isRendering || session.needsSubmissionObservation || session.needsStateObservation || hasPendingAssets) && itemID != nil else { return }
+            while !Task.isCancelled && session.terminalStateReadError == nil && (session.isRendering || session.needsSubmissionObservation || session.needsStateObservation || hasPendingAssets) {
                 do { try await Task.sleep(for: .seconds(3)) } catch { return }
                 await refresh(readOnlyObservation: true)
             }
@@ -570,7 +570,7 @@ struct SlidePostWorkspaceView: View {
                 }
                 .buttonStyle(.plain).accessibilityHint("Dismiss")
                 if session.canCheckAIResult {
-                    Button("Check original result") {
+                    Button(session.originalAIActionTitle) {
                         guard let itemID else { return }
                         Task { await session.checkAIResult(api: model.api, itemID: itemID) }
                     }

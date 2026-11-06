@@ -31,11 +31,11 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
     override func setUp() { super.setUp(); suite = "SlidePostExportTests.\(UUID())"; defaults = UserDefaults(suiteName: suite) }
     override func tearDown() { SlidePostRetryAfterURLProtocol.handler = nil; NativeEditorURLProtocol.handler = nil; defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: journalRoot); super.tearDown() }
 
-    private func makeSession(readRetrySleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }, readNow: @escaping () -> ContinuousClock.Instant = { .now }) -> SlidePostSession {
+    private func makeSession(readRetrySleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }, readNow: @escaping () -> ContinuousClock.Instant = { .now }, submissionNow: @escaping () -> Date = Date.init) -> SlidePostSession {
         SlidePostSession(defaults: defaults, readRetrySleep: readRetrySleep, readNow: readNow,
             submissionJournal: .init(root: journalRoot), submissionScope: { _, id in
                 .init(owner: "test-owner", environment: "https://native-editor.test", itemID: id)
-            }, transportOwner: { _ in nil })
+            }, submissionNow: submissionNow, transportOwner: { _ in nil })
     }
 
     private func state(version: Int = 1) -> SlidePostState {
@@ -536,9 +536,10 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
         let latest = state(version: 2)
         var reads = 0
         NativeEditorURLProtocol.handler = { _ in reads += 1; return (200, try JSONEncoder().encode(latest)) }
-        await session.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
+        let newer = Task { await session.refresh(api: NativeEditorTestSupport.api(), itemID: itemID) }
+        await Task.yield()
         resume?.resume()
-        await old.value
+        await old.value; await newer.value
         XCTAssertEqual(reads, 1, "Superseded reads must not issue another GET")
         XCTAssertEqual(session.state?.draft?.version, 2)
         XCTAssertNil(session.error)
@@ -555,9 +556,10 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
         await fulfillment(of: [waiting], timeout: 2)
         let next = SlidePostState(itemID: "22222222-2222-2222-2222-222222222222", title: "Next post", draft: state().draft)
         NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(next)) }
-        await session.refresh(api: NativeEditorTestSupport.api(), itemID: next.itemID)
+        let newer = Task { await session.refresh(api: NativeEditorTestSupport.api(), itemID: next.itemID) }
+        await Task.yield()
         resume?.resume()
-        await old.value
+        await old.value; await newer.value
         XCTAssertEqual(session.state?.itemID, next.itemID)
         XCTAssertNil(session.error)
     }
@@ -1035,5 +1037,109 @@ extension SlidePostExportTests {
             writePhotos: { _ in writes += 1 }, readWait: { _ in value.stopObserving() })
         await exporter.export(.photos, session: value, api: NativeEditorTestSupport.api(), itemID: itemID, maxPolls: 0)
         XCTAssertEqual(writes, 0); XCTAssertEqual(mutations, 0)
+    }
+}
+
+extension SlidePostExportTests {
+    func testInitialReadExhaustionRearmsWithoutExistingStateOrMutation() async {
+        var clock = Date(timeIntervalSince1970: 1000)
+        let value = makeSession(readRetrySleep: { _ in }, submissionNow: { clock })
+        let ready = state(); var reads = 0; var mutations = 0
+        NativeEditorURLProtocol.handler = { request in
+            if request.httpMethod != "GET" { mutations += 1 }
+            reads += 1
+            return reads <= 6 ? (503, Data()) : (200, try JSONEncoder().encode(ready))
+        }
+        await value.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
+        XCTAssertNil(value.state); XCTAssertTrue(value.needsStateObservation); XCTAssertEqual(reads, 3)
+        await value.refresh(api: NativeEditorTestSupport.api(), itemID: itemID, readOnlyObservation: true)
+        XCTAssertEqual(reads, 6)
+        clock.addTimeInterval(29)
+        await value.refresh(api: NativeEditorTestSupport.api(), itemID: itemID, readOnlyObservation: true)
+        XCTAssertEqual(reads, 6)
+        clock.addTimeInterval(1)
+        await value.refresh(api: NativeEditorTestSupport.api(), itemID: itemID, readOnlyObservation: true)
+        XCTAssertTrue(value.canExport); XCTAssertEqual(mutations, 0)
+    }
+
+    func testFinalExportRevalidationRetriesOnlyGETBeforeOnePhotosWrite() async {
+        let value = await session(state()); var reads = 0; var writes = 0; var mutations = 0
+        let ready = state()
+        NativeEditorURLProtocol.handler = { request in
+            if request.httpMethod != "GET" { mutations += 1 }
+            reads += 1
+            return reads <= 3 ? (503, Data()) : (200, try JSONEncoder().encode(ready))
+        }
+        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized },
+            writePhotos: { _ in writes += 1 }, readWait: { _ in })
+        await exporter.export(.photos, session: value, api: NativeEditorTestSupport.api(), itemID: itemID)
+        XCTAssertEqual(writes, 1); XCTAssertEqual(mutations, 0); XCTAssertGreaterThan(reads, 3)
+    }
+
+    func testExportStopsOnNewVersionOrTargetWithoutPhotosWrite() async {
+        for replacement in ["version", "target"] {
+            var pending = unrenderedState(); pending.renderStatus = "rendering"; pending.jobID = UUID()
+            let value = await session(pending)
+            var ready = state(version: replacement == "version" ? 2 : 1)
+            ready.jobID = replacement == "target" ? UUID() : pending.jobID
+            NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(ready)) }
+            var writes = 0
+            let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized },
+                writePhotos: { _ in writes += 1 }, readWait: { _ in })
+            await exporter.export(.photos, session: value, api: NativeEditorTestSupport.api(), itemID: itemID, maxPolls: 0)
+            XCTAssertEqual(writes, 0)
+        }
+    }
+}
+
+extension SlidePostExportTests {
+    func testReadObservationDelayHandlesMalformedAndLargeHintsWithoutShorteningAdmission() {
+        XCTAssertEqual(SlidePostSession.readObservationDelay(.nan), .seconds(30))
+        XCTAssertEqual(SlidePostSession.readObservationDelay(.infinity), .seconds(30))
+        XCTAssertEqual(SlidePostSession.readObservationDelay(-1), .seconds(30))
+        XCTAssertEqual(SlidePostSession.readObservationDelay(120), .seconds(120))
+        XCTAssertEqual(SlidePostSession.readObservationDelay(Double.greatestFiniteMagnitude), .seconds(86400))
+        // The sleep is a bounded chunk; persisted/monotonic admission retains the full valid deadline.
+        XCTAssertGreaterThan(SlidePostSession.validReadRetryAfter(200000)!, 86400)
+    }
+}
+
+extension SlidePostExportTests {
+    func testTerminalStateDeletionEndsExportWithoutMutationOrPhotosWrite() async {
+        var pending = unrenderedState(); pending.renderStatus = "rendering"
+        let value = await session(pending); var reads = 0; var writes = 0
+        NativeEditorURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "GET"); reads += 1; return (404, Data())
+        }
+        let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 }, readWait: { _ in })
+        await exporter.export(.photos, session: value, api: NativeEditorTestSupport.api(), itemID: itemID)
+        XCTAssertEqual(reads, 1); XCTAssertEqual(writes, 0)
+        guard case .failed = exporter.status else { return XCTFail("Deleted state must be actionable, not an endless render wait") }
+    }
+}
+
+extension SlidePostExportTests {
+    func testLateOwnerCooldownDoesNotThrottleNewOwnerOfSameItem() async {
+        var owner = "first-owner"
+        let value = SlidePostSession(defaults: defaults, submissionJournal: .init(root: journalRoot),
+            submissionScope: { _, id in .init(owner: owner, environment: "https://native-editor.test", itemID: id) }, transportOwner: { _ in nil })
+        let heldRead = expectation(description: "Original owner's GET is held")
+        var held: SlidePostRetryAfterURLProtocol?
+        var reads = 0
+        let ready = state()
+        SlidePostRetryAfterURLProtocol.handler = { _, transport in
+            reads += 1
+            if reads == 1 { held = transport; heldRead.fulfill() }
+            else { transport.respond(status: 200, data: try! JSONEncoder().encode(ready)) }
+        }
+        let api = retryAfterAPI()
+        let old = Task { await value.refresh(api: api, itemID: itemID) }
+        await fulfillment(of: [heldRead], timeout: 2)
+        owner = "second-owner"
+        let next = Task { await value.refresh(api: api, itemID: itemID) }
+        await Task.yield()
+        held?.respond(status: 429, retryAfter: 60)
+        await old.value; await next.value
+        XCTAssertEqual(reads, 2); XCTAssertTrue(value.canExport)
     }
 }

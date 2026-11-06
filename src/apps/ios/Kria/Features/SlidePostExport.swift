@@ -146,12 +146,12 @@ import UIKit
         // Supported posts render on the phone from original media: the live draft (unsaved edits
         // included) goes straight to Photos / the share sheet, no save, generate or poll.
         if SlidePostOnDeviceRender.supports(session.draft, assets: session.state?.assets ?? [], extended: extendedOnDevice) {
-            await exportOnDevice(destination, session: session, api: api, itemID: itemID)
+            await exportOnDevice(destination, session: session, api: api, itemID: itemID, isCurrent: isCurrent)
             return
         }
         var requestedRender = (session.isRendering || session.hasPendingRenderSubmission) && !session.hasUnsavedChanges
         var expectedDraft = session.draft
-        var expectedJob = requestedRender ? session.exportObservationJobID : nil
+        var expectedJob = (requestedRender || session.canExport) ? session.exportObservationJobID : nil
         var polls = 0
         while !session.canExport {
             // The caller cancels this task when the editor goes away; stop instead of finishing in the background.
@@ -178,14 +178,30 @@ import UIKit
             guard !Task.isCancelled, isCurrent() else { set(.idle); return }
             await session.refresh(api: api, itemID: itemID, readOnlyObservation: true)
             guard !Task.isCancelled, isCurrent() else { set(.idle); return }
-            if SlidePostState.isTerminalRenderFailure(session.state?.renderStatus), !session.isRendering { set(.failed("Rendering failed. Try again.")); return }
+            if let error = session.terminalStateReadError { set(.failed(error)); return }
+            if session.hasConfirmedRenderFailure { set(.failed("Rendering failed. Try again.")); return }
         }
+        if expectedJob == nil { expectedJob = session.exportObservationJobID }
         guard !Task.isCancelled, isCurrent(), let current = session.draft,
               expectedDraft.map({ $0.version == current.version && $0.hasSameContent(as: current) }) ?? false,
               expectedJob == nil || expectedJob == session.exportObservationJobID else { set(.idle); return }
         let revalidate: Revalidate = {
             guard !Task.isCancelled, isCurrent() else { throw CancellationError() }
-            try await session.revalidateForExport(api: api, itemID: itemID)
+            while true {
+                do { try await session.revalidateForExport(api: api, itemID: itemID); break }
+                catch {
+                    guard !Task.isCancelled, isCurrent(), let current = session.draft,
+                          expectedDraft.map({ $0.version == current.version && $0.hasSameContent(as: current) }) ?? false,
+                          expectedJob == nil || expectedJob == session.exportObservationJobID else { throw CancellationError() }
+                    let delay: Duration
+                    if case let APIError.requestFailed(status, detail) = error,
+                       status == 408 || status == 429 || (500...599).contains(status) {
+                        delay = SlidePostSession.readObservationDelay(detail.retryAfter)
+                    } else if error is URLError { delay = .seconds(30) }
+                    else { throw error }
+                    try await self.readWait(delay)
+                }
+            }
             guard !Task.isCancelled, isCurrent(), let current = session.draft,
                   expectedDraft.map({ $0.version == current.version && $0.hasSameContent(as: current) }) ?? false,
                   expectedJob == nil || expectedJob == session.exportObservationJobID else { throw CancellationError() }
@@ -199,7 +215,7 @@ import UIKit
     /// Renders every slide of the current draft into a temp directory, then hands it to Photos or the share sheet.
     /// A render error fails the export (no mid-way server fallback); an expired signed URL refreshes the
     /// session once and retries that slide.
-    private func exportOnDevice(_ destination: Destination, session: SlidePostSession, api: any KriaAPIClient, itemID: String) async {
+    private func exportOnDevice(_ destination: Destination, session: SlidePostSession, api: any KriaAPIClient, itemID: String, isCurrent: () -> Bool) async {
         guard let draft = session.draft else { return }
         isWorking = true; defer { isWorking = false }
         let directory = FileManager.default.temporaryDirectory.appending(path: "kria-slide-post-\(itemID)-\(draft.version)-\(UUID().uuidString)")
@@ -224,7 +240,7 @@ import UIKit
                 files.append(PhotoResource(url: file, kind: slide.kind, creationDate: dates[index]))
             }
             try Task.checkCancellation()
-            guard session.draft == draft else { throw SlidePostExportError.draftChanged }
+            guard isCurrent(), session.draft == draft else { throw SlidePostExportError.draftChanged }
             switch destination {
             case .photos:
                 try await writePhotos(files)

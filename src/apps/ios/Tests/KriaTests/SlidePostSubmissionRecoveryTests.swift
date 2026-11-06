@@ -741,3 +741,25 @@ extension SlidePostSessionRecoveryTests {
         XCTAssertEqual(reads, stopped)
     }
 }
+
+extension SlidePostSessionRecoveryTests {
+    func testExhaustedUnknownReceiptCannotExportAnUnverifiedReadyProjection() async throws {
+        let server = Server(snapshot()); let journal = SlidePostSubmissionJournal(root: root)
+        let value = session(); let api = NativeEditorTestSupport.api()
+        NativeEditorURLProtocol.handler = { try server.handle($0) }
+        await value.refresh(api: api, itemID: itemID)
+        let record = try journal.reserve(.init(scope: scope, expectedVersion: 1, previousJobID: nil)).record
+        try journal.update(scope, operationID: record.operationID) { $0.remainingReads = 0; $0.phase = .exhausted; $0.remainingPostAttempts = 0 }
+        server.state.jobID = UUID(); server.state.renderStatus = "ready"; server.state.renderedVersion = 1
+        server.state.draft?.renderedVersion = 1
+        server.state.slides = [.init(id: "one", assetID: "a", kind: "image", url: URL(string: "https://fixture.test/one.jpg"))]
+        NativeEditorURLProtocol.handler = { request in
+            if request.url!.path.contains("/generation-requests/") { return (404, Data()) }
+            return try server.handle(request)
+        }
+        await value.refresh(api: api, itemID: itemID, readOnlyObservation: true)
+        XCTAssertFalse(value.canExport)
+        XCTAssertTrue(value.needsSubmissionObservation)
+        XCTAssertTrue(server.requests.isEmpty)
+    }
+}

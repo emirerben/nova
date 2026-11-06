@@ -1,6 +1,6 @@
 # Unreviewed continuation checkpoint
 
-This is a preservation checkpoint, **not buildable or release-ready source**. No native compilation, test, package, simulator, device or model execution was performed for these continuations. Written tests have not executed. Text diff checks do not establish compilation or correctness.
+This records the historical preservation checkpoint `56b1ddc4649b2f14c95fdc1da6b5de08edc75783`, **not buildable or release-ready source at that snapshot**. Later source corrections are recorded separately in continuation-checkpoint.md. No native compilation, test, package, simulator, device or model execution was performed for these continuations. Written tests have not executed. Text diff checks do not establish compilation or correctness.
 
 All work starts from integrated checkpoint `c0ab9630a3abdaf59c3892ed6bc9ed90ce8c4c74`, tree `126815c7e426c8cace46ef48a09c9e5cce9f1fca`. Both Cunda merge `70bff5f3738ca8f6873e3a85ddd9fbad374ada49` and verified main `c078f13b9ad6f0f60d4a5e94f4cd2afac551a76b` were confirmed ancestors before this checkpoint. No additional Cunda replay or merge of an unmerged speed/split branch is needed or performed.
 
