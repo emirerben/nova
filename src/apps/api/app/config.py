@@ -905,6 +905,14 @@ class Settings(BaseSettings):
     # before (title-scope asks only, unnamed asks stay prose, no verification pass).
     # Apply: `fly secrets set TEXT_ANIMATION_ASK_ENABLED=false` (api + worker) + restart.
     text_animation_ask_enabled: bool = True
+    # Prompt fidelity (item 22): "just this text, nothing else" renders only the creator's words.
+    # When True, the creation text pass DROPS a composer `add_text` that is not one of her
+    # literal asks (an invented line, or a second copy of her line) instead of letting it reach
+    # the video; research ops are always kept (her own research ask), and described asks,
+    # story builds, no-brief jobs and pinned programs are unchanged. False: byte-identical to
+    # before (an extra line is kept, or raises when no text was asked). Apply:
+    # `fly secrets set TEXT_COMPOSER_ASKED_ONLY_ENABLED=true` (api + worker) + restart.
+    text_composer_asked_only_enabled: bool = False
     # Text behind people ON THE PHONE (the device twin of `text_behind_subject_enabled`
     # below, which is the cloud Skia lane). When True, `compile_text_overlay` stamps
     # `behind_subject` on a phone recipe text layer whose text element asks for it, and
@@ -1062,6 +1070,12 @@ class Settings(BaseSettings):
     # the mic. Audio is never stored. Apply: `fly secrets set VOICE_DICTATION_ENABLED=false`
     # (api) + restart.
     voice_dictation_enabled: bool = True
+    # Qendresa item 24: the iPhone Add media sheet hints that a screen recording placed in
+    # Footage next to a talking take belongs in Overlays, with a one-tap move. iPhone-only; the
+    # server only advertises the `upload_place_hint` capability. Default off; off = the Add media
+    # sheet is unchanged. Apply: `fly secrets set UPLOAD_PLACE_HINT_ENABLED=true` (api) + restart;
+    # no worker use.
+    upload_place_hint_enabled: bool = False
     # One word at a time for caption `Display: Word` (`karaoke.single_word`, capability
     # `singleWordText`): the layer's runs are standalone-centred words and only the active one
     # is drawn. Emitted only when `singleWordText` is in PHONE_RENDER_VERIFIED_FEATURES (fly
