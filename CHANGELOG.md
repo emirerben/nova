@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.32.0] - 2026-11-06
+
+### Changed
+- fix(ios): a late AVPlayer .playing report no longer undoes an explicit pause (KRI-1087) (#2024) <!-- release-pr: 2024 -->
+
 ## [0.88.31.0] - 2026-11-06
 
 ### Changed
