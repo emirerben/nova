@@ -322,7 +322,7 @@ struct NativeEditorView: View {
                 }
             }
             #endif
-            .task { await loadEditor(); await session.resumeEditorImports() }
+            .task { session.setObserversVisible(scenePhase == .active); await loadEditor(); await session.resumeEditorImports() }
             .onReceive(model.uploads.$pendingEditorPlacements) { _ in
                 Task { await session.resumePendingEditorPlacements() }
             }
@@ -334,6 +334,7 @@ struct NativeEditorView: View {
             // server probe is picked up instead of leaving "Preparing media
             // import…" up until a relaunch.
             .onChange(of: scenePhase) { _, phase in
+                session.setObserversVisible(phase == .active)
                 if phase == .active {
                     Task { await session.resumeEditorImports() }
                     Task { await session.resumeRefreshSync() }
@@ -344,6 +345,7 @@ struct NativeEditorView: View {
                 if online { Task { await session.resumeRefreshSync() } }
             }
             .onDisappear {
+                session.setObserversVisible(false)
                 finishPanelEditing()
                 session.suspendEditorImports()
                 session.pausePlayback()

@@ -692,3 +692,52 @@ final class SlidePostSubmissionRecoveryTests: XCTestCase {
     }
 
 }
+
+extension SlidePostSessionRecoveryTests {
+    func testExhaustedReceiptObserverFindsReadyWithoutCreateOrReopen() async throws {
+        let server = Server(snapshot()); NativeEditorURLProtocol.handler = { try server.handle($0) }
+        let value = session(); let api = NativeEditorTestSupport.api()
+        await value.refresh(api: api, itemID: itemID); await value.create(api: api, itemID: itemID)
+        let journal = SlidePostSubmissionJournal(root: root)
+        let record = try XCTUnwrap(journal.load(scope))
+        try journal.update(scope, operationID: record.operationID) { $0.remainingReads = 0; $0.phase = .exhausted; $0.nextObservationAt = now.addingTimeInterval(60) }
+        let reads = server.receiptReads
+        await value.refresh(api: api, itemID: itemID, readOnlyObservation: true)
+        XCTAssertEqual(server.receiptReads, reads)
+        now.addTimeInterval(60)
+        server.state.renderStatus = "ready"; server.state.renderedVersion = 1
+        server.state.draft?.renderedVersion = 1
+        server.state.slides = [.init(id: "one", assetID: "a", kind: "image", url: URL(string: "https://fixture.test/one.jpg"))]
+        await value.refresh(api: api, itemID: itemID, readOnlyObservation: true)
+        XCTAssertTrue(value.canExport); XCTAssertEqual(server.requests.count, 1)
+        XCTAssertNil(try journal.load(scope))
+    }
+
+    func testExhaustedMissingReceiptObservationNeverPostsAndPersistsPacing() async throws {
+        let server = Server(snapshot()); let journal = SlidePostSubmissionJournal(root: root)
+        var reads = 0
+        NativeEditorURLProtocol.handler = { request in
+            reads += 1
+            if request.url!.path.contains("/generation-requests/") { return (404, Data()) }
+            return try server.handle(request)
+        }
+        let value = session(); let api = NativeEditorTestSupport.api()
+        await value.refresh(api: api, itemID: itemID)
+        let record = try journal.reserve(.init(scope: scope, expectedVersion: 1, previousJobID: nil)).record
+        try journal.update(scope, operationID: record.operationID) { $0.remainingReads = 0; $0.phase = .exhausted; $0.remainingPostAttempts = 0 }
+        await value.refresh(api: api, itemID: itemID, readOnlyObservation: true)
+        let first = reads
+        XCTAssertTrue(value.needsSubmissionObservation); XCTAssertTrue(server.requests.isEmpty)
+        now.addTimeInterval(29)
+        await value.refresh(api: api, itemID: itemID, readOnlyObservation: true)
+        XCTAssertEqual(reads, first)
+        now.addTimeInterval(1)
+        await value.refresh(api: api, itemID: itemID, readOnlyObservation: true)
+        XCTAssertGreaterThan(reads, first); XCTAssertTrue(server.requests.isEmpty)
+        XCTAssertEqual(try journal.load(scope)?.remainingReads, 0)
+        value.stopObserving(); now.addTimeInterval(30)
+        let stopped = reads
+        await value.refresh(api: api, itemID: itemID, readOnlyObservation: true)
+        XCTAssertEqual(reads, stopped)
+    }
+}

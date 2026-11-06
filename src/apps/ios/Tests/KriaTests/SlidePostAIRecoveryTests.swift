@@ -684,3 +684,53 @@ extension SlidePostAISessionRecoveryTests {
         }
     }
 }
+
+extension SlidePostAISessionRecoveryTests {
+    func testExhaustedAutomaticObserverGetsLaterResultWithoutPostOrReopen() async throws {
+        let h = AIHarness(state: remote()); defer { h.clean() }
+        let value = h.session(); await value.refresh(api: h.api, itemID: itemID)
+        _ = await value.chatEdit(api: h.api, itemID: itemID, message: "caption")
+        var record = try XCTUnwrap(h.journal.load(scope: h.scope, projectID: projectID, kind: .chatEdit))
+        record.remainingReads = 0; record.remainingPosts = 0
+        record.slowReadNotBefore = h.now.addingTimeInterval(60)
+        try h.journal.update(record)
+        h.advance(59)
+        await value.recoverAI(api: h.api, itemID: itemID, explicit: false)
+        var counts = await h.api.counts(); XCTAssertEqual(counts.reads, 0)
+        h.advance(1)
+        await value.recoverAI(api: h.api, itemID: itemID, explicit: false)
+        counts = await h.api.counts(); XCTAssertEqual(counts.reads, 1); XCTAssertEqual(counts.posts, 1)
+        XCTAssertEqual(value.draft?.caption, "AI caption")
+        XCTAssertEqual(try h.journal.load(scope: h.scope, projectID: projectID, kind: .chatEdit)?.remainingReads, 0)
+    }
+
+    func testStoppedObserverDoesNotReadOrApplyCompletedResult() async throws {
+        let h = AIHarness(state: remote()); defer { h.clean() }
+        let value = h.session(); await value.refresh(api: h.api, itemID: itemID)
+        _ = await value.chatEdit(api: h.api, itemID: itemID, message: "caption")
+        h.advance(60); value.stopObserving()
+        await value.recoverAI(api: h.api, itemID: itemID, explicit: false)
+        let counts = await h.api.counts(); XCTAssertEqual(counts.reads, 0); XCTAssertEqual(counts.posts, 1)
+        XCTAssertEqual(value.draft?.caption, "original")
+    }
+}
+
+extension SlidePostAISessionRecoveryTests {
+    func testExhaustedMissingAIReceiptNeverResumesPostAndStopFencesLateCompletion() async throws {
+        let h = AIHarness(state: remote()); defer { h.clean() }
+        let value = h.session(); await value.refresh(api: h.api, itemID: itemID)
+        _ = await value.chatEdit(api: h.api, itemID: itemID, message: "caption")
+        var record = try XCTUnwrap(h.journal.load(scope: h.scope, projectID: projectID, kind: .chatEdit))
+        record.remainingReads = 0; record.remainingPosts = 0; try h.journal.update(record)
+        await h.api.configure(readError: APIError.requestFailed(status: 404, detail: .init("missing")))
+        h.advance(30); await value.recoverAI(api: h.api, itemID: itemID, explicit: false)
+        var counts = await h.api.counts(); XCTAssertEqual(counts.posts, 1); XCTAssertEqual(counts.reads, 1)
+        await h.api.configure(); await h.api.suspendReads(); h.advance(30)
+        let pending = Task { await value.recoverAI(api: h.api, itemID: itemID, explicit: false) }
+        let suspended = await h.api.waitForSuspension(); XCTAssertTrue(suspended)
+        value.stopObserving(); value.startObserving()
+        await h.api.releaseRead(); await pending.value
+        XCTAssertEqual(value.draft?.caption, "original")
+        counts = await h.api.counts(); XCTAssertEqual(counts.posts, 1)
+    }
+}

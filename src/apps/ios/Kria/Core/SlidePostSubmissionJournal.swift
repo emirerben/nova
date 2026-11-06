@@ -35,6 +35,7 @@ struct SlidePostSubmissionRecord: Codable, Sendable {
     var observedActive: Bool
     var remainingPostAttempts = 3
     var nextReplayAt: Date?
+    var nextObservationAt: Date?
     var readNotBefore: Date?
     var readFailureStatus: Int?
     var readFailureMessage: String?

@@ -19,7 +19,41 @@ final class NativeEditorSessionTests: XCTestCase {
         try await exerciseLatestJobDuringSave(runtimeVersion: 2, retryAfter: 60)
     }
 
-    private func exerciseLatestJobDuringSave(runtimeVersion: Int, retryAfter: Double? = nil) async throws {
+    func testLatestJobRecoversAfterFastReadBudgetWithoutAnotherNotification() async throws {
+        try await exerciseLatestJobDuringSave(runtimeVersion: 2, failedReads: 5)
+    }
+
+    func testSupersededInFlightLatestReadRetainsSoleTransportAndLateRetryAfter() async throws {
+        try await exerciseLatestJobDuringSave(runtimeVersion: 2, retryAfter: 600, supersedeInFlight: true)
+    }
+
+    func testLatestJobRearmsBeyondFiveMinuteWindowWithoutShorteningRetryAfter() async throws {
+        try await exerciseLatestJobDuringSave(runtimeVersion: 2, retryAfter: 600)
+    }
+
+    func testLatestJobWatchContinuesSlowlyAfterSixtyFourRenderingChecks() async throws {
+        try await exerciseLatestJobDuringSave(runtimeVersion: 2, renderingWaits: 65)
+    }
+
+    func testSlowLatestJobWakeCannotSurviveAccountOrLoadReplacement() async throws {
+        for replacement in ["account", "load"] {
+            try await exerciseLatestJobDuringSave(runtimeVersion: 2, failedReads: 5, invalidateOnSlow: replacement)
+        }
+    }
+
+    func testSlowLatestJobWakeIsReplacedByNewerNotificationWithoutDuplicateRead() async throws {
+        try await exerciseLatestJobDuringSave(runtimeVersion: 2, failedReads: 5, invalidateOnSlow: "ticket")
+    }
+
+    func testSlowLatestJobReadSettlesCancelledOrSupersededTargetWithoutRendering() async throws {
+        for status in ["cancelled", "superseded", "failed"] {
+            try await exerciseLatestJobDuringSave(runtimeVersion: 2, failedReads: 5, terminalJobStatus: status)
+        }
+    }
+
+    private func exerciseLatestJobDuringSave(runtimeVersion: Int, retryAfter: Double? = nil,
+                                           failedReads: Int = 1, renderingWaits: Int = 0,
+                                           invalidateOnSlow: String? = nil, terminalJobStatus: String? = nil, supersedeInFlight: Bool = false) async throws {
         let thread = UUID(), oldJob = UUID(), newJob = UUID()
         let snapshot: [String: JSONValue] = ["editor_payload": .object(["sections": .object([
             "text_elements": .array([.object(["id": .string("text"), "text": .string("Original"),
@@ -34,10 +68,29 @@ final class NativeEditorSessionTests: XCTestCase {
         session.latestJobRetryDelays = [.zero]
         var now = ContinuousClock.now
         var waited: Duration = .zero
+        var watchWaits = 0
+        var readsAtInvalidation: Int?
+        fake.mediaLibraryOwner = "first"
+        session.newVersionPollDelays = [.seconds(1)]
         session.latestJobReadNow = { now }
         session.latestJobReadSleep = { delay in
             waited += delay
             now = now.advanced(by: delay)
+            if renderingWaits > 0 {
+                watchWaits += 1
+                if watchWaits >= renderingWaits {
+                    fake.editorVariantsByJob[newJob] = [["variant_id": .string("variant"), "render_status": .string("ready")]]
+                }
+            }
+            if delay >= .seconds(300), let invalidateOnSlow, readsAtInvalidation == nil {
+                readsAtInvalidation = fake.projectCallCount
+                if invalidateOnSlow == "account" { fake.mediaLibraryOwner = "replacement" }
+                else if invalidateOnSlow == "ticket", let latest = fake.refreshedThread?.summary {
+                    fake.projectErrorQueue = []
+                    await session.adoptLatestJob(latest, api: fake)
+                } else { await session.load(api: fake, threadID: thread) }
+            }
+            await Task.yield()
         }
         await session.load(api: fake, threadID: thread)
         if runtimeVersion == 1 { fake.draftError = .unsupported }
@@ -53,18 +106,48 @@ final class NativeEditorSessionTests: XCTestCase {
         {"id":"\#(thread.uuidString)","title":"Latest","status":"active","revision":2,"runtime_version":\#(runtimeVersion),
          "active_job_id":"\#(newJob.uuidString)","active_plan_item_id":"item",
          "state":{"selected_variant_id":"variant"},
-         "job":{"id":"\#(newJob.uuidString)","status":"variants_ready","variants":[{"variant_id":"variant","render_status":"ready"}]},
+         "job":{"id":"\#(newJob.uuidString)","status":"\#(terminalJobStatus ?? "variants_ready")","variants":[{"variant_id":"variant","render_status":"ready"}]},
          "updated_at":"2026-09-09T08:00:00Z"}
         """#.utf8))
-        fake.editorVariantsByJob[newJob] = [["variant_id": .string("variant"), "render_status": .string("ready")]]
+        fake.editorVariantsByJob[newJob] = [["variant_id": .string("variant"), "render_status": .string(renderingWaits > 0 ? "rendering" : "ready")]]
         let newest = try XCTUnwrap(fake.refreshedThread?.summary)
         let readsBefore = fake.projectCallCount
-        fake.projectErrorQueue = [.requestFailed(status: 503, detail: .init("Temporary", retryAfter: retryAfter))]
+        fake.projectErrorQueue = Array(repeating: .requestFailed(status: 503, detail: .init("Temporary", retryAfter: retryAfter)), count: renderingWaits > 0 ? 0 : failedReads)
         await session.adoptLatestJob(newest, api: fake)
         XCTAssertEqual(fake.projectCallCount, readsBefore, "Save owns the document until its response settles")
         session.updateTextContent(id: "text", content: "Still editing")
+        if supersedeInFlight { fake.suspendNextProject = true }
         fake.resumeCommit()
         await saving.value
+        if supersedeInFlight {
+            _ = await waitUntil { fake.projectIsSuspended }
+            await session.adoptLatestJob(newest, api: fake)
+            for _ in 0..<20 { await Task.yield() }
+            XCTAssertEqual(fake.projectCallCount, readsBefore + 1, "a replaced ticket must wait for the sole transport")
+            fake.resumeProject()
+        }
+        if invalidateOnSlow != nil {
+            _ = await waitUntil { readsAtInvalidation != nil }
+            if invalidateOnSlow == "ticket" {
+                _ = await waitUntil { session.newerJobPrompt?.activeJobID == newJob }
+                XCTAssertEqual(fake.projectCallCount, (readsAtInvalidation ?? 0) + 1)
+            } else {
+                for _ in 0..<30 { await Task.yield() }
+                XCTAssertEqual(fake.projectCallCount, readsAtInvalidation)
+            }
+            XCTAssertEqual(fake.commitCount, 1)
+            return
+        }
+        if terminalJobStatus != nil {
+            _ = await waitUntil { fake.projectCallCount >= readsBefore + failedReads + 1 }
+            let settledReads = fake.projectCallCount
+            for _ in 0..<30 { await Task.yield() }
+            XCTAssertEqual(fake.projectCallCount, settledReads)
+            XCTAssertNil(session.newerJobPrompt)
+            XCTAssertEqual(session.document.textElements.first?.text, "Still editing")
+            XCTAssertEqual(fake.commitCount, 1)
+            return
+        }
         _ = await waitUntil { runtimeVersion == 1 ? session.mergeConflictMessage != nil : session.newerJobPrompt?.activeJobID == newJob }
         XCTAssertGreaterThanOrEqual(fake.projectCallCount, readsBefore + 2)
         if runtimeVersion == 1 {
@@ -74,6 +157,8 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.document.textElements.first?.text, "Still editing")
         XCTAssertTrue(session.hasUnsavedChanges)
         if let retryAfter { XCTAssertEqual(waited, .seconds(retryAfter)) }
+        if failedReads > 1 || renderingWaits > 64 { XCTAssertGreaterThanOrEqual(waited, .seconds(300)) }
+        XCTAssertEqual(fake.commitCount, 1, "read recovery never resubmits Save")
     }
 
     func testDeviceNarrationRequestUsesPublishedGenerationAndExactTarget() throws {
@@ -7218,6 +7303,7 @@ private actor SessionTestStatus {
 // Keep reports, counters and suspended-call state on the same actor as those readers.
 @MainActor
 final class EditorCommitSpy: KriaAPIClient {
+    var mediaLibraryOwner: String? = nil
     var draftSnapshot: DraftSnapshot
     var draftError: APIError?
     let openReceipt: OpenInEditorResponse?
@@ -7266,6 +7352,10 @@ final class EditorCommitSpy: KriaAPIClient {
     var editorVariantJobIDs: [UUID] = []
     var supersededJobIDs: Set<UUID> = []
     var projectCallCount = 0
+    var suspendNextProject = false
+    var projectIsSuspended = false
+    private var projectContinuation: CheckedContinuation<Void, Never>?
+    func resumeProject() { projectContinuation?.resume(); projectContinuation = nil }
     var editorVariantsCallCount = 0
     var sourcePoolCallCount = 0
     var sourcePoolExpectation: XCTestExpectation?
@@ -7314,6 +7404,11 @@ final class EditorCommitSpy: KriaAPIClient {
     }
     func project(threadID: UUID) async throws -> CreationThread {
         projectCallCount += 1
+        if suspendNextProject {
+            suspendNextProject = false; projectIsSuspended = true
+            await withCheckedContinuation { projectContinuation = $0 }
+            projectIsSuspended = false
+        }
         if !projectErrorQueue.isEmpty { throw projectErrorQueue.removeFirst() }
         guard let refreshedThread else { throw APIError.unsupported }
         return refreshedThread

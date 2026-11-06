@@ -1,12 +1,14 @@
 # Automatic result convergence
 
-Base: `05d9720d8b3f838f8b91963e183eb7206c34e538`; isolated branch `codex/automatic-result-convergence`. Publication is unauthorized. No production writes, private media, paid provider calls, or physical-device changes are in scope.
+Branch: `codex/automatic-result-convergence`. The initial base was `05d9720d8b3f838f8b91963e183eb7206c34e538`; historical findings and tests below retain that scope. Current integrated checkpoint is `c0ab9630a3abdaf59c3892ed6bc9ed90ce8c4c74`, tree `126815c7e426c8cace46ef48a09c9e5cce9f1fca`, inheriting verified main `c078f13b9ad6f0f60d4a5e94f4cd2afac551a76b` and landed Cunda #2126. Publication/admin merge is authorized when ready; readiness has not been established. No production writes, private media, paid provider calls or physical-device changes were performed.
+
+Current source/evidence: [main integration](main-integration-evidence.md), [read recovery](read-recovery-evidence.md), [backend component checks](backend-evidence.md), [AI component checks](slide-post-ai-evidence.md), and [remaining affordances](manual-affordances.md). Review and Device automatic rearming are checkpointed and independently source-reviewed. Native latest-job/watch, strict AI and generation-receipt exhaustion corrections remain active; a broad automatic-convergence claim is blocked until those named gaps and final-source verification gates close.
 
 ## Acceptance (before implementation)
 
 The current result appears without a refresh/show-new-version tap when its authoritative read succeeds. An unchanged old ready response must not finish a newer update. Responses arriving out of order must not restore an older snapshot. Dirty local work survives status reads. Transient GET failures recover with bounded attempts and backoff; cancellation stops retrying. A render/save/upload/paid request with an uncertain outcome is never blindly repeated. Terminal failures name an actionable next step.
 
-This change is separate from Cunda's unpublished `codex/cunda-editor-recovery`. That owner controls NativeEditorSession, Services, ChatWorkspaceView, NativeEditorView, render/compiler/legacy/banner/header and associated tests. Its corrections cover prompt lifetime, reconcile-on-open dirtiness after suspension, and old badge cleanup. Those files are read-only here. After Cunda is merged into main through its separately authorized process, rebase this branch onto that main, resolve model coverage against the combined tree, then repeat native integration/aggregate gates. Neither branch's isolated results prove the combined build or original Cunda recovery.
+Cunda #2126 landed at `70bff5f3738ca8f6873e3a85ddd9fbad374ada49` and is inherited through main. Its canonical editor lifetime, nested-load and whole-Save-attempt guards were preserved during the controlled integration; the three-way merge/history and pending-latest journal compose beneath them. Speed and split remain separately coordinated incoming work. Neither prior isolated test results nor source-level conflict resolution prove the combined native build or Emir's original private Cunda video.
 
 ## Why the previous proof did not establish zero friction
 
@@ -14,7 +16,9 @@ KRI-934 / PR #1816 addressed killer screens and explicitly deferred duration sna
 
 `formal/ios_edit_flow/coverage.json` tracks selected save/poll/device/prompt sync functions, but omits editor load, reconcileOnOpen, adoptLatestJob and workspace refreshNow. The historical empty residual list applies only within its model. Scope excludes retry-cap exhaustion, planner/output verification and some liveness combinations; MaxFaults is 1 with 1–2 saves. Model assertions, executed native tests, physical output and rollout evidence must remain separate.
 
-## Current route/failure matrix
+## Initial baseline route/failure matrix
+
+This matrix records the initial audit. Later implementation and evidence supersede individual rows; consult the current continuation artifacts above before treating an initial risk as open or a written regression as executed.
 
 Status legend: **risk** = current code review, not reproduced; **historical-fixed** = changed implementation present, not a fresh executed claim; **regression** = a new executable case with result recorded below; **untested** = evidence absent. Paths are relative to repository root.
 

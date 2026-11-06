@@ -107,6 +107,20 @@ private struct Publisher: DeviceRenderPublishing {
     func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication { .published }
 }
 
+private actor ParkedPublisher: DeviceRenderPublishing {
+    let verification: Bool
+    private(set) var uploads = 0
+    init(verification: Bool) { self.verification = verification }
+    func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool {
+        if !verification { throw URLError(.networkConnectionLost) }
+        return true
+    }
+    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication {
+        uploads += 1
+        throw DeviceRenderVerificationPending()
+    }
+}
+
 /// Scripted server: each read pops the next answer, then repeats the last.
 private actor Server {
     private var answers: [Result<DeviceRenderStatusResponse, Error>]
@@ -512,6 +526,59 @@ private final class Phone: @unchecked Sendable {
         now = now.addingTimeInterval(600); await clock.fire()
         let ready = await eventually { sessions.presentations[key]?.phase == .synced }; XCTAssertTrue(ready)
         await sessions.stopAll()
+    }
+
+    func testParkedCoordinatorObservesPublishedWithoutChatOrRepeatingWork() async throws {
+        for verification in [true, false] {
+            let job = UUID(), pinned = request(job), clock = Clock(), exporter = Exporter()
+            let publisher = ParkedPublisher(verification: verification), output = directory()
+            let coordinator = try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: NoSources(), publisher: publisher,
+                retryPolicy: .init(transientDelays: [], reportBackoffCap: .seconds(1), sleep: { _ in }))
+            let server = Server([awaiting(pinned)])
+            let sessions = DeviceRenderSessions(fetch: { _, _ in try await server.read() }, factory: { _, _ in coordinator },
+                sleep: { await clock.sleep($0) })
+            let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+            await sessions.reconcile(key, capabilities: enabled)
+            let parked = await eventually { await clock.pending == 1 }; XCTAssertTrue(parked)
+            let delay = await clock.delays.last; XCTAssertEqual(delay, .seconds(300))
+            let exportsBefore = await exporter.calls, uploadsBefore = await publisher.uploads
+            // Still pending at the next read: observation must not call recover() or publish().
+            await clock.fire()
+            let again = await eventually { await clock.pending == 1 }; XCTAssertTrue(again)
+            await server.then([published(pinned)]); await clock.fire()
+            let synced = await eventually { sessions.presentations[key]?.phase == .synced }; XCTAssertTrue(synced)
+            let exportsAfter = await exporter.calls, uploadsAfter = await publisher.uploads
+            XCTAssertEqual(exportsAfter, exportsBefore); XCTAssertEqual(uploadsAfter, uploadsBefore)
+            XCTAssertEqual(uploadsAfter, verification ? 1 : 0)
+            await sessions.stopAll()
+        }
+    }
+
+    func testParkedObservationCannotCrossStopShutdownOwnerOrChangedIdentity() async throws {
+        for change in ["stop", "shutdown", "owner", "identity"] {
+            let job = UUID(), pinned = request(job), clock = Clock(), exporter = Exporter()
+            let publisher = ParkedPublisher(verification: true), output = directory()
+            let coordinator = try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: NoSources(), publisher: publisher)
+            let server = Server([awaiting(pinned)])
+            var owner = "first"
+            let sessions = DeviceRenderSessions(fetch: { _, _ in try await server.read() }, factory: { _, _ in coordinator },
+                ownerIdentity: { owner }, sleep: { await clock.sleep($0) })
+            let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+            await sessions.reconcile(key, capabilities: enabled)
+            let parked = await eventually { await clock.pending == 1 }; XCTAssertTrue(parked)
+            let before = await server.reads
+            await server.then([published(change == "identity" ? request(job, revision: 2) : pinned)])
+            if change == "stop" { await sessions.cancel(key) }
+            if change == "shutdown" { await sessions.stopAll() }
+            if change == "owner" { owner = "replacement" }
+            await clock.fire()
+            for _ in 0..<30 { await Task.yield() }
+            let reads = await server.reads, exports = await exporter.calls, uploads = await publisher.uploads
+            XCTAssertEqual(reads, before + (change == "identity" ? 1 : 0))
+            XCTAssertNotEqual(sessions.presentations[key]?.phase, .synced)
+            XCTAssertEqual(exports, 1); XCTAssertEqual(uploads, 1)
+            await sessions.stopAll()
+        }
     }
 
     // MARK: 4: server answers map to the state they describe

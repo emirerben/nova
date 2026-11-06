@@ -34,6 +34,7 @@ struct SlidePostAIRecord: Codable, Sendable {
     var remainingReads = 40
     var remainingPosts = 3
     var notBefore: Date?
+    var slowReadNotBefore: Date?
     var serverNotBefore: Date?
     var receipt: SlidePostAIReceipt?
     var delivered = false
@@ -88,6 +89,7 @@ final class SlidePostAIJournal: @unchecked Sendable {
         record.remainingReads = min(current.remainingReads, record.remainingReads)
         record.remainingPosts = min(current.remainingPosts, record.remainingPosts)
         record.delivered = current.delivered || record.delivered
+        if let deadline = current.slowReadNotBefore, record.slowReadNotBefore.map({ $0 < deadline }) ?? true { record.slowReadNotBefore = deadline }
         if let deadline = current.notBefore, record.notBefore.map({ $0 < deadline }) ?? true { record.notBefore = deadline }
         if let deadline = current.serverNotBefore, record.serverNotBefore.map({ $0 < deadline }) ?? true { record.serverNotBefore = deadline }
         if current.receipt?.status == .completed { record.receipt = current.receipt }
@@ -104,7 +106,10 @@ final class SlidePostAIJournal: @unchecked Sendable {
                   record.remainingPosts > 0 || explicit else { throw Failure.paused }
             record.remainingPosts = max(0, record.remainingPosts - 1)
         } else {
-            guard record.remainingReads > 0 || explicit else { throw Failure.paused }
+            if record.remainingReads == 0 && !explicit {
+                if let deadline = record.slowReadNotBefore, deadline > now { throw Failure.paused }
+                record.slowReadNotBefore = now.addingTimeInterval(30)
+            }
             record.remainingReads = max(0, record.remainingReads - 1)
         }
         record.notBefore = now.addingTimeInterval(3)

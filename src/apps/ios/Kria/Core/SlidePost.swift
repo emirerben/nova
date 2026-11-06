@@ -826,7 +826,7 @@ struct SlidePostRenderAcknowledgement {
     private var hasRenderStatusError: Bool {
         error == Self.renderChecking || error == Self.renderWaitExhausted || error == Self.renderFailed
     }
-    private static let renderWaitExhausted = "Kria hasn’t confirmed this render yet. Your edits are saved. Tap Create to check again; another render hasn’t been requested."
+    private static let renderWaitExhausted = "Kria hasn’t confirmed this render yet. Your edits are saved. Kria will keep checking; another render hasn’t been requested."
     private static let renderFailed = "Rendering failed. Your saved edits are still here."
     private struct ReadCooldown {
         let notBefore: ContinuousClock.Instant
@@ -850,6 +850,12 @@ struct SlidePostRenderAcknowledgement {
     private var aiRecoveryToken = UUID()
     private var aiRecoveryMessage: String?
     private var aiResultTerminal = false
+    private var observationEpoch = 0
+    private var observationsStopped = false
+    private var pendingObservationRefresh: (() async -> Void)?
+    private var stateObservationNotBefore: Date?
+    private var refreshesInFlight = 0
+    private var observationReading = false
     private var aiRecovering = false
     private let submissionScope: (any KriaAPIClient, String) throws -> SlidePostSubmissionScope
     private let submissionNow: () -> Date
@@ -905,7 +911,21 @@ struct SlidePostRenderAcknowledgement {
         return ["pending", "queued", "generating", "rendering", "processing"].contains(state?.renderStatus ?? "")
     }
 
-    func refresh(api: any KriaAPIClient, itemID: String, projectID: UUID? = nil) async {
+    var needsSubmissionObservation: Bool {
+        guard !observationsStopped, let submission else { return false }
+        return !(submission.receipt != nil && state?.jobID == submission.receipt?.jobID &&
+                 (state?.canExport == true || SlidePostState.isTerminalRenderFailure(state?.renderStatus)))
+    }
+    var needsStateObservation: Bool { !observationsStopped && requestedItemID != nil && (state == nil || refreshError != nil) }
+    func startObserving() { observationsStopped = false }
+    func stopObserving() {
+        observationsStopped = true
+        observationEpoch += 1
+        pendingObservationRefresh = nil
+        refreshSequence += 1
+        aiRecoveryToken = UUID(); aiRecoveryTask?.cancel(); aiRecoveryTask = nil
+    }
+    func refresh(api: any KriaAPIClient, itemID: String, projectID: UUID? = nil, readOnlyObservation: Bool = false) async {
         let scopeBeforeRead = try? submissionScope(api, itemID)
         if let current = localIdentity?.scope ?? loadedSubmissionScope, current != scopeBeforeRead {
             clearPrivatePresentation()
@@ -915,7 +935,46 @@ struct SlidePostRenderAcknowledgement {
             if let old = localUIBinding, old != binding { clearPrivatePresentation() }
             localUIBinding = binding
         }
+        if readOnlyObservation {
+            guard !observationsStopped, !observationReading, refreshesInFlight == 0 else { return }
+            observationReading = true
+        } else if observationReading {
+            let epoch = observationEpoch
+            pendingObservationRefresh = { [weak self] in
+                guard let self, !self.observationsStopped, self.observationEpoch == epoch,
+                      (try? self.submissionScope(api, itemID)) == scopeBeforeRead else { return }
+                await self.refresh(api: api, itemID: itemID, projectID: projectID)
+            }
+            return
+        }
+        refreshesInFlight += 1
+        defer {
+            refreshesInFlight -= 1
+            if readOnlyObservation { observationReading = false }
+            if refreshesInFlight == 0, let pending = pendingObservationRefresh {
+                pendingObservationRefresh = nil
+                Task { await pending() }
+            }
+        }
+        if readOnlyObservation, state == nil || refreshError != nil {
+            let now = submissionNow()
+            guard stateObservationNotBefore.map({ $0 <= now }) ?? true else { return }
+            stateObservationNotBefore = now.addingTimeInterval(30)
+        }
         guard !isBusy, !Task.isCancelled else { return }
+        if let scope = scopeBeforeRead, let record = try? submissionJournal.load(scope), record.remainingReads == 0 {
+            submission = record
+            let now = submissionNow()
+            guard record.nextObservationAt.map({ $0 <= now }) ?? true,
+                  record.readNotBefore.map({ $0 <= now }) ?? true else { return }
+            do {
+                guard try submissionJournal.update(scope, operationID: record.operationID, change: { value in
+                    guard value.nextObservationAt.map({ $0 <= now }) ?? true,
+                          value.readNotBefore.map({ $0 <= now }) ?? true else { throw CancellationError() }
+                    value.nextObservationAt = now.addingTimeInterval(30)
+                }) else { return }
+            } catch { return }
+        }
         if requestedItemID != itemID {
             requestedItemID = itemID
             mutationGeneration += 1
@@ -949,6 +1008,7 @@ struct SlidePostRenderAcknowledgement {
             adopt(result)
             if error == refreshError { error = nil }
             refreshError = nil
+            stateObservationNotBefore = nil
             loadedSubmissionScope = scopeBeforeRead
             if let projectID = state?.aiProjectID, let scope = scopeBeforeRead,
                SlidePostAIKind.allCases.contains(where: { kind in
@@ -973,12 +1033,12 @@ struct SlidePostRenderAcknowledgement {
                     let context = contextGeneration
                     isBusy = true
                     defer { if contextGeneration == context { isBusy = false } }
-                    try await refreshSubmissionReceipt(api: api, scope: scope)
+                    try await refreshSubmissionReceipt(api: api, scope: scope, allowExhausted: readOnlyObservation)
                     if submission?.receipt?.isCurrentTarget == false {
                         try await observeSupersedingSubmission(api: api, scope: scope)
                         return
                     }
-                    try await resumeSubmission(api: api, scope: scope, capability: result.generationIdempotencyVersion)
+                    if !readOnlyObservation { try await resumeSubmission(api: api, scope: scope, capability: result.generationIdempotencyVersion) }
                     try reconcileSubmission(result, scope: scope)
                 }
             }
@@ -1032,7 +1092,7 @@ struct SlidePostRenderAcknowledgement {
         var errorDescription: String? { message }
     }
     private func aiCurrent(_ record: SlidePostAIRecord, api: any KriaAPIClient, itemID: String) -> Bool {
-        self.itemID == itemID && requestedItemID == itemID && state?.aiProjectID == record.projectID &&
+        !observationsStopped && self.itemID == itemID && requestedItemID == itemID && state?.aiProjectID == record.projectID &&
         (try? submissionScope(api, itemID)) == record.scope &&
         (try? aiJournal.load(scope: record.scope, projectID: record.projectID, kind: record.kind)?.operationID) == record.operationID
     }
@@ -1146,23 +1206,25 @@ struct SlidePostRenderAcknowledgement {
         aiRecoveryMessage = nil
     }
     private func readAI(api: any KriaAPIClient, itemID: String, record: inout SlidePostAIRecord, explicit: Bool) async throws {
+        let epoch = observationEpoch
         guard aiCurrent(record, api: api, itemID: itemID), !Task.isCancelled else { throw CancellationError() }
         if record.receipt?.status == .completed { return }
         guard record.notBefore.map({ $0 <= submissionNow() }) ?? true else { return }
-        guard record.remainingReads > 0 || explicit else { return }
+        let observationOnly = !explicit && record.remainingReads == 0
+        if observationOnly, let deadline = record.slowReadNotBefore, deadline > submissionNow() { return }
         record = try aiJournal.reserveAttempt(record, post: false, explicit: explicit, now: submissionNow())
         do {
             let receipt = try await api.slidePostAIReceipt(itemID: itemID, requestID: record.operationID, expectedOwner: record.scope.owner)
-            guard aiCurrent(record, api: api, itemID: itemID), !Task.isCancelled else { throw CancellationError() }
+            guard epoch == observationEpoch, aiCurrent(record, api: api, itemID: itemID), !Task.isCancelled else { throw CancellationError() }
             try acceptAIReceipt(receipt, record: &record)
-            if receipt.status == .pending, state?.aiRequestRecoveryVersion == 1, (record.remainingPosts > 0 || explicit) {
+            if !observationOnly, receipt.status == .pending, state?.aiRequestRecoveryVersion == 1, (record.remainingPosts > 0 || explicit) {
                 // GET never dispatches. Resume only the same admitted, still-unclaimed intent.
                 let ownDelay = record.notBefore
                 try await postAI(api: api, itemID: itemID, record: &record, explicit: explicit, ownReadDeadline: ownDelay)
             }
         } catch {
-            guard aiCurrent(record, api: api, itemID: itemID) else { throw CancellationError() }
-            if case let APIError.requestFailed(status, _) = error, status == 404,
+            guard epoch == observationEpoch, aiCurrent(record, api: api, itemID: itemID) else { throw CancellationError() }
+            if !observationOnly, case let APIError.requestFailed(status, _) = error, status == 404,
                record.receipt == nil, state?.aiRequestRecoveryVersion == 1, (record.remainingPosts > 0 || explicit) {
                 let ownDelay = record.notBefore
                 try await postAI(api: api, itemID: itemID, record: &record, explicit: explicit, ownReadDeadline: ownDelay)
@@ -1173,15 +1235,15 @@ struct SlidePostRenderAcknowledgement {
         }
     }
     private func startAIRecovery(api: any KriaAPIClient, itemID: String) {
-        guard aiRecoveryTask == nil, let projectID = state?.aiProjectID,
+        guard !observationsStopped, aiRecoveryTask == nil, let projectID = state?.aiProjectID,
               let scope = try? submissionScope(api, itemID),
               SlidePostAIKind.allCases.contains(where: { kind in
                   guard let record = try? aiJournal.load(scope: scope, projectID: projectID, kind: kind) else { return false }
-                  return !record.delivered && (record.remainingReads > 0 || record.receipt?.status == .completed)
+                  return !record.delivered && record.receipt?.status != .rejected
               }) else { return }
         let token = UUID(); aiRecoveryToken = token
         aiRecoveryTask = Task { [weak self] in
-            for _ in 0..<40 {
+            while !Task.isCancelled {
                 guard !Task.isCancelled else { break }
                 try? await Task.sleep(for: .seconds(3))
                 guard let self, self.aiRecoveryToken == token, self.itemID == itemID,
@@ -1190,16 +1252,16 @@ struct SlidePostRenderAcknowledgement {
                 await self.recoverAI(api: api, itemID: itemID, explicit: false)
                 let pending = SlidePostAIKind.allCases.contains { kind in
                     guard let record = try? self.aiJournal.load(scope: scope, projectID: projectID, kind: kind) else { return false }
-                    return !record.delivered && (record.remainingReads > 0 || record.receipt?.status == .completed)
+                    return !record.delivered && record.receipt?.status != .rejected
                 }
                 if !pending { break }
             }
             if let self, self.aiRecoveryToken == token { self.aiRecoveryTask = nil }
         }
     }
-    private var aiWaitingCopy: String { "The original AI result is not available yet. Check again to recover it without starting another AI call." }
-    private func recoverAI(api: any KriaAPIClient, itemID: String, explicit: Bool) async {
-        guard !isBusy, !isChatting, !aiRecovering, let projectID = state?.aiProjectID,
+    private var aiWaitingCopy: String { "The original AI result is not available yet. Kria will keep checking without starting another AI call." }
+    func recoverAI(api: any KriaAPIClient, itemID: String, explicit: Bool) async {
+        guard !observationsStopped, !isBusy, !isChatting, !aiRecovering, let projectID = state?.aiProjectID,
               let scope = try? submissionScope(api, itemID) else { return }
         let context = contextGeneration
         aiRecovering = true; defer { if contextGeneration == context { aiRecovering = false } }
@@ -1323,6 +1385,21 @@ struct SlidePostRenderAcknowledgement {
             return .seconds(max(backoff, detail.retryAfter ?? 0))
         }
         return nil
+    }
+
+    var hasPendingRenderSubmission: Bool { submission != nil }
+    var exportObservationJobID: UUID? { submission == nil ? state?.jobID : submission?.receipt?.jobID }
+    func exportObservationGuard(api: any KriaAPIClient, itemID: String) -> () -> Bool {
+        let scope = try? submissionScope(api, itemID)
+        let epoch = observationEpoch
+        let context = contextGeneration
+        let project = state?.aiProjectID
+        return { [weak self] in
+            guard let self else { return false }
+            return !self.observationsStopped && self.observationEpoch == epoch && self.contextGeneration == context &&
+                self.itemID == itemID && self.state?.aiProjectID == project && scope != nil &&
+                (try? self.submissionScope(api, itemID)) == scope
+        }
     }
 
     /// Export requires an authoritative check; a cached ready projection is
@@ -1837,8 +1914,9 @@ struct SlidePostRenderAcknowledgement {
     }
 
     private func refreshSubmissionReceipt(api: any KriaAPIClient, scope: SlidePostSubmissionScope, allowExhausted: Bool = false) async throws {
-        guard let record = try submissionJournal.load(scope), let pinned = record.receipt,
-              record.remainingReads > 0 || allowExhausted else { return }
+        guard let record = try submissionJournal.load(scope),
+              (record.receipt != nil || allowExhausted), record.remainingReads > 0 || allowExhausted else { return }
+        let epoch = observationEpoch
         try Task.checkCancellation()
         guard try submissionScope(api, scope.itemID) == scope, loadedSubmissionScope == scope else { throw CancellationError() }
         pruneReadCooldowns(at: readNow())
@@ -1847,9 +1925,10 @@ struct SlidePostRenderAcknowledgement {
         do {
             let latest = try await api.slidePostGenerationReceipt(itemID: itemID ?? scope.itemID, clientRequestID: record.operationID, expectedOwner: transportOwner(scope))
             try Task.checkCancellation()
-            guard try submissionScope(api, scope.itemID) == scope, loadedSubmissionScope == scope else { throw CancellationError() }
-            guard latest.clientRequestID == pinned.clientRequestID, latest.itemID == pinned.itemID,
-                  latest.draftVersion == pinned.draftVersion, latest.jobID == pinned.jobID else { throw APIError.invalidResponse }
+            guard epoch == observationEpoch, !observationsStopped, try submissionScope(api, scope.itemID) == scope, loadedSubmissionScope == scope else { throw CancellationError() }
+            guard latest.clientRequestID == record.operationID, latest.itemID == UUID(uuidString: scope.itemID),
+                  latest.draftVersion == record.expectedVersion,
+                  record.receipt.map({ $0.jobID == latest.jobID }) ?? true else { throw APIError.invalidResponse }
             guard try submissionJournal.update(scope, operationID: record.operationID, change: { $0.receipt = latest }) else { throw APIError.conflict }
             submission = try submissionJournal.load(scope)
         } catch {
@@ -2452,6 +2531,8 @@ struct SlidePostRenderAcknowledgement {
         } else { self.error = error.localizedDescription }
     }
     private func clearPrivatePresentation(invalidate: Bool = true) {
+        observationEpoch += 1
+        pendingObservationRefresh = nil; stateObservationNotBefore = nil
         contextGeneration += 1
         isBusy = false; isChatting = false; aiRecovering = false; operationMessage = nil
         if invalidate { mutationGeneration += 1 }

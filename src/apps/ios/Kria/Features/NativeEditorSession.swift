@@ -206,6 +206,14 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var newVersionWatchTarget: UUID?
     private var latestJobGate = NativeEditorLatestGate()
     private var latestJobDrainTask: Task<Void, Never>?
+    private var latestJobTransport: Task<Void, Never>?
+    private var observersVisible = true
+    private var pendingLoadObservation: (@MainActor () async -> Void)?
+    private var loadObservationCooldown = NativeEditorReadCooldown()
+    private var previewObservationCooldown = NativeEditorReadCooldown()
+    private var previewTransport: Task<[String: JSONValue], Error>?
+    private var watchedLatestProject: ProjectSummary?
+    private static let latestJobSlowRecheck: Duration = .seconds(300)
     var latestJobRetryDelays: [Duration] = [.seconds(1), .seconds(3), .seconds(9)]
     var latestJobReadNow: () -> ContinuousClock.Instant = { ContinuousClock.now }
     var latestJobReadSleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
@@ -2606,8 +2614,26 @@ struct NativeEditorTemporaryVideo: Sendable {
         drainPendingLatestJob()
     }
 
+    /// Visibility pauses observers only; Save, local edits, and conflict choices keep their owners.
+    func setObserversVisible(_ visible: Bool) {
+        guard observersVisible != visible else { return }
+        observersVisible = visible
+        if !visible {
+            latestJobDrainTask?.cancel(); latestJobDrainTask = nil
+            newVersionWatchTask?.cancel(); newVersionWatchTask = nil
+            loadRetryTask?.cancel(); loadRetryTask = nil
+            previewRefreshTask?.cancel(); previewRefreshTask = nil
+            if let project = watchedLatestProject, project.id == threadID { _ = latestJobGate.enqueue(threadID: project.id) }
+            return
+        }
+        drainPendingLatestJob()
+        if let retry = pendingLoadObservation { scheduleLoadObservation(retry, delay: .zero) }
+        if let generation = pendingPreviewGeneration { startPreviewRefresh(generation: generation) }
+    }
+
     private func resetLatestJobDrain() {
         savedSongProjectionLag = nil
+        watchedLatestProject = nil
         latestJobGate.reset()
         latestJobDrainTask?.cancel()
         latestJobDrainTask = nil
@@ -2618,10 +2644,11 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func drainPendingLatestJob() {
-        guard !isSaving, activeSaveAttemptID == nil, let ticket = latestJobGate.pending,
+        guard observersVisible, !isSaving, activeSaveAttemptID == nil, let ticket = latestJobGate.pending,
               ticket.threadID == threadID, let api else { return }
         latestJobDrainTask?.cancel()
         let expectedJob = jobID
+        let owner = api.mediaLibraryOwner
         let window = NativeEditorReadWindow(started: latestJobReadNow())
         let retryDelays = latestJobRetryDelays
         latestJobDrainTask = Task { [weak self] in
@@ -2629,29 +2656,34 @@ struct NativeEditorTemporaryVideo: Sendable {
             // Notifications may be coalesced or reordered while Save is running.
             // Resolve the active target now rather than adopting the saved event.
             for attempt in 0...retryDelays.count {
-                guard !Task.isCancelled, self.latestJobGate.matches(ticket), self.threadID == ticket.threadID,
-                      self.jobID == expectedJob, !self.isSaving, self.activeSaveAttemptID == nil else { return }
+                guard !Task.isCancelled, self.observersVisible, self.latestJobGate.matches(ticket), self.threadID == ticket.threadID,
+                      self.jobID == expectedJob, api.mediaLibraryOwner == owner, !self.isSaving, self.activeSaveAttemptID == nil else { return }
                 do {
-                    guard try await self.allowLatestJobRead(ticket, window: window) else { return }
-                    let latest = try await api.project(threadID: ticket.threadID)
-                    guard !Task.isCancelled, self.latestJobGate.matches(ticket), self.threadID == ticket.threadID,
-                          self.jobID == expectedJob, !self.isSaving, self.activeSaveAttemptID == nil else { return }
+                    guard try await self.allowLatestJobRead(ticket, window: window), api.mediaLibraryOwner == owner else { return }
+                    let latest = try await self.readLatestJob(ticket, window: window) { try await api.project(threadID: ticket.threadID) }
+                    guard !Task.isCancelled, self.observersVisible, self.latestJobGate.matches(ticket), self.threadID == ticket.threadID,
+                          self.jobID == expectedJob, api.mediaLibraryOwner == owner, !self.isSaving, self.activeSaveAttemptID == nil else { return }
                     self.latestJobCooldowns[ticket.threadID]?.prune(now: self.latestJobReadNow())
                     self.latestJobRefreshMessage = nil
+                    if let currentJob = latest.job, currentJob.id == latest.activeJobID,
+                       ["cancelled", "superseded", "failed", "no_labeled_tracks"].contains(currentJob.status.lowercased()) || currentJob.status.lowercased().hasSuffix("_failed") {
+                        self.newVersionWatchTask?.cancel(); self.newVersionWatchTask = nil; self.watchedLatestProject = nil
+                        if self.refreshSync == .newVersionRendering { self.refreshSync = .idle }
+                        self.latestJobGate.finish(ticket)
+                        return
+                    }
                     try await self.adoptResolvedLatestJob(latest.summary, api: api, ticket: ticket, window: window)
                     return
                 } catch {
-                    // Retry-After applies to later tickets too, even if this
-                    // response lost content ownership while the request ran.
-                    if case let APIError.requestFailed(status, detail) = error,
-                       status == 408 || status == 429 || status >= 500, let seconds = detail.retryAfter {
-                        self.latestJobCooldowns[ticket.threadID, default: NativeEditorReadCooldown()].record(seconds: seconds, now: self.latestJobReadNow())
+                    guard !Task.isCancelled, self.observersVisible, self.latestJobGate.matches(ticket), self.threadID == ticket.threadID,
+                          self.jobID == expectedJob, api.mediaLibraryOwner == owner, !self.isSaving, self.activeSaveAttemptID == nil else { return }
+                    guard case .transient = Self.refreshFailure(error) else {
+                        self.latestJobRefreshMessage = "The latest version could not be checked. Your edits are still here."
+                        return
                     }
-                    guard !Task.isCancelled, self.latestJobGate.matches(ticket), self.threadID == ticket.threadID,
-                          self.jobID == expectedJob, !self.isSaving, self.activeSaveAttemptID == nil else { return }
-                    guard case .transient = Self.refreshFailure(error), attempt < retryDelays.count,
+                    guard attempt < retryDelays.count,
                           retryDelays[attempt] <= window.remaining(now: self.latestJobReadNow()) else {
-                        self.latestJobRefreshMessage = "The latest version could not be checked. Your edits are still here; the next project update will check again."
+                        self.scheduleLatestJobRecheck(ticket)
                         return
                     }
                     do { try await self.latestJobReadSleep(retryDelays[attempt]) } catch { return }
@@ -2660,13 +2692,64 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
     }
 
+    /// Ticket cancellation releases UI ownership, not transport ownership. A replacement
+    /// waits for a cancellation-ignoring GET and its Retry-After before issuing another.
+    private func readLatestJob<Value: Sendable>(_ ticket: NativeEditorLatestGate.Ticket, window: NativeEditorReadWindow,
+                                      read: @escaping @MainActor () async throws -> Value) async throws -> Value {
+        while let active = latestJobTransport {
+            await active.value
+            try Task.checkCancellation()
+        }
+        guard try await allowLatestJobRead(ticket, window: window), latestJobGate.matches(ticket) else { throw CancellationError() }
+        // A waiter may have acquired the transport while this one waited on pacing.
+        if latestJobTransport != nil { return try await readLatestJob(ticket, window: window, read: read) }
+        let owner = api?.mediaLibraryOwner
+        let task = Task<Value, Error> { [weak self] in
+            defer { self?.latestJobTransport = nil }
+            do { return try await read() }
+            catch {
+                if let self, self.api?.mediaLibraryOwner == owner,
+                   case let APIError.requestFailed(status, detail) = error,
+                   status == 408 || status == 429 || status >= 500, let hint = detail.retryAfter {
+                    self.latestJobCooldowns[ticket.threadID, default: NativeEditorReadCooldown()].record(seconds: hint, now: self.latestJobReadNow())
+                }
+                throw error
+            }
+        }
+        latestJobTransport = Task { _ = try? await task.value }
+        return try await task.value
+    }
+
+    /// A finite fast burst hands off to one cancellable, read-only wake. Server
+    /// deadlines survive bursts; a later notification replaces this ticket's wake.
+    private func scheduleLatestJobRecheck(_ ticket: NativeEditorLatestGate.Ticket) {
+        guard latestJobGate.matches(ticket), let api else { return }
+        let cooldown = latestJobCooldowns[ticket.threadID] ?? NativeEditorReadCooldown()
+        guard !cooldown.isPaused else {
+            latestJobRefreshMessage = "The server supplied an unsupported retry interval. Your edits are still here."
+            return
+        }
+        let delay = max(Self.latestJobSlowRecheck, cooldown.delay(now: latestJobReadNow()))
+        let identity = editorOperationIdentity, owner = api.mediaLibraryOwner, sleep = latestJobReadSleep
+        latestJobRefreshMessage = "The latest version will be checked again automatically. Your edits are still here."
+        latestJobDrainTask = Task { [weak self] in
+            do { try await sleep(delay) } catch { return }
+            guard !Task.isCancelled, let self, self.observersVisible, self.editorOperationIdentity == identity,
+                  self.latestJobGate.matches(ticket), api.mediaLibraryOwner == owner else { return }
+            self.latestJobDrainTask = nil
+            self.drainPendingLatestJob()
+        }
+    }
+
     private func allowLatestJobRead(_ ticket: NativeEditorLatestGate.Ticket, window: NativeEditorReadWindow) async throws -> Bool {
+        let owner = api?.mediaLibraryOwner
         while true {
-            guard !Task.isCancelled, latestJobGate.matches(ticket), ticket.threadID == threadID, !isSaving, activeSaveAttemptID == nil else { return false }
+            guard !Task.isCancelled, observersVisible, latestJobGate.matches(ticket), ticket.threadID == threadID,
+                  api?.mediaLibraryOwner == owner, !isSaving, activeSaveAttemptID == nil else { return false }
             let cooldown = latestJobCooldowns[ticket.threadID] ?? NativeEditorReadCooldown()
             switch window.action(cooldown: cooldown, now: latestJobReadNow()) {
             case .paused:
-                latestJobRefreshMessage = "The server's wait exceeded this automatic check's limit. Your edits are still here; a later project update will check again."
+                scheduleLatestJobRecheck(ticket)
                 return false
             case .ready:
                 return true
@@ -2685,35 +2768,37 @@ struct NativeEditorTemporaryVideo: Sendable {
             return
         }
         let expectedJob = jobID
+        let owner = api.mediaLibraryOwner
         // A re-plan points the thread at its new job before that job has a video. Loading it then
         // threw away the working video for "The editor couldn't open", and the prompt claimed a new
         // version was ready while it was still rendering. Keep editing the current video until then.
         let identity = editorOperationIdentity
-        guard try await allowLatestJobRead(ticket, window: window) else { return }
-        let variants = try await api.editorVariants(jobID: target)
-        guard !Task.isCancelled, editorOperationIdentity == identity, latestJobGate.matches(ticket),
+        guard try await allowLatestJobRead(ticket, window: window), api.mediaLibraryOwner == owner else { return }
+        let variants = try await readLatestJob(ticket, window: window) { try await api.editorVariants(jobID: target) }
+        guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, editorOperationIdentity == identity, latestJobGate.matches(ticket),
               !isSaving, activeSaveAttemptID == nil else { return }
         switch Self.readiness(variants: variants, preferredVariantID: project.outputVariantID) {
         case .ready:
             break
         case .rendering:
-            guard !Task.isCancelled, latestJobGate.matches(ticket), jobID == expectedJob, threadID == ticket.threadID else { return }
+            guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob, threadID == ticket.threadID else { return }
             refreshSync = .newVersionRendering
             watchNewVersion(project, api: api)
             latestJobGate.finish(ticket)
             return
         case .failed:
-            guard !Task.isCancelled, latestJobGate.matches(ticket), jobID == expectedJob, threadID == ticket.threadID else { return }
+            guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob, threadID == ticket.threadID else { return }
             // The new render failed; the chat says so. The current video stays as it is.
-            newVersionWatchTask?.cancel(); newVersionWatchTask = nil
+            newVersionWatchTask?.cancel(); newVersionWatchTask = nil; watchedLatestProject = nil
             if refreshSync == .newVersionRendering { refreshSync = .idle }
             latestJobGate.finish(ticket)
             return
         }
-        guard !Task.isCancelled, latestJobGate.matches(ticket), jobID == expectedJob,
+        guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob,
               threadID == ticket.threadID, isBehindActiveJob(project), !isSaving, activeSaveAttemptID == nil else { return }
         newVersionWatchTask?.cancel(); newVersionWatchTask = nil
         newVersionWatchAttempts = 0
+        watchedLatestProject = nil
         if refreshSync == .newVersionRendering { refreshSync = .idle }
         if hasUnsavedChanges, !hasOnlyChatStagedChanges {
             if project.runtimeVersion == 1 {
@@ -2724,9 +2809,9 @@ struct NativeEditorTemporaryVideo: Sendable {
                     latestJobGate.finish(ticket)
                     return
                 }
-                guard try await allowLatestJobRead(ticket, window: window) else { return }
-                let variant = try await api.editorVariant(jobID: target, variantID: variantID)
-                guard !Task.isCancelled, latestJobGate.matches(ticket), jobID == expectedJob,
+                guard try await allowLatestJobRead(ticket, window: window), api.mediaLibraryOwner == owner else { return }
+                let variant = try await readLatestJob(ticket, window: window) { try await api.editorVariant(jobID: target, variantID: variantID) }
+                guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob,
                       threadID == ticket.threadID, !isSaving, activeSaveAttemptID == nil else { return }
                 let generation = variant["render_generation_id"]?.stringValue ?? variant["render_finished_at"]?.stringValue
                 let snapshot = DraftSnapshot(draftID: "latest-\(target.uuidString)", itemID: item, variantKey: variantID,
@@ -2741,9 +2826,9 @@ struct NativeEditorTemporaryVideo: Sendable {
                     destination: (target, variantID, item), remoteETag: "", legacySnapshot: draft.serverSnapshot)
                 return
             }
-            guard try await allowLatestJobRead(ticket, window: window) else { return }
-            let snapshot = try await api.draft(threadID: ticket.threadID)
-            guard !Task.isCancelled, latestJobGate.matches(ticket), jobID == expectedJob,
+            guard try await allowLatestJobRead(ticket, window: window), api.mediaLibraryOwner == owner else { return }
+            let snapshot = try await readLatestJob(ticket, window: window) { try await api.draft(threadID: ticket.threadID) }
+            guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob,
                   threadID == ticket.threadID, !isSaving, activeSaveAttemptID == nil else { return }
             guard snapshot.baseJobID.flatMap(UUID.init) == target,
                   project.activePlanItemID.map({ $0 == snapshot.itemID }) ?? true,
@@ -2754,9 +2839,9 @@ struct NativeEditorTemporaryVideo: Sendable {
                 latestJobGate.finish(ticket)
                 return
             }
-            guard try await allowLatestJobRead(ticket, window: window) else { return }
-            let variant = try await api.editorVariant(jobID: target, variantID: snapshot.variantKey)
-            guard !Task.isCancelled, latestJobGate.matches(ticket), jobID == expectedJob,
+            guard try await allowLatestJobRead(ticket, window: window), api.mediaLibraryOwner == owner else { return }
+            let variant = try await readLatestJob(ticket, window: window) { try await api.editorVariant(jobID: target, variantID: snapshot.variantKey) }
+            guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob,
                   threadID == ticket.threadID, !isSaving, activeSaveAttemptID == nil else { return }
             let latestDraft = snapshot.editorDraft(projectID: ticket.threadID, authoritativeVariant: variant)
             let latestClean = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(latestDraft))
@@ -2797,21 +2882,24 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// Ask again until the new job is ready, then run the normal adopt decision once.
     private func watchNewVersion(_ project: ProjectSummary, api: any KriaAPIClient) {
         guard let target = project.activeJobID else { return }
+        watchedLatestProject = project
+        guard observersVisible else { return }
         if newVersionWatchTask != nil, newVersionWatchTarget == target { return }
         newVersionWatchTask?.cancel()
         if newVersionWatchTarget != target { newVersionWatchAttempts = 0 }
         newVersionWatchTarget = target
         let identity = editorOperationIdentity
         let delays = newVersionPollDelays
-        guard newVersionWatchAttempts < 64, !delays.isEmpty else {
-            latestJobRefreshMessage = "The latest version is still rendering. Your current edits are still here."
-            return
-        }
-        let delay = delays[min(newVersionWatchAttempts, delays.count - 1)]
-        newVersionWatchAttempts += 1
+        guard !delays.isEmpty else { return }
+        let exhausted = newVersionWatchAttempts >= 64
+        let delay = exhausted ? Self.latestJobSlowRecheck : delays[min(newVersionWatchAttempts, delays.count - 1)]
+        newVersionWatchAttempts = min(newVersionWatchAttempts + 1, 64)
+        if exhausted { latestJobRefreshMessage = "The latest version is still rendering. It will be checked again automatically." }
+        let owner = api.mediaLibraryOwner, sleep = latestJobReadSleep
         newVersionWatchTask = Task { [weak self] in
-            do { try await Task.sleep(for: delay) } catch { return }
-            guard !Task.isCancelled, let self, self.editorOperationIdentity == identity, self.isBehindActiveJob(project) else { return }
+            do { try await sleep(delay) } catch { return }
+            guard !Task.isCancelled, let self, self.observersVisible, self.editorOperationIdentity == identity,
+                  api.mediaLibraryOwner == owner, self.isBehindActiveJob(project) else { return }
             self.newVersionWatchTask = nil
             // Every GET, including readiness, goes through the same paced drain.
             await self.adoptLatestJob(project, api: api)

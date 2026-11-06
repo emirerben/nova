@@ -374,7 +374,7 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
         XCTAssertEqual(writes, 1)
     }
 
-    func testRenderThatNeverFinishesEndsInAFailureStatusNotAHang() async {
+    func testRenderThatNeverFinishesKeepsObservingUntilCancelled() async {
         let server = FakeServer(unrenderedState())
         server.generated = true   // already rendering, and the stub's GET will flip to ready only after 2 polls
         server.state.renderStatus = "rendering"
@@ -387,10 +387,10 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
         let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
         var writes = 0
-        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 })
+        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 }, readWait: { _ in throw CancellationError() })
         await exporter.export(.photos, session: session, api: api, itemID: itemID, pollInterval: .milliseconds(1), maxPolls: 3)
         XCTAssertEqual(writes, 0)
-        guard case .failed = exporter.status else { return XCTFail("expected a failure status, got \(exporter.status)") }
+        XCTAssertEqual(exporter.status, .idle)
     }
 
     // Failure matrix: transient GETs recover without replaying generate; persistent failures
@@ -445,11 +445,11 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
             if request.httpMethod == "GET", !request.url!.path.contains("/generation-requests/"), server.generated { reads += 1; return (503, Data()) }
             return try server.handle(request)
         }
-        let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { _ in XCTFail("Must not export stale state") })
+        let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { _ in XCTFail("Must not export stale state") }, readWait: { _ in throw CancellationError() })
         await exporter.export(.photos, session: session, api: api, itemID: itemID, pollInterval: .milliseconds(1), maxPolls: 5)
         XCTAssertEqual(reads, 3)
         XCTAssertEqual(server.calls, ["generate"])
-        guard case .failed = exporter.status else { return XCTFail("Exhausted reads must stop") }
+        XCTAssertEqual(exporter.status, .idle)
     }
 
     func testAcknowledgedGenerateWithLaggingReadIsNotDispatchedTwice() async {
@@ -482,10 +482,10 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
             mutations += 1
             return (503, Data())
         }
-        let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { _ in XCTFail("Must not write") })
+        let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { _ in XCTFail("Must not write") }, readWait: { _ in throw CancellationError() })
         await exporter.export(.photos, session: session, api: NativeEditorTestSupport.api(), itemID: itemID, pollInterval: .milliseconds(1), maxPolls: 5)
         XCTAssertEqual(mutations, 1)
-        guard case .failed = exporter.status else { return XCTFail("Uncertain mutation must stop") }
+        XCTAssertEqual(exporter.status, .idle)
     }
 
     func testTerminalReadFailureIsNotRetried() async {
@@ -1001,5 +1001,39 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
 
         XCTAssertEqual(downloads, 0)
         XCTAssertEqual(writes, 0)
+    }
+}
+
+extension SlidePostExportTests {
+    func testAuthorizedExportObservesBeyondFastBudgetAndWritesPhotosOnce() async {
+        var pending = unrenderedState(); pending.renderStatus = "rendering"
+        let value = await session(pending)
+        let ready = state()
+        var reads = 0; var mutations = 0; var writes = 0; var slowWaits = 0
+        NativeEditorURLProtocol.handler = { request in
+            if request.httpMethod != "GET" { mutations += 1 }
+            reads += 1
+            return (200, try JSONEncoder().encode(reads > 205 ? ready : pending))
+        }
+        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized },
+            writePhotos: { _ in writes += 1 }, readWait: { delay in if delay >= .seconds(30) { slowWaits += 1 } })
+        await exporter.export(.photos, session: value, api: NativeEditorTestSupport.api(), itemID: itemID,
+            pollInterval: .milliseconds(1), maxPolls: 200)
+        XCTAssertEqual(writes, 1); XCTAssertEqual(mutations, 0); XCTAssertGreaterThan(slowWaits, 0)
+        XCTAssertEqual(exporter.status, .savedToPhotos(2))
+    }
+
+    func testExportDismissDuringSlowReadNeverWritesPhotos() async {
+        var pending = unrenderedState(); pending.renderStatus = "rendering"
+        let value = await session(pending); let ready = state()
+        var writes = 0; var mutations = 0
+        NativeEditorURLProtocol.handler = { request in
+            if request.httpMethod != "GET" { mutations += 1 }
+            return (200, try JSONEncoder().encode(ready))
+        }
+        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized },
+            writePhotos: { _ in writes += 1 }, readWait: { _ in value.stopObserving() })
+        await exporter.export(.photos, session: value, api: NativeEditorTestSupport.api(), itemID: itemID, maxPolls: 0)
+        XCTAssertEqual(writes, 0); XCTAssertEqual(mutations, 0)
     }
 }

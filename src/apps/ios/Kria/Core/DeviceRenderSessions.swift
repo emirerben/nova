@@ -521,8 +521,9 @@ enum DeviceRenderGate: Equatable {
     }
 
     private func reconcile(_ key: DeviceRenderKey, capabilities offered: PhoneRenderingCapabilities, retry requestedRetry: Bool,
-                           origin: DeviceRenderExecutionOrigin, intentAction requestedAction: IntentAction) async {
+                           origin: DeviceRenderExecutionOrigin, intentAction requestedAction: IntentAction, observing parkedTarget: ResumeTarget? = nil) async {
         guard resetOperation == nil, await synchronizeOwner() else { return }
+        if let parkedTarget, !canObserveParked(key, target: parkedTarget) { return }
         let intentAction: IntentAction = requestedAction == .creatorResume || delayedReads[key]?.action == .creatorResume || resumeAuthorizations[key] != nil ? .creatorResume : .automatic
         let retry = requestedRetry || delayedReads[key]?.retry == true || resumeAuthorizations[key] != nil
         if case .automatic = intentAction, delayedReads[key]?.action != .creatorResume {
@@ -539,8 +540,8 @@ enum DeviceRenderGate: Equatable {
         let capabilities = offered == .disabled ? (lastEnabledCapabilities ?? offered) : offered
         self.capabilities[key] = capabilities
         if let deadline = readNotBefore[key], deadline > now() {
-            deferRead(key, retry: retry, action: intentAction)
-            scheduleRetry(key)
+            if parkedTarget == nil { deferRead(key, retry: retry, action: intentAction) }
+            scheduleRetry(key, after: parkedTarget == nil ? nil : Self.slowReadRecheck, observing: parkedTarget)
             return
         }
         if tickets[key] == nil, let active = transportReads[key] {
@@ -548,10 +549,14 @@ enum DeviceRenderGate: Equatable {
             _ = try? await active.value
             guard ownerIsCurrent, activeOwner == owner, keyOperations[key] == operation,
                   transportLifetime == lifetime, !Task.isCancelled else { return }
-            await reconcile(key, capabilities: capabilities, retry: retry, origin: origin, intentAction: intentAction)
+            await reconcile(key, capabilities: capabilities, retry: retry, origin: origin, intentAction: intentAction, observing: parkedTarget)
             return
         }
         guard tickets[key] == nil else {
+            if let parkedTarget {
+                scheduleRetry(key, after: Self.slowReadRecheck, observing: parkedTarget)
+                return
+            }
             // The read in flight may predate a request pinned since (an editor Save while
             // the chat poll's read was out): read again once it finishes.
             let previous = rereads[key]
@@ -597,10 +602,22 @@ enum DeviceRenderGate: Equatable {
         } catch {
             let failure = DeviceRenderReadFailure(error)
             guard ownerIsCurrent, tickets[key] == ticket else { return }
+            if let parkedTarget {
+                if case .transient = failure, canObserveParked(key, target: parkedTarget) {
+                    scheduleRetry(key, after: Self.slowReadRecheck, observing: parkedTarget)
+                } else if failure == .inactive || failure == .jobCancelled || failure == .superseded {
+                    await readFailed(key, failure: failure, error: error, ticket: ticket, retry: false, intentAction: .automatic)
+                }
+                return
+            }
             await readFailed(key, failure: failure, error: error, ticket: ticket, retry: retry, intentAction: intentAction)
             return
         }
         guard ownerIsCurrent, tickets[key] == ticket, !Task.isCancelled else { return }
+        if let parkedTarget {
+            await applyParkedStatus(status, key: key, target: parkedTarget, ticket: ticket)
+            return
+        }
         // Observed by the chat body: only write when it actually changes.
         if inactiveKeys.contains(key) { inactiveKeys.remove(key) }
         guard status.request.identity.jobID == key.jobID, status.request.identity.variantID == key.variantID else {
@@ -613,6 +630,45 @@ enum DeviceRenderGate: Equatable {
         } catch {
             guard ownerIsCurrent, tickets[key] == ticket else { return }
             await preparationFailed(key, error: error, ticket: ticket)
+        }
+    }
+
+    private func canObserveParked(_ key: DeviceRenderKey, target: ResumeTarget) -> Bool {
+        guard ownerIsCurrent, requests[key]?.identity == target.identity,
+              baseGenerations[key] == target.baseGeneration,
+              pendingRetries[key] == nil, resumeAuthorizations[key] == nil else { return false }
+        do {
+            let storageKey = try intentKey(key)
+            guard !failedIntentWrites.contains(storageKey) else { return false }
+            return try intentStore.load(storageKey).map { $0.state == .released } ?? true
+        } catch { return false }
+    }
+
+    /// Observe only: no factory, recover, export, upload, retry or failure-report call.
+    private func applyParkedStatus(_ status: DeviceRenderStatusResponse, key: DeviceRenderKey,
+                                   target: ResumeTarget, ticket: UUID) async {
+        guard tickets[key] == ticket, canObserveParked(key, target: target) else { return }
+        guard status.request.identity == target.identity, status.baseGeneration == target.baseGeneration else {
+            presentations[key] = DeviceRenderPresentation(phase: .superseded)
+            await retire(key)
+            return
+        }
+        if status.phase == "published" {
+            let saved = await entries[key]?.snapshot()
+            guard tickets[key] == ticket, canObserveParked(key, target: target) else { return }
+            settle(key)
+            presentations[key] = DeviceRenderPresentation(phase: .synced,
+                localFile: saved?.request.identity == target.identity ? saved?.outputURL : nil,
+                publishedGeneration: status.publishedGeneration)
+        } else if status.phase == "needs_attention" {
+            settle(key)
+            var presentation = presentations[key] ?? DeviceRenderPresentation(phase: .needsAttention)
+            presentation.phase = presentation.localFile == nil ? .needsAttention : .localReady
+            presentation.reasonCode = status.reasonCode; presentation.message = status.reason
+            presentation.requiresServerRetry = true
+            presentations[key] = presentation
+        } else {
+            scheduleRetry(key, after: Self.slowReadRecheck, observing: target)
         }
     }
 
@@ -940,7 +996,7 @@ enum DeviceRenderGate: Equatable {
 
     /// One coalesced status read remains after fast retries run out. No new
     /// generation is requested; the existing identity/intent gates still own execution.
-    private func scheduleRetry(_ key: DeviceRenderKey, after delay: Duration? = nil) {
+    private func scheduleRetry(_ key: DeviceRenderKey, after delay: Duration? = nil, observing parkedTarget: ResumeTarget? = nil) {
         guard retryTasks[key] == nil else { return }
         let attempt = min((retryAttempts[key] ?? 0) + 1, Self.maxAutomaticRetries + 1)
         retryAttempts[key] = attempt
@@ -957,7 +1013,7 @@ enum DeviceRenderGate: Equatable {
             guard let capabilities = self.capabilities[key] else { return }
             let deferred = self.delayedReads.removeValue(forKey: key)
             await self.reconcile(key, capabilities: capabilities, retry: deferred?.retry ?? false,
-                                 origin: .automaticRecovery, intentAction: deferred?.action ?? .automatic)
+                                 origin: .automaticRecovery, intentAction: deferred?.action ?? .automatic, observing: parkedTarget)
         }
     }
 
@@ -1412,10 +1468,17 @@ enum DeviceRenderGate: Equatable {
                 var presentation = self.presentation(saved, for: key)
                 presentation.exportProgress = state.exportProgress
                 if self.presentations[key] != presentation { self.presentations[key] = presentation }
-                // Idle means nothing will change until something resumes it
-                // (`reconcile`/`resumeParked` start a new observation then).
                 if !state.isBusy {
                     self.observations[key] = nil
+                    // A parked receipt can become published without another foreground or
+                    // Chat poll. Observe that outcome without repeating uncertain work.
+                    let target = ResumeTarget(identity: saved.request.identity, baseGeneration: self.baseGenerations[key])
+                    if saved.error == nil, [.preparing, .localReady].contains(saved.phase),
+                       self.tickets[key] == nil, self.canObserveParked(key, target: target) {
+                        self.retryTasks.removeValue(forKey: key)?.cancel()
+                        self.retryTokens[key] = nil
+                        self.scheduleRetry(key, after: Self.slowReadRecheck, observing: target)
+                    }
                     return
                 }
                 try? await Task.sleep(for: .milliseconds(250))

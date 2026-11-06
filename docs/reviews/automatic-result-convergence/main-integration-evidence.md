@@ -46,7 +46,7 @@ Result: **205 passed**, 44 warnings, 5.01 seconds; `/tmp/slide-main-integration-
 
 From src/apps/api, guarded `/tmp/nova-ai-db-safe-python -m app.cli.kria_contracts --write` and `--check` both exited zero; `/tmp/nova-auto-main-contract-write.log` and `/tmp/nova-auto-main-contract-check.log`. The checker reported matching tool, mobile-fixture and mobile-OpenAPI artifacts.
 
-The first merged-source AI PostgreSQL attempt exited five with one module skipped (database not reachable from the default sandbox). It is **not passing PostgreSQL evidence**. An escalated guarded scratch-database attempt was requested separately; its result is pending and must be recorded before attributing concurrency proof to this source.
+The first merged-source AI PostgreSQL attempt exited five with one module skipped (database not reachable from the default sandbox). It is **not passing PostgreSQL evidence**. The separately authorized guarded scratch-database attempt completed on integration checkpoint `c0ab9630a3abdaf59c3892ed6bc9ed90ce8c4c74`: **10 passed**, 44 warnings, 33.43 seconds. Command from src/apps/api: `/tmp/nova-ai-db-safe-python -m pytest -q -rs tests/routes/test_slide_post_ai_requests_postgres.py`; log `/tmp/nova-auto-main-ai-pg-authorized.log`. The runner restricts SQL to the isolated AI test database and prevents external provider connections. This is the focused AI concurrency suite, not the full backend aggregate or all PostgreSQL cases.
 
 ## Readiness limits
 
