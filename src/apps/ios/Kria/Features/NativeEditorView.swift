@@ -364,8 +364,10 @@ struct NativeEditorView: View {
             .onReceive(NetworkReachability.shared.$isOnline.removeDuplicates()) { online in
                 if online { Task { await session.resumeRefreshSync() } }
             }
+            .onAppear { session.beginPreviewPresentation() }
             .onDisappear {
                 session.setObserversVisible(false)
+                session.endPreviewPresentation()
                 finishPanelEditing()
                 session.suspendEditorImports()
                 session.pausePlayback()
@@ -475,9 +477,9 @@ struct NativeEditorView: View {
                 .overlay {
                     // KRI-589: the finger canvas in Draw mode, else the selected drawing's move / scale / rotate layer.
                     // After the preview's identifier: a parent's identifier masks its children's.
-                    if drawMode != nil {
+                    if !session.isShowingPreviousPreview, drawMode != nil {
                         NativeDrawingCanvas(sketch: sketch)
-                    } else if let selection = session.selection, selection.kind == .drawing {
+                    } else if !session.isShowingPreviousPreview, let selection = session.selection, selection.kind == .drawing {
                         NativeDrawingTransformLayer(session: session, id: selection.id)
                     }
                 }
@@ -1044,7 +1046,8 @@ struct NativeEditorView: View {
         }
         return NativeEditorAIStatus.current(
             projectID: project.id, conversation: conversationActivity,
-            refresh: session.refreshSync, preview: session.sourcePreviewState, render: render
+            refresh: session.refreshSync, preview: session.sourcePreviewState,
+            previewIsUpdating: session.isPreparingCurrentPreview, render: render
         )
     }
 

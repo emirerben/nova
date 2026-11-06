@@ -193,7 +193,10 @@
         "src/apps/api/tests/services/test_length_owner_choices.py",
         "src/apps/api/tests/services/test_phone_editor_render_contract.py",
         "src/apps/ios/Kria/Features/NativeEditorAIActivity.swift",
-        "src/apps/ios/Tests/KriaTests/NativeEditorAIActivityTests.swift"
+        "src/apps/ios/Tests/KriaTests/NativeEditorAIActivityTests.swift",
+        "src/apps/ios/Kria/Core/NativeEditorPreviewHandoff.swift",
+        "src/apps/ios/Tests/KriaTests/NativeEditorPreviewHandoffTests.swift",
+        "src/apps/ios/Tests/KriaTests/NativeEditorPreviewWorkSessionTests.swift"
       ]
     },
     {

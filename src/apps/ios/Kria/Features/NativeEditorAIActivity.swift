@@ -35,10 +35,11 @@ enum NativeEditorAIStatus: Equatable {
     static func current(projectID: UUID, conversation: NativeEditorAIActivity?,
                         refresh: NativeEditorRefreshSync = .idle,
                         preview: NativeSourcePreviewState = .ready,
+                        previewIsUpdating: Bool = false,
                         render: DeviceRenderPresentation? = nil) -> Self? {
         if case .targetLost = refresh { return nil }
         if let conversation, conversation.projectID == projectID { return conversation.status }
-        if preview == .preparing { return .preparingPreview }
+        if previewIsUpdating, !preview.isFailure { return .preparingPreview }
         // The displayed job can be finished while a different, newer job is still being prepared.
         if refresh == .newVersionRendering { return .rendering }
         if let render {

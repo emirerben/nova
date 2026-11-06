@@ -28,7 +28,10 @@ final class NativeEditorAIActivityTests: XCTestCase {
     }
 
     func testPreviewWorkStopsOnReadinessOrFailureWithoutInventingSuccess() {
-        XCTAssertEqual(status(preview: .preparing), .preparingPreview)
+        XCTAssertNil(status(preview: .preparing)) // Cancelled/inactive old state cannot invent work.
+        XCTAssertEqual(status(preview: .preparing, pending: true), .preparingPreview)
+        XCTAssertEqual(status(preview: .ready, pending: true), .preparingPreview) // Cached rebuild.
+        XCTAssertNil(status(preview: .failed("Preview failed"), pending: true))
         XCTAssertNil(status(preview: .ready))
         XCTAssertNil(status(preview: .failed("Preview failed")))
         XCTAssertNil(status(preview: .originalsUnavailable))
@@ -63,8 +66,9 @@ final class NativeEditorAIActivityTests: XCTestCase {
 
     private func status(preview: NativeSourcePreviewState = .ready,
                         refresh: NativeEditorRefreshSync = .idle,
+                        pending: Bool = false,
                         render: DeviceRenderPresentation? = nil) -> NativeEditorAIStatus? {
         NativeEditorAIStatus.current(projectID: project, conversation: nil,
-                                    refresh: refresh, preview: preview, render: render)
+                                    refresh: refresh, preview: preview, previewIsUpdating: pending, render: render)
     }
 }

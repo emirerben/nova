@@ -1,5 +1,7 @@
 # Editor AI activity feedback
 
+This records the standalone candidate and investigation. The authorized local integration branch is described in [the integration record](editor-ai-halo-integration.md), which supersedes the proposed implementation/ownership statements below.
+
 Acceptance, recorded before implementation:
 
 - Sending a prompt and waiting for its correlated turn produces a compact, readable activity control in the video editor. Tapping it still opens the conversation.
