@@ -7698,15 +7698,6 @@ def _names_join(items: Sequence[str]) -> str:
     return ", ".join(items[:-1]) + say(en=" and ", tr=" ve ") + items[-1]
 
 
-# KRI-1237: the Visuals the phone Talking card matcher grounds, written against `_fold` output and
-# the diacritic-free form `_speech_cue` also reads ("ekran görüntüsü" -> "ekran goruntusu").
-# Only what the pool holds (the creator's own photos, screenshots, recordings): a sticker, emoji,
-# flag or logo asked for by type is not a Visual the matcher can find, and "a title card" is text.
-_SPOKEN_CARD_RE = re.compile(
-    r"\b(?:photos?|pictures?|images?|visuals?|screen ?shots?)\b"
-    r"|\bscreen ?(?:recordings?|captures?|grabs?)\b"
-    r"|\bekran (?:goruntu|kayd|kayit|resm)\w*|\bgorsel\w*|\bfotograf\w*|\bresim\w*"
-)
 # Why a Visual stayed off screen, from `phone_overlay_receipt.unplaced[].reason` (EN, TR). An
 # unknown reason claims no cause (`_CARD_MISS_OTHER`).
 _CARD_MISS_WHY: dict[str, tuple[str, str]] = {
@@ -7729,17 +7720,12 @@ _CARD_MISS_OTHER = ("couldn't be placed", "yerleştirilemedi")
 
 
 def _asks_spoken_cards(req: BriefRequirement) -> bool:
-    """KRI-1237: "when I talk about something, show the matching screenshot": the creator's
-    Visuals shown on the words they match, naming no word. That is the phone Talking card
-    matcher's job. A word the creator named ("when I say Spec Kit") stays a reaction beat the
-    planner authors, and a sound has no card, so both keep the pop-in check."""
-    text = _req_text(req)
-    return (
-        _wants_beats(req)
-        and not _named_triggers(req)
-        and not _SOUND_RE.search(text)
-        and _speech_cue(text, _SPOKEN_CARD_RE)
-    )
+    """KRI-1237: "when I talk about something, show the matching screenshot": a pop-in ask that
+    names no word, which on a phone Talking edit is the card matcher's job (it finds the moment for
+    each Visual). A word the creator named ("when I say Spec Kit") stays a reaction beat the planner
+    authors, and a sound has no card, so both keep the pop-in check. No new word reading (KRI-667):
+    which kind of picture is asked for is not judged here; the facts decide whether cards exist."""
+    return _wants_beats(req) and not _named_triggers(req) and not _SOUND_RE.search(_req_text(req))
 
 
 def _spoken_cards_receipt(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:

@@ -350,17 +350,32 @@ def test_no_card_verdict_without_an_overlay_receipt() -> None:
 # ------------------------------------------------ 4. review follow-ups (same failure modes)
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        "When I get excited, show an emoji",
-        "When I talk about a country, pop up its flag",
-        "When I mention a tool, show a title card",
-    ],
-)
-def test_an_ask_for_a_kind_of_sticker_is_not_a_visuals_promise(text: str) -> None:
-    """Failure mode 2: the matcher finds the creator's own pictures, not an emoji or a flag."""
-    req = BriefRequirement(id="r4", kind="style", scope="global", description=text)
+def test_her_ask_in_turkish_gets_the_same_promise() -> None:
+    """Failure mode 4, EN/TR parity: the decision reads no English words (KRI-667)."""
+    req = CARDS.model_copy(
+        update={
+            "description": (
+                "Bir şeyden bahsettiğimde, eşleşen ekran görüntüsünü ya da ekran kaydını yüzümün "
+                "üstüne değil ekranın üst ya da alt kısmına koy"
+            )
+        }
+    )
+    with reply_language_for("tr"):
+        receipt = _receipt(req, _draft_facts())
+    assert receipt.status == "partial"
+    assert receipt.reason == _receipt_tr_promise()
+
+
+def _receipt_tr_promise() -> str:
+    with reply_language_for("tr"):
+        return _receipt(CARDS, _draft_facts()).reason
+
+
+def test_a_sound_on_my_words_is_not_a_card() -> None:
+    """Failure mode 3: a sound pop-in keeps its own check (a card plays no sound)."""
+    req = CARDS.model_copy(
+        update={"description": "When I talk about something, play a ding sound", "facts": {}}
+    )
     assert _receipt(req, _draft_facts()).reason != PROMISE_EN
 
 

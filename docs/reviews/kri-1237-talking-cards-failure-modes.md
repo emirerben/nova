@@ -60,6 +60,9 @@ Read from the prod records in `src/apps/api/tests/fixtures/kri1237_qendresa_q1_c
   until then.
 - Position ("top or bottom, not over my face") is not judged here: the card layout belongs to
   KRI-1238 (item 15 layout); faces are avoided by the matcher's own face sampling.
+- Which kind of picture an unnamed pop-in ask wants (a flag, an emoji) is not judged: KRI-667 bars
+  reading it from words, so the brief writer would need a typed fact. The promise names the
+  mechanism ("your Visuals ... when you talk about them"), and the receipt names what showed.
 - A named word with no planner beat ("when I say X, show its screenshot") keeps the pop-in verdict
   even though the card matcher may still place it.
 - Several speaking clips: no promise (the worker skips the lanes), so the old answer stays.
