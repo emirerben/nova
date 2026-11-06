@@ -354,6 +354,434 @@ import XCTest
         guard case .failed = exporter.status else { return XCTFail("expected a failure status, got \(exporter.status)") }
     }
 
+    // Failure matrix: transient GETs recover without replaying generate; persistent failures
+    // stop; terminal reads do not retry; recovered refreshes preserve dirty local edits.
+    func testTransientReadAfterGenerateRecoversWithoutAnotherRender() async {
+        let server = FakeServer(unrenderedState())
+        NativeEditorURLProtocol.handler = { try server.handle($0) }
+        let api = NativeEditorTestSupport.api()
+        let session = SlidePostSession(defaults: defaults)
+        await session.refresh(api: api, itemID: itemID)
+        var failed = false
+        NativeEditorURLProtocol.handler = { request in
+            if request.httpMethod == "GET", server.generated, !failed {
+                failed = true
+                return (503, Data())
+            }
+            return try server.handle(request)
+        }
+        var writes = 0
+        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 })
+        await exporter.export(.photos, session: session, api: api, itemID: itemID, pollInterval: .milliseconds(1), maxPolls: 5)
+        XCTAssertEqual(server.calls, ["generate"])
+        XCTAssertEqual(writes, 1)
+        XCTAssertEqual(exporter.status, .savedToPhotos(2))
+        XCTAssertNil(session.error)
+    }
+
+    func testSuccessfulRefreshClearsReadErrorAndPreservesDirtyDraft() async {
+        let session = await session(state())
+        session.draft?.caption = "Local edit"
+        NativeEditorURLProtocol.handler = { _ in (403, Data()) }
+        await session.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
+        XCTAssertNotNil(session.error)
+        var latest = state(version: 2)
+        latest.draft?.caption = "Remote edit"
+        NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(latest)) }
+        await session.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
+        XCTAssertNil(session.error)
+        XCTAssertEqual(session.draft?.caption, "Local edit")
+        XCTAssertEqual(session.state?.draft?.version, 2)
+        XCTAssertTrue(session.hasUnsavedChanges)
+    }
+
+    func testPersistentReadFailureIsBoundedAndDoesNotReplayGenerate() async {
+        let server = FakeServer(unrenderedState())
+        NativeEditorURLProtocol.handler = { try server.handle($0) }
+        let api = NativeEditorTestSupport.api()
+        let session = SlidePostSession(defaults: defaults)
+        await session.refresh(api: api, itemID: itemID)
+        var reads = 0
+        NativeEditorURLProtocol.handler = { request in
+            if request.httpMethod == "GET" { reads += 1; return (503, Data()) }
+            return try server.handle(request)
+        }
+        let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { _ in XCTFail("Must not export stale state") })
+        await exporter.export(.photos, session: session, api: api, itemID: itemID, pollInterval: .milliseconds(1), maxPolls: 5)
+        XCTAssertEqual(reads, 3)
+        XCTAssertEqual(server.calls, ["generate"])
+        guard case .failed = exporter.status else { return XCTFail("Exhausted reads must stop") }
+    }
+
+    func testAcknowledgedGenerateWithLaggingReadIsNotDispatchedTwice() async {
+        let server = FakeServer(unrenderedState())
+        NativeEditorURLProtocol.handler = { try server.handle($0) }
+        let api = NativeEditorTestSupport.api()
+        let session = SlidePostSession(defaults: defaults)
+        await session.refresh(api: api, itemID: itemID)
+        let lagging = unrenderedState()
+        var reads = 0
+        NativeEditorURLProtocol.handler = { request in
+            if request.httpMethod == "GET" {
+                reads += 1
+                if reads < 3 { return (200, try JSONEncoder().encode(lagging)) }
+            }
+            return try server.handle(request)
+        }
+        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in })
+        await exporter.export(.photos, session: session, api: api, itemID: itemID, pollInterval: .milliseconds(1), maxPolls: 8)
+        XCTAssertEqual(server.calls, ["generate"])
+        XCTAssertEqual(exporter.status, .savedToPhotos(2))
+    }
+
+    func testUncertainGenerateFailureIsNeverReplayed() async {
+        let session = await session(unrenderedState())
+        var mutations = 0
+        NativeEditorURLProtocol.handler = { _ in mutations += 1; return (503, Data()) }
+        let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { _ in XCTFail("Must not write") })
+        await exporter.export(.photos, session: session, api: NativeEditorTestSupport.api(), itemID: itemID, pollInterval: .milliseconds(1), maxPolls: 5)
+        XCTAssertEqual(mutations, 1)
+        guard case .failed = exporter.status else { return XCTFail("Uncertain mutation must stop") }
+    }
+
+    func testTerminalReadFailureIsNotRetried() async {
+        let session = await session(state())
+        var reads = 0
+        NativeEditorURLProtocol.handler = { _ in reads += 1; return (403, Data()) }
+        await session.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
+        XCTAssertEqual(reads, 1)
+        XCTAssertNotNil(session.error)
+    }
+
+    func testReadRetryHonorsServerBackoffAndNeverRetriesTerminalFailures() {
+        XCTAssertEqual(SlidePostSession.readRetryDelay(APIError.requestFailed(status: 429, detail: .init(nil, retryAfter: 12)), attempt: 0), .seconds(12))
+        XCTAssertEqual(SlidePostSession.readRetryDelay(URLError(.timedOut), attempt: 0), .milliseconds(500))
+        XCTAssertEqual(SlidePostSession.readRetryDelay(URLError(.timedOut), attempt: 1), .seconds(1))
+        XCTAssertNil(SlidePostSession.readRetryDelay(APIError.requestFailed(status: 429, detail: .init(nil, retryAfter: 31)), attempt: 0))
+        XCTAssertNil(SlidePostSession.readRetryDelay(APIError.sessionExpired, attempt: 0))
+        XCTAssertNil(SlidePostSession.readRetryDelay(APIError.invalidResponse, attempt: 0))
+        XCTAssertNil(SlidePostSession.readRetryDelay(URLError(.cancelled), attempt: 0))
+    }
+
+    func testCancelledRefreshDuringBackoffStopsWithoutPublishingError() async {
+        let waiting = expectation(description: "Read entered backoff")
+        let session = SlidePostSession(defaults: defaults, readRetrySleep: { _ in
+            waiting.fulfill()
+            try await Task.sleep(for: .seconds(60))
+        })
+        var reads = 0
+        NativeEditorURLProtocol.handler = { _ in reads += 1; return (503, Data()) }
+        let task = Task { await session.refresh(api: NativeEditorTestSupport.api(), itemID: itemID) }
+        await fulfillment(of: [waiting], timeout: 2)
+        task.cancel()
+        await task.value
+        XCTAssertEqual(reads, 1)
+        XCTAssertNil(session.state)
+        XCTAssertNil(session.error)
+    }
+
+    func testNewerRefreshSupersedesRetryWithoutPublishingOldFailure() async {
+        let waiting = expectation(description: "Old read entered backoff")
+        var resume: CheckedContinuation<Void, Never>?
+        let session = SlidePostSession(defaults: defaults, readRetrySleep: { _ in
+            await withCheckedContinuation { resume = $0; waiting.fulfill() }
+        })
+        NativeEditorURLProtocol.handler = { _ in (503, Data()) }
+        let old = Task { await session.refresh(api: NativeEditorTestSupport.api(), itemID: itemID) }
+        await fulfillment(of: [waiting], timeout: 2)
+        let latest = state(version: 2)
+        var reads = 0
+        NativeEditorURLProtocol.handler = { _ in reads += 1; return (200, try JSONEncoder().encode(latest)) }
+        await session.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
+        resume?.resume()
+        await old.value
+        XCTAssertEqual(reads, 1, "Superseded reads must not issue another GET")
+        XCTAssertEqual(session.state?.draft?.version, 2)
+        XCTAssertNil(session.error)
+    }
+
+    func testItemSwitchDuringBackoffCannotRestoreTheOldItem() async {
+        let waiting = expectation(description: "Old item entered backoff")
+        var resume: CheckedContinuation<Void, Never>?
+        let session = SlidePostSession(defaults: defaults, readRetrySleep: { _ in
+            await withCheckedContinuation { resume = $0; waiting.fulfill() }
+        })
+        NativeEditorURLProtocol.handler = { _ in (503, Data()) }
+        let old = Task { await session.refresh(api: NativeEditorTestSupport.api(), itemID: itemID) }
+        await fulfillment(of: [waiting], timeout: 2)
+        let next = SlidePostState(itemID: "22222222-2222-2222-2222-222222222222", title: "Next post", draft: state().draft)
+        NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(next)) }
+        await session.refresh(api: NativeEditorTestSupport.api(), itemID: next.itemID)
+        resume?.resume()
+        await old.value
+        XCTAssertEqual(session.state?.itemID, next.itemID)
+        XCTAssertNil(session.error)
+    }
+
+    func testWrongItemSaveAndCreateNeverDispatchMutations() async {
+        let session = await session(unrenderedState())
+        session.draft?.caption = "Local edit"
+        var mutations = 0
+        NativeEditorURLProtocol.handler = { request in
+            if request.httpMethod != "GET" { mutations += 1 }
+            return (503, Data())
+        }
+        let otherID = "22222222-2222-2222-2222-222222222222"
+        await session.save(api: NativeEditorTestSupport.api(), itemID: otherID)
+        XCTAssertEqual(mutations, 0)
+        XCTAssertNotNil(session.error)
+        await session.create(api: NativeEditorTestSupport.api(), itemID: otherID)
+        XCTAssertEqual(mutations, 0)
+        XCTAssertNotNil(session.error)
+        XCTAssertEqual(session.draft?.caption, "Local edit")
+    }
+
+    func testExistingRenderWithLaggingReadDoesNotDispatchAgain() async {
+        var rendering = unrenderedState()
+        rendering.renderStatus = "rendering"
+        let session = await session(rendering)
+        let server = FakeServer(unrenderedState())
+        server.generated = true
+        let lagging = unrenderedState()
+        var reads = 0
+        NativeEditorURLProtocol.handler = { request in
+            if request.httpMethod == "GET" {
+                reads += 1
+                if reads == 1 { return (200, try JSONEncoder().encode(lagging)) }
+            }
+            return try server.handle(request)
+        }
+        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in })
+        await exporter.export(.photos, session: session, api: NativeEditorTestSupport.api(), itemID: itemID, pollInterval: .milliseconds(1), maxPolls: 8)
+        XCTAssertTrue(server.calls.isEmpty)
+        XCTAssertEqual(exporter.status, .savedToPhotos(2))
+    }
+
+    func testStandaloneCreateKeepsPollingThroughLaggingAcknowledgement() async {
+        let server = FakeServer(unrenderedState())
+        NativeEditorURLProtocol.handler = { try server.handle($0) }
+        let api = NativeEditorTestSupport.api()
+        let session = SlidePostSession(defaults: defaults)
+        await session.refresh(api: api, itemID: itemID)
+        let lagging = unrenderedState()
+        var reads = 0
+        NativeEditorURLProtocol.handler = { request in
+            if request.httpMethod == "GET" {
+                reads += 1
+                if reads <= 2 { return (200, try JSONEncoder().encode(lagging)) }
+            }
+            return try server.handle(request)
+        }
+        await session.create(api: api, itemID: itemID)
+        XCTAssertTrue(session.isRendering, "An acknowledged render must keep the workspace poll alive")
+        // The workspace only polls while isRendering is true.
+        for _ in 0..<4 where session.isRendering { await session.refresh(api: api, itemID: itemID) }
+        XCTAssertTrue(session.canExport)
+        XCTAssertFalse(session.isRendering)
+        XCTAssertEqual(server.calls, ["generate"])
+    }
+
+    func testAcknowledgedRenderBudgetRetainsIdentityAndCanRecover() {
+        let oldJob = UUID()
+        var acknowledgement = SlidePostRenderAcknowledgement(version: 7, previousJobID: oldJob, remainingReads: 2)
+        acknowledgement.observe(jobID: oldJob, status: "failed", canExport: false)
+        XCTAssertEqual(acknowledgement.outcome, .waiting, "An old failure is not a new render receipt")
+        acknowledgement.observe(jobID: oldJob, status: "not_rendered", canExport: false)
+        XCTAssertEqual(acknowledgement.outcome, .exhausted)
+        XCTAssertEqual(acknowledgement.version, 7, "Exhaustion must not authorize another dispatch")
+        acknowledgement.observe(jobID: oldJob, status: "ready", canExport: true)
+        XCTAssertEqual(acknowledgement.outcome, .ready)
+    }
+
+    func testAcknowledgedRenderRecognizesNewJobFailure() {
+        let oldJob = UUID()
+        var acknowledgement = SlidePostRenderAcknowledgement(version: 7, previousJobID: oldJob)
+        acknowledgement.observe(jobID: UUID(), status: "failed", canExport: false)
+        XCTAssertEqual(acknowledgement.outcome, .failed)
+        var active = SlidePostRenderAcknowledgement(version: 7, previousJobID: oldJob)
+        active.observe(jobID: oldJob, status: "rendering", canExport: false)
+        active.observe(jobID: oldJob, status: "failed", canExport: false)
+        XCTAssertEqual(active.outcome, .failed)
+    }
+
+    func testExhaustedAcknowledgedRenderNeverDispatchesAgain() async {
+        let server = FakeServer(unrenderedState())
+        NativeEditorURLProtocol.handler = { try server.handle($0) }
+        let api = NativeEditorTestSupport.api()
+        let session = SlidePostSession(defaults: defaults)
+        await session.refresh(api: api, itemID: itemID)
+        let lagging = unrenderedState()
+        NativeEditorURLProtocol.handler = { request in
+            if request.httpMethod == "GET" { return (200, try JSONEncoder().encode(lagging)) }
+            return try server.handle(request)
+        }
+        await session.create(api: api, itemID: itemID)
+        for _ in 0..<200 where session.isRendering { await session.refresh(api: api, itemID: itemID) }
+        XCTAssertFalse(session.isRendering)
+        XCTAssertNotNil(session.error)
+        await session.create(api: api, itemID: itemID)
+        XCTAssertEqual(server.calls, ["generate"])
+        XCTAssertNotNil(session.error)
+        let next = SlidePostState(itemID: "22222222-2222-2222-2222-222222222222", title: "Next post", draft: state().draft)
+        NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(next)) }
+        await session.refresh(api: api, itemID: next.itemID)
+        XCTAssertEqual(session.state?.itemID, next.itemID)
+        XCTAssertNil(session.error, "The previous item's exhausted render must not poison the new item")
+    }
+
+    func testLowerVersionLagConsumesAcknowledgedRenderBudget() async {
+        var current = unrenderedState()
+        current.draft?.version = 2
+        let server = FakeServer(current)
+        NativeEditorURLProtocol.handler = { try server.handle($0) }
+        let api = NativeEditorTestSupport.api()
+        let session = SlidePostSession(defaults: defaults)
+        await session.refresh(api: api, itemID: itemID)
+        let old = unrenderedState()
+        NativeEditorURLProtocol.handler = { request in
+            if request.httpMethod == "GET" { return (200, try JSONEncoder().encode(old)) }
+            return try server.handle(request)
+        }
+        await session.create(api: api, itemID: itemID)
+        for _ in 0..<200 where session.isRendering { await session.refresh(api: api, itemID: itemID) }
+        XCTAssertFalse(session.isRendering)
+        XCTAssertEqual(session.state?.draft?.version, 2)
+        XCTAssertNotNil(session.error)
+        await session.create(api: api, itemID: itemID)
+        XCTAssertEqual(server.calls, ["generate"])
+    }
+
+    func testConfirmedRenderFailureAllowsANewExplicitCreate() async {
+        let server = FakeServer(unrenderedState())
+        NativeEditorURLProtocol.handler = { try server.handle($0) }
+        let api = NativeEditorTestSupport.api()
+        let session = SlidePostSession(defaults: defaults)
+        await session.refresh(api: api, itemID: itemID)
+        var failed = unrenderedState()
+        failed.jobID = UUID()
+        failed.renderStatus = "failed"
+        NativeEditorURLProtocol.handler = { request in
+            if request.httpMethod == "GET" { return (200, try JSONEncoder().encode(failed)) }
+            return try server.handle(request)
+        }
+        await session.create(api: api, itemID: itemID)
+        XCTAssertFalse(session.isRendering)
+        XCTAssertNotNil(session.error)
+        await session.create(api: api, itemID: itemID)
+        XCTAssertEqual(server.calls, ["generate", "generate"])
+    }
+
+    func testReadyRefreshClearsConfirmedRenderFailureButPreservesUnrelatedErrors() async {
+        let server = FakeServer(unrenderedState())
+        NativeEditorURLProtocol.handler = { try server.handle($0) }
+        let api = NativeEditorTestSupport.api()
+        let session = SlidePostSession(defaults: defaults)
+        await session.refresh(api: api, itemID: itemID)
+        var failed = unrenderedState()
+        failed.jobID = UUID()
+        failed.renderStatus = "failed"
+        NativeEditorURLProtocol.handler = { request in
+            if request.httpMethod == "GET" { return (200, try JSONEncoder().encode(failed)) }
+            return try server.handle(request)
+        }
+        await session.create(api: api, itemID: itemID)
+        XCTAssertNotNil(session.error)
+        XCTAssertFalse(session.isRendering)
+        let ready = state()
+        NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(ready)) }
+        await session.refresh(api: api, itemID: itemID)
+        XCTAssertTrue(session.canExport)
+        XCTAssertNil(session.error, "A confirmed ready read supersedes the earlier render failure")
+        session.error = "Keep this unrelated mutation error"
+        await session.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(session.error, "Keep this unrelated mutation error")
+    }
+
+    func testCommittedGenerateWithLostResponseIsReobservedByCreateAndNewExport() async {
+        let server = FakeServer(unrenderedState())
+        NativeEditorURLProtocol.handler = { try server.handle($0) }
+        let api = NativeEditorTestSupport.api()
+        let session = SlidePostSession(defaults: defaults)
+        await session.refresh(api: api, itemID: itemID)
+        let lagging = unrenderedState()
+        var reads = 0
+        NativeEditorURLProtocol.handler = { request in
+            if request.httpMethod == "POST" {
+                _ = try server.handle(request) // The server committed before the response was lost.
+                throw URLError(.networkConnectionLost)
+            }
+            reads += 1
+            if reads == 1 { return (200, try JSONEncoder().encode(lagging)) }
+            return try server.handle(request)
+        }
+        await session.create(api: api, itemID: itemID)
+        XCTAssertTrue(session.isRendering, "An uncertain submission must keep read convergence active")
+        XCTAssertNotNil(session.error)
+        await session.create(api: api, itemID: itemID)
+        XCTAssertEqual(server.calls, ["generate"], "A second create must only reobserve the submitted version")
+        var writes = 0
+        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 })
+        await exporter.export(.photos, session: session, api: api, itemID: itemID, pollInterval: .milliseconds(1), maxPolls: 8)
+        XCTAssertEqual(server.calls, ["generate"], "A new export flow must not duplicate the uncertain mutation")
+        XCTAssertEqual(writes, 1)
+        XCTAssertEqual(exporter.status, .savedToPhotos(2))
+        XCTAssertNil(session.error)
+    }
+
+    func testCancelledGenerateResponseRetainsSubmissionIdentity() async {
+        let server = FakeServer(unrenderedState())
+        NativeEditorURLProtocol.handler = { try server.handle($0) }
+        let api = NativeEditorTestSupport.api()
+        let session = SlidePostSession(defaults: defaults)
+        await session.refresh(api: api, itemID: itemID)
+        NativeEditorURLProtocol.handler = { request in
+            if request.httpMethod == "POST" {
+                _ = try server.handle(request)
+                throw URLError(.cancelled)
+            }
+            return try server.handle(request)
+        }
+        await session.create(api: api, itemID: itemID)
+        XCTAssertTrue(session.isRendering)
+        await session.create(api: api, itemID: itemID)
+        XCTAssertEqual(server.calls, ["generate"])
+        session.error = "Keep this unrelated save error"
+        await session.refresh(api: api, itemID: itemID)
+        XCTAssertTrue(session.canExport)
+        XCTAssertEqual(session.error, "Keep this unrelated save error")
+    }
+
+    func testDefinitiveGenerateRejectionAllowsALaterExplicitAttempt() async {
+        let session = await session(unrenderedState())
+        var posts = 0
+        NativeEditorURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            posts += 1
+            return (403, Data())
+        }
+        await session.create(api: NativeEditorTestSupport.api(), itemID: itemID)
+        XCTAssertFalse(session.isRendering)
+        XCTAssertNotNil(session.error)
+        await session.create(api: NativeEditorTestSupport.api(), itemID: itemID)
+        XCTAssertEqual(posts, 2)
+    }
+
+    func testFollowupReadRejectionDoesNotClearSubmittedRenderIdentity() async {
+        let server = FakeServer(unrenderedState())
+        NativeEditorURLProtocol.handler = { try server.handle($0) }
+        let api = NativeEditorTestSupport.api()
+        let session = SlidePostSession(defaults: defaults)
+        await session.refresh(api: api, itemID: itemID)
+        NativeEditorURLProtocol.handler = { request in
+            if request.httpMethod == "GET" { return (403, Data()) }
+            return try server.handle(request)
+        }
+        await session.create(api: api, itemID: itemID)
+        XCTAssertTrue(session.isRendering)
+        await session.create(api: api, itemID: itemID)
+        XCTAssertEqual(server.calls, ["generate"], "A read rejection cannot authorize repeating an accepted POST")
+    }
+
     // MARK: Gallery open: a server draft is the baseline
 
     func testPostOpenedWithAServerDraftEqualToItsRestoredLocalCopyIsNotUnsaved() async {

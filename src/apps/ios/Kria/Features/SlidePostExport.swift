@@ -144,15 +144,16 @@ import UIKit
             await exportOnDevice(destination, session: session, api: api, itemID: itemID)
             return
         }
-        var generated = 0
+        var requestedRender = session.isRendering && !session.hasUnsavedChanges
         var polls = 0
         while !session.canExport {
             // The caller cancels this task when the editor goes away; stop instead of finishing in the background.
             if Task.isCancelled { set(.idle); return }
-            if session.hasUnsavedChanges || (!session.isRendering && generated < 2) {
+            if requestedRender && session.hasUnsavedChanges { set(.failed(SlidePostExportError.draftChanged.localizedDescription)); return }
+            if !requestedRender && (session.hasUnsavedChanges || !session.isRendering) {
                 // `create` saves a dirty draft first, then dispatches the render.
                 set(session.hasUnsavedChanges ? .saving : .rendering)
-                if !session.hasUnsavedChanges { generated += 1 }
+                requestedRender = true
                 await session.create(api: api, itemID: itemID)
                 if let error = session.error { set(.failed(error)); return }
                 continue
@@ -164,7 +165,7 @@ import UIKit
             if Task.isCancelled { set(.idle); return }
             await session.refresh(api: api, itemID: itemID)
             if let error = session.error { set(.failed(error)); return }
-            if session.state?.renderStatus == "failed" { set(.failed("Rendering failed. Try again.")); return }
+            if session.state?.renderStatus == "failed", !session.isRendering { set(.failed("Rendering failed. Try again.")); return }
         }
         let revalidate: Revalidate = { try await session.revalidateForExport(api: api, itemID: itemID) }
         switch destination {

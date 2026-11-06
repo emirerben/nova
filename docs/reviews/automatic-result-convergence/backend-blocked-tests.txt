@@ -1,0 +1,12 @@
+Paired origin/main and candidate offline runs each: 90 passed, 9 blocked.
+Blocker: Network access forbidden during offline regression.
+
+FAILED tests/kria/test_runtime_tasks.py::test_reconciler_selects_only_recoverable_turns_and_publishes_stable_task_ids - AssertionError: Network access forbidden during offline regression
+FAILED tests/kria/test_runtime_tasks.py::test_reconciler_republishes_accepted_approval_execution - AssertionError: Network access forbidden during offline regression
+FAILED tests/kria/test_runtime_tasks.py::test_reconciler_recovers_approved_execution_after_initial_publish_failure - AssertionError: Network access forbidden during offline regression
+FAILED tests/kria/test_runtime_phone_v2.py::test_claim_turns_a_refused_phone_edit_into_a_terminal_reply_not_a_crash_loop - AssertionError: Network access forbidden during offline regression
+FAILED tests/kria/test_runtime_phone_v2.py::test_claim_pins_the_device_recipe_revision_the_edit_created - AssertionError: Network access forbidden during offline regression
+FAILED tests/kria/test_runtime_phone_v2.py::test_claim_passes_phone_catalog_sfx_paths_to_the_editor_commit - AssertionError: Network access forbidden during offline regression
+FAILED tests/kria/test_runtime_phone_v2.py::test_claim_refuses_when_the_pinned_recipe_cannot_derive_sfx_paths - AssertionError: Network access forbidden during offline regression
+FAILED tests/kria/test_runtime_phone_v2.py::test_claim_still_raises_for_a_cloud_variant_validation_error - AssertionError: Network access forbidden during offline regression
+FAILED tests/kria/test_runtime_phone_v2.py::test_claim_reports_a_baseline_conflict_as_a_stale_video_not_an_unsupported_edit - AssertionError: Network access forbidden during offline regression

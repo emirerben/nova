@@ -7924,6 +7924,120 @@ def _localized_block_recovery(message: str, receipts: list[dict[str, Any]]) -> s
     return render_block_recovery(failures).message
 
 
+def _recover_unknown_dispatch(
+    db: Any,
+    execution: CreatorAgentExecution,
+    turn: CreatorAgentTurn,
+    session: CreatorAgentSession,
+    thread: CreationThread,
+    job: Job,
+    *,
+    exact_target: bool,
+) -> tuple[str, None]:
+    """Resolve only an exact completed cloud receipt, without publishing more work.
+
+    The caller holds the reconciliation graph locks, including the thread lock.
+    Unknown dispatch already released the turn; a successor must retain authority.
+    Missing, failed or superseded output remains unknown, never a retry request.
+    """
+    prep = (execution.result or {}).get("editor_prep")
+    if (
+        not exact_target
+        or turn.status != "failed"
+        or (turn.error or {}).get("code") != "render_dispatch_outcome_unknown"
+        or session.status != "awaiting_feedback"
+        or session.last_error != execution.error
+        or not isinstance(prep, dict)
+        or prep.get("render_destination") == "device"
+        or not execution.target_variant_id
+        or not execution.target_generation_id
+    ):
+        return "ignored", None
+    variant = _ready_variant(
+        job, variant_id=execution.target_variant_id, generation_id=execution.target_generation_id
+    )
+    if variant is None or not (variant.get("video_path") or variant.get("output_url")):
+        return "pending", None
+    later_turn = db.execute(
+        select(CreatorAgentTurn.id)
+        .where(
+            CreatorAgentTurn.thread_id == thread.id,
+            CreatorAgentTurn.id != turn.id,
+            CreatorAgentTurn.created_at >= turn.created_at,
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+    if later_turn is not None:
+        return "ignored", None
+    review_text, review_receipts = _approved_generation_review(
+        db, thread, job, variant, execution, _render_ready_review_copy(execution.target_variant_id)
+    )
+    now = datetime.now(UTC)
+    execution.status = "completed"
+    execution.completed_at = execution.observed_at = now
+    execution.error = None
+    execution.result = {
+        **(execution.result or {}),
+        "outcome": "ready",
+        "job_id": str(job.id),
+        "variant_id": execution.target_variant_id,
+        "render_generation_id": execution.target_generation_id,
+    }
+    turn.status = "completed"
+    turn.completed_at = now
+    turn.error = None
+    session.last_error = None
+    session.target_variant_id = execution.target_variant_id
+    session.target_generation_id = execution.target_generation_id
+    session.last_good = {
+        "job_id": str(job.id),
+        "variant_id": execution.target_variant_id,
+        "render_generation_id": execution.target_generation_id,
+        "draft_id": str(execution.target_draft_id) if execution.target_draft_id else None,
+    }
+    thread.active_job_id = job.id
+    event = _append_sync_event(
+        db,
+        thread,
+        role="assistant",
+        event_type="generation_ready",
+        content=None,
+        payload={
+            "turn_id": str(turn.id),
+            "execution_id": str(execution.id),
+            "job_id": str(job.id),
+            "variant_id": execution.target_variant_id,
+            "render_generation_id": execution.target_generation_id,
+            "status": "ready",
+            "artifact_key": f"job:{job.id}:variant:{execution.target_variant_id}",
+            "receipt_ids": [str(execution.id)],
+        },
+    )
+    execution.observed_event_id = event.id
+    review = _append_sync_event(
+        db,
+        thread,
+        role="assistant",
+        event_type="assistant_review",
+        content=review_text,
+        payload={
+            "turn_id": str(turn.id),
+            "turn_value": "review",
+            "execution_id": str(execution.id),
+            "job_id": str(job.id),
+            "variant_id": execution.target_variant_id,
+            "render_generation_id": execution.target_generation_id,
+            "receipt_ids": [str(execution.id)],
+            "next_actions": ["review_cut", "request_revision"],
+            "schema_version": 2,
+            **({"requirement_receipts": review_receipts} if review_receipts else {}),
+        },
+    )
+    turn.observed_event_id = review.id
+    db.commit()
+    return "completed", None
+
+
 def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | None]:
     """Settle one dispatched receipt from durable Job truth."""
 
@@ -7936,7 +8050,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         execution_ref = db.get(CreatorAgentExecution, execution_id)
         if (
             execution_ref is None
-            or execution_ref.status != "dispatched"
+            or execution_ref.status not in {"dispatched", "outcome_unknown"}
             or execution_ref.target_job_id is None
             or execution_ref.turn_id is None
             or execution_ref.target_thread_id is None
@@ -7982,7 +8096,9 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         ).scalar_one_or_none()
         if any(row is None for row in (plan, item, job, session, turn, execution, thread)):
             return "ignored", None
-        if execution.status != "dispatched" or turn.status != "observing":
+        if execution.status not in {"dispatched", "outcome_unknown"} or (
+            execution.status == "dispatched" and turn.status != "observing"
+        ):
             return "ignored", None
         # KRI-520: the review and failure copy below follow the chat's language.
         _bind_thread_language(language, thread)
@@ -8000,6 +8116,23 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             and int(plan.ownership_epoch or 0) == int(session.ownership_epoch)
             and int(job.content_plan_ownership_epoch or 0) == int(session.ownership_epoch)
         )
+        if execution.status == "outcome_unknown":
+            outcome = _recover_unknown_dispatch(
+                db,
+                execution,
+                turn,
+                session,
+                thread,
+                job,
+                exact_target=exact_target and job.status in PLAN_ITEM_JOB_READY,
+            )
+            if execution.status == "outcome_unknown":
+                # Keep unresolved receipts moving through their bounded scan without
+                # changing their product state or releasing a successor. The execution
+                # is still row-locked, and the recovery branch made no other writes.
+                execution.observed_at = datetime.now(UTC)
+                db.commit()
+            return outcome
         terminal = job.status in PLAN_ITEM_JOB_READY or job.status in PLAN_ITEM_JOB_FAILED
         # A device render is `awaiting_device` (never terminal) until the phone
         # publishes; its failure lives on the device record, not on Job.status.
@@ -8793,17 +8926,7 @@ def _reconcile_kria_turns_body() -> dict[str, int]:
         approval_identifiers = list(
             dict.fromkeys([*(str(value) for value in approved_approval_ids), *approval_identifiers])
         )
-        dispatched_execution_ids = list(
-            db.execute(
-                select(CreatorAgentExecution.id)
-                .where(
-                    CreatorAgentExecution.status == "dispatched",
-                    CreatorAgentExecution.target_job_id.is_not(None),
-                )
-                .order_by(CreatorAgentExecution.dispatched_at, CreatorAgentExecution.id)
-                .limit(50)
-            ).scalars()
-        )
+        dispatched_execution_ids = list(db.execute(_execution_observation_query()).scalars())
     for identifier in identifiers:
         turn_id = str(identifier)
         run_kria_turn.apply_async(args=[turn_id], task_id=turn_id, queue="agent-control")
@@ -8817,6 +8940,32 @@ def _reconcile_kria_turns_body() -> dict[str, int]:
         "published": len(identifiers) + len(approval_identifiers),
         "settled": _settle_dispatched_executions(dispatched_execution_ids),
     }
+
+
+def _execution_observation_query(job_id: uuid.UUID | None = None) -> Any:
+    """Unknown receipts have their own budget; unresolved ones cannot starve dispatches."""
+    queries = []
+    for status in ("dispatched", "outcome_unknown"):
+        statement = select(CreatorAgentExecution.id).where(
+            CreatorAgentExecution.status == status,
+            CreatorAgentExecution.target_job_id.is_not(None),
+        )
+        if job_id is not None:
+            statement = statement.where(CreatorAgentExecution.target_job_id == job_id)
+        if status == "outcome_unknown":
+            # Deleted turn/thread links cannot be recovered and exit before the
+            # locked observation. Do not let those permanent orphans hold scan slots.
+            statement = statement.where(
+                CreatorAgentExecution.turn_id.is_not(None),
+                CreatorAgentExecution.target_thread_id.is_not(None),
+            )
+        order = (
+            CreatorAgentExecution.observed_at.asc().nulls_first()
+            if status == "outcome_unknown"
+            else CreatorAgentExecution.dispatched_at
+        )
+        queries.append(statement.order_by(order, CreatorAgentExecution.id).limit(50))
+    return queries[0].union_all(queries[1])
 
 
 def _settle_dispatched_executions(execution_ids: list[uuid.UUID]) -> int:
@@ -8862,17 +9011,7 @@ def observe_kria_job(job_id: str) -> dict[str, int]:
     if not settings.kria_runtime_v2_enabled:
         return {"settled": 0}
     with sync_session() as db:
-        execution_ids = list(
-            db.execute(
-                select(CreatorAgentExecution.id)
-                .where(
-                    CreatorAgentExecution.target_job_id == uuid.UUID(job_id),
-                    CreatorAgentExecution.status == "dispatched",
-                )
-                .order_by(CreatorAgentExecution.dispatched_at, CreatorAgentExecution.id)
-                .limit(50)
-            ).scalars()
-        )
+        execution_ids = list(db.execute(_execution_observation_query(uuid.UUID(job_id))).scalars())
     return {"settled": _settle_dispatched_executions(execution_ids)}
 
 

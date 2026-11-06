@@ -126,7 +126,7 @@ struct SlidePostWorkspaceView: View {
         return nil
     }
 
-    private var pollingKey: String { "\(itemID ?? "")-\(session.state?.renderStatus ?? "")-\(hasPendingAssets)-\(session.isBusy)" }
+    private var pollingKey: String { "\(itemID ?? "")-\(session.state?.renderStatus ?? "")-\(hasPendingAssets)-\(session.isBusy)-\(session.isRendering)" }
     /// The selected video plays only while the app is active and nothing covers the preview (a sheet, an export).
     private var videoPlaybackAllowed: Bool {
         scenePhase == .active && !showsConversation && !showsAttachments && !showsCaption && !showsSize

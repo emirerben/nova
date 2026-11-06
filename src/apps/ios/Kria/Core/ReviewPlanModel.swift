@@ -2,7 +2,7 @@ import Foundation
 import Observation
 
 /// The state machine behind `ReviewPlanView`: loads the plan snapshot, holds the creator's flags and edits, sends
-/// the scoped turn, and follows the update render until it is ready. The workspace owns the thread revision, the
+/// the scoped turn, and follows its authoritative plan until the decisions are ready. The workspace owns the thread revision, the
 /// delta feed and the approval and reaches them through `ReviewPlanActions`.
 @MainActor @Observable
 final class ReviewPlanModel {
@@ -11,7 +11,7 @@ final class ReviewPlanModel {
         case reviewing
         /// A turn is being sent / approved.
         case submitting
-        /// The update render is running; `scope` are the sections being redone.
+        /// The update plan is settling; `scope` are the sections being redone.
         case updating
     }
 
@@ -29,9 +29,12 @@ final class ReviewPlanModel {
 
     private let actions: ReviewPlanActions
     private var followTask: Task<Void, Never>?
-    /// The job the creator was looking at when they pressed Update / Undo: the update is done once the
-    /// snapshot shows a different job in `ready`.
+    /// A scoped update can render into the same job. Its turn and event cursor distinguish its
+    /// ready plan from an old ready projection that arrives before the update is visible.
     private var baselineJobID: String?
+    private var baselineTurnID: String?
+    private var baselineSequence = -1
+    private var readSequence = 0
     private var initialFlag: PlanSectionID?
     /// The sheet was dismissed: an update already being sent still finishes (never half-send a turn), but nothing
     /// is followed afterwards.
@@ -59,7 +62,7 @@ final class ReviewPlanModel {
 
     var status: PlanSnapshot.Status? { snapshot?.status }
     var isBusy: Bool { phase != .reviewing }
-    /// An update render is running, whether this sheet started it or it was already in flight when it opened.
+    /// An update plan is settling, whether this sheet started it or it was already in flight when it opened.
     var isUpdating: Bool { phase != .reviewing || snapshot?.status == .updating }
     var hasChanges: Bool { blocks.contains { $0.changed } }
     /// After an update finished: changed sections show "Updated" with Undo.
@@ -114,25 +117,37 @@ final class ReviewPlanModel {
     }
 
     func refresh(initial: Bool = false) async {
+        guard !dismissed, !Task.isCancelled else { return }
+        readSequence += 1
+        let sequence = readSequence
         do {
             let fresh = try await actions.loadSnapshot()
-            apply(fresh)
+            guard !dismissed, !Task.isCancelled, sequence == readSequence else { return }
+            guard apply(fresh) else { return }
             loadFailed = false
         } catch {
+            guard !dismissed, !Task.isCancelled, sequence == readSequence else { return }
+            if error is CancellationError { return }
             if blocks.isEmpty { loadFailed = true }
         }
         isLoading = false
         if initial { resumeIfUpdating() }
     }
 
-    /// The sheet opened while an update render was already running (it was closed mid-update, or started from the
-    /// chat): nothing else would ever poll, so follow it to its end.
+    /// The sheet opened while a plan was already updating: follow its decisions to the end.
+    /// This snapshot does not establish rendered video or Photos output readiness.
     private func resumeIfUpdating() {
         guard phase == .reviewing, followTask == nil, snapshot?.status == .updating else { return }
-        followTask = Task { [weak self] in await self?.follow(awaitNewJob: false) }
+        followTask = Task { [weak self] in await self?.follow(awaitNewResult: false) }
     }
 
-    private func apply(_ fresh: PlanSnapshot) {
+    @discardableResult
+    private func apply(_ fresh: PlanSnapshot) -> Bool {
+        if let current = snapshot {
+            guard fresh.threadID == current.threadID,
+                  fresh.threadRevision >= current.threadRevision,
+                  fresh.nextAfterSequence >= current.nextAfterSequence else { return false }
+        }
         snapshot = fresh
         if fresh.status != .empty { blocks = fresh.blocks }
         let editable = Set(fresh.blocks.filter { canChange($0) }.map(\.section))
@@ -141,6 +156,7 @@ final class ReviewPlanModel {
             if editable.contains(pending) { draft.setFlagged(draft.flagged.union([pending])) }
         }
         draft.prune(keeping: editable)
+        return true
     }
 
     // MARK: Actions
@@ -183,6 +199,7 @@ final class ReviewPlanModel {
     /// dismissal never leaves a submitted draft unapproved.
     func cancelFollowing() {
         dismissed = true
+        readSequence += 1
         if phase != .submitting {
             followTask?.cancel()
             followTask = nil
@@ -205,6 +222,9 @@ final class ReviewPlanModel {
         phase = .submitting
         updatingScope = scope
         baselineJobID = snapshot?.jobID
+        baselineTurnID = snapshot?.turnID
+        baselineSequence = snapshot?.nextAfterSequence ?? -1
+        readSequence += 1
         followTask?.cancel()
         followTask = Task { [weak self] in
             let rendering: Bool
@@ -222,7 +242,7 @@ final class ReviewPlanModel {
                 self.finish(notice: nil)
             } else if rendering {
                 self.phase = .updating
-                await self.follow(awaitNewJob: true)
+                await self.follow(awaitNewResult: true)
             } else {
                 // Nothing was queued (a restore that only changed the draft): show what the server has now.
                 await self.refresh()
@@ -247,29 +267,35 @@ final class ReviewPlanModel {
         }
     }
 
-    /// Polls the snapshot until the update render is ready, stopped, or taking too long. `awaitNewJob`: the update
-    /// this sheet sent must show up as a different job first (an old `ready` is not its result); false when
-    /// following a render that was already running.
-    private func follow(awaitNewJob: Bool) async {
+    /// A new job or a newer turn on the same job can finish this update. An unchanged old ready
+    /// projection cannot. Reopened sheets can follow the update they already observed.
+    private func follow(awaitNewResult: Bool) async {
         let started = ContinuousClock.now
         var failures = 0
         while !Task.isCancelled {
+            readSequence += 1
+            let sequence = readSequence
             do {
                 let fresh = try await actions.loadSnapshot()
-                failures = 0
-                apply(fresh)
-                if fresh.status == .cancelled {
-                    finish(notice: "The update was stopped.")
-                    return
-                }
-                if fresh.status == .ready, !awaitNewJob || fresh.jobID != baselineJobID {
-                    finish(notice: nil)
-                    return
+                guard !dismissed, !Task.isCancelled else { return }
+                if sequence == readSequence, apply(fresh) {
+                    failures = 0
+                    let newResult = fresh.jobID != nil && fresh.jobID != baselineJobID
+                        || fresh.turnID != nil && fresh.turnID != baselineTurnID && fresh.nextAfterSequence > baselineSequence
+                    if fresh.status == .cancelled, !awaitNewResult || newResult {
+                        finish(notice: "The update was stopped.")
+                        return
+                    }
+                    if fresh.status == .ready, !awaitNewResult || newResult {
+                        finish(notice: nil)
+                        return
+                    }
                 }
             } catch is CancellationError {
                 return
             } catch {
-                failures += 1
+                guard !dismissed, !Task.isCancelled else { return }
+                if sequence == readSequence { failures += 1 }
                 if failures >= 6 {
                     finish(notice: "Kria lost the connection. Your update keeps going; reopen Review to see it.")
                     return
@@ -279,7 +305,8 @@ final class ReviewPlanModel {
                 finish(notice: "This is taking longer than usual. It keeps going in the background.")
                 return
             }
-            try? await Task.sleep(for: pollInterval)
+            let delay = min(pollInterval * (1 << min(failures, 4)), .seconds(30))
+            do { try await Task.sleep(for: delay) } catch { return }
         }
     }
 

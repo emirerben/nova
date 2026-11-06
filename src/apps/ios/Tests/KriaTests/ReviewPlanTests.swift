@@ -61,11 +61,12 @@ final class ReviewPlanTests: XCTestCase {
         XCTAssertTrue(untargetable.manualEdits(titleBarID: nil).isEmpty, "a title without a bar id cannot be targeted")
     }
 
-    private func snapshot(status: String = "ready", job: String = "job-1", editable: Bool = true) throws -> PlanSnapshot {
+    private func snapshot(status: String = "ready", job: String = "job-1", editable: Bool = true, turn: String? = nil, sequence: Int = 9) throws -> PlanSnapshot {
         let block: [String: Any] = ["section_id": "captions", "state": "decided", "intent": false, "skipped": false,
                                     "summary": "4 lines", "revision": 1, "changed": false, "editable": editable]
-        let body: [String: Any] = ["thread_id": "t", "thread_revision": 3, "job_id": job, "status": status, "blocks": [block],
-                                   "next_after_sequence": 9, "draft": ["draft_id": "d", "draft_revision": 2, "etag": "e", "can_undo": false]]
+        var body: [String: Any] = ["thread_id": "t", "thread_revision": 3, "job_id": job, "status": status, "blocks": [block],
+                                   "next_after_sequence": sequence, "draft": ["draft_id": "d", "draft_revision": 2, "etag": "e", "can_undo": false]]
+        if let turn { body["turn_id"] = turn }
         return try JSONDecoder().decode(PlanSnapshot.self, from: JSONSerialization.data(withJSONObject: body))
     }
 
@@ -109,6 +110,71 @@ final class ReviewPlanTests: XCTestCase {
         XCTAssertEqual(model.snapshot?.jobID, "job-2")
         XCTAssertNil(model.notice)
         XCTAssertTrue(model.draft.isEmpty, "the draft is spent once the update is sent")
+    }
+
+    func testSameJobUpdateSettlesOnlyAfterTheNewTurnIsReady() async throws {
+        var reads = 0
+        let oldReadyRead = expectation(description: "old ready remains pending")
+        let newReadyRead = expectation(description: "same job new turn becomes ready")
+        var releaseOldRead: CheckedContinuation<Void, Never>?
+        let actions = ReviewPlanActions(
+            loadSnapshot: {
+                reads += 1
+                if reads == 1 { return try self.snapshot(turn: "turn-1") }
+                if reads == 2 {
+                    oldReadyRead.fulfill()
+                    await withCheckedContinuation { releaseOldRead = $0 }
+                    return try self.snapshot(turn: "turn-1")
+                }
+                if reads == 3 { return try self.snapshot(status: "updating", turn: "turn-2", sequence: 10) }
+                if reads == 4 { newReadyRead.fulfill() }
+                return try self.snapshot(turn: "turn-2", sequence: 11)
+            },
+            update: { _, _, _ in }, undoSection: { _, _, _ in true }, undoAll: { _ in }
+        )
+        let model = ReviewPlanModel(seed: [], initialFlag: .captions, actions: actions,
+                                    pollInterval: .milliseconds(1), giveUpAfter: .seconds(1))
+        await model.load()
+        model.submitUpdate()
+        await fulfillment(of: [oldReadyRead], timeout: 2)
+        XCTAssertEqual(model.phase, .updating, "the old ready snapshot cannot finish the update")
+        releaseOldRead?.resume()
+        await fulfillment(of: [newReadyRead], timeout: 2)
+        // Give the read's caller its MainActor turn to apply the response.
+        for _ in 0..<100 where model.phase != .reviewing { await Task.yield() }
+        XCTAssertEqual(model.phase, .reviewing, "an existing job can finish a new turn without a refresh tap")
+        XCTAssertEqual(model.snapshot?.turnID, "turn-2")
+        XCTAssertNil(model.notice)
+        model.cancelFollowing()
+    }
+
+    func testLateSnapshotCannotReplaceANewerReviewResult() async throws {
+        var reads = 0
+        let slowReadStarted = expectation(description: "old read suspended")
+        var releaseRead: CheckedContinuation<Void, Never>?
+        let actions = ReviewPlanActions(
+            loadSnapshot: {
+                reads += 1
+                if reads == 2 {
+                    slowReadStarted.fulfill()
+                    await withCheckedContinuation { releaseRead = $0 }
+                    return try self.snapshot(turn: "turn-1", sequence: 9)
+                }
+                return try self.snapshot(turn: reads == 1 ? "turn-1" : "turn-2", sequence: reads == 1 ? 9 : 11)
+            },
+            update: { _, _, _ in }, undoSection: { _, _, _ in true }, undoAll: { _ in }
+        )
+        let model = ReviewPlanModel(seed: [], initialFlag: nil, actions: actions)
+        await model.load()
+        let old = Task { await model.refresh() }
+        await fulfillment(of: [slowReadStarted], timeout: 2)
+        await model.refresh()
+        XCTAssertEqual(model.snapshot?.turnID, "turn-2")
+        releaseRead?.resume()
+        await old.value
+        XCTAssertEqual(model.snapshot?.turnID, "turn-2", "the older response must not undo automatic convergence")
+        XCTAssertEqual(model.snapshot?.nextAfterSequence, 11)
+        model.cancelFollowing()
     }
 
     private func changedSnapshot(status: String = "ready", job: String, withDraft: Bool = true) throws -> PlanSnapshot {

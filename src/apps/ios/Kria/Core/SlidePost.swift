@@ -680,6 +680,36 @@ private struct SlidePostItemResponse: Decodable {
 
 /// A versioned, server-authoritative editor. Unsent text, proposals and local
 /// edits survive navigation; local storage never contains signed media URLs.
+/// Tracks one submitted version without replaying its render when the response is lost or reads lag.
+struct SlidePostRenderAcknowledgement {
+    enum Outcome { case waiting, ready, failed, exhausted }
+    let version: Int
+    let previousJobID: UUID?
+    private(set) var remainingReads: Int
+    private(set) var outcome: Outcome = .waiting
+    private var observedActive = false
+
+    init(version: Int, previousJobID: UUID?, remainingReads: Int = 200) {
+        self.version = version
+        self.previousJobID = previousJobID
+        self.remainingReads = max(1, remainingReads)
+    }
+
+    mutating func observe(jobID: UUID?, status: String, canExport: Bool) {
+        if canExport { outcome = .ready; return }
+        let active = ["pending", "queued", "generating", "rendering", "processing"].contains(status)
+        if active { observedActive = true }
+        // The API discards generate's job receipt. An unchanged old failure cannot prove this render failed.
+        if status == "failed", observedActive || (jobID != nil && jobID != previousJobID) {
+            outcome = .failed
+            return
+        }
+        guard outcome == .waiting else { return }
+        remainingReads -= 1
+        if remainingReads == 0 { outcome = .exhausted }
+    }
+}
+
 @MainActor final class SlidePostSession: ObservableObject {
     @Published private(set) var state: SlidePostState?
     @Published var draft: SlidePostDraft? { didSet { persist() } }
@@ -730,9 +760,21 @@ private struct SlidePostItemResponse: Decodable {
     private var restoring = false
     private var mutationGeneration = 0
     private var refreshSequence = 0
-    private var appliedRefreshSequence = 0
+    private var requestedItemID: String?
+    private var refreshError: String?
+    private var renderAcknowledgement: SlidePostRenderAcknowledgement?
+    private static let renderChecking = "Kria is checking whether this render started. Your draft is still here; another render hasn’t been requested."
+    private var hasRenderStatusError: Bool {
+        error == Self.renderChecking || error == Self.renderWaitExhausted || error == Self.renderFailed
+    }
+    private static let renderWaitExhausted = "Kria hasn’t confirmed this render yet. Your edits are saved. Check the post again later; another render hasn’t been requested."
+    private static let renderFailed = "Rendering failed. Your saved edits are still here."
+    private let readRetrySleep: (Duration) async throws -> Void
     private let defaults: UserDefaults
-    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+    init(defaults: UserDefaults = .standard, readRetrySleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
+        self.defaults = defaults
+        self.readRetrySleep = readRetrySleep
+    }
 
     /// Pool assets that can become slides: everything except the pictures used (or being uploaded) as stickers.
     var slideAssets: [SlidePostAsset] { state?.assets.filter { !isStickerAsset($0) } ?? [] }
@@ -757,36 +799,111 @@ private struct SlidePostItemResponse: Decodable {
     /// Undo/redo of unsaved edits in this editor.
     var canUndoEdit: Bool { !undoStack.isEmpty && !isBusy }
     var canRedoEdit: Bool { !redoStack.isEmpty && !isBusy }
-    var isRendering: Bool { ["pending", "queued", "generating", "rendering", "processing"].contains(state?.renderStatus ?? "") }
+    var isRendering: Bool {
+        if let renderAcknowledgement { return renderAcknowledgement.outcome == .waiting }
+        return ["pending", "queued", "generating", "rendering", "processing"].contains(state?.renderStatus ?? "")
+    }
 
     func refresh(api: any KriaAPIClient, itemID: String) async {
-        guard !isBusy else { return }
+        guard !isBusy, !Task.isCancelled else { return }
+        if requestedItemID != itemID {
+            requestedItemID = itemID
+            mutationGeneration += 1
+        }
         let generation = mutationGeneration
         refreshSequence += 1
         let sequence = refreshSequence
         do {
-            let result = try await api.slidePost(itemID: itemID)
+            let result = try await readState(api: api, itemID: itemID) {
+                generation == self.mutationGeneration && !self.isBusy && sequence == self.refreshSequence
+            }
             // An upload refresh must not roll a completed save back, or let an
             // older poll replace a more recent render/status projection.
-            guard generation == mutationGeneration, !isBusy, sequence >= appliedRefreshSequence else { return }
+            guard generation == mutationGeneration, !isBusy, sequence == refreshSequence else { return }
             guard result.schemaVersion == 1, result.itemID == itemID else { throw APIError.invalidResponse }
             if self.itemID != itemID {
                 restoring = true
                 self.itemID = itemID
+                renderAcknowledgement = nil
+                if hasRenderStatusError { error = nil }
                 restore()
                 restoring = false
             }
-            appliedRefreshSequence = sequence
             adopt(result)
-        } catch is CancellationError { } catch { self.error = error.localizedDescription }
+            if error == refreshError { error = nil }
+            refreshError = nil
+        } catch is CancellationError { } catch {
+            guard !Task.isCancelled, generation == mutationGeneration, !isBusy, sequence == refreshSequence else { return }
+            if let urlError = error as? URLError, urlError.code == .cancelled { return }
+            refreshError = error.localizedDescription
+            self.error = refreshError
+            observeAcknowledgedRender(jobID: nil, status: "unavailable", canExport: false)
+        }
+    }
+
+    private func observeAcknowledgedRender(jobID: UUID?, status: String, canExport: Bool) {
+        guard renderAcknowledgement != nil else { return }
+        renderAcknowledgement?.observe(jobID: jobID, status: status, canExport: canExport)
+        switch renderAcknowledgement?.outcome {
+        case .exhausted: error = Self.renderWaitExhausted
+        case .failed:
+            error = Self.renderFailed
+            renderAcknowledgement = nil
+        case .ready:
+            if hasRenderStatusError { error = nil }
+            renderAcknowledgement = nil
+        default: break
+        }
+    }
+
+    /// Only GETs retry. A failed save or generate may already have committed on the server.
+    private func readState(api: any KriaAPIClient, itemID: String, isCurrent: () -> Bool = { true }) async throws -> SlidePostState {
+        let generation = mutationGeneration
+        let requestedItem = requestedItemID
+        for attempt in 0..<3 {
+            try Task.checkCancellation()
+            guard generation == mutationGeneration, requestedItem == requestedItemID, isCurrent() else { throw CancellationError() }
+            do {
+                let result = try await api.slidePost(itemID: itemID)
+                try Task.checkCancellation()
+                guard generation == mutationGeneration, requestedItem == requestedItemID, isCurrent() else { throw CancellationError() }
+                guard result.schemaVersion == 1, result.itemID == itemID else { throw APIError.invalidResponse }
+                if self.error == refreshError { self.error = nil }
+                refreshError = nil
+                return result
+            } catch {
+                try Task.checkCancellation()
+                guard generation == mutationGeneration, requestedItem == requestedItemID, isCurrent() else { throw CancellationError() }
+                guard attempt < 2, let delay = Self.readRetryDelay(error, attempt: attempt) else {
+                    refreshError = error.localizedDescription
+                    throw error
+                }
+                try await readRetrySleep(delay)
+            }
+        }
+        throw APIError.invalidResponse
+    }
+
+    static func readRetryDelay(_ error: Error, attempt: Int) -> Duration? {
+        let backoff = Double(attempt + 1) * 0.5
+        if RequestFailureCause(error) == .connection { return .seconds(backoff) }
+        if case let APIError.requestFailed(status, detail) = error,
+           status == 408 || status == 429 || (500...599).contains(status) {
+            // A server hint beyond our bounded read window ends this attempt instead of retrying early.
+            if let advised = detail.retryAfter, advised > 30 { return nil }
+            return .seconds(max(backoff, detail.retryAfter ?? 0))
+        }
+        return nil
     }
 
     /// Export requires an authoritative check; a cached ready projection is
     /// insufficient when another device can save a newer version.
     func revalidateForExport(api: any KriaAPIClient, itemID: String) async throws {
-        guard !isBusy, !hasUnsavedChanges else { throw APIError.conflict }
+        guard !isBusy, !hasUnsavedChanges, self.itemID == itemID else { throw APIError.conflict }
         let generation = mutationGeneration
-        let result = try await api.slidePost(itemID: itemID)
+        let result = try await readState(api: api, itemID: itemID) {
+            generation == self.mutationGeneration && self.itemID == itemID && !self.isBusy && !self.hasUnsavedChanges
+        }
         guard result.schemaVersion == 1, result.itemID == itemID else { throw APIError.invalidResponse }
         guard generation == mutationGeneration, !isBusy, !hasUnsavedChanges,
               (result.draft?.version ?? 0) >= baseVersion else { throw APIError.conflict }
@@ -798,7 +915,19 @@ private struct SlidePostItemResponse: Decodable {
 
     private func adopt(_ result: SlidePostState) {
         let remoteVersion = result.draft?.version ?? 0
-        guard remoteVersion >= baseVersion else { return }
+        guard remoteVersion >= baseVersion else {
+            observeAcknowledgedRender(jobID: nil, status: "unavailable", canExport: false)
+            return
+        }
+        if result.canExport, hasRenderStatusError { error = nil }
+        if let acknowledgement = renderAcknowledgement {
+            if remoteVersion > acknowledgement.version {
+                renderAcknowledgement = nil
+                if hasRenderStatusError { error = nil }
+            } else if remoteVersion == acknowledgement.version {
+                observeAcknowledgedRender(jobID: result.jobID, status: result.renderStatus, canExport: result.canExport)
+            }
+        }
         // Without a remembered baseline (a fresh session, or a restored draft saved before baselines were
         // kept) the server's draft IS the baseline: a local copy equal to it is clean, so a post just
         // opened from the gallery never reads "Unsaved changes". With no server draft either, the local
@@ -879,14 +1008,15 @@ private struct SlidePostItemResponse: Decodable {
     }
 
     func save(api: any KriaAPIClient, itemID: String) async {
-        guard !isBusy, !isChatting, let draft else { return }
+        guard !isBusy, !isChatting, !Task.isCancelled, let draft else { return }
         if let message = draft.validationMessage { error = message; return }
         await persistDraft(draft, api: api, itemID: itemID)
     }
 
     private func persistDraft(_ value: SlidePostDraft, api: any KriaAPIClient, itemID: String) async {
+        guard !Task.isCancelled, validateMutationTarget(itemID) else { return }
         mutationGeneration += 1
-        isBusy = true; error = nil; operationMessage = "Saving your post…"
+        isBusy = true; error = nil; refreshError = nil; operationMessage = "Saving your post…"
         defer { isBusy = false; operationMessage = nil }
         do {
             let previous = state?.draft
@@ -894,17 +1024,19 @@ private struct SlidePostItemResponse: Decodable {
             var saved: SlidePostDraft
             while true {
                 do {
+                    try Task.checkCancellation()
                     saved = try await api.saveSlidePost(itemID: itemID, request: .init(draft: value, expectedVersion: baseVersion))
                     break
                 } catch let failure as APIError where failure == .conflict && rebases < Self.maxRebases {
                     // The newest thing the user saw in the editor wins: learn the server's current
                     // version and write the local draft over it. No banner, no choice.
                     rebases += 1
-                    let latest = try await api.slidePost(itemID: itemID)
+                    let latest = try await readState(api: api, itemID: itemID)
                     guard latest.schemaVersion == 1, latest.itemID == itemID else { throw APIError.invalidResponse }
                     baseVersion = latest.draft?.version ?? baseVersion
                 }
             }
+            if let acknowledgement = renderAcknowledgement, saved.version > acknowledgement.version { renderAcknowledgement = nil }
             baseVersion = saved.version; baselineDraft = saved; proposal = nil; undoDraft = previous
             // Saved content is what the user was looking at; keep any later undo history but
             // swap in the server's stamps (version, rendered_version).
@@ -914,9 +1046,9 @@ private struct SlidePostItemResponse: Decodable {
             state?.draft = saved
             state?.renderedVersion = saved.renderedVersion
             if state?.jobID != nil { state?.renderStatus = "rendering" }
-            let result = try await api.slidePost(itemID: itemID)
+            let result = try await readState(api: api, itemID: itemID)
             adopt(result)
-        } catch { handle(error) }
+        } catch is CancellationError { } catch { handle(error) }
     }
 
     // MARK: Chat edit
@@ -1048,22 +1180,60 @@ private struct SlidePostItemResponse: Decodable {
     }
     func clearChat() { chat = [] }
 
+    private func validateMutationTarget(_ itemID: String) -> Bool {
+        guard self.itemID == itemID, requestedItemID == itemID else {
+            error = "This post changed while it was loading. Reopen the post before saving or creating it. Your edits are still here."
+            return false
+        }
+        return true
+    }
+
+    private static func isDefinitiveGenerateRejection(_ error: Error) -> Bool {
+        guard let error = error as? APIError else { return false }
+        switch error {
+        case .conflict, .sessionExpired, .nativeUpdateRequired: return true
+        case let .requestFailed(status, _): return (400..<500).contains(status) && status != 408
+        default: return false
+        }
+    }
+
     func create(api: any KriaAPIClient, itemID: String) async {
-        guard !isBusy, !isChatting else { return }
-        error = nil
+        guard !isBusy, !isChatting, !Task.isCancelled, validateMutationTarget(itemID) else { return }
+        error = nil; refreshError = nil
         if proposal != nil { await applyProposal(api: api, itemID: itemID) }
         else if hasUnsavedChanges { await save(api: api, itemID: itemID) }
         guard error == nil, let draft, draft.validationMessage == nil else { return }
+        if renderAcknowledgement?.version == draft.version {
+            await refresh(api: api, itemID: itemID)
+            return
+        }
         if isRendering { return }
         mutationGeneration += 1
         isBusy = true; error = nil; operationMessage = "Creating your post…"
         defer { isBusy = false; operationMessage = nil }
         do {
-            try await api.generateSlidePost(itemID: itemID, expectedVersion: draft.version)
+            try Task.checkCancellation()
+            // Fence the submission before awaiting the POST: an error may arrive after the server commits.
+            renderAcknowledgement = SlidePostRenderAcknowledgement(version: draft.version, previousJobID: state?.jobID)
+            do {
+                try await api.generateSlidePost(itemID: itemID, expectedVersion: draft.version)
+            } catch {
+                if Self.isDefinitiveGenerateRejection(error) {
+                    renderAcknowledgement = nil
+                    handle(error)
+                } else {
+                    // Transport loss, cancellation, 5xx or an undecodable response leave the outcome unknown.
+                    self.error = Self.renderChecking
+                }
+                return
+            }
             state?.renderStatus = "rendering"; state?.slides = []; state?.bundleURL = nil
-            let result = try await api.slidePost(itemID: itemID)
+            let result = try await readState(api: api, itemID: itemID)
             adopt(result)
-        } catch { handle(error) }
+        } catch is CancellationError { } catch {
+            handle(error)
+            observeAcknowledgedRender(jobID: nil, status: "unavailable", canExport: false)
+        }
     }
 
     func undo(api: any KriaAPIClient, itemID: String) async {
