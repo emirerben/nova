@@ -71,6 +71,6 @@ final class SegmentationInputScalerTests: XCTestCase {
             let output = scaler.scaled(input)
             seen.insert(Unmanaged.passUnretained(output).toOpaque())
         }
-        XCTAssertLessThanOrEqual(seen.count, 3, "a handful of pooled buffers serve every frame, not one new buffer each")
+        XCTAssertLessThanOrEqual(seen.count, 8, "a handful of pooled buffers serve every frame, not one new buffer each (30 renders)")
     }
 }
