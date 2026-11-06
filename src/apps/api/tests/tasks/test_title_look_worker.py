@@ -652,3 +652,146 @@ def test_review_when_only_her_captions_leave_no_room_the_receipt_says_so(monkeyp
     assert [e for e in receipt["placed"] if e["beat_id"] == "logo"] == []
     [missed] = [e for e in receipt["unplaced"] if e["beat_id"] == "logo"]
     assert (missed["anchor"], missed["reason"]) == ("title", "no_room_off_captions")
+
+
+# --- review (Emir, head e0cdfff10): measuring her captions for the title never resolves them --
+# Before the fix, the title look measured her caption lines (`caption_boxes`) BEFORE the normal
+# whole-timeline caption compile. Under the phone text policy (prod) that compile-for-a-peek
+# resolved and cached the whole edit's caption look from the opening cues alone, and sampled
+# faces before the real clip timeline was registered (`_environment_sampled` then blocked it).
+# Ways it could fail (written before the fix):
+# R1 the caption look (size, spot, width) for the WHOLE edit is fitted to the opening cues only;
+# R2 faces are sampled on the fallback whole-source window, not the cut / scaled timeline;
+# R3 the peek overwrites the policy's caption boxes (the styling pass and card layout read them);
+# R4 the title is placed against default-look boxes while the real captions sit elsewhere
+#    (she asked for captions at the top) -> title drawn on her captions;
+# R5 measuring with the resolved look leaks state of its own; R6 flag off changes anything.
+
+_OPENING = (
+    ("Five", 0.0, 0.4),
+    ("projects", 0.4, 0.9),
+    ("people", 0.9, 1.3),
+    ("ask", 1.3, 1.6),
+    ("about.", 1.6, 2.2),
+)
+# A long later passage after the cut (4.0-6.0 s is removed): the tallest caption block of the edit.
+_LATER = tuple(
+    (word, 6.2 + 0.32 * index, 6.2 + 0.32 * index + 0.3)
+    for index, word in enumerate(
+        "Honestly the extraordinarily underappreciated documentation generators everybody "
+        "recommends kept breaking whenever infrastructure configurations changed overnight.".split()
+    )
+)
+
+
+def _styled_cut_job(monkeypatch, *, on: bool, scaled: bool = False, caption_spot=None):
+    """Her stacked title on a CUT take (4-6 s removed), phone text policy on (prod), with the
+    real environment sampler (only the proxy download and the frame readers are stubbed)."""
+    import app.pipeline.phone_text_background as background_mod
+    import app.pipeline.render_geometry as geometry_mod
+    import app.services.phone_text_styling as styling
+    import app.storage as storage_mod
+    from app.pipeline.silence_cut import CutPlan, Removal
+    from app.services.phone_sources import PHONE_SOURCES_FIELD
+    from tests.pipeline.test_phone_subtitled_plan import _binding as _wide_binding
+
+    _look(monkeypatch, on=on)
+    _faces(monkeypatch)
+    monkeypatch.setattr(gb.settings, "phone_text_styling_enabled", True)
+    job, snapshot, *_ = _titled(monkeypatch, transcript_words=_words(*_OPENING, *_LATER))
+    if scaled:  # a landscape take letterboxed onto the portrait canvas (scale 0.316)
+        wide = _wide_binding("c0", duration_s=10.0, width=1920, height=1080)
+        job.assembly_plan[PHONE_SOURCES_FIELD] = [wide.model_dump(mode="json")]
+        snapshot[PHONE_SOURCES_FIELD] = [wide.model_dump(mode="json")]
+        job.all_candidates["landscape_fit"] = "fit"
+    cut = CutPlan(
+        keep_segments=[(0.0, 4.0), (6.0, 10.0)],
+        removed=[Removal(4.0, 6.0, "silence")],
+        time_saved_s=2.0,
+    )
+    monkeypatch.setattr(gb, "_phone_opening_cut", lambda _s, _plan, _w, **_k: (cut, []))
+    # The cut take's words come from its checked transcript snapshot (as a cleanup-off job's do).
+    from types import SimpleNamespace
+
+    transcript = SimpleNamespace(
+        source_words=lambda: _words(*_OPENING, *_LATER),
+        analysis=SimpleNamespace(
+            language="en", safety_signals=SimpleNamespace(transcript_low_confidence=False)
+        ),
+    )
+    monkeypatch.setattr(gb, "_phone_opening_cut_snapshot", lambda *_a, **_k: transcript)
+    seen: list[list[dict]] = []
+
+    def faces(_path, points, **_kwargs):
+        policy = styling._POLICY.get()
+        seen.append([dict(window) for window in policy.get("_sample_windows") or []])
+        face = NormalizedBox(0.30, 0.30, 0.70, 0.55)
+        return [ProtectedRegion(0.0, 10.0, face, "face")], {"decoded": len(points)}
+
+    monkeypatch.setattr(storage_mod, "download_to_file", lambda *_a, **_k: None)
+    monkeypatch.setattr(geometry_mod, "sample_face_regions", faces)
+    monkeypatch.setattr(background_mod, "sample_background", lambda *_a, **_k: None)
+    style = {"version": 1, "preferences": {"all_text": {}}, "requested": {}, "selection_calls": 2}
+    if caption_spot is not None:
+        style["requested"] = {"caption": {"position": caption_spot}}
+    job.assembly_plan[styling.PHONE_TEXT_STYLE_FIELD] = style
+    return job, seen
+
+
+def _caption_layers(job) -> list[dict]:
+    return [
+        layer.model_dump(mode="json")
+        for layer in _recipe(job).text_layers
+        if layer.id.startswith("caption-")
+    ]
+
+
+@pytest.mark.parametrize("scaled", [False, True], ids=["cut", "scaled_and_cut"])
+def test_review_the_title_look_never_changes_her_captions(monkeypatch, scaled):
+    """On/off: the same job draws the same caption layers, sampled on the real cut timeline."""
+    off, off_seen = _styled_cut_job(monkeypatch, on=False, scaled=scaled)
+    gb._run_generative_job(str(off.id))
+    assert off.status == "awaiting_device", off.status
+    captions_off = _caption_layers(off)
+
+    on, on_seen = _styled_cut_job(monkeypatch, on=True, scaled=scaled)
+    gb._run_generative_job(str(on.id))
+    assert on.status == "awaiting_device", on.status
+
+    assert [row["text"] for row in _title_rows(on)] == HER_LINES
+    # R2: faces were sampled once per run, on the registered (cut) timeline, not the fallback.
+    assert off_seen and off_seen[0], "flag off samples on the registered timeline"
+    assert on_seen == off_seen
+    # R1/R3: every caption layer (text, timing, spot, size, wrap) is identical.
+    assert _caption_layers(on) == captions_off
+    assert any(layer["start"] >= 4.0 for layer in captions_off), "later cues are drawn"
+
+
+def test_review_her_title_keeps_off_captions_she_asked_for_at_the_top(monkeypatch):
+    """R4: the title is measured against the captions as they are really drawn (resolved look)."""
+    from app.pipeline import text_overlay_skia as cloud
+    from app.pipeline.phone_captions import CAPTION_FONT_FAMILY, caption_ink_box
+
+    job, _seen = _styled_cut_job(monkeypatch, on=True, caption_spot="top")
+    gb._run_generative_job(str(job.id))
+    assert job.status == "awaiting_device", job.status
+
+    rows = _title_rows(job)
+    assert [row["text"] for row in rows] == HER_LINES
+    title_end = max(row["end_s"] for row in rows)
+    face = cloud._resolve_typeface_for_overlay({"font_family": CAPTION_FONT_FAMILY}).typeface
+    caption_inks: list[NormalizedBox] = []
+    for layer in _recipe(job).text_layers:
+        if not layer.id.startswith("caption-") or layer.start >= title_end:
+            continue
+        for run in layer.runs:
+            ink = caption_ink_box(run, face)
+            if ink is not None:
+                caption_inks.append(
+                    NormalizedBox(ink[0] / 1080, ink[1] / 1920, ink[2] / 1080, ink[3] / 1920)
+                )
+    assert caption_inks, "her captions show during the title"
+    assert min(box.top for box in caption_inks) < 0.3, "the captions really are at the top"
+    for row in rows:
+        for caption in caption_inks:
+            assert _box(row).coverage_by(caption) <= _MAX_FACE_COVERAGE, (row["text"], caption)
