@@ -5380,7 +5380,13 @@ final class NativeEditorSessionTests: XCTestCase {
         let originalRequest = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
         var recipe = originalRequest.recipe
         if focusOnly {
-            recipe.requiredCapabilities.insert(.backgroundFocus)
+            recipe.schemaVersion = 2
+            recipe.assets.append(MediaAsset(id: "fill", relativePath: "fill"))
+            recipe.speakerBackground = SpeakerBackgroundLayer(
+                assetID: "fill", mediaKind: VisualMediaKind.image, subjectTrackID: "video",
+                focus: SpeakerBackgroundFocus(x: 0.2, y: 0.5, zoom: 0.5))
+            try recipe.validate()
+            XCTAssertTrue(recipe.effectiveCapabilities.contains(.backgroundFocus))
             var variant = try await fake.editorVariant(jobID: jobID, variantID: "variant")
             variant["resolved_archetype"] = .string("subtitled")
             variant["speaker_background"] = .object(["media_id": .string("fill"), "kind": .string("image"), "source_start_s": .number(0)])
@@ -5412,6 +5418,8 @@ final class NativeEditorSessionTests: XCTestCase {
         if focusOnly {
             XCTAssertFalse(session.hasUnsavedChanges, "The initial background is already saved")
             XCTAssertTrue(session.setSpeakerBackgroundFocus(x: 0.2, zoom: 0.5))
+            fake.authoritativeVariant?["render_generation_id"] = .string("next")
+            fake.authoritativeVariant?["speaker_background"] = session.speakerBackground?.json
         } else {
             session.trimSelected(edge: .trailing, to: 1.5)
         }
@@ -5463,6 +5471,14 @@ final class NativeEditorSessionTests: XCTestCase {
         }
         XCTAssertEqual(lane["focus"]?.objectValue?["x"], .number(0.2))
         XCTAssertEqual(lane["focus"]?.objectValue?["zoom"], .number(0.5))
+        let accepted = try XCTUnwrap(edit.renders.request(for: edit.key))
+        XCTAssertEqual(accepted.identity, edit.request.identity)
+        let background = try XCTUnwrap(accepted.recipe.speakerBackground)
+        XCTAssertEqual(background.assetID, lane["media_id"]?.stringValue)
+        XCTAssertEqual(background.focus, SpeakerBackgroundFocus(x: 0.2, y: 0.5, zoom: 0.5))
+        XCTAssertEqual(background.focus, edit.session.speakerBackground?.focus)
+        XCTAssertTrue(accepted.recipe.effectiveCapabilities.contains(.backgroundFocus))
+        // The synthetic exporter proves routing only; media-engine tests prove actual pixels.
         XCTAssertFalse(edit.session.hasUnsavedChanges)
         XCTAssertEqual(try edit.session.videoDownloadRoute(deviceLocalFile: nil), .localFile(edit.file))
         await edit.renders.stopAll()
@@ -5472,6 +5488,14 @@ final class NativeEditorSessionTests: XCTestCase {
         for fails in [false, true] {
             let edit = try await savedPhoneEditWithFinishedRender(focusOnly: true)
             XCTAssertTrue(edit.session.setSpeakerBackgroundFocus(x: 0.4))
+            var response = try XCTUnwrap(edit.fake.authoritativeVariant)
+            response["render_generation_id"] = .string("next")
+            response["speaker_background"] = edit.session.speakerBackground?.json
+            response["text_elements"] = .array([.object([
+                "id": .string(UUID().uuidString), "text": .string("Authoritative focus save"),
+                "start_s": .number(0), "end_s": .number(1)
+            ])])
+            edit.fake.authoritativeVariant = response
             edit.fake.suspendNextEditorVariant = true
             let saving = Task { await edit.session.save() }
             let held = await waitUntil(timeout: .seconds(5)) { edit.fake.editorVariantIsSuspended }
@@ -5481,6 +5505,9 @@ final class NativeEditorSessionTests: XCTestCase {
             edit.fake.resumeEditorVariant()
             await saving.value
             XCTAssertEqual(edit.session.speakerBackground?.focus?.x, 0.8)
+            let reconciled = edit.session.document.textElements.contains { $0.text == "Authoritative focus save" }
+            XCTAssertEqual(reconciled, !fails, "A successful matching-generation read must reconcile authoritative text")
+            XCTAssertFalse(edit.session.isDirty(.text))
             XCTAssertTrue(edit.session.hasUnsavedChanges)
             XCTAssertFalse(edit.session.canDownloadCurrentVideo)
             assertOwnFileNotOffered(edit, "A newer focus edit cannot export the older saved frame")
@@ -5493,18 +5520,36 @@ final class NativeEditorSessionTests: XCTestCase {
         for fails in [false, true] {
             let edit = try await savedPhoneEditWithFinishedRender(focusOnly: true)
             XCTAssertTrue(edit.session.setSpeakerBackgroundFocus(x: 0.4))
+            var response = try XCTUnwrap(edit.fake.authoritativeVariant)
+            response["render_generation_id"] = .string("next")
+            response["speaker_background"] = edit.session.speakerBackground?.json
+            response["text_elements"] = .array([.object([
+                "id": .string(UUID().uuidString), "text": .string("Authoritative focus save"),
+                "start_s": .number(0), "end_s": .number(1)
+            ])])
+            edit.fake.authoritativeVariant = response
             edit.fake.suspendNextEditorVariant = true
             let saving = Task { await edit.session.save() }
             let held = await waitUntil(timeout: .seconds(5)) { edit.fake.editorVariantIsSuspended }
             XCTAssertTrue(held)
             let thread = UUID(), job = UUID()
-            let replacement = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "replacement", itemID: "other", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: job.uuidString, baseGenerationID: "other-generation", snapshot: [:], canUndo: false, createdAt: .now))
+            // Give B the same generation string: rejecting A solely for a mismatched generation
+            // would hide a missing editor-identity fence.
+            var replacementVariant = response
+            replacementVariant["text_elements"] = .array([.object([
+                "id": .string(UUID().uuidString), "text": .string("Replacement editor text"),
+                "start_s": .number(0), "end_s": .number(1)
+            ])])
+            let replacement = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "replacement", itemID: "other", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: job.uuidString, baseGenerationID: "next", snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: replacementVariant)
             await edit.session.load(api: replacement, threadID: thread)
             let before = edit.session.draft
+            XCTAssertEqual(edit.session.document.textElements.first?.text, "Replacement editor text")
             if fails { edit.fake.editorVariantError = .requestFailed(status: 503) }
             edit.fake.resumeEditorVariant()
             await saving.value
             XCTAssertEqual(edit.session.draft, before)
+            XCTAssertEqual(edit.session.document.textElements.first?.text, "Replacement editor text")
+            XCTAssertFalse(edit.session.document.textElements.contains { $0.text == "Authoritative focus save" })
             XCTAssertEqual(edit.session.saveState, .idle)
             XCTAssertFalse(edit.session.hasUnsavedChanges)
             assertOwnFileNotOffered(edit, "Leaving the focus edit revokes its local export")
