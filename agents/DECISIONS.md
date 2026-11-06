@@ -3595,7 +3595,7 @@ watermark as hard obstacles, then raised.
 
 **Rollback:** revert the PR, `fly scale count api=2 worker=1 light=1 autoplace=1 speech_analysis=1`, then flip the flags back in reverse order. OOM only: `fly scale memory 8192 --process-group worker`.
 
-**Guards:** `tests/test_pool_asset_fly_contract.py::test_topology_is_exactly_api_worker_light`, `tests/test_worker_prewarm_gate.py::test_analysis_queues_are_consumed_only_by_the_unified_worker`, `tests/scripts/test_video_poster_backfill_workflow.py`.
+**Guards:** `tests/test_pool_asset_fly_contract.py::test_topology_is_exactly_api_worker_light_visuals`, `tests/test_worker_prewarm_gate.py::test_analysis_queues_have_exactly_the_intended_consumers` (both renamed when KRI-1240 added the `visuals` group, 2026-11-07), `tests/scripts/test_video_poster_backfill_workflow.py`.
 
 ## [2026-11-03] A restarted sentence is cut by consented cleanup once retake detection is on; no reply promises a cut the render won't make (KRI-1176)
 
@@ -3870,3 +3870,21 @@ the foundation's `unified_montage` table, not this lane: `montage_cadence` is ma
 although the phone planner reads it only as a story blocker, so a kept cadence renders as a plain
 montage with no card line (true for English cadences already), and `image_hold` "standard" and
 "very_fast" give the same photo hold.
+
+## [2026-11-07] Visuals analysis gets its own small always-on process again (KRI-1240)
+
+**Decision:** add a fourth Fly process group, `visuals` (`celery ... --concurrency=6 --max-memory-per-child=524288 -Q visuals-analysis`, shared-cpu-2x / 2048MB, always on, one machine). The unified `worker` keeps consuming `visuals-analysis` as the fallback; `autoplace-jobs` (poster repair, intent-review evidence, footage analysis) and `speech-analysis` stay on the worker only. The CLIP prewarm skips a process that consumes nothing outside `VISUALS_WORKER_QUEUES` (`app/services/queue_state.py`).
+
+**Why:** Release 2 (2026-11-02, above) folded the `autoplace` group (`--concurrency=2 -Q autoplace-jobs,visuals-analysis`) into the worker's single slot. On 2026-11-06 Qendresa's Q1 run added 10 Visuals at 20:40:14Z and the last was ready at 20:44:48Z: one file at a time, behind the worker's cold start and the item's own footage/speech analysis. Her posts use 12-14 Visuals. The work is a GCS download, a probe/preview and a Gemini wait (decode/probe 0.03-0.10 s per file), so it needs parallel slots, not CPU. Raising the worker's concurrency was rejected: it would also parallelise speech analysis, poster repair (full MP4 + ffmpeg) and recipe compiles on a 4GB VM sized for one of them. Moving the queue to `light` was rejected: 1GB, hosts Beat and the Kria chat lane (`agent-control`). Two Celery workers inside the worker machine were rejected: a hand-written supervisor for signals/soft shutdown, and the worker autostops, so Visuals would still wait for its cold start.
+
+**Measured (offline, local, Gemini replaced by a 25 s sleep, no paid calls; `docs/reviews/kri-1240-visuals-burst.md`):** 10 Visuals all ready in 276.6 s on today's topology (control) vs 60.7 s with the visuals process alone at concurrency 6; 14 Visuals 83.0 s at 6 vs 120.2 s at 4. Visuals tree peak 0.95GB macOS RSS at concurrency 6; the visuals process logged `visuals-only worker (small VM) — skipping CLIP prewarm`.
+
+**Cost:** one shared-cpu-2x/2048MB machine, ~$13/month at Fly's list price (Release 2 removed two such analysis machines, ~$24). Upstash: one more always-on consumer. Postgres: six more sync pools (2 + 3 overflow each), typically one connection per child.
+
+**Rollout (order matters):** merge -> Fly Deploy creates the group. Because it has a `[[services]]` block, flyctl's `--ha` adds a second started machine on that first deploy, so run `fly scale count visuals=1 --app nova-video --yes` once (without `[[services]]` flyctl would add a stopped standby, which the Fly Deploy topology guard rejects). Then confirm routing: on the next Visuals upload the api logs `pool_asset_analysis_queued queue=visuals-analysis` and the visuals machine logs the task (`VISUALS_ANALYSIS_QUEUE` is a set secret; unset, the new machine idles).
+
+**Rollback:** `fly scale count visuals=0 --app nova-video --yes` (the worker drains `visuals-analysis` alone, as before), then revert the PR; a deploy recreates a machine for any group still in `fly.toml`. OOM only: `fly scale memory 4096 --process-group visuals` (~+$12/month).
+
+**Guards:** `tests/test_pool_asset_fly_contract.py::test_topology_is_exactly_api_worker_light_visuals` and `::test_visuals_group_is_one_small_always_on_parallel_analysis_machine`; `tests/test_worker_prewarm_gate.py::test_visuals_worker_queues_match_fly_toml_visuals_command`, `::test_visuals_only_worker_never_prewarms_clip`, `::test_analysis_queues_have_exactly_the_intended_consumers`, `::test_every_autoplace_jobs_consumer_also_drains_visuals`.
+
+**Not done:** `pool_analysis_deadline._QUEUE_CONCURRENCY = 2` still describes the old `autoplace` group; with 6 (+1) slots its claim windows are longer than needed, never shorter (no false timeouts). A Visuals dispatch still wakes the autostopped worker (`visuals-analysis` is in `RENDER_WORKER_QUEUES`), and a busy visuals host keeps `render_worker_idle` false for the length of a burst. Ticket options (b) one Gemini call per burst and (c) per-file progress were not taken. No production measurement yet.
