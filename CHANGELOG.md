@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.35.0] - 2026-11-06
+
+### Changed
+- Recover automatic result updates without replaying uncertain work (#2137) <!-- release-pr: 2137 -->
+
 ## [0.88.34.0] - 2026-11-06
 
 ### Added
