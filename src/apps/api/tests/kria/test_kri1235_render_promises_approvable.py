@@ -25,11 +25,14 @@ Ways the fix can fail, each pinned below:
  8. the hold reply (and "Make it without these", which reads the same rows) still names
     promises: only rows that are truly held are listed;
  9. a joined cleanup reason longer than the receipt's 300-character cap is cut and re-blocks;
-10. the approval-time re-check disagrees with the draft's verdict ("evidence changed").
+10. repeated readiness assessments disagree (HTTP approval is not exercised here);
+11. a long pinned promise loses its identity at the 300-character display boundary;
+12. capped trigger/time collisions or hidden joined shortfalls are incorrectly approved.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import re
 
@@ -271,7 +274,7 @@ def test_turn2_ending_alone_is_approvable(q1_prod):
     assert report["ready"] is True
 
 
-def test_the_approval_recheck_agrees_with_the_draft(q1_prod):
+def test_repeated_readiness_assessment_is_deterministic(q1_prod):
     first, second = _assess(), _assess()
     assert first["digest"] == second["digest"]
 
@@ -335,15 +338,139 @@ def test_a_pinned_spoken_text_promise_is_approvable(q1_prod):
     assert row["disposition"] == "unverified", row
 
 
-def test_a_pin_for_another_time_is_not_this_promise():
-    """Item 7: the pinned promise is re-derived for its requirement, never matched by prefix."""
-    ask = _r("p", "text", "show it when I say it", literal="Spec-kit", facts={"triggers": ["kit"]})
-    facts = bc.plan_facts_from_strategy({**Q1_STRATEGY, "choice_answers": [_PIN_ANSWER]})
-    said = bc._pinned_spoken_text_plan(bc_spoken_text(ask), facts)
-    assert said is not None and _promised_at_render(ask, _partial(said), facts)
-    for other in (said.replace("0:14", "0:15"), said.replace("“kit”", "“Spec”")):
-        assert other != said
-        assert not _promised_at_render(ask, _partial(other), facts), other
+_MISSION_TRIGGER = (
+    "Our mission is to build simple tools that help small teams organize their work, share "
+    "their ideas, and finish important projects together without getting lost in endless "
+    "meetings or complicated spreadsheets."
+)
+
+# Choice-answer values support at most 300 characters; this valid trigger hides its suffix.
+_LONG_TRIGGER = (_MISSION_TRIGGER + " Our shared work stays simple and clear." * 3)[:290]
+
+
+def _pinned_case(trigger: str, *, option: str = "occ_2_of_3_t1420", rid: str = "p"):
+    ask = _r(
+        rid, "text", "show it when I say it", literal="Spec-kit", facts={"triggers": [trigger]}
+    )
+    answer = {**_PIN_ANSWER, "value": trigger, "option": option, "requirement_ids": [rid]}
+    strategy = {**Q1_STRATEGY, "choice_answers": [answer]}
+    facts = dataclasses.replace(bc.plan_facts_from_strategy(strategy), phone_talking=True)
+    return ask, strategy, facts
+
+
+def _checked_pin(ask, facts):
+    (receipt,) = bc.build_receipts([ask], facts, include_unchecked=True)
+    assert receipt.status == "partial"
+    assert receipt.verification == "checked"
+    return receipt
+
+
+@pytest.mark.parametrize("language", ["en", "tr"])
+@pytest.mark.parametrize("trigger", [_MISSION_TRIGGER, _LONG_TRIGGER])
+def test_long_pinned_promise_survives_real_receipt_and_readiness(q1_prod, language, trigger):
+    with reply_language_for(language):
+        ask, strategy, facts = _pinned_case(trigger)
+        full = bc._pinned_spoken_text_plan(bc_spoken_text(ask), facts)
+        assert len(full) >= 300
+        receipt = _checked_pin(ask, facts)
+        assert receipt.reason == full[:300]
+        assert _promised_at_render(ask, receipt, facts)
+        report = _assess(CreativeBrief(version=1, requirements=[ask]), strategy)
+        (row,) = report["requirements"]
+        assert row["reason"] == receipt.reason
+        assert row["disposition"] == "unverified", row
+        assert report["ready"] is True
+
+
+@pytest.mark.parametrize("language", ["en", "tr"])
+def test_long_pin_identity_rejects_same_display_different_trigger_or_time(q1_prod, language):
+    with reply_language_for(language):
+        trigger = _LONG_TRIGGER
+        ask, _, facts = _pinned_case(trigger)
+        receipt = _checked_pin(ask, facts)
+        for other_trigger, option in (
+            (trigger + " More.", "occ_2_of_3_t1420"),
+            (trigger, "occ_2_of_3_t1520"),
+        ):
+            other_ask, _, other_facts = _pinned_case(other_trigger, option=option)
+            other = _checked_pin(other_ask, other_facts)
+            assert other.reason == receipt.reason, "negative control must collide after capping"
+            assert not _promised_at_render(ask, other, facts)
+            assert not _promised_at_render(other_ask, receipt, other_facts)
+        wrong_ask, _, wrong_facts = _pinned_case(trigger, rid="other")
+        assert not _promised_at_render(wrong_ask, receipt, wrong_facts)
+        # Answers naming another requirement cannot reconstruct this dynamic promise.
+        assert not _promised_at_render(ask, receipt, wrong_facts)
+
+
+@pytest.mark.parametrize("language", ["en", "tr"])
+def test_long_pin_composition_does_not_hide_a_shortfall(q1_prod, language):
+    with reply_language_for(language):
+        ask, _, facts = _pinned_case(_LONG_TRIGGER)
+        receipt = _checked_pin(ask, facts)
+        # A second real checker verdict is beyond the public cap, but must still hold.
+        shortfall = bc._receipt(ask, "partial", bc._CLOSING_ARROW_MISSING)
+        for joined in (
+            bc.combine_receipts(receipt, shortfall),
+            bc.combine_receipts(shortfall, receipt),
+        ):
+            assert not _promised_at_render(ask, joined, facts)
+        pure = bc.combine_receipts(receipt, bc._receipt(ask, "met", None))
+        assert pure.reason == receipt.reason
+        assert _promised_at_render(ask, pure, facts)
+        assert not _promised_at_render(
+            ask, receipt.model_copy(update={"status": "not_possible"}), facts
+        )
+        assert not _promised_at_render(
+            ask, receipt.model_copy(update={"reason": bc._CLOSING_ARROW_MISSING}), facts
+        )
+
+
+@pytest.mark.parametrize("state", ["error", "not_comparable"])
+def test_unclear_word_append_retains_hidden_shortfall(q1_prod, state):
+    ask, _, facts = _pinned_case(_LONG_TRIGGER)
+    receipt = _checked_pin(ask, facts)
+    updated = bc._with_unclear_word(
+        ask, dataclasses.replace(facts, unclear_words={"state": state}), receipt
+    )
+    assert updated.reason == receipt.reason
+    assert not _promised_at_render(ask, updated, facts)
+
+
+def test_two_capped_promises_do_not_deduplicate_distinct_evidence(q1_prod):
+    ask, _, facts = _pinned_case(_LONG_TRIGGER)
+    other_ask, _, other_facts = _pinned_case(_LONG_TRIGGER + " More.")
+    first, second = _checked_pin(ask, facts), _checked_pin(other_ask, other_facts)
+    assert first.reason == second.reason
+    combined = bc.combine_receipts(first, second)
+    assert not _promised_at_render(ask, combined, facts)
+    assert not _promised_at_render(other_ask, combined, other_facts)
+
+
+def test_long_pin_server_evidence_is_not_serialized(q1_prod):
+    ask, _, facts = _pinned_case(_LONG_TRIGGER)
+    receipt = _checked_pin(ask, facts)
+    wire = receipt.model_dump(mode="json")
+    assert len(wire["reason"]) == 300
+    assert set(wire) == set(RequirementReceipt.model_json_schema()["properties"])
+    restored = RequirementReceipt.model_validate_json(receipt.model_dump_json())
+    assert restored.model_dump() == wire
+    # Display-only input cannot prove a hidden trigger or time. Approval rebuilds its receipts.
+    assert not _promised_at_render(ask, restored, facts)
+    assert _promised_at_render(ask, receipt.model_copy(update={"stage": "checked"}), facts)
+
+
+def test_a_pin_for_another_time_is_not_this_promise(q1_prod):
+    """Short pins retain exact word/time matching through real receipt construction."""
+    ask, _, facts = _pinned_case("kit")
+    receipt = _checked_pin(ask, facts)
+    assert _promised_at_render(ask, receipt, facts)
+    for other in (
+        receipt.reason.replace("0:14", "0:15"),
+        receipt.reason.replace("“kit”", "“Spec”"),
+    ):
+        assert other != receipt.reason
+        assert not _promised_at_render(ask, bc._receipt(ask, "partial", other), facts)
 
 
 # --------------------------------------------- 3. what must still hold (negative controls)

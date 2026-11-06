@@ -141,9 +141,12 @@ def _promised_at_render(req: BriefRequirement, receipt: RequirementReceipt, fact
     still be in your video", a restarted sentence that stays in because retake detection is off,
     only the long pauses cut, an arrow the creator has to draw, a length the take cannot reach.
     """
-    if receipt.status != "partial" or not receipt.reason:
+    # Receipts localize and cap public copy at 300 characters. Only complete evidence can
+    # distinguish long triggers/times or retain a shortfall appended past that boundary.
+    reason = receipt.full_reason
+    if receipt.status != "partial" or not reason or receipt.requirement_id != req.id:
         return False
-    return _only_promises(receipt.reason) or receipt.reason == _pinned_promise(req, facts)
+    return _only_promises(reason) or reason == _pinned_promise(req, facts)
 
 
 def _only_promises(reason: str) -> bool:

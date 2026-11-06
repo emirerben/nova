@@ -49,7 +49,8 @@ shortfall. Readiness approved only the five older speech-cleanup sentences
    match would approve a different word or time.
 8. The hold reply or the leaves-out list still names promises.
 9. A joined cleanup reason longer than the receipt's 300-character cap is cut and re-blocks.
-10. The approval-time re-check disagrees with the draft's verdict ("evidence changed").
+10. Repeated readiness assessments disagree. HTTP approval is separate evidence, not proved
+    by calling the same assessment twice.
 11. A future feature adds a new draft plan reason and silently re-blocks its own draft.
 
 ## Not covered
@@ -59,3 +60,44 @@ shortfall. Readiness approved only the five older speech-cleanup sentences
   guard test's `NOT_RENDER_PROMISES`.
 - The receipts screen's "Partly done" ticks before anything is made.
 - No live model call, device run or render: offline replay only.
+
+## Local review correction: bounded display is not promise identity
+
+Acceptance recorded before implementation: the real checker/receipt/readiness chain must
+approve an EN/TR pinned promise whose human-readable reason exceeds 300 characters, while
+still rejecting a different trigger suffix, a different selected time, the wrong requirement,
+a joined shortfall hidden beyond that display limit, and a `not_possible` receipt. The public
+receipt stays at most 300 characters and its schema does not gain approval evidence.
+
+The 207-character mission trigger from review produces a 305-character English promise.
+Longer trigger pairs can share all 300 visible characters, hiding both their differing suffixes
+and their selected times. Comparing truncated expectations or accepting a prefix is unsafe.
+Reason composition must preserve the complete explanation, not a stale promise marker.
+
+Evidence scope: real offline receipt construction and readiness assessment. Repeated `_assess`
+calls establish deterministic assessment only; they do not exercise the HTTP approval recheck.
+HTTP approval, native export, and live Q1 request fulfillment remain unverified under KRI-1235
+and parent KRI-1234. No paid call, real device, publication, merge, or deployment is included.
+
+### Local verification of the review correction
+
+The correction retains complete localized reason evidence in a Pydantic private attribute.
+The public reason remains capped, and serialization/schema omit that private evidence.
+Current receipt composition/replacement paths preserve the full reason and refresh the
+projection together. Readiness requires the matching requirement ID and exact complete text;
+it does not compare a truncated expected sentence or accept a promise prefix.
+
+- Final regression file on original PR head `4fdc15d153bad11e41bfb271d129f300b4c16693`:
+  **6 failed, 50 passed**. The valid 207/290-character triggers reach the actual receipt
+  boundary. This red control used an archived original tree, not another owner's checkout.
+- `bash scripts/check-api.sh test tests/kria/test_kri1235_render_promises_approvable.py -q`:
+  **56 passed** after correction.
+- The focused file plus the neighboring editor, Talking, draft deferral, pause/restart,
+  unclear-word, speaker opening, ending and list-label suites: **550 passed**.
+- `DATABASE_URL="$(cat .dev/test-db-url)" python3 scripts/reliability-gates.py run --changed`:
+  **863 passed, zero skips/errors**, using this worktree's own migrated test database.
+  Existing HTTP approval tests are included; no new long-trigger HTTP scenario is claimed.
+- Scoped Ruff lint/format, `git diff --check`, and the instruction-size guard pass.
+
+No main integration or dependency/native fix is included. Production, native output,
+paid-provider behavior, and the exact long-trigger HTTP journey remain unverified.
