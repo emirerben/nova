@@ -86,6 +86,35 @@ def test_partial_mute_keeps_the_pin() -> None:
     assert contract.original_audio == "require"
 
 
+def _two_ask_brief() -> CreativeBrief:
+    """A whole-video mute, then a later ask that mutes but keeps one line's camera sound."""
+    later = MUTE.model_copy(update={"id": "r6", "facts": dict(kri942.OFF_EXCEPT_LINE)})
+    return CreativeBrief(version=1, requirements=[MUTE, later])
+
+
+def test_a_second_ask_with_an_audible_exception_keeps_the_pin() -> None:
+    """Asks apply in brief order, so r6's exception is painted on: the pin stays."""
+    from app.kria.clip_sound_toggle_ask import brief_mutes_whole_video
+
+    assert brief_mutes_whole_video(CreativeBrief(version=1, requirements=[MUTE])) is True
+    assert brief_mutes_whole_video(_two_ask_brief()) is False
+    contract = build_render_contract(STRATEGY, generation_id="g1", brief=_two_ask_brief())
+    assert contract.original_audio == "require"
+
+
+def test_a_second_ask_with_an_audible_exception_is_not_relaxed() -> None:
+    from app.kria.clip_sound_toggle_ask import brief_sound_toggle_asks
+    from app.services.phone_clip_sound_toggle import ToggleLane, mute_relaxed_contract
+
+    contract = CreatorRenderContract(generation_id="generation", original_audio="require").rebind()
+    lane = ToggleLane(
+        asks=brief_sound_toggle_asks(_two_ask_brief()),
+        intent=None,  # type: ignore[arg-type]
+        candidates=(),
+    )
+    assert mute_relaxed_contract(contract, lane, {}, variant_id="guided_story") is None
+
+
 def test_switch_off_keeps_the_pin(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.config import settings
 

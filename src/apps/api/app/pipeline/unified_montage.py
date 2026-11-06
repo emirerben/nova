@@ -4102,6 +4102,9 @@ def _whole_video_title_pin(
     (``opening_title_duration_s``) or a title entrance (pins have none), and the switch off.
     Corner: the literal's typed ``position`` when it names one (the middle only where item 21
     draws middle pins), else ``top_center``.
+    A pin of the same words already in ``pins`` is never doubled: a whole-video one is reused
+    (the title is dropped, the pin stays where she put it); a timed one is a deliberate ask,
+    so the title is left as it was.
     """
     if not settings.whole_video_text_pin_enabled or not title or not view.global_literals:
         return title, title_source, pins
@@ -4120,6 +4123,11 @@ def _whole_video_title_pin(
         (spot for text, spot in view.global_literals if fold_text(text) == key), _NO_LITERAL
     )
     if position is _NO_LITERAL:
+        return title, title_source, pins
+    same_words = [pin for pin in pins if fold_text(_nfc(pin.text)) == key]
+    if any(pin.is_whole_video for pin in same_words):
+        return None, "none", pins
+    if same_words:
         return title, title_source, pins
     corner = _POSITION_CORNERS.get(normalize_label_position(position) or "", "top_center")
     if corner == "middle_center" and not settings.clip_text_tiktok_look_enabled:

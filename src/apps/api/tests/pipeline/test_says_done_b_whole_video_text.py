@@ -145,3 +145,49 @@ def test_switch_off_keeps_the_short_title(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(settings, "whole_video_text_pin_enabled", False)
     plan, _rows, spans = _render({**BASE, "opening_title": TEXT})
     assert len(spans) == 1 and spans[0][2] < plan.duration_s - 1.0, spans
+
+
+def test_an_existing_whole_video_pin_is_reused() -> None:
+    """The strategy already pins the same words for the whole video: no second pin is added."""
+    plan, rows, spans = _render(
+        {
+            **BASE,
+            "opening_title": TEXT,
+            "pinned_texts": [{"text": TEXT, "corner": "top_center"}],
+        }
+    )
+    assert len(spans) == 1, spans
+    assert spans[0][0] == "guided-pinned-0"
+    assert abs(spans[0][1]) < 0.05 and abs(spans[0][2] - plan.duration_s) < 0.05, spans
+    assert plan.title is None
+    assert [r.status for r in _receipts(plan, rows)] == ["met", "met"]
+
+
+def test_a_whole_video_pin_in_another_corner_is_kept_where_she_put_it() -> None:
+    plan, _rows, spans = _render(
+        {
+            **BASE,
+            "opening_title": TEXT,
+            "pinned_texts": [{"text": TEXT, "corner": "bottom_left"}],
+        }
+    )
+    assert len(spans) == 1, spans
+    assert abs(spans[0][1]) < 0.05 and abs(spans[0][2] - plan.duration_s) < 0.05, spans
+    assert plan.title is None
+    pins = plan.snapshot.pinned_texts
+    assert len(pins) == 1 and pins[0].corner == "bottom_left", pins
+
+
+def test_a_deliberately_timed_pin_is_left_as_it_was(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.config import settings
+
+    strategy = {
+        **BASE,
+        "opening_title": TEXT,
+        "pinned_texts": [{"text": TEXT, "corner": "top_center", "end_s": 3}],
+    }
+    on_plan, _rows, on_spans = _render(strategy)
+    monkeypatch.setattr(settings, "whole_video_text_pin_enabled", False)
+    off_plan, _rows, off_spans = _render(strategy)
+    assert on_spans == off_spans
+    assert on_plan.title == off_plan.title
