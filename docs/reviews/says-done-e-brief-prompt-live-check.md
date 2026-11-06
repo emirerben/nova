@@ -1,36 +1,47 @@
 # Says-done group E: paid live check of the brief-writer teaching (NOT RUN)
 
-Status: written, not run. It spends real money on Gemini, so it needs Yasin's OK first.
+Status: written, not run. Waiting for Emir/Yasin to choose Plan A, Plan B or no live run.
+It spends real money on Gemini, so it needs Yasin's OK first.
 Free checks already done: the replay evals (`pytest tests/evals/`) pass, but replay answers are
 hand-written and the cassette ignores the prompt, so only this live run shows what the model
 actually records for her sentences.
 
 ## What it runs
 
-The real Main Creator (Gemini 3.1 Pro, prompt v137) on Qendresa's exact Q1 and Q2 prompts, three
-times each (the model is not deterministic), plus one plain-ask decoy and one brief-extractor
-follow-up. The test file applies the same checks it applies in replay to the model's real answer
-(`meta.caption_cleanup_brief`, `meta.restart_brief`, `meta.prompt_contains`), so a pass or fail is
-printed per case. Each real answer is saved under `NOVA_EVAL_CAPTURE_DIR`.
+The real Main Creator (Gemini 3.1 Pro, prompt v137) on Qendresa's exact Q1 and Q2 prompts (three
+times each in the full plan, since the model is not deterministic), plus one plain-ask decoy, one
+brief-extractor follow-up, and one case 10 control. The test file applies the same checks it applies
+in replay to the model's real answer (`meta.caption_cleanup_brief`, `meta.restart_brief`,
+`meta.moment_hold_brief`, `meta.prompt_contains`), so a pass or fail is printed per case. Each real
+answer is saved under `NOVA_EVAL_CAPTURE_DIR`.
+
+Case 10 is covered too. The Q1 fixture also checks it, so running Q1 costs nothing extra for case 10.
 
 | Case | Fixture | Expected facts (checked automatically) |
 |---|---|---|
-| Q1 ×3 | `main_creator/qendresa_q1_caption_two_words_tight` | one captions requirement: `captions: "word_by_word"`, `caption_words: 2`, `caption_position: "middle"`, `caption_color: "#FFFFFF"`, no box; a cleanup ask with `pauses: "tight"`; `cut_restarts: true` |
-| Q2 ×3 | `main_creator/qendresa_q2_caption_box_all_pauses` | one captions requirement: `captions: "word_by_word"`, `caption_box: "#E5E5E5"`, `caption_position: "bottom"`, no count; a cleanup ask with `pauses: "tight"`; no `cut_restarts` |
-| Decoy ×1 | `main_creator/decoy_qendresa_plain_word_captions_long_pauses` | `captions: "word_by_word"` with no count / box / position; cleanup NOT tight |
-| Follow-up ×1 | `brief_extractor/qendresa_followup_two_words_all_pauses_en` | captions changed to `caption_words: 2` (middle, white); a cleanup ask with `pauses: "tight"` |
+| Q1 | `main_creator/qendresa_q1_caption_two_words_tight` | one captions requirement: `captions: "word_by_word"`, `caption_words: 2`, `caption_position: "middle"`, `caption_color: "#FFFFFF"`, no box; a cleanup ask with `pauses: "tight"`; `cut_restarts: true`. Case 10 (`moment_hold_brief`): the title "lets build an agent that reads an APP before I trust it!!" is a `text`/`title` requirement and "comment READ" a `text`/`global` requirement, with NO `timing` requirement carrying `duration_s: 3` (`length_policy.creator_duration` returns None) |
+| Q2 | `main_creator/qendresa_q2_caption_box_all_pauses` | one captions requirement: `captions: "word_by_word"`, `caption_box: "#E5E5E5"`, `caption_position: "bottom"`, no count; a cleanup ask with `pauses: "tight"`; no `cut_restarts` |
+| Case 10 control | `main_creator/qendresa_title_hold_with_video_length` | prompt: "Start with the title \"MY WEEK\" for the first 3 seconds and make the video 30 seconds long." Expects the title as `text`/`title` AND a `timing`/`global` requirement with `duration_s: 30` (`creator_duration` = 30) |
+| Decoy | `main_creator/decoy_qendresa_plain_word_captions_long_pauses` | `captions: "word_by_word"` with no count / box / position; cleanup NOT tight |
+| Follow-up | `brief_extractor/qendresa_followup_two_words_all_pauses_en` | captions changed to `caption_words: 2` (middle, white); a cleanup ask with `pauses: "tight"` |
 
 ## Cost
 
 Measured locally (free): each Main Creator prompt is about 90,000 characters (~26,000 tokens).
 Gemini 3.1 Pro is $2 per million input tokens and $12 per million output tokens
 (`app/services/ai_cost_control.py`), so one turn is about $0.05 in plus $0.05-0.12 out (thinking
-included), roughly $0.10-0.17, double if the schema retry fires. Seven Main Creator turns are about
-$0.70-1.20; the extractor turn (Gemini 3.6 Flash) is about $0.02. **Expected total about $1-1.50.**
-Each command below carries its own hard cap; the caps add up to $1.90.
+included), roughly $0.10-0.17, double if the schema retry fires. The extractor turn (Gemini 3.6
+Flash) is about $0.02.
+
+- **Plan A:** 3 Main Creator turns, about $0.30-0.50 (up to about $1 if every call retries). Caps add up to $0.75.
+- **Plan B:** 8 Main Creator turns + 1 extractor turn, about $0.80-1.40. Caps add up to $1.95 (3 × 0.45 + 0.25 + 0.25 + 0.1), under the $2 total limit.
+
+Every single command has its own cap, and each is at most $0.5, well under the $2 hard limit per run.
 The harness pre-flight assumes a 4 KB prompt, so it under-counts this ~90 KB prompt; trust the estimate above. `AI_COST_CONTROL_ENABLED=true` records the spend in the development ledger, which needs the local Postgres from the repo `.env` to be reachable.
 
 ## Commands (run from this worktree, after Yasin approves)
+
+Shared setup (once, for either plan):
 
 ```bash
 cd /Users/yasinberkyesilyurt/projects/nova/.claude/worktrees/says-done-e-prompt-069396/src/apps/api
@@ -38,18 +49,47 @@ set -a; source /Users/yasinberkyesilyurt/projects/nova/.env; set +a
 export NOVA_EVAL_MODE=live AI_COST_CONTROL_ENABLED=true AI_USAGE_ENVIRONMENT=development
 export NOVA_EVAL_CAPTURE_DIR="$HOME/Downloads/kria-qendresa-test/handoff/says_done_e_live"
 PY=/Users/yasinberkyesilyurt/projects/nova/src/apps/api/.venv/bin/python
+```
+
+### Plan A (cheap, recommended first): about $0.35-0.55
+
+One round of Q1 and Q2, plus the case 10 control. 3 Main Creator turns.
+
+```bash
+PYTHONPATH=$PWD $PY -m pytest tests/evals/test_main_creator_evals.py --eval-mode=live -rA -q \
+  -k "qendresa_q1_caption_two_words_tight or qendresa_q2_caption_box_all_pauses" \
+  --usage-purpose=live_eval --test-run-id=says-done-e-a-20261106 \
+  --max-cost-usd=0.5 --approve-reservation
+PYTHONPATH=$PWD $PY -m pytest tests/evals/test_main_creator_evals.py --eval-mode=live -rA -q \
+  -k "qendresa_title_hold_with_video_length" \
+  --usage-purpose=live_eval --test-run-id=says-done-e-a-len-20261106 \
+  --max-cost-usd=0.25 --approve-reservation
+mkdir -p "$NOVA_EVAL_CAPTURE_DIR/plan_a"
+mv "$NOVA_EVAL_CAPTURE_DIR"/main_creator/*.json "$NOVA_EVAL_CAPTURE_DIR/plan_a/"
+```
+
+### Plan B (full): about $0.85-1.45
+
+Three rounds of Q1 and Q2, the decoy, the brief-extractor follow-up, and the case 10 control.
+8 Main Creator turns + 1 extractor turn. Caps: 3 × 0.45 + 0.25 + 0.25 + 0.1 = $1.95 in total (under $2).
+
+```bash
 for round in 1 2 3; do
   PYTHONPATH=$PWD $PY -m pytest tests/evals/test_main_creator_evals.py --eval-mode=live -rA -q \
     -k "qendresa_q1_caption_two_words_tight or qendresa_q2_caption_box_all_pauses" \
     --usage-purpose=live_eval --test-run-id="says-done-e-r${round}-20261106" \
-    --max-cost-usd=0.5 --approve-reservation
+    --max-cost-usd=0.45 --approve-reservation
   mkdir -p "$NOVA_EVAL_CAPTURE_DIR/round${round}"
   mv "$NOVA_EVAL_CAPTURE_DIR"/main_creator/*.json "$NOVA_EVAL_CAPTURE_DIR/round${round}/"
 done
 PYTHONPATH=$PWD $PY -m pytest tests/evals/test_main_creator_evals.py --eval-mode=live -rA -q \
   -k "decoy_qendresa_plain_word_captions_long_pauses" \
   --usage-purpose=live_eval --test-run-id=says-done-e-decoy-20261106 \
-  --max-cost-usd=0.3 --approve-reservation
+  --max-cost-usd=0.25 --approve-reservation
+PYTHONPATH=$PWD $PY -m pytest tests/evals/test_main_creator_evals.py --eval-mode=live -rA -q \
+  -k "qendresa_title_hold_with_video_length" \
+  --usage-purpose=live_eval --test-run-id=says-done-e-len-20261106 \
+  --max-cost-usd=0.25 --approve-reservation
 PYTHONPATH=$PWD $PY -m pytest tests/evals/test_brief_extractor_evals.py --eval-mode=live -rA -q \
   -k "qendresa_followup_two_words_all_pauses_en" \
   --usage-purpose=live_eval --test-run-id=says-done-e-followup-20261106 \
@@ -62,12 +102,14 @@ case prints which fact was missing (for example `caption look words None ... exp
 
 ## Reading the result
 
-- All 3 rounds of Q1 and Q2 pass: the teaching works for her prompts; cases 6-8 are fixed at the
-  source as far as one model run can show.
+- All rounds of Q1 and Q2 pass: the teaching works for her prompts; cases 6-8 are fixed at the
+  source as far as the model runs can show.
 - A round fails on `caption_words` / `caption_box` / `pauses`: the model still drops the fact; the
   captured answer shows how (for example the look on a second requirement, or `caption_words: 1`).
   Send the captured JSON back to group E.
 - Only `restart_brief` fails on Q1 (`cut_restarts` missing for "mistakes"): the caption and pause
   facts are fine; the "mistakes" line is a separate, smaller teaching gap.
-- The decoy fails: the new wording over-reaches (plain asks turned tight or counted) and must be
-  narrowed before merge.
+- Q1 or the control fails on `moment_hold_brief`: the model still files a title/ending hold as the
+  video length (or drops a real length). Send the captured JSON back to group E.
+- The decoy fails (Plan B only): the new wording over-reaches (plain asks turned tight or counted)
+  and must be narrowed before merge.

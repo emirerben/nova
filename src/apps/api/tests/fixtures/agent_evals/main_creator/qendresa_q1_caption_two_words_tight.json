@@ -405,7 +405,7 @@
     },
     "brief_enabled": true
   },
-  "raw_text": "{\"brief_updates\": [{\"kind\": \"audio\", \"scope\": \"global\", \"literal\": null, \"description\": \"Cut out all my pauses and mistakes so it's tight\", \"facts\": {\"speech_cleanup\": true, \"pauses\": \"tight\", \"cut_restarts\": true}}, {\"kind\": \"style\", \"scope\": \"global\", \"literal\": null, \"description\": \"Captions word by word in the middle of the screen, white, two words at a time\", \"facts\": {\"captions\": \"word_by_word\", \"caption_words\": 2, \"caption_position\": \"middle\", \"caption_color\": \"#FFFFFF\"}}, {\"kind\": \"text\", \"scope\": \"title\", \"literal\": \"lets build an agent that reads an APP before I trust it!!\", \"description\": \"a big opening title for the first 3 seconds\", \"facts\": {}}, {\"kind\": \"style\", \"scope\": \"global\", \"literal\": null, \"description\": \"show the matching screenshot or screen recording in the top or bottom part of the screen when I talk about it, not over my face\", \"facts\": {}}, {\"kind\": \"text\", \"scope\": \"global\", \"literal\": \"1. which company it sends data to?\", \"description\": \"show each of the four listed things as big text, like this one\", \"facts\": {}}, {\"kind\": \"text\", \"scope\": \"global\", \"literal\": \"comment READ\", \"description\": \"end with this and an arrow for the last 3 seconds\", \"facts\": {\"closing\": \"comment READ with an arrow\"}}, {\"kind\": \"audio\", \"scope\": \"global\", \"literal\": null, \"description\": \"Only my voice, no music\", \"facts\": {\"audio_intent\": \"no_music\"}}], \"action\": {\"kind\": \"propose_strategy\", \"strategy\": {\"direction\": \"native\", \"edit_format\": \"subtitled\", \"archetype\": null, \"audio_strategy\": \"original_audio\", \"execution_contract\": null, \"media_scope\": \"all\", \"clip_intents\": [], \"story_structure\": [\"The talk to camera, tightened, with captions\"], \"intro_hook\": null, \"pacing\": \"balanced\", \"target_duration_s\": 31.2, \"render_program\": \"native\", \"selected_media_ids\": [\"analysis-proxy-ios-4DB8A9C3-80FE-4269-9D22-7C19280DC543.mp4\"], \"optional_treatments\": [], \"rationale\": \"One talking take, kept in order, cut tight and captioned.\", \"caption_style\": \"karaoke\"}, \"summary\": \"I'll cut your take tight and caption it in white in the middle, two words at a time.\", \"render_intent_evidence\": {\"opening_title\": null, \"font_family\": null, \"text_color\": null, \"opening_title_duration_s\": null, \"shot_labels\": null, \"closing_title\": null, \"licensed_sfx\": null}}}",
+  "raw_text": "{\"brief_updates\": [{\"kind\": \"audio\", \"scope\": \"global\", \"literal\": null, \"description\": \"Cut out all my pauses and mistakes so it's tight\", \"facts\": {\"speech_cleanup\": true, \"pauses\": \"tight\", \"cut_restarts\": true}}, {\"kind\": \"style\", \"scope\": \"global\", \"literal\": null, \"description\": \"Captions word by word in the middle of the screen, white, two words at a time\", \"facts\": {\"captions\": \"word_by_word\", \"caption_words\": 2, \"caption_position\": \"middle\", \"caption_color\": \"#FFFFFF\"}}, {\"kind\": \"text\", \"scope\": \"title\", \"literal\": \"lets build an agent that reads an APP before I trust it!!\", \"description\": \"a big opening title for the first 3 seconds\", \"facts\": {}}, {\"kind\": \"style\", \"scope\": \"global\", \"literal\": null, \"description\": \"show the matching screenshot or screen recording in the top or bottom part of the screen when I talk about it, not over my face\", \"facts\": {}}, {\"kind\": \"text\", \"scope\": \"global\", \"literal\": \"1. which company it sends data to?\", \"description\": \"show each of the four listed things as big text, like this one\", \"facts\": {}}, {\"kind\": \"text\", \"scope\": \"global\", \"literal\": \"comment READ\", \"description\": \"end with comment READ and an arrow for the last 3 seconds\", \"facts\": {}}, {\"kind\": \"audio\", \"scope\": \"global\", \"literal\": null, \"description\": \"Only my voice, no music\", \"facts\": {\"audio_intent\": \"no_music\"}}], \"action\": {\"kind\": \"propose_strategy\", \"strategy\": {\"direction\": \"native\", \"edit_format\": \"subtitled\", \"archetype\": null, \"audio_strategy\": \"original_audio\", \"execution_contract\": null, \"media_scope\": \"all\", \"clip_intents\": [], \"story_structure\": [\"The talk to camera, tightened, with captions\"], \"intro_hook\": null, \"pacing\": \"balanced\", \"target_duration_s\": 31.2, \"render_program\": \"native\", \"selected_media_ids\": [\"analysis-proxy-ios-4DB8A9C3-80FE-4269-9D22-7C19280DC543.mp4\"], \"optional_treatments\": [], \"rationale\": \"One talking take, kept in order, cut tight and captioned.\", \"caption_style\": \"karaoke\"}, \"summary\": \"I'll cut your take tight and caption it in white in the middle, two words at a time.\", \"render_intent_evidence\": {\"opening_title\": null, \"font_family\": null, \"text_color\": null, \"opening_title_duration_s\": null, \"shot_labels\": null, \"closing_title\": null, \"licensed_sfx\": null}}}",
   "output": null,
   "meta": {
     "source": "hand_authored_golden",
@@ -414,12 +414,29 @@
       "phone_render_user_ids": [],
       "phone_subtitled_rendering_enabled": true
     },
-    "note": "Qendresa says-done cases 6 and 8 (kit Q1, `test_q1_caption_two_words`, `test_q1_pauses_tight`): her full Q1 prompt. 'word by word ... two words at a time' records caption_words 2 beside captions word_by_word on ONE requirement; 'all my pauses ... so it's tight' records pauses tight; unnamed 'mistakes' is cut_restarts. Hand-authored golden answer (NOT a model recording): the cassette ignores the prompt, so replay proves only the answer shape, that the v137 teaching is in the rendered prompt (`prompt_contains`) and the `caption_cleanup_brief` check. The paid live run in docs/reviews/says-done-e-brief-prompt-live-check.md measures what the model records. Input shell: kri1189_green3_restart_en (one-take iPhone Talking, prod profile; her screenshots and recordings are not attached, which the brief facts judged here do not depend on).",
+    "note": "Qendresa says-done cases 6 and 8 (kit Q1, `test_q1_caption_two_words`, `test_q1_pauses_tight`): her full Q1 prompt. 'word by word ... two words at a time' records caption_words 2 beside captions word_by_word on ONE requirement; 'all my pauses ... so it's tight' records pauses tight; unnamed 'mistakes' is cut_restarts.  Case 10: the title and the ending hold their 3 seconds in their own text requirements; no timing/duration_s. Hand-authored golden answer (NOT a model recording): the cassette ignores the prompt, so replay proves only the answer shape, that the v137 teaching is in the rendered prompt (`prompt_contains`) and the `caption_cleanup_brief` check. The paid live run in docs/reviews/says-done-e-brief-prompt-live-check.md measures what the model records. Input shell: kri1189_green3_restart_en (one-take iPhone Talking, prod profile; her screenshots and recordings are not attached, which the brief facts judged here do not depend on).",
     "prompt_contains": [
       "\"word by word\" names the karaoke style, never a count",
       "\"caption_words\": 2, \"caption_position\": \"middle\", \"caption_color\": \"#FFFFFF\"",
-      "\"Cut out all my pauses and mistakes so it's tight\""
+      "\"Cut out all my pauses and mistakes so it's tight\"",
+      "Seconds tied to ONE moment are never the video's length"
     ],
+    "moment_hold_brief": {
+      "video_length_s": null,
+      "moment_seconds": [
+        3
+      ],
+      "texts": [
+        {
+          "scope": "title",
+          "literal": "lets build an agent that reads an APP before I trust it!!"
+        },
+        {
+          "scope": "global",
+          "literal": "comment READ"
+        }
+      ]
+    },
     "caption_cleanup_brief": {
       "captions": {
         "captions": "word_by_word",

@@ -136,6 +136,16 @@ def test_main_creator_eval(
         )
         assert not failures, failures
 
+    moment_hold = fixture.meta.get("moment_hold_brief")
+    if moment_hold:
+        # Qendresa says-done case 10: a title / ending held for N seconds is not the video's
+        # length, read by the product's own `creator_duration`. Replay = the hand-authored golden.
+        from .runners.moment_hold_brief import moment_hold_brief_failures
+
+        assert result.output is not None
+        failures = moment_hold_brief_failures(result.output.get("brief_updates") or [], moment_hold)
+        assert not failures, failures
+
     copy_meta = fixture.meta.get("creative_copy_decision")
     if copy_meta:
         assert result.output is not None
@@ -749,3 +759,47 @@ def test_the_caption_cleanup_check_rejects_the_answers_that_said_done_wrongly():
 
     assert any("caption look words None" in failure for failure in q1_failures), q1_failures
     assert any("pauses tight is False" in failure for failure in q1_failures), q1_failures
+
+
+def test_the_moment_hold_check_rejects_a_hold_filed_as_the_video_length():
+    """Wrong-content control for Qendresa says-done case 10: her title and ending holds filed as
+    `timing` / `duration_s: 3` make the product reader take 3 seconds as the whole video."""
+    from .runners.moment_hold_brief import moment_hold_brief_failures
+
+    fixtures = Path(__file__).parents[1] / "fixtures"
+    expect = load_fixture(
+        fixtures / "agent_evals" / "main_creator" / "qendresa_q1_caption_two_words_tight.json"
+    ).meta["moment_hold_brief"]
+    updates = [
+        {
+            "kind": "timing",
+            "scope": "global",
+            "description": "Big title for the first 3 seconds",
+            "facts": {"duration_s": 3},
+        },
+        {
+            "kind": "timing",
+            "scope": "global",
+            "description": 'End with "comment READ" and an arrow for the last 3 seconds',
+            "facts": {"duration_s": 3},
+        },
+        {
+            "kind": "text",
+            "scope": "title",
+            "literal": "lets build an agent that reads an APP before I trust it!!",
+            "description": "a big opening title",
+            "facts": {},
+        },
+        {
+            "kind": "text",
+            "scope": "global",
+            "literal": "comment READ",
+            "description": "end with comment READ and an arrow",
+            "facts": {},
+        },
+    ]
+
+    failures = moment_hold_brief_failures(updates, expect)
+
+    assert any("video length" in failure and "3.0" in failure for failure in failures), failures
+    assert any("duration_s 3" in failure for failure in failures), failures

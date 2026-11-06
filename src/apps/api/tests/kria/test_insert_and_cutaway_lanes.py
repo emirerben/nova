@@ -85,10 +85,10 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # sentences carry her Q1/Q2 sentences as examples; v136's values were 39455ee1 / 06797395 /
 # 4b280598 / 83b280d6.
 MAIN_PROMPT_SHA = {
-    "neither": "c6c8040199dc082ae3a03811a010e2ff1254595560093fa77e0faafe7b393d98",
-    (True, True): "2d113d5a28c3026ca2d6e3caaaca35e36b2a3b441b885b0fe8f8fcd4359996c9",
-    (True, False): "a8a1b2451928c251c49b62038429c61df5dfa75928d68f7d10409d35a095564c",
-    (False, True): "0739183af6e439c730c37f530f7325c69b389d4b2c3fa751f29128fb9493545f",
+    "neither": "6de1ce89685f26a24358129bd07172dd787517f4e8a17bfdffe798cf09a1bca4",
+    (True, True): "292137f1287a5e7595426d744642886921488ffeed2ed6b7228212a5ad2532da",
+    (True, False): "3e5c06939f98d67f2c7780f53a15d42aaf2bb587e9261ac37e282c74ac559b80",
+    (False, True): "60d598c85d722c110a4ef2e3e1ad5d8ca3ab7d36a6d7a99c64d1b5b17b7b3fa2",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (

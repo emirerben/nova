@@ -59,3 +59,36 @@ look lands on a requirement without the captions; a count other than 1-3 is writ
 A brief written without the fact (an older thread, or a model that still omits it) cannot be judged
 against her count/box/"all" without reading her words (KRI-667). The receipts can only describe
 what the video really holds (see the group E report).
+
+## Case 10 (added on request of the says-done orchestrator): a title / ending hold read as the video's length
+
+Her Q1 says `Start with a big title "lets build an agent that reads an APP before I trust it!!" for
+the first 3 seconds` and `End with "comment READ" and an arrow for the last 3 seconds`. Filed as
+`timing`/`global` `{"duration_s": 3}`, either one has the typed shape of a whole-video length ask
+(`length_policy.creator_duration`), and code may not read the words to tell them apart (KRI-667).
+Group B (346d640be) makes a `title`-scoped hold one moment; a `global` one stays a length.
+
+Acceptance: for her two sentences the brief holds the title as a `text`/`title` requirement and the
+ending as a `text`/`global` requirement with the seconds only in their descriptions, and NO
+`timing` requirement with `duration_s` (`creator_duration(brief)` is None). Control: "... for the
+first 3 seconds and make the video 30 seconds long" keeps the title AND a `timing`/`global`
+`{"duration_s": 30}` (`creator_duration` = 30).
+
+Ways it could fail:
+10a. **The length rule wins.** "ALWAYS add a timing requirement ... any number of seconds" has no
+     exception, so the model still files `duration_s: 3`. Mitigation: an explicit exception with
+     her two sentences as worked examples, placed right after the length rule.
+10b. **Over-correction.** The model stops recording real lengths when a message also has a timed
+     title ("title for 3 seconds, make it 30 seconds"). Mitigation: the example says a length of the
+     whole video still records `duration_s`; the control fixture pins both in one message.
+10c. **The hold moves to a scope the server reads as a length.** `timing`/`title` `duration_s` is a
+     length on main until group B merges. Mitigation: teach no `timing` row at all for a one-moment
+     hold; the strategy (`opening_title_duration_s`, `pinned_texts` `end_s`) carries the seconds.
+10d. **Clip holds caught by the new rule.** "show this clip for 2 seconds" is a clip hold
+     (`timing`/`clip:<id>`, KRI-824), not a title. Mitigation: the rule names only an opening title
+     and the ending words.
+10e. **Ending filed with the `closing` fact.** `closing` is for ending on a shot / photo / badge;
+     the ending words are a `text` requirement with the literal (item 14 reads the arrow from it).
+     Mitigation: the example shows `facts: {}`; the Q1/Q2 goldens drop the `closing` fact they had.
+10f. **Kit test stays red.** `test_q1_title_hold_length` builds the `timing`/`global` rows itself;
+     a prompt cannot turn it green. That is expected: it pins what code does with a wrong brief.
