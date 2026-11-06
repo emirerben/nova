@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.28.0] - 2026-11-06
+
+### Changed
+- fix(kria): every served suggestion card executes (follow-up to #2109) (#2135) <!-- release-pr: 2135 -->
+
 ## [0.88.27.0] - 2026-11-06
 
 ### Changed
