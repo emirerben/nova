@@ -1,0 +1,41 @@
+{
+ "id": "unissued_kind",
+ "description": "A kind that was never issued (the schema enum forbids it): the whole answer is void.",
+ "context": "nermin-matcha-update::first_prompt",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "fireworks",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 1
+   },
+   {
+    "kind": "hook",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 2
+   }
+  ]
+ },
+ "expect": {
+  "wording": "fallback",
+  "stored_status": "fallback",
+  "fallback_reason": "schema_error",
+  "kinds": [
+   "default_edit",
+   "hook",
+   "sfx",
+   "transition"
+  ]
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

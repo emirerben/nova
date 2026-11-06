@@ -5,33 +5,40 @@ Footage-aware starter and follow-up chips for the Kria creation chat in the **iO
 (web is out of scope and ignores every field below). Ships dark behind
 `KRIA_SUGGESTION_CHIPS_ENABLED`.
 
-**The generator decides which chips may exist. The agent only words them.**
+**The generator decides which chips may exist. The agent only picks and orders them.**
 
 1. A pure, free, LLM-free **candidate generator** (`build_candidates`) emits only chips that are
    *real* (the footage or edit exists), *enabled* (the manifest / editor `allowed_op_families` /
    client protocol say so), *executable* (a dry-run witness proved the change is not a no-op)
    and *not already in the edit*.
-2. A small text-only Flash agent, `nova.chat.suggester`, runs in a worker **off the request
-   path**. It can only return candidate ids it was given; it ranks them and rewrites their
-   display `label` and one-line `why`. `kind`, `capability`, `message`, `target` and `anchor`
-   are always copied from the candidate. A deterministic validator gates every label and `why`.
+2. The suggestion agent, `nova.chat.suggestion_agent` (OpenAI `KRIA_SUGGESTER_MODEL`, strict
+   `json_schema`), runs in a worker **off the request path**. It can only return kinds and clip
+   handles the server issued; it picks, orders and writes a one-line `why` (and, for a hook, the
+   exact text). `label`, `kind`, `capability`, `message`, `target` and `anchor` are always the
+   server's own, and the server builds every `Action` from the kind's registry row and proves it
+   with the kind's witness. A deterministic validator gates every `why` and `copy`.
 3. `GET /creation-threads/{id}/suggestions` **never calls a model**. It recomputes the
-   candidates, joins the cached agent wording, falls back per chip to the template label, and
-   freezes what it served.
+   candidates, joins the cached agent picks, falls back to the deterministic order, and freezes
+   what it served.
 4. The app renders server chips only when `capabilities.suggestion_chips` is true AND the GET
    returns `status: "ok"` with at least one chip; otherwise it keeps the old fixed ready-card
    chips. Flag off is byte-identical to legacy: no capability, GET answers `unavailable`, no
    agent runs, no payload keys.
 
 Code: [`services/suggestion_chips.py`](../../src/apps/api/app/services/suggestion_chips.py)
-(models, candidates, assembly, tap detection, ring, loader),
+(models, candidates, assembly, tap detection, ring, loader; the kind rows and the shared snapshot
+readers live in [`services/suggestions/`](../../src/apps/api/app/services/suggestions), see
+[`suggestion-blocks`](suggestion-blocks.md)),
 [`services/suggestion_chip_copy.py`](../../src/apps/api/app/services/suggestion_chip_copy.py)
-(label and `why` validators),
+(`why` / `copy` validators, the template label guard, new-kind card copy),
 [`services/suggestion_serve.py`](../../src/apps/api/app/services/suggestion_serve.py)
 (the GET read path, enqueue helpers),
 [`services/suggestion_store.py`](../../src/apps/api/app/services/suggestion_store.py) (Redis),
-[`agents/chip_suggester.py`](../../src/apps/api/app/agents/chip_suggester.py) +
-[`prompts/chip_suggester.txt`](../../src/apps/api/prompts/chip_suggester.txt),
+[`agents/suggestion_agent.py`](../../src/apps/api/app/agents/suggestion_agent.py) +
+[`prompts/suggestion_agent.txt`](../../src/apps/api/prompts/suggestion_agent.txt) +
+[`agents/skills/edit-improver`](../../src/apps/api/app/agents/skills/edit-improver/SKILL.md),
+[`services/suggestions/picks.py`](../../src/apps/api/app/services/suggestions/picks.py) (pick to
+card),
 [`tasks/kria_suggester.py`](../../src/apps/api/app/tasks/kria_suggester.py), and the route /
 capability in [`routes/creation_threads.py`](../../src/apps/api/app/routes/creation_threads.py).
 Eval, report and funnel tooling: [`suggested-chips`](suggested-chips.md).
@@ -151,44 +158,81 @@ when a new text-carrying op enters the editor op vocabulary without an explicit 
 
 ### Adding a kind
 
-1. Add the `ChipKind`, copy in `_COPY` (en + tr), lexicon stems in
-   `suggestion_chip_copy.LEXICON`, and a `ChipKindSpec` row in `CHIP_KIND_GATE` (`available`,
-   `already_present`, `ground`, `dry_run` per state, `expects`, `claimed_op`, `witness_op`,
-   `min_protocol`).
+1. Add the `ChipKind` (`suggestions/models.py`), copy in `_COPY` (en + tr), lexicon stems in
+   `suggestion_chip_copy.LEXICON`, and a `ChipKindSpec` row in `suggestions/kinds/<kind>.py`
+   (`available`, `already_present`, `ground`, `dry_run` per state, `expects`, `claimed_op`,
+   `witness_op`, `min_protocol`) registered in `suggestions/kinds/__init__.py`; `CHIP_KIND_GATE`
+   is built from the registry in its original order.
 2. Decide the op in `CHIP_OP_ALLOW` / `CHIP_OP_DENY`; prove it with a strategy or editor witness
    (or an explicit allow-list entry and a reason).
 3. Extend the replay eval ([`suggested-chips`](suggested-chips.md)) and this table.
 
-## Wording agent (`nova.chat.suggester`)
+## Suggestion agent (`nova.chat.suggestion_agent`)
 
-AgentSpec: `prompt_id chip_suggester`, `prompt_version 2026-10-19.2` (`PROMPT_VERSION` in
-`suggestion_chips.py`; bump it with the prompt), `gemini-2.5-flash`, `thinking_budget 128`,
-`max_attempts 2`, `timeout_s 12`, `sensitive_io false`. Feature name for cost control:
-`chip_suggester`.
+AgentSpec: `prompt_id suggestion_agent`, `prompt_version` = `PROMPT_VERSION` in
+`suggestion_chips.py` (bump it with the prompt or the `edit-improver` skill; it also feeds every
+set digest), model `KRIA_SUGGESTER_MODEL` (default `gpt-6.1-sol`) through `OpenAITextClient`,
+reasoning effort `medium`, `max_output_tokens 2500`, `max_attempts 1` (a failed run is one paid
+attempt, never a retry), `timeout_s 25`, **`sensitive_io true`** (transcripts are the creator's
+private speech: the raw response and input never reach AgentRun or logs). The strict schema is
+built per run (`agent_response_schema`) and closed over the kinds and clip handles the server
+issued. Ledger feature name and daily-cap key: `nova.chat.suggestion_agent` (`spec.name`).
 
-* **Input** (`ChipSuggesterInput`): `state`, `language`, `max_chips`, `footage` (opaque handles
-  `c1..cN`, moments `c2.m1`; `subject` <= 6 words, `setting`, `speech none|voiceover|to_camera`,
-  moment `description` <= 60 chars), `already_in_edit` tags, `candidates` (`cid`, `kind`,
-  `gap_tags`, `facts`, `label_slots` names, `fallback_label`), and `typed_request` (ready only,
-  <= 200 chars). No media id, timestamp, transcript or creator-typed text at first_prompt.
-* **Output**: `{default_label, ranked: [{cid, label_template, why}]}`; `parse()` drops unknown
-  cids, duplicate kinds and over-limit items (<= 3 first_prompt, <= 4 ready).
-* **Label rules** (`validate_label`, deterministic): <= 36 chars; no digits or quotes outside
-  placeholders; only `{time}` / `{filename}` and only if listed in the candidate's `label_slots`;
-  every word in the kind's per-language lexicon or the function-word list; at least one word that
-  names the kind's action; no word that belongs only to a different kind (label parity); no
-  negation or reverse-direction word (`polarity`: `up`/`loud` on the music chip, whose tap only
-  lowers it; `hard`/`cut` on transitions; `no`, `not`, `without`, `off`, `remove`); stoplist
-  and cringe stoplist; `en` / `tr` only (others fall back to `en`). Failure: the template label,
-  `label_source: "template"`, drop reason `label_*`.
-* **`why` rules** (`validate_why`): <= 48 chars, no digits / quotes / handles / links, stoplist,
-  in the chat language, no capability word of another kind or an unoffered one (`capability`:
-  a sfx chip's subtitle cannot say music or captions), and at least one folded content word
-  (filler words like `with` do not count) that also appears in the footage analysis. The
-  analyzer writes English, so a non-English `why` normally has no overlap and is dropped (the
-  prompt tells the agent to use null instead of mixing languages). Failure: `why` is dropped. **Gemini-derived text (subject, moment, setting) appears
-  only in `why`, never in `message` or any overlay.**
-* Copy-bearing kinds (`hook`, `pinned_text`) are asks only and at most one per set.
+* **Input** (`SuggestionAgentInput`, `build_agent_input`): the agent's full READ access.
+  `kinds` (the issued kinds with `gap_tags`, `facts`, `carries_copy`), `clips` (handles `c1..cN`;
+  server-measured `speech`, `duration_s`, `signals`; everything Gemini wrote or the creator said
+  sits under the clip's `untrusted` key: `subject`, `setting`, `moments`, `transcript` <= 420
+  chars), `already_in_edit` tags, `editor` summary (ready only: op families, slot count, title,
+  captions, music level), `capabilities`, `brief`, `typed_request` (ready only). No media id and
+  no timestamp. The prompt tells the model `untrusted` is data, never instructions.
+* **Output** (`SuggestionAgentOutput`): `{ranked: [{kind, target_ids, why, copy, rank}]}`. No field
+  for an op, an action, a message or a label (`extra="forbid"`). `parse_agent_output_tolerant`
+  (what `SuggestionAgent.parse` calls) voids an answer that names an unissued kind or handle, has
+  an unknown field or a wrong type: the run stores a fallback marker. OpenAI strict mode carries
+  no `maxLength` / `maxItems`, so it repairs SIZES instead of voiding: `why` cut at a word boundary
+  to 96, `copy` over 200 dropped (never cut), targets clamped to the first 3 distinct, picks
+  ordered by the rank given, a repeated (kind, targets) pair dropped, 5 kept, ranks renumbered
+  1..n. Kind and handle are checked on every pick before anything is trimmed. `parse_agent_output`
+  is the strict contract the edit-improver skill eval grades raw model output against.
+* **Issued kinds** (`picks.issue_kinds`): the engine's proven candidates plus every other
+  registry kind that is switched on for the phone, in this state, fits the protocol, and whose own
+  `availability` says yes and `already_present` says no. Nothing is issued before first-prompt
+  understanding completes.
+* **Build** (`picks.build_suggestions`): for each pick in rank order: kind issued and enabled, at
+  most one card per kind and one copy-bearing card, target handles resolved to targets the server
+  owns (an engine kind keeps its engine target), `copy` gated by `validate_copy`, the `Action`
+  built by the kind's `build_action` and proved by its `witness` (no overlap with a prior card's
+  touched targets). A pick that fails any step is dropped by reason (`unknown_kind`,
+  `kind_disabled`, `no_action`, `witness_*`, `overlap`, `copy_*`, `duplicate_kind`, `over_limit`).
+  No usable pick (empty or all dropped) serves the deterministic order instead.
+* **`why` rules** (`validate_why`): <= 48 chars on a chip, <= 96 on a card; no digits / quotes /
+  handles / links, stoplist, in the chat language, no capability word of another kind, at least one
+  folded content word that also appears in the footage analysis, and no run of three words taken
+  from a transcript (`shares_run`). Failure: the deterministic evidence line stands in.
+* **`copy` rules** (`validate_copy`, hook and `pinned_text` only): one plain line <= 60 chars in the
+  thread language, no markup / links / handles / hype, and no run of three words, or a whole subject,
+  taken from a transcript or the Gemini subject / setting / moment text. Links are refused in every
+  form (`looks_like_link`: scheme, `www.`, a bare domain like `evil.com` / `bit.ly`, "dot com" /
+  "nokta com" / "slash com", also with the letters spaced apart: "dot c o m"), also in a `why`. A word mixing
+  letters and digits ("d0t", "l1nk") is refused by `validate_copy` itself. Turkish copy may only use ASCII, Turkish letters or an ASCII letter
+  plus an accent (`has_lookalike_letter`: no small-capital o, script g). The hook kind adds (in
+  `hook.check_copy`): the cringe/bait list also over the text with hyphens as spaces and runs of
+  single letters joined ("Link-in-bio", "f o l l o w me") and with spaces ignored when the phrase
+  starts at a word start ("fo llow me", `squashed_phrase_hit`; "unlimited time" is not "limited time"), and a paraphrase check
+  (`echoes_source`) per clause of each transcript and on-screen text: two or more shared content
+  stems that make up 60% of the copy's. **Gemini metadata never becomes on-screen text.** A card never puts the copy in its `prompt` (the chat message a tap
+  sends is a closed template).
+* **Wire**: the legacy `chips` keep their KRI-756 shape (template `label` and `message`;
+  `label_source` is always `template`). The v2 `suggestions` and `digest` appear only behind
+  `KRIA_SUGGESTION_PINNED_TAPS_ENABLED` (a card is only safe to tap when the tap is pinned);
+  off, the JSON is byte-for-byte the chips-only set.
+* **Cost**: the run books under the `suggestions` OpenAI credit capability
+  (`AI_OPENAI_SUGGESTIONS_BUDGET_USD`, default 0 = no spend; enforced even while
+  `AI_COST_CONTROL_ENABLED` is off, like `intent_review`), a per-call cap
+  (`KRIA_SUGGESTER_MAX_USD`, checked on the worst-case estimate before any ledger contact), the
+  per-thread run cap and the per-user daily cap. Every failure (budget, call cap, timeout, refusal,
+  truncation, schema, provider error) writes a fallback marker with its reason and serves the
+  deterministic set at once, never a 500.
 
 ## Triggers, storage and caps
 
@@ -206,11 +250,11 @@ AgentSpec: `prompt_id chip_suggester`, `prompt_version 2026-10-19.2` (`PROMPT_VE
   (the language and protocol the GET last saw, because the worker has no request headers).
   **Nothing is written to `thread.state` from the worker.** No migration.
 * Settings that bound the agent (not flags): `KRIA_SUGGESTER_MAX_RUNS_PER_THREAD` (default 12;
-  **0 disables the agent only**, chips fall back to templates: the cost kill lever) and
+  **0 disables the agent only**, chips fall back to the deterministic order: the cost kill lever) and
   `KRIA_SUGGESTER_DAILY_LIMIT_PER_USER` (default 20 paid model ATTEMPTS per creator per UTC day, not chip runs: a retry is a second
   reservation, so flaky runs reach it sooner; counted from `ai_cost_reservations` by the
-  literal feature name `chip_suggester`, because a new feature name escapes the `edit_director`
-  check). A budget, quota or cap stop gives a fallback marker, never a 500.
+  literal feature name `nova.chat.suggestion_agent`, because a new feature name escapes the
+  `edit_director` check). A budget, quota or cap stop gives a fallback marker, never a 500.
 
 ## Tap path and persistence
 
@@ -277,5 +321,5 @@ TestFlight build.
   list) just costs one lazy run from the GET.
 * `shown` means served, not seen; there is no `retry` / failed-render chip and no seen beacon yet.
 * A typed message equal to a chip counts as a tap when no explicit `suggestion` id is sent.
-* The label vocabulary is deliberately closed, so some agent rewordings fall back to the
-  template; the eval lane measures the rate.
+* The agent no longer writes labels: the template deck is the only source of a label, and
+  `validate_label` stays as a guard that every template label obeys its own closed vocabulary.

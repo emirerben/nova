@@ -1,0 +1,85 @@
+{
+  "name": "d17_four_way_burst_is_taken_in_steps",
+  "description": "Four takes: one card keeps the best and removes two; the refresh offers the rest.",
+  "language": "en",
+  "clips": [
+    {
+      "media_id": "m1",
+      "kind": "video",
+      "duration_s": 4.0,
+      "hashes": [
+        "dec1ede0758d8515",
+        "9e3408b2456f8785",
+        "9b9def52dd9b3d51"
+      ],
+      "sharpness": 50,
+      "mean_luma": 120.0
+    },
+    {
+      "media_id": "m2",
+      "kind": "video",
+      "duration_s": 4.0,
+      "hashes": [
+        "dec1ede0758d8514",
+        "9e3408b2456f8784",
+        "9b9def52dd9b3d50"
+      ],
+      "sharpness": 80,
+      "mean_luma": 120.0
+    },
+    {
+      "media_id": "m3",
+      "kind": "video",
+      "duration_s": 4.0,
+      "hashes": [
+        "dec1ede0758d8516",
+        "9e3408b2456f8786",
+        "9b9def52dd9b3d52"
+      ],
+      "sharpness": 120,
+      "mean_luma": 120.0
+    },
+    {
+      "media_id": "m4",
+      "kind": "video",
+      "duration_s": 4.0,
+      "hashes": [
+        "dec1ede0758d8512",
+        "9e3408b2456f8782",
+        "9b9def52dd9b3d56"
+      ],
+      "sharpness": 200,
+      "mean_luma": 120.0
+    },
+    {
+      "media_id": "m5",
+      "kind": "video",
+      "duration_s": 4.0,
+      "hashes": [
+        "e9daf9c495f635b9",
+        "2f15a0a0d2b70b80",
+        "50f24a15eb3bb540"
+      ],
+      "sharpness": 100.0,
+      "mean_luma": 120.0
+    }
+  ],
+  "slots": [
+    "m1",
+    "m2",
+    "m3",
+    "m4",
+    "m5"
+  ],
+  "needed": [],
+  "expect": {
+    "offered": true,
+    "ops": [
+      0,
+      1
+    ],
+    "keep": "m4",
+    "reason": "sharper",
+    "prompt": "Keep the better of clips 1, 2, 4"
+  }
+}

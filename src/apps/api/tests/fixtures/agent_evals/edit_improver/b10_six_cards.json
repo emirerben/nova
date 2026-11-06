@@ -1,0 +1,148 @@
+{
+  "id": "b10_six_cards",
+  "why_bad": "six cards when five is the cap",
+  "expect": "fail",
+  "expect_failures": [
+    "schema"
+  ],
+  "input": {
+    "state": "ready",
+    "language": "en",
+    "creator_request": "",
+    "issued": [
+      {
+        "kind": "hook",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "captions",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "sfx",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "transition",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "music",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "title_animation",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      }
+    ],
+    "evidence": {
+      "e1": {
+        "signal": "visual",
+        "fact": "opening clip shows hands pouring matcha"
+      }
+    },
+    "already_in_edit": [],
+    "dismissed": [],
+    "untrusted_texts": []
+  },
+  "output": {
+    "ranked": [
+      {
+        "kind": "hook",
+        "target_ids": [
+          "all"
+        ],
+        "why": "Opening shows matcha pouring",
+        "copy": "Matcha, poured slow",
+        "rank": 1
+      },
+      {
+        "kind": "captions",
+        "target_ids": [
+          "all"
+        ],
+        "why": "Opening shows matcha pouring",
+        "copy": null,
+        "rank": 2
+      },
+      {
+        "kind": "sfx",
+        "target_ids": [
+          "all"
+        ],
+        "why": "Opening shows matcha pouring",
+        "copy": null,
+        "rank": 3
+      },
+      {
+        "kind": "transition",
+        "target_ids": [
+          "all"
+        ],
+        "why": "Opening shows matcha pouring",
+        "copy": null,
+        "rank": 4
+      },
+      {
+        "kind": "music",
+        "target_ids": [
+          "all"
+        ],
+        "why": "Opening shows matcha pouring",
+        "copy": null,
+        "rank": 5
+      },
+      {
+        "kind": "title_animation",
+        "target_ids": [
+          "all"
+        ],
+        "why": "Opening shows matcha pouring",
+        "copy": null,
+        "rank": 6
+      }
+    ]
+  }
+}
