@@ -285,6 +285,9 @@ def test_retry_with_real_checker_rejects_changed_production_or_guard(
     scripts = repo / "scripts"
     scripts.mkdir()
     (scripts / "run-video-poster-backfill.sh").write_text(launcher.SCRIPT.read_text())
+    (scripts / "fly-production-inventory.jq").write_text(
+        (launcher.SCRIPT.parent / "fly-production-inventory.jq").read_text()
+    )
     monkeypatch.setattr(launcher, "SCRIPT", launcher.REPO_ROOT / "scripts/fly-deploy-with-retry.sh")
     deploy_stub = r"""
 if [[ "$1" == "deploy" ]]; then
