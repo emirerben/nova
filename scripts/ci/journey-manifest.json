@@ -2028,6 +2028,7 @@
         "src/apps/api/tests/fixtures/agent_evals/brief_extractor/kri1189_followup_cut_restart_en.json",
         "src/apps/api/tests/fixtures/agent_evals/brief_extractor/kri1189_followup_start_over_en.json",
         "src/apps/api/tests/fixtures/agent_evals/brief_extractor/kri1189_followup_tekrar_aldigim_tr.json",
+        "src/apps/api/tests/fixtures/agent_evals/brief_extractor/qendresa_followup_two_words_all_pauses_en.json",
         "src/apps/api/tests/evals/test_brief_extractor_evals.py",
         "src/apps/api/tests/evals/runners/restart_brief.py"
       ]
