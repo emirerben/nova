@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.18.0] - 2026-11-06
+
+### Changed
+- Keep saved video edits reachable and safe to retry after render failure (#2126) <!-- release-pr: 2126 -->
+
 ## [0.88.17.0] - 2026-11-06
 
 ### Changed
