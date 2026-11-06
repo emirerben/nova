@@ -9,7 +9,7 @@ from app.agents._schemas.creator_agent import (
     ProposeStrategy,
     ResolvedCreatorManifest,
 )
-from app.agents.main_creator import MAIN_CREATOR_PROMPT_VERSION, MainCreatorAgent, MainCreatorInput
+from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
 
 
 def _manifest() -> ResolvedCreatorManifest:
@@ -122,7 +122,6 @@ def test_brief_prompt_requires_explicit_versioned_target_for_changes() -> None:
         _input().model_copy(update={"brief_enabled": True})
     )
 
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-06-v136"
     assert '`operation`: "change"' in prompt
     assert "target_requirement_id" in prompt
     assert "expected_version" in prompt

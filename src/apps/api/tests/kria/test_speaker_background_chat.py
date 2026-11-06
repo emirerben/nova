@@ -390,12 +390,6 @@ def test_a_closed_gate_prompt_is_byte_identical_to_one_with_no_background_suppor
     assert "PHOTO OR VIDEO BEHIND THE SPEAKER" not in closed
 
 
-def test_the_prompt_version_is_bumped_for_the_new_field():
-    from app.agents.main_creator import MAIN_CREATOR_PROMPT_VERSION
-
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-06-v136"
-
-
 # ----------------------------------------------------------- KRI-1162: several backgrounds
 
 

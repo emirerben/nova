@@ -82,3 +82,26 @@ Typed ask: a live `text` requirement, scope `global`, with a `literal` (the brie
 | 10.2 | The same hold filed as `timing/global` (`title_hold_scope_global`, `ending_hold`). | NOT fixed: its typed fields equal a real length ask's ("make it 3 seconds"); only the words differ, which KRI-667 forbids reading. Needs the brief writer to file a hold on its title / closing row (group E). Those two kit params stay red. |
 | 10.3 | A real length ask stops counting. | Only scope `title` changes; `global` length rows unchanged. `test_a_global_length_still_counts`. |
 | 10.4 | Switch off. | Unchanged. `test_switch_off_reads_the_title_row_as_before`. |
+
+## Case 9 follow-up — an ending's words are never the opening title or a whole-video pin
+
+After #2130 (Yasin, 2026-11-06): "End with THANK YOU for the last 2 seconds" is filed by the brief
+writer (group E, Main Creator v137) as a `text/global` literal with the typed fact
+`{"closing": "<words>"}`. With no title ask, `unified_montage._title` fell back to that global
+literal as the opening title, and `_whole_video_title_pin` then pinned it for the whole video
+(0–11 s) beside the 2 s closing title. Typed fact only (KRI-667): a text literal whose `facts`
+carry a non-empty `closing` value is an ending; no wording is read. Same switch,
+`WHOLE_VIDEO_TEXT_PIN_ENABLED` (off = byte-identical to before #2130). Group E's strict xfail
+`tests/kria/test_says_done_e_ending_receipt.py::test_known_gap_ending_only_brief_is_pinned_whole_video`
+(PR #2131) covers the same case.
+
+| # | Failure mode | Handling / pinned by |
+|---|---|---|
+| 9.11 | Ending-only brief, no title ask: the closing literal becomes the brief-fallback opening title (0–2.2 s) and is then pinned for the whole video. | With the switch on, `_title`'s brief-literal fallback skips a global literal that carries `closing`, and `_whole_video_title_pin` never pins one. THANK YOU is drawn only as the closing title (9–11 s of 11 s) and the final review says met. `test_an_ending_only_brief_is_drawn_only_at_the_end`. |
+| 9.12 | The planner also wrote the ending's words as `opening_title`. | Not pinned (the literal is an ending); the title stays the planner's short title, as before #2130. `test_an_ending_filed_as_the_opening_title_is_not_pinned`. |
+| 9.13 | A whole-video line with no `closing` fact stops being pinned (the case-9 fix regresses). | Only a literal carrying `closing` is skipped; the case-9 guards stay as they are (`test_whole_video_line_stays_on_screen`), plus a same-brief control: the same words with `facts` {} are still pinned 0 → end. |
+| 9.14 | Title + ending brief changes. | A title-scope literal still wins in `_title` and blocks the pin (9.2); the ending is the closing title. Asserted equal to the switch-off render. `test_title_and_ending_are_unchanged`. |
+| 9.15 | Two global literals: an ending and a whole-video line. | The ending is skipped as the fallback title; the other literal (first without `closing`) is the fallback and is pinned whole video. `test_a_whole_video_line_beside_an_ending_is_still_pinned`. |
+| 9.16 | A falsy or malformed `closing` value (`""`, `null`, `false`). | Not an ending (only a non-empty string or `true` counts): the literal behaves as before. |
+| 9.17 | Switch off. | `_title` and the pin step are byte-identical to before #2130 (the ending-only literal is a 2.2 s opening title again). `test_switch_off_keeps_the_old_ending_fallback`. |
+| 9.18 | (Review, PR #2138) The ending check matched words, not requirements: r1 `FOLLOW ME` (whole video, `facts` {}) and r2 `FOLLOW ME` (`closing`) — both were skipped as the fallback title, so r1's whole-video line vanished; the pin guard had the same words-only ambiguity when the planner wrote `FOLLOW ME` as `opening_title`. | The ending flag rides on each global literal entry (`BriefView.global_literals` = text, position, ending). The fallback takes the first entry that is not itself an ending; the pin step skips only when every same-words entry is an ending, and otherwise pins with the non-ending entry's position. Both asks kept: r1 pinned 0 → end, r2 the closing title at the end. `test_the_same_words_as_a_whole_video_line_and_an_ending_keep_both` (fallback and `opening_title` filings, through planner, compiler and final review). |
