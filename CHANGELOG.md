@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.17.0] - 2026-11-06
+
+### Changed
+- feat(kria): AI suggestion cards that apply the checked edit on tap (dark) (#2109) <!-- release-pr: 2109 -->
+
 ## [0.88.16.0] - 2026-11-06
 
 ### Changed
