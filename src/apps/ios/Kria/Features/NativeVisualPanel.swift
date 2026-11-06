@@ -423,6 +423,10 @@ struct NativeVisualPanel: View {
 
     private var transitionsCategory: some View {
         VStack(spacing: 12) {
+            if let error = session.splitScreenActionError {
+                Text(error).font(.footnote).foregroundStyle(KriaColor.failureText)
+                    .accessibilityIdentifier("native-editor-transition-error")
+            }
             Picker("Transition", selection: $panelDrafts.wholeVideoTransition) {
                 ForEach(NativeEditorWireContract.transitions, id: \.self) { value in
                     Text(nativeEditorWireLabel(value)).tag(value)

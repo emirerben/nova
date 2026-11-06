@@ -2709,11 +2709,19 @@ def _op_split_clip(state: _DraftState, op: dict[str, Any]) -> None:
 
 def _op_set_transition(state: _DraftState, op: dict[str, Any]) -> None:
     active = [index for index, row in enumerate(state.slots) if not row.get("removed")]
-    boundary = _require_index(active[:-1], op.get("boundary_index"), "Transition")
+    boundary = _require_index(active, op.get("boundary_index"), "Transition")
     row = state.slots[active[boundary]]
-    row["transition_after"] = op["transition"]
-    row["transition_duration_s"] = (
-        None if op["transition"] == "cut" else float(op.get("duration_s") or 0.3)
+    from app.kria.split_screen import has_timeline_transition_successor, set_timeline_transition
+
+    if not has_timeline_transition_successor(state.slots, row):
+        raise KriaEditorOpError("Transition changed before this edit could be drafted")
+
+    set_timeline_transition(
+        state.slots,
+        state.split_screen_sections,
+        row,
+        op["transition"],
+        None if op["transition"] == "cut" else float(op.get("duration_s") or 0.3),
     )
     state.changed.add("timeline")
 

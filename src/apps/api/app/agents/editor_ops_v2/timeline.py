@@ -896,8 +896,10 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
             else:
                 row["tilt"] = tilted
                 applied += 1
+        from app.kria.split_screen import has_timeline_transition_successor
+
         if ("transition_after" in patch or "transition_duration_s" in patch) and (
-            index != last_active
+            has_timeline_transition_successor(rows, row)
         ):
             current = row.get("transition_after") or "cut"
             transition = patch.get("transition_after", current)
@@ -907,13 +909,23 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
                     # not applied (reported honestly below), row untouched.
                     duration_only_on_cut = True
                     continue
-                row["transition_after"] = "cut"
-                row["transition_duration_s"] = None
+                seconds = None
             else:
-                seconds = patch.get("transition_duration_s") or row.get("transition_duration_s")
-                row["transition_after"] = transition
-                row["transition_duration_s"] = float(seconds or 0.3)
+                seconds = float(
+                    patch.get("transition_duration_s") or row.get("transition_duration_s") or 0.3
+                )
+            from app.kria.split_screen import set_timeline_transition
+
+            set_timeline_transition(
+                state.slots, state.split_screen_sections, row, transition, seconds, validate=False
+            )
             applied += 1
+    if state.split_screen_sections and (
+        "transition_after" in patch or "transition_duration_s" in patch
+    ):
+        from app.kria.split_screen import layout_split_timeline
+
+        layout_split_timeline(rows, state.split_screen_sections)
     if not applied:
         if tilt_unchanged:
             raise _err(

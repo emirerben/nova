@@ -154,3 +154,74 @@ def layout_split_timeline(
     if set(placed) != set(by_id):
         raise ValueError("every split section needs a timeline member")
     return starts, list(placed.values()), cursor
+
+
+def has_timeline_transition_successor(rows: list[dict[str, Any]], row: dict[str, Any]) -> bool:
+    active = [candidate for candidate in rows if not candidate.get("removed")]
+    if row.get("split_section_id"):
+        return any(
+            candidate.get("split_section_id") == row["split_section_id"]
+            and candidate.get("split_panel_index") == row["split_panel_index"]
+            and float(candidate["split_offset_s"]) > float(row["split_offset_s"])
+            for candidate in active
+        )
+    return bool(active) and active[-1] is not row
+
+
+def set_timeline_transition(
+    rows: list[dict[str, Any]],
+    sections: list[dict[str, Any]],
+    row: dict[str, Any],
+    transition: str,
+    duration: float | None,
+    *,
+    validate: bool = True,
+) -> None:
+    """Apply an outgoing transition without changing source windows or peer clocks."""
+    patch = {
+        "transition_after": transition,
+        "transition_duration_s": None if transition == "cut" else duration,
+    }
+    if not row.get("split_section_id"):
+        row.update(patch)
+        return
+    later = sorted(
+        [
+            candidate
+            for candidate in rows
+            if not candidate.get("removed")
+            and candidate.get("split_section_id") == row["split_section_id"]
+            and candidate.get("split_panel_index") == row["split_panel_index"]
+            and float(candidate["split_offset_s"]) > float(row["split_offset_s"])
+        ],
+        key=lambda candidate: float(candidate["split_offset_s"]),
+    )
+    shifted = {}
+    if later:
+        end = float(row["split_offset_s"]) + float(row["duration_s"])
+        next_start = float(later[0]["split_offset_s"])
+        # An authored gap stays a gap. At an actual join the suffix moves as
+        # one unit so later transitions and deliberate gaps retain their lengths.
+        if next_start <= end + 1e-6:
+            old_overlap = max(0.0, end - next_start)
+            new_overlap = transition_overlap({**row, **patch}, later[0])
+            delta = old_overlap - new_overlap
+            shifted = {
+                id(candidate): float(candidate["split_offset_s"]) + delta for candidate in later
+            }
+    proposed = [
+        {
+            **candidate,
+            **(patch if candidate is row else {}),
+            **({"split_offset_s": shifted[id(candidate)]} if id(candidate) in shifted else {}),
+        }
+        for candidate in rows
+    ]
+    # Validate before mutating: removing an overlap must never trim a suffix
+    # that no longer fits or silently extend the section.
+    if validate:
+        layout_split_timeline(proposed, sections)
+    row.update(patch)
+    for candidate in later:
+        if id(candidate) in shifted:
+            candidate["split_offset_s"] = shifted[id(candidate)]

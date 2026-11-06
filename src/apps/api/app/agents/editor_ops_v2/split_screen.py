@@ -142,9 +142,12 @@ def validate_state(state: Any) -> None:
 def _bound_duration(row: dict, room: float, editor: Any) -> None:
     if room < 0.1:
         raise ValueError("The section leaves less than 0.1 seconds for this clip")
+    duration = editor._slot_duration(row)
+    if duration <= room + 1e-6:
+        return
     from app.kria.clip_source_clock import slice_source_window
 
-    row.update(slice_source_window(row, 0, min(editor._slot_duration(row), room)))
+    row.update(slice_source_window(row, 0, room))
 
 
 def _apply(state: Any, op: dict[str, Any]) -> None:
@@ -192,11 +195,10 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
                     after.append(suffix)
             if len(rows) > count and not full:
                 raise ValueError("Choose at most one source clip per panel, or use full_length")
+            serial_starts, _, serial_duration = layout_split_timeline(rows, [])
             duration = command.get(
                 "duration_s",
-                sum(editor._slot_duration(r) for r in rows)
-                if full
-                else max(editor._slot_duration(r) for r in rows),
+                serial_duration if full else max(editor._slot_duration(r) for r in rows),
             )
             section = SplitScreenSection(
                 id=str(uuid4()),
@@ -209,8 +211,8 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
             members = []
             for panel in range(count):
                 panel_rows = rows if full else [rows[panel] if panel < len(rows) else rows[0]]
-                offset = 0.0
-                for source in panel_rows:
+                for source_index, source in enumerate(panel_rows):
+                    offset = serial_starts[source_index] if full else 0.0
                     row = editor.copy_source_occurrence(source)
                     if (full and panel > 0) or (not full and panel >= len(rows)):
                         row["slot_id"] = str(uuid4())
@@ -221,7 +223,6 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
                     )
                     _bound_duration(row, duration - offset, editor)
                     members.append(row)
-                    offset += editor._slot_duration(row)
             state.slots[min(indexes) : max(indexes) + 1] = before + members + after
             state.split_screen_sections.append(section)
         else:
@@ -240,6 +241,14 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
                 if "panel_count" in updates and "panel_weights" not in updates:
                     updates["panel_weights"] = [1] * updates["panel_count"]
                 revised = SplitScreenSection.model_validate({**section, **updates}).model_dump()
+                if not any(
+                    row["split_panel_index"] < revised["panel_count"]
+                    and row["split_offset_s"] < revised["duration_s"]
+                    for row in members
+                ):
+                    raise ValueError(
+                        "This edit leaves only an empty section background with no media occurrence"
+                    )
                 for row in members:
                     if (
                         row["split_panel_index"] >= revised["panel_count"]

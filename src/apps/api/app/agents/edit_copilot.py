@@ -4493,13 +4493,11 @@ def _indices_valid(name: str, payload: dict, snapshot: dict) -> bool:
     cue_count = _section_len(snapshot, "captions", "cues")
     camera_effect_count = len(snapshot.get("camera_effects") or [])
     visual_block_count = len(snapshot.get("visual_blocks") or [])
-    transition_slot_count = len(
-        [
-            slot
-            for slot in _snapshot_list(snapshot, _SLOT_INDEX_KEYS)
-            if isinstance(slot, dict) and not slot.get("removed")
-        ]
-    )
+    transition_slots = [
+        slot
+        for slot in _snapshot_list(snapshot, _SLOT_INDEX_KEYS)
+        if isinstance(slot, dict) and not slot.get("removed")
+    ]
     for key in ("bar_index",):
         if key in payload and not _index_in_bounds(payload[key], text_count):
             log.warning("edit_copilot.drop_text_index_oob", op=name, index=payload.get(key))
@@ -4540,8 +4538,13 @@ def _indices_valid(name: str, payload: dict, snapshot: dict) -> bool:
             index=payload.get("camera_effect_index"),
         )
         return False
-    if "boundary_index" in payload and not _index_in_bounds(
-        payload["boundary_index"], max(0, transition_slot_count - 1)
+    from app.kria.split_screen import has_timeline_transition_successor
+
+    if "boundary_index" in payload and (
+        not _index_in_bounds(payload["boundary_index"], len(transition_slots))
+        or not has_timeline_transition_successor(
+            transition_slots, transition_slots[int(payload["boundary_index"])]
+        )
     ):
         log.warning(
             "edit_copilot.drop_boundary_index_oob",
@@ -5749,6 +5752,18 @@ def _coerce_payload(
         boundary_index = out["boundary_index"]
         left = slots[boundary_index] if boundary_index < len(slots) else {}
         right = slots[boundary_index + 1] if boundary_index + 1 < len(slots) else {}
+        if left.get("split_section_id"):
+            successors = sorted(
+                [
+                    candidate
+                    for candidate in slots
+                    if candidate.get("split_section_id") == left["split_section_id"]
+                    and candidate.get("split_panel_index") == left.get("split_panel_index")
+                    and float(candidate["split_offset_s"]) > float(left["split_offset_s"])
+                ],
+                key=lambda candidate: float(candidate["split_offset_s"]),
+            )
+            right = successors[0] if successors else {}
         if not isinstance(left, dict) or not isinstance(right, dict):
             state.invalid_value()
             return None

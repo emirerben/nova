@@ -725,3 +725,198 @@ extension NativeSplitScreenTests {
         }
     }
 }
+
+extension NativeSplitScreenTests {
+    @MainActor
+    private func mutationSession(_ document: EditorDocument) -> NativeEditorSession {
+        let session = NativeEditorSession(draft: EditorDraft(projectID: UUID(), clips: [], text: [],
+            captions: .init(enabled: false, style: "sentence"), music: nil, revision: 0,
+            serverSnapshot: ["render_destination": .string("device")]))
+        session.replaceDocumentForTesting(document)
+        return session
+    }
+
+    @MainActor
+    func testFrozenPanelSlipMovesHeldFrameAndPreservesPartitionAtSourceBounds() throws {
+        let id = UUID().uuidString
+        var held = EditorTimelineSlot(id: id, clipIndex: 0, inS: 2, durationS: 3,
+            raw: ["playback_rate": .number(2), "source_end_s": .number(4),
+                  "freeze_frame_s": .number(4), "freeze_hold_s": .number(2), "source_duration_s": .number(8)])
+        held.setSplitMembership(sectionID: "s", panelIndex: 0, offset: 1)
+        var peer = EditorTimelineSlot(id: UUID().uuidString, clipIndex: 0, inS: 0, durationS: 5)
+        peer.setSplitMembership(sectionID: "s", panelIndex: 1, offset: 0)
+        var document = EditorDocument(clips: [held, peer], capabilities: ["timeline": .init(editable: true), "split_screen": .init(editable: true)])
+        document.splitScreenSections = [.init(id: "s", durationS: 5, panelCount: 2)]
+        let session = mutationSession(document)
+        session.select(.init(kind: .clip, id: id), seekToStart: false)
+        for (delta, expectedStart, expectedFrame) in [(0.1, 2.1, 4.1), (100.0, 6.0, 8.0), (-100.0, 0.0, 2.0)] {
+            session.slideSourceWindow(by: delta)
+            let slot = try XCTUnwrap(session.document.clips.first)
+            let clock = NativeClipSourceClock(slot: slot)
+            XCTAssertEqual(slot.inS, expectedStart, accuracy: 0.000001)
+            XCTAssertEqual(try XCTUnwrap(slot.raw["freeze_frame_s"]?.numberValue), expectedFrame, accuracy: 0.000001)
+            XCTAssertEqual(clock.movingDuration, 1, accuracy: 0.000001)
+            XCTAssertEqual(clock.hold, 2, accuracy: 0.000001)
+            XCTAssertEqual(clock.rate, 2)
+            XCTAssertEqual(slot.durationS, 3)
+            XCTAssertEqual(slot.splitOffsetS, 1)
+            XCTAssertEqual(session.document.clips[1], peer)
+            XCTAssertEqual(session.timelineProjection.totalDuration, 5)
+        }
+        session.undo()
+        XCTAssertEqual(session.document.clips[0].inS, 6)
+        session.redo()
+        XCTAssertEqual(session.document.clips[0].inS, 0)
+    }
+
+    @MainActor
+    func testWholeVideoTransitionsCascadeWithinPanelsAndUndoAtomically() {
+        var members = (0..<3).map { index -> EditorTimelineSlot in
+            var slot = EditorTimelineSlot(id: UUID().uuidString, clipIndex: index, inS: Double(index), durationS: 2)
+            slot.setSplitMembership(sectionID: "s", panelIndex: 0, offset: Double(index * 2))
+            return slot
+        }
+        var peer = EditorTimelineSlot(id: UUID().uuidString, clipIndex: 3, inS: 7, durationS: 8)
+        peer.setSplitMembership(sectionID: "s", panelIndex: 1, offset: 0)
+        members.append(peer)
+        let tail = EditorTimelineSlot(id: UUID().uuidString, clipIndex: 4, inS: 0, durationS: 2)
+        var document = EditorDocument(clips: members + [tail], capabilities: ["timeline": .init(editable: true), "split_screen": .init(editable: true)])
+        document.splitScreenSections = [.init(id: "s", durationS: 8, panelCount: 2)]
+        let session = mutationSession(document)
+        session.setTransitionAcrossVideo(transition: "crossfade", durationS: 0.2)
+        XCTAssertTrue(session.document.splitScreenIsValid)
+        for (slot, expected) in zip(session.document.clips.prefix(3), [0.0, 1.8, 3.6]) {
+            XCTAssertEqual(slot.splitOffsetS, expected, accuracy: 0.000001)
+        }
+        XCTAssertEqual(session.document.clips[3].splitOffsetS, 0)
+        XCTAssertEqual(session.document.clips.map(\.inS), document.clips.map(\.inS))
+        XCTAssertEqual(session.document.clips.map(\.durationS), document.clips.map(\.durationS))
+        XCTAssertEqual(session.timelineProjection.totalDuration, 10)
+        let faded = session.document
+        session.undo()
+        XCTAssertEqual(session.document, document)
+        session.redo()
+        XCTAssertEqual(session.document, faded)
+        session.setTransitionAcrossVideo(transition: "cut")
+        XCTAssertTrue(session.document.splitScreenIsValid)
+        for (slot, expected) in zip(session.document.clips.prefix(3), [0.0, 2.0, 4.0]) {
+            XCTAssertEqual(slot.splitOffsetS, expected, accuracy: 0.000001)
+        }
+        session.undo()
+        XCTAssertEqual(session.document, faded)
+    }
+
+    @MainActor
+    func testLayoutOnlyAndSectionExtensionPreserveSelectedSourceEnd() {
+        let id = UUID().uuidString
+        var slot = EditorTimelineSlot(id: id, clipIndex: 0, inS: 2, durationS: 2,
+            raw: ["source_end_s": .number(8), "playback_rate": .number(1), "source_duration_s": .number(12)])
+        slot.setSplitMembership(sectionID: "s", panelIndex: 0, offset: 0)
+        var document = EditorDocument(clips: [slot], capabilities: ["timeline": .init(editable: true), "split_screen": .init(editable: true)])
+        document.splitScreenSections = [.init(id: "s", durationS: 4, panelCount: 2)]
+        let session = mutationSession(document)
+        session.select(.init(kind: .clip, id: id), seekToStart: false)
+        session.setSplitScreenPanelWeight(index: 0, weight: 2)
+        session.setSplitScreenGutter(0.02)
+        session.setSplitScreenBackgroundColor("#112233")
+        XCTAssertEqual(session.document.clips, [slot])
+        session.setSplitScreenDuration(5)
+        XCTAssertEqual(session.document.clips, [slot])
+        session.setSplitScreenDuration(1)
+        XCTAssertEqual(session.document.clips[0].durationS, 1)
+        XCTAssertEqual(session.document.clips[0].raw["source_end_s"], .number(3))
+    }
+}
+
+extension NativeSplitScreenTests {
+    @MainActor
+    func testPanelTransitionMovesSuffixPreservesGapsAndRefusesOverflow() {
+        var slots = [0.0, 2.0, 4.0, 7.0].enumerated().map { index, offset -> EditorTimelineSlot in
+            var slot = EditorTimelineSlot(id: UUID().uuidString, clipIndex: index, inS: Double(index), durationS: 2)
+            slot.setSplitMembership(sectionID: "s", panelIndex: 0, offset: offset)
+            return slot
+        }
+        var peer = EditorTimelineSlot(id: UUID().uuidString, clipIndex: 9, inS: 4, durationS: 9)
+        peer.setSplitMembership(sectionID: "s", panelIndex: 1, offset: 0)
+        slots.append(peer)
+        var document = EditorDocument(clips: slots, capabilities: ["timeline": .init(editable: true), "split_screen": .init(editable: true)])
+        document.splitScreenSections = [.init(id: "s", durationS: 9, panelCount: 2)]
+        let session = mutationSession(document)
+        session.setClipTransition(clipID: slots[0].id, transition: "crossfade", durationS: 0.2)
+        for (slot, expected) in zip(session.document.clips.prefix(4), [0.0, 1.8, 3.8, 6.8]) {
+            XCTAssertEqual(slot.splitOffsetS, expected, accuracy: 0.000001)
+        }
+        XCTAssertEqual(session.document.clips[4], peer)
+        let beforeGapEdit = session.document.clips.map(\.splitOffsetS)
+        session.setClipTransition(clipID: slots[2].id, transition: "crossfade", durationS: 0.2)
+        XCTAssertEqual(session.document.clips.map(\.splitOffsetS), beforeGapEdit, "A transition at a deliberate gap must not join it")
+        session.setClipTransition(clipID: slots[0].id, transition: "cut")
+        XCTAssertEqual(session.document.clips.map(\.splitOffsetS), slots.map(\.splitOffsetS))
+        XCTAssertTrue(session.document.splitScreenIsValid)
+
+        var full = document
+        full.clips[0].transitionAfter = "crossfade"; full.clips[0].transitionDurationS = 0.2
+        full.clips[1].raw["split_offset_s"] = .number(1.8)
+        full.clips[2].raw["split_offset_s"] = .number(3.8)
+        full.clips[3].raw["split_offset_s"] = .number(7)
+        let blocked = mutationSession(full)
+        blocked.setTransitionAcrossVideo(transition: "cut")
+        XCTAssertEqual(blocked.document, full)
+        XCTAssertFalse(blocked.canUndo)
+        XCTAssertNotNil(blocked.splitScreenActionError)
+    }
+}
+
+extension NativeSplitScreenTests {
+    @MainActor
+    func testPanelSlipClampsSelectedSourceEndEvenWhenOutputIsSectionBounded() {
+        let id = UUID().uuidString
+        var slot = EditorTimelineSlot(id: id, clipIndex: 0, inS: 2, durationS: 2,
+            raw: ["source_end_s": .number(8), "playback_rate": .number(1), "source_duration_s": .number(12)])
+        slot.setSplitMembership(sectionID: "s", panelIndex: 0, offset: 0)
+        var document = EditorDocument(clips: [slot], capabilities: ["timeline": .init(editable: true), "split_screen": .init(editable: true)])
+        document.splitScreenSections = [.init(id: "s", durationS: 2, panelCount: 2)]
+        let session = mutationSession(document)
+        session.select(.init(kind: .clip, id: id), seekToStart: false)
+        session.slideSourceWindow(by: 100)
+        XCTAssertEqual(session.document.clips[0].inS, 6)
+        XCTAssertEqual(session.document.clips[0].raw["source_end_s"], .number(12))
+        XCTAssertEqual(session.document.clips[0].durationS, 2)
+        XCTAssertEqual(session.timelineProjection.totalDuration, 2)
+        session.undo()
+        XCTAssertEqual(session.document, document)
+    }
+}
+
+extension NativeSplitScreenTests {
+    @MainActor
+    func testPanelTransitionsUseTemporalOrderWhenPredecessorIsLastStoredMember() {
+        var ordered = (0..<3).map { index -> EditorTimelineSlot in
+            var slot = EditorTimelineSlot(id: UUID().uuidString, clipIndex: index, inS: Double(index), durationS: 2)
+            slot.setSplitMembership(sectionID: "s", panelIndex: 0, offset: Double(index * 2))
+            return slot
+        }
+        var peer = EditorTimelineSlot(id: UUID().uuidString, clipIndex: 3, inS: 0, durationS: 8)
+        peer.setSplitMembership(sectionID: "s", panelIndex: 1, offset: 0)
+        let firstID = ordered[0].id
+        ordered = [ordered[2], ordered[1], peer, ordered[0]]
+        var document = EditorDocument(clips: ordered, capabilities: ["timeline": .init(editable: true), "split_screen": .init(editable: true)])
+        document.splitScreenSections = [.init(id: "s", durationS: 8, panelCount: 2)]
+        let session = mutationSession(document)
+        session.setClipTransition(clipID: firstID, transition: "crossfade", durationS: 0.2)
+        for slot in session.document.clips where slot.splitPanelIndex == 0 {
+            XCTAssertEqual(slot.splitOffsetS, [0.0, 1.8, 3.8][slot.clipIndex], accuracy: 0.000001)
+        }
+        session.undo()
+        XCTAssertEqual(session.document, document)
+        session.setTransitionAcrossVideo(transition: "crossfade", durationS: 0.2)
+        for slot in session.document.clips where slot.splitPanelIndex == 0 {
+            XCTAssertEqual(slot.splitOffsetS, [0.0, 1.8, 3.6][slot.clipIndex], accuracy: 0.000001)
+        }
+        XCTAssertTrue(session.document.splitScreenIsValid)
+        XCTAssertEqual(session.document.clips.first { $0.id == peer.id }?.splitOffsetS, 0)
+        session.undo()
+        XCTAssertEqual(session.document, document)
+        XCTAssertFalse(session.canUndo)
+    }
+}

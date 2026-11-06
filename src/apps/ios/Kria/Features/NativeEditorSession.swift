@@ -4291,12 +4291,27 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func slideSourceWindow(by offset: TimeInterval) {
-        guard canEditTimeline, let id = selectedClipID, let index = clipSlotIndex(id.uuidString), document.clips.indices.contains(index) else { return }
+        guard canEditTimeline, offset.isFinite, let id = selectedClipID, let index = clipSlotIndex(id.uuidString), document.clips.indices.contains(index) else { return }
         let slot = document.clips[index]
+        if slot.raw["freeze_frame_s"]?.numberValue != nil {
+            let clock = NativeClipSourceClock(slot: slot)
+            let limit = Self.number(slot.raw["source_duration_s"] ?? slot.raw["source_duration"])
+                ?? max(clock.end, clock.frame ?? clock.end)
+            let shifted = clock.shifted(by: offset, sourceDuration: limit)
+            guard abs(shifted.start - clock.start) > 0.000001 else { return }
+            transactDocument(section: .timeline) {
+                $0.clips[index] = shifted.applying(to: slot)
+                $0.clips[index].durationS = slot.durationS
+                $0.clips[index].raw["source_start_locked"] = .bool(true)
+            }
+            return
+        }
         let length = max(minimumClipDuration, slot.durationS ?? minimumClipDuration)
         // The source span is the length times the real rate, or the slide could write a window the server refuses.
         let found = sourceWindowSlot(for: EditorSelection(kind: .clip, id: id.uuidString))
-        let span = length * (found.map { effectiveSourceRate(slot: $0.slot, clip: $0.clip) } ?? 1)
+        let consumedSpan = length * (found.map { effectiveSourceRate(slot: $0.slot, clip: $0.clip) } ?? 1)
+        let selectedSpan = (slot.raw["source_end_s"]?.numberValue).map { $0 - slot.inS }
+        let span = max(consumedSpan, selectedSpan ?? consumedSpan)
         let sourceEnd = Self.number(slot.raw["source_duration_s"] ?? slot.raw["source_duration"]) ?? slot.inS + span
         let start = min(max(0, slot.inS + offset), max(0, sourceEnd - span))
         transactDocument(section: .timeline) {
@@ -4349,21 +4364,14 @@ struct NativeEditorTemporaryVideo: Sendable {
         // value that only gets shrunk later at Save.
         let duration = transition == "cut" ? nil : durationS.map { min(max(0.1, $0), 0.3) }
         guard let index = clipSlotIndex(clipID) else { return }
-        transactDocument(section: .timeline) { value in
-            let slot = value.clips[index]
-            value.clips[index].transitionAfter = transition; value.clips[index].transitionDurationS = duration
-            if let id = slot.splitSectionID,
-               let next = value.clips.indices.filter({ value.clips[$0].splitSectionID == id && value.clips[$0].splitPanelIndex == slot.splitPanelIndex && value.clips[$0].splitOffsetS > slot.splitOffsetS })
-                .min(by: { value.clips[$0].splitOffsetS < value.clips[$1].splitOffsetS }) {
-                let end = slot.splitOffsetS + (slot.durationS ?? 0)
-                let oldOverlap = max(0, end - value.clips[next].splitOffsetS)
-                let overlap = transition == "cut" ? 0 : min(0.3, duration ?? 0.3, (slot.durationS ?? 0) * 0.3, (value.clips[next].durationS ?? 0) * 0.3)
-                // A deliberate gap stays a gap; transitions only join touching/overlapping members.
-                if value.clips[next].splitOffsetS <= end + 0.000001 {
-                    value.clips[next].raw["split_offset_s"] = .number(value.clips[next].splitOffsetS + oldOverlap - overlap)
-                }
-            }
+        var candidate = document
+        Self.applyClipTransition(to: &candidate, index: index, transition: transition, duration: duration)
+        guard candidate.splitScreenIsValid else {
+            splitScreenActionError = "This transition would move clips outside the section. Extend the section first."
+            return
         }
+        splitScreenActionError = nil
+        transactDocument(section: .timeline) { $0 = candidate }
     }
     func setClipTransition(clipID: UUID, transition: String, durationS: Double? = nil) { setClipTransition(clipID: clipID.uuidString, transition: transition, durationS: durationS) }
     /// Sets the same transition on every boundary in one transaction (one
@@ -4374,12 +4382,38 @@ struct NativeEditorTemporaryVideo: Sendable {
     func setTransitionAcrossVideo(transition: String, durationS: Double? = nil) {
         guard NativeEditorWireContract.transitions.contains(transition), canEditSection(.timeline) else { return }
         let duration = transition == "cut" ? nil : durationS.map { min(max(0.1, $0), 0.3) }
-        transactDocument(section: .timeline) { doc in
-            guard doc.clips.count > 1 else { return }
-            for index in doc.clips.indices.dropLast() {
-                doc.clips[index].transitionAfter = transition
-                doc.clips[index].transitionDurationS = duration
-            }
+        guard document.clips.count > 1 else { return }
+        var candidate = document
+        for index in candidate.clips.indices where index < candidate.clips.count - 1 || candidate.clips[index].splitSectionID != nil {
+            Self.applyClipTransition(to: &candidate, index: index, transition: transition, duration: duration)
+        }
+        guard candidate.splitScreenIsValid else {
+            splitScreenActionError = "These transitions would move clips outside a section. Extend the section first."
+            return
+        }
+        splitScreenActionError = nil
+        transactDocument(section: .timeline) { $0 = candidate }
+    }
+
+    private static func applyClipTransition(to value: inout EditorDocument, index: Int, transition: String, duration: Double?) {
+        let slot = value.clips[index]
+        value.clips[index].transitionAfter = transition
+        value.clips[index].transitionDurationS = duration
+        guard let id = slot.splitSectionID else { return }
+        let suffix = value.clips.indices.filter {
+            value.clips[$0].splitSectionID == id && value.clips[$0].splitPanelIndex == slot.splitPanelIndex
+                && value.clips[$0].splitOffsetS > slot.splitOffsetS
+        }.sorted { value.clips[$0].splitOffsetS < value.clips[$1].splitOffsetS }
+        guard let next = suffix.first else { return }
+        let end = slot.splitOffsetS + (slot.durationS ?? 0)
+        guard value.clips[next].splitOffsetS <= end + 0.000001 else { return }
+        let oldOverlap = max(0, end - value.clips[next].splitOffsetS)
+        let allowed = min(0.3, duration ?? 0.3, (slot.durationS ?? 0) * 0.3, (value.clips[next].durationS ?? 0) * 0.3)
+        let overlap = transition == "cut" || allowed < 0.1 ? 0 : allowed
+        let delta = oldOverlap - overlap
+        // Move the whole suffix so later joins and deliberate gap lengths remain unchanged.
+        for position in suffix {
+            value.clips[position].raw["split_offset_s"] = .number(value.clips[position].splitOffsetS + delta)
         }
     }
     func setClipTiming(clipID: String, inS: Double? = nil, durationS: Double? = nil, durationBeats: Int? = nil) {
@@ -9644,6 +9678,7 @@ extension NativeEditorSession {
             value.clips.removeAll { $0.splitSectionID == id && $0.splitOffsetS >= duration - minimumClipDuration + 0.000001 }
             for i in value.clips.indices where value.clips[i].splitSectionID == id {
                 let length = min(value.clips[i].durationS ?? duration, duration - value.clips[i].splitOffsetS)
+                guard length < (value.clips[i].durationS ?? length) - 0.000001 else { continue }
                 if value.clips[i].raw["freeze_frame_s"]?.numberValue != nil {
                     value.clips[i] = NativeClipSourceClock(slot: value.clips[i]).sliced(from: 0, to: length).applying(to: value.clips[i])
                     continue

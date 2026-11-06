@@ -23,7 +23,7 @@ The acceptance matrix records implementation, offline verification and native ve
 
 This crosses the persistent timeline, API validation, AI operation parsing and application, native document and session, timeline UI, recipe compilers and native compositor. At least six independently testable units are required. The risky unknown is simultaneous media on a timeline whose editor currently adds every clip duration in sequence.
 
-Independent exploration uses three Astra agents, as requested by the user. Implementation will divide only across disjoint files after the shared contract is settled. Native builds remain serial and deferred until shared Mac load is checked. The worktree starts at `31477c8e9` on `codex/editable-split-screen`. No publication or deployment is authorized.
+Independent exploration uses three Astra agents, as requested by the user. Implementation divides only across disjoint files after the shared contract is settled. Native builds remain serial and require coordinated lane clearance. The worktree originally started at `31477c8e9` on `codex/editable-split-screen` and later rebased to `05d9720d8`. Publication and eventual merge were subsequently authorized subject to genuine acceptance and required gates; deployment and rollout remain outside authorization. See verification.md for current holds.
 
 ## Timeline decisions
 

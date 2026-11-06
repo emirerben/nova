@@ -32,6 +32,16 @@ struct NativeClipSourceClock {
         return result
     }
 
+    func shifted(by delta: Double, sourceDuration: Double) -> Self {
+        var result = self
+        let lastSourceTime = max(end, frame ?? end)
+        let bounded = min(max(delta, -start), max(0, sourceDuration - lastSourceTime))
+        result.start += bounded
+        result.end += bounded
+        result.frame = frame.map { $0 + bounded }
+        return result
+    }
+
     func applying(to slot: EditorTimelineSlot) -> EditorTimelineSlot {
         var result = slot
         result.inS = start; result.durationS = duration; result.durationBeats = nil

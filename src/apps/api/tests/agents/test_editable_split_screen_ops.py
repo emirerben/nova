@@ -724,3 +724,244 @@ def test_legacy_speaker_provenance_on_assignment_and_panel_expansion(document):
     )
     assert assigned["speaker_subject"] is False
     assert not assigned.get("parent_segment_id")
+
+
+def _transition_document(document, monkeypatch, offsets=(0, 2, 4), duration=7):
+    job, variant = document
+    monkeypatch.setattr(
+        editor,
+        "_editor_capabilities",
+        lambda *args: {"timeline": True, "clips": {"transitions": True}},
+    )
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "edit_transitions_enabled", True)
+    source = variant["user_timeline"]["slots"][0]
+    source.update(media_kind="video", look_preset="none")
+    rows = [
+        {
+            **deepcopy(source),
+            "slot_id": f"clip-{i}",
+            "duration_s": 2,
+            "split_section_id": "s",
+            "split_panel_index": 0,
+            "split_offset_s": offset,
+        }
+        for i, offset in enumerate(offsets)
+    ]
+    rows.append(
+        {
+            **deepcopy(source),
+            "slot_id": "peer",
+            "duration_s": duration,
+            "split_section_id": "s",
+            "split_panel_index": 1,
+            "split_offset_s": 0,
+        }
+    )
+    variant["user_timeline"] = {
+        "slots": rows,
+        "split_screen_sections": [
+            {"id": "s", "duration_s": duration, "panel_count": 2, "panel_weights": [1, 1]}
+        ],
+    }
+    return job, variant
+
+
+def _transition_op(api, transition, seconds=0.2):
+    return (
+        {
+            "op": "set_transition",
+            "boundary_index": 0,
+            "transition": transition,
+            "duration_s": seconds,
+        }
+        if api == "set_transition"
+        else {
+            "op": "patch_slots",
+            "selector": {"slot_indexes": [0]},
+            "patch": {"transition_after": transition, "transition_duration_s": seconds},
+        }
+    )
+
+
+@pytest.mark.parametrize("api", ["set_transition", "patch_slots"])
+def test_panel_transition_moves_same_panel_suffix_only(document, monkeypatch, api):
+    job, variant = _transition_document(document, monkeypatch)
+    peer = deepcopy(variant["user_timeline"]["slots"][-1])
+    updated, _ = apply(job, variant, _transition_op(api, "crossfade"))
+    rows = updated["user_timeline"]["slots"]
+    assert [r["split_offset_s"] for r in rows[:3]] == pytest.approx([0, 1.8, 3.8])
+    assert rows[-1] == peer
+    assert [r["in_s"] for r in rows[:3]] == [0, 0, 0]
+    assert updated["user_timeline"]["split_screen_sections"][0]["duration_s"] == 7
+
+
+@pytest.mark.parametrize("api", ["set_transition", "patch_slots"])
+def test_panel_transition_cut_restores_suffix_without_source_retime(document, monkeypatch, api):
+    job, variant = _transition_document(document, monkeypatch, offsets=(0, 1.8, 3.8), duration=6)
+    variant["user_timeline"]["slots"][0].update(
+        transition_after="crossfade", transition_duration_s=0.2
+    )
+    updated, _ = apply(job, variant, _transition_op(api, "cut"))
+    assert [r["split_offset_s"] for r in updated["user_timeline"]["slots"][:3]] == pytest.approx(
+        [0, 2, 4]
+    )
+
+
+@pytest.mark.parametrize("api", ["set_transition", "patch_slots"])
+def test_panel_transition_preserves_deliberate_gap(document, monkeypatch, api):
+    job, variant = _transition_document(document, monkeypatch, offsets=(0, 2.5, 4.5))
+    updated, _ = apply(job, variant, _transition_op(api, "crossfade"))
+    assert [r["split_offset_s"] for r in updated["user_timeline"]["slots"][:3]] == [0, 2.5, 4.5]
+
+
+@pytest.mark.parametrize("api", ["set_transition", "patch_slots"])
+def test_panel_transition_bounds_refuse_atomically(document, monkeypatch, api):
+    job, variant = _transition_document(document, monkeypatch, offsets=(0, 1.8, 3.8), duration=5.8)
+    variant["user_timeline"]["slots"][0].update(
+        transition_after="crossfade", transition_duration_s=0.2
+    )
+    before = deepcopy(variant)
+    with pytest.raises(editor.KriaEditorOpError):
+        apply(job, variant, _transition_op(api, "cut"))
+    assert variant == before
+
+
+def test_layout_only_update_preserves_unconsumed_source_eof_and_properties(document):
+    job, variant = document
+    variant, _ = apply(
+        job, variant, {"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2}
+    )
+    row = variant["user_timeline"]["slots"][0]
+    row.update(
+        source_end_s=4,
+        duration_s=2,
+        playback_rate=1,
+        source_audio_volume=0.4,
+        speaker_subject=True,
+        media_transform={"scale": 0.8, "position_x": 12, "position_y": -9, "rotation_degrees": 0},
+    )
+    before = deepcopy(variant["user_timeline"]["slots"])
+    section_id = variant["user_timeline"]["split_screen_sections"][0]["id"]
+    updated, _ = apply(
+        job,
+        variant,
+        {"op": "update_split_screen", "section_id": section_id, "panel_weights": [2, 1]},
+    )
+    assert updated["user_timeline"]["slots"] == before
+
+
+def test_full_length_creation_preserves_serial_overlap_clock(document, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "edit_transitions_enabled", True)
+    job, variant = document
+    variant["user_timeline"]["slots"][0].update(
+        transition_after="crossfade", transition_duration_s=0.2
+    )
+    updated, payload = apply(
+        job,
+        variant,
+        {
+            "op": "create_split_screen",
+            "slot_indexes": [0, 1],
+            "panel_count": 2,
+            "full_length": True,
+        },
+    )
+    assert payload["split_screen_sections"][0]["duration_s"] == pytest.approx(3.8)
+    rows = updated["user_timeline"]["slots"]
+    assert [r["split_offset_s"] for r in rows] == pytest.approx([0, 1.8, 0, 1.8])
+    assert rows[0]["transition_after"] == rows[2]["transition_after"] == "crossfade"
+    assert [r["duration_s"] for r in rows] == [2, 2, 2, 2]
+
+
+def test_duration_update_cannot_silently_delete_background_only_section(document):
+    job, variant = document
+    row, tail = deepcopy(variant["user_timeline"]["slots"])
+    row.update(duration_s=1, split_section_id="s", split_panel_index=0, split_offset_s=3)
+    variant["user_timeline"] = {
+        "slots": [row, tail],
+        "split_screen_sections": [
+            {"id": "s", "duration_s": 4, "panel_count": 2, "panel_weights": [1, 1]}
+        ],
+    }
+    before = deepcopy(variant)
+    with pytest.raises(editor.KriaEditorOpError, match="empty section background"):
+        apply(job, variant, {"op": "update_split_screen", "section_id": "s", "duration_s": 2})
+    assert variant == before
+
+
+@pytest.mark.parametrize("api", ["set_transition", "patch_slots"])
+@pytest.mark.parametrize("last_offset, following_transition", [(3.8, "crossfade"), (4.5, "cut")])
+def test_panel_transition_preserves_later_join_or_gap(
+    document, monkeypatch, api, last_offset, following_transition
+):
+    job, variant = _transition_document(document, monkeypatch, offsets=(0, 2, last_offset))
+    variant["user_timeline"]["slots"][1].update(
+        transition_after=following_transition, transition_duration_s=0.2
+    )
+    before = deepcopy(variant["user_timeline"]["slots"])
+    updated, _ = apply(job, variant, _transition_op(api, "crossfade"))
+    rows = updated["user_timeline"]["slots"]
+    assert rows[2]["split_offset_s"] - rows[1]["split_offset_s"] == pytest.approx(last_offset - 2)
+    assert rows[1]["transition_after"] == following_transition
+    for old, new in zip(before, rows, strict=True):
+        assert (
+            new["in_s"],
+            new["duration_s"],
+            new.get("source_end_s"),
+            new.get("playback_rate"),
+        ) == (old["in_s"], old["duration_s"], old.get("source_end_s"), old.get("playback_rate"))
+
+
+def test_explicit_delete_final_section_member_remains_allowed(document):
+    job, variant = document
+    row, tail = deepcopy(variant["user_timeline"]["slots"])
+    row.update(duration_s=1, split_section_id="s", split_panel_index=0, split_offset_s=3)
+    variant["user_timeline"] = {
+        "slots": [row, tail],
+        "split_screen_sections": [
+            {"id": "s", "duration_s": 4, "panel_count": 2, "panel_weights": [1, 1]}
+        ],
+    }
+    updated, payload = apply(job, variant, {"op": "remove_clip", "slot_index": 0})
+    assert payload["split_screen_sections"] == []
+    assert [r["slot_id"] for r in updated["user_timeline"]["slots"] if not r.get("removed")] == [
+        tail["slot_id"]
+    ]
+
+
+def test_bulk_panel_transitions_validate_final_candidate(document, monkeypatch):
+    job, variant = _transition_document(document, monkeypatch, offsets=(0, 1.7, 3.6), duration=5.6)
+    rows = variant["user_timeline"]["slots"]
+    rows[0].update(transition_after="crossfade", transition_duration_s=0.3)
+    rows[1].update(transition_after="crossfade", transition_duration_s=0.1)
+    updated, _ = apply(
+        job,
+        variant,
+        {
+            "op": "patch_slots",
+            "selector": {"slot_indexes": [0, 1]},
+            "patch": {"transition_after": "crossfade", "transition_duration_s": 0.2},
+        },
+    )
+    assert [
+        row["split_offset_s"] for row in updated["user_timeline"]["slots"][:3]
+    ] == pytest.approx([0, 1.8, 3.6])
+
+
+@pytest.mark.parametrize("api", ["set_transition", "patch_slots"])
+def test_panel_transition_uses_clock_not_storage_order(document, monkeypatch, api):
+    job, variant = _transition_document(document, monkeypatch)
+    rows = variant["user_timeline"]["slots"]
+    variant["user_timeline"]["slots"] = rows[1:] + rows[:1]
+    op = _transition_op(api, "crossfade")
+    if api == "set_transition":
+        op["boundary_index"] = 3
+    else:
+        op["selector"] = {"slot_indexes": [3]}
+    updated, _ = apply(job, variant, op)
+    rows = updated["user_timeline"]["slots"]
+    assert [rows[i]["split_offset_s"] for i in [3, 0, 1]] == pytest.approx([0, 1.8, 3.8])
