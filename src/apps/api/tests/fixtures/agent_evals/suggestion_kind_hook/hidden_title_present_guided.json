@@ -1,0 +1,91 @@
+{
+ "name": "hidden_title_present_guided",
+ "description": "A guided story: its title is the guided-title bar.",
+ "tags": [
+  "hidden"
+ ],
+ "context": {
+  "thread_id": "thread-hidden_title_present_guided",
+  "state": "ready",
+  "language": "en",
+  "client_protocol": 13,
+  "media_digest": "digest-hidden_title_present_guided",
+  "understanding": "n/a",
+  "runtime_version": 2,
+  "edit_format": "montage",
+  "clips": [
+   {
+    "media_id": "clip-1",
+    "ordinal": 1,
+    "kind": "video",
+    "subject": "pouring matcha into a glass",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 4.0,
+    "notable_moments": [
+     {
+      "start_s": 0.5,
+      "end_s": 2.0,
+      "label": "the pour"
+     }
+    ]
+   },
+   {
+    "media_id": "clip-2",
+    "ordinal": 2,
+    "kind": "video",
+    "subject": "packing orders into boxes",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 4.0,
+    "notable_moments": [
+     {
+      "start_s": 0.5,
+      "end_s": 2.0,
+      "label": "tape sealing the box"
+     }
+    ]
+   },
+   {
+    "media_id": "clip-3",
+    "ordinal": 3,
+    "kind": "video",
+    "subject": "first sip of the drink",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 4.0,
+    "notable_moments": [
+     {
+      "start_s": 0.5,
+      "end_s": 2.0,
+      "label": "first sip"
+     }
+    ]
+   }
+  ],
+  "render_generation_id": "gen-1",
+  "variant_id": "v1",
+  "snapshot_preset": "guided_story_titled",
+  "kind_inputs": {
+   "hook": {
+    "title_requirement": false,
+    "opening_copy": "",
+    "transcripts": [],
+    "general": [],
+    "on_screen": []
+   }
+  }
+ },
+ "expect": {
+  "hidden": "title_present",
+  "copies": [
+   {
+    "copy": "Matcha for the slow start",
+    "reason": null
+   }
+  ]
+ }
+}

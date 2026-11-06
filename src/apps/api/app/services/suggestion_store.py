@@ -1,21 +1,23 @@
-"""Redis side-store for suggestion-chip wording (KRI-756).
+"""Redis side-store for the suggestion agent's picks (KRI-756, AI suggestion blocks).
 
-The wording agent runs in a worker, off the request path, and the GET route only ever reads
+The suggestion agent runs in a worker, off the request path, and the GET route only ever reads
 what it left here. Nothing is written to ``thread.state`` from the worker (the ring write
 read-modify-writes the whole state JSON), and there is no migration.
 
-Keys (all TTL 24h, all fail-open: a Redis outage degrades to template labels, never a 500):
+Keys (all TTL 24h, all fail-open: a Redis outage degrades to the deterministic set, never a 500):
 
-* ``kria:suggester:{thread}:{digest}``         agent result (validated wording or a fallback marker)
-* ``kria:suggester:served:{thread}:{digest}``  the final set a creator was served: labels never
-                                              change for a digest (SET NX; first writer wins)
+* ``kria:suggester:{thread}:{digest}``         agent result (validated picks or a fallback marker)
+* ``kria:suggester:served:{thread}:{digest}``  the final set a creator was served: it never
+                                              changes for a digest (SET NX; first writer wins)
 * ``kria:suggester:seen:{thread}:{digest}``    when a GET first saw the digest with no result
-                                              (starts the 6 s wording wait)
+                                              (starts the 6 s agent wait)
 * ``kria:suggester:lock:{thread}:{digest}``    single-flight for enqueueing a run
 * ``kria:suggester:runs:{thread}``             per-thread run counter
                                               (``KRIA_SUGGESTER_MAX_RUNS_PER_THREAD``)
 * ``kria:suggester:hint:{thread}``             language/protocol the GET last saw (the worker
                                               has no request headers)
+* ``kria:suggester:debounce:{thread}:-``       one pending freshness refresh per debounce window
+                                              (``KRIA_SUGGESTION_EDITOR_TRIGGERS_ENABLED``)
 
 The functions are synchronous; async callers use ``asyncio.to_thread``.
 """
@@ -28,6 +30,8 @@ from typing import Any
 
 import structlog
 
+from app.services.suggestions.models import SuggestionAgentOutput
+
 log = structlog.get_logger()
 
 TTL_S = 24 * 60 * 60
@@ -39,7 +43,7 @@ _client: Any = None
 
 
 class StoreUnavailable(Exception):  # noqa: N818 - internal control flow
-    """Redis could not be reached; callers fall back to template labels."""
+    """Redis could not be reached; callers fall back to the deterministic set."""
 
 
 def _redis() -> Any:
@@ -76,6 +80,35 @@ def _guard(fn: Any) -> Any:
         raise
     except Exception as exc:  # noqa: BLE001 - every Redis failure is "store unavailable"
         raise StoreUnavailable(str(exc)) from exc
+
+
+def ok_result(output: SuggestionAgentOutput, *, prompt_version: str, model: str | None) -> dict:
+    """The stored shape of a usable agent answer (already validated against what was issued)."""
+    return {
+        "status": "ok",
+        "picks": output.model_dump(mode="json", by_alias=True)["ranked"],
+        "prompt_version": prompt_version,
+        "model": model,
+    }
+
+
+def fallback_result(reason: str, *, prompt_version: str) -> dict:
+    """A run that produced nothing usable: the GET serves the deterministic set at once."""
+    return {"status": "fallback", "reason": reason, "prompt_version": prompt_version}
+
+
+def picks_from_result(result: dict[str, Any] | None) -> SuggestionAgentOutput | None:
+    """The picks of a stored result, or None for a fallback marker, a miss or a corrupt entry.
+
+    Never trusted as-is: ``assemble_set`` rebuilds every card from the LIVE registry, so a
+    stored pick can only ever reorder cards the server would build anyway.
+    """
+    if not isinstance(result, dict) or result.get("status") != "ok":
+        return None
+    try:
+        return SuggestionAgentOutput.model_validate({"ranked": result.get("picks")})
+    except (ValueError, TypeError):
+        return None
 
 
 def get_result(thread_id: str, digest: str) -> dict[str, Any] | None:
@@ -123,6 +156,16 @@ def try_lock(thread_id: str, digest: str, ttl_s: int = LOCK_TTL_S, scope: str = 
     return bool(
         _guard(lambda: _redis().set(_key(scope, thread_id, digest), "1", nx=True, ex=ttl_s))
     )
+
+
+def claim_refresh_slot(thread_id: str, window_s: int) -> bool:
+    """True for exactly one caller per debounce window: the one that must enqueue the refresh.
+
+    A refresh enqueued with a countdown of ``window_s`` reads the thread when it runs, so any
+    trigger that lands inside the window is already covered by it and is dropped here. The slot
+    expires with the window, so a trigger that lands after the run read the thread starts the next.
+    """
+    return try_lock(thread_id, "-", ttl_s=max(1, window_s), scope="debounce")
 
 
 def release_lock(thread_id: str, digest: str, scope: str = "lock") -> None:

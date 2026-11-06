@@ -1,0 +1,71 @@
+{
+  "id": "g02_tr_filler_then_captions",
+  "description": "Turkish ready set: fix tier then essential tier.",
+  "expect": "pass",
+  "input": {
+    "state": "ready",
+    "language": "tr",
+    "creator_request": "Daha akıcı olsun",
+    "issued": [
+      {
+        "kind": "filler_words",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "captions",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e2"
+            ]
+          }
+        ]
+      }
+    ],
+    "evidence": {
+      "e1": {
+        "signal": "filler",
+        "fact": "7 yerde dolgu sözcüğü var"
+      },
+      "e2": {
+        "signal": "speech",
+        "fact": "1. ve 4. klipte konuşma var, altyazı yok"
+      }
+    },
+    "already_in_edit": [],
+    "dismissed": [],
+    "untrusted_texts": [
+      "yani şey bugün size hamur açacağım"
+    ]
+  },
+  "output": {
+    "ranked": [
+      {
+        "kind": "filler_words",
+        "target_ids": [
+          "all"
+        ],
+        "why": "7 yerde dolgu sözcüğü var",
+        "copy": null,
+        "rank": 1
+      },
+      {
+        "kind": "captions",
+        "target_ids": [
+          "all"
+        ],
+        "why": "1. ve 4. klipte konuşma var",
+        "copy": null,
+        "rank": 2
+      }
+    ]
+  }
+}

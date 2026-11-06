@@ -270,6 +270,7 @@ from app.services.song_range import (
     song_range_of,
     song_range_question_text,
 )
+from app.services.source_replacement import source_replacement_supersedes
 from app.services.spoken_quotes import (
     Transcribe,
     closing_quote_notice,
@@ -1086,6 +1087,10 @@ class PlannedKriaTurn:
     editor_repair: PreparedEditorRepair | None = None
     editor_repair_run_context: RunContext | None = None
     intent_repair: IntentRepairSpec | None = None
+    # A tapped suggestion card's pin (`plan_pinned_suggestion_turn`): set_id, id, kind, whether
+    # the stored action ran as built, and the digest of the editor state it compiles against,
+    # which the draft commit re-checks inside the row lock. None for every other turn.
+    suggestion_pin: dict | None = field(default=None, compare=False, repr=False)
 
 
 async def _withdraw_stuck_pins(
@@ -2399,6 +2404,11 @@ async def _load_editor_target(
         _miss("no_current_job", session_id=None)
         return None
     thread = await db.get(CreationThread, thread_id)
+    if thread is not None and source_replacement_supersedes(getattr(thread, "state", None), job_id):
+        # Not in _GUARDED_MISSES: this Job's cuts and captions belong to a take the creator
+        # replaced, so every follow-up re-plans from the new take instead of editing them.
+        _miss("source_replaced", session_id=None)
+        return None
     if thread is None or thread.active_creator_agent_session_id is None:
         _miss("no_active_session", session_id=None)
         return None
@@ -6449,6 +6459,19 @@ async def _plan_scoped_turn(
             )
         if miss == "editor_state_stale":
             return _reply(_editor_state_stale_reply())
+        if miss == "source_replaced":
+            return _reply(
+                say(
+                    en=(
+                        "Those parts belonged to your old take. Ask me to make the video "
+                        "again and I'll plan it from your new one."
+                    ),
+                    tr=(
+                        "Bu bölümler eski çekimine aitti. Videoyu yeniden yapmamı iste, "
+                        "yeni çekiminle planlayayım."
+                    ),
+                )
+            )
         return _reply(
             say(
                 en="I couldn't open your current video to update it. Try again in a moment.",
@@ -6587,6 +6610,317 @@ async def _plan_scoped_turn(
             brief_expected_version=expected_version,
         )
     return planned
+
+
+_NO_LONGER_FITS = (
+    "This suggestion no longer fits your edit. Nothing was changed, and I'm refreshing the ideas."
+)
+_NO_LONGER_FITS_TR = (
+    "Bu öneri artık düzenlemene uymuyor. Hiçbir şey değişmedi, önerileri yeniliyorum."
+)
+
+
+def no_longer_fits_reply() -> str:
+    return say(en=_NO_LONGER_FITS, tr=_NO_LONGER_FITS_TR)
+
+
+_UNSAVED_EDITS_REPLY = "Save your edits first, then tap this suggestion again. Nothing was changed."
+_UNSAVED_EDITS_REPLY_TR = (
+    "Önce düzenlemelerini kaydet, sonra bu öneriye tekrar dokun. Hiçbir şey değişmedi."
+)
+
+
+async def plan_pinned_suggestion_turn(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    item_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    user_message: str,
+    pin: Mapping[str, Any],
+    editor_state: Any = None,
+    client_protocol: int | None = None,
+) -> PlannedKriaTurn:
+    """A tapped suggestion card as a planned turn: the action it was proven with, no model.
+
+    The result is either ``[draft.apply_editor_ops]`` built from the card's stored action (or the
+    registry's rebuild of it when the editor state moved since the card was served), or a reply
+    that says the card no longer fits. It is never a free interpretation of the card's words:
+    every failure here is a reply, not a fall-through to the planner. The draft commit
+    (``tasks/kria_runtime._complete_draft_turn``) is the only apply path and re-checks the
+    editor state inside its row lock (``suggestion_pin``).
+    """
+    from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+    from app.services.suggestions import pinned  # noqa: PLC0415
+    from app.services.suggestions.models import (  # noqa: PLC0415
+        BriefUpdateAction,
+        CopyDecisionAction,
+        EditorOpsAction,
+        ItemSettingAction,
+    )
+
+    item = await db.get(PlanItem, item_id)
+    if item is None:
+        raise RuntimeError("Kria target item is unavailable")
+    plan_row = await db.get(ContentPlan, item.content_plan_id)
+    if plan_row is None or plan_row.user_id != creator_id:
+        raise RuntimeError("Kria target item ownership changed")
+    persona = await db.get(Persona, plan_row.persona_id)
+    if persona is None or persona.user_id != creator_id:
+        raise RuntimeError("Kria creator context is unavailable")
+    # Reads only (capabilities, media refs): the manifest hash needs no model call.
+    manifest, _ = await resolve_item_creator_context(
+        db, item, persona=persona, runs_guided_voiceover=False
+    )
+    set_id, suggestion_id = str(pin.get("set_id") or ""), str(pin.get("id") or "")
+
+    def _record(outcome: str, **extra: Any) -> dict[str, Any]:
+        return {
+            "suggestion_pin": {
+                "set_id": set_id,
+                "id": suggestion_id,
+                "outcome": outcome,
+                **extra,
+            }
+        }
+
+    def _reply(text: str, reason: str) -> PlannedKriaTurn:
+        log.info("suggestion_pin.refused", thread_id=str(thread_id), reason=reason)
+        return PlannedKriaTurn(
+            plan=KriaTurnPlan(
+                mode="respond",
+                turn_value="recovery",
+                response=text,
+                diagnostics=_record("refused", reason=reason),
+            ),
+            manifest_hash=manifest.manifest_hash,
+            context_hash=manifest.context_hash,
+        )
+
+    def _no_longer_fits(reason: str) -> PlannedKriaTurn:
+        return _reply(no_longer_fits_reply(), reason)
+
+    thread = await db.get(CreationThread, thread_id)
+    resolved = pinned.resolve_pin(thread.state if thread is not None else None, pin, user_message)
+    if resolved.card is None:
+        return _no_longer_fits(resolved.reason or pinned.UNRESOLVED)
+    card = resolved.card
+    suggestion = card.suggestion
+    action = suggestion.action
+    restate = pinned.restates_strategy(action)
+    ops = pinned.editor_ops(action)
+    allow = pinned.PINNED_OP_ALLOW
+    if ops is None and (ops := pinned.copy_ops(action)) is not None:
+        allow = pinned.COPY_OP_ALLOW
+    if ops is None and not restate:
+        return _no_longer_fits(pinned.ACTION_UNSUPPORTED)
+    if (ops is not None and pinned.disallowed_op(ops, allow) is not None) or (
+        not pinned.kind_enabled(suggestion)
+    ):
+        return _no_longer_fits(pinned.OP_NOT_ALLOWED)
+    if restate and editor_state is not None and editor_state_has_lanes(editor_state):
+        # The creator's hand edits are not saved yet. Restating the plan would re-plan over them.
+        # The card is still good once they save, so it is not "no longer fits" and stays tappable.
+        return _reply(
+            say(en=_UNSAVED_EDITS_REPLY, tr=_UNSAVED_EDITS_REPLY_TR), pinned.UNSAVED_EDITS
+        )
+
+    target = await _load_editor_target(
+        db, thread_id=thread_id, item=item, **_state_kw(editor_state)
+    )
+    if target is None:
+        miss = _editor_target_miss.get()
+        if miss == "render_in_flight":
+            return _reply(
+                say(en=_EDITOR_TARGET_IN_FLIGHT_REPLY, tr=_EDITOR_TARGET_IN_FLIGHT_REPLY_TR),
+                pinned.TARGET_UNAVAILABLE,
+            )
+        if miss == "editor_state_stale":
+            return _reply(_editor_state_stale_reply(), pinned.TARGET_UNAVAILABLE)
+        return _no_longer_fits(pinned.TARGET_UNAVAILABLE)
+    if target.recovery_basis is not None:
+        # A failed render's correction carries a pinned recovery basis only the copilot path mints.
+        return _no_longer_fits(pinned.TARGET_UNAVAILABLE)
+
+    # Every card is proven again against the facts as they are now, whatever its action type:
+    # the editor may be on the exact base the card was built for while something else moved (the
+    # creator named the clip a duplicates card removes, a title was decided, the analysis was
+    # replaced). The kind's own witness is the one judge of that (it also compares the base).
+    ctx = None
+    try:
+        ctx = await pinned.ready_context(
+            db, thread=thread, item=item, manifest=manifest, target=target, protocol=client_protocol
+        )
+    except Exception:  # noqa: BLE001 - facts that cannot be read prove nothing: rebuild or refuse
+        log.warning("suggestion_pin.context_failed", thread_id=str(thread_id), exc_info=True)
+    exact = ctx is not None and pinned.proves(suggestion, action, ctx)
+    if (
+        not exact
+        and isinstance(action, EditorOpsAction)
+        and pinned.snapshot_digest(target.snapshot) == action.base_digest
+    ):
+        # The editor is on the exact base the card was built for, yet its own proof fails: a
+        # stored op the compiler or the kind now refuses. That is not an edit that moved, so
+        # nothing is rebuilt around it.
+        return _no_longer_fits(pinned.OP_REFUSED)
+    if not exact:
+        # The edit moved since the card was served: build it again from the registry and the
+        # current facts. A card the registry cannot prove now is a card that no longer fits, and
+        # so is one a tap already applied: its rebuild would be a new change, not the offer.
+        if pinned.is_consumed(thread.state, set_id, suggestion_id):
+            return _no_longer_fits(pinned.CONSUMED)
+        rebuilt = await pinned.rebuild_action(
+            db,
+            suggestion=suggestion,
+            thread=thread,
+            item=item,
+            manifest=manifest,
+            target=target,
+            protocol=client_protocol,
+            ctx=ctx,
+        )
+        if rebuilt is None or type(rebuilt) is not type(action):
+            return _no_longer_fits(pinned.BASE_MOVED)
+        action = rebuilt
+        ops = pinned.editor_ops(action)
+        if ops is None:
+            ops = pinned.copy_ops(action)
+        if (ops is None and not restate) or (
+            ops is not None and pinned.disallowed_op(ops, allow) is not None
+        ):
+            return _no_longer_fits(pinned.BASE_MOVED)
+
+    brief_fields: dict[str, Any] = {}
+    parsed: list[dict] | None = None
+    typed_updates: tuple[Any, ...] = ()
+    restated_head_hash: str | None = None
+    if ops is not None:
+        parsed = pinned.parse_ops(ops, target.snapshot)
+        if parsed is None:
+            return _no_longer_fits(pinned.OP_REFUSED)
+        plan_out = adapt_editor_action(
+            reply=say(en=_PHONE_STAGED_REPLY, tr=_PHONE_STAGED_REPLY_TR), ops=parsed
+        )
+        if plan_out.mode != "act":
+            return _no_longer_fits(pinned.OP_REFUSED)
+        typed_updates = pinned.brief_updates_for(
+            suggestion,
+            parsed,
+            language=(ctx.language if ctx is not None else current_reply_language()) or "en",
+        )
+        route = "editor_ops"
+    else:
+        restate_base = await pinned.restate_base(db, thread_id=thread_id, ctx=ctx)
+        if restate_base.strategy is None:
+            return _no_longer_fits(restate_base.reason or pinned.NO_STRATEGY)
+        plan_out = _restated_strategy_plan(restate_base.strategy, suggestion.prompt)
+        restated_head_hash = restate_base.head_hash
+        typed_updates = pinned.restate_updates(suggestion, action)
+        route = "replan"
+    if settings.creative_brief_for(creator_id):
+        # The tap's typed requirement, so the receipt names what changed and a later replan
+        # reads it as a requirement. Deterministic: no extraction, no deferred brief.
+        try:
+            prior_brief = await load_latest_brief(db, thread_id)
+            ids = [
+                req.id
+                for req in apply_updates(prior_brief, typed_updates, source_turn_id=None).live()
+            ]
+        except (BriefCoverageError, BriefUpdateBatchError, ValidationError, ValueError):
+            log.warning("suggestion_pin.brief_unavailable", thread_id=str(thread_id), exc_info=True)
+            return _no_longer_fits(pinned.BRIEF_UNAVAILABLE)
+        current_version = prior_brief.version if prior_brief else 0
+        if isinstance(action, BriefUpdateAction) and action.expected_version != current_version:
+            return _no_longer_fits(pinned.BASE_MOVED)
+        brief_fields = {
+            "brief_updates": typed_updates,
+            "brief_route": route,
+            "brief_clip_ids": tuple(str(media.media_id) for media in manifest.media),
+            "brief_manifest": manifest,
+            "brief_coverage": {
+                "applicable_ids": ids,
+                "retrieved_ids": [],
+                "enforced_ids": [],
+                "unresolved_ids": ids,
+            },
+            "brief_expected_version": current_version,
+        }
+    elif isinstance(action, BriefUpdateAction):
+        return _no_longer_fits(pinned.BRIEF_UNAVAILABLE)
+    from app.services.creative_copy_decisions import (  # noqa: PLC0415
+        media_digest,
+        suggestion_resolution,
+    )
+
+    extra: dict[str, Any] = {}
+    pin_state: dict[str, Any] = {}
+    if isinstance(action, CopyDecisionAction):
+        extra["creative_copy_resolution"] = suggestion_resolution(
+            text=action.text,
+            dependency_digest=media_digest(snapshot_media(item)),
+            set_id=set_id,
+            suggestion_id=suggestion_id,
+        )
+    if restate:
+        extra["media_snapshot"] = snapshot_media(item)
+        pin_state["head_hash"] = restated_head_hash
+        # A native-editor Save moves the saved video without writing a draft, so the head hash
+        # cannot tell. The commit compares this with the video it finds under the row lock.
+        pin_state["generation_id"] = variant_render_baseline(target.variant or {})
+        if isinstance(action, ItemSettingAction):
+            pin_state["setting"] = {"field": action.field, "value": action.value}
+    else:
+        pin_state["projected_digest"] = pinned.projected_digest(target.variant)
+    log.info(
+        "suggestion_pin.planned",
+        thread_id=str(thread_id),
+        kind=suggestion.kind,
+        exact=exact,
+        lane="restate" if restate else "ops",
+        ops=[op.get("op") for op in parsed or []],
+    )
+    return PlannedKriaTurn(
+        plan=plan_out.model_copy(
+            update={"diagnostics": _record("planned", kind=suggestion.kind, exact=exact)}
+        ),
+        manifest_hash=manifest.manifest_hash,
+        context_hash=manifest.context_hash,
+        suggestion_pin={
+            "set_id": set_id,
+            "id": suggestion_id,
+            "kind": suggestion.kind,
+            "exact": exact,
+            **pin_state,
+        },
+        **brief_fields,
+        **extra,
+    )
+
+
+def _restated_strategy_plan(strategy: dict[str, Any], summary: str) -> KriaTurnPlan:
+    """The thread's current plan as a draft plus its exact render approval: the route that
+    re-reads the brief (a clip's sound, the speech-cleanup setting). The plan itself is not
+    changed; the typed update and the item setting are what the tap adds."""
+    return KriaTurnPlan(
+        mode="act",
+        turn_value="action",
+        evidence_ids=["trusted-project-manifest"],
+        intents=[
+            {
+                "intent_id": "apply-strategy",
+                "tool_name": "draft.apply_strategy",
+                "tool_version": 1,
+                "arguments": {"strategy": strategy, "summary": summary},
+            },
+            {
+                "intent_id": "request-render",
+                "tool_name": "render.request",
+                "tool_version": 1,
+                "arguments": {},
+                "depends_on": ["apply-strategy"],
+            },
+        ],
+    )
 
 
 async def _plan_live_turn(
@@ -6926,7 +7260,7 @@ async def _plan_live_turn(
                 target = await _load_editor_target(
                     db, thread_id=thread_id, item=item, **_state_kw(editor_state)
                 )
-                if target is None:
+                if target is None and _editor_target_miss.get() != "source_replaced":
                     if failed_editor_correction and _editor_target_miss.get() == "no_render":
                         _editor_target_miss.set("failed_draft_unavailable")
                     recovery = _editor_target_recovery(manifest)
@@ -6936,7 +7270,9 @@ async def _plan_live_turn(
                         brief_expected_version=prior_brief.version if prior_brief else 0,
                         defer_brief=False,
                     )
-                shape = plan_shape_from_editor_snapshot(target.snapshot)
+                # A replaced take leaves no target, so the shape reads "no render" and routes
+                # to a fresh plan rather than to the recovery reply above.
+                shape = plan_shape_from_editor_snapshot(target.snapshot if target else None)
                 await db.rollback()
                 route = route_requirements(fresh, shape, message=user_message, full_replan=False)
             if route == "editor_ops":

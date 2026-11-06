@@ -9,7 +9,7 @@ telemetry checks and the funnel. **Nothing here calls a model.**
 
 ```bash
 cd src/apps/api
-pytest tests/evals/test_suggestion_chips_evals.py tests/evals/test_chip_suggester_evals.py \
+pytest tests/evals/test_suggestion_chips_evals.py tests/evals/test_suggestion_agent_evals.py \
   tests/services/test_suggestion_chips_guards.py tests/scripts/test_suggestion_chip_funnel.py -q
         # CI (test_suggestion_chips_postgres.py also runs on a *_test database)
 .venv/bin/python scripts/suggestion_chip_report.py          # writes <repo>/.chip-eval/report.md (gitignored)
@@ -21,7 +21,8 @@ pytest tests/evals/test_suggestion_chips_evals.py tests/evals/test_chip_suggeste
 ## What is checked
 
 Two layers: the deterministic **engine** decides which chips may exist (G1 to G9, G11); the
-**wording agent** `nova.chat.suggester` only ranks and words them (G10 + cassettes + telemetry).
+**suggestion agent** `nova.chat.suggestion_agent` only picks and orders them (G10 + cassettes +
+telemetry; the server builds and proves every card, see [`suggestion-chips`](suggestion-chips.md)).
 
 | gate | proves | bar |
 | --- | --- | --- |
@@ -34,7 +35,7 @@ Two layers: the deterministic **engine** decides which chips may exist (G1 to G9
 | G7 closed template set | every message is in the copy deck; footage text appears in neither message nor label (only in `why`) | 0 violations |
 | G8 determinism | byte-identical output | 100% |
 | G9 executability | a recorded planner answer per (kind, state) compiles to a non-empty change through `replay_v2_strategy` / `replay_v2_editor` | >= 95% |
-| G10 wording fuzz | for ARBITRARY model output the served set is a subset of the live candidates with `message`, `kind`, `capability`, `anchor`, `requires_protocol` copied from them, no flag-off / already-in-edit / dark kind, valid label and `why`, limits held | 100% |
+| G10 agent fuzz | for ARBITRARY model output the served chips are live candidates with `label`, `message`, `kind`, `capability`, `anchor`, `requires_protocol` copied from them, and every served v2 card is an issued, enabled registry kind whose action passes its witness on the live snapshot, with closed-template title and prompt, no action on the wire; no flag-off / already-in-edit / dark kind, valid `why` / `copy`, limits held | 100% |
 | G11 wire contract | status / state / `retry_after_s` / `wording` / closed kind enum / `default_edit` flag / ids | 100% |
 
 Every gate has negative controls (a known-bad set it must flag). G10 also has **mutation controls**:
@@ -45,30 +46,25 @@ empty catalog, phone vs cloud, en vs tr, title / captions / music already presen
 pending / empty / done, no media, photos only, photos plus one video, open question, failed
 render, in-flight render, duplicate subjects, v1 without the agent, no witness) incl. the
 `nermin-*` replay fixtures and `east-run-brief` (Turkish) projected into first-prompt and ready
-cases. 25 wording-agent cassettes over those contexts and a 130-label corpus.
-`tests/fixtures/agent_evals/{suggestion_chips,chip_suggester}/`.
+cases. 31 suggestion-agent cassettes over those contexts.
+`tests/fixtures/agent_evals/{suggestion_chips,suggestion_agent}/`.
 
-Latest run (`.chip-eval/report.md`, this branch): G1 to G8 and G11 60/60, expectation pins 60/60,
-G9 11/11, cassettes 25/25, G10 fuzz 1350/1350 (45 contexts x 30 seeded answers; 22,500 more in a
-one-off hunt, 0 violations), label recall 73/84 (87%), label rejection 46/46.
+Run `scripts/suggestion_chip_report.py` for the current numbers (`.chip-eval/report.md`):
+engine gates, G9, the cassette pass table and the G10 fuzz (45 contexts x 30 seeded answers).
 
 **Limits, stated plainly.** G9 is the COMPILE path: a hand-authored planner answer parses, adapts
 and compiles; it does not prove today's Main Creator / copilot choose that answer. The first-prompt
-`hook` is "reaches wording approval with a candidate". The cassettes and the label corpus are
-hand-authored, so they measure what the safeguards do with answers I wrote, not what Flash writes.
-Cost and latency of the agent are unmeasured. Witness tiers (`strategy` | `editor` | `policy_only`)
+`hook` is "reaches wording approval with a candidate". The cassettes are hand-authored, so they
+measure what the safeguards do with answers I wrote, not what gpt-6.1-sol picks. Cost, latency and
+the share of real picks that pass their witness are unmeasured (the paid live eval below). Witness tiers (`strategy` | `editor` | `policy_only`)
 are reported per chip so "executable" is never claimed more strongly than it was proven;
 `default_edit` and `title_animation` are `policy_only`.
 
-## Label acceptance (is the closed lexicon too strict?)
+## Labels
 
-Of 84 plausible creator-voiced labels (en 49/56, tr 24/28) the validator lets 87% through; it
-stops 46/46 cringe, wrong-kind, content-leaking, digit / quote / emoji, injection and
-wrong-language labels. Loosening to stoplist-only would let 25 of those 46 (54%) through, so
-**keep the lexicon, widen it** with the rejected plausible words (`seconds`, `screen`, `parts`,
-`together`, "cuts" under sfx, `I`, `, ` with a space, a few Turkish verbs), and do not justify
-enabling the agent by its wording: a rejected label costs nothing (the template label stays); the
-value is the ranking and the grounded `why`. The real rate needs a live replay (paid, below).
+The agent no longer writes labels, so there is no label-acceptance measurement: every label is a
+template, and `test_every_template_label_passes_the_label_validator` keeps the template deck inside
+its own closed vocabulary (the old 130-label corpus was deleted with the label agent).
 
 ## Findings
 
@@ -77,33 +73,31 @@ Fixed in the engine (KRI-756 B1), pinned by fixtures: existing opening text coun
 captions are gated on the footage and edit format, not the manifest `caption_style` capability
 (`fp_caption_style_off` pins that captions are still offered when it is off).
 
-Open (strict xfails; each fails the day it is fixed, `BACKEND_GAPS` in
-`tests/evals/chip_suggester_harness.py`):
+Open:
 
-1. `validate_why` needs only ONE footage word, so a call to action ("pouring matcha, tap Buy Now
-   at example dot com") is shown as the subtitle. Display-only, never sent.
-2. `validate_why` checks language one way: English text passes on a Turkish thread.
-3. `label_source` is `agent` even when the agent's label equals the template, which inflates the
-   agent arm of the Flash-vs-template split.
-4. (dark) the raw creator filename goes into the `opener_clip` label and message, so a quote or
+1. (dark) the raw creator filename goes into the `opener_clip` label and message, so a quote or
    `{time}` survives. Sanitize before `CLIP_ORDINAL_PROVEN` flips.
+
+The agent-era gaps the strict xfails used to pin are closed by construction: a `why` or `copy`
+that repeats a run of transcript words is dropped (`shares_run`), and there is no `label_source:
+agent` any more.
 
 Noted, not gated: `already_in_edit` tags `captions` when the edit has no caption lane and
 `title_animation` when there is no title (the agent is told they are "already in the edit"); an
-all-rejected answer is stored with `status: ok` and keeps the model's order while the served set
-reports `wording: fallback`; a model that legitimately returns an empty ranking is reported as
-`fallback_reason: label_rejected`; fenced JSON is not parsed (falls back to templates).
+empty answer is stored as `fallback_reason: empty_ranking` and an answer none of whose picks
+serves anything as `no_usable_picks`; fenced JSON is not parsed (strict mode never returns it;
+the run falls back).
 
 ## OLD vs NEW
 
 `scripts/suggestion_chip_report.py` prints, per fixture, the chips a creator saw before (iOS
 `ReadyStage`: two hardcoded strings after a render, read from the base commit; nothing at first
 prompt) next to the new chips, with the gate, witness tier and, for the cassette contexts, the
-agent-worded set beside the template set. The artifact is `.chip-eval/report.md`.
+agent-picked set beside the deterministic set. The artifact is `.chip-eval/report.md`.
 
 ## Telemetry (structlog, contract section 8)
 
-Asserted with `structlog.testing.capture_logs` in `test_chip_suggester_evals.py`:
+Asserted with `structlog.testing.capture_logs` in `test_suggestion_agent_evals.py`:
 
 * `suggestion_chips.shown {thread_id, set_id, state, wording, kinds, n}`: once per FINAL set_id
   (the pending set does not emit; a pending set is replaced in place under the same set_id).
@@ -143,7 +137,8 @@ compare completed first renders and chat edits per render between a flag-off and
    development ledger cap $2, no judge).
 2. Empathy / cringe judge (`audit-user-empathy`) on the template deck and on recorded agent labels.
 3. Blind old-vs-new pairwise on about 20 sessions (`llm_judge.py` has no pairwise mode).
-4. Flash-vs-template wording A/B by `label_source` in real taps (fix finding 3 first).
-5. Live replay of `nova.chat.suggester` to replace the hand-authored label corpus with a measured
-   acceptance rate, latency and cost.
+4. Live replay of `nova.chat.suggestion_agent` (gpt-6.1-sol, about 10 real threads, development
+   ledger cap $2, `AI_OPENAI_SUGGESTIONS_BUDGET_USD` set for the run): record cost per run, latency
+   and the share of picks that pass their witness, then replay the rubric judge.
+5. Agent-picked vs deterministic order A/B in real taps (`wording` in `shown` / `tap`).
 6. An `opener_clip` cassette proving filename-to-hero resolution (unlocks `CLIP_ORDINAL_PROVEN`).

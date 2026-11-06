@@ -1,0 +1,36 @@
+{
+ "id": "copy_over_the_cap_is_dropped_not_cut",
+ "description": "Hook copy beyond the 200-character cap is dropped (a cut hook is junk); the other pick survives.",
+ "context": "rd_music_loud",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "hook",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": "Matcha mornings Matcha mornings Matcha mornings Matcha mornings Matcha mornings Matcha mornings Matcha mornings Matcha mornings Matcha mornings Matcha mornings Matcha mornings Matcha mornings Matcha mornings Matcha mornings Matcha mornings Matcha mornings Matcha mornings Matcha mornings Matcha mornings Matcha mornings ",
+    "rank": 1
+   },
+   {
+    "kind": "music",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 2
+   }
+  ]
+ },
+ "expect": {
+  "wording": "agent",
+  "cards": [
+   "music"
+  ]
+ },
+ "tags": [
+  "natural"
+ ]
+}
