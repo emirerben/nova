@@ -1481,11 +1481,7 @@ def test_release_orphan_machine_that_may_still_run_a_migration_still_blocks(
     result = _acquire_with(tmp_path, _release_orphan_machine(state))
 
     assert result.returncode == 1
-    assert (
-        "do not expose one immutable image digest" in result.stderr
-        or "lifecycle" in result.stderr
-        or "operational" in result.stderr
-    ), result.stderr
+    assert "release_command Machine is still running" in result.stderr
     assert not (tmp_path / "create.args").exists()
 
 
