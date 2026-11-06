@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.8.0] - 2026-11-06
+
+### Changed
+- feat(list-labels): numbered labels appear when each item starts (Qendresa item 19) (#2116) <!-- release-pr: 2116 -->
+
 ## [0.88.7.0] - 2026-11-06
 
 ### Changed
