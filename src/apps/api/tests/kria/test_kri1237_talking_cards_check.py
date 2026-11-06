@@ -144,9 +144,9 @@ def _readiness(**strategy):  # noqa: ANN003, ANN202
 
 def _promise() -> str:
     """The new reason constant, imported per test so origin/main shows each test's failure."""
-    from app.kria.brief_checks import TALKING_CARDS_PLAN  # noqa: PLC0415
+    from app.kria.brief_checks import _TALKING_CARDS_PLAN  # noqa: PLC0415
 
-    return TALKING_CARDS_PLAN
+    return _TALKING_CARDS_PLAN
 
 
 # ------------------------------------------------------------------- 1. the Q1 draft (turn 1)
@@ -179,7 +179,7 @@ def test_q1_cards_ask_is_a_render_promise_not_a_refusal() -> None:
     strict=True,
     reason=(
         "KRI-1235 owns approval_readiness: the promise turns approvable once its render-promise "
-        "tuple holds TALKING_CARDS_PLAN. Whichever PR lands second drops this marker."
+        "tuple holds _TALKING_CARDS_PLAN. Whichever PR lands second drops this marker."
     ),
 )
 def test_q1_cards_promise_is_approvable() -> None:
@@ -270,7 +270,7 @@ def test_finished_q1_names_each_screenshot_and_when_it_shows() -> None:
     assert receipt.verification == "checked"
     reason = receipt.reason
     for name, at in SHOWN_AT.items():
-        assert f"{name} at {at}" in reason, (name, reason)
+        assert f"{at} {name}" in reason, (name, reason)
     assert not any(clock in reason for clock in SOURCE_CLOCK), reason
     for name in NOT_SHOWN:
         assert name in reason, (name, reason)
@@ -303,7 +303,7 @@ def test_wrong_content_control_nothing_placed_is_never_met() -> None:
     receipt = _receipt(CARDS, plan_facts_from_phone_variant(variant))
     assert receipt.status == "not_possible", receipt
     assert "Screenshot 1 spec-kit" in receipt.reason
-    assert not any(f"at {at}" in receipt.reason for at in SHOWN_AT.values())
+    assert not any(at in receipt.reason for at in SHOWN_AT.values()), receipt.reason
 
 
 def test_a_card_the_cleanup_cut_is_named_as_cut_not_shown() -> None:
@@ -317,9 +317,9 @@ def test_a_card_the_cleanup_cut_is_named_as_cut_not_shown() -> None:
     }
     variant = _variant(placed=rest, unplaced=[*receipt_rows["unplaced"], demoted])
     reason = _receipt(CARDS, plan_facts_from_phone_variant(variant)).reason
-    assert "Screenshot 1 spec-kit at" not in reason
-    assert "Screenshot 1 spec-kit" in reason
-    assert "Screenshot 2 impeccable at 0:11" in reason
+    assert "0:05 Screenshot 1 spec-kit" not in reason
+    assert "Screenshot 1 spec-kit (its moment was cut out)" in reason, reason
+    assert "0:11 Screenshot 2 impeccable" in reason
 
 
 def test_no_times_when_the_cut_record_is_missing() -> None:
@@ -328,7 +328,7 @@ def test_no_times_when_the_cut_record_is_missing() -> None:
     variant.pop("silence_cut")
     reason = _receipt(CARDS, plan_facts_from_phone_variant(variant)).reason
     assert "Screenshot 1 spec-kit" in reason
-    assert not any(f"at {at}" in reason for at in (*SHOWN_AT.values(), *SOURCE_CLOCK)), reason
+    assert not any(at in reason for at in (*SHOWN_AT.values(), *SOURCE_CLOCK)), reason
 
 
 @pytest.mark.parametrize("matcher", ["manual", "failed", "sequence"])
@@ -345,3 +345,55 @@ def test_no_card_verdict_without_an_overlay_receipt() -> None:
     receipt = _receipt(CARDS, plan_facts_from_phone_variant(variant))
     assert not any(name in (receipt.reason or "") for name in SHOWN_AT), receipt
     assert receipt.status != "met"
+
+
+# ------------------------------------------------ 4. review follow-ups (same failure modes)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "When I get excited, show an emoji",
+        "When I talk about a country, pop up its flag",
+        "When I mention a tool, show a title card",
+    ],
+)
+def test_an_ask_for_a_kind_of_sticker_is_not_a_visuals_promise(text: str) -> None:
+    """Failure mode 2: the matcher finds the creator's own pictures, not an emoji or a flag."""
+    req = BriefRequirement(id="r4", kind="style", scope="global", description=text)
+    assert _receipt(req, _draft_facts()).reason != PROMISE_EN
+
+
+def test_the_planner_beats_still_answer_on_the_finished_video() -> None:
+    """Failure mode 3: where word-triggered pop-ins were placed, their verdict stands."""
+    variant = copy.deepcopy(VARIANT)
+    variant["phone_beat_receipt"] = {
+        "version": 1,
+        "matcher": "phrase",
+        "placed": [{"trigger": "Spec Kit", "visual_label": "Screenshot 1 spec-kit"}],
+        "unplaced": [],
+    }
+    reason = _receipt(CARDS, plan_facts_from_phone_variant(variant)).reason or ""
+    assert "Screen Recording" not in reason and "Shown:" not in reason, reason
+
+
+def test_long_names_never_overflow_the_receipt() -> None:
+    """Failure mode 8: six placed cards with 60-character names still fit, cut at a name."""
+    long_name = "Screenshot 2026-11-05 at 14.22.31 spec-kit demo walkthrough"
+    rows = [
+        {"media_id": f"m{i}", "label": f"{long_name} {i}", "start_s": 5.0 + 6 * i, "end_s": 9.0}
+        for i in range(8)
+    ]
+    variant = _variant(placed=rows)
+    receipt = _receipt(CARDS, plan_facts_from_phone_variant(variant))
+    assert receipt.status == "met"
+    assert len(receipt.reason) <= 300
+    assert receipt.reason.endswith(".") and "more" in receipt.reason, receipt.reason
+
+
+def test_a_short_title_keeps_its_dot() -> None:
+    """Failure mode 8: only an extension the receipt's 60-character cap cut short is dropped."""
+    variant = _variant(
+        placed=[{"media_id": "m1", "label": "Q3.m", "start_s": 9.0, "end_s": 12.0}], unplaced=[]
+    )
+    assert "Q3.m" in _receipt(CARDS, plan_facts_from_phone_variant(variant)).reason
