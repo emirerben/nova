@@ -173,6 +173,9 @@ struct EditorUserSongState: Equatable, Sendable {
 /// wherever no window covers the time) and `speaker_frame` (the matted speaker drawn small in a corner).
 /// KRI-1173 adds a second FILL shape, a solid colour: `{kind: "color", color: "#RRGGBB"}` with no `media_id` and no
 /// `source_start_s`; windows and the speaker frame sit over it exactly as over a media fill.
+/// Qendresa item 16 adds `full_screen_windows` (`[{start_s, end_s}]`, cut-timeline seconds, key absent while empty): spans in
+/// which the speaker's own take is drawn full-frame with no mask, background or corner frame. A strategy opening is the one
+/// starting at 0; the editor keeps the list through every background change and only ever removes the opening.
 struct EditorSpeakerBackground: Equatable, Sendable {
     /// What fills the layer wherever no window covers the time.
     enum Fill: Equatable, Sendable {
@@ -187,17 +190,21 @@ struct EditorSpeakerBackground: Equatable, Sendable {
     var windows: [EditorSpeakerBackgroundWindow]
     /// Nil = the speaker fills the frame (key absent).
     var speakerFrame: EditorSpeakerFrame?
+    /// Sorted by `startS`, non-overlapping, at most `SpeakerBackgroundLimits.maxFullScreenWindows`; empty = key absent.
+    var fullScreenWindows: [EditorFullScreenWindow]
 
     init(mediaID: String, kind: VisualMediaKind, sourceStartS: Double = 0,
-         windows: [EditorSpeakerBackgroundWindow] = [], speakerFrame: EditorSpeakerFrame? = nil) {
+         windows: [EditorSpeakerBackgroundWindow] = [], speakerFrame: EditorSpeakerFrame? = nil,
+         fullScreenWindows: [EditorFullScreenWindow] = []) {
         self.fill = .media(mediaID: mediaID, kind: kind, sourceStartS: kind == .video ? sourceStartS : 0)
-        self.windows = windows; self.speakerFrame = speakerFrame
+        self.windows = windows; self.speakerFrame = speakerFrame; self.fullScreenWindows = fullScreenWindows
     }
 
     /// A solid-colour fill. `color` is stored as given; `init?(json:)` and `isValid` hold the `#RRGGBB` rule, and
     /// the session normalises a picked colour (`Self.normalizedColor`) before it gets here.
-    init(color: String, windows: [EditorSpeakerBackgroundWindow] = [], speakerFrame: EditorSpeakerFrame? = nil) {
-        self.fill = .color(color); self.windows = windows; self.speakerFrame = speakerFrame
+    init(color: String, windows: [EditorSpeakerBackgroundWindow] = [], speakerFrame: EditorSpeakerFrame? = nil,
+         fullScreenWindows: [EditorFullScreenWindow] = []) {
+        self.fill = .color(color); self.windows = windows; self.speakerFrame = speakerFrame; self.fullScreenWindows = fullScreenWindows
     }
 
     /// The pool visual behind the speaker; nil while the fill is a colour.
@@ -227,8 +234,8 @@ struct EditorSpeakerBackground: Equatable, Sendable {
     init?(json: JSONValue) {
         guard case .object(let fields) = json, case .string(let rawKind)? = fields["kind"] else { return nil }
         let isColor = rawKind == "color"
-        let allowed: Set<String> = isColor ? ["kind", "color", "windows", "speaker_frame"]
-                                           : ["media_id", "kind", "source_start_s", "windows", "speaker_frame"]
+        let allowed: Set<String> = isColor ? ["kind", "color", "windows", "speaker_frame", "full_screen_windows"]
+                                           : ["media_id", "kind", "source_start_s", "windows", "speaker_frame", "full_screen_windows"]
         guard Set(fields.keys).isSubset(of: allowed) else { return nil }
         var windows: [EditorSpeakerBackgroundWindow] = []
         if let raw = fields["windows"] {
@@ -244,9 +251,18 @@ struct EditorSpeakerBackground: Equatable, Sendable {
             guard let value = EditorSpeakerFrame(json: raw) else { return nil }
             frame = value
         }
+        var fullScreen: [EditorFullScreenWindow] = []
+        if let raw = fields["full_screen_windows"] {
+            guard case .array(let rows) = raw, !rows.isEmpty, rows.count <= SpeakerBackgroundLimits.maxFullScreenWindows else { return nil }
+            for row in rows {
+                guard let window = EditorFullScreenWindow(json: row) else { return nil }
+                fullScreen.append(window)
+            }
+            guard Self.fullScreenWindowsAreOrdered(fullScreen) else { return nil }
+        }
         if isColor {
             guard case .string(let hex)? = fields["color"], Self.isStrictHexColor(hex) else { return nil }
-            self.init(color: hex, windows: windows, speakerFrame: frame)
+            self.init(color: hex, windows: windows, speakerFrame: frame, fullScreenWindows: fullScreen)
             return
         }
         guard let kind = VisualMediaKind(rawValue: rawKind),
@@ -259,7 +275,7 @@ struct EditorSpeakerBackground: Equatable, Sendable {
         default: return nil
         }
         guard start.isFinite, (0...SpeakerBackgroundLimits.maxSourceStart).contains(start), kind == .video || start == 0 else { return nil }
-        self.init(mediaID: id, kind: kind, sourceStartS: start, windows: windows, speakerFrame: frame)
+        self.init(mediaID: id, kind: kind, sourceStartS: start, windows: windows, speakerFrame: frame, fullScreenWindows: fullScreen)
     }
 
     var json: JSONValue {
@@ -272,6 +288,7 @@ struct EditorSpeakerBackground: Equatable, Sendable {
         }
         if !windows.isEmpty { fields["windows"] = .array(windows.map(\.json)) }
         if let speakerFrame { fields["speaker_frame"] = speakerFrame.json }
+        if !fullScreenWindows.isEmpty { fields["full_screen_windows"] = .array(fullScreenWindows.map(\.json)) }
         return .object(fields)
     }
 
@@ -279,14 +296,16 @@ struct EditorSpeakerBackground: Equatable, Sendable {
     /// `visual-<media_id>` for a pool visual, or a `color` fill with no asset (KRI-1173).
     var layer: SpeakerBackgroundLayer {
         let layerWindows = windows.isEmpty ? nil : windows.map(\.layerWindow)
+        let layerFullScreen = fullScreenWindows.isEmpty ? nil : fullScreenWindows.map(\.layerWindow)
         switch fill {
         case .media(let mediaID, let kind, let sourceStartS):
             return SpeakerBackgroundLayer(assetID: Self.assetID(forMediaID: mediaID), mediaKind: kind, sourceStart: sourceStartS,
                                           loop: true, subjectTrackID: SpeakerBackgroundLimits.defaultSubjectTrackID,
-                                          windows: layerWindows, speakerFrame: speakerFrame?.layerFrame)
+                                          windows: layerWindows, speakerFrame: speakerFrame?.layerFrame,
+                                          fullScreenWindows: layerFullScreen)
         case .color(let hex):
             return .color(hex, subjectTrackID: SpeakerBackgroundLimits.defaultSubjectTrackID,
-                          windows: layerWindows, speakerFrame: speakerFrame?.layerFrame)
+                          windows: layerWindows, speakerFrame: speakerFrame?.layerFrame, fullScreenWindows: layerFullScreen)
         }
     }
 
@@ -307,12 +326,44 @@ struct EditorSpeakerBackground: Equatable, Sendable {
     static func localID(_ n: Int) -> String { "bg-\(n)" }
 
     /// The server's rule: sorted by start, non-overlapping (touching is fine), each at least half a second.
+    static func fullScreenWindowsAreOrdered(_ windows: [EditorFullScreenWindow]) -> Bool {
+        guard (1...SpeakerBackgroundLimits.maxFullScreenWindows).contains(windows.count) else { return false }
+        for window in windows where !window.isValid { return false }
+        for (earlier, later) in zip(windows, windows.dropFirst()) where later.startS < earlier.endS { return false }
+        return true
+    }
+
     static func windowsAreOrdered(_ windows: [EditorSpeakerBackgroundWindow]) -> Bool {
         guard (1...SpeakerBackgroundLimits.maxWindows).contains(windows.count) else { return false }
         for window in windows where !window.isValid { return false }
         for (earlier, later) in zip(windows, windows.dropFirst()) where later.startS < earlier.endS { return false }
         return true
     }
+}
+
+/// Qendresa item 16: one span (cut-timeline seconds) in which the speaker's own take fills the frame, unmasked.
+struct EditorFullScreenWindow: Equatable, Sendable {
+    var startS: Double
+    var endS: Double
+
+    init(startS: Double, endS: Double) { self.startS = startS; self.endS = endS }
+
+    init?(json: JSONValue) {
+        guard case .object(let fields) = json, Set(fields.keys) == ["start_s", "end_s"],
+              case .number(let start)? = fields["start_s"], case .number(let end)? = fields["end_s"] else { return nil }
+        let window = EditorFullScreenWindow(startS: start, endS: end)
+        guard window.isValid else { return nil }
+        self = window
+    }
+
+    var isValid: Bool {
+        startS.isFinite && endS.isFinite && startS >= 0 && endS <= SpeakerBackgroundLimits.maxTimeline
+            && endS - startS >= SpeakerBackgroundLimits.minWindowSeconds
+    }
+
+    var json: JSONValue { .object(["start_s": .number(startS), "end_s": .number(endS)]) }
+
+    var layerWindow: SpeakerFullScreenWindow { SpeakerFullScreenWindow(start: startS, end: endS) }
 }
 
 /// One timed background: a pool photo (held) or muted video (looping from `sourceStartS` inside the window).

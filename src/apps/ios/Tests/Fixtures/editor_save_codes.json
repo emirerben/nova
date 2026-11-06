@@ -40,6 +40,8 @@
     "speaker_background_unsupported",
     "speaker_background_window_invalid",
     "speaker_background_windows_disabled",
+    "speaker_full_opening_disabled",
+    "speaker_full_opening_invalid",
     "talking_range_captions_missing",
     "talking_range_cut_mismatch",
     "talking_range_multi_clip",

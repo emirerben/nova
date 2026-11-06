@@ -1208,6 +1208,18 @@ class EditorCommitSpeakerBackgroundWindow(BaseModel):
     end_s: float = Field(ge=0.0, le=1800.0, allow_inf_nan=False)
 
 
+class EditorCommitSpeakerFullScreenWindow(BaseModel):
+    """One full-screen span of the Save section (Qendresa item 16): from ``start_s`` to ``end_s``
+    of the edit's timeline the speaker's own take is drawn full-frame. Order, overlap, the
+    0.5 s minimum, the count and the edit end are checked by
+    `_validate_speaker_full_screen_windows` so they answer with their own code."""
+
+    model_config = {"extra": "forbid"}
+
+    start_s: float = Field(ge=0.0, le=1800.0, allow_inf_nan=False)
+    end_s: float = Field(ge=0.0, le=1800.0, allow_inf_nan=False)
+
+
 # The docstring below is part of the generated tool / mobile contracts (kria_contracts), so it
 # stays as written. Besides the named corner presets, the iPhone editor also writes any frame
 # inside these ranges when the creator drags or pinches the speaker on the preview.
@@ -1252,6 +1264,10 @@ class EditorCommitSpeakerBackground(BaseModel):
         default=None, min_length=1, max_length=40
     )
     speaker_frame: EditorCommitSpeakerFrame | None = None
+    # Qendresa item 16: omitted from the dump while unused (so an old-shape Save still equals
+    # the stored document). No length bounds here: `_validate_speaker_full_screen_windows`
+    # answers a bad list with `speaker_full_opening_invalid`.
+    full_screen_windows: list[EditorCommitSpeakerFullScreenWindow] | None = None
 
     @field_validator("color", mode="before")
     @classmethod
@@ -1276,6 +1292,8 @@ class EditorCommitSpeakerBackground(BaseModel):
             data.pop("windows", None)
         if data.get("speaker_frame") is None:
             data.pop("speaker_frame", None)
+        if not data.get("full_screen_windows"):
+            data.pop("full_screen_windows", None)
         return data
 
 
@@ -7643,6 +7661,9 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         # KRI-1173: a solid-colour fill, present only when ON (same reason).
         if _speaker_background_color_capability(job, variant):
             capabilities["speaker_background_color"] = True
+        # Qendresa item 16: the speaker full screen before the corner, present only when ON.
+        if _speaker_full_opening_capability(job, variant):
+            capabilities["speaker_full_opening"] = True
     if _caption_animation_capability(variant, capabilities):
         capabilities["caption_animation"] = True
     if _clip_tilt_capability(job, variant, capabilities):
@@ -11473,6 +11494,49 @@ def _speaker_background_color_capability(job: Job, variant: dict) -> bool:
     )
 
 
+def _speaker_full_opening_capability(job: Job, variant: dict) -> bool:
+    """Qendresa item 16: may the app author ``full_screen_windows``
+    (``editor_capabilities.speaker_full_opening``)? The base capability AND the full-opening
+    gate (flag, windows gate, ``speakerFrameWindows`` verified, protocol >= 41)."""
+    from app.services.phone_rollout import speaker_full_opening_supported  # noqa: PLC0415
+
+    return bool(
+        _speaker_background_capability(job, variant)
+        and speaker_full_opening_supported(require_client=True)
+    )
+
+
+def _validate_speaker_full_screen_windows(
+    requested: EditorCommitSpeakerBackground, variant: dict
+) -> None:
+    """Qendresa item 16 (S76): refuse spans the phone cannot draw. 1..4, sorted, never
+    overlapping (touching is fine), each at least 0.5 s, and inside the edit when its length
+    is known. Answers ``speaker_full_opening_invalid``."""
+    from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+        MAX_FULL_SCREEN_WINDOWS,
+        MIN_BACKGROUND_WINDOW_S,
+    )
+
+    spans = requested.full_screen_windows or []
+    duration = variant.get("duration_s")
+    previous_end = 0.0
+    ok = len(spans) <= MAX_FULL_SCREEN_WINDOWS
+    for span in spans:
+        if (
+            span.end_s - span.start_s < MIN_BACKGROUND_WINDOW_S - 1e-9
+            or span.start_s < previous_end
+        ):
+            ok = False
+        if isinstance(duration, int | float) and span.end_s > duration + 1e-6:
+            ok = False
+        previous_end = span.end_s
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "speaker_full_opening_invalid"},
+        )
+
+
 _BACKGROUND_COLOR_RE = re.compile(r"^#[0-9A-F]{6}$")
 
 
@@ -11543,12 +11607,14 @@ def _validate_speaker_background_section(
     from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
         SubtitledBackground,
         SubtitledBackgroundWindow,
+        SubtitledFullScreenWindow,
         SubtitledSpeakerFrame,
     )
     from app.services.phone_rollout import (  # noqa: PLC0415
         speaker_background_color_unavailable_reason,
         speaker_background_unavailable_reason,
         speaker_background_windows_unavailable_reason,
+        speaker_full_opening_unavailable_reason,
     )
     from app.services.phone_subtitled_editor import (  # noqa: PLC0415
         pinned_visual,
@@ -11643,6 +11709,37 @@ def _validate_speaker_background_section(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={"code": "speaker_background_windows_disabled", "reason": windows_reason},
             )
+    from app.services.kria_editor_ops import background_current  # noqa: PLC0415
+
+    # The spans the editor document shows NOW: the variant's own Saved row, else the pinned
+    # recipe's for a worker-rendered variant (never Saved), so an unchanged opening echoed back
+    # is not re-gated.
+    current = background_current(job, variant)
+    stored_spans = current.get("full_screen_windows") if isinstance(current, dict) else None
+    new_spans = [span.model_dump() for span in requested.full_screen_windows or []]
+    if new_spans:
+        # Qendresa item 16 (S76, S77): the full-opening gate on top of the windows gate above.
+        # Only a Save that sets or changes the spans needs it; one that merely keeps what the
+        # variant already carries (a fill change) is not refused by a gate closed since.
+        opening_reason = (
+            speaker_full_opening_unavailable_reason() if new_spans != stored_spans else None
+        )
+        if opening_reason == "client_protocol_below_min":
+            raise HTTPException(
+                426,
+                detail={
+                    "code": "client_update_required",
+                    "feature": "speaker_full_opening",
+                    "minimum_client_protocol": (settings.speaker_full_opening_min_client_protocol),
+                },
+            )
+        if opening_reason is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_full_opening_disabled", "reason": opening_reason},
+            )
+        if new_spans != stored_spans:
+            _validate_speaker_full_screen_windows(requested, variant)
     fill: dict[str, Any]
     if is_color:
         # KRI-1173 (S54): a colour is not a pool visual -- nothing to look up or pin.
@@ -11700,6 +11797,10 @@ def _validate_speaker_background_section(
                 SubtitledSpeakerFrame(**requested.speaker_frame.model_dump())
                 if requested.speaker_frame is not None
                 else None
+            ),
+            full_screen_windows=tuple(
+                SubtitledFullScreenWindow(start_s=span.start_s, end_s=span.end_s)
+                for span in requested.full_screen_windows or []
             ),
         )
     )

@@ -1275,9 +1275,15 @@ enum KriaClientProtocolContract {
     /// 36 (Qendresa item 12): the editor reads `caption_meta.shape` (`caption_shape`) and draws the creator's typed
     /// caption box / dimmed-word look exactly like the cloud recipe. The server renders a shaped caption only for this
     /// protocol (`CAPTION_SHAPE_PROTOCOL`).
+    /// 37-39 are unused (held for items 14, 16 and 18 while they were in review).
     /// 40 (Qendresa item 15): the editor keeps a picture card marked `caption_clear` in the top or bottom band instead of
     /// clamping its centre above y 0.62, matching the cloud recipe. The server places such cards only for this protocol.
-    static let version = 40
+    /// 41 (Qendresa item 16): decodes and draws `speaker_background.full_screen_windows` (the speaker's own take full-frame,
+    /// unmasked, with no background or corner frame, for an opening or ending) and the `speakerFrameWindows` capability, and
+    /// round-trips them in the editor. The server offers `editor_capabilities.speaker_full_opening` only to this protocol (and
+    /// only with `speakerFrameWindows` verified) and answers 426 `client_update_required` (`speaker_full_opening`) to an
+    /// older build polling or saving a recipe that already carries them.
+    static let version = 41
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -2184,6 +2190,8 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "speaker_background_color_disabled": "A plain colour behind you isn’t available on this edit yet. Pick a photo or video, or remove the background, then save again. Your edits are still here.",
             "speaker_background_color_invalid": "That colour can’t be used. Pick a swatch or a solid colour, then save again. Your edits are still here.",
             "speaker_background_windows_disabled": "Timed backgrounds aren’t available right now. Remove them and save again. Your edits are still here.",
+            "speaker_full_opening_disabled": "Starting full screen isn’t available right now. Remove it and save again. Your edits are still here.",
+            "speaker_full_opening_invalid": "The full-screen opening doesn’t fit this video. Remove it and save again. Your edits are still here.",
             "speaker_background_window_invalid": "The timed backgrounds overlap or one is too short. Give each at least half a second without overlap, then save again. Your edits are still here.",
             // 426 from the editor-commit route: this build is older than the feature the edit uses (see the call site).
             "client_update_required": "Update Kria to save this edit. Your edits are still here.",

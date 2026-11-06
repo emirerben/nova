@@ -788,4 +788,154 @@ import KriaMediaEngine
     func testTheProtocolDeclaresTheColourBuild() {
         XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, 34, "34 = decodes a colour speaker background and the speakerBackgroundColor capability")
     }
+
+    // MARK: - Qendresa item 16: the full-screen opening
+
+    private func fullScreenRow(_ start: Double, _ end: Double) -> JSONValue { .object(["start_s": .number(start), "end_s": .number(end)]) }
+
+    /// A lane with a media fill, optionally the corner frame, and the given `full_screen_windows` rows.
+    private func openingLane(_ rows: [JSONValue] = [JSONValue.object(["start_s": .number(0), "end_s": .number(7.2)])],
+                             frame: Bool = true, windows: [JSONValue] = []) -> JSONValue {
+        var fields: [String: JSONValue] = ["media_id": .string("fill"), "kind": .string("image"), "source_start_s": .number(0)]
+        if !windows.isEmpty { fields["windows"] = .array(windows) }
+        if frame { fields["speaker_frame"] = cornerFrame }
+        if !rows.isEmpty { fields["full_screen_windows"] = .array(rows) }
+        return .object(fields)
+    }
+
+    /// A Talking session that opens the background, the timed ones, the colour fill and (unless `openingOpen` is false) the opening.
+    private func openingSession(lane: JSONValue? = nil, openingOpen: Bool = true) -> NativeEditorSession {
+        var draft = NativeEditorUITestFixtures.speakerBackground
+        var caps = draft.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
+        caps["speaker_background_windows"] = .object(["editable": .bool(true)])
+        caps["speaker_background_color"] = .object(["editable": .bool(true)])
+        if openingOpen { caps["speaker_full_opening"] = .object(["editable": .bool(true)]) }
+        draft.serverSnapshot["editor_capabilities"] = .object(caps)
+        if let lane {
+            var payload = draft.serverSnapshot["editor_payload"]?.objectValue ?? [:]
+            var sections = payload["sections"]?.objectValue ?? [:]
+            sections["speaker_background"] = lane
+            payload["sections"] = .object(sections)
+            draft.serverSnapshot["editor_payload"] = .object(payload)
+        }
+        return NativeEditorSession(draft: draft)
+    }
+
+    func testFullScreenWindowsRoundTripAndTheLayerCarriesThem() throws {
+        let lane = openingLane([fullScreenRow(0, 7.2), fullScreenRow(50, 55)])
+        let decoded = EditorDocument.decode(snapshot: snapshot(lane: lane))
+        XCTAssertFalse(decoded.unreadableSpeakerBackground)
+        let background = try XCTUnwrap(decoded.speakerBackground)
+        XCTAssertEqual(background.fullScreenWindows, [EditorFullScreenWindow(startS: 0, endS: 7.2), EditorFullScreenWindow(startS: 50, endS: 55)])
+        XCTAssertEqual(decoded.encodeSnapshot(), snapshot(lane: lane), "an unchanged lane saves as it loaded, full_screen_windows included")
+        let layer = background.layer
+        XCTAssertEqual(layer.fullScreenWindows, [SpeakerFullScreenWindow(start: 0, end: 7.2), SpeakerFullScreenWindow(start: 50, end: 55)])
+        try layer.validate()
+        XCTAssertTrue(layer.showsSpeakerFullScreen(at: 3))
+        // A colour fill carries it too.
+        let colour = EditorSpeakerBackground(color: "#111111", fullScreenWindows: [EditorFullScreenWindow(startS: 0, endS: 5)])
+        XCTAssertEqual(EditorSpeakerBackground(json: colour.json), colour)
+        XCTAssertEqual(colour.layer.fullScreenWindows, [SpeakerFullScreenWindow(start: 0, end: 5)])
+    }
+
+    func testTheCompiledRecipeDeclaresTheOpeningCapability() throws {
+        let background = EditorSpeakerBackground(mediaID: "fill", kind: .image, fullScreenWindows: [EditorFullScreenWindow(startS: 0, endS: 2)])
+        let recipe = try compile(document(background: background), backgroundSources: backgroundSource("fill"))
+        XCTAssertEqual(recipe.speakerBackground?.fullScreenWindows, [SpeakerFullScreenWindow(start: 0, end: 2)])
+        XCTAssertTrue(recipe.effectiveCapabilities.contains(.speakerFrameWindows))
+        try recipe.validate()
+    }
+
+    func testALaneWithoutAnOpeningEncodesByteIdenticallyToToday() throws {
+        let plain = EditorSpeakerBackground(mediaID: "1a2b", kind: .video, sourceStartS: 2.5)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        XCTAssertEqual(String(decoding: try encoder.encode(plain.json), as: UTF8.self),
+                       #"{"kind":"video","media_id":"1a2b","source_start_s":2.5}"#)
+        XCTAssertTrue(plain.fullScreenWindows.isEmpty)
+        XCTAssertNil(plain.layer.fullScreenWindows)
+        XCTAssertFalse(String(decoding: try RecipeJSON.encoder().encode(plain.layer), as: UTF8.self).contains("full_screen"))
+        let decoded = EditorDocument.decode(snapshot: snapshot(lane: openingLane([], frame: true)))
+        XCTAssertEqual(decoded.encodeSnapshot(), snapshot(lane: openingLane([], frame: true)))
+    }
+
+    func testMalformedFullScreenWindowsAreUnreadable() {
+        func readable(_ field: JSONValue) -> Bool {
+            guard case .object(var fields) = openingLane([]) else { return false }
+            fields["full_screen_windows"] = field
+            return EditorSpeakerBackground(json: .object(fields)) != nil
+        }
+        XCTAssertTrue(readable(.array([fullScreenRow(0, 3)])))
+        XCTAssertFalse(readable(.array([])), "[] is invalid")
+        XCTAssertFalse(readable(.null), "null is not absent here")
+        XCTAssertFalse(readable(.array([fullScreenRow(0, 3), fullScreenRow(2, 5)])), "overlap")
+        XCTAssertFalse(readable(.array([fullScreenRow(5, 8), fullScreenRow(0, 3)])), "unsorted")
+        XCTAssertFalse(readable(.array([fullScreenRow(0, 0.4)])), "under half a second")
+        XCTAssertFalse(readable(.array([fullScreenRow(-1, 3)])))
+        XCTAssertFalse(readable(.array([fullScreenRow(0, 1801)])))
+        XCTAssertFalse(readable(.array((0..<5).map { fullScreenRow(Double($0) * 2, Double($0) * 2 + 1) })), "at most four")
+        XCTAssertFalse(readable(.array([.object(["start_s": .number(0), "end_s": .number(3), "extra": .number(1)])])), "unknown key")
+        XCTAssertTrue(readable(.array([fullScreenRow(0, 3), fullScreenRow(3, 5)])), "touching ends are fine")
+    }
+
+    func testChangingTheFillTheWindowsOrTheCornerKeepsTheOpening() {
+        let opening = [EditorFullScreenWindow(startS: 0, endS: 7.2)]
+        let session = openingSession(lane: openingLane())
+        XCTAssertEqual(session.speakerBackground?.fullScreenWindows, opening)
+        XCTAssertEqual(session.speakerFullScreenOpening, opening.first)
+
+        XCTAssertTrue(session.setSpeakerBackground(mediaID: "fixture-bg-photo", kind: .image))
+        XCTAssertEqual(session.speakerBackground?.fullScreenWindows, opening, "a new photo fill keeps it")
+        XCTAssertTrue(session.setSpeakerBackgroundColor(hex: "#00ff00"))
+        XCTAssertEqual(session.speakerBackground?.fullScreenWindows, opening, "a colour fill keeps it")
+        XCTAssertTrue(session.setSpeakerBackground(mediaID: "fixture-bg-video", kind: .video, sourceStart: 1))
+        XCTAssertEqual(session.speakerBackground?.fullScreenWindows, opening, "a video fill keeps it")
+        XCTAssertTrue(session.addSpeakerBackgroundWindow(mediaID: "fixture-bg-photo", kind: .image, length: 2))
+        XCTAssertEqual(session.speakerBackground?.fullScreenWindows, opening, "adding a window keeps it")
+        let id = session.speakerBackgroundWindows[0].localID
+        XCTAssertTrue(session.removeSpeakerBackgroundWindow(id: id))
+        XCTAssertEqual(session.speakerBackground?.fullScreenWindows, opening, "removing a window keeps it")
+        XCTAssertTrue(session.setSpeakerFrame(preset: "small_top_left"))
+        XCTAssertEqual(session.speakerBackground?.fullScreenWindows, opening, "moving the corner keeps it")
+        XCTAssertTrue(session.clearSpeakerFrame())
+        XCTAssertEqual(session.speakerBackground?.fullScreenWindows, opening, "clearing the corner keeps it")
+    }
+
+    func testRemovingTheOpeningClearsOnlyTheOpeningAndIsUndoable() {
+        let session = openingSession(lane: openingLane([fullScreenRow(0, 7.2), fullScreenRow(50, 55)]))
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertTrue(session.removeFullScreenOpening())
+        XCTAssertNil(session.speakerFullScreenOpening)
+        XCTAssertEqual(session.speakerBackground?.fullScreenWindows, [EditorFullScreenWindow(startS: 50, endS: 55)], "the ending stays")
+        XCTAssertNotNil(session.speakerFrame, "the corner stays")
+        XCTAssertTrue(session.isDirty(.speakerBackground))
+        XCTAssertFalse(session.removeFullScreenOpening(), "nothing left to remove is not an unsaved change")
+        session.undo()
+        XCTAssertEqual(session.speakerFullScreenOpening, EditorFullScreenWindow(startS: 0, endS: 7.2))
+        XCTAssertFalse(session.hasUnsavedChanges, "back to the loaded lane is no edit")
+        // Removing the only window drops the key from the wire.
+        let only = openingSession(lane: openingLane())
+        XCTAssertTrue(only.removeFullScreenOpening())
+        XCTAssertTrue(only.speakerBackground?.fullScreenWindows.isEmpty == true)
+        XCTAssertNil(only.speakerBackground?.json.objectValue?["full_screen_windows"])
+    }
+
+    func testTheOpeningIsReadOnlyWithoutItsCapability() {
+        let session = openingSession(lane: openingLane(), openingOpen: false)
+        XCTAssertNotNil(session.speakerFullScreenOpening, "still shown")
+        XCTAssertFalse(session.canEditSpeakerFullOpening)
+        XCTAssertFalse(session.removeFullScreenOpening())
+        XCTAssertNotNil(session.speakerFullScreenOpening)
+        XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
+    func testRemovingTheBackgroundClearsTheOpeningToo() {
+        let session = openingSession(lane: openingLane())
+        XCTAssertTrue(session.removeSpeakerBackground())
+        XCTAssertNil(session.speakerBackground)
+        XCTAssertNil(session.speakerFullScreenOpening)
+    }
+
+    func testTheProtocolDeclaresTheOpeningBuild() {
+        XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, 41, "41 = decodes, draws and round-trips speaker_background.full_screen_windows")
+    }
 }

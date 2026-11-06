@@ -47,6 +47,10 @@ CAPTION_SHAPE_PROTOCOL = 36
 # (older editors pull every card centre up to 0.62, onto the Q1 captions).
 CARD_LAYOUT_PROTOCOL = 40
 
+# Qendresa item 16: the first build that decodes `speaker_background.full_screen_windows` (the
+# `speakerFrameWindows` capability: the speaker full screen in their own take, then the corner).
+SPEAKER_FULL_OPENING_PROTOCOL = 41
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()

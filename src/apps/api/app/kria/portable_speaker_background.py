@@ -19,6 +19,12 @@ KRI-1173 (solid-colour fill): the FILL may instead be a flat colour -- ``media_k
 before (``color`` omitted while None), so every earlier recipe keeps its digest. Windows
 stay photo/video only. Design and failure modes:
 `docs/reviews/speaker-background-color-failure-modes.md`.
+
+Qendresa item 16 (the speaker full screen in their own take, then the corner): optional
+``full_screen_windows`` (absent while unused) are spans of the edit where the speaker's own
+take is drawn full-frame and untouched -- no person mask, no background, no ``speaker_frame``.
+Outside them the layer renders exactly as before. Capability ``speakerFrameWindows``; pinned by
+`tests/fixtures/speaker-background-parity/v4.json`.
 """
 
 from __future__ import annotations
@@ -34,6 +40,8 @@ MAX_BACKGROUND_WINDOWS = 40
 MIN_BACKGROUND_WINDOW_S = 0.5
 MAX_TIMELINE_S = 1800.0
 MIN_SPEAKER_FRAME_WIDTH_FRACTION = 0.2
+# Qendresa item 16: an opening and (later) a closing full-frame span; a few, never a timeline.
+MAX_FULL_SCREEN_WINDOWS = 4
 # KRI-1173: exactly ``#`` + six UPPERCASE hex digits on the recipe wire. Case and names are
 # normalised at the editor Save, the lane and the chat boundary, never here.
 BACKGROUND_COLOR_PATTERN = r"^#[0-9A-F]{6}$"
@@ -90,6 +98,22 @@ class SpeakerBackgroundWindow(BaseModel):
         return self
 
 
+class SpeakerFullScreenWindow(BaseModel):
+    """Qendresa item 16: from ``start`` to ``end`` (output seconds) the speaker's own take shows
+    full-frame and untouched (no mask, no background, no corner frame)."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    start: float = Field(ge=0.0, le=MAX_TIMELINE_S)
+    end: float = Field(gt=0.0, le=MAX_TIMELINE_S)
+
+    @model_validator(mode="after")
+    def _long_enough(self) -> SpeakerFullScreenWindow:
+        if self.end - self.start < MIN_BACKGROUND_WINDOW_S:
+            raise ValueError("a full-screen window must last at least 0.5 seconds")
+        return self
+
+
 class SpeakerBackgroundLayer(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
@@ -106,6 +130,10 @@ class SpeakerBackgroundLayer(BaseModel):
         default=None, min_length=1, max_length=MAX_BACKGROUND_WINDOWS
     )
     speaker_frame: SpeakerFrame | None = None
+    # Qendresa item 16, omitted from the wire while unused (never ``[]`` / ``null``).
+    full_screen_windows: list[SpeakerFullScreenWindow] | None = Field(
+        default=None, min_length=1, max_length=MAX_FULL_SCREEN_WINDOWS
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -145,10 +173,26 @@ class SpeakerBackgroundLayer(BaseModel):
                     raise ValueError("background windows must be sorted and must not overlap")
         return self
 
+    @model_validator(mode="after")
+    def full_screen_windows_sorted_and_disjoint(self) -> SpeakerBackgroundLayer:
+        # The phone picks per frame whether the time is inside one, so they must be sorted and
+        # never overlap (touching ends are fine), like the background windows (S28).
+        if self.full_screen_windows:
+            pairs = zip(self.full_screen_windows, self.full_screen_windows[1:], strict=False)
+            for earlier, later in pairs:
+                if later.start < earlier.end:
+                    raise ValueError("full-screen windows must be sorted and must not overlap")
+        return self
+
     @property
     def uses_windows(self) -> bool:
         """True when the layer needs the ``speakerBackgroundWindows`` capability."""
         return bool(self.windows) or self.speaker_frame is not None
+
+    @property
+    def uses_full_screen(self) -> bool:
+        """True when the layer needs the ``speakerFrameWindows`` capability (Qendresa item 16)."""
+        return bool(self.full_screen_windows)
 
     @property
     def uses_color(self) -> bool:
@@ -166,4 +210,6 @@ class SpeakerBackgroundLayer(BaseModel):
             data.pop("windows", None)
         if data.get("speaker_frame") is None:
             data.pop("speaker_frame", None)
+        if not data.get("full_screen_windows"):
+            data.pop("full_screen_windows", None)
         return data

@@ -218,7 +218,8 @@ func speakerRecipe(canvas: Canvas, speaker: URL, duration: Double, transform: Me
                    background: SpeakerTestBackground?, endingClip: TimelineClip? = nil, extraTracks: [TimelineTrack] = [],
                    extraAssets: [String: URL] = [:], visuals: [String: (url: URL, kind: VisualMediaKind)] = [:],
                    audio: AudioMixRecipe = .default, windows: [SpeakerTestWindow] = [],
-                   speakerFrame: SpeakerFrame? = nil, colorBackground: String? = nil) throws -> (recipe: EditRecipe, urls: [String: URL]) {
+                   speakerFrame: SpeakerFrame? = nil, colorBackground: String? = nil,
+                   fullScreenWindows: [SpeakerFullScreenWindow]? = nil) throws -> (recipe: EditRecipe, urls: [String: URL]) {
     var visuals = visuals
     if let background { visuals["visual-background"] = (background.url, background.kind) }
     for (index, window) in windows.enumerated() { visuals["visual-window-\(index)"] = (window.url, window.kind) }
@@ -236,10 +237,10 @@ func speakerRecipe(canvas: Canvas, speaker: URL, duration: Double, transform: Me
     }
     // KRI-1173: a colour fill has no manifest asset (and wins over `background` if both are given).
     let speakerBackgroundLayer: SpeakerBackgroundLayer? = colorBackground.map {
-        SpeakerBackgroundLayer.color($0, windows: windowLayers, speakerFrame: speakerFrame)
+        SpeakerBackgroundLayer.color($0, windows: windowLayers, speakerFrame: speakerFrame, fullScreenWindows: fullScreenWindows)
     } ?? background.map {
         SpeakerBackgroundLayer(assetID: "visual-background", mediaKind: $0.kind, sourceStart: $0.sourceStart, loop: $0.loop,
-                               windows: windowLayers, speakerFrame: speakerFrame)
+                               windows: windowLayers, speakerFrame: speakerFrame, fullScreenWindows: fullScreenWindows)
     }
     let recipe = EditRecipe(
         schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: canvas, assets: assets,
