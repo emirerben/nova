@@ -292,6 +292,29 @@ copilot `set_background_color`) are described below.
   verified, app too old, or "this draft doesn't put a plain colour behind you"). "Attach the photos or videos first" is never the
   answer to a colour ask.
 
+## Full screen first, then the corner (`SPEAKER_FULL_OPENING_ENABLED`, Qendresa item 16)
+
+Her screen walkthroughs open with her full screen in her own room for 3-7 s (V5: 0-7.2 s, switching on "first
+one"; V1: 0-2.5 s), then she sits small in the bottom-right corner over the recordings. Contract and failure
+modes S70-S82: `docs/reviews/speaker-background-windows-failure-modes.md` (last section).
+
+| Where | Shape |
+| --- | --- |
+| Recipe (`SpeakerBackgroundLayer`) | `full_screen_windows: [{start, end}]` (output seconds, sorted, disjoint, >= 0.5 s, 1-4, absent while unused). Inside one the phone draws the speaker's own take untouched: no person mask, no background, no `speaker_frame`; decided per frame. Capability `speakerFrameWindows`; shared fixture `tests/fixtures/speaker-background-parity/v4.json`. |
+| Lane (`SubtitledBackground`) | `full_screen_windows: tuple[SubtitledFullScreenWindow]` in ORIGINAL take time, moved by `remap_lanes_for_cut` like windows; `strip_unsupported_background` drops only them on a closed gate (trace `speaker_full_opening_phone_fallback`). |
+| Strategy | `background_media.full_screen_opening: true` (+ `full_screen_opening_s` 1-15 when a length was named), omitted while unused; taught by Main Creator v133 only while the manifest advertises `speaker_full_opening`. Brief fact `speaker_full_opening` (+ `_s`), Main Creator v133 / Brief extractor v68, only with the flag on. |
+| Layout | `phone_background_sequence.full_screen_opening_end`: the stated length, else the first recording's word when heard 2-8 s in, else 5 s, never before the hook title ends; snapped to a gap between kept words (a sentence end within 1 s first), never inside a word, >= 1 s of take on each side. `lay_out(opening_s=X)`: no window starts before X (the lead-in opens the first window at X). |
+| Receipts | Finished: `phone_lane_receipt.background.full_screen_opening_s` (read off the compiled recipe), or a `dropped` entry `{lane: background, part: full_screen_opening, reason: app_too_old\|unavailable\|take_too_short}`. `_check_full_screen_opening` (fact route) and `_check_speaker_framing` never answer "fills the frame" for a corner speaker; the editor document wins over the lane receipt. |
+| Editor | Document `speaker_background.full_screen_windows: [{start_s, end_s}]` (cut time); Save validates it (422 `speaker_full_opening_disabled` / `_invalid`), 426 `speaker_full_opening` for a build below 41 that sets it or Saves a variant carrying it, and on a device poll of a pinned recipe with it. Capability `editor_capabilities.speaker_full_opening`. iPhone: a "Starts full screen" row with a remove button; every background change keeps it, removing the background clears it. Copilot ops keep it (no new op). |
+
+Gates: `speaker_full_opening_supported()` (request-aware) and `speaker_full_opening_planned_for(protocol)` (the
+build the creator acted from: the turn's bound build, then `creator_client_protocol` on the Job). An old build
+gets today's corner from 0 s and an honest "update the app" receipt, never a 426 on the whole video.
+Rollout: verify `speakerFrameWindows` on a device (opening in preview and export, the switch frame cut out
+cleanly, a failed mask at the switch falls back to the plain speaker in the corner), add it to
+`PHONE_RENDER_VERIFIED_FEATURES`, then the flag (api + worker, restart). Rollback: the flag off.
+Not changed: the corner preset's size (her corner face is 1.5-2x today's `small_bottom_right`).
+
 ## Rollback
 
 Kill switch, never a code revert: `fly secrets set SPEAKER_BACKGROUND_ENABLED=false

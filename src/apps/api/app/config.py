@@ -974,6 +974,20 @@ class Settings(BaseSettings):
     # (api + worker); rollback = `...=false` + restart. Design:
     # docs/reviews/speaker-background-windows-failure-modes.md (S64-S69).
     background_follows_talk_enabled: bool = False
+    # Qendresa item 16 (builds on KRI-1162): the speaker starts FULL SCREEN in their own take (no
+    # person mask, no background, no corner) and then drops into the background / corner for the
+    # rest of the edit. Recipe field `speaker_background.full_screen_windows` (capability
+    # `speakerFrameWindows`, app builds >= `speaker_full_opening_min_client_protocol`); the planner
+    # writes it from `background_media.full_screen_opening` (Main Creator v133, taught only with
+    # the flag on). Below the protocol, or without the verified token, the windows are laid out as
+    # today (corner from 0 s) and the receipt says the full-screen opening was not made. Default
+    # FALSE: off, every prompt, recipe and receipt is byte-identical. Apply: verify
+    # `speakerFrameWindows` on a device, add it to PHONE_RENDER_VERIFIED_FEATURES, then `fly secrets
+    # set SPEAKER_FULL_OPENING_ENABLED=true --app nova-video` + restart (api + worker); rollback =
+    # `...=false` + restart. Design: docs/reviews/speaker-background-windows-failure-modes.md
+    # (S70-S82).
+    speaker_full_opening_enabled: bool = False
+    speaker_full_opening_min_client_protocol: int = 41
     # Qendresa item 19: numbered list labels on a phone Talking edit. A brief text ("1. Spec-kit")
     # with no spoken trigger is shown when its item's part of the talk starts (where its
     # background recording is introduced, else the take's own words), as an ordinary text row on

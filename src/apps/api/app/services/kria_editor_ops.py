@@ -1039,6 +1039,15 @@ def _background_snapshot(
         section["speaker_frame"] = background_frame_preset(
             current.get("speaker_frame") if isinstance(current, dict) else None
         )
+    # Qendresa item 16: shown only while the speaker has a full-screen opening, so every other
+    # snapshot keeps its exact shape. Read-only for the model: no op sets it.
+    spans = current.get("full_screen_windows") if isinstance(current, dict) else None
+    if spans:
+        section["full_screen_windows"] = [
+            {"start_s": span.get("start_s"), "end_s": span.get("end_s")}
+            for span in spans
+            if isinstance(span, dict)
+        ]
     return section
 
 

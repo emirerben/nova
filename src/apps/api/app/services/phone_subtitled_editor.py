@@ -153,6 +153,37 @@ def variant_carries_speaker_background_windows(assembly_plan: dict, variant: dic
     )
 
 
+def variant_carries_speaker_full_opening(assembly_plan: dict, variant: dict) -> bool:
+    """Does this variant already hold ``full_screen_windows`` (Qendresa item 16, S76)?
+
+    The same three places as `variant_carries_speaker_background`. PURE. Decides whether a Save
+    or a poll from a build below the full-opening protocol must be refused: such a build would
+    drop the opening silently (or cannot decode the recipe at all).
+    """
+    if not isinstance(assembly_plan, dict) or not isinstance(variant, dict):
+        return False
+
+    def uses(value: object) -> bool:
+        return isinstance(value, dict) and bool(value.get("full_screen_windows"))
+
+    if uses(variant.get("speaker_background")):
+        return True
+    persisted = variant.get(PHONE_SUBTITLED_EDITOR_LANES_FIELD)
+    if isinstance(persisted, dict):
+        lanes = persisted.get("lanes")
+        if isinstance(lanes, dict) and uses(lanes.get("background")):
+            return True
+    variant_id = variant.get("variant_id")
+    if not isinstance(variant_id, str) or not variant_id:
+        return False
+    recipe = _pinned_recipe(assembly_plan, variant_id)
+    return (
+        recipe is not None
+        and recipe.speaker_background is not None
+        and recipe.speaker_background.uses_full_screen
+    )
+
+
 def variant_carries_speaker_background_color(assembly_plan: dict, variant: dict) -> bool:
     """Does this variant already hold a solid-colour background fill (KRI-1173)?
 
@@ -398,7 +429,8 @@ def speaker_background_document(background: SubtitledBackground) -> dict[str, An
 
     KRI-1162: ``windows`` (``[{media_id, kind, source_start_s, start_s, end_s}]``) and
     ``speaker_frame`` (``{width_fraction, x_fraction, y_fraction}``) are added ONLY while
-    present, so every existing document is byte-identical.
+    present, so every existing document is byte-identical. Qendresa item 16:
+    ``full_screen_windows`` (``[{start_s, end_s}]``, cut-timeline seconds) likewise.
     """
     document: dict[str, Any]
     if background.uses_color:
@@ -427,6 +459,12 @@ def speaker_background_document(background: SubtitledBackground) -> dict[str, An
             "x_fraction": background.speaker_frame.x_fraction,
             "y_fraction": background.speaker_frame.y_fraction,
         }
+    if background.full_screen_windows:
+        # Qendresa item 16: spans of the cut timeline where the speaker's own take is full-frame.
+        document["full_screen_windows"] = [
+            {"start_s": span.start_s, "end_s": span.end_s}
+            for span in background.full_screen_windows
+        ]
     return document
 
 
@@ -588,6 +626,7 @@ def lanes_from_recipe(
                     if layer.speaker_frame is not None
                     else None
                 ),
+                full_screen_windows=_full_screen_from_layer(layer),
             )
         elif (visual := visual_for(layer.asset_id)) is not None:
             background = SubtitledBackground(
@@ -605,6 +644,7 @@ def lanes_from_recipe(
                     if layer.speaker_frame is not None
                     else None
                 ),
+                full_screen_windows=_full_screen_from_layer(layer),
             )
 
     return PhoneSubtitledLanes(
@@ -612,6 +652,16 @@ def lanes_from_recipe(
         sound_effects=sound_effects,
         ending_clip=ending_clip,
         background=background,
+    )
+
+
+def _full_screen_from_layer(layer: Any) -> tuple[Any, ...]:
+    """The recipe's full-screen spans as lane spans (already in compiled cut time)."""
+    from app.pipeline.phone_subtitled_lanes import SubtitledFullScreenWindow  # noqa: PLC0415
+
+    return tuple(
+        SubtitledFullScreenWindow(start_s=span.start, end_s=span.end)
+        for span in layer.full_screen_windows or ()
     )
 
 

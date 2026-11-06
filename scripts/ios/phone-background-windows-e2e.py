@@ -20,12 +20,21 @@ Footage is NOT made here: OUT_DIR must already hold (never in git)
   rec1.mp4..rec5.mp4   the five "screen recordings"
 
 usage:
-  src/apps/api/.venv/bin/python scripts/ios/phone-background-windows-e2e.py OUT_DIR [--flag on|off] [--phrases labels|spoken]
+  src/apps/api/.venv/bin/python scripts/ios/phone-background-windows-e2e.py OUT_DIR [--flag on|off]
+      [--phrases labels|spoken] [--opening on|off] [--title TEXT] [--client-protocol N]
 
 ``--flag`` sets ``background_follows_talk_enabled`` (default off = today's behaviour).
 ``--phrases labels`` (default) feeds her typed label spellings as ``spoken_phrase``; ``spoken``
 feeds each name's words exactly as whisper wrote them in words.json (what the planner is taught
 to copy from the take's own transcript).
+
+Qendresa item 16: ``--opening on`` asks to start full screen (``background_media
+.full_screen_opening``) with ``SPEAKER_FULL_OPENING_ENABLED`` and ``speakerFrameWindows``
+verified, for the app build ``--client-protocol`` (default 41); ``off`` is today's corner from
+0 s. ``--title`` adds the Talking hook title row (`talking_title_element`), moved off the face
+by the real `place_talking_title`; the face boxes come from OUT_DIR/face_boxes.json
+(``[[x, y, w, h], ...]`` normalised, top-left origin, e.g. Apple Vision on the take) when
+present, else from the real face sampler.
 """
 
 from __future__ import annotations
@@ -157,11 +166,72 @@ def _name_time(words: list[dict], token: str, occurrence: int) -> float | None:
     return None
 
 
+def _title_row(
+    text: str, words: list[dict], take_s: float, talk: Path, out: Path
+) -> dict:
+    """The Talking hook title row, placed off the face the way the worker places it."""
+    from app.pipeline.phone_subtitled_title import (
+        place_talking_title,
+        talking_title_element,
+    )
+    from app.pipeline.render_geometry import (
+        NormalizedBox,
+        ProtectedRegion,
+        _face_protection_box,
+    )
+
+    class _Canvas:
+        width = CANVAS["width"]
+        height = CANVAS["height"]
+
+    row = talking_title_element(
+        text,
+        duration_s=None,
+        first_word_end_s=words[0]["end_s"] if words else None,
+        timeline_duration_s=take_s,
+        canvas=_Canvas(),
+    )
+    assert row is not None, "no title row"
+    sample = None
+    boxes_file = out / "face_boxes.json"
+    if boxes_file.exists():
+        boxes = json.loads(boxes_file.read_text())
+
+        def sample(_path, anchors, **_kw):  # noqa: ANN001, ANN202
+            regions = [
+                ProtectedRegion(
+                    start_s=0.0,
+                    end_s=take_s,
+                    box=_face_protection_box(
+                        NormalizedBox(left=x, top=y, right=x + w, bottom=y + h)
+                    ),
+                    kind="face",
+                )
+                for x, y, w, h in boxes
+            ]
+            return regions, {"detected": len(regions), "source": "face_boxes.json"}
+
+    placed, receipt = place_talking_title(
+        row,
+        clip_path=str(talk),
+        keep_segments=[(0.0, take_s)],
+        display_width=CANVAS["width"],
+        display_height=CANVAS["height"],
+        canvas=_Canvas(),
+        sample=sample,
+    )
+    print(f"title placed: y_frac={placed.get('y_frac')} receipt={receipt}")
+    return placed
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("out_dir")
     parser.add_argument("--flag", choices=("on", "off"), default="off")
     parser.add_argument("--phrases", choices=("labels", "spoken"), default="labels")
+    parser.add_argument("--opening", choices=("on", "off"), default="off")
+    parser.add_argument("--title", default=None)
+    parser.add_argument("--client-protocol", type=int, default=41)
     args = parser.parse_args()
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -191,11 +261,13 @@ def main() -> None:
     # Gates open (outside an HTTP request the client-protocol gate is open too), flag per --flag.
     settings.speaker_background_enabled = True
     settings.background_follows_talk_enabled = args.flag == "on"
+    settings.speaker_full_opening_enabled = args.opening == "on"
     settings.phone_render_verified_features = sorted(
         {
             *settings.phone_render_verified_features,
             "speakerBackground",
             "speakerBackgroundWindows",
+            *(("speakerFrameWindows",) if args.opening == "on" else ()),
         }
     )
 
@@ -219,6 +291,7 @@ def main() -> None:
             )
         ],
         "speaker_frame": "small_bottom_right",
+        **({"full_screen_opening": True} if args.opening == "on" else {}),
     }
     all_candidates = {
         "creator_strategy": {
@@ -241,6 +314,7 @@ def main() -> None:
 
     request = gb._strategy_background_request(all_candidates)
     assert request is not None, "the strategy's background_media did not parse"
+    title_row = _title_row(args.title, words, take_s, talk, out) if args.title else None
     lane_drops: list[dict] = []
     background, reserved = gb._resolve_strategy_background(
         request,
@@ -249,6 +323,8 @@ def main() -> None:
         words=words,
         keep_segments=None,
         take_s=gb._background_take_s(None, take_s),
+        creator_client_protocol=args.client_protocol,
+        title_end_s=float(title_row["end_s"]) if title_row else None,
     )
     print(f"gb loaded from {gb.__file__}")
     print(f"lane_drops={lane_drops} reserved={sorted(reserved)}")
@@ -295,6 +371,7 @@ def main() -> None:
         caption_cues=_cues(words),
         visuals=tuple(visuals),
         lanes=PhoneSubtitledLanes(background=background),
+        text_elements=(title_row,) if title_row else (),
     )
     layer = recipe.speaker_background
     assert layer is not None and layer.windows, (
@@ -304,6 +381,7 @@ def main() -> None:
     verified = sorted(
         set(recipe.required_capabilities)
         | {"speakerBackground", "speakerBackgroundWindows"}
+        | ({"speakerFrameWindows"} if args.opening == "on" else set())
     )
     settings.phone_render_verified_features = verified
     validate_phone_pilot_recipe(recipe, allow_editor_media=True)
@@ -343,6 +421,12 @@ def main() -> None:
             {
                 "flag": args.flag,
                 "phrases": phrases,
+                "opening": args.opening,
+                "full_screen_windows": [
+                    [round(w.start, 3), round(w.end, 3)]
+                    for w in layer.full_screen_windows or []
+                ],
+                "title": title_row,
                 "take_s": take_s,
                 "recipe_duration_s": recipe.duration,
                 "lane_drops": lane_drops,

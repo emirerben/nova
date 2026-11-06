@@ -21,7 +21,15 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from app.text_fold import loose_text
 
@@ -300,6 +308,14 @@ class BackgroundSequenceEntry(BaseModel):
         return data
 
 
+def _opening_seconds(value: object) -> float | None:
+    """A real number (never a bool or text) from 1 to 15 seconds, else ``None``."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if 1.0 <= number <= 15.0 else None
+
+
 class BackgroundMedia(BaseModel):
     """The photo or looping video shown BEHIND the speaker (KRI-1117, KRI-1162).
 
@@ -337,6 +353,32 @@ class BackgroundMedia(BaseModel):
         default=DEFAULT_BACKGROUND_CADENCE_S, ge=2.0, le=10.0, allow_inf_nan=False
     )
     speaker_frame: SpeakerFramePreset = "full"
+    # Qendresa item 16: the speaker's own take full screen before the background / corner starts.
+    # Both are omitted from the dump while unused and lenient on junk (a bad model value never
+    # fails the turn).
+    full_screen_opening: bool = False
+    full_screen_opening_s: float | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _opening_length_implies_the_opening(cls, data: object) -> object:
+        if isinstance(data, dict) and data.get("full_screen_opening") is None:
+            if _opening_seconds(data.get("full_screen_opening_s")) is not None:
+                return {**data, "full_screen_opening": True}
+        return data
+
+    @field_validator("full_screen_opening", mode="before")
+    @classmethod
+    def _lenient_full_screen_opening(cls, value: object) -> bool:
+        try:
+            return TypeAdapter(bool).validate_python(value)
+        except ValueError:
+            return False
+
+    @field_validator("full_screen_opening_s", mode="before")
+    @classmethod
+    def _lenient_full_screen_opening_s(cls, value: object) -> float | None:
+        return _opening_seconds(value)
 
     @model_validator(mode="after")
     def _one_fill(self) -> BackgroundMedia:
@@ -361,6 +403,10 @@ class BackgroundMedia(BaseModel):
             data.pop("cadence_s", None)
         if data.get("speaker_frame") == "full":
             data.pop("speaker_frame", None)
+        if data.get("full_screen_opening") is False:
+            data.pop("full_screen_opening", None)
+        if data.get("full_screen_opening_s") is None:
+            data.pop("full_screen_opening_s", None)
         return data
 
 

@@ -8164,6 +8164,13 @@ def _names_pool_media(visual_id: object, media_id: str) -> bool:
     )
 
 
+def _stamped_protocol(value: object) -> int | None:
+    """The app-protocol stamp the approving build left on the job, or ``None``."""
+    from app.services.phone_rollout import stamped_client_protocol  # noqa: PLC0415
+
+    return stamped_client_protocol(value)
+
+
 def _strategy_background_request(all_candidates: dict) -> dict[str, Any] | None:
     """The approved strategy's ``background_media`` as ``{"media_id", "source_start_s"}``.
 
@@ -8225,6 +8232,13 @@ def _strategy_background_request(all_candidates: dict) -> dict[str, Any] | None:
     frame = raw.get("speaker_frame")
     if isinstance(frame, str) and frame in SPEAKER_FRAME_PRESETS:
         request["speaker_frame"] = frame
+    # Qendresa item 16: the speaker full screen before the background / corner. Carried only while
+    # the kill switch is on (off = a request byte-identical to today's), with or without a sequence.
+    if raw.get("full_screen_opening") is True and settings.speaker_full_opening_enabled:
+        request["full_screen_opening"] = True
+        opening_s = raw.get("full_screen_opening_s")
+        if isinstance(opening_s, (int, float)) and not isinstance(opening_s, bool):
+            request["full_screen_opening_s"] = float(opening_s)
     return request
 
 
@@ -8236,6 +8250,8 @@ def _resolve_strategy_background(
     words: list[dict] | None = None,
     keep_segments: list[tuple[float, float]] | None = None,
     take_s: float | None = None,
+    creator_client_protocol: int | None = None,
+    title_end_s: float | None = None,
     layout_out: dict[str, Any] | None = None,
 ) -> tuple[Any, frozenset[str]]:
     """The ``SubtitledBackground`` lane the approved strategy names, and the pool spellings
@@ -8258,6 +8274,12 @@ def _resolve_strategy_background(
     reservation (S43); a window gate closed alone strips the windows and the frame again in
     `strip_unsupported_background`, and only what survives is reserved.
 
+    Qendresa item 16: a request with ``full_screen_opening`` starts the speaker full screen until
+    X (picked on the kept take by `phone_background_sequence.full_screen_opening_end`, written
+    back in original time like every window) when the approving build (``creator_client_protocol``)
+    can decode it; no window starts before X. ``title_end_s`` is when the hook title leaves (output
+    seconds). Otherwise the layout is today's and a ``part: full_screen_opening`` drop says why.
+
     Item 19: given ``layout_out``, a laid-out sequence leaves ``layout_out["anchors"]`` -- a
     ``phone_list_labels.LabelAnchor`` per anchored entry (where it is said, and where its first
     window ending after that opens), on the kept take's clock. ``layout_out["phrases"]`` is every
@@ -8271,10 +8293,12 @@ def _resolve_strategy_background(
         PhoneSubtitledLaneRequest,
         SubtitledBackground,
         SubtitledBackgroundWindow,
+        SubtitledFullScreenWindow,
         SubtitledSpeakerFrame,
         strip_unsupported_background,
     )
     from app.services import phone_background_sequence as sequence_mod  # noqa: PLC0415
+    from app.services.phone_rollout import speaker_full_opening_planned_reason  # noqa: PLC0415
 
     sequence_request: list[dict[str, Any]] = list(request.get("sequence") or [])
     # KRI-1173: a plain colour names no pool media -- nothing is looked up for the fill and
@@ -8346,6 +8370,50 @@ def _resolve_strategy_background(
             lane_drops.append({"lane": "background", "reason": "missing_generation"})
             return None, reserved
 
+    opening_end_s: float | None = None
+    full_screen_windows: tuple[Any, ...] = ()
+    if request.get("full_screen_opening"):
+        opening_reason = speaker_full_opening_planned_reason(creator_client_protocol)
+        if opening_reason == "disabled":
+            pass  # the kill switch is off: nothing new anywhere
+        elif opening_reason is not None:
+            lane_drops.append(
+                {"lane": "background", "part": "full_screen_opening", "reason": opening_reason}
+            )
+        else:
+            opening_end_s, why_not = sequence_mod.full_screen_opening_end(
+                words=words,
+                keep_segments=keep_segments,
+                take_s=float(take_s) if take_s is not None else 0.0,
+                stated_s=request.get("full_screen_opening_s"),
+                first_heard_s=sequence_mod.first_heard_at(
+                    [
+                        sequence_mod.SequenceEntry(
+                            index=index,
+                            spoken_phrase=entry.get("spoken_phrase"),
+                            hold_s=entry.get("hold_s"),
+                        )
+                        for index, entry, _row in entry_rows
+                    ],
+                    words,
+                    keep_segments,
+                ),
+                title_end_s=title_end_s,
+            )
+            if opening_end_s is None:
+                lane_drops.append(
+                    {"lane": "background", "part": "full_screen_opening", "reason": why_not}
+                )
+            else:
+                full_screen_windows = (
+                    SubtitledFullScreenWindow(
+                        start_s=0.0,
+                        end_s=sequence_mod.to_source_time(
+                            opening_end_s, keep_segments, as_end=True
+                        ),
+                    ),
+                )
+
     windows: list[SubtitledBackgroundWindow] = []
     if entry_rows:
         by_index = {index: (entry, row) for index, entry, row in entry_rows}
@@ -8366,6 +8434,7 @@ def _resolve_strategy_background(
             keep_segments=keep_segments,
             # A colour fill is a base outside the sequence; a pool fill may be one of its photos.
             fill_key=str(fill_row["id"]) if fill_row is not None else None,
+            **({"opening_s": opening_end_s} if opening_end_s is not None else {}),
         )
         lane_drops.extend(layout.notes)
         if layout_out is not None:
@@ -8427,7 +8496,11 @@ def _resolve_strategy_background(
     try:
         if fill_row is None:
             background = SubtitledBackground(
-                kind="color", color=fill_color, windows=tuple(windows), speaker_frame=frame
+                kind="color",
+                color=fill_color,
+                windows=tuple(windows),
+                speaker_frame=frame,
+                full_screen_windows=full_screen_windows,
             )
         else:
             background = SubtitledBackground(
@@ -8438,6 +8511,7 @@ def _resolve_strategy_background(
                 source_start_s=fill_start if fill_kind == "video" else 0.0,
                 windows=tuple(windows),
                 speaker_frame=frame,
+                full_screen_windows=full_screen_windows,
             )
     except ValueError as exc:
         lane_drops.append({"lane": "background", "reason": str(exc)[:300]})
@@ -10723,6 +10797,14 @@ def _run_phone_subtitled_job(
                                 words=raw_words,
                                 keep_segments=_bg_keep,
                                 take_s=_background_take_s(_bg_keep, float(probe.duration_s)),
+                                creator_client_protocol=_stamped_protocol(
+                                    all_candidates.get("creator_client_protocol")
+                                ),
+                                title_end_s=(
+                                    max(float(row["end_s"]) for row in title_rows)
+                                    if title_rows
+                                    else (3.0 if talking_title_text else None)
+                                ),
                                 layout_out=list_label_layout if list_label_asks else None,
                             )
                         )
@@ -11418,6 +11500,16 @@ def _run_phone_subtitled_job(
                             if _label_frame is not None
                             else None
                         ),
+                        # Qendresa item 16: she is full-frame inside the opening (cut time, as the
+                        # lanes were remapped above), so a label there keeps off that face.
+                        full_screen_windows=(
+                            tuple(
+                                (float(span.start_s), float(span.end_s))
+                                for span in lanes.background.full_screen_windows
+                            )
+                            if lanes is not None and lanes.background is not None
+                            else ()
+                        ),
                         protected=protected_plan,
                         **text_canvas,
                     )
@@ -11516,7 +11608,12 @@ def _run_phone_subtitled_job(
                     # KRI-1161: what the finished video really has behind the speaker, so the
                     # render-ready review judges the ask (omitted while the background is plain).
                     _bg = lanes.background
-                    if _bg.windows or _bg.speaker_frame is not None or _bg.uses_color:
+                    if (
+                        _bg.windows
+                        or _bg.speaker_frame is not None
+                        or _bg.uses_color
+                        or _bg.uses_full_screen
+                    ):
                         lane_receipt["background"] = {
                             # KRI-1173: a plain colour names itself; a media fill adds no key.
                             **({"color": _bg.color} if _bg.uses_color else {}),
@@ -11537,6 +11634,25 @@ def _run_phone_subtitled_job(
                             lane_receipt["background"]["media"] = len(
                                 {w.media_id for w in _bg.windows}
                             )
+                        # Qendresa item 16: how long the finished video really is full screen
+                        # from 0 s, read off the COMPILED recipe (a speech cut is accounted for).
+                        _opening_end = next(
+                            (
+                                round(float(span.end), 2)
+                                for span in (
+                                    getattr(
+                                        getattr(recipe, "speaker_background", None),
+                                        "full_screen_windows",
+                                        None,
+                                    )
+                                    or ()
+                                )
+                                if span.start <= 1e-6
+                            ),
+                            None,
+                        )
+                        if _opening_end is not None:
+                            lane_receipt["background"]["full_screen_opening_s"] = _opening_end
                 try:
                     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -13481,14 +13597,17 @@ def _phone_talking_list_label_rows(
     protected: Any = None,
     canvas: Any = None,
     phrases: Any = None,
+    full_screen_windows: tuple[tuple[float, float], ...] = (),
 ) -> tuple[list[dict], dict[str, Any] | None]:
     """Item 19: one text row per numbered list label that has its moment, plus the receipt.
 
     Modelled on `_phone_talking_spoken_text_rows`. ``anchors`` (`LabelAnchor`) and ``words``
     are on the cut timeline the recipe plays; ``cards`` are ``(start_s, end_s, NormalizedBox)``
     of the cards on screen. ``speaker_frame`` maps the sampled face to where the matted speaker
-    is drawn, so a label stays off the corner face. The receipt keeps every ask that is a list
-    item; ``None`` when none is."""
+    is drawn, so a label stays off the corner face. ``full_screen_windows`` (Qendresa item 16, the
+    cut timeline like the rows) are where she is drawn full-frame instead: a label's time inside
+    one keeps off her full-frame face. The receipt keeps every ask that is a list item; ``None``
+    when none is."""
     from app.pipeline.phone_list_labels import list_label_rows  # noqa: PLC0415
     from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
     from app.pipeline.phone_spoken_text import _text_boxes, caption_boxes  # noqa: PLC0415
@@ -13513,6 +13632,7 @@ def _phone_talking_list_label_rows(
             position_x=position_x,
             avoid=avoid,
             speaker_frame=speaker_frame,
+            **({"full_screen_windows": full_screen_windows} if full_screen_windows else {}),
             **_protected_placement_kwargs(protected),
         )
 

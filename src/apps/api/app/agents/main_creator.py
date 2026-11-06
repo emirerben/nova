@@ -234,14 +234,35 @@ log = structlog.get_logger()
 # v120 (Qendresa item 12): the shared brief section records the caption shape as typed facts,
 # `caption_words` (1-3 words at a time) and `caption_box` (a #RRGGBB box behind the captions).
 # On top of v119; brief_extractor v55 shares it.
+# v121 (Qendresa 13, tight pauses; on top of v120, Qendresa 12 caption shape): the shared brief
+# section records an "all my pauses / tight pace" ask as `pauses: "tight"` beside
+# `speech_cleanup`. On top of v119.
+# v123 (Qendresa item 17, follow-up of KRI-1175; v121-v122 reserved by items 13-14): one
+# paragraph after the windows section teaching how to write a sequence entry's `spoken_phrase`
+# (as said in the take, with the words only said where that visual is introduced). Shown only
+# with BACKGROUND_FOLLOWS_TALK_ENABLED and the windows capability; every other prompt keeps its
+# bytes.
+# v125 (Qendresa item 16; v124 is reserved for item 15): two teachings, shown only with
+# SPEAKER_FULL_OPENING_ENABLED and the `speaker_full_opening` capability. Strategy: "start with me
+# full screen ... after that my recordings and me small in the corner" sets
+# `background_media.full_screen_opening` (+ `full_screen_opening_s` for a named length). Brief: the
+# shared section records `speaker_full_opening` / `speaker_full_opening_s` on the requirement it
+# belongs to (brief_extractor v60 shares it). Every other prompt keeps its bytes.
+# v128 (Qendresa item 21), on top of v120 (Qendresa 12 caption shape): behind
+# `settings.clip_text_tiktok_look_enabled`, `_CLIP_TEXT_LOOK_PROMPT_SECTION` teaches one line
+# pinned in the MIDDLE for the whole video (`corner: "middle_center"`) and TikTok's own text look
+# (`look: "tiktok"`). Flag off => the rendered prompt is byte-identical to v120.
 # v131 (item 23, Related KRI-1129), on top of v120 (Qendresa 12 caption shape): with
 # BRIEF_LONG_REQUEST_ENABLED the brief section says "at most 32 objects" instead of 16.
 # Flag off: every prompt byte-identical.
+# v133 (Qendresa item 16; v130 until main reached v131 with item 23; v132 is held by item 24):
+# v125's two full-screen-opening teachings on top of v128 and v131. Flag off, every prompt keeps
+# its bytes.
 # v135 (Qendresa item 20, TITLE_LOOK_ENABLED): only while `title_look_enabled` is on, the Talking
 # reaction-beats section gains one rule: a logo/sticker she wants with or above the opening title
 # is a beat with `anchor: "title"`; the title stays in `opening_title`, " / " included. Flag off:
-# every prompt keeps its bytes. On top of v131 (#2106). Reserved as v129, renumbered once main
-# passed it; v132-v134 are held by unmerged branches.
+# every prompt keeps its bytes. On top of v133 (#2111). Reserved as v129, renumbered once main
+# passed it; v132 and v134 are held by items 24 and 18.
 MAIN_CREATOR_PROMPT_VERSION = "2026-11-06-v135"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
@@ -757,6 +778,61 @@ transcript, not the way it is spelled on screen ("trading agents", not "TradingA
 name is also said elsewhere in the take (a common word such as "agents"), copy the words said only
 where that one is introduced ("number four agents").
 """.strip("\n")
+
+# Qendresa item 16: appended after the windows section ONLY with SPEAKER_FULL_OPENING_ENABLED and
+# the `speaker_full_opening` capability. The repair
+# (`creator_capabilities.repair_creator_speaker_background`) keeps the field only while a
+# background survives.
+_FULL_OPENING_PROMPT_SECTION = """
+START FULL SCREEN, THEN THE BACKGROUND (iPhone Talking only)
+When the creator asks to START (or open) the video full screen as themselves in their own room,
+before the background or the corner ("start with me full screen and the title, after that my
+screen recordings and me small in the bottom right", "önce ben tam ekran, sonra kayıtlar"), set
+`background_media.full_screen_opening` true next to the background itself. Add
+`full_screen_opening_s` (1 to 15 seconds) only when they name a length ("for the first 5
+seconds"). The switch happens on its own, on the words of the first recording or after about 5
+seconds, and the opening title shows during it. It needs a `background_media`: never set it
+without one. "Put my recordings full screen" is the photos or videos behind them, never this:
+leave it off for that. Say in `summary`, in plain words, that they start full screen and then
+move into the corner.
+""".strip("\n")
+
+_BRIEF_FULL_OPENING_SENTENCE = (
+    " When the creator wants to START full screen as themselves in their own room before the"
+    ' background or the corner ("start with me full screen", "önce ben tam ekran"), add'
+    ' "speaker_full_opening": true to the requirement it belongs to (the background ask, or its own'
+    ' `style` requirement) and "speaker_full_opening_s": <seconds> only when they name a length'
+    ' ("for the first 5 seconds"); "put my recordings full screen" is not this.'
+)
+_BRIEF_FULL_OPENING_ANCHOR = '"arkam düz yeşil olsun"). Sound that merely'
+
+
+def with_full_opening_brief(section: str) -> str:
+    """``section`` (the shared brief section, or the extractor's narrowing of it) with the one
+    full-screen-opening sentence added. Only called where the opening is open, so every other
+    prompt keeps the bytes it had before (Qendresa item 16)."""
+    assert section.count(_BRIEF_FULL_OPENING_ANCHOR) == 1, "brief full-opening anchor moved"
+    return section.replace(
+        _BRIEF_FULL_OPENING_ANCHOR,
+        '"arkam düz yeşil olsun").' + _BRIEF_FULL_OPENING_SENTENCE + " Sound that merely",
+    )
+
+
+def speaker_full_opening_taught(manifest: ResolvedCreatorManifest) -> bool:
+    """True when the full-screen-opening teachings belong in the prompt: the flag is on AND the
+    manifest advertises the capability (`speaker_full_opening`, on top of the background)."""
+    if not settings.speaker_full_opening_enabled:
+        return False
+    from app.services import creator_capabilities  # noqa: PLC0415
+
+    open_fn = getattr(creator_capabilities, "speaker_full_opening_open", None)
+    if open_fn is not None:
+        return bool(open_fn(manifest))
+    capability = manifest.capabilities.get("speaker_full_opening")
+    return bool(
+        capability is not None and capability.available and speaker_background_open(manifest)
+    )
+
 
 # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED) on a phone Montage / Voiceover
 # edit. Appended to the `$reaction_beats_section` slot ONLY when the manifest advertises
@@ -1348,7 +1424,7 @@ def with_long_request_cap(section: str) -> str:
     return section.replace(_BRIEF_CAP_ANCHOR, f"at most {LONG_REQUEST_MAX_UPDATES} objects")
 
 
-def brief_prompt_section(insert_clips_open: bool = False) -> str:
+def brief_prompt_section(insert_clips_open: bool = False, full_opening_open: bool = False) -> str:
     section = (
         with_insert_clip_brief(_BRIEF_PROMPT_SECTION)
         if insert_clips_open
@@ -1356,7 +1432,7 @@ def brief_prompt_section(insert_clips_open: bool = False) -> str:
     )
     if settings.brief_long_request_enabled:
         section = with_long_request_cap(section)
-    return section
+    return with_full_opening_brief(section) if full_opening_open else section
 
 
 class MainCreatorInput(BaseModel):
@@ -1580,10 +1656,20 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     and speaker_background_windows_open(input.capability_manifest)
                     else ""
                 )
+                # Qendresa item 16: "" unless the flag is on AND the capability is advertised.
+                + (
+                    "\n" + _FULL_OPENING_PROMPT_SECTION
+                    if speaker_full_opening_taught(input.capability_manifest)
+                    else ""
+                )
             ),
             # KRI-188: "" (flag off) adds no bytes; same line-suffix trick.
             brief_section=(
-                "\n" + brief_prompt_section(bool(insert_clip_candidates(input.capability_manifest)))
+                "\n"
+                + brief_prompt_section(
+                    bool(insert_clip_candidates(input.capability_manifest)),
+                    speaker_full_opening_taught(input.capability_manifest),
+                )
                 if input.brief_enabled
                 else ""
             ),

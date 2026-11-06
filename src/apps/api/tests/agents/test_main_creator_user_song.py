@@ -89,6 +89,8 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v123 (Qendresa item 17, on top of v121): its paragraph renders only with
 # BACKGROUND_FOLLOWS_TALK_ENABLED and the windows capability, which these renders never have, so
 # all four hashes are v121's, unchanged (the pins cover v121 + v123).
+# v125 (Qendresa item 16): its teachings render only with SPEAKER_FULL_OPENING_ENABLED and the
+# `speaker_full_opening` capability, so the pins cover v125 too (renumbered v133 on top of v131).
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
 PRE_CHANGE_PROMPT_SHA = {

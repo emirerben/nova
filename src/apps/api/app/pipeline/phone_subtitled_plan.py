@@ -76,6 +76,7 @@ from app.kria.portable_speaker_background import (
     SpeakerBackgroundLayer,
     SpeakerBackgroundWindow,
     SpeakerFrame,
+    SpeakerFullScreenWindow,
 )
 from app.kria.portable_visual import AudioMuteWindow, VisualMediaPlacement
 from app.kria.recipes import (
@@ -1055,6 +1056,18 @@ def _compile_background(
                 end=end,
             )
         )
+    # Qendresa item 16: the full-screen spans pin nothing; clip them to the edit like windows.
+    full_screen: list[SpeakerFullScreenWindow] = []
+    for span in background.full_screen_windows:
+        start = span.start_s
+        end = span.end_s
+        if timeline_duration_s is not None:
+            if start >= timeline_duration_s - 1e-6:
+                continue
+            end = min(end, timeline_duration_s)
+        if end - start < MIN_BACKGROUND_WINDOW_S - 1e-9:
+            continue
+        full_screen.append(SpeakerFullScreenWindow(start=start, end=end))
     frame = background.speaker_frame
     fill: dict[str, Any] = (
         {"media_kind": "color", "color": background.color}
@@ -1065,6 +1078,7 @@ def _compile_background(
         **fill,
         source_start=background.source_start_s if background.kind == "video" else 0.0,
         windows=windows or None,
+        full_screen_windows=full_screen or None,
         speaker_frame=(
             SpeakerFrame(
                 width_fraction=frame.width_fraction,
