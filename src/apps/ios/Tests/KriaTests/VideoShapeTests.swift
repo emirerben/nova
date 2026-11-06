@@ -325,16 +325,46 @@ import KriaMediaEngine
 
     private func compiledTransform(fit: String?, capability: EditorCapability?, raw: [String: JSONValue] = [:],
                                    trimOut: Double = 3, orientation: String? = nil) throws -> MediaTransform? {
+        try compiledShapeClip(fit: fit, capability: capability, raw: raw, trimOut: trimOut, orientation: orientation).transform
+    }
+
+    private func compiledShapeClip(fit: String?, capability: EditorCapability?, raw: [String: JSONValue] = [:],
+                                   trimOut: Double = 3, orientation: String? = nil, hydrateHold: Bool = false) throws -> TimelineClip {
         let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
         let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original",
-            asset: MediaAsset(id: "local", relativePath: "original.mp4", fingerprint: fingerprint, duration: 4,
+            asset: MediaAsset(id: "original", relativePath: "original.mp4", fingerprint: fingerprint, duration: 4,
                               naturalSize: MediaSize(width: 1920, height: 1080)),
             url: URL(fileURLWithPath: "/fixture/original.mp4"))
         let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 3, trimIn: 0, trimOut: trimOut, sourceDuration: 4, slotID: "slot")
         let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
-        let document = EditorDocument(clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: 3, raw: raw)], orientation: orientation, landscapeFit: fit,
+        var document = EditorDocument(clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: 3, raw: raw)], orientation: orientation, landscapeFit: fit,
                                       capabilities: capability.map { ["landscape_fit": $0] } ?? [:])
-        return try compiler.compile(document: document, clips: [clip], items: [], sources: [0: source]).recipe.tracks.first?.clips.first?.transform
+        var projectedClips = [clip]
+        if hydrateHold {
+            document.clips = []
+            let recipe = KriaMediaEngine.EditRecipe(assets: [source.asset], tracks: [
+                .init(id: "video", kind: .video, clips: [
+                    .init(id: "held", sourceAssetID: "original", sourceStart: 0,
+                          sourceDuration: 1, timelineStart: 0, rate: 1, holdDuration: 2)
+                ])
+            ])
+            let pool = NativeEditorSourcePool(clips: [.init(clipIndex: 0, nativeSource:
+                .init(mediaID: "original", sourceURL: nil, original: nil, localRequired: false))], baseGeneration: "g")
+            let seeds = NativePhoneNarratedSource.seeds(recipe: recipe, pool: pool)
+            XCTAssertEqual(seeds.count, 1)
+            document = NativePhoneNarratedSource.hydrate(document, seeds: seeds, sources: [0: source])
+            XCTAssertEqual(document.clips.first?.raw["native_source_span_s"], .number(1))
+            XCTAssertEqual(document.clips.first?.raw["playback_rate"], .number(1))
+            let projection = NativeEditorInteraction.timelineProjection(slots: document.clips, carousel: nil)
+            projectedClips = projection.clipWindows.map { window in
+                let slot = document.clips[window.sourceIndex]
+                return EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: slot.clipIndex,
+                    start: window.start, end: window.end, trimIn: slot.inS,
+                    trimOut: slot.inS + (slot.raw["native_source_span_s"]?.numberValue ?? 0),
+                    sourceDuration: 4, slotID: slot.id)
+            }
+        }
+        return try XCTUnwrap(compiler.compile(document: document, clips: projectedClips, items: [], sources: [0: source]).recipe.tracks.first?.clips.first)
     }
 
     func testCompilerLetterboxesASidewaysClipOnlyWhenBlackBarsAreChosen() throws {
@@ -367,7 +397,26 @@ import KriaMediaEngine
         // A fit-capable format that is merely not editable here still shows its bars.
         XCTAssertEqual(try XCTUnwrap(compiledTransform(fit: "fit", capability: EditorCapability(editable: false, reason: "phone_edit_unsupported", value: "fit"))).scale, 0.31640625, accuracy: 1e-9)
         // A held clip (source shorter than its slot) is not fitted, like the backend's `_fit_eligible`.
-        XCTAssertEqual(try compiledTransform(fit: "fit", capability: EditorCapability(editable: true, value: "fit"), raw: ["playback_rate": .number(1)], trimOut: 1), .identity)
+        XCTAssertEqual(try compiledTransform(fit: "fit", capability: EditorCapability(editable: true, value: "fit"), raw: ["playback_rate": .number(1), "native_source_span_s": .number(1)], trimOut: 1), .identity)
+    }
+
+    func testHydratedHeldClipPreservesMotionHoldAndFitExclusion() throws {
+        let clip = try compiledShapeClip(fit: "fit", capability: .init(editable: true, value: "fit"), hydrateHold: true)
+        XCTAssertEqual(clip.sourceDuration, 1, accuracy: 1e-9)
+        XCTAssertEqual(clip.rate, 1, accuracy: 1e-9)
+        XCTAssertEqual(try XCTUnwrap(clip.holdDuration), 2, accuracy: 1e-9)
+        XCTAssertEqual(clip.duration, 3, accuracy: 1e-9)
+        XCTAssertEqual(clip.transform, .identity)
+    }
+
+    func testUnmarkedStaleTrimDoesNotInventAnAuthoredHold() throws {
+        let clip = try compiledShapeClip(fit: "fit", capability: .init(editable: true, value: "fit"),
+            raw: ["playback_rate": .number(1)], trimOut: 1)
+        XCTAssertEqual(clip.sourceDuration, 3, accuracy: 1e-9)
+        XCTAssertEqual(clip.rate, 1, accuracy: 1e-9)
+        XCTAssertNil(clip.holdDuration)
+        XCTAssertEqual(clip.duration, 3, accuracy: 1e-9)
+        XCTAssertEqual(clip.transform.scale, 0.31640625, accuracy: 1e-9)
     }
 
     func testPreviewCanvasAndAspectRatioAgreeOnLegacyOrientationSpellings() async throws {

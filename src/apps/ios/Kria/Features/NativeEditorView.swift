@@ -1036,14 +1036,13 @@ struct NativeEditorView: View {
             if project.runtimeVersion == 2 { await session.synchronizePromptRevision() }
             return
         }
-        if let libraryJobID {
-            await session.load(libraryJobID: libraryJobID, api: model.api)
-        } else {
+        let lifetime = session.editorLifetimeID
+        if libraryJobID == nil {
             // KRI-529: a thread revision bump alone (a chat turn) must not reload the editor.
             if await session.reconcileOnOpen(project: project, api: model.api) { return }
-            await session.load(project: project, api: model.api)
         }
-        await session.refreshDeviceRender()
+        guard let loadedLifetime = await session.loadForEditorOpen(project: project, libraryJobID: libraryJobID,
+            api: model.api, expectedLifetime: lifetime), session.editorLifetimeID == loadedLifetime else { return }
         if let file = deviceLocalFile { session.showDeviceOutput(file) }
     }
 
