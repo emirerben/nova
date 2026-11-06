@@ -195,5 +195,45 @@ final class SpeakerFrameManipulationTests: XCTestCase {
         let fullLive = try await LivePreviewComposition(recipe: full.recipe, assetURLs: full.urls)
         XCTAssertNil(fullLive.speakerSelectionBounds(time: 1), "a full-frame speaker is not selectable")
     }
+
+    /// S84, S85 (`docs/reviews/speaker-background-windows-failure-modes.md`): with a full-screen opening (Qendresa
+    /// item 16) the corner speaker is selectable only after the switch, and moving the frame by hand stays the in-place
+    /// update and keeps the opening: still full-frame inside it, the speaker at the new place after it.
+    @MainActor func testAnOpeningIsNotSelectableAndSurvivesAMovedFrame() async throws {
+        useSpeakerSegmenter(self, GreenPersonSegmenter())
+        let directory = try speakerTestDirectory(self)
+        let speaker = try await writeSpeakerClip(directory: directory, size: (canvas.width, canvas.height), seconds: 2)
+        let opening = [SpeakerFullScreenWindow(start: 0, end: 0.8)]
+        let built = try speakerRecipe(canvas: canvas, speaker: speaker, duration: 2,
+                                      background: SpeakerTestBackground(url: try solidSpeakerTestImage(directory: directory)),
+                                      speakerFrame: corner, fullScreenWindows: opening)
+        let live = try await LivePreviewComposition(recipe: built.recipe, assetURLs: built.urls)
+        XCTAssertNil(live.speakerSelectionBounds(time: 0.4), "no corner box while she is full screen")
+        XCTAssertThrowsError(try live.speakerInteractionLayers(time: 0.4), "no drag split inside the opening")
+        XCTAssertNotNil(live.speakerSelectionBounds(time: 1.2), "the corner speaker is selectable after the switch")
+        XCTAssertNoThrow(try live.speakerInteractionLayers(time: 1.2))
+
+        let moved = SpeakerFrame(widthFraction: 0.6, xFraction: 0.35, yFraction: 0.55)
+        let layer = try XCTUnwrap(built.recipe.speakerBackground)
+        XCTAssertEqual(layer.replacingSpeakerFrame(moved).fullScreenWindows, opening, "a moved frame keeps the opening")
+        var next = built.recipe
+        next.speakerBackground = layer.replacingSpeakerFrame(moved)
+        let item = live.preview.playerItem
+        XCTAssertNoThrow(try live.updateText(recipe: next), "a moved frame with an opening is still only a move")
+        XCTAssertTrue(live.preview.playerItem === item, "the same player item")
+        XCTAssertEqual(live.recipe.speakerBackground?.fullScreenWindows, opening)
+        let composition = try XCTUnwrap(item.videoComposition)
+        let inside = try SpeakerTestFrame(try await still(live, composition, at: 0.4))
+        let old = person(in: corner)
+        // The raw take is decoded H.264 here, so its room is checked as the opening's own tests check it.
+        for (fx, fy) in [(0.04, 0.04), (old.0 + 0.1, old.1 + 0.1)] {
+            XCTAssertTrue(isColor(inside.rgb(fx: fx, fy: fy), SpeakerColor.room, tolerance: 90),
+                          "inside the opening her own room fills the frame at (\(fx), \(fy)): \(inside.rgb(fx: fx, fy: fy))")
+        }
+        let after = try SpeakerTestFrame(try await still(live, composition, at: 1.2))
+        let standing = person(in: moved)
+        XCTAssertTrue(isColor(after.rgb(fx: standing.0, fy: standing.1), SpeakerColor.person), "after the switch the speaker is at the new place")
+        XCTAssertTrue(isColor(after.rgb(fx: old.0 + 0.1, fy: old.1 + 0.1), SpeakerColor.background), "and the old corner is the background")
+    }
 }
 #endif

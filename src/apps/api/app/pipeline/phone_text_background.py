@@ -7,7 +7,10 @@ import subprocess
 WIDTH, HEIGHT = 108, 192
 
 
-def sample_background(path: str, at_s: float, *, crop=None, canvas=None) -> bytes | None:
+def sample_background(path: str, at_s: float | None, *, crop=None, canvas=None) -> bytes | None:
+    """One gray frame of ``path`` at ``at_s``, cover-fit to the analysis grid. ``at_s`` None reads
+    the first frame without seeking: a still photo (Green 5 backgrounds), where an input seek,
+    even to 0, yields no frame."""
     filters = []
     if crop is not None:
         filters.append(f"crop=iw*{crop['width']}:ih*{crop['height']}:iw*{crop['x']}:ih*{crop['y']}")
@@ -28,8 +31,7 @@ def sample_background(path: str, at_s: float, *, crop=None, canvas=None) -> byte
                 "ffmpeg",
                 "-v",
                 "error",
-                "-ss",
-                str(max(0, at_s)),
+                *(() if at_s is None else ("-ss", str(max(0, at_s)))),
                 "-i",
                 path,
                 "-vf",

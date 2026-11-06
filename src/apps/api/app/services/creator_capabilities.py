@@ -94,6 +94,8 @@ from app.services.phone_rollout import (
     speaker_background_color_supported,
     speaker_background_supported,
     speaker_background_windows_supported,
+    speaker_full_opening_planned_for,
+    speaker_full_opening_planned_reason,
 )
 
 CAPABILITY_SET_ITEM_INTENT = "set_item_intent"
@@ -135,6 +137,11 @@ CAPABILITY_SPEAKER_BACKGROUND = "speaker_background"
 # `speaker_background` is advertised AND `speaker_background_windows_supported()` holds, so a
 # manifest without it keeps its dict, both hashes and the creator prompt byte-identical.
 CAPABILITY_SPEAKER_BACKGROUND_WINDOWS = "speaker_background_windows"
+# Qendresa item 16: the speaker's own take full screen before the background / corner starts.
+# Present ONLY inside the windows branch AND while `speaker_full_opening_planned_for` holds for the
+# app build that sent the message (`client_protocol.current_client_protocol`, bound for a Kria turn
+# by `bind_sending_build`), so a closed gate leaves the dict, both hashes and the prompt identical.
+CAPABILITY_SPEAKER_FULL_OPENING = "speaker_full_opening"
 # KRI-1173: a plain colour as the fill. Present ONLY while `speaker_background` is advertised AND
 # `speaker_background_color_supported()` holds (the `speakerBackgroundColor` token + a protocol-34
 # build), so a manifest without it keeps its dict, both hashes and the creator prompt identical.
@@ -172,6 +179,18 @@ SPEAKER_BACKGROUND_NOTICES: dict[str, str] = {
     "color_invalid": (
         "Couldn't use that colour for your background; kept your own background. "
         "Try white, black, green, blue, red, yellow or grey."
+    ),
+}
+# Qendresa item 16: the opening was asked for but cannot be made (flag on only; flag off drops it
+# silently). Keyed by `phone_rollout.speaker_full_opening_planned_reason`. Turkish twins belong in
+# `app.kria.strategy_policy._KNOWN_TR`.
+SPEAKER_FULL_OPENING_NOTICES: dict[str, str] = {
+    "app_too_old": (
+        "Couldn't start you full screen before the background: your iPhone app can't do that "
+        "yet. Update the app and ask again."
+    ),
+    "unavailable": (
+        "Couldn't start you full screen before the background: it isn't available here right now."
     ),
 }
 TALKING_CLIP_INTENTS_DROPPED_NOTICE = (
@@ -959,6 +978,10 @@ def resolve_creator_manifest(
             capabilities[CAPABILITY_SPEAKER_BACKGROUND] = _available()
             if speaker_background_windows_supported():
                 capabilities[CAPABILITY_SPEAKER_BACKGROUND_WINDOWS] = _available()
+                from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+
+                if speaker_full_opening_planned_for(current_client_protocol()):
+                    capabilities[CAPABILITY_SPEAKER_FULL_OPENING] = _available()
             if speaker_background_color_supported():
                 capabilities[CAPABILITY_SPEAKER_BACKGROUND_COLOR] = _available()
             background_pick = speaker_background_pick or None
@@ -1776,6 +1799,17 @@ def speaker_background_windows_open(manifest: ResolvedCreatorManifest) -> bool:
     return capability is not None and capability.available and speaker_background_open(manifest)
 
 
+def speaker_full_opening_open(manifest: ResolvedCreatorManifest) -> bool:
+    """True when the manifest advertises the full-screen opening (windows open, build >= 41)."""
+
+    capability = manifest.capabilities.get(CAPABILITY_SPEAKER_FULL_OPENING)
+    return (
+        capability is not None
+        and capability.available
+        and speaker_background_windows_open(manifest)
+    )
+
+
 def speaker_background_color_open(manifest: ResolvedCreatorManifest) -> bool:
     """True when the manifest also advertises a plain colour as the fill (KRI-1173)."""
 
@@ -1802,6 +1836,12 @@ def _speaker_background_media(
     if found is None and needle and not needle.startswith("asset-"):
         found = _match_owned_media_ref(pool, f"asset-{needle}")
     return found
+
+
+def _sending_build_protocol() -> int | None:
+    from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+
+    return current_client_protocol()
 
 
 def _repair_creator_speaker_background(
@@ -1897,6 +1937,18 @@ def _repair_creator_speaker_background(
                 notices.append(SPEAKER_BACKGROUND_NOTICES["sequence_not_found"])
             if not entries:
                 cadence_s = DEFAULT_BACKGROUND_CADENCE_S
+    opening = False
+    opening_s: float | None = None
+    if wanted is not None and wanted.full_screen_opening:
+        if speaker_full_opening_open(manifest):
+            opening, opening_s = True, wanted.full_screen_opening_s
+        elif settings.speaker_full_opening_enabled:
+            reason = speaker_full_opening_planned_reason(_sending_build_protocol())
+            notices.append(
+                SPEAKER_FULL_OPENING_NOTICES.get(
+                    reason or "unavailable", SPEAKER_FULL_OPENING_NOTICES["unavailable"]
+                )
+            )
     if media is None and color is None and entries:
         # The model named no usable fill but a usable sequence: its first entry fills.
         first = entries[0]
@@ -1904,6 +1956,9 @@ def _repair_creator_speaker_background(
         start = first.source_start_s
     if media is None and color is None:
         return strategy.model_copy(update={"background_media": None}), notices
+    opening_fields: dict[str, Any] = (
+        {"full_screen_opening": True, "full_screen_opening_s": opening_s} if opening else {}
+    )
     if color is not None:
         # KRI-1173: the colour fill names no pool media; its windows (if any) still do.
         fill = BackgroundMedia(
@@ -1911,6 +1966,7 @@ def _repair_creator_speaker_background(
             sequence=tuple(entries),
             cadence_s=cadence_s,
             speaker_frame=frame,
+            **opening_fields,
         )
     else:
         fill = BackgroundMedia(
@@ -1919,6 +1975,7 @@ def _repair_creator_speaker_background(
             sequence=tuple(entries),
             cadence_s=cadence_s,
             speaker_frame=frame,
+            **opening_fields,
         )
     update: dict[str, Any] = {"background_media": fill}
     backdrop_ids = {*(entry.media_id for entry in entries)}
@@ -2449,6 +2506,8 @@ __all__ = [
     "repair_creator_speaker_background",
     "speaker_background_open",
     "speaker_background_windows_open",
+    "speaker_full_opening_open",
+    "SPEAKER_FULL_OPENING_NOTICES",
     "speaker_background_pick_from_state",
     "canonical_pool_media_id",
     "SPEAKER_BACKGROUND_STATE_KEY",

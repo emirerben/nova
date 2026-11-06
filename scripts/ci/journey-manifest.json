@@ -1118,6 +1118,14 @@
       ]
     },
     {
+      "id": "qendresa-19-list-labels",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_phone_list_labels.py tests/tasks/test_qendresa_list_labels_worker.py tests/tasks/test_qendresa_spoken_list_worker.py tests/kria/test_item19_list_label_receipts.py tests/services/test_item19_list_label_contract.py",
+      "paths": [
+        "src/apps/api/app/pipeline/phone_list_labels.py"
+      ]
+    },
+    {
       "id": "kri-827-protected-text-regions",
       "needs_native": false,
       "api_tests": "tests/pipeline/test_protected_object_text_e2e.py tests/tasks/test_kri827_protected_text_worker.py tests/kria/test_kri827_protected_targets.py tests/kria/test_kri827_protected_region_turn_postgres.py tests/kria/test_kri901_mark_before_approval_postgres.py",
@@ -3177,6 +3185,20 @@
       ]
     },
     {
+      "id": "qendresa-23-long-prompts",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_brief_long_request.py tests/kria/test_creative_brief.py tests/evals/test_main_creator_evals.py tests/evals/test_brief_extractor_evals.py",
+      "paths": [
+        "src/apps/api/app/kria/brief.py",
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/agents/brief_extractor.py",
+        "src/apps/api/tests/kria/test_brief_long_request.py",
+        "src/apps/api/tests/fixtures/kria_replay/q2-long-prompt/",
+        "scripts/kria/score_q2_long_prompt.py",
+        "docs/reviews/qendresa-23-long-prompts.md"
+      ]
+    },
+    {
       "id": "steer-now",
       "needs_native": true,
       "api_tests": "tests/kria/test_steer_now_postgres.py",
@@ -3212,6 +3234,21 @@
         "src/apps/ios/Kria/Features/WaitingMessageBar.swift",
         "src/apps/ios/Tests/KriaTests/SteerNowPolicyTests.swift",
         "src/apps/ios/Tests/KriaUITests/SteerNowUITests.swift"
+      ]
+    },
+    {
+      "id": "qendresa-13-tight-pauses",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_tight_pause_cut.py tests/pipeline/test_voice_guard_cleanup_e2e.py tests/kria/test_tight_pause_ask.py tests/kria/test_tight_pause_receipts.py tests/tasks/test_phone_tight_pauses.py tests/routes/test_creation_thread_cleanup_requested.py",
+      "paths": [
+        "src/apps/api/app/pipeline/tight_pause_cut.py",
+        "src/apps/api/app/kria/tight_pause_ask.py",
+        "src/apps/api/tests/pipeline/test_tight_pause_cut.py",
+        "src/apps/api/tests/kria/test_tight_pause_ask.py",
+        "src/apps/api/tests/kria/test_tight_pause_receipts.py",
+        "src/apps/api/tests/tasks/test_phone_tight_pauses.py",
+        "src/apps/api/tests/routes/test_creation_thread_cleanup_requested.py",
+        "scripts/ios/qendresa-13-tight-pauses-e2e.py"
       ]
     }
   ]

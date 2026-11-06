@@ -2,6 +2,56 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.10.0] - 2026-11-06
+
+### Changed
+- Qendresa item 16: she starts full screen, then drops into the corner (#2111) <!-- release-pr: 2111 -->
+
+## [0.88.9.0] - 2026-11-06
+
+### Changed
+- feat(kria): plan a long creation prompt (~17 asks) in one go (Qendresa 23) (#2106) <!-- release-pr: 2106 -->
+
+## [0.88.8.0] - 2026-11-06
+
+### Changed
+- feat(list-labels): numbered labels appear when each item starts (Qendresa item 19) (#2116) <!-- release-pr: 2116 -->
+
+## [0.88.7.0] - 2026-11-06
+
+### Changed
+- feat(text): her short-clip text look — one line in the middle, TikTok's own look (Qendresa item 21) (#2114) <!-- release-pr: 2114 -->
+
+## [0.88.6.0] - 2026-11-06
+
+### Changed
+- fix(captions): captions over a speaker background are chosen against it, with an outline when no colour is readable (Green 5) (#2099) <!-- release-pr: 2099 -->
+
+## [0.88.5.0] - 2026-11-06
+
+### Changed
+- Qendresa item 15: phone Talking cards her size and place (builds on #2104: merge that first) (#2107) <!-- release-pr: 2107 -->
+
+## [0.88.4.0] - 2026-11-06
+
+### Changed
+- feat(speaker-background): hear background names said another way (Qendresa item 17) (#2110) <!-- release-pr: 2110 -->
+
+## [0.88.3.0] - 2026-11-05
+
+### Changed
+- feat(speech-cleanup): tight pauses on phone Talking when the creator asks (Qendresa 13) (#2102) <!-- release-pr: 2102 -->
+
+## [0.88.2.0] - 2026-11-05
+
+### Changed
+- fix(kria): a chat with no language yet answers in the language the creator types, not the phone's (Green 5) (#2098) <!-- release-pr: 2098 -->
+
+## [0.88.1.0] - 2026-11-05
+
+### Changed
+- fix(ios): preserve valid source windows through saved render preparation (#2122) <!-- release-pr: 2122 -->
+
 ## [0.88.0.0] - 2026-11-05
 
 ### Added
