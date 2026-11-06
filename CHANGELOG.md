@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.18.0] - 2026-11-06
+
+### Changed
+- Keep saved video edits reachable and safe to retry after render failure (#2126) <!-- release-pr: 2126 -->
+
+## [0.88.17.0] - 2026-11-06
+
+### Changed
+- feat(kria): AI suggestion cards that apply the checked edit on tap (dark) (#2109) <!-- release-pr: 2109 -->
+
+## [0.88.16.0] - 2026-11-06
+
+### Changed
+- fix(captions): phone Talking captions spell the names the creator typed and drop whisper's unsupported title case (Green 4/5) (#2097) <!-- release-pr: 2097 -->
+
+## [0.88.15.0] - 2026-11-06
+
+### Changed
+- feat(kria): replace a Talking take in an existing chat, dark behind MEDIA_REPLACE_ENABLED (KRI-1186) (#2124) <!-- release-pr: 2124 -->
+
 ## [0.88.14.0] - 2026-11-06
 
 ### Changed

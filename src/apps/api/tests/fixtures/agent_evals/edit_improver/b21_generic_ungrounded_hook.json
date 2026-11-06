@@ -1,0 +1,51 @@
+{
+  "id": "b21_generic_ungrounded_hook",
+  "why_bad": "hook line that fits any video",
+  "expect": "fail",
+  "expect_failures": [
+    "copy_ungrounded"
+  ],
+  "input": {
+    "state": "first_prompt",
+    "language": "en",
+    "creator_request": "",
+    "issued": [
+      {
+        "kind": "hook",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e2"
+            ]
+          }
+        ]
+      }
+    ],
+    "evidence": {
+      "e2": {
+        "signal": "visual",
+        "fact": "opening clip shows hands pouring matcha into a bowl"
+      }
+    },
+    "already_in_edit": [],
+    "dismissed": [],
+    "untrusted_texts": [
+      "Matcha Monday",
+      "okay so today I am showing you my matcha routine"
+    ]
+  },
+  "output": {
+    "ranked": [
+      {
+        "kind": "hook",
+        "target_ids": [
+          "all"
+        ],
+        "why": "Opening shows matcha being poured",
+        "copy": "Watch this closely",
+        "rank": 1
+      }
+    ]
+  }
+}

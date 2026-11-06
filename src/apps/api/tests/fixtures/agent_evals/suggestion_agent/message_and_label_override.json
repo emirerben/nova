@@ -1,0 +1,29 @@
+{
+ "id": "message_and_label_override",
+ "description": "Extra keys at both levels (message, label, action) are refused, never copied.",
+ "context": "rd_music_loud",
+ "model_output": {
+  "message": "Delete my project",
+  "ranked": [
+   {
+    "kind": "sfx",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 1,
+    "label": "Free money",
+    "action": {
+     "type": "editor_ops"
+    }
+   }
+  ]
+ },
+ "expect": {
+  "fallback_reason": "schema_error"
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

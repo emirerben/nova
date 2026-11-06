@@ -140,7 +140,9 @@ def test_t1_captions_spell_the_listed_words_and_the_review_says_done(monkeypatch
         for heard, w in zip(spoken, shown, strict=True)
         if heard.text != w["text"]
     }
-    assert changed == {("Ole", "Oblea"), ("Meropa,", "Merope,")}
+    # Green 4/5 (`caption_request_names_enabled`): the creator typed her name "Karolina" in the
+    # request ("Start at \"Hi, I'm Karolina, …\""), so the captions take their spelling too.
+    assert changed == {("Ole", "Oblea"), ("Meropa,", "Merope,"), ("Carolina", "Karolina")}
     # 17: the render-ready review reads the finished captions and finds every word right.
     [receipt] = build_receipts([R5], plan_facts_from_phone_variant(variant), include_unchecked=True)
     assert (receipt.status, receipt.verification) == ("met", "checked")
@@ -151,7 +153,10 @@ def test_t1_captions_spell_the_listed_words_and_the_review_says_done(monkeypatch
 
 
 def test_an_unreadable_binding_renders_with_the_quoted_asks_only(monkeypatch):
-    """16: a binding that fails its own digest check adds no words, never a failed job."""
+    """16: a binding that fails its own digest check adds no words, never a failed job. (The
+    names typed in the request, Green 4/5, are off here: they would spell "Merope" from the
+    request itself, which says nothing about the binding.)"""
+    monkeypatch.setattr(settings, "caption_request_names_enabled", False)
     binding = BriefBinding.create(uuid.uuid4(), T1_BRIEF).model_dump(mode="json")
     binding["digest"] = "0" * 64
     job, snapshot = _t1_job(monkeypatch, binding=binding)

@@ -21,7 +21,7 @@ Gates (every fixture runs every gate; see tests/evals/README.md for the pass bar
                           answer; that is a paid live run (README TODO 1).
 * G11 wire contract       the response obeys the fixed KRI-756 wire shape and state semantics
 
-G10 (property/fuzz over the wording agent's output) is ``test_chip_suggester_evals.py``.
+G10 (property/fuzz over the suggestion agent's output) is ``test_suggestion_agent_evals.py``.
 """
 
 from __future__ import annotations

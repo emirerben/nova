@@ -1,0 +1,16 @@
+{
+ "id": "ranked_not_a_list",
+ "description": "ranked is an object.",
+ "context": "nermin-matcha-update::first_prompt",
+ "model_output": {
+  "ranked": {
+   "sfx": 1
+  }
+ },
+ "expect": {
+  "fallback_reason": "schema_error"
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

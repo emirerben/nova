@@ -1,0 +1,25 @@
+{
+ "id": "flag_off_kind_guess",
+ "description": "mute_clip is registered but its stub never offers: not issued.",
+ "context": "rd_music_loud",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "mute_clip",
+    "target_ids": [
+     "c1"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 1
+   }
+  ]
+ },
+ "expect": {
+  "fallback_reason": "schema_error",
+  "wording": "fallback"
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

@@ -33,3 +33,15 @@ Main adds source-replacement ownership/approval retirement, suggestion cards and
 Independent backend review identified a combined-source regression to prove before acceptance: a take replacement can preserve `item.current_job_id` while recording `SourceReplacement.superseded_job_id`. `_recover_unknown_dispatch` must inspect that replacement marker before announcing the old Job ready; its current exact-target and newer-turn checks alone are insufficient. The correction and combined-source regression are pending integration, not claimed covered by old component tests.
 
 Cunda is now an inherited main dependency; preserve its canonical lifetime, Save-attempt and receipt ownership guards, without replaying it manually. Speed and split remain separately coordinated incoming dependencies. This checkpoint is not publication/merge readiness and does not authorize private-project mutation. Required final-source gates remain independent review, affected backend tests, native compilation and named test execution, model correspondence and verification, aggregate checks and hosted CI.
+
+## Remaining automatic-observation gaps
+
+Independent read-only audit after the Review/Device correction found three further P1 liveness gaps. These are current source findings, not executed reproductions, and block a broad automatic-convergence claim:
+
+| Path | Remaining gap | Required continuation |
+| --- | --- | --- |
+| Native latest-job adoption | Pending ticket survives fast retry/window exhaustion without a timer; the new-version watcher separately stops after 64 ticks. Existing foreground recovery targets another retry mechanism. | One slow read-only continuation fenced by canonical editor lifetime, owner, thread/job and whole-Save ownership; preserve server cooldown and dirty content. |
+| SlidePost AI | Zero read budget and the 40-tick observer limit can strand a later completed original result. | Persist a slow original-UUID observation deadline without resetting fast budgets or resuming POST. |
+| SlidePost generation receipt | Zero read budget clears isRendering and stops the workspace poller, even for an uncertain original submission. | Slow original-receipt GET and authoritative state reconciliation; no new UUID or generation request. |
+
+Each needs exhaustion followed by eventual readiness without reopening, long Retry-After, one in-flight reader, account/target replacement, shutdown/Stop and stale-completion controls. Unknown paid outcomes remain observation-only. The existing explicit Check original/Create affordances do not satisfy automatic liveness by themselves.

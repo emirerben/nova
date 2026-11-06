@@ -19,6 +19,7 @@ tmp/
 
 # Pre-PR overlay-verify outputs (reports + montages from `make verify-overlays`)
 .overlay-verify/
+.replace-media-e2e/
 # KRI-827 `make verify-protected-text` outputs
 .protected-verify/
 

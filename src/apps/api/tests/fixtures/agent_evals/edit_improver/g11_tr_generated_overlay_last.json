@@ -1,0 +1,76 @@
+{
+  "id": "g11_tr_generated_overlay_last",
+  "description": "Money-costing card ranks last behind a fix.",
+  "expect": "pass",
+  "input": {
+    "state": "ready",
+    "language": "tr",
+    "creator_request": "",
+    "issued": [
+      {
+        "kind": "duplicates",
+        "targets": [
+          {
+            "id": "c1",
+            "evidence": [
+              "e1"
+            ]
+          },
+          {
+            "id": "c4",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "generated_overlay",
+        "targets": [
+          {
+            "id": "c2",
+            "evidence": [
+              "e2"
+            ]
+          }
+        ]
+      }
+    ],
+    "evidence": {
+      "e1": {
+        "signal": "near_dup",
+        "fact": "1. ve 4. klip neredeyse aynı çekim"
+      },
+      "e2": {
+        "signal": "moment",
+        "fact": "2. klipte pasta tezgahı var"
+      }
+    },
+    "already_in_edit": [],
+    "dismissed": [],
+    "untrusted_texts": []
+  },
+  "output": {
+    "ranked": [
+      {
+        "kind": "duplicates",
+        "target_ids": [
+          "c1",
+          "c4"
+        ],
+        "why": "1. ve 4. klip neredeyse aynı",
+        "copy": null,
+        "rank": 1
+      },
+      {
+        "kind": "generated_overlay",
+        "target_ids": [
+          "c2"
+        ],
+        "why": "2. klipte pasta tezgahı var",
+        "copy": null,
+        "rank": 2
+      }
+    ]
+  }
+}

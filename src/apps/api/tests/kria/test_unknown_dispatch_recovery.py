@@ -54,6 +54,7 @@ def receipt(monkeypatch):
         runtime_version=2,
         active_creator_agent_session_id=session.id,
         active_plan_item_id=item.id,
+        state={},
     )
     execution = Row(
         id=uuid.uuid4(),
@@ -142,6 +143,7 @@ def test_completed_exact_unknown_receipt_recovers_without_dispatch(receipt):
         "new_session",
         "other_owner",
         "new_session_state",
+        "replaced_source_without_new_turn",
     ],
 )
 def test_unknown_without_exact_current_completed_receipt_stays_unknown(receipt, case):
@@ -170,6 +172,20 @@ def test_unknown_without_exact_current_completed_receipt_stays_unknown(receipt, 
         receipt.job.user_id = uuid.uuid4()
     elif case == "new_session_state":
         receipt.session.status = "planning"
+    elif case == "replaced_source_without_new_turn":
+        from app.services.source_replacement import SOURCE_REPLACEMENT_STATE_KEY, SourceReplacement
+
+        receipt.thread.state = {
+            SOURCE_REPLACEMENT_STATE_KEY: SourceReplacement(
+                replaced_media_id="old-take",
+                media_id="new-take",
+                superseded_job_id=str(receipt.job.id),
+                revision=9,
+            ).to_state()
+        }
+        # The real replacement route keeps the old Job pointer and creates no new turn.
+        assert receipt.item.current_job_id == receipt.job.id
+        assert receipt.state.later_turn is None
     before = deepcopy(
         [vars(row) for row in (receipt.execution, receipt.turn, receipt.session, receipt.thread)]
     )
@@ -277,3 +293,22 @@ def test_unknown_is_selected_only_for_observation(monkeypatch, sweep):
         assert rt.observe_kria_job.run(str(uuid.uuid4())) == {"settled": 0}
     assert "outcome_unknown" in statements[-1]
     assert statements[-1].count("LIMIT 50") == 2  # unknowns cannot consume dispatched slots
+
+
+def test_old_source_replacement_marker_does_not_block_new_target_recovery(receipt):
+    from app.services.source_replacement import SOURCE_REPLACEMENT_STATE_KEY, SourceReplacement
+
+    receipt.thread.state = {
+        SOURCE_REPLACEMENT_STATE_KEY: SourceReplacement(
+            replaced_media_id="old-take",
+            media_id="new-take",
+            superseded_job_id=str(uuid.uuid4()),
+            revision=9,
+        ).to_state()
+    }
+    assert rt._observe_dispatched_execution(receipt.execution.id) == ("completed", None)
+    assert receipt.execution.status == "completed"
+    assert [event["event_type"] for event in receipt.events] == [
+        "generation_ready",
+        "assistant_review",
+    ]
