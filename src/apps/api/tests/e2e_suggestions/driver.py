@@ -243,7 +243,9 @@ class Phone:
         applied_before = len(h.events(seeded.thread_id, "draft_applied"))
         from app.services.client_protocol import bind_sending_build, unbind_sending_build
 
-        token = bind_sending_build(self.protocol)
+        # Only a phone that declares a build binds one: a caller that already bound the build the
+        # tap is sent from (``tap_as`` in the strip tests) keeps it.
+        token = bind_sending_build(self.protocol) if self.protocol is not None else None
         try:
             accepted, _publish = await h.submit(
                 seeded,
@@ -253,7 +255,8 @@ class Phone:
             )
             result = await h.run(accepted.turn_id)
         finally:
-            unbind_sending_build(token)
+            if token is not None:
+                unbind_sending_build(token)
         assistant = [e for e in h.events(seeded.thread_id) if e.role == "assistant"][-1]
         chat = [e for e in h.events(seeded.thread_id) if e.event_type == "user_message"][-1]
         applied = h.events(seeded.thread_id, "draft_applied")
