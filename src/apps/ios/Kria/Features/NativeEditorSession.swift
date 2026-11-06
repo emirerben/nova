@@ -1275,7 +1275,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         var kept = value
         let clips = ids("clip")
         kept.clips.removeAll { clips.contains($0.id ?? "") }
-        kept.splitScreenSections.removeAll { section in !kept.clips.contains { $0.splitSectionID == section.id } }
+        let retainedSplitIDs = Set(kept.clips.compactMap(\.splitSectionID))
+        kept.splitScreenSections.removeAll { !retainedSplitIDs.contains($0.id) }
         kept.textElements.removeAll { text.contains($0.id) || ($0.isCaption && cues.contains($0.id)) }
         kept.captionCues.removeAll { cues.contains($0.id) }
         kept.soundEffects.removeAll { sounds.contains($0.id) }
@@ -8412,7 +8413,8 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     private func transactDocument(sections: Set<EditorSection>, _ body: (inout EditorDocument) -> Void) {
         var next = document; body(&next)
-        next.splitScreenSections.removeAll { section in !next.clips.contains { !$0.removed && $0.splitSectionID == section.id } }
+        let retainedSplitIDs = Set(next.clips.filter { !$0.removed }.compactMap(\.splitSectionID))
+        next.splitScreenSections.removeAll { !retainedSplitIDs.contains($0.id) }
         guard next.splitScreenIsValid else { return }
         if !next.clips.isEmpty { next.editorState = "renderable" }
         guard next != document else { return }
