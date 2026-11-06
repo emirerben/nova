@@ -6505,6 +6505,30 @@ _TALKING_LIST_LABEL_PLAN = (
     "I'll show it when that part of your talk starts; if I don't hear where it starts, it "
     "won't appear"
 )
+# KRI-1235: what a draft promises the render (or the approval card's Clean up speech choice)
+# does with an ask, and says after: never a shortfall to hold the first draft over. Approval
+# readiness approves a checked partial receipt whose reason is only these, each part exact and
+# joined by "; ", in English or its Turkish twin (`approval_readiness._promised_at_render`; a
+# pinned spoken text is re-derived there, `_pinned_spoken_text_plan`). A new draft-plan reason
+# goes here or, with its reason, into NOT_RENDER_PROMISES in
+# tests/kria/test_kri1235_render_promises_approvable.py, or its feature holds its own draft.
+RENDER_PROMISE_REASONS: tuple[str, ...] = (
+    # Speech cleanup: KRI-1178, the named line KRI-821, the restarted sentence KRI-1189.
+    _CLEANUP_PLANNED,
+    _CLEANUP_AT_APPROVAL,
+    _CLEANUP_IF_OFFERED,
+    _NAMED_CUT_AT_RENDER,
+    _RESTART_CUT_AT_APPROVAL,
+    # Qendresa 13: every pause cut down to about 0.3 s.
+    _TIGHT_PLANNED,
+    _TIGHT_AT_APPROVAL,
+    _TIGHT_IF_OFFERED,
+    # Qendresa 14: the arrow beside the "comment WORD" ending.
+    _CLOSING_ARROW_PLAN,
+    # KRI-707: a text shown at the word it is said; Qendresa 19: a list label at its part.
+    _TALKING_SPOKEN_TEXT_PLAN,
+    _TALKING_LIST_LABEL_PLAN,
+)
 # KRI-793: what a phone Talking draft says about a captions ask naming a language or words
 # to spell: the writer captions everything said in the take (an off-camera voice too), and
 # the reason goes on to name the language and the words (`_caption_words_plan`).
