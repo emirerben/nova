@@ -127,17 +127,21 @@ public struct SHA256Fingerprinter: AssetFingerprinter {
     /// test fixture; nil in normal use.
     nonisolated(unsafe) public static var observer: (@Sendable (Int64) -> Void)?
     public func fingerprint(file: URL) throws -> AssetFingerprint {
-        let handle = try FileHandle(forReadingFrom: file)
-        defer { try? handle.close() }
         var count: Int64 = 0
-        var digest = SHA256Accumulator()
-        while true {
-            let data = try handle.read(upToCount: 1024 * 1024) ?? Data()
-            if data.isEmpty { break }
-            count += Int64(data.count); digest.update(data)
+        var hex = ""
+        try EngineSignpost.measure("talk.hash", detail: "bytes=\(count)") {
+            let handle = try FileHandle(forReadingFrom: file)
+            defer { try? handle.close() }
+            var digest = SHA256Accumulator()
+            while true {
+                let data = try handle.read(upToCount: 1024 * 1024) ?? Data()
+                if data.isEmpty { break }
+                count += Int64(data.count); digest.update(data)
+            }
+            hex = digest.finalize()
         }
         Self.observer?(count)
-        return AssetFingerprint(hex: digest.finalize(), byteCount: count)
+        return AssetFingerprint(hex: hex, byteCount: count)
     }
 }
 
