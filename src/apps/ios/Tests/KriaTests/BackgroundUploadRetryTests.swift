@@ -1378,12 +1378,93 @@ extension BackgroundUploadRetryTests {
     }
 }
 
+/// A server for one project's attach chain (review of 100b8b5). Thread reads, attaches and `remove_media` are named
+/// "read", "attach <media id>" and "remove <media id>", so a test can hold the next request of a name, see it arrive,
+/// and answer it when it chooses. Attaches are kept in the order the server took them; `remove_media` succeeds only
+/// for attached media (409 otherwise, like the real route).
+@MainActor private final class AttachChainServer {
+    let projectID: UUID
+    private(set) var attaches: [String] = []
+    private(set) var removed: [String] = []
+    private(set) var attached: Set<String> = []
+    private var holds: [String: XCTestExpectation] = [:]
+    private var held: [String: (transport: UploadRetryProtocol, mediaID: String?)] = [:]
+
+    init(projectID: UUID) {
+        self.projectID = projectID
+        UploadRetryProtocol.handler = { [weak self] transport in
+            guard let self else { return }
+            let request = AttachChainServer.describe(transport.request)
+            if let reached = self.holds.removeValue(forKey: request.name) {
+                self.held[request.name] = (transport: transport, mediaID: request.mediaID)
+                reached.fulfill()
+                return
+            }
+            self.answer(transport, name: request.name, mediaID: request.mediaID)
+        }
+    }
+
+    /// The next request called `name` waits for `release(name)`; `reached` is fulfilled when it arrives.
+    func hold(_ name: String, reached: XCTestExpectation) { holds[name] = reached }
+
+    func release(_ name: String) {
+        guard let request = held.removeValue(forKey: name) else {
+            XCTFail("no request is held as \(name)")
+            return
+        }
+        answer(request.transport, name: name, mediaID: request.mediaID)
+    }
+
+    private func answer(_ transport: UploadRetryProtocol, name: String, mediaID: String?) {
+        if name.hasPrefix("attach "), let mediaID {
+            attaches.append(mediaID)
+            attached.insert(mediaID)
+        } else if name.hasPrefix("remove ") {
+            guard let mediaID, attached.remove(mediaID) != nil else {
+                transport.finish(409, Data(#"{"detail":"That media is no longer attached"}"#.utf8))
+                return
+            }
+            removed.append(mediaID)
+        }
+        transport.finish(200, thread())
+    }
+
+    private func thread() -> Data {
+        let media = attached.sorted().map { #"{"media_id":"\#($0)","filename":"Screen Recording.mov","kind":"video"}"# }.joined(separator: ",")
+        return Data(#"{"id":"\#(projectID.uuidString)","title":"t","status":"draft","revision":1,"runtime_version":2,"updated_at":"2026-09-09T12:00:00Z","events":[],"state":{"media":[\#(media)]}}"#.utf8)
+    }
+
+    /// The body is a stream that reads once, so the media id is taken here and kept with a held request.
+    private static func describe(_ request: URLRequest) -> (name: String, mediaID: String?) {
+        let path = request.url?.path ?? ""
+        if path.hasSuffix("/media") {
+            let body = (try? JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request))) as? [String: Any]
+            let mediaID = (body?["media"] as? [[String: Any]])?.first?["media_id"] as? String
+            return ("attach \(mediaID ?? "?")", mediaID)
+        }
+        if path.hasSuffix("/actions") {
+            let body = (try? JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request))) as? [String: Any]
+            let mediaID = (body?["payload"] as? [String: Any])?["media_id"] as? String
+            return ("remove \(mediaID ?? "?")", mediaID)
+        }
+        if request.httpMethod == "GET", path.contains("creation-threads") { return ("read", nil) }
+        return ("\(request.httpMethod ?? "?") \(path)", nil)
+    }
+}
+
+/// What `withdraw` returned, once it has returned.
+@MainActor private final class OutcomeBox { var outcome: DeselectOutcome? }
+
 /// The move copies the clip and starts its overlay before it takes the clip out of Footage, so a Files clip (no Photos
 /// ledger entry) that was still uploading can finish and attach in between. Ways it can fail, each checked below or by
 /// the code it mirrors (`deselect`): the attach lands first and the clip stays in Footage with no warning (the review's
 /// finding: `cancel(recordID:)` finds no record and returns); an upload still sending is not cancelled; a clip that left
 /// without attaching gets a removal the server refuses (a false "Remove it from Footage"); the attach is in flight and
-/// is cancelled under it (waits on the attach chain, as `deselect` does).
+/// is cancelled under it (waits on the attach chain, as `deselect` does). Review of 100b8b5: the clip's own attach joins
+/// the chain behind another one after `withdraw` started waiting, passes its first check when that one lands and is
+/// still reading the project when `withdraw` resumes, so `withdraw` cancels it and says `.cancelledUpload` while the
+/// attach carries on into Footage; and, more generally, an attach whose clip was cancelled during one of its waits
+/// (place lookup, project read, a busy server's backoff) attaches it anyway.
 extension BackgroundUploadRetryTests {
     private func footageMove(holdPut: Bool) async throws -> (BackgroundUploadCoordinator, FootageMoveServer, UploadRecoveryRecord) {
         let key = "kria.test.move-to-overlays.\(UUID().uuidString)"
@@ -1444,5 +1525,110 @@ extension BackgroundUploadRetryTests {
 
         XCTAssertEqual(outcome, .discarded, "nothing is in Footage, so no warning")
         XCTAssertTrue(server.removed.isEmpty)
+    }
+
+    /// A Footage clip whose bytes already reached storage and whose attach has not run yet: what a relaunch restores,
+    /// or an attach that failed and waits for Retry. Its attach goes through the same `attach` an upload's completion uses.
+    private func storedClip(projectID: UUID, mediaID: String, taskIdentifier: Int) throws -> UploadRecoveryRecord {
+        let file = FileManager.default.temporaryDirectory.appending(path: "Screen Recording \(UUID().uuidString).mov")
+        try Data("a screen recording".utf8).write(to: file)
+        addTeardownBlock { try? FileManager.default.removeItem(at: file) }
+        return UploadRecoveryRecord(
+            id: UUID(), projectID: projectID, localFilePath: file.path, filename: file.lastPathComponent,
+            source: .files, purpose: .cloudRenderSource, mediaID: mediaID, gcsPath: "users/u/\(mediaID).mov",
+            contentType: "video/quicktime", uploadCompleted: true, taskIdentifier: taskIdentifier, retryCount: 0
+        )
+    }
+
+    private func attachChainCoordinator(_ records: [UploadRecoveryRecord], projectID: UUID) throws -> BackgroundUploadCoordinator {
+        let key = "kria.test.attach-chain.\(UUID().uuidString)"
+        UserDefaults.standard.set(try JSONEncoder().encode(records), forKey: key)
+        let project = BackgroundUploadCoordinator.projectDirectory(projectID).root
+        addTeardownBlock {
+            for suffix in ["", ".preparing", ".photo-selection"] { UserDefaults.standard.removeObject(forKey: key + suffix) }
+            try? FileManager.default.removeItem(at: project)
+        }
+        let configuration = UploadRetryProtocol.configuration()
+        let api = KriaAPI(baseURL: URL(string: "https://uploads.test")!, tokenStore: NativeEditorMemoryTokenStore(), session: URLSession(configuration: configuration))
+        return BackgroundUploadCoordinator(api: api, defaultsKey: key, sessionConfiguration: configuration, backgroundActivity: RecordingBackgroundActivityAssertion())
+    }
+
+    /// Review of 100b8b5, the interleaving the three tests above do not pin. Attach A is running for the project and
+    /// clip B's bytes already reached storage. The move withdraws B: `withdraw` waits on the attach chain as it is then
+    /// (A alone). B's attach joins the chain behind A afterwards; when A lands, B passes its first check and suspends in
+    /// its project read. `withdraw` then found the record, cancelled it and returned `.cancelledUpload`, and B went on to
+    /// attach: the file in Footage and in Overlays. No sleeps: every step waits on the server seeing a request, or on a
+    /// task fulfilling an expectation in the same main-actor turn that it reaches its first wait.
+    func testMovingAClipWhoseAttachQueuedBehindAnotherWaitsForItInsteadOfReportingItCancelled() async throws {
+        let projectID = UUID()
+        let server = AttachChainServer(projectID: projectID)
+        let a = try storedClip(projectID: projectID, mediaID: "clip-a", taskIdentifier: 991)
+        let b = try storedClip(projectID: projectID, mediaID: "clip-b", taskIdentifier: 992)
+        let coordinator = try attachChainCoordinator([a, b], projectID: projectID)
+
+        // Hold A: its attach reaches the server and waits there.
+        let aAttaching = expectation(description: "A's attach reached the server")
+        server.hold("attach clip-a", reached: aAttaching)
+        let attachA = Task { await coordinator.retryAttachment(recordID: a.id) }
+        await fulfillment(of: [aAttaching], timeout: 10)
+
+        // The move withdraws B. Its bytes are in storage, so `withdraw` waits on the attach chain, which is A's alone.
+        let withdrawing = expectation(description: "withdraw is waiting on the attach chain")
+        let decided = OutcomeBox()
+        let withdrawal = Task { () -> DeselectOutcome in
+            withdrawing.fulfill()
+            let outcome = await coordinator.withdraw(recordID: b.id, mediaID: b.mediaID, projectID: projectID)
+            decided.outcome = outcome
+            return outcome
+        }
+        await fulfillment(of: [withdrawing], timeout: 10)
+
+        // B's attach joins the chain behind A (`attach` links it before its first wait). Its project read will be held.
+        let bReading = expectation(description: "B passed its first check and is reading the project")
+        server.hold("read", reached: bReading)
+        let queued = expectation(description: "B's attach is queued behind A")
+        let attachB = Task {
+            queued.fulfill()
+            await coordinator.retryAttachment(recordID: b.id)
+        }
+        await fulfillment(of: [queued], timeout: 10)
+
+        // A lands. B passes its first check and pauses in its project read.
+        server.release("attach clip-a")
+        await fulfillment(of: [bReading], timeout: 10)
+        XCTAssertNil(decided.outcome, "withdraw must not decide while B's attach is still running")
+
+        // Release B's I/O: B attaches, and only then does `withdraw` decide.
+        server.release("read")
+        let outcome = await withdrawal.value
+        await attachB.value
+        await attachA.value
+
+        XCTAssertEqual(outcome, .detached, "B attached, so it is taken out of Footage; never `.cancelledUpload`")
+        XCTAssertEqual(server.attaches, ["clip-a", "clip-b"])
+        XCTAssertEqual(server.removed, ["clip-b"], "the file ends in Overlays only")
+        XCTAssertEqual(server.attached, ["clip-a"])
+        XCTAssertTrue(coordinator.records.isEmpty)
+    }
+
+    /// The same gap at its source: an attach whose clip was cancelled while it read the project (or looked up the place,
+    /// or backed off a busy server) carried on and attached it. It must re-check after every wait before the attach call.
+    func testAClipCancelledWhileItsAttachReadsTheProjectIsNeverAttached() async throws {
+        let projectID = UUID()
+        let server = AttachChainServer(projectID: projectID)
+        let b = try storedClip(projectID: projectID, mediaID: "clip-b", taskIdentifier: 992)
+        let coordinator = try attachChainCoordinator([b], projectID: projectID)
+        let reading = expectation(description: "the attach passed its first check and is reading the project")
+        server.hold("read", reached: reading)
+        let attaching = Task { await coordinator.retryAttachment(recordID: b.id) }
+        await fulfillment(of: [reading], timeout: 10)
+
+        await coordinator.cancel(recordID: b.id)
+        server.release("read")
+        await attaching.value
+
+        XCTAssertTrue(server.attaches.isEmpty, "a cancelled clip never reaches Footage")
+        XCTAssertTrue(coordinator.records.isEmpty)
+        XCTAssertTrue(coordinator.failures.isEmpty, "a cancelled clip is not reported as a failed upload")
     }
 }

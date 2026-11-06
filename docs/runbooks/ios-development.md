@@ -1193,6 +1193,9 @@ filenames or the Photos screen-recording subtype. No model call, no upload. The 
 additive (older builds ignore it), so there is no client protocol bump. The move starts the
 overlay first and only then takes the clip out of Footage; a clip still uploading goes through
 `BackgroundUploadCoordinator.withdraw`, which cancels it, or detaches it if its upload finished
-and attached meanwhile (Photos picks use `deselect`), so the file ends in exactly one place. Off: the sheet is
+and attached meanwhile (Photos picks use `deselect`), so the file ends in exactly one place.
+`withdraw` decides only once no attach is queued for the project, including one that joined
+while it waited, and an attach re-checks its record after every wait before it calls the
+server, so a clip cancelled meanwhile is never attached. Off: the sheet is
 unchanged. Apply or roll back: `fly secrets set UPLOAD_PLACE_HINT_ENABLED=true|false -a nova-video`
 and restart the api (workers do not read it).
