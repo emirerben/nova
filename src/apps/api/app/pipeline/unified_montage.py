@@ -277,6 +277,8 @@ class BriefView:
     # Qendresa case 9: every live ``text/global`` literal (the brief's whole-video / pinned
     # text) with its typed ``facts.position`` (raw; normalized where it is used).
     global_literals: tuple[tuple[str, object], ...] = ()
+    # Any live title-scope text ask (worded or not): that title is the creator's own.
+    title_asked: bool = False
     facts: Mapping[str, Any] = field(default_factory=dict)
     target_duration_s: float | None = None
     # KRI-522: how the creator asked the title to enter / where labels sit / that the
@@ -329,6 +331,7 @@ def brief_view(brief: Any) -> BriefView:
     title_literal: str | None = None
     global_literal: str | None = None
     global_literals: list[tuple[str, object]] = []
+    title_asked = False
     facts: dict[str, Any] = {}
     target: float | None = None
     title_animation: str | None = None
@@ -365,6 +368,7 @@ def brief_view(brief: Any) -> BriefView:
         if req.kind == "text":
             if req.scope == "global" and req.literal:
                 global_literals.append((_nfc(req.literal), (req.facts or {}).get("position")))
+            title_asked = title_asked or req.scope == "title"
             if text_shape(req) == CURVED:
                 curved_title = curved_title or req.scope == "title"
                 curved_labels = curved_labels or req.scope == "per_clip"
@@ -436,6 +440,7 @@ def brief_view(brief: Any) -> BriefView:
         title_literal=title_literal,
         global_literal=global_literal,
         global_literals=tuple(global_literals),
+        title_asked=title_asked or bool(title_literal),
         facts=facts,
         target_duration_s=target,
         title_animation=title_animation,
@@ -4092,8 +4097,8 @@ def _whole_video_title_pin(
     ``opening_title``, or with no text field so ``_title`` used the literal, it showed for the
     2.2 s title hold of an 11 s video. When the title's words are such a literal it becomes one
     whole-video pin (``title`` none), which the ``opening`` text role and the phone repair
-    still accept (a pin drawn from 0 s). Typed facts only (KRI-667). Unchanged: a title-scope
-    literal with the same words (she asked for a title), a typed title hold
+    still accept (a pin drawn from 0 s). Typed facts only (KRI-667). Unchanged: any live
+    title-scope ask (she asked for a title, worded or not), a typed title hold
     (``opening_title_duration_s``) or a title entrance (pins have none), and the switch off.
     Corner: the literal's typed ``position`` when it names one (the middle only where item 21
     draws middle pins), else ``top_center``.
@@ -4107,9 +4112,10 @@ def _whole_video_title_pin(
         or view.text_animation
     ):
         return title, title_source, pins
-    key = fold_text(_nfc(title))
-    if view.title_literal and fold_text(_nfc(view.title_literal)) == key:
+    if view.title_asked:
+        # She asked for a title too: the planner's title stays hers to judge.
         return title, title_source, pins
+    key = fold_text(_nfc(title))
     position = next(
         (spot for text, spot in view.global_literals if fold_text(text) == key), _NO_LITERAL
     )

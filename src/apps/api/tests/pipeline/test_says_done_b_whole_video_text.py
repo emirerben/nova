@@ -120,6 +120,20 @@ def test_title_literal_stays_a_title() -> None:
     assert len(spans) == 1 and spans[0][2] < plan.duration_s - 1.0, spans
 
 
+def test_a_wordless_title_ask_keeps_the_title() -> None:
+    """ "Add a hook title" with no words beside the whole-video line: the planner's title answers
+    that ask, so it is not turned into a pin (the title gate already counts it as the words)."""
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            WHOLE_VIDEO_LINE,
+            BriefRequirement(id="t1", kind="text", scope="title", description="a hook title"),
+        ],
+    )
+    plan, _rows, spans = _render({**BASE, "opening_title": TEXT}, brief)
+    assert plan.title == TEXT and len(spans) == 1 and spans[0][2] < plan.duration_s - 1.0, spans
+
+
 def test_a_typed_title_hold_stays_a_title() -> None:
     plan, _rows, spans = _render({**BASE, "opening_title": TEXT, "opening_title_duration_s": 3})
     assert len(spans) == 1 and abs(spans[0][2] - 3.0) < 0.05, spans
