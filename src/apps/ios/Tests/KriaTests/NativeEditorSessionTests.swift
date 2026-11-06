@@ -5372,12 +5372,25 @@ final class NativeEditorSessionTests: XCTestCase {
         let status: SessionTestStatus, key: DeviceRenderKey, file: URL, output: URL, request: DeviceRenderRequest
     }
 
-    private func savedPhoneEditWithFinishedRender(verification: Bool = false, stalledPublish: Bool = false) async throws -> SavedPhoneEdit {
+    private func savedPhoneEditWithFinishedRender(verification: Bool = false, stalledPublish: Bool = false, focusOnly: Bool = false) async throws -> SavedPhoneEdit {
         let threadID = UUID(), jobID = UUID()
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 4, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
         fake.phoneDestination = true
         fake.phoneRenderingCapabilities = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: MediaCapability.allCases.map(\.rawValue))
-        let request = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
+        let originalRequest = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
+        var recipe = originalRequest.recipe
+        if focusOnly {
+            recipe.requiredCapabilities.insert(.backgroundFocus)
+            var variant = try await fake.editorVariant(jobID: jobID, variantID: "variant")
+            variant["resolved_archetype"] = .string("subtitled")
+            variant["speaker_background"] = .object(["media_id": .string("fill"), "kind": .string("image"), "source_start_s": .number(0)])
+            var caps = variant["editor_capabilities"]?.objectValue ?? [:]
+            caps["speaker_background"] = .object(["editable": .bool(true)])
+            caps["background_focus"] = .object(["editable": .bool(true)])
+            variant["editor_capabilities"] = .object(caps)
+            fake.authoritativeVariant = variant
+        }
+        let request = DeviceRenderRequest(identity: originalRequest.identity, recipe: recipe)
         let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         // The server's `base_generation` is the generation this request renders: the save's commit generation.
         let status = SessionTestStatus(DeviceRenderStatusResponse(phase: "awaiting_device", request: request, baseGeneration: "next", outputVerificationRequired: verification))
@@ -5396,7 +5409,12 @@ final class NativeEditorSessionTests: XCTestCase {
         session.previewPollInterval = .seconds(600)
         await session.load(api: fake, threadID: threadID)
         session.selectClip(session.draft.clips[0].id)
-        session.trimSelected(edge: .trailing, to: 1.5)
+        if focusOnly {
+            XCTAssertFalse(session.hasUnsavedChanges, "The initial background is already saved")
+            XCTAssertTrue(session.setSpeakerBackgroundFocus(x: 0.2, zoom: 0.5))
+        } else {
+            session.trimSelected(edge: .trailing, to: 1.5)
+        }
         await session.save()
         let key = DeviceRenderKey(projectID: threadID, jobID: jobID, variantID: "variant")
         if verification {
@@ -5429,6 +5447,98 @@ final class NativeEditorSessionTests: XCTestCase {
 
         XCTAssertTrue(edit.session.applyPreviewVariant(["render_generation_id": .string("next"), "render_status": .string("ready"), "render_destination": .string("device"), "output_url": .string("https://cdn.test/final.mp4"), "text_elements": .array([])], generation: "next"))
         XCTAssertEqual(try edit.session.videoDownloadRoute(deviceLocalFile: nil), .localFile(edit.file), "A published edit must not be downloaded again when the phone holds the file")
+        await edit.renders.stopAll()
+    }
+
+    // Integration failure modes: focus-only saves must not bypass receipt identity, newer focus
+    // edits must survive suspended reads, and late reads must not mutate a replacement editor.
+    func testFocusOnlySaveReusesOnlyItsAcknowledgedLocalRender() async throws {
+        let edit = try await savedPhoneEditWithFinishedRender(focusOnly: true)
+        defer { try? FileManager.default.removeItem(at: edit.output) }
+        XCTAssertNil(edit.fake.lastRequest?.timelineSlots, "Focus must not rewrite source windows")
+        guard let request = edit.fake.lastRequest, case let .replace(lane) = request.speakerBackground else {
+            XCTFail("Focus must be committed through the background lane")
+            await edit.renders.stopAll()
+            return
+        }
+        XCTAssertEqual(lane["focus"]?.objectValue?["x"], .number(0.2))
+        XCTAssertEqual(lane["focus"]?.objectValue?["zoom"], .number(0.5))
+        XCTAssertFalse(edit.session.hasUnsavedChanges)
+        XCTAssertEqual(try edit.session.videoDownloadRoute(deviceLocalFile: nil), .localFile(edit.file))
+        await edit.renders.stopAll()
+    }
+
+    func testNewerFocusSurvivesSuccessfulAndFailedSuspendedSaveReads() async throws {
+        for fails in [false, true] {
+            let edit = try await savedPhoneEditWithFinishedRender(focusOnly: true)
+            XCTAssertTrue(edit.session.setSpeakerBackgroundFocus(x: 0.4))
+            edit.fake.suspendNextEditorVariant = true
+            let saving = Task { await edit.session.save() }
+            let held = await waitUntil(timeout: .seconds(5)) { edit.fake.editorVariantIsSuspended }
+            XCTAssertTrue(held)
+            XCTAssertTrue(edit.session.setSpeakerBackgroundFocus(x: 0.8))
+            if fails { edit.fake.editorVariantError = .requestFailed(status: 503) }
+            edit.fake.resumeEditorVariant()
+            await saving.value
+            XCTAssertEqual(edit.session.speakerBackground?.focus?.x, 0.8)
+            XCTAssertTrue(edit.session.hasUnsavedChanges)
+            XCTAssertFalse(edit.session.canDownloadCurrentVideo)
+            assertOwnFileNotOffered(edit, "A newer focus edit cannot export the older saved frame")
+            await edit.renders.stopAll()
+            try? FileManager.default.removeItem(at: edit.output)
+        }
+    }
+
+    func testFocusSaveReadCannotMutateReplacementEditorOnSuccessOrFailure() async throws {
+        for fails in [false, true] {
+            let edit = try await savedPhoneEditWithFinishedRender(focusOnly: true)
+            XCTAssertTrue(edit.session.setSpeakerBackgroundFocus(x: 0.4))
+            edit.fake.suspendNextEditorVariant = true
+            let saving = Task { await edit.session.save() }
+            let held = await waitUntil(timeout: .seconds(5)) { edit.fake.editorVariantIsSuspended }
+            XCTAssertTrue(held)
+            let thread = UUID(), job = UUID()
+            let replacement = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "replacement", itemID: "other", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: job.uuidString, baseGenerationID: "other-generation", snapshot: [:], canUndo: false, createdAt: .now))
+            await edit.session.load(api: replacement, threadID: thread)
+            let before = edit.session.draft
+            if fails { edit.fake.editorVariantError = .requestFailed(status: 503) }
+            edit.fake.resumeEditorVariant()
+            await saving.value
+            XCTAssertEqual(edit.session.draft, before)
+            XCTAssertEqual(edit.session.saveState, .idle)
+            XCTAssertFalse(edit.session.hasUnsavedChanges)
+            assertOwnFileNotOffered(edit, "Leaving the focus edit revokes its local export")
+            await edit.renders.stopAll()
+            try? FileManager.default.removeItem(at: edit.output)
+        }
+    }
+
+    func testFocusCapabilityCacheIsBypassedByExplicitRenderRetry() async throws {
+        let edit = try await savedPhoneEditWithFinishedRender(focusOnly: true)
+        defer { try? FileManager.default.removeItem(at: edit.output) }
+        let all = MediaCapability.allCases.map(\.rawValue)
+        let missingFocus = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: all.filter { $0 != MediaCapability.backgroundFocus.rawValue })
+        edit.fake.cachedCreationCapabilities = CreationCapabilities(formats: [], phoneRendering: missingFocus)
+        let identity = deviceRenderRequest(jobID: edit.key.jobID, revision: 2, digest: "b").identity
+        let request = DeviceRenderRequest(identity: identity, recipe: edit.request.recipe)
+        await edit.status.set(DeviceRenderStatusResponse(phase: "awaiting_device", request: request, baseGeneration: "next"))
+        let before = edit.fake.capabilitiesCallCount
+        await edit.session.refreshDeviceRender()
+        XCTAssertEqual(edit.fake.capabilitiesCallCount, before, "Ordinary refresh uses the cached answer")
+        XCTAssertFalse(edit.session.canDownloadCurrentVideo, "A recipe requiring focus cannot use unsupported capabilities")
+        assertOwnFileNotOffered(edit, "An old request cannot substitute for the unsupported focus request")
+        edit.fake.phoneRenderingCapabilities = .disabled
+        await edit.session.refreshDeviceRender(retry: true)
+        XCTAssertEqual(edit.fake.capabilitiesCallCount, before + 1)
+        XCTAssertFalse(edit.session.canDownloadCurrentVideo, "A disabled answer cannot grant missing focus support")
+        edit.fake.phoneRenderingCapabilities = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: all)
+        await edit.session.refreshDeviceRender(retry: true)
+        XCTAssertEqual(edit.fake.capabilitiesCallCount, before + 2, "Explicit Retry fetches current capabilities")
+        let ready = await waitUntil(timeout: .seconds(10)) {
+            edit.renders.request(for: edit.key)?.identity == identity && edit.renders.presentations[edit.key]?.localFile != nil
+        }
+        XCTAssertTrue(ready)
+        XCTAssertEqual(try edit.session.videoDownloadRoute(deviceLocalFile: nil), .localFile(try XCTUnwrap(edit.renders.presentations[edit.key]?.localFile)))
         await edit.renders.stopAll()
     }
 
@@ -7356,6 +7466,7 @@ final class EditorCommitSpy: KriaAPIClient {
     var capabilitiesError: APIError?
     var phoneRenderingCapabilities: PhoneRenderingCapabilities?
     var capabilitiesCallCount = 0
+    var cachedCreationCapabilities: CreationCapabilities?
     /// One-shot answers for `editorVariant`, consumed in order before the fixed variant/error apply.
     var editorVariantScript: [Result<[String: JSONValue], APIError>] = []
     /// Per-job `editorVariants` answers (a re-plan's new job can have no ready variant yet).
@@ -7374,6 +7485,9 @@ final class EditorCommitSpy: KriaAPIClient {
         self.suspendNextCommit = suspendNextCommit
     }
     func projects() async throws -> [ProjectSummary] { throw APIError.unsupported }
+    func recentCreationCapabilities(maxAge: TimeInterval) async -> CreationCapabilities? {
+        cachedCreationCapabilities
+    }
     func creationCapabilities() async throws -> CreationCapabilities {
         if callDelay > .zero { try? await Task.sleep(for: callDelay) }
         capabilitiesCallCount += 1

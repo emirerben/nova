@@ -225,3 +225,19 @@ Executed at the combined head:
 Commands are preserved in `/tmp/kria-speed-ad2-bounded.sh`: project regeneration, scoped xcodebuild test, then serial test-without-building UI execution. Synthetic pending chat 0 ms / real identity 522 ms for 500 ms injected delay; Save 905 ms for four 300 ms calls, each once. No real-device speed claim.
 
 This report-only successor preserves all consumed native/UI/selection inputs byte-for-byte. A fresh final-head focused native run and final preship are reported separately in the PR body. The six UI results above remain attributed to ecbb6a8ee. Full native hosted evidence from f22 is prior-head only. Lifecycle formal is still incomplete after resource interruption; it was not started during this integration validation. Physical-device timing, export fidelity, broad model correspondence and the historical cancellation flake remain open under KRI-640.
+
+## Background-focus integration preparation (native execution pending)
+
+Pinned main `05d9720d8b3f838f8b91963e183eb7206c34e538` (protocol 42 / #2108) merged cleanly at `dc50c3625b0399a236cb4cc72ed432017d07906b`. Backup: `backup/iphone-latency-before-focus-6d924dbb`. The complete main protocol, capabilities, decoding, editor and shared preview/export implementation is inherited together. No production correction was made and no interaction defect is established. Cunda's unpublished candidate is excluded. The green hosted run 42186925653 belongs to `6d924dbb48a454babcfc5cce4c393a51e6c030dc`, not this integration.
+
+Four targeted native regression methods are prepared in NativeEditorSessionTests (NOT compiled or executed due Cunda priority):
+1. Focus-only Save commits only the background lane and reuses the coherent same-generation local receipt.
+2. A newer focus edit survives both successful and 503 post-save reads, stays dirty and refuses the old export.
+3. Replacement editor state remains untouched by both successful and failed suspended focus-save reads.
+4. Cached capabilities lacking backgroundFocus reject the replacement render; explicit Retry reads fresh, disabled responses do not grant the missing capability, and a later supported response restores eligible reuse.
+
+The fixture uses synthetic exports and a recipe requiring backgroundFocus; it proves routing/identity behavior, not output pixels. Existing speaker background round-trip/undo/opening and shared compositor focus/below-cover black-band tests are selected for later execution instead of copied. Generic late-save render-not-started, cancellation, source-window and all existing receipt controls remain selected. These assertions are expectations awaiting execution, not passing evidence.
+
+Prepared commands: `/tmp/kria-speed-focus-next-checks.sh` (do not run until resource release). No native/UI/formal work or publication occurred during preparation. Lightweight CI/inventory results are reported separately; no gate or coverage hash was weakened/resynced. Physical-device timing, exported-file fidelity and formal-correspondence gaps remain open under KRI-640.
+
+Preparation checks on the integrated worktree: 160 CI selection/required-contract tests passed (73.874s, `/tmp/kria-speed-focus-ci.log`); 26 UI-selection tests passed (29.796s, `/tmp/kria-speed-focus-inventory.log`); `git diff --check` passed. These Python checks do not compile or execute the four new Swift methods.
