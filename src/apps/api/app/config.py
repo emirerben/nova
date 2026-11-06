@@ -387,6 +387,13 @@ class Settings(BaseSettings):
     # the cloud renderer uses the extra clips too (plans/027). Apply: `fly secrets
     # set TALKING_MULTI_CLIP_ENABLED=true --app nova-video` + restart api + worker.
     talking_multi_clip_enabled: bool = False
+    # Re-record a take: `POST /creation-threads/{id}/media/replace` swaps one attached
+    # speaker clip for a new upload in a single transaction, and `upload-urls` accepts
+    # `replaces_media_id` for the clip cap. False (default): the route and the field
+    # answer 404 `media_replace_unavailable` and `media_capabilities.clips.replace` is
+    # absent, so the app cannot offer it. Apply: `fly secrets set MEDIA_REPLACE_ENABLED=true
+    # --app nova-video` + restart api + worker. Docs: docs/pipelines/kria-agent-runtime.md.
+    media_replace_enabled: bool = False
     # KRI-132 (narrated walkthrough): a `narrated`/`narrated_planned`/
     # `narrated_ready` item WITH a recorded voiceover compiles through
     # `app.pipeline.phone_narrated_plan.compile_phone_narrated_plan`

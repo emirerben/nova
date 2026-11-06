@@ -9575,6 +9575,47 @@
         "title": "RenderShapeOut",
         "type": "object"
       },
+      "ReplaceMediaBody": {
+        "additionalProperties": false,
+        "properties": {
+          "client_event_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Client Event Id",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "media": {
+            "$ref": "#/components/schemas/MediaInput"
+          },
+          "reason": {
+            "default": "retake",
+            "enum": [
+              "retake"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "replaced_media_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Replaced Media Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "replaced_media_id",
+          "media",
+          "client_event_id",
+          "expected_revision"
+        ],
+        "title": "ReplaceMediaBody",
+        "type": "object"
+      },
       "RequestOutcomeContext": {
         "additionalProperties": false,
         "properties": {
@@ -13681,6 +13722,14 @@
             "title": "Filename",
             "type": "string"
           },
+          "replaces_media_id": {
+            "default": null,
+            "maxLength": 160,
+            "minLength": 1,
+            "nullable": true,
+            "title": "Replaces Media Id",
+            "type": "string"
+          },
           "role": {
             "default": null,
             "enum": [
@@ -15175,6 +15224,81 @@
           },
           "401": {
             "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
+          "422": {
+            "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/creation-threads/{thread_id}/media/replace": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "replaceCreationThreadMedia",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplaceMediaBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreationThreadOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Re-recording is unavailable"
           },
           "409": {
             "description": "Revision or identity conflict"
