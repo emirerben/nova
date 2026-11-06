@@ -198,3 +198,15 @@ xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation -di
 Synthetic injected-delay results: pending New Chat 0 ms, real thread 517 ms with a 500 ms POST delay; Save 906 ms with four 300 ms calls, each once. These are not real-device timings. Historical baseline and prior full-suite/UI results above retain their original tested SHA.
 
 Current-head full native/UI and full lifecycle formal attempts were interrupted by disk exhaustion/resource priority and remain incomplete. This bounded run does not replace those broader checks. Physical-device timing, exported-file fidelity, broad formal correspondence and the cancellation flake remain open under restored In Progress **KRI-640** (not KRI-672; earlier UNASSIGNED references describe historical state). Local cache rebuild left more than 12 GiB free. No private project, backend data or unrelated cache was changed.
+
+## CI inventory correction (2026-11-06)
+
+Hosted run 42177880099 at `477b91f63900af5743e8b6bc902cd7d9052713fb` stopped in selection: 160 contract tests, four failures. No downstream native/API/journey execution occurred. Local reproduction matched all four failures; unchanged main `31477c8e9b0eabf5f143d4b506b9543a7c17f44c` passed all 160. The delayed-New-Chat UI test was the only discovered test missing from `ui-test-groups.json`; inventory validation correctly fell back to full coverage.
+
+Correction: add only `KriaUITests/CreationUITests/testDelayedNewChatAcceptsTypingBeforeItsServerIdentityExists` to the existing creation group. Selector code, assertions and conservative fallback are unchanged. On the actual corrected worktree (parent `477b91f63`, inventory SHA-256 `97fff33eaeb3b61f48e97cc98ffb9af3f0f78e3b3204650957fcd47a41dfdee2`):
+
+- `python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v`: **160 passed**, 57.060s; `/tmp/kria-speed-registration-ci.log`.
+- `python3 -m unittest discover -s scripts/ios/tests -p 'test_ui_tests.py' -v`: **26 passed**, 11.604s; `/tmp/kria-speed-registration-ui.log`.
+- Inventory matches; shared AppState input still selects full; `git diff --check` passed.
+
+These checks ran before this evidence-only report addition; all test inputs are identical to the committed correction. Native production/test/build inputs are unchanged from `477b91f63`, whose 63-test pass remains attributed to that SHA. Final-head native re-execution, preship and hosted results are recorded separately in PR evidence; this report does not preclaim their outcome. Main integration is not needed for this missing registration. Broader validation gaps remain as above.

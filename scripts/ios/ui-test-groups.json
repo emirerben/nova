@@ -1,6 +1,7 @@
 {
   "groups": {
     "creation": [
+      "KriaUITests/CreationUITests/testDelayedNewChatAcceptsTypingBeforeItsServerIdentityExists",
       "KriaUITests/SlidePostUITests/testLooksAppearOnThePhotoBeforeSavingWhenDeviceCapabilityIsEnabled",
       "KriaUITests/CreationUITests/testChatBubblesPreserveShapeAndWrappingAtAccessibilityTextSize",
       "KriaUITests/CreationUITests/testLongPressCopiesPromptsAndRepliesWithoutBlockingOptionTaps",
