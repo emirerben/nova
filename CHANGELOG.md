@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.9.0] - 2026-11-06
+
+### Changed
+- feat(kria): plan a long creation prompt (~17 asks) in one go (Qendresa 23) (#2106) <!-- release-pr: 2106 -->
+
+## [0.88.8.0] - 2026-11-06
+
+### Changed
+- feat(list-labels): numbered labels appear when each item starts (Qendresa item 19) (#2116) <!-- release-pr: 2116 -->
+
 ## [0.88.7.0] - 2026-11-06
 
 ### Changed

@@ -35,7 +35,7 @@ from app.agents._skills import load_skill
 from app.agents._writing_context import turkish_audience_instruction
 from app.agents.prompt_vocab import render_vocab_tokens
 from app.config import settings
-from app.kria.brief import BriefUpdate, parse_brief_updates
+from app.kria.brief import LONG_REQUEST_MAX_UPDATES, BriefUpdate, parse_brief_updates
 from app.kria.reply_language import prompt_language_line
 from app.kria.take_trim import refile_take_trim
 from app.kria.text_sequence import last_quoted_literal, refile_text_sequences
@@ -234,10 +234,13 @@ log = structlog.get_logger()
 # v120 (Qendresa item 12): the shared brief section records the caption shape as typed facts,
 # `caption_words` (1-3 words at a time) and `caption_box` (a #RRGGBB box behind the captions).
 # On top of v119; brief_extractor v55 shares it.
+# v131 (item 23, Related KRI-1129), on top of v120 (Qendresa 12 caption shape): with
+# BRIEF_LONG_REQUEST_ENABLED the brief section says "at most 32 objects" instead of 16.
+# Flag off: every prompt byte-identical.
 # v129 (Qendresa item 20, TITLE_LOOK_ENABLED): only while `title_look_enabled` is on, the Talking
 # reaction-beats section gains one rule: a logo/sticker she wants with or above the opening title
 # is a beat with `anchor: "title"`; the title stays in `opening_title`, " / " included. Flag off:
-# every prompt keeps its bytes. On top of v120 (v121-v128 are held by unmerged branches).
+# every prompt keeps its bytes. On top of v131 (#2106); the PR keeps its reserved number.
 MAIN_CREATOR_PROMPT_VERSION = "2026-11-05-v129"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
@@ -1335,12 +1338,24 @@ def with_insert_clip_brief(section: str) -> str:
     )
 
 
+_BRIEF_CAP_ANCHOR = "at most 16 objects"
+
+
+def with_long_request_cap(section: str) -> str:
+    """``section`` with the per-turn entry cap raised to the long-request ceiling."""
+    assert section.count(_BRIEF_CAP_ANCHOR) == 1, "brief cap anchor moved"
+    return section.replace(_BRIEF_CAP_ANCHOR, f"at most {LONG_REQUEST_MAX_UPDATES} objects")
+
+
 def brief_prompt_section(insert_clips_open: bool = False) -> str:
-    return (
+    section = (
         with_insert_clip_brief(_BRIEF_PROMPT_SECTION)
         if insert_clips_open
         else _BRIEF_PROMPT_SECTION
     )
+    if settings.brief_long_request_enabled:
+        section = with_long_request_cap(section)
+    return section
 
 
 class MainCreatorInput(BaseModel):

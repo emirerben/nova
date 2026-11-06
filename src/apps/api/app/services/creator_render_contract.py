@@ -1106,6 +1106,29 @@ def _digest(data: Mapping[str, Any]) -> str:
     )
 
 
+def _talking_list_label(requirement: Any, raw: Mapping[str, Any]) -> bool:
+    """Item 19: flag on and the Talking worker would read this whole-video text as a list label."""
+    from app.pipeline.phone_list_labels import is_list_label_candidate  # noqa: PLC0415
+    from app.services.phone_rollout import phone_list_labels_supported  # noqa: PLC0415
+
+    if requirement.scope != "global" or not phone_list_labels_supported():
+        return False
+    from app.config import settings  # noqa: PLC0415
+
+    # Like the worker (`_phone_list_label_follow`): a label follows a recording only with item
+    # 17's windows; without them only a marked label is one.
+    background = raw.get("background_media") if settings.background_follows_talk_enabled else None
+    sequence = background.get("sequence") if isinstance(background, Mapping) else None
+    phrases = tuple(
+        entry["spoken_phrase"].strip()
+        for entry in sequence or ()
+        if isinstance(entry, Mapping)
+        and isinstance(entry.get("spoken_phrase"), str)
+        and entry["spoken_phrase"].strip()
+    )
+    return is_list_label_candidate(requirement, phrases)
+
+
 def _strategy(raw: Mapping[str, Any] | None) -> CreativeStrategy | None:
     if raw is None:
         return None
@@ -1646,6 +1669,12 @@ def build_render_contract(
                     # take says it (`phone_spoken_text`). Its own receipt answers it ("not
                     # heard" / "can't"), so pinning it would refuse an honest render.
                     # KRI-791: so does one whose word the ask doesn't name ("which word?").
+                    continue
+                if talking_edit and _talking_list_label(requirement, raw):
+                    # Item 19: a Talking edit draws a numbered list label (or the name of a
+                    # planned recording) only where its item's part starts
+                    # (`phone_list_labels`). An item never heard gets no label and its own
+                    # receipt says so, so pinning it would refuse an honest render.
                     continue
                 shot_index = None
                 if requirement.is_shot_text:
