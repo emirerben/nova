@@ -726,6 +726,112 @@ async def _restate_held(
     return "requirements_not_ready" if unmet else None
 
 
+async def _filler_unoffered(db: Any, item: Any, ctx: SuggestionContext) -> str | None:
+    """Why the filler card's evidence no longer supports it, or None when it still does.
+
+    The kind's own judge (``filler_words.unoffered_reason``) over the evidence as it is now: the
+    engine and the capability levers it rides on, the creator's decision on the analysis, the
+    plan item's setting, the source-policy fingerprint, the analysis status. This GET's context
+    already read it (``with_transcripts``); a context that did not is read here. What the frozen
+    set was proven on is not asked: the tap re-reads it and refuses on any change.
+
+    This is the evidence's freshness. It is not part of the set digest on purpose: the evidence is
+    only read while the kind's own switch is on, so a digest that followed it would make pulling
+    that switch a new set (a model run and a pending screen) instead of the instant strip of the
+    same frozen set.
+    """
+    from app.services.suggestions.kinds import filler_words  # noqa: PLC0415
+
+    found = (
+        ctx.kind_inputs.get(filler_words.INPUTS_KEY)
+        if isinstance(ctx.kind_inputs, Mapping)
+        else None
+    )
+    evidence = (
+        found if isinstance(found, filler_words.FillerEvidence) else await filler_evidence(db, item)
+    )
+    return filler_words.unoffered_reason(evidence)
+
+
+async def _mark_needed(db: Any, thread: Any, ctx: SuggestionContext, item: Any) -> bool:
+    """Would the tap's commit ask "Mark the plate" (KRI-901, ``mark_needed``) instead of staging?
+
+    A restating tap requests render approval, so ``_protected_region_gate_sync`` runs on it: when
+    the app shows the mark card, the draft renders on the phone Talking writer and a live
+    ``keep_text_off`` object has no current mark, the tap writes nothing, asks for the mark and
+    the refusal hides the card for good. The same ``protected_targets`` functions answer here, over
+    the same brief, the same marks (the creator's own events), the same clips and the same plan. The
+    app build is the GET's own (``ctx.client_protocol``): the phone that reads the card taps it.
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.kria.brief import load_latest_brief  # noqa: PLC0415
+    from app.kria.protected_targets import (  # noqa: PLC0415
+        clip_generations,
+        fold_protected_regions,
+        marks_route,
+        missing_object_marks,
+        rendered_speaker_media_id,
+        speaker_candidates,
+    )
+    from app.models import CreationThreadEvent, Job  # noqa: PLC0415
+    from app.services.suggestions import pinned  # noqa: PLC0415
+
+    creator_id = getattr(thread, "creator_id", None)
+    if not settings.brief_binding_for(creator_id):
+        return False
+    protocol = ctx.client_protocol
+    client_marks = (
+        protocol is not None and protocol >= settings.protected_region_mark_min_client_protocol
+    )
+    base = await pinned.restate_base(db, thread_id=thread.id, ctx=ctx)
+    strategy = base.strategy
+    if strategy is None or not marks_route(
+        client_marks=client_marks,
+        creator_id=creator_id,
+        strategy=strategy,
+        edit_format=getattr(item, "edit_format", None) or strategy.get("edit_format"),
+        clip_paths=getattr(item, "clip_gcs_paths", None) or (),
+        voiceover_path=getattr(item, "voiceover_gcs_path", None),
+    ):
+        return False
+    brief = await load_latest_brief(db, thread.id)
+    rows = (
+        await db.execute(
+            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            .where(CreationThreadEvent.thread_id == thread.id, CreationThreadEvent.role == "user")
+            .order_by(CreationThreadEvent.sequence)
+        )
+    ).all()
+    assignments = getattr(item, "clip_assignments", None) or []
+    job_id = getattr(item, "current_job_id", None)
+    job = await db.get(Job, job_id) if job_id else None
+    variants = ((getattr(job, "assembly_plan", None) or {}).get("variants")) or []
+    return bool(
+        missing_object_marks(
+            brief,
+            fold_protected_regions([(role, payload) for role, payload in rows]),
+            clip_generations(assignments),
+            render_clips=speaker_candidates(
+                assignments, rendered_speaker=rendered_speaker_media_id(variants)
+            ),
+        )
+    )
+
+
+async def _restate_refused(
+    db: Any, thread: Any, ctx: SuggestionContext, item: Any, kind: str
+) -> str | None:
+    """Refusals of a restating tap that neither the plan nor approval readiness explain."""
+    if kind == "filler_words":
+        reason = await _filler_unoffered(db, item, ctx)
+        if reason is not None:
+            return f"filler:{reason}"
+    if await _mark_needed(db, thread, ctx, item):
+        return "mark_needed"
+    return None
+
+
 async def dead_card_kinds(
     db: Any, thread: Any, ctx: SuggestionContext, kinds: frozenset[str]
 ) -> dict[str, str]:
@@ -755,6 +861,8 @@ async def dead_card_kinds(
     for kind in sorted((left - dead.keys()) & RESTATING_KINDS):
         try:
             reason = await _restate_held(db, thread, ctx, item, kind)
+            if reason is None:
+                reason = await _restate_refused(db, thread, ctx, item, kind)
         except Exception:  # noqa: BLE001
             log.warning("suggestion_chips.error", stage="restate_held", kind=kind, exc_info=True)
             reason = "check_failed"

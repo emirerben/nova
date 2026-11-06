@@ -519,24 +519,13 @@ def _empty_plan(ctx: SuggestionContext, state: str) -> CandidatePlan:
     )
 
 
-def _enabled_kinds() -> tuple[str, ...]:
-    """The kinds that have a switch of their own and are on. Part of a ready set's identity:
-    a card of a kind switched on after a set froze would otherwise be built under the SAME set id,
-    whose ring entry (written once, with the cards the set was first built with) cannot resolve
-    it. With every switch off this is empty and the identity is exactly what it always was."""
-    from app.services.suggestions import registry  # noqa: PLC0415
-
-    return tuple(
-        sorted(k.kind for k in registry.all_kinds() if k.flag is not None and registry.enabled(k))
-    )
-
-
-def _input_digest(base: str, cids: Sequence[str], kinds: Sequence[str] = ()) -> str:
-    parts: dict[str, Any] = {"base": base, "cids": list(cids), "prompt_version": PROMPT_VERSION}
-    if kinds:
-        parts["kinds"] = list(kinds)
+def _input_digest(base: str, cids: Sequence[str]) -> str:
     return hashlib.sha256(
-        json.dumps(parts, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(
+            {"base": base, "cids": list(cids), "prompt_version": PROMPT_VERSION},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
     ).hexdigest()[:32]
 
 
@@ -656,7 +645,7 @@ def _build_candidates(ctx: SuggestionContext) -> CandidatePlan:
             seen_targets |= touched
             levers.append(cand)
     cids = ([default.cid] if default else []) + [c.cid for c in levers]
-    digest = _input_digest(base, cids, _enabled_kinds() if state == "ready" else ())
+    digest = _input_digest(base, cids)
     return CandidatePlan(
         state=state,
         understanding=ctx.understanding,

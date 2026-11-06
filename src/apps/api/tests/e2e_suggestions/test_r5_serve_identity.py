@@ -3,9 +3,10 @@
 Failure catalogue (written first; each row is a test below):
 
   I1  A per-kind switch is turned ON after the thread froze a set without that kind. The set id is
-      the digest's and the digest did not name the enabled kinds, so once the 24 h freeze lapsed
-      the same digest was rebuilt WITH the new kind's card under the SAME set id. The ring entry of
-      that id already held cards and is written once, so the card was served and never stored: the
+      the digest's and the digest does not name the enabled kinds (naming them would make every
+      switch pulled a new set and take the instant strip away), so once the 24 h freeze lapsed the
+      same digest was rebuilt WITH the new kind's card under the SAME set id. The ring entry of
+      that id already held cards and was written once, so the card was served and never stored: the
       tap answered "no longer fits" and the refusal hid the card. Hook, duplicates, filler words
       and mute, English and Turkish.
   I2  The same set id, a different set of cards (the agent's picks differ after the freeze lapsed).
@@ -14,8 +15,8 @@ Failure catalogue (written first; each row is a test below):
   I3  The identity is not stable when nothing changed: the same footage, edit and switches give the
       same set id and the same cards on every read, and a switch put back restores the set the
       thread had before.
-  I4  Every per-kind switch off: the digest and so the set id are what they were before the
-      change (the flag-off bytes). Pinned by building the set with the registry's flags off.
+  I4  The digest is untouched: with every per-kind switch off it is the frozen formula of the code
+      before this lane (base, candidate ids, prompt version), so flag-off bytes do not move.
   I5  The ring write is skipped (the thread row is locked past the write's ~0.35 s of retries): the
       GET used to return the v2 cards anyway. It must return the chips only (the cards are an
       enhancement of a set that serves without them), with the same set id, and the next GET, with
@@ -91,13 +92,6 @@ async def test_i1_a_kind_switched_on_after_the_freeze_is_a_card_the_ring_holds(
         "no served card missing from its ring entry",
         not unstored(scene.phone, out) and await ensure_stored(scene.phone, out) == "route",
         f"unstored {unstored(scene.phone, out)}; set {first.set_id} -> {out.set_id}",
-    )
-    rec.negative(
-        f"I1 {flag} on: the set that offers the card is not the set that did not",
-        where,
-        "a new set id",
-        out.set_id != first.set_id,
-        f"set {first.set_id} -> {out.set_id}",
     )
     if card is not None:
         tap = await scene.phone.tap(card, out)
