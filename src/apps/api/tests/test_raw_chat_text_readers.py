@@ -47,6 +47,8 @@ RAW_TEXT_NAMES = frozenset(
         "_creator_requests_narrated_treatment",
         "speech_montage_possible",
         "mentions_speech",
+        # brief_asks: the one function that reads a requirement's description for a lane word.
+        "_description_says",
     }
 )
 # ``Requirement.text()`` is the brief's prose one-liner (zero-arg method call).
@@ -84,6 +86,24 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
     "agents/narration_annotations.py": ("agent_prompt", "annotation input/prompt", None),
     "agents/semantic_edit_proposal.py": ("agent_prompt", "semantic proposal prompt", None),
     "agents/speech_excerpt_planner.py": ("agent_prompt", "excerpt planner input/prompt", None),
+    "services/suggestion_serve.py": (
+        "agent_prompt",
+        "brief_headline hands the creator's live requests to the suggestion agent as one line of "
+        "model context (KRI-129: their request wins). It only feeds the agent input "
+        "(SuggestionContext.brief_headline -> build_agent_input), never a branch condition, a "
+        "card's action or the digest.",
+        frozenset({"brief_headline"}),
+    ),
+    "services/suggestions/brief_asks.py": (
+        "agent_prompt",
+        "KRI-667: whether the creator already asked about a lane is read from the requirement's "
+        "kind and facts. Only the two splits the brief writer records no typed signal for "
+        "(music against sound effects, which share the `audio` kind, and transitions) read the "
+        "description, once, over the shared fold, never the on-screen literal, and only to "
+        "withhold a suggestion card: it never decides a card's action, the digest, the route, "
+        "duration, voice, order or required text of any render.",
+        frozenset({"_description_says", "_kind_says", "_talks_about"}),
+    ),
     # --- plan time: pinned by approval ----------------------------------------------------------
     "cli/verify_protected_text.py": (
         "plan_time",

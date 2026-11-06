@@ -43,8 +43,16 @@ from app.tasks.reaper import (
     _repairable_state_predicate,
     _terminal_reconcile_state_predicate,
 )
+from tests.postgres_required import postgres_required
 
 if not (make_url(settings.database_url).database or "").endswith("_test"):
+    # Where the run provides the database (the api shards), a missing one is a failed run, not a
+    # green one that executed none of the jsonpath: the module that guards the reaper's discovery
+    # query must never "pass" by skipping.
+    if postgres_required():
+        raise RuntimeError(
+            "NOVA_REQUIRE_POSTGRES_TESTS=1 but DATABASE_URL is not a *_test database"
+        )
     pytest.skip("requires a *_test database", allow_module_level=True)
 
 
@@ -56,6 +64,8 @@ def db():
         session = sync_session()
         session.execute(text("select 1"))
     except OperationalError:
+        if postgres_required():
+            pytest.fail("NOVA_REQUIRE_POSTGRES_TESTS=1 but the *_test Postgres is not reachable")
         pytest.skip("nova_test Postgres not reachable")
     try:
         yield session

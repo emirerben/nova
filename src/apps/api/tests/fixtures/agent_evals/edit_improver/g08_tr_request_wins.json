@@ -1,0 +1,60 @@
+{
+  "id": "g08_tr_request_wins",
+  "description": "Creator said no captions in Turkish; the transition card is offered instead.",
+  "expect": "pass",
+  "input": {
+    "state": "ready",
+    "language": "tr",
+    "creator_request": "Altyazı istemiyorum",
+    "issued": [
+      {
+        "kind": "captions",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "transition",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e2"
+            ]
+          }
+        ]
+      }
+    ],
+    "evidence": {
+      "e1": {
+        "signal": "speech",
+        "fact": "klipte konuşma var"
+      },
+      "e2": {
+        "signal": "cuts",
+        "fact": "4 sert kesme art arda"
+      }
+    },
+    "already_in_edit": [],
+    "dismissed": [],
+    "untrusted_texts": []
+  },
+  "output": {
+    "ranked": [
+      {
+        "kind": "transition",
+        "target_ids": [
+          "all"
+        ],
+        "why": "4 sert kesme art arda",
+        "copy": null,
+        "rank": 1
+      }
+    ]
+  }
+}

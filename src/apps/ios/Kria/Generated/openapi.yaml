@@ -12201,6 +12201,134 @@
         "title": "SuggestionChipOut",
         "type": "object"
       },
+      "SuggestionDigest": {
+        "description": "What a set was computed from. A card is stale the moment any of these moves.",
+        "properties": {
+          "brief_version": {
+            "default": null,
+            "nullable": true,
+            "title": "Brief Version",
+            "type": "integer"
+          },
+          "language": {
+            "default": "en",
+            "title": "Language",
+            "type": "string"
+          },
+          "media_digest": {
+            "default": "",
+            "title": "Media Digest",
+            "type": "string"
+          },
+          "prompt_version": {
+            "default": "",
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "signals_version": {
+            "default": "",
+            "title": "Signals Version",
+            "type": "string"
+          },
+          "snapshot_hash": {
+            "default": null,
+            "nullable": true,
+            "title": "Snapshot Hash",
+            "type": "string"
+          },
+          "state": {
+            "default": "none",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "title": "SuggestionDigest",
+        "type": "object"
+      },
+      "SuggestionDismissOut": {
+        "description": "What happened to a dismiss. Every value is a normal outcome, never an error.",
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "SuggestionDismissOut",
+        "type": "object"
+      },
+      "SuggestionOut": {
+        "description": "Wire projection of a ``Suggestion``: no action, no witness (those stay server-side).",
+        "properties": {
+          "action_type": {
+            "default": "",
+            "title": "Action Type",
+            "type": "string"
+          },
+          "anchor": {
+            "$ref": "#/components/schemas/ChipAnchorOut"
+          },
+          "copy_text": {
+            "default": null,
+            "nullable": true,
+            "title": "Copy Text",
+            "type": "string"
+          },
+          "cost_usd": {
+            "default": null,
+            "nullable": true,
+            "title": "Cost Usd",
+            "type": "number"
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "id": {
+            "default": "",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "",
+            "title": "Kind",
+            "type": "string"
+          },
+          "prompt": {
+            "default": "",
+            "title": "Prompt",
+            "type": "string"
+          },
+          "rank": {
+            "default": 1,
+            "title": "Rank",
+            "type": "integer"
+          },
+          "requires_protocol": {
+            "default": null,
+            "nullable": true,
+            "title": "Requires Protocol",
+            "type": "integer"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          },
+          "why": {
+            "default": "",
+            "title": "Why",
+            "type": "string"
+          }
+        },
+        "title": "SuggestionOut",
+        "type": "object"
+      },
       "SuggestionSetOut": {
         "properties": {
           "anchor": {
@@ -12212,6 +12340,11 @@
             },
             "title": "Chips",
             "type": "array"
+          },
+          "digest": {
+            "$ref": "#/components/schemas/SuggestionDigest",
+            "default": null,
+            "nullable": true
           },
           "retry_after_s": {
             "default": null,
@@ -12238,6 +12371,13 @@
             "default": "unavailable",
             "title": "Status",
             "type": "string"
+          },
+          "suggestions": {
+            "items": {
+              "$ref": "#/components/schemas/SuggestionOut"
+            },
+            "title": "Suggestions",
+            "type": "array"
           },
           "understanding": {
             "default": "empty",
@@ -13407,6 +13547,15 @@
               "superseded"
             ],
             "title": "Status",
+            "type": "string"
+          },
+          "suggestion_outcome": {
+            "default": null,
+            "enum": [
+              "refused"
+            ],
+            "nullable": true,
+            "title": "Suggestion Outcome",
             "type": "string"
           },
           "thread_revision": {
@@ -15492,6 +15641,78 @@
           }
         }
       ]
+    },
+    "/creation-threads/{thread_id}/suggestions/dismiss": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "dismissCreationSuggestion",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuggestionTapIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuggestionDismissOut"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
+          "422": {
+            "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
     },
     "/creation-threads/{thread_id}/turns": {
       "parameters": [

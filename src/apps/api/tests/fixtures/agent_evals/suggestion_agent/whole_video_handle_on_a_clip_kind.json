@@ -1,0 +1,28 @@
+{
+ "id": "whole_video_handle_on_a_clip_kind",
+ "description": "target_ids point at a clip for a whole-video engine kind: the engine's own target stands, the card still builds.",
+ "context": "rd_captions_off_with_cues",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "captions",
+    "target_ids": [
+     "c2",
+     "c3"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 1
+   }
+  ]
+ },
+ "expect": {
+  "wording": "agent",
+  "cards": [
+   "captions"
+  ]
+ },
+ "tags": [
+  "natural"
+ ]
+}

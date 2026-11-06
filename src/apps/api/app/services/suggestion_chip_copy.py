@@ -1,17 +1,22 @@
-"""Deterministic copy validation for suggestion chips (KRI-756).
+"""Deterministic copy rules for suggestion chips and cards (KRI-756, AI suggestion blocks).
 
-The chip wording agent (``nova.chat.suggester``) may reword a chip's DISPLAY label and write
-a one-line ``why`` subtitle. It never writes ``message`` (the only text a tap sends) and it
-never names a capability. This module is the gate between the model and the screen:
+The suggestion agent (``nova.chat.suggestion_agent``) writes a one-line ``why`` and, for a hook,
+the on-screen ``copy``. It never writes a label, the ``message`` a tap sends, or an action. This
+module is the gate between the model and the screen:
 
-* ``validate_label``  a closed-vocabulary check: every word must belong to the chip kind's
-  lexicon or to a small function/verb list, the label must contain a word that names the
-  kind's action, and it must not name a DIFFERENT kind's action (label parity: a label can
-  never promise something the tap does not do).
+* ``validate_label``  a closed-vocabulary check that every TEMPLATE label obeys (a regression
+  guard: the template table is the only source of a label now). Every word must belong to the
+  kind's lexicon or to a small function/verb list, and a label must not name a DIFFERENT kind's
+  action (label parity: a label can never promise something the tap does not do).
 * ``validate_why``    a lexical grounding check: the subtitle must share a content word with
   what the footage analysis actually said (fold-and-overlap, the technique
   ``edit_copilot`` uses for caption wording). Gemini-derived text lives ONLY here.
-* ``footage_vocabulary`` the folded word set that check reads.
+* ``validate_copy``   the on-screen text gate (the Gemini-metadata invariant): hook copy must be
+  plain, in the thread language, and must not reuse a run of words from a transcript or from
+  the Gemini subject / setting / moment text.
+* ``shares_run``      the laundering check both ``why`` and ``copy`` use against transcripts.
+* ``footage_vocabulary`` the folded word set the grounding check reads.
+* ``SUGGESTION_COPY`` the title / chat-prompt templates of the kinds the KRI-756 table never had.
 
 Everything is pure and language-aware for ``en`` and ``tr`` (any other language falls back to
 ``en``). A failure never raises: the caller falls back to the template label (or drops the
@@ -21,12 +26,18 @@ Everything is pure and language-aware for ``en`` and ``tr`` (any other language 
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 
 from app.kria.brief_route import loose_text
+from app.text_fold import strip_marks
 
 MAX_LABEL_CHARS = 36
 MAX_WHY_CHARS = 48
+# A v2 card carries a longer one-line reason than a chip subtitle.
+MAX_CARD_WHY_CHARS = 96
+# On-screen hook text is read in under three seconds: far shorter than the schema's 200.
+MAX_COPY_CHARS = 60
 SUPPORTED = ("en", "tr")
 # Placeholders a label may carry. Each must be filled identically in ``message`` by the same
 # renderer, so a label can never name something the tap does not send.
@@ -490,12 +501,6 @@ def _contra_match(token: str, stems: Iterable[str], slack: int) -> bool:
     )
 
 
-def lexicon_words(kind: str, language: str) -> tuple[str, ...]:
-    """The kind's action words, for the agent prompt's vocabulary hint (display-folded)."""
-    lang = language_of(language)
-    return tuple(_LEXICON_SRC[lang].get(kind, ()))
-
-
 def _tokens(text: str) -> list[str]:
     return [t for t in _WORD.findall(_fold(text)) if t]
 
@@ -605,16 +610,22 @@ def _singular(token: str) -> str:
 
 
 def validate_why(
-    why: object, *, language: str, vocabulary: frozenset[str], kind: str | None = None
+    why: object,
+    *,
+    language: str,
+    vocabulary: frozenset[str],
+    kind: str | None = None,
+    max_chars: int = MAX_WHY_CHARS,
 ) -> tuple[str | None, str | None]:
     """``(why, None)`` when the subtitle is grounded in the footage, else ``(None, reason)``.
 
     Grounded = it shares at least one content word (4+ letters, folded, filler words
     excluded) with the footage vocabulary. It carries no digits, quotes, handles, links,
-    marketing register or markup, fits the 48 character subtitle line, and (when ``kind`` is
-    given) names no capability other than the chip's own: a subtitle never promises what the
-    tap does not do. The vocabulary is whatever language the analyzer wrote; a ``why`` in
-    another language is therefore dropped unless it shares a footage word, by design.
+    marketing register or markup, fits the ``max_chars`` line (48 for a chip subtitle), and
+    (when ``kind`` is given) names no capability other than the chip's own: a subtitle never
+    promises what the tap does not do. The vocabulary is whatever language the analyzer wrote;
+    a ``why`` in another language is therefore dropped unless it shares a footage word, by
+    design.
     """
     lang = language_of(language)
     if not isinstance(why, str):
@@ -622,13 +633,13 @@ def validate_why(
     text = " ".join(why.split())
     if not text:
         return None, "empty"
-    if len(text) > MAX_WHY_CHARS:
+    if len(text) > max_chars:
         return None, "length"
     if any(ch.isdigit() for ch in text):
         return None, "digit"
     if any(ch in _QUOTES for ch in text):
         return None, "quote"
-    if _HANDLE.search(text) or "http" in text.casefold() or "@" in text or "#" in text:
+    if _HANDLE.search(text) or looks_like_link(text) or "@" in text or "#" in text:
         return None, "handle"
     if _hits_stoplist(text):
         return None, "stoplist"
@@ -656,15 +667,285 @@ def validate_why(
     return text, None
 
 
+_RUN = 3
+
+
+def _runs(text: str, n: int = _RUN) -> set[tuple[str, ...]]:
+    words = _tokens(text)
+    return {tuple(words[i : i + n]) for i in range(len(words) - n + 1)}
+
+
+def shares_run(text: str, sources: Iterable[str], *, n: int = _RUN) -> bool:
+    """Does ``text`` repeat ``n`` consecutive words of any source (loosely folded)?
+
+    The laundering check: a transcript, or an instruction hidden in one, must not come back out
+    of the model as a card's reason or a hook's words. Whole-clause overlap is what an echo
+    looks like; a shared word or two is ordinary language.
+    """
+    mine = _runs(text, n)
+    return bool(mine) and any(mine & _runs(source, n) for source in sources if source)
+
+
+# A bare domain ("evil.com", "bit.ly", "coffee-deals.shop"): a dot with letters on both sides and
+# no space. "http" and "www." alone left every link without a scheme on the screen.
+_BARE_DOMAIN = re.compile(r"(?<![^\W_])[\w-]*[^\W\d_][\w-]*\.[^\W\d_]{2,}(?![^\W_])")
+# A link spelled out so that no dot is typed ("evil dot com", Turkish "evil nokta com").
+_SPELLED_DOT = frozenset({"dot", "nokta", "slash"})
+_SPELLED_TLDS = frozenset(
+    "com net org io co ly me tv app shop xyz info biz gg to cc link store online site "
+    "ai dev tr".split()
+)
+
+
+def _join_singles(tokens: Sequence[str]) -> list[str]:
+    """A run of single-letter tokens read as one word: ``d o t`` -> ``dot``."""
+    out: list[str] = []
+    run: list[str] = []
+    for token in tokens:
+        if len(token) == 1:
+            run.append(token)
+            continue
+        if run:
+            out.append("".join(run))
+            run = []
+        out.append(token)
+    if run:
+        out.append("".join(run))
+    return out
+
+
+def looks_like_link(text: str) -> bool:
+    """A URL in any of the forms a title must never carry: scheme, ``www.``, a bare domain, or
+    one spelled out with "dot" / "nokta" / "slash", even with its letters spaced apart. Display
+    text only; never decides an action."""
+    low = text.casefold()
+    if "http" in low or "www." in low or _BARE_DOMAIN.search(low):
+        return True
+    words = _join_singles(_tokens(text))
+    return any(word in _SPELLED_DOT and nxt in _SPELLED_TLDS for word, nxt in zip(words, words[1:]))
+
+
+def squashed_phrase_hit(text: str, phrases: Iterable[object]) -> bool:
+    """Does a plain phrase appear in ``text`` once the spaces inside it are ignored?
+
+    "fo llow me" and "lin k in bio" split a word once, which the spaced-letters join does not see.
+    The match must start where a word of ``text`` starts, so "unlimited time" is not "limited
+    time". Phrases that squash to fewer than six letters are skipped ("dm me", "pov" would hit
+    inside ordinary words). Only plain-string phrases take part; an ending-sensitive ``Marker``
+    keeps its own word-boundary matcher.
+    """
+    squashed, starts = "", set()
+    for word in text.split():
+        letters = "".join(ch for ch in _fold(word) if ch.isalpha())
+        if letters:
+            starts.add(len(squashed))
+            squashed += letters
+    for phrase in phrases:
+        if not isinstance(phrase, str):
+            continue
+        needle = "".join(ch for ch in _fold(phrase) if ch.isalpha())
+        at = squashed.find(needle) if len(needle) >= 6 else -1
+        while at != -1:
+            if at in starts:
+                return True
+            at = squashed.find(needle, at + 1)
+    return False
+
+
+_TR_LETTERS = frozenset("çğıöşüÇĞİÖŞÜ")
+
+
+def has_lookalike_letter(text: str) -> bool:
+    """A letter that is neither ASCII, nor Turkish, nor an ASCII letter plus a combining mark.
+
+    The Latin script holds letters that read as another ("ᴏ" small capital O, "ɡ" script G) and
+    pass every "is it Latin" test. "café" decomposes to "e" plus an accent and is fine.
+    """
+    for ch in text:
+        if not ch.isalpha() or ch.isascii() or ch in _TR_LETTERS:
+            continue
+        # An ASCII letter plus accents ("é" -> "e"), and only that: a compatibility form
+        # ("Ｏ", "ſ", "𝗼", "ﬁ") is a lookalike by definition, so it must not fold to its letter.
+        plain = strip_marks(ch)
+        if (
+            len(plain) == 1
+            and plain.isascii()
+            and plain.isalpha()
+            and unicodedata.normalize("NFKC", ch) == unicodedata.normalize("NFC", ch)
+        ):
+            continue
+        return True
+    return False
+
+
+# Words too common to show that two sentences say the same thing.
+_ECHO_STOP = frozenset(
+    _fold(w)
+    for w in (
+        "this that these those with from into onto over then than them they their there here "
+        "when where what which while about after before around been being have were will would "
+        "could should some more very just also only each both other your ours okay yeah "
+        "için gibi daha kadar sonra önce olan bunu şunu veya ile çok değil ama böyle şimdi "
+        "bugün evet tamam"
+    ).split()
+)
+_CLAUSE_BREAK = re.compile(r"[.!?;:\n]+")
+_ECHO_SUFFIXES = ("ing", "ed", "es", "s")
+_ECHO_MIN_SHARED = 2
+_ECHO_COVERAGE = 0.6
+
+
+def _content_stems(text: str, lang: str) -> frozenset[str]:
+    """Folded content words reduced to a stem: a crude English suffix strip, and the first five
+    letters for agglutinative Turkish ("dükkana" and "dükkanda" meet). Over-matching is the safe
+    direction here: a dropped card costs a card, a kept echo costs a quoted transcript."""
+    stems: set[str] = set()
+    for token in _tokens(text):
+        if len(token) < 4 or token in _ECHO_STOP:
+            continue
+        if lang == "tr":
+            stems.add(token[:5])
+            continue
+        for suffix in _ECHO_SUFFIXES:
+            if token.endswith(suffix) and len(token) - len(suffix) >= 4:
+                token = token[: -len(suffix)]
+                break
+        stems.add(token)
+    return frozenset(stems)
+
+
+def echoes_source(text: str, sources: Iterable[str], *, language: str = "en") -> bool:
+    """Does ``text`` re-say a clause of a source in other words?
+
+    The verbatim check (``shares_run``) needs three words in a row, so reordering the words or
+    swapping one slips past it. This one compares content stems clause by clause (a topic word
+    from one sentence and another from the next is ordinary language) and fires when two or
+    more are shared and they make up most of what ``text`` says. Stricter than ``shares_run``
+    on purpose: it guards the words that become the video's title.
+    """
+    lang = language_of(language)
+    mine = _content_stems(text, lang)
+    if len(mine) < _ECHO_MIN_SHARED:
+        return False
+    for source in sources:
+        for clause in _CLAUSE_BREAK.split(source or ""):
+            shared = mine & _content_stems(clause, lang)
+            if len(shared) >= _ECHO_MIN_SHARED and len(shared) / len(mine) >= _ECHO_COVERAGE:
+                return True
+    return False
+
+
+# A word that mixes letters and digits ("d0t", "l1nk"): leetspeak that dodges every phrase list.
+_LETTERS_AND_DIGITS = re.compile(r"(?=[^\W_]*\d)(?=[^\W_]*[^\W\d_])[^\W_]+")
+_COPY_CHARS = re.compile(r"^[^\W_]+(?:[ \-',.!?:][^\W_]+)*[.!?]?$", re.UNICODE)
+
+
+def validate_copy(
+    copy: object,
+    *,
+    language: str,
+    transcripts: Iterable[str] = (),
+    footage: Iterable[str] = (),
+) -> tuple[str | None, str | None]:
+    """``(copy, None)`` when the exact on-screen text may be offered, else ``(None, reason)``.
+
+    Hook and title text is the only generated text that can reach the screen, so it is checked
+    harder than a ``why``: one plain line, in the thread language, no markup, links, handles or
+    marketing register, and no run of words taken from a transcript or from what the footage
+    analysis wrote (a subject, setting or moment label). Gemini metadata never becomes
+    on-screen text.
+    """
+    lang = language_of(language)
+    if not isinstance(copy, str):
+        return None, "empty"
+    text = " ".join(copy.split())
+    if not text:
+        return None, "empty"
+    if len(text) > MAX_COPY_CHARS:
+        return None, "length"
+    if any(ch in text for ch in "{}<>$`\\|[]*_#@") or looks_like_link(text):
+        return None, "markup"
+    if not _COPY_CHARS.match(text) or _LETTERS_AND_DIGITS.search(text):
+        return None, "chars"
+    if _hits_stoplist(text):
+        return None, "stoplist"
+    if len(_tokens(text)) < 2:
+        return None, "short"
+    if lang == "en" and not all(ord(ch) < 128 for ch in text):
+        return None, "language"
+    if lang == "tr" and has_lookalike_letter(text):
+        return None, "language"
+    footage_texts = [t for t in footage if t]
+    if shares_run(text, [*transcripts, *footage_texts]):
+        return None, "reused_footage_text"
+    folded = _fold(text)
+    for source in footage_texts:
+        if len(_tokens(source)) >= 2 and _fold(source) in folded:
+            return None, "reused_footage_text"
+    return text, None
+
+
+# Title and chat-prompt templates for the kinds the KRI-756 ``_COPY`` table never had. ``{clip}``
+# is filled with the card's clip ordinals ("2" or "2, 3"); a template that needs it renders
+# nothing for a whole-video target, so a card never names a clip it does not touch. No quotes,
+# and never any footage-derived word: a tap sends only this closed text.
+SUGGESTION_COPY: dict[str, dict[str, tuple[str, str]]] = {
+    "mute_clip": {
+        "en": ("Mute clip {clip}", "Mute the sound of clip {clip}"),
+        "tr": ("{clip}. klibi sustur", "{clip}. klibin sesini kapat"),
+    },
+    "filler_words": {
+        "en": ("Cut the filler words", "Cut the filler words"),
+        "tr": ("Dolgu sözcüklerini kes", "Dolgu sözcüklerini kes"),
+    },
+    "duplicates": {
+        "en": ("Keep the better clip", "Keep the better of clips {clip}"),
+        "tr": ("Daha iyi klibi tut", "{clip}. kliplerden daha iyisini tut"),
+    },
+    # A v2 hook card shows the agent's text on the card itself. The chat prompt a tap sends is a
+    # closed sentence that never carries or quotes that text: a creator message that quotes copy
+    # skips the approval question (`creator_quoted`), and the tap IS the approval already.
+    "hook": {
+        "en": ("Add this hook", "Add the hook shown on the card"),
+        "tr": ("Bu kancayı ekle", "Kartta gösterilen kancayı ekle"),
+    },
+    "generated_overlay": {
+        "en": ("Add a generated image", "Add a generated image overlay"),
+        "tr": ("Üretilmiş görsel ekle", "Üretilmiş bir görsel bindirmesi ekle"),
+    },
+}
+
+
+def render_suggestion_copy(
+    kind: str, language: str, clip_ordinals: Sequence[int]
+) -> tuple[str, str] | None:
+    """``(title, prompt)`` for a kind outside the KRI-756 table, or None when unrenderable."""
+    table = SUGGESTION_COPY.get(kind)
+    if table is None:
+        return None
+    title, prompt = table.get(language_of(language)) or table["en"]
+    if "{clip}" in title + prompt:
+        if not clip_ordinals:
+            return None
+        clips = ", ".join(str(n) for n in sorted(set(clip_ordinals))[:3])
+        title, prompt = title.replace("{clip}", clips), prompt.replace("{clip}", clips)
+    return title, prompt
+
+
 __all__ = [
     "ALLOWED_PLACEHOLDERS",
     "LEXICON",
+    "MAX_CARD_WHY_CHARS",
+    "MAX_COPY_CHARS",
     "MAX_LABEL_CHARS",
     "MAX_WHY_CHARS",
     "STOPLIST",
+    "SUGGESTION_COPY",
     "footage_vocabulary",
     "language_of",
-    "lexicon_words",
+    "render_suggestion_copy",
+    "shares_run",
+    "validate_copy",
     "validate_label",
     "validate_why",
 ]

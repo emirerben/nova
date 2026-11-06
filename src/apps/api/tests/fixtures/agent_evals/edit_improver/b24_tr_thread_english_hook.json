@@ -1,0 +1,51 @@
+{
+  "id": "b24_tr_thread_english_hook",
+  "why_bad": "English hook copy on a Turkish thread",
+  "expect": "fail",
+  "expect_failures": [
+    "copy_ungrounded",
+    "copy_language"
+  ],
+  "input": {
+    "state": "first_prompt",
+    "language": "tr",
+    "creator_request": "",
+    "issued": [
+      {
+        "kind": "hook",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      }
+    ],
+    "evidence": {
+      "e1": {
+        "signal": "visual",
+        "fact": "elleri hamur yoğuruyor"
+      }
+    },
+    "already_in_edit": [],
+    "dismissed": [],
+    "untrusted_texts": [
+      "bugün hamur yapıyorum"
+    ]
+  },
+  "output": {
+    "ranked": [
+      {
+        "kind": "hook",
+        "target_ids": [
+          "all"
+        ],
+        "why": "Açılışta hamur yoğuran eller",
+        "copy": "Hands kneading dough",
+        "rank": 1
+      }
+    ]
+  }
+}

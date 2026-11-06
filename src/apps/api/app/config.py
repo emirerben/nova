@@ -1409,6 +1409,33 @@ class Settings(BaseSettings):
     # `ai_cost_reservations` by feature name (ai_cost_control.py).
     kria_suggester_max_runs_per_thread: int = Field(default=12, ge=0, le=100)
     kria_suggester_daily_limit_per_user: int = Field(default=20, ge=0, le=500)
+    # AI suggestion blocks (docs/pipelines/suggestion-blocks.md) evolve the chips above. Every
+    # flag here is dark (false) and subordinate to the chip capability: with
+    # KRIA_SUGGESTION_CHIPS_ENABLED off nothing below does anything. Flag off is byte-identical to
+    # the KRI-756 behavior. Apply: fly secret on api + worker, then restart both.
+    # Pinned taps: a tap carries {set_id, chip_id}, joins `request_digest`, and the server runs the
+    # exact action it already proved instead of re-planning the sentence.
+    kria_suggestion_pinned_taps_enabled: bool = False
+    # Read the per-clip measured signals (`services/clip_signals`) into the suggestion context.
+    kria_suggestion_signals_enabled: bool = False
+    # Recompute cards on a draft-revision commit and a native editor Save.
+    kria_suggestion_editor_triggers_enabled: bool = False
+    # One switch per new kind, so each ships (and rolls back) on its own. A kind that reads
+    # measured signals also needs KRIA_SUGGESTION_SIGNALS_ENABLED.
+    kria_suggestion_hook_copy_enabled: bool = False
+    kria_suggestion_mute_clip_enabled: bool = False
+    kria_suggestion_filler_words_enabled: bool = False
+    kria_suggestion_duplicates_enabled: bool = False
+    kria_suggestion_generated_overlay_enabled: bool = False
+    # The suggestion agent (OpenAI Responses, strict json_schema). A model outside
+    # `agents/_text_providers.TEXT_MODELS` is refused at call time, not here.
+    kria_suggester_model: str = "gpt-6.1-sol"
+    # Per-run spend ceiling, and the credit sub-budget (0 = no spend allowed) for the
+    # `suggestions` capability in ai_cost_control.py. A budget stop falls back to template cards.
+    kria_suggester_max_usd: float = Field(default=0.05, gt=0, le=0.25)
+    ai_openai_suggestions_budget_usd: float = Field(default=0, ge=0, le=1000)
+    # Quiet period before a freshness trigger recomputes the set; never during a turn or render.
+    kria_suggestion_refresh_debounce_s: int = Field(default=20, ge=0, le=600)
 
     @field_validator(
         "kria_creative_brief_user_ids",

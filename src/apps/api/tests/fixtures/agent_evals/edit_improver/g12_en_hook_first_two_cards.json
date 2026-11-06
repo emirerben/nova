@@ -1,0 +1,72 @@
+{
+  "id": "g12_en_hook_first_two_cards",
+  "description": "Hook outranks captions, both first-prompt, no default_edit issued.",
+  "expect": "pass",
+  "input": {
+    "state": "first_prompt",
+    "language": "en",
+    "creator_request": "",
+    "issued": [
+      {
+        "kind": "captions",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "hook",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e2"
+            ]
+          }
+        ]
+      }
+    ],
+    "evidence": {
+      "e1": {
+        "signal": "speech",
+        "fact": "creator talks to camera in clip 1"
+      },
+      "e2": {
+        "signal": "visual",
+        "fact": "opening clip shows a dog catching a frisbee"
+      }
+    },
+    "already_in_edit": [],
+    "dismissed": [],
+    "untrusted_texts": [
+      "Dog days",
+      "come on buddy get it"
+    ]
+  },
+  "output": {
+    "ranked": [
+      {
+        "kind": "hook",
+        "target_ids": [
+          "all"
+        ],
+        "why": "Opening shows a dog and a frisbee",
+        "copy": "Dog meets frisbee, mid-air",
+        "rank": 1
+      },
+      {
+        "kind": "captions",
+        "target_ids": [
+          "all"
+        ],
+        "why": "Speech to camera in clip 1",
+        "copy": null,
+        "rank": 2
+      }
+    ]
+  }
+}

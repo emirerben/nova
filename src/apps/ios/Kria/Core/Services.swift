@@ -225,6 +225,8 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgro
     func creationBrief(threadID: UUID) async throws -> CreativeBrief
     /// KRI-756: footage-aware suggestion chips. Nil = the server has none to offer (no endpoint, or unreadable).
     func creationSuggestions(threadID: UUID) async throws -> SuggestionSet?
+    /// AI suggestion blocks: tells the server a card was dismissed so it is never offered again. Never throws.
+    func dismissSuggestion(threadID: UUID, setID: String, suggestionID: String) async
     func sendCreationMessage(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
     func creationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int, clientActionID: String) async throws -> CreationThread
     func reserveVisualUpload(itemID: String, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> VisualUploadTarget
@@ -424,6 +426,7 @@ extension KriaAPIClient {
     func steerNow(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
     func removeWaitingMessage(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
     func creationSuggestions(threadID: UUID) async throws -> SuggestionSet? { nil }
+    func dismissSuggestion(threadID: UUID, setID: String, suggestionID: String) async {}
     func transcribeDictation(audio: Data, contextTerms: [String]) async throws -> DictationTranscriptResponse { throw APIError.unsupported }
     func planSnapshot(threadID: UUID) async throws -> PlanSnapshot { throw APIError.unsupported }
     func submitScopedTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, scope: [PlanSectionID], manualEdits: [ManualPlanEdit]) async throws -> TurnAccepted { throw APIError.unsupported }
