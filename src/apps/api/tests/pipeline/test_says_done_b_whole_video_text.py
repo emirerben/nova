@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.config import settings
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_checks import (
     build_receipts,
@@ -27,6 +28,9 @@ from app.pipeline.guided_story import GuidedStoryExecutionPlan, compile_executio
 from app.pipeline.phone_plan_repair import _shows
 from app.pipeline.unified_montage import UnifiedClip, brief_view, plan_unified_montage
 from app.services.creator_render_contract import build_render_contract
+from tests.kria.test_whole_video_text_receipt import BASE as REVIEW_BASE
+from tests.kria.test_whole_video_text_receipt import CLIP as REVIEW_CLIP
+from tests.kria.test_whole_video_text_receipt import _review
 
 TEXT = "The prompt I run at the end of every Claude session"
 WHOLE_VIDEO_LINE = BriefRequirement(
@@ -191,3 +195,136 @@ def test_a_deliberately_timed_pin_is_left_as_it_was(monkeypatch: pytest.MonkeyPa
     off_plan, _rows, off_spans = _render(strategy)
     assert on_spans == off_spans
     assert on_plan.title == off_plan.title
+
+
+THANK_YOU = BriefRequirement(
+    id="r2",
+    kind="text",
+    scope="global",
+    literal="THANK YOU",
+    description="End with THANK YOU for the last 2 seconds",
+    facts={"closing": "THANK YOU"},
+)
+
+
+def _ending_render(strategy, reqs, judged):
+    brief = CreativeBrief(version=1, requirements=reqs)
+    plan = plan_unified_montage([REVIEW_CLIP], brief_view(brief), strategy=strategy)
+    rows = compile_execution_plan(plan.guided_edit(), track=None)["text_elements"]
+    spans = [
+        (r["id"], r["start_s"], r["end_s"]) for r in rows if judged.literal in r.get("text", "")
+    ]
+    variant = {"text_elements": rows, "duration_s": plan.duration_s}
+    return _review(judged, plan.record(), variant), spans, plan.duration_s, plan
+
+
+def test_an_ending_only_brief_is_drawn_only_at_the_end() -> None:
+    receipt, spans, total, _plan = _ending_render(
+        {**REVIEW_BASE, "closing_title": "THANK YOU"}, [THANK_YOU], THANK_YOU
+    )
+    assert spans, spans
+    assert all(start > 0.05 for _i, start, _e in spans), spans
+    assert max(end for _i, _s, end in spans) >= total - 0.05, spans
+    assert min(start for _i, start, _e in spans) >= total - 2.5, spans
+    assert not any(i.startswith("guided-pinned") for i, _s, _e in spans), spans
+    assert receipt.status == "met", receipt.reason
+
+
+def test_an_ending_filed_as_the_opening_title_is_not_pinned() -> None:
+    _r, spans, _total, _plan = _ending_render(
+        {**REVIEW_BASE, "opening_title": "THANK YOU", "closing_title": "THANK YOU"},
+        [THANK_YOU],
+        THANK_YOU,
+    )
+    assert not any(i.startswith("guided-pinned") for i, _s, _e in spans), spans
+
+
+def test_the_same_words_without_the_ending_fact_are_still_pinned() -> None:
+    req = THANK_YOU.model_copy(update={"facts": {}})
+    _r, spans, total, _plan = _ending_render({**REVIEW_BASE}, [req], req)
+    assert len(spans) == 1 and spans[0][0].startswith("guided-pinned"), spans
+    assert spans[0][1] <= 0.05 and spans[0][2] >= total - 0.05, spans
+
+
+def _all_rows(strategy, reqs):
+    brief = CreativeBrief(version=1, requirements=reqs)
+    plan = plan_unified_montage([REVIEW_CLIP], brief_view(brief), strategy=strategy)
+    rows = compile_execution_plan(plan.guided_edit(), track=None)["text_elements"]
+    return [(r["id"], r["start_s"], r["end_s"], r.get("text")) for r in rows]
+
+
+def test_title_and_ending_are_unchanged(monkeypatch) -> None:
+    reqs = [
+        BriefRequirement(id="r1", kind="text", scope="title", literal="MY TRIP", facts={}),
+        THANK_YOU,
+    ]
+    strategy = {**REVIEW_BASE, "opening_title": "MY TRIP", "closing_title": "THANK YOU"}
+    on = _all_rows(strategy, reqs)
+    monkeypatch.setattr(settings, "whole_video_text_pin_enabled", False)
+    assert on == _all_rows(strategy, reqs)
+
+
+def test_a_whole_video_line_beside_an_ending_is_still_pinned() -> None:
+    visit = BriefRequirement(id="r3", kind="text", scope="global", literal="VISIT ASSOS", facts={})
+    _r, spans, total, _plan = _ending_render(
+        {**REVIEW_BASE, "closing_title": "THANK YOU"}, [THANK_YOU, visit], visit
+    )
+    assert len(spans) == 1 and spans[0][0].startswith("guided-pinned"), spans
+    assert spans[0][1] <= 0.05 and spans[0][2] >= total - 0.05, spans
+    _r, ty, _t, _p = _ending_render(
+        {**REVIEW_BASE, "closing_title": "THANK YOU"}, [THANK_YOU, visit], THANK_YOU
+    )
+    assert not any(i.startswith("guided-pinned") for i, _s, _e in ty), ty
+    assert all(start > 0.05 for _i, start, _e in ty), ty
+
+
+def test_switch_off_keeps_the_old_ending_fallback(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "whole_video_text_pin_enabled", False)
+    _r, spans, _total, _plan = _ending_render(
+        {**REVIEW_BASE, "closing_title": "THANK YOU"}, [THANK_YOU], THANK_YOU
+    )
+    assert any(start <= 0.05 for _i, start, _e in spans), spans
+
+
+@pytest.mark.parametrize("facts", [{"closing": ""}, {"closing": None}, {"closing": False}])
+def test_a_falsy_closing_fact_is_not_an_ending(facts: dict) -> None:
+    req = THANK_YOU.model_copy(update={"facts": facts})
+    _r, spans, total, _plan = _ending_render({**REVIEW_BASE}, [req], req)
+    assert len(spans) == 1 and spans[0][0].startswith("guided-pinned"), spans
+    assert spans[0][1] <= 0.05 and spans[0][2] >= total - 0.05, spans
+
+
+@pytest.mark.parametrize(
+    "strategy",
+    [
+        pytest.param({**REVIEW_BASE, "closing_title": "FOLLOW ME"}, id="fallback"),
+        pytest.param(
+            {**REVIEW_BASE, "opening_title": "FOLLOW ME", "closing_title": "FOLLOW ME"},
+            id="opening_title",
+        ),
+    ],
+)
+def test_the_same_words_as_a_whole_video_line_and_an_ending_keep_both(strategy) -> None:
+    whole = BriefRequirement(
+        id="r1",
+        kind="text",
+        scope="global",
+        literal="FOLLOW ME",
+        description="FOLLOW ME for the whole video",
+        facts={},
+    )
+    ending = BriefRequirement(
+        id="r2",
+        kind="text",
+        scope="global",
+        literal="FOLLOW ME",
+        description="End with FOLLOW ME",
+        facts={"closing": "FOLLOW ME"},
+    )
+    for judged in (whole, ending):
+        receipt, spans, total, _plan = _ending_render(strategy, [whole, ending], judged)
+        pinned = [s for s in spans if s[0].startswith("guided-pinned")]
+        assert len(pinned) == 1, spans
+        assert pinned[0][1] <= 0.05 and pinned[0][2] >= total - 0.05, spans
+        assert any(start >= total - 2.5 for _i, start, _e in spans), spans
+        assert receipt.status == "met", (judged.id, receipt.status, receipt.reason)
