@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.13.0] - 2026-11-06
+
+### Changed
+- fix(creation-text): Kria's text writer adds only the text the creator asked for (Qendresa item 22) (#2113) <!-- release-pr: 2113 -->
+
 ## [0.88.12.0] - 2026-11-06
 
 ### Changed
