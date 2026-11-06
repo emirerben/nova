@@ -23,7 +23,11 @@ list allowed left the music card on screen over a creator who had just asked to 
 down). The brief writer records the meaning and this module reads the field:
 
 * ``kind``: the writer files every volume, music and sound ask as an ``audio`` requirement, in any
-  language and any wording, so an ``audio`` requirement is an ask about the soundtrack;
+  language and any wording, so an ``audio`` requirement is an ask about the soundtrack, unless its
+  typed facts place it in the footage's own sound lane: a clip's sound turned on or off
+  (``clip_sound``, read by ``clip_sound_toggle_ask``: the very requirement a mute-clip tap writes)
+  is about what a clip plays, not about the music or the sound effects, and withholds neither card.
+  A fact that lane's reader cannot parse is not that lane: the requirement still speaks;
 * ``facts``: ``captions`` / ``caption_*``, ``animation``, ``audio_intent: no_music``, ``music*``.
 
 Two splits have no typed signal, so they read the creator's ``description`` once, over the shared
@@ -138,8 +142,24 @@ def _description_says(req: Any, words: tuple[str, ...]) -> bool:
     return isinstance(description, str) and has_marker(description, words)
 
 
+def _is_clip_sound_toggle(req: Any) -> bool:
+    """The requirement is, by its typed facts, a clip's own sound turned on or off.
+
+    The one reader of that shape (``clip_sound_toggle_ask``); anything it cannot read is not a
+    toggle, so a malformed or unrecognised fact leaves the requirement speaking for the card.
+    """
+    from app.kria.clip_sound_toggle_ask import requirement_sound_toggle  # noqa: PLC0415
+
+    try:
+        return requirement_sound_toggle(req) is not None
+    except Exception:  # noqa: BLE001 - a shape that cannot be read is not the footage lane
+        return False
+
+
 def _kind_says(req: Any, dim: Dimension) -> bool:
     if getattr(req, "kind", None) not in dim.kinds:
+        return False
+    if _is_clip_sound_toggle(req):
         return False
     if dim.kind_needs and not _description_says(req, dim.kind_needs):
         return False
