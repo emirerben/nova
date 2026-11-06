@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.26.0] - 2026-11-06
+
+### Changed
+- perf(ios): live green-screen preview lag, four independent levers (KRI-1183) (#2121) <!-- release-pr: 2121 -->
+
 ## [0.88.25.0] - 2026-11-06
 
 ### Changed
