@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.27.0] - 2026-11-06
+
+### Changed
+- fix(kria): an ending's words are never the opening title or a whole-video pin (says-done B follow-up to #2130) (#2138) <!-- release-pr: 2138 -->
+
 ## [0.88.26.0] - 2026-11-06
 
 ### Changed
