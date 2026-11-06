@@ -3,6 +3,21 @@ import UIKit
 
 @MainActor
 final class NativeEditorInspectorUITests: XCTestCase {
+    private func selectTimelineClip(_ number: Int, in app: XCUIApplication) {
+        let clip = app.descendants(matching: .any)["native-editor-clip-\(number)"].firstMatch
+        let lanes = app.scrollViews["native-editor-lane-scroll"]
+        let toolbar = app.buttons["native-editor-adjust"]
+        for _ in 0..<4 where clip.frame.maxY >= toolbar.frame.minY {
+            let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                dx: lanes.frame.minX + 24,
+                dy: min(toolbar.frame.minY - 16, lanes.frame.maxY - 16)))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -90)))
+        }
+        XCTAssertLessThan(clip.frame.maxY, toolbar.frame.minY, "Scroll the clip clear of the floating tools before tapping")
+        clip.tap()
+        XCTAssertTrue(clip.isSelected)
+    }
+
     func testSplitPanelReplacesVideoWithUnusedPhotoAndKeepsCrop() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-split-mixed-media", "-ui-testing-editor-live-preview"]
@@ -16,12 +31,13 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(create.waitForExistence(timeout: 5))
         create.tap()
         app.buttons["native-editor-inspector-done"].tap()
-        app.descendants(matching: .any)["native-editor-clip-2"].firstMatch.tap()
+        selectTimelineClip(2, in: app)
         app.buttons["native-editor-adjust"].tap()
         let replace = app.buttons["native-editor-split-replace"]
         for _ in 0..<8 where !replace.isHittable { app.swipeUp() }
         XCTAssertTrue(replace.isHittable)
         replace.tap()
+        XCTAssertTrue(app.buttons["Clip 2"].waitForExistence(timeout: 5))
         app.buttons["Clip 2"].tap()
         let photoSpeed = app.staticTexts["Photos do not have playback speed."]
         for _ in 0..<5 where !photoSpeed.isHittable { app.swipeUp() }
@@ -85,7 +101,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         for title in ["Top", "Middle", "Bottom"] {
             XCTAssertTrue(app.staticTexts["native-editor-lane-label-split-" + title.lowercased()].waitForExistence(timeout: 5))
         }
-        app.descendants(matching: .any)["native-editor-clip-2"].firstMatch.tap()
+        selectTimelineClip(2, in: app)
         app.buttons["native-editor-adjust"].tap()
         let position = app.segmentedControls["native-editor-split-position"]
         for _ in 0..<5 where !position.isHittable { app.swipeUp() }
@@ -97,6 +113,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         for _ in 0..<8 where !replace.isHittable { app.swipeUp() }
         XCTAssertTrue(replace.isHittable)
         replace.tap()
+        XCTAssertTrue(app.buttons["Clip 2"].waitForExistence(timeout: 5))
         app.buttons["Clip 2"].tap()
         XCTAssertTrue(app.staticTexts["Clip 2"].exists)
         app.buttons["native-editor-inspector-done"].tap()

@@ -54,3 +54,9 @@ The ordinary inspector continues to own media edits. The split controls expose s
 - UI worker owns native view files and UI fixtures/tests only. It does not edit session/model/compiler.
 - AI worker owns operation registration/parser/application and AI context preservation.
 - Parent owns integration, shared fixtures, documentation, generated contracts and final verification.
+
+## Ownership and compatibility
+
+`speaker_subject` is durable occurrence provenance, distinct from caption ancestry. Copies preserve explicit true/false; legacy speaker IDs are resolved before a new UUID is minted. New independent copies do not inherit a caption-parent link. Recipe `speaker_background.subject_clip_ids` names the exact video occurrences; absent keeps legacy track ownership, while an empty array represents no current subject. Speaker frame settings remain shared, with manipulation coordinates resolved inside the selected panel. Background focus uses the panel's aspect ratio.
+
+Native chat staging and variant hydration copy slots and section definitions atomically. An explicit section array makes the chat's complete timeline authoritative, including an empty array when unstacking. New canonical UUIDs retain identity and approved source metadata; historical non-UUID temporary IDs retain their existing admission repair. A panel-local edit does not move global canvas layers. Section boundary changes move those layers through serial section units, while explicitly source-owned text/captions follow the movement/hold source clock.

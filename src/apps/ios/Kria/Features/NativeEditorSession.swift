@@ -2916,6 +2916,9 @@ struct NativeEditorTemporaryVideo: Sendable {
                     mediaID: "fixture-source-1", sourceURL: URL(string: "https://fixture.invalid/unused-photo.png"),
                     original: nil, localRequired: false))], baseGeneration: document.revision.baseGeneration)
                 sourceResolver = NativeEditorSourceResolver(project: fixtureProject)
+                // This account-free fixture has no narration/song bed. Supplying a real
+                // source resolver must not trigger a device-recipe API fetch for that empty lane.
+                deviceNarrationResolutionGeneration = narrationOwnerGeneration(document)
                 // Resolve the admitted photo through the ordinary verified disk-cache path on selection.
                 resolvedSources?.removeValue(forKey: 1)
             }

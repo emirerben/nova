@@ -249,10 +249,17 @@ struct NativeSplitScreenControls: View {
             .disabled(!session.canDuplicateSelectedClip)
             .accessibilityIdentifier("native-editor-split-duplicate")
             .accessibilityHint(section == nil ? "Adds another copy after this clip" : "Requires enough unused time after this clip in the same panel")
-        Menu("Replace footage") {
+        Menu {
             ForEach(session.splitScreenSourceChoices, id: \.clipIndex) { source in
                 Button(source.label) { session.replaceSelectedClipSource(clipIndex: source.clipIndex) }
             }
+        } label: {
+            HStack {
+                Text("Replace footage")
+                Spacer()
+                Image(systemName: "chevron.up.chevron.down").foregroundStyle(.secondary)
+            }
+            .contentShape(Rectangle())
         }
         .disabled(session.splitScreenSourceChoices.isEmpty)
         .accessibilityIdentifier("native-editor-split-replace")
