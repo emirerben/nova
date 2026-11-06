@@ -90,12 +90,14 @@ Code: `services/suggestions/pinned.py` (ring reads, lane allow-list, rebuild),
   work), so they are not shown over an editor head; they return after Undo or when the head is the
   plan again. With `KRIA_SUGGESTION_EDITOR_TRIGGERS_ENABLED` off the digest does not track the head,
   so the strip below is what keeps a frozen set honest.
-- **Handled cards never come back.** A refreshed set has a new `set_id`, but a dismissed or applied
-  card is hidden on read by its kind and target fingerprint (`suggestion_serve.fingerprint`: kind,
-  clip media id or ordinal, text bar, moment), from both `suggestions` and the legacy `chips`
-  (the client falls back to chips when the cards run out). The last 32 fingerprints are kept after
-  the ring rolls over. A kind with no target (captions, music level, hook) is therefore hidden for
-  that creator's thread after one apply, even if they later undo that change.
+- **Handled cards stay handled until the tap is taken back.** A refreshed set has a new `set_id`,
+  but a dismissed or applied card is hidden on read by its kind and target fingerprint
+  (`suggestion_serve.fingerprint`: kind, clip media id or ordinal, text bar, moment), from both
+  `suggestions` and the legacy `chips` (the client falls back to chips when the cards run out). The
+  last 32 fingerprints are kept after the ring rolls over. A kind with no target (captions, music
+  level, hook) is therefore hidden for that creator's thread after one apply. A tap that is taken
+  back (Undo, a deny, expiry, the sweep, a cancel, a claim that finds the video moved) makes the
+  card an offer again, see "Undo takes the whole tap back".
 - **No refusal is silent.** Every reply a tap can end in without applying (the planner's refusals,
   the consent, mark, readiness and choice gates, and the commit's error replies) carries the typed
   `suggestion_pin` record `{set_id, id, outcome: "refused", reason}` on the assistant event AND on
@@ -110,9 +112,11 @@ Code: `services/suggestions/pinned.py` (ring reads, lane allow-list, rebuild),
   `base_moved`. The commit also fences the video: it refuses `base_moved` when the saved variant's
   generation differs from the one the tap was planned against, or from the one the agent session
   last read (`tasks/kria_runtime._restate_video_moved`). A native-editor Save moves that generation
-  without writing a draft, and a restated plan holds none of the Save's edits. An editor-op tap is
-  built on the saved video, so it re-syncs the session's pointer instead. A restate whose clips
-  changed after planning is the same typed refusal, not a failed turn.
+  without writing a draft, and a restated plan holds none of the Save's edits. The serve asks the
+  same question (`pinned.save_unread`) and offers no restating card while a Save is unread. An
+  editor-op tap is built on the saved video, so it re-syncs the session's pointer instead (and
+  Undo of that draft puts it back, below). A restate whose clips changed after planning is the same
+  typed refusal, not a failed turn.
 - **Reason codes.** The planner-side codes are the constants of `services/suggestions/pinned`; the
   codes of the commit's own stops (`consent_required`, `mark_needed`, `requirements_not_ready`,
   `choice_needed`, `request_too_long`) are the `_PIN_*` strings in `tasks/kria_runtime.py`, plain
@@ -122,15 +126,30 @@ Code: `services/suggestions/pinned.py` (ring reads, lane allow-list, rebuild),
   ask (KRI-129). So no brief version is written for it, its receipts are dropped (they judged a
   brief the refusal rolled back) and no "make it without these" question is offered (answering it
   would not apply the card).
-- **Undo takes the whole tap back.** The pinned commit keeps its footprint on the draft's execution
-  (`result["pinned_undo"]`: the requirement ids it wrote, the card's pin, and for the filler card
-  the setting's pre-tap values). `undo_draft` withdraws those requirements as a server waiver in a
-  new brief version, restores `speech_cleanup_enabled` / `user_edited` if the tap's flip is still in
-  force, and clears the card's applied mark so it is an offer again (a tap on it applies once, not
-  twice). What a later turn or the creator changed since is left alone. Limits: a fingerprint a GET
-  already folded into the thread's kept list stays (`suggestion_serve.fold_suppressed`), so a new
-  set may not offer the card again; and a hook's creative-copy decision stays in the event log
+- **Undo takes the whole tap back.** Every pinned tap keeps its footprint on the draft's execution
+  (`result["pinned_undo"]`: the card's pin and turn, the requirement ids it wrote, for the filler
+  card the setting's pre-tap values, and the card's fingerprint with whether the creator's kept
+  list already held it). It is written with or without the creative brief. `undo_draft` withdraws
+  those requirements as a server waiver in a new brief version, restores
+  `speech_cleanup_enabled` / `user_edited` if the tap's flip is still in force, clears the card's
+  applied mark AND any refused mark a repeat of the tap left on that entry, and removes the
+  fingerprint a GET folded into the kept list while the tap was pending (unless the creator had
+  dismissed the card before: a dismissed card stays dismissed). The card is an offer again (a tap
+  on it applies once, not twice). What a later turn or the creator changed since is left alone.
+  A staged approval that ends without a render (deny, expiry, the sweep, a cancel, a claim that
+  finds the video moved) takes back the same footprint, but only when the tap wrote a requirement
+  or a setting: the draft of an editor tap that wrote neither is still the head, so its card stays
+  spent until Undo. Limit: a hook's creative-copy decision stays in the event log
   (`fold_creative_copy(include_suggestions=True)`), so the hook card is still spent after Undo.
+- **Undo puts the session's pointer back.** An editor-op draft is built on the saved video, so its
+  commit moves `session.target_generation_id` (the video the agent last read) onto it. The draft
+  keeps the value it replaced (`result["pointer_sync"]`, written behind
+  `KRIA_SUGGESTION_PINNED_TAPS_ENABLED`) and `undo_draft` restores it, with the session locked
+  before the turns (Plan -> PlanItem -> Job -> Session -> Turn), only when nothing moved the pointer
+  since. Without that, Save -> editor card -> Undo left the pointer on the saved video while the
+  head was the plan again, which lifted the Save fence below over a plan that holds none of the
+  Save's edits. The plan-review undo (`kria/plan_review`) syncs the pointer the same way and does
+  not use this record yet.
 
 ### Serve and tap agree (`suggestion_serve._strip_dead_cards`)
 
@@ -158,10 +177,12 @@ cards out (what cannot be proven is not offered). The questions, in the tap's or
    (`plan_facts_from_strategy` -> `build_receipts` -> `needs_creator_choice`) about the same plan
    and brief. It reads only the plan and the brief; facts that need the phone montage preflight or
    the research step stay unknown, which is an unchecked receipt, never a verdict. An account on
-   approval readiness (`KRIA_APPROVAL_READINESS_*`) gets no restating card at all: the pinned
-   restate never resolves `planned.readiness_manifest`, so `assess_readiness` answers "I haven't
-   established which renderer can make this edit yet" for every requirement. Remove that switch
-   when `plan_pinned_suggestion_turn` resolves the manifest the way `_plan_with_live_agent` does.
+   approval readiness (`KRIA_APPROVAL_READINESS_*`) is asked the same questions: the pinned restate
+   resolves `planned.readiness_manifest` through `tasks/kria_runtime._with_approval_readiness`,
+   the helper `_plan_with_live_agent` uses, so `assess_readiness` judges the draft against the real
+   renderer. Not asked at serve: the renderer's own policy question (`check_strategy_for_runtime_v2`
+   inside `assess_readiness`), so a plan the renderer refuses outright (a native render with no
+   clip attached) still serves a card whose tap answers `requirements_not_ready`.
 4. **A plan to restate** (`pinned.restate_base`): no strategy draft, or a head that is newer
    editor work, leaves the restating cards out.
 
@@ -242,7 +263,15 @@ every Unicode letter with a frozen copy of the original check.
 one they skip, unless `NOVA_REQUIRE_POSTGRES_TESTS=1` (`tests/postgres_required.py`), which only the
 api test shards in `ci.yml` set: there a missing database fails collection. It is not keyed on
 `CI`, because the "Structural evals" job runs `pytest tests/evals/` with `CI=true` and no Postgres
-service. Pinned by `tests/evals/test_suggestion_gates_ci_guard.py`.
+service. Pinned by `tests/evals/test_suggestion_gates_ci_guard.py`. `tests/tasks/test_reaper_jsonpath.py`
+follows the same rule at both of its skip sites (no `*_test` database, database unreachable): a
+laptop run skips, a run that sets the variable fails. The harness imports
+`app.tasks.kria_suggester` before any fixture patches `enqueue_suggester` (`driver.py`,
+`conftest.py`): the task binds the name on first import, so importing it under the recorder kept the
+recorder for the rest of the process and failed two freshness tests whenever the harness ran first.
+`tests/tasks/test_kria_pinned_r5_ci_wiring.py` runs both in a child pytest, and checks that the
+screens-leg step of `ci.yml` runs and verifies every `KriaUITests/` test the `kri-756-suggestion-chips`
+journey names.
 
 The end-to-end proof (`tests/e2e_suggestions`, `tests/e2e_suggestions/README.md`) drives the real
 path for every kind in English and Turkish: GET -> the real worker body with a cassette -> GET ->
