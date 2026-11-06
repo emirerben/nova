@@ -666,10 +666,8 @@ async def _restate_held(
     verdict (an unknown fact is an unchecked receipt), so what this holds back is what the plan
     itself falls short of.
 
-    An account on approval readiness (KRI-721) is held back whole: the pinned restate never
-    resolves the readiness manifest (``planned.readiness_manifest`` stays None), so
-    ``assess_readiness`` answers "I haven't established which renderer can make this edit yet"
-    for every requirement and every restating tap is refused.
+    An account on approval readiness (KRI-721) is asked the same questions: the pinned restate
+    resolves the readiness manifest like the live planner does.
     """
     from app.kria.brief import load_latest_brief  # noqa: PLC0415
     from app.kria.brief_checks import (  # noqa: PLC0415
@@ -684,8 +682,6 @@ async def _restate_held(
     from app.services.suggestions import pinned  # noqa: PLC0415
 
     creator_id = getattr(thread, "creator_id", None)
-    if settings.approval_readiness_for(creator_id):
-        return "readiness_manifest_unresolved"
     base = await pinned.restate_base(db, thread_id=thread.id, ctx=ctx)
     if base.strategy is None:
         return base.reason or "no_plan"

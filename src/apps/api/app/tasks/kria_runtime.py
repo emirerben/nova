@@ -3990,83 +3990,12 @@ async def _plan_with_live_agent(
                     ),
                     **scoped,
                 )
-                if (
-                    settings.approval_readiness_for(snapshot["creator_id"])
-                    and planned.plan.mode == "act"
-                ):
-                    strategy_intent = next(
-                        (
-                            intent
-                            for intent in planned.plan.intents
-                            if intent.tool_name == "draft.apply_strategy"
-                        ),
-                        None,
-                    )
-                    if any(intent.tool_name == "render.request" for intent in planned.plan.intents):
-                        from app.kria.approval_readiness import (
-                            resolve_readiness_manifest,  # noqa: PLC0415
-                        )
-
-                        item = await db.get(
-                            PlanItem, uuid.UUID(str(snapshot["item_id"])), populate_existing=True
-                        )
-                        manifest = await resolve_readiness_manifest(
-                            db,
-                            item,
-                            strategy_intent.arguments["strategy"] if strategy_intent else None,
-                        )
-                        if strategy_intent is not None:
-                            from app.agents._schemas.creator_agent import (
-                                CreativeStrategy,  # noqa: PLC0415
-                            )
-                            from app.kria.strategy_policy import (  # noqa: PLC0415
-                                RefusedStrategy,
-                                check_strategy_for_runtime_v2,
-                            )
-
-                            # Resolve defaults against the PROPOSED renderer before
-                            # offering approval, then save that exact canonical strategy.
-                            # The assessor and approval reader still reject later repairs.
-                            checked = check_strategy_for_runtime_v2(
-                                manifest,
-                                CreativeStrategy.model_validate(
-                                    strategy_intent.arguments["strategy"]
-                                ),
-                                ask_before_simplifying=True,
-                                ask_about_stated_settings=True,
-                            )
-                            if not isinstance(checked, RefusedStrategy):
-                                canonical = strategy_intent.model_copy(
-                                    update={
-                                        "arguments": {
-                                            **strategy_intent.arguments,
-                                            "strategy": checked.strategy.model_dump(
-                                                mode="json", exclude_none=True
-                                            ),
-                                            "summary": " ".join(
-                                                [
-                                                    str(
-                                                        strategy_intent.arguments.get("summary")
-                                                        or ""
-                                                    ),
-                                                    *checked.notices,
-                                                ]
-                                            ).strip()[:1000],
-                                        },
-                                    }
-                                )
-                                planned = replace(
-                                    planned,
-                                    plan=planned.plan.model_copy(
-                                        update={
-                                            "intents": [
-                                                canonical if i is strategy_intent else i
-                                                for i in planned.plan.intents
-                                            ],
-                                        }
-                                    ),
-                                )
-                        planned = replace(planned, readiness_manifest=manifest)
+                planned = await _with_approval_readiness(
+                    db,
+                    planned,
+                    creator_id=snapshot["creator_id"],
+                    item_id=snapshot["item_id"],
+                )
                 return planned
     finally:
         turn_deadline.reset(deadline)
@@ -4079,6 +4008,90 @@ async def _plan_with_live_agent(
             await heartbeat
         finally:
             await engine.dispose()
+
+
+async def _with_approval_readiness(
+    db,  # noqa: ANN001 - SQLAlchemy AsyncSession
+    planned: PlannedKriaTurn,
+    *,
+    creator_id: Any,  # noqa: ANN401
+    item_id: Any,  # noqa: ANN401
+) -> PlannedKriaTurn:
+    """Resolve the renderer an approval-readiness account's draft is judged against (KRI-721).
+
+    Shared by the live planner and the pinned suggestion planner: a plan that asks for a render
+    carries ``readiness_manifest`` (and its strategy resolved against that renderer), or
+    ``assess_readiness`` can establish nothing and refuses every requirement. A plan with no
+    render request, and an account not on readiness, come back untouched.
+    """
+    if settings.approval_readiness_for(creator_id) and planned.plan.mode == "act":
+        strategy_intent = next(
+            (
+                intent
+                for intent in planned.plan.intents
+                if intent.tool_name == "draft.apply_strategy"
+            ),
+            None,
+        )
+        if any(intent.tool_name == "render.request" for intent in planned.plan.intents):
+            from app.kria.approval_readiness import (
+                resolve_readiness_manifest,  # noqa: PLC0415
+            )
+
+            item = await db.get(PlanItem, uuid.UUID(str(item_id)), populate_existing=True)
+            manifest = await resolve_readiness_manifest(
+                db,
+                item,
+                strategy_intent.arguments["strategy"] if strategy_intent else None,
+            )
+            if strategy_intent is not None:
+                from app.agents._schemas.creator_agent import (
+                    CreativeStrategy,  # noqa: PLC0415
+                )
+                from app.kria.strategy_policy import (  # noqa: PLC0415
+                    RefusedStrategy,
+                    check_strategy_for_runtime_v2,
+                )
+
+                # Resolve defaults against the PROPOSED renderer before
+                # offering approval, then save that exact canonical strategy.
+                # The assessor and approval reader still reject later repairs.
+                checked = check_strategy_for_runtime_v2(
+                    manifest,
+                    CreativeStrategy.model_validate(strategy_intent.arguments["strategy"]),
+                    ask_before_simplifying=True,
+                    ask_about_stated_settings=True,
+                )
+                if not isinstance(checked, RefusedStrategy):
+                    canonical = strategy_intent.model_copy(
+                        update={
+                            "arguments": {
+                                **strategy_intent.arguments,
+                                "strategy": checked.strategy.model_dump(
+                                    mode="json", exclude_none=True
+                                ),
+                                "summary": " ".join(
+                                    [
+                                        str(strategy_intent.arguments.get("summary") or ""),
+                                        *checked.notices,
+                                    ]
+                                ).strip()[:1000],
+                            },
+                        }
+                    )
+                    planned = replace(
+                        planned,
+                        plan=planned.plan.model_copy(
+                            update={
+                                "intents": [
+                                    canonical if i is strategy_intent else i
+                                    for i in planned.plan.intents
+                                ],
+                            }
+                        ),
+                    )
+            planned = replace(planned, readiness_manifest=manifest)
+    return planned
 
 
 async def _plan_pinned_turn(
@@ -4097,7 +4110,7 @@ async def _plan_pinned_turn(
     sender = bind_sending_build(protocol)
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
-            return await plan_pinned_suggestion_turn(
+            planned = await plan_pinned_suggestion_turn(
                 db,
                 thread_id=uuid.UUID(str(snapshot["thread_id"])),
                 item_id=uuid.UUID(str(snapshot["item_id"])),
@@ -4106,6 +4119,14 @@ async def _plan_pinned_turn(
                 pin=snapshot["pinned_suggestion"],
                 editor_state=parse_editor_state(editor_state),
                 client_protocol=protocol,
+            )
+            # A restate asks for the render approval, so it is judged like any other draft that
+            # does: against the renderer the live planner would have resolved.
+            return await _with_approval_readiness(
+                db,
+                planned,
+                creator_id=snapshot["creator_id"],
+                item_id=snapshot["item_id"],
             )
     finally:
         unbind_sending_build(sender)
