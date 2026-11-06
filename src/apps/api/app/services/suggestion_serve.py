@@ -210,8 +210,10 @@ def brief_headline(brief: Any) -> str | None:
 
 def needed_media(brief: Any, media_ids: Sequence[str]) -> frozenset[str]:
     """Media the creator's own request depends on: a clip a requirement names, or every clip
-    when a requirement orders, selects or labels clips in a way this cannot resolve (KRI-129).
-    Over-reporting only hides a duplicates card; it never lets one remove a requested clip."""
+    when a requirement orders, selects or labels clips in a way this cannot resolve, or states the
+    video's length (KRI-129). Over-reporting only hides a duplicates card; it never lets one remove
+    a requested clip or move a requested length. Typed data only: a requirement's kind, scope and
+    ``duration_s`` fact, never its words."""
     from app.kria.asset_holds import resolve_clip_scope  # noqa: PLC0415
 
     live = getattr(brief, "live", None)
@@ -226,6 +228,11 @@ def needed_media(brief: Any, media_ids: Sequence[str]) -> frozenset[str]:
                 return everything
             needed.add(resolved)
         elif req.kind in {"order", "select", "text_sequence"} or req.scope == "per_clip":
+            return everything
+        elif req.kind == "timing" and req.facts.get("duration_s") is not None:
+            # A stated length: taking any clip out moves it, and the tap records no receipt for
+            # the creator's own ask. (A freeze or a moment's seconds carries the fact too and
+            # withholds as well: telling them apart takes their words.)
             return everything
     return frozenset(needed)
 
