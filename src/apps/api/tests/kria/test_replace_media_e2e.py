@@ -323,6 +323,9 @@ def object_store(monkeypatch: pytest.MonkeyPatch):
     )
     monkeypatch.setattr(storage, "signed_put_url", lambda *a, **k: "https://store.test/put")
     monkeypatch.setattr(storage, "signed_get_url", lambda *a, **k: "https://store.test/get")
+    monkeypatch.setattr(
+        storage, "signed_download_url", lambda *a, **k: "https://store.test/download"
+    )
     for name in (
         "delete_object_best_effort",
         "delete_object_generation",
