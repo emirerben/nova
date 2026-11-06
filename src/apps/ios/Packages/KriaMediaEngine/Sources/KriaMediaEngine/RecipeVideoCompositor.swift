@@ -441,7 +441,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
     /// subjects never inherit each other's placement or segmentation history.
     private func composeOccurrenceSpeakers(_ layers: [RecipeVideoLayer], onto canvas: CIImage,
         instruction: RecipeVideoInstruction, request: AVAsynchronousVideoCompositionRequest, time: Double) throws -> CIImage {
-        let bounds = CGRect(origin: .zero, size: instruction.canvas)
+        let bounds = instruction.canvas
         let backgrounds = layers.filter { $0.speakerRole == .background }
         let speakers = layers.filter { $0.speakerRole == .speaker }
         let first = layers.firstIndex { $0.speakerRole == .speaker } ?? 0
@@ -464,7 +464,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                 raw.speakerFrameOverride = nil
                 let whole = instruction.speakerSlice == .whole
                 let solo = RecipeVideoInstruction(timeRange: instruction.timeRange,
-                    layers: backgrounds + [raw] + instruction.layers.filter { $0.backdropAssetID != nil }, text: [], canvas: instruction.canvas,
+                    layers: backgrounds + [raw] + instruction.layers.filter { $0.backdropAssetID != nil }, text: [], canvas: instruction.canvas.size,
                     cameraPulses: instruction.cameraPulses, transparentBackground: true,
                     speakerMatte: instruction.speakerMatte?.forPanel("occurrence:" + (layer.clipID ?? "")),
                     speakerFrame: layer.effectiveSpeakerFrame(instruction.speakerFrame),
