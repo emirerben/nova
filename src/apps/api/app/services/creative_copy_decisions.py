@@ -275,18 +275,94 @@ class CreativeCopyState:
     question_id: str | None = None
 
 
+# A suggestion card shows its exact words and the creator's tap approves them. The server records
+# that approval from the stored card, in the draft's own transaction, as a resolution with
+# ``source="suggestion"``; it is neither words the creator typed (``creator_supplied``) nor a
+# wording question they answered. The tap is the proof, so the fold honors the record only when
+# the creator's own event, earlier in the stream, carries the same stamped pin.
+SOURCE_SUGGESTION = "suggestion"
+SUGGESTION_APPROVED = "suggestion_approved"
+# Mirrors ``services/suggestions/pinned.PIN_KEY`` (that module imports the suggestion engine, which
+# this one must not; a test pins the two equal).
+SUGGESTION_PIN_KEY = "pinned_suggestion"
+
+
+def suggestion_resolution(
+    *, text: str, dependency_digest: str, set_id: str, suggestion_id: str
+) -> dict[str, Any]:
+    """The ``creative_copy_resolution`` payload for a tapped suggestion card's opening words.
+
+    Written by the server from the stored card, never by a model. ``set_id`` / ``suggestion_id``
+    name the pin the creator's tap stamped; the fold ignores a record without it.
+    """
+    clean = normalize_copy(text)
+    if not clean or not set_id or not suggestion_id:
+        raise ValueError("a suggestion decision needs its words and the card it came from")
+    return {
+        "target": "opening_title",
+        "status": SUGGESTION_APPROVED,
+        "source": SOURCE_SUGGESTION,
+        "text": clean,
+        "dependency_digest": dependency_digest,
+        "suggestion": {"set_id": set_id, "id": suggestion_id},
+    }
+
+
+def _suggestion_state(
+    resolution: Mapping[str, Any], taps: set[tuple[str, str]], dependency_digest: str
+) -> CreativeCopyState | None:
+    text, card = resolution.get("text"), resolution.get("suggestion")
+    if (
+        resolution.get("status") != SUGGESTION_APPROVED
+        or resolution.get("target") != "opening_title"
+        or not isinstance(text, str)
+        or not isinstance(card, Mapping)
+    ):
+        return None
+    clean = normalize_copy(text)
+    pin = (str(card.get("set_id") or ""), str(card.get("id") or ""))
+    if not clean or not all(pin) or pin not in taps:
+        return None
+    current = resolution.get("dependency_digest") == dependency_digest
+    return CreativeCopyState(
+        target="opening_title",
+        dependency_digest=str(resolution.get("dependency_digest") or ""),
+        status="approved" if current else "stale",
+        candidate=clean,
+        approved=clean if current else None,
+        provenance=SOURCE_SUGGESTION,
+    )
+
+
 def fold_creative_copy(
-    events: Events, *, dependency_digest: str
+    events: Events, *, dependency_digest: str, include_suggestions: bool = False
 ) -> dict[Target, CreativeCopyState]:
-    """Fold only selections tied to exact persisted questions and current media."""
+    """Fold only selections tied to exact persisted questions and current media.
+
+    ``include_suggestions`` also folds the decisions of tapped suggestion cards. It is off for
+    every consent gate and planner read on purpose: those treat any state as "copy is being
+    settled" (editor shortcuts skip, a strategy-less draft is refused), and a hook the creator
+    tapped onto the draft is just an edit, not a negotiation. Only readers that ask "did the
+    creator already decide this?" (the suggestion kinds) opt in.
+    """
     questions: dict[str, Mapping[str, Any]] = {}
     latest_question_id: dict[Target, str] = {}
     states: dict[Target, CreativeCopyState] = {}
+    taps: set[tuple[str, str]] = set()
     for role, payload in events:
         if not isinstance(payload, Mapping):
             continue
         if role == "assistant":
             resolution = payload.get("creative_copy_resolution")
+            if (
+                include_suggestions
+                and isinstance(resolution, Mapping)
+                and resolution.get("source") == SOURCE_SUGGESTION
+            ):
+                decided = _suggestion_state(resolution, taps, dependency_digest)
+                if decided is not None:
+                    latest_question_id.pop(decided.target, None)
+                    states[decided.target] = decided
             if (
                 isinstance(resolution, Mapping)
                 and resolution.get("target") in {"opening_title", "closing_title"}
@@ -345,6 +421,9 @@ def fold_creative_copy(
             continue
         if role != "user":
             continue
+        pin = payload.get(SUGGESTION_PIN_KEY) if include_suggestions else None
+        if isinstance(pin, Mapping) and not pin.get("unresolved"):
+            taps.add((str(pin.get("set_id") or ""), str(pin.get("id") or "")))
         selection = payload.get("choice_selection")
         if not isinstance(selection, Mapping):
             continue
@@ -506,6 +585,9 @@ def latest_open_creative_question(events: Events) -> dict[str, Any] | None:
 __all__ = [
     "APPROVED_COPY_FACT",
     "CREATIVE_COPY_CONFLICT",
+    "SOURCE_SUGGESTION",
+    "SUGGESTION_APPROVED",
+    "SUGGESTION_PIN_KEY",
     "CreativeCopyState",
     "authorship_question",
     "bind_approved_copy",
@@ -514,5 +596,6 @@ __all__ = [
     "latest_open_creative_question",
     "media_digest",
     "normalize_copy",
+    "suggestion_resolution",
     "wording_question",
 ]

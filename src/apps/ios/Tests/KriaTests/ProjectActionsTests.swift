@@ -443,6 +443,301 @@ import SwiftData
         XCTAssertFalse(model.isLoading)
     }
 
+    /// Failure modes: (1) New chat stayed dead while the first list loaded; (2) once enabled, the workspace
+    /// opening that list put the creator back on the remembered chat; (3) the launch sweep deleted the empty
+    /// chat they had just opened.
+    func testNewChatDuringWorkspaceOpenStaysSelectedAndIsNotSwept() async throws {
+        let rememberedID = UUID(), createdID = PreviewFixtures.projectID
+        let listRequested = expectation(description: "Project list suspended")
+        var heldList: ProjectActionDeferredProtocol?
+        var threadReads: [String] = []
+        ProjectActionDeferredProtocol.handler = { transport in
+            let path = transport.request.url?.path ?? ""
+            if path == "/creation-threads/capabilities" {
+                transport.finish(200, Data(#"{"formats":[],"runtime_versions":[1]}"#.utf8))
+            } else if transport.request.httpMethod == "POST" {
+                transport.finish(200, self.response(createdID, title: "New chat"))
+            } else if path == "/creation-threads" {
+                heldList = transport; listRequested.fulfill()
+            } else {
+                threadReads.append(path)
+                transport.finish(404, Data())
+            }
+        }
+        // A launch normally has the cached list: the remembered chat is there, and the list the creator
+        // outran is dropped, so the remembered chat is what the workspace would restore.
+        let container = try ModelContainer(for: CachedProject.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let cache = CacheRepository(context: container.mainContext)
+        try cache.upsert([ProjectSummary(id: rememberedID, title: "Remembered", status: .draft, updatedAt: .distantPast, posterURL: nil)])
+        let model = AppModel(api: deferredAPI(), cache: cache)
+        let opening = Task { await model.openWorkspace(preferredProjectID: rememberedID) }
+        await fulfillment(of: [listRequested], timeout: 3)
+        XCTAssertTrue(model.isLoading, "setup: the list is still loading")
+
+        await model.createProject()
+        XCTAssertEqual(model.selectedProject?.id, createdID)
+
+        let list = Data("[".utf8) + response(createdID, title: "New chat") + Data(",".utf8) + response(rememberedID, title: "Remembered") + Data("]".utf8)
+        try XCTUnwrap(heldList).finish(200, list)
+        await opening.value
+        XCTAssertEqual(model.selectedProject?.id, createdID, "A list that finishes later must not pull the creator off the chat they opened")
+
+        await model.sweepAbandonedChats()
+        XCTAssertFalse(threadReads.contains("/creation-threads/\(createdID.uuidString)"), "The launch sweep is for chats a killed app left behind, not the one just opened")
+    }
+
+    private func heldCreateHandler(held: @escaping @MainActor (ProjectActionDeferredProtocol) -> Void) {
+        ProjectActionDeferredProtocol.handler = { transport in
+            let path = transport.request.url?.path ?? ""
+            if path == "/creation-threads/capabilities" { transport.finish(200, Data(#"{"formats":[],"runtime_versions":[1]}"#.utf8)) }
+            else if transport.request.httpMethod == "POST" { held(transport) }
+            else { transport.finish(404, Data()) }
+        }
+    }
+
+    /// Failure modes: the tap showed nothing until the POST returned; a second tap made a second chat; the
+    /// pending conversation was selectable as if it had a thread id.
+    func testNewChatShowsTheConversationBeforeTheServerReplies() async throws {
+        var posts: [ProjectActionDeferredProtocol] = []
+        let posted = expectation(description: "create posted")
+        heldCreateHandler { posts.append($0); posted.fulfill() }
+        let existing = PreviewFixtures.projects[0]
+        let model = AppModel(api: deferredAPI())
+        model.selectProject(existing)
+
+        model.startNewChat()
+        XCTAssertNotNil(model.pendingNewChat, "The new conversation is on screen before any network answer")
+        XCTAssertNil(model.pendingNewChat?.failure)
+        XCTAssertEqual(model.selectedProject?.id, existing.id, "No thread id exists yet, so nothing is selected")
+        XCTAssertTrue(model.isCreatingProject)
+        model.startNewChat()
+        await fulfillment(of: [posted], timeout: 3)
+        XCTAssertEqual(posts.count, 1, "Repeated taps are one chat")
+
+        posts[0].finish(200, response(PreviewFixtures.projectID, title: "New chat"))
+        for _ in 0..<200 where model.pendingNewChat != nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertNil(model.pendingNewChat)
+        XCTAssertEqual(model.selectedProject?.id, PreviewFixtures.projectID)
+        XCTAssertNotNil(model.takeCreatedThread(PreviewFixtures.projectID), "The chat opens on the create reply, with no read-back")
+    }
+
+    /// Failure modes: a failed create vanished (the drawer was already closed), or could not be retried.
+    func testFailedNewChatStaysVisibleAndRetries() async throws {
+        var posts: [ProjectActionDeferredProtocol] = []
+        var arrived = 0
+        heldCreateHandler { posts.append($0); arrived += 1 }
+        let existing = PreviewFixtures.projects[0]
+        let model = AppModel(api: deferredAPI())
+        model.selectProject(existing)
+
+        model.startNewChat()
+        for _ in 0..<300 where arrived < 1 { try await Task.sleep(for: .milliseconds(10)) }
+        posts[0].finish(500, Data())
+        for _ in 0..<300 where model.pendingNewChat?.failure == nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertNotNil(model.pendingNewChat?.failure, "The failure shows on the pending conversation")
+        XCTAssertFalse(model.isCreatingProject)
+        XCTAssertEqual(model.selectedProject?.id, existing.id)
+
+        model.startNewChat()
+        XCTAssertNil(model.pendingNewChat?.failure, "Try again returns to the starting state")
+        for _ in 0..<300 where arrived < 2 { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(arrived, 2)
+        posts[1].finish(200, response(PreviewFixtures.projectID, title: "New chat"))
+        for _ in 0..<300 where model.pendingNewChat != nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(model.selectedProject?.id, PreviewFixtures.projectID)
+
+        model.startNewChat()
+        for _ in 0..<300 where arrived < 3 { try await Task.sleep(for: .milliseconds(10)) }
+        posts[2].finish(500, Data())
+        for _ in 0..<300 where model.pendingNewChat?.failure == nil { try await Task.sleep(for: .milliseconds(10)) }
+        model.cancelPendingNewChat()
+        XCTAssertNil(model.pendingNewChat, "Back to my chats leaves the failure")
+        XCTAssertEqual(model.selectedProject?.id, PreviewFixtures.projectID)
+    }
+
+    /// Failure mode: opening another chat while the new one was being made was undone when the create replied.
+    func testNewChatDoesNotPullTheCreatorBackAfterTheyOpenAnotherChat() async throws {
+        let createdID = UUID()
+        var posts: [ProjectActionDeferredProtocol] = []
+        var arrived = 0
+        heldCreateHandler { posts.append($0); arrived += 1 }
+        let existing = PreviewFixtures.projects[0]
+        let model = AppModel(api: deferredAPI())
+        model.selectProject(existing)
+        model.startNewChat()
+        for _ in 0..<300 where arrived < 1 { try await Task.sleep(for: .milliseconds(10)) }
+
+        XCTAssertTrue(model.selectProject(existing))
+        XCTAssertNil(model.pendingNewChat, "Choosing a chat leaves the pending one")
+        posts[0].finish(200, response(createdID, title: "New chat"))
+        for _ in 0..<300 where model.isCreatingProject { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(model.selectedProject?.id, existing.id, "Their latest choice stands")
+        XCTAssertNil(model.takeCreatedThread(createdID))
+    }
+
+    /// SYNTHETIC, not a device measurement: the transport answers the create call after an injected 500 ms.
+    /// It shows WHEN a conversation surface exists relative to that reply; it says nothing about real network
+    /// or server time, and no live speedup follows from it.
+    func testSyntheticNewChatSurfaceDoesNotWaitForTheInjectedCreateDelay() async throws {
+        let delayMs = 500
+        var created = false
+        ProjectActionDeferredProtocol.handler = { transport in
+            let path = transport.request.url?.path ?? ""
+            if path == "/creation-threads/capabilities" { transport.finish(200, Data(#"{"formats":[],"runtime_versions":[1]}"#.utf8)) }
+            else if transport.request.httpMethod == "POST" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delayMs)) {
+                    created = true
+                    transport.finish(200, self.response(PreviewFixtures.projectID, title: "New chat"))
+                }
+            } else { transport.finish(404, Data()) }
+        }
+        let model = AppModel(api: deferredAPI())
+        let clock = ContinuousClock()
+        let start = clock.now
+        model.startNewChat()
+        let surfaceMs = Int((clock.now - start).components.attoseconds / 1_000_000_000_000_000)
+        XCTAssertNotNil(model.pendingNewChat)
+        XCTAssertFalse(created, "setup: the delayed reply has not arrived when the surface exists")
+        try await waitFor { model.pendingNewChat == nil }
+        let realDuration = clock.now - start
+        let realMs = Int(realDuration.components.seconds * 1000) + Int(realDuration.components.attoseconds / 1_000_000_000_000_000)
+        print("SYNTHETIC new chat: injected create reply delay \(delayMs) ms; pending conversation present after \(surfaceMs) ms; real thread selected after \(realMs) ms")
+        XCTAssertTrue(created, "the create call really ran")
+        XCTAssertEqual(model.selectedProject?.id, PreviewFixtures.projectID)
+        XCTAssertGreaterThanOrEqual(realMs, delayMs)
+        XCTAssertLessThan(surfaceMs, 100)
+    }
+
+    private func isolatedDrafts() -> ChatDraftStore {
+        ChatDraftStore(defaults: UserDefaults(suiteName: "kria-test-drafts-\(UUID().uuidString)")!)
+    }
+
+    private func waitFor(_ condition: @MainActor () -> Bool) async throws {
+        for _ in 0..<500 where !condition() { try await Task.sleep(for: .milliseconds(10)) }
+    }
+
+    /// Failure modes: typing during the wait was impossible; the typed text leaked into the PRIOR chat's
+    /// draft, replaced it, or was lost when the create succeeded.
+    func testTextTypedWhileTheChatIsBeingMadeMovesToTheNewChatOnly() async throws {
+        let createdID = UUID()
+        var posts: [ProjectActionDeferredProtocol] = []
+        heldCreateHandler { posts.append($0) }
+        let existing = PreviewFixtures.projects[0]
+        let model = AppModel(api: deferredAPI(), chatDrafts: isolatedDrafts())
+        model.selectProject(existing)
+        model.chatDrafts.setDraft("prior unsent words", for: existing.id)
+
+        model.startNewChat()
+        model.setPendingNewChatDraft("typed during the wait")
+        XCTAssertEqual(model.pendingNewChat?.draft, "typed during the wait")
+        XCTAssertEqual(model.chatDrafts.draft(for: existing.id), "prior unsent words", "The pending chat never writes into another conversation")
+        try await waitFor { posts.count == 1 }
+
+        posts[0].finish(200, response(createdID, title: "New chat"))
+        try await waitFor { model.pendingNewChat == nil }
+        XCTAssertEqual(model.selectedProject?.id, createdID)
+        XCTAssertEqual(model.chatDrafts.draft(for: createdID), "typed during the wait")
+        XCTAssertEqual(model.chatDrafts.draft(for: existing.id), "prior unsent words")
+    }
+
+    /// Failure mode: a failed create threw away what the creator had typed, or the retry started empty.
+    func testTextSurvivesAFailedCreateAndItsRetry() async throws {
+        let createdID = UUID()
+        var posts: [ProjectActionDeferredProtocol] = []
+        heldCreateHandler { posts.append($0) }
+        let model = AppModel(api: deferredAPI(), chatDrafts: isolatedDrafts())
+        model.startNewChat()
+        model.setPendingNewChatDraft("first words")
+        try await waitFor { posts.count == 1 }
+        posts[0].finish(500, Data())
+        try await waitFor { model.pendingNewChat?.failure != nil }
+        XCTAssertEqual(model.pendingNewChat?.draft, "first words")
+        model.setPendingNewChatDraft("first words, edited after the failure")
+
+        model.startNewChat()
+        XCTAssertEqual(model.pendingNewChat?.draft, "first words, edited after the failure", "Try again is the same conversation")
+        try await waitFor { posts.count == 2 }
+        posts[1].finish(200, response(createdID, title: "New chat"))
+        try await waitFor { model.pendingNewChat == nil }
+        XCTAssertEqual(model.chatDrafts.draft(for: createdID), "first words, edited after the failure")
+    }
+
+    /// Failure mode: opening another chat during the wait dropped the typed text with the pending chat.
+    func testTextTypedBeforeOpeningAnotherChatIsKeptOnTheChatThatGetsMade() async throws {
+        let createdID = UUID()
+        var posts: [ProjectActionDeferredProtocol] = []
+        heldCreateHandler { posts.append($0) }
+        let existing = PreviewFixtures.projects[0]
+        let model = AppModel(api: deferredAPI(), chatDrafts: isolatedDrafts())
+        model.selectProject(existing)
+        model.startNewChat()
+        model.setPendingNewChatDraft("do not lose this")
+        try await waitFor { posts.count == 1 }
+        XCTAssertTrue(model.selectProject(existing))
+        posts[0].finish(200, response(createdID, title: "New chat"))
+        try await waitFor { !model.isCreatingProject }
+        XCTAssertEqual(model.selectedProject?.id, existing.id, "Their latest navigation stands")
+        XCTAssertEqual(model.chatDrafts.draft(for: createdID), "do not lose this")
+        XCTAssertEqual(model.chatDrafts.draft(for: existing.id), "")
+    }
+
+    /// Failure modes: from the camera roll the pending conversation was hidden behind the camera roll;
+    /// a failed create then left no way back.
+    func testNewChatFromTheCameraRollLeavesItAndFailureReturnsToIt() async throws {
+        var posts: [ProjectActionDeferredProtocol] = []
+        heldCreateHandler { posts.append($0) }
+        let model = AppModel(api: deferredAPI())
+        model.openCameraRoll()
+        XCTAssertTrue(model.showsCameraRoll)
+        model.startNewChat()
+        XCTAssertNotNil(model.pendingNewChat, "The view puts the pending chat ahead of the camera roll")
+        try await waitFor { posts.count == 1 }
+        posts[0].finish(500, Data())
+        try await waitFor { model.pendingNewChat?.failure != nil }
+        model.cancelPendingNewChat()
+        XCTAssertTrue(model.showsCameraRoll, "Back lands on the camera roll the creator came from")
+
+        model.startNewChat()
+        try await waitFor { posts.count == 2 }
+        posts[1].finish(200, response(PreviewFixtures.projectID, title: "New chat"))
+        try await waitFor { model.pendingNewChat == nil }
+        XCTAssertFalse(model.showsCameraRoll)
+        XCTAssertEqual(model.destination, .chat(PreviewFixtures.projectID))
+    }
+
+    /// Failure mode (review P2): typed text was lost when the creator left the pending chat for another chat or
+    /// the camera roll and the create then failed. It is kept, nothing is selected for them, and the next New
+    /// chat starts with it.
+    func testTextTypedBeforeLeavingIsRecoverableWhenTheCreateFailsLater() async throws {
+        for target in ["another chat", "camera roll"] {
+            var posts: [ProjectActionDeferredProtocol] = []
+            heldCreateHandler { posts.append($0) }
+            let existing = PreviewFixtures.projects[0], createdID = UUID()
+            let model = AppModel(api: deferredAPI(), chatDrafts: isolatedDrafts())
+            model.selectProject(existing)
+            model.chatDrafts.setDraft("prior words", for: existing.id)
+            model.startNewChat()
+            model.setPendingNewChatDraft("typed then left (\(target))")
+            try await waitFor { posts.count == 1 }
+            if target == "camera roll" { model.openCameraRoll() } else { XCTAssertTrue(model.selectProject(existing)) }
+
+            posts[0].finish(500, Data())
+            try await waitFor { !model.isCreatingProject }
+            XCTAssertNil(model.pendingNewChat, "\(target): a failure after leaving does not pull them back")
+            XCTAssertEqual(model.showsCameraRoll, target == "camera roll", "\(target): navigation untouched")
+            XCTAssertEqual(model.selectedProject?.id, existing.id)
+            XCTAssertEqual(model.chatDrafts.draft(for: existing.id), "prior words", "\(target): the previous chat's draft is unchanged")
+
+            model.startNewChat()
+            XCTAssertEqual(model.pendingNewChat?.draft, "typed then left (\(target))", "\(target): New chat again recovers the text")
+            try await waitFor { posts.count == 2 }
+            posts[1].finish(200, response(createdID, title: "New chat"))
+            try await waitFor { model.pendingNewChat == nil }
+            XCTAssertEqual(model.chatDrafts.draft(for: createdID), "typed then left (\(target))")
+            XCTAssertEqual(model.chatDrafts.draft(for: existing.id), "prior words")
+        }
+    }
+
     func testProjectListCannotReplaceNewerRenamedRevision() async throws {
         let project = PreviewFixtures.projects[0]
         let renamed = response(project.id, title: "Renamed on this device", revision: 7)

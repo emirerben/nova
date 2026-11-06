@@ -1,0 +1,51 @@
+{
+  "id": "b07_cringe_hook",
+  "why_bad": "thought-leadership 'secret nobody tells you' hook",
+  "expect": "fail",
+  "expect_failures": [
+    "copy_cringe"
+  ],
+  "input": {
+    "state": "first_prompt",
+    "language": "en",
+    "creator_request": "",
+    "issued": [
+      {
+        "kind": "hook",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e2"
+            ]
+          }
+        ]
+      }
+    ],
+    "evidence": {
+      "e2": {
+        "signal": "visual",
+        "fact": "opening clip shows hands pouring matcha into a bowl"
+      }
+    },
+    "already_in_edit": [],
+    "dismissed": [],
+    "untrusted_texts": [
+      "Matcha Monday",
+      "okay so today I am showing you my matcha routine"
+    ]
+  },
+  "output": {
+    "ranked": [
+      {
+        "kind": "hook",
+        "target_ids": [
+          "all"
+        ],
+        "why": "Opening shows matcha being poured",
+        "copy": "The secret nobody tells you about matcha",
+        "rank": 1
+      }
+    ]
+  }
+}

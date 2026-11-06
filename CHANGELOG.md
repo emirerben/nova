@@ -2,6 +2,56 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.24.0] - 2026-11-06
+
+### Changed
+- fix(ios): make New Chat immediate and reduce save/share waits (#2125) <!-- release-pr: 2125 -->
+
+## [0.88.23.0] - 2026-11-06
+
+### Changed
+- fix(receipts): Kria's review matches the video for unheard recordings, whole-video text and kept clips (Qendresa says-done C) (#2129) <!-- release-pr: 2129 -->
+
+## [0.88.22.0] - 2026-11-06
+
+### Changed
+- fix(kria): the video does what the brief asked for keep-whole, mute, whole-video text and title holds (Qendresa says-done group B) (#2130) <!-- release-pr: 2130 -->
+
+## [0.88.21.0] - 2026-11-06
+
+### Changed
+- fix(text-style): "no captions" no longer takes her text's place and colour (Qendresa case 3) (#2128) <!-- release-pr: 2128 -->
+
+## [0.88.20.0] - 2026-11-06
+
+### Changed
+- fix(captions): keep captions off the speaker's face when she is small in a corner (Qendresa case 1) (#2127) <!-- release-pr: 2127 -->
+
+## [0.88.19.0] - 2026-11-06
+
+### Changed
+- feat(ios): Talk to Camera instrumentation and device bench (KRI-1181) (#2120) <!-- release-pr: 2120 -->
+
+## [0.88.18.0] - 2026-11-06
+
+### Changed
+- Keep saved video edits reachable and safe to retry after render failure (#2126) <!-- release-pr: 2126 -->
+
+## [0.88.17.0] - 2026-11-06
+
+### Changed
+- feat(kria): AI suggestion cards that apply the checked edit on tap (dark) (#2109) <!-- release-pr: 2109 -->
+
+## [0.88.16.0] - 2026-11-06
+
+### Changed
+- fix(captions): phone Talking captions spell the names the creator typed and drop whisper's unsupported title case (Green 4/5) (#2097) <!-- release-pr: 2097 -->
+
+## [0.88.15.0] - 2026-11-06
+
+### Changed
+- feat(kria): replace a Talking take in an existing chat, dark behind MEDIA_REPLACE_ENABLED (KRI-1186) (#2124) <!-- release-pr: 2124 -->
+
 ## [0.88.14.0] - 2026-11-06
 
 ### Changed

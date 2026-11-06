@@ -1,6 +1,7 @@
 {
   "groups": {
     "creation": [
+      "KriaUITests/CreationUITests/testDelayedNewChatAcceptsTypingBeforeItsServerIdentityExists",
       "KriaUITests/SlidePostUITests/testLooksAppearOnThePhotoBeforeSavingWhenDeviceCapabilityIsEnabled",
       "KriaUITests/CreationUITests/testChatBubblesPreserveShapeAndWrappingAtAccessibilityTextSize",
       "KriaUITests/CreationUITests/testLongPressCopiesPromptsAndRepliesWithoutBlockingOptionTaps",
@@ -239,6 +240,9 @@
       "KriaUITests/GeneratedMediaUITests/testRejectedImageEditRequiresEditAndExplicitNewSubmission",
       "KriaUITests/GeneratedMediaUITests/testRejectedOverlayKeepsItsPromptAndTryAgainRunsAtOnce",
       "KriaUITests/GeneratedMediaUITests/testTwoOverlaysEachWithTheirOwnPromptAreUsedTogether",
+      "KriaUITests/CreationUITests/testSuggestionCardsInChatAndTheEditorImproveSheetShareOneSet",
+      "KriaUITests/CreationUITests/testDeclinedSuggestionCardRepliesNoLongerFitsThenTheRefreshedSet",
+      "KriaUITests/CreationUITests/testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize",
       "KriaUITests/UploadPlaceHintUITests/testLandscapeRecordingNextToTalkingTakeShowsHintAndMovesToOverlays",
       "KriaUITests/UploadPlaceHintUITests/testPortraitScreenRecordingByNameShowsHint",
       "KriaUITests/UploadPlaceHintUITests/testSingleTalkingTakeShowsNoHint",
@@ -579,6 +583,9 @@
     "src/apps/ios/Kria/Features/WhatsNewView.swift": "projects",
     "src/apps/ios/Kria/Features/AccountUITestTransport.swift": "projects",
     "src/apps/ios/Tests/KriaUITests/WhatsNewUITests.swift": "projects",
+    "src/apps/ios/Kria/Core/SuggestionCards.swift": "creation",
+    "src/apps/ios/Kria/Features/SuggestionCardsView.swift": "creation",
+    "src/apps/ios/Kria/Features/SuggestionCardsMocks.swift": "creation",
     "src/apps/ios/Tests/KriaUITests/FootageSourcesUITests.swift": "creation",
     "src/apps/ios/Kria/Features/ChatFootageViews.swift": "creation",
     "src/apps/ios/Kria/Features/GenerateImagePreviewHost.swift": "creation",

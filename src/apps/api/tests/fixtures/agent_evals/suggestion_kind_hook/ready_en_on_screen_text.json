@@ -1,0 +1,102 @@
+{
+ "name": "ready_en_on_screen_text",
+ "description": "Gemini read a sign, a brand and a one-word banner off the screen. None of it may come back as the hook.",
+ "tags": [
+  "gemini_metadata",
+  "on_screen_text"
+ ],
+ "context": {
+  "thread_id": "thread-ready_en_on_screen_text",
+  "state": "ready",
+  "language": "en",
+  "client_protocol": 13,
+  "media_digest": "digest-ready_en_on_screen_text",
+  "understanding": "n/a",
+  "runtime_version": 2,
+  "edit_format": "montage",
+  "clips": [
+   {
+    "media_id": "clip-1",
+    "ordinal": 1,
+    "kind": "video",
+    "subject": "a cafe counter",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 4.0,
+    "notable_moments": [],
+    "on_screen_text": "SUNDAY RESET CLUB",
+    "brands": [
+     "Blue Bottle"
+    ]
+   },
+   {
+    "media_id": "clip-2",
+    "ordinal": 2,
+    "kind": "video",
+    "subject": "a chalkboard menu",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 4.0,
+    "notable_moments": [],
+    "on_screen_text": "CHEERS"
+   },
+   {
+    "media_id": "clip-3",
+    "ordinal": 3,
+    "kind": "video",
+    "subject": "the first sip",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 4.0,
+    "notable_moments": [],
+    "brands": [
+     "Nike"
+    ]
+   }
+  ],
+  "render_generation_id": "gen-1",
+  "variant_id": "v1",
+  "snapshot_preset": "plain_montage",
+  "kind_inputs": {
+   "hook": {
+    "title_requirement": false,
+    "opening_copy": "",
+    "transcripts": [],
+    "general": [],
+    "on_screen": []
+   }
+  }
+ },
+ "expect": {
+  "hidden": null,
+  "copies": [
+   {
+    "copy": "Slow morning at the counter",
+    "reason": null
+   },
+   {
+    "copy": "Sunday reset starts here",
+    "reason": "reused_on_screen_text"
+   },
+   {
+    "copy": "Sunday reset club",
+    "reason": "reused_footage_text"
+   },
+   {
+    "copy": "Cheers to a quiet morning",
+    "reason": "reused_on_screen_text"
+   },
+   {
+    "copy": "Blue bottle mornings",
+    "reason": "reused_footage_text"
+   },
+   {
+    "copy": "Nike mornings",
+    "reason": "reused_on_screen_text"
+   }
+  ]
+ }
+}

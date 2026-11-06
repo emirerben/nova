@@ -62,7 +62,9 @@ public extension LocalExporting {
         let startedAt = Date()
         do {
             traceDeviceExportPhase("prepare")
-            let preview = try await AVPlayerPreviewComposer(branding: branding).makePreview(recipe: recipe, assetURLs: assetURLs)
+            let preview = try await EngineSignpost.measureAsync("talk.save.compose") {
+                try await AVPlayerPreviewComposer(branding: branding).makePreview(recipe: recipe, assetURLs: assetURLs)
+            }
             traceDeviceExportPhase("prepared")
             guard preset.videoCodec == "h264", preset.audioCodec == "aac", preset.videoBitrate > 0 else { throw NativePreviewFeatureError("Export-51") }
             try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)

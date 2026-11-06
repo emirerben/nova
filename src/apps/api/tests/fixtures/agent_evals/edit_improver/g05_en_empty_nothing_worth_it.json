@@ -1,0 +1,37 @@
+{
+  "id": "g05_en_empty_nothing_worth_it",
+  "description": "Only cosmetic candidates with no evidence: empty is the right answer.",
+  "expect": "pass",
+  "input": {
+    "state": "ready",
+    "language": "en",
+    "creator_request": "",
+    "issued": [
+      {
+        "kind": "sfx",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": []
+          }
+        ]
+      },
+      {
+        "kind": "transition",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": []
+          }
+        ]
+      }
+    ],
+    "evidence": {},
+    "already_in_edit": [],
+    "dismissed": [],
+    "untrusted_texts": []
+  },
+  "output": {
+    "ranked": []
+  }
+}

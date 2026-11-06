@@ -5151,14 +5151,18 @@ def _run_phone_guided_job(
     # promise refuses steps down to the next; the last one is the plan as it was.
     from app.services.phone_clip_sound_toggle import (  # noqa: PLC0415
         conflict_reasons,
+        mute_relaxed_contract,
         plan_toggle_lane,
         sound_contract_conflict,
+        stage_contract_revision,
         toggle_record,
     )
     from app.services.phone_rollout import phone_clip_sound_windows_supported  # noqa: PLC0415
 
     toggle_receipt: dict | None = None
     toggle_changed = False
+    # (approved contract, its relaxed revision) when a whole-video mute cleared a camera pin.
+    relaxed_pin: tuple[Any, Any] | None = None
     toggle_lane = plan_toggle_lane(
         snapshot,
         raw_plan=raw_plan,
@@ -5202,15 +5206,36 @@ def _run_phone_guided_job(
                 )
                 continue
             if sound_contract_conflict(contract, candidate_compiled.recipe, bindings):
-                conflicted = conflict_reasons(toggle_lane)
-                continue
+                # Qendresa case 4: a whole-video mute outranks a camera-audio pin the approval
+                # took from the planner's audio strategy; anything else steps down as before.
+                relaxed = mute_relaxed_contract(
+                    contract, toggle_lane, snapshot, variant_id="guided_story"
+                )
+                if relaxed is None or sound_contract_conflict(
+                    relaxed, candidate_compiled.recipe, bindings
+                ):
+                    conflicted = conflict_reasons(toggle_lane)
+                    continue
+                relaxed_pin = (contract, relaxed)
+                contract = relaxed
             raw_plan, plan, compiled = candidate.raw_plan, candidate_plan, candidate_compiled
             recipe, repair_notes = compiled.recipe, list(compiled.notes)
             toggle_changed = True
             toggle_receipt = toggle_record(toggle_lane, candidate, recipe, bindings)
             break
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(timed_cards))
-    repair_notes = _phone_repair_notes(snapshot, contract, recipe.duration, repair_notes)
+    repair_notes = _phone_repair_notes(
+        (
+            stage_contract_revision(
+                snapshot, *relaxed_pin, creator_strategy or {}, variant_id="guided_story"
+            )
+            if relaxed_pin is not None
+            else snapshot
+        ),
+        contract,
+        recipe.duration,
+        repair_notes,
+    )
     # The editor's Save recompiles from this private plan, so it must hold the moments' sound
     # and (KRI-1027) their vertical framing.
     repaired_plan_payload = (
@@ -5330,6 +5355,11 @@ def _run_phone_guided_job(
             # Private receipts the editor recompiles from; each row keeps
             # gcs_path so pool deletion still sees the photo as referenced.
             current[PHONE_VISUALS_FIELD] = visual_rows
+        if relaxed_pin is not None:
+            # The pin verifies this variant against the relaxed revision (KRI-736 shape).
+            current = stage_contract_revision(
+                current, *relaxed_pin, creator_strategy or {}, variant_id="guided_story"
+            )
         job.assembly_plan = current
         narration_binding = None
         if plan.narration is not None and plan.narration.speech_cleanup is not None:
@@ -7423,6 +7453,11 @@ def _run_phone_unified_montage_job(
     # layout, the fast montage the route always made is composed instead and the note says why.
     plan = _composed_plan(plan, assignments, all_candidates, compose)
     record = plan.record()
+    from app.kria.brief_checks import FINAL_SOURCE_CUTS, montage_final_source_cuts  # noqa: PLC0415
+
+    # Review of #2129: the plan's FINAL cuts (after freezes, speeds and slides), so keep-whole
+    # is judged on what plays.
+    record[FINAL_SOURCE_CUTS] = montage_final_source_cuts(plan)
     from app.pipeline.story_direction import fallback_note, says_fallback  # noqa: PLC0415
 
     if (requested := (strategy or {}).get("direction")) and says_fallback(
@@ -8250,6 +8285,48 @@ def _strategy_background_request(all_candidates: dict) -> dict[str, Any] | None:
     return request
 
 
+def _unshown_background_entries(
+    entries: Sequence[Mapping[str, Any]],
+    background: Any,
+    lane_drops: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Qendresa case 5: the strategy's background entries the COMPILED lane never shows.
+
+    ``entries`` are `_resolve_strategy_background`'s ``entries_out`` rows. A recording counts as
+    shown when its pool row id is on any compiled window (two entries naming one photo are one
+    photo), or, with no windows at all, when it is the fill. A ``phrase_not_heard`` note alone
+    is not "never shown": the cadence fallback still gives such an entry a window. Each row is
+    ``{"window": i}`` plus ``phrase`` (the entry's spoken phrase) and ``reason`` (its drop note)
+    when known.
+    """
+    windows = tuple(getattr(background, "windows", None) or ())
+    shown = {str(window.media_id) for window in windows}
+    fill = getattr(background, "media_id", None)
+    if not windows and fill:
+        shown.add(str(fill))
+    reasons: dict[int, str] = {}
+    for note in lane_drops:
+        window = note.get("window") if isinstance(note, Mapping) else None
+        if (
+            isinstance(window, int)
+            and not isinstance(window, bool)
+            and note.get("lane") == "background"
+            and "part" not in note
+        ):
+            reasons.setdefault(window, str(note.get("reason") or "")[:120])
+    out: list[dict[str, Any]] = []
+    for entry in entries:
+        if entry.get("media_id") and str(entry["media_id"]) in shown:
+            continue
+        row: dict[str, Any] = {"window": entry["window"]}
+        if entry.get("phrase"):
+            row["phrase"] = entry["phrase"]
+        if reasons.get(entry["window"]):
+            row["reason"] = reasons[entry["window"]]
+        out.append(row)
+    return out
+
+
 def _resolve_strategy_background(
     request: dict[str, Any],
     *,
@@ -8261,6 +8338,7 @@ def _resolve_strategy_background(
     creator_client_protocol: int | None = None,
     title_end_s: float | None = None,
     layout_out: dict[str, Any] | None = None,
+    entries_out: list[dict[str, Any]] | None = None,
 ) -> tuple[Any, frozenset[str]]:
     """The ``SubtitledBackground`` lane the approved strategy names, and the pool spellings
     that stay out of every mid-talk placement (KRI-1117).
@@ -8295,6 +8373,11 @@ def _resolve_strategy_background(
     against all the names in the list; ``layout_out["entry_media"]`` maps an entry index to the
     pool row id its windows carry. A phone gate that strips the windows clears all three: no
     recording is shown, so none is followed. ``None``: untouched.
+
+    Qendresa case 5: given ``entries_out``, every sequence entry is appended as ``{"window": i,
+    "phrase": <spoken_phrase or None>, "media_id": <pool row id, or None when it did not
+    resolve>}`` so the lane receipt can name an asked recording the compiled windows never show
+    (`_unshown_background_entries`).
     """
     import app.services.phone_overlay_grounding as pool_mod  # noqa: PLC0415
     from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
@@ -8349,6 +8432,15 @@ def _resolve_strategy_background(
         if row is not None:
             entry_rows.append((index, entry, row))
             reserved = reserved | _pool_media_keys(str(row["id"]))
+        if entries_out is not None:
+            phrase = str(entry.get("spoken_phrase") or "").strip()
+            entries_out.append(
+                {
+                    "window": index,
+                    "phrase": phrase or None,
+                    "media_id": str(row["id"]) if row is not None else None,
+                }
+            )
 
     fill_row: dict | None = None
     fill_start = 0.0
@@ -8968,7 +9060,6 @@ def _run_phone_subtitled_job(
     feature existed, and the lanes field on the snapshot is ignored entirely.
     """
     from app.kria.device_render import make_device_request  # noqa: PLC0415
-    from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
     from app.pipeline.caption_language import (  # noqa: PLC0415
         SOURCE_DETECTED,
         SOURCE_FALLBACK,
@@ -8977,11 +9068,9 @@ def _run_phone_subtitled_job(
         crosscheck_detected_language,
         resolve_spoken_caption_language,
     )
-    from app.pipeline.caption_spelling import extract_spelling_asks  # noqa: PLC0415
     from app.pipeline.captions import (  # noqa: PLC0415
         PHONE_CUE_BUDGET,
         build_plain_cues,
-        resplit_cues_into_sentences,
     )
     from app.pipeline.phone_guided_plan import (  # noqa: PLC0415
         SilentAudioPlanDeclined,
@@ -10257,34 +10346,14 @@ def _run_phone_subtitled_job(
                     and _caption_final != _translated_source
                 ):
                     caption_translated_from = _translated_source
-            cues = correct_caption_cues(
+            cues, unclear_words_receipt = _phone_talking_caption_text(
                 cues,
-                detected_lang,
-                model=settings.caption_correction_model,
-                enabled=settings.subtitled_caption_correction_enabled,
-                trusted_aliases=None,
+                detected_lang=detected_lang,
+                snapshot=snapshot,
+                all_candidates=all_candidates,
+                cut_plan=cut_plan,
+                clip_metas=clip_metas,
             )
-            cues = resplit_cues_into_sentences(cues)
-            # KRI-631: the creator's quoted spelling asks ("write 'community' in English").
-            # KRI-793: plus every word the approved brief lists to spell in the captions
-            # ("correct spellings: Oblea de la Casa, dulce de leche, ..."), applied last
-            # so caption correction can never undo them.
-            cues = _apply_creator_spellings(
-                cues,
-                _phone_caption_spellings(
-                    snapshot, extract_spelling_asks(_creator_request_text(all_candidates))
-                ),
-            )
-            # KRI-849: "if you can't tell what he says, ask me": leave the unclear word out.
-            cues, unclear_words_receipt = _apply_unclear_words(
-                cues,
-                snapshot,
-                cut_plan,
-                extract_spelling_asks(_creator_request_text(all_candidates)),
-            )
-            # KRI-1177: "captions lowercase" is the cue text itself, so the drawn layers, the
-            # editor and a Save all carry it.
-            cues = generation_caption_cues(cues, language=detected_lang)
 
             # The speaker's span exactly as the compiler plays it: the cleanup
             # cut, else the phone-measured clip (which can run a hair shorter
@@ -10800,6 +10869,8 @@ def _run_phone_subtitled_job(
                 # becomes of the lane, the photo stays out of every mid-talk card below.
                 strategy_background_lane: Any = None
                 background_reserved: frozenset[str] = frozenset()
+                # Qendresa case 5: every asked recording, so the receipt names one never shown.
+                background_entries: list[dict[str, Any]] = []
                 background_request = _strategy_background_request(all_candidates)
                 if background_request is not None:
                     if ending_lane_only:
@@ -10834,6 +10905,7 @@ def _run_phone_subtitled_job(
                                     else (3.0 if talking_title_text else None)
                                 ),
                                 layout_out=list_label_layout if list_label_asks else None,
+                                entries_out=background_entries,
                             )
                         )
 
@@ -11664,6 +11736,11 @@ def _run_phone_subtitled_job(
                             lane_receipt["background"]["media"] = len(
                                 {w.media_id for w in _bg.windows}
                             )
+                        # Qendresa case 5: an asked recording the compiled windows never show
+                        # (its phrase was never heard on the word), so the review names it.
+                        _unshown = _unshown_background_entries(background_entries, _bg, lane_drops)
+                        if _unshown:
+                            lane_receipt["background"]["unshown"] = _unshown
                         # Qendresa item 16: how long the finished video really is full screen
                         # from 0 s, read off the COMPILED recipe (a speech cut is accounted for).
                         _opening_end = next(
@@ -13361,14 +13438,108 @@ def _phone_caption_spellings(snapshot: dict, quoted: tuple[str, ...]) -> tuple[s
     return tuple(targets)
 
 
-def _apply_creator_spellings(cues: list, targets: tuple[str, ...]) -> list:
+def _phone_talking_caption_text(
+    cues: list,
+    *,
+    detected_lang: str | None,
+    snapshot: dict,
+    all_candidates: dict,
+    cut_plan: Any,
+    clip_metas: Any = None,
+) -> tuple[list, dict | None]:
+    """The phone Talking caption words after whisper, in the job's order: the model spelling
+    fix, sentence split, the creator's spellings, unclear words, then the creator's case ask.
+
+    One function so a replay of a real job runs exactly these steps (Green 4/5, 2026-11-04).
+    ``clip_metas`` are the job's Gemini clip records. Returns ``(cues, unclear_words_receipt)``.
+    """
+    from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
+    from app.pipeline.caption_spelling import (  # noqa: PLC0415
+        creator_request_names,
+        creator_typed_words,
+        extract_spelling_asks,
+    )
+    from app.pipeline.captions import resplit_cues_into_sentences  # noqa: PLC0415
+
+    cues = correct_caption_cues(
+        cues,
+        detected_lang,
+        model=settings.caption_correction_model,
+        enabled=settings.subtitled_caption_correction_enabled,
+        trusted_aliases=None,
+    )
+    cues = resplit_cues_into_sentences(cues)
+    # Green 4/5: a mid-sentence capital whisper's full text put on an ordinary word ("a Sunrise
+    # Fashion Show") is lowered when Gemini's own record of the take writes it lowercase.
+    if settings.caption_case_reference_enabled:
+        cues = _settle_caption_case(cues, clip_metas)
+    # KRI-631: the creator's quoted spelling asks ("write 'community' in English").
+    # KRI-793: plus every word the approved brief lists to spell in the captions
+    # ("correct spellings: Oblea de la Casa, dulce de leche, ..."), applied last
+    # so caption correction can never undo them.
+    # Green 4/5: plus the names the creator typed ("Kervan x Lumo Pamukkale show" -> "Curvan"),
+    # which never respell a word the creator typed themselves, in any case ("Do not change Curvan
+    # to Kervan" types both) or a spelling above; a name typed in a "don't" clause is none.
+    request = _creator_request_text(all_candidates)
+    names = creator_request_names(request) if settings.caption_request_names_enabled else ()
+    cues = _apply_creator_spellings(
+        cues,
+        _phone_caption_spellings(snapshot, extract_spelling_asks(request)),
+        request_names=names,
+        typed=creator_typed_words(request) if names else (),
+    )
+    # KRI-849: "if you can't tell what he says, ask me": leave the unclear word out.
+    cues, unclear_words_receipt = _apply_unclear_words(
+        cues,
+        snapshot,
+        cut_plan,
+        extract_spelling_asks(_creator_request_text(all_candidates)),
+    )
+    # KRI-1177: "captions lowercase" is the cue text itself, so the drawn layers, the
+    # editor and a Save all carry it.
+    return generation_caption_cues(cues, language=detected_lang), unclear_words_receipt
+
+
+def _settle_caption_case(cues: list, clip_metas: Any) -> list:
+    """``cues`` with whisper's unsupported mid-sentence capitals lowered against the job's Gemini
+    clip records (`caption_case.settle_caption_case`), and a `captions/case_settled` trace event
+    naming every caption line that changed."""
+    from app.pipeline.caption_case import settle_caption_case  # noqa: PLC0415
+
+    references = [getattr(meta, "transcript", None) for meta in clip_metas or ()]
+    out = settle_caption_case(cues, references)
+    changes = [
+        {"before": str(old.get("text") or "")[:200], "after": str(new.get("text") or "")[:200]}
+        for old, new in zip(cues, out, strict=True)
+        if old.get("text") != new.get("text")
+    ]
+    if changes:
+        try:
+            from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+            record_pipeline_event(
+                "captions", "case_settled", {"changed": len(changes), "changes": changes[:20]}
+            )
+        except Exception:  # noqa: BLE001 - observability only
+            pass
+    return out
+
+
+def _apply_creator_spellings(
+    cues: list,
+    targets: tuple[str, ...],
+    *,
+    request_names: tuple[str, ...] = (),
+    typed: tuple[str, ...] = (),
+) -> list:
     """``cues`` with ``targets`` applied, and a `captions/creator_spellings` trace event
-    naming every caption line that changed (the evidence that the spellings arrived)."""
+    naming every caption line that changed (the evidence that the spellings arrived).
+    ``request_names`` follow, guarded by ``typed`` (`caption_spelling.apply_spelling_to_cues`)."""
     from app.pipeline.caption_spelling import apply_spelling_to_cues  # noqa: PLC0415
 
-    if not targets:
+    if not targets and not request_names:
         return cues
-    out = apply_spelling_to_cues(cues, targets)
+    out = apply_spelling_to_cues(cues, targets, request_names=request_names, typed=typed)
     changes = [
         {"before": str(old.get("text") or "")[:200], "after": str(new.get("text") or "")[:200]}
         for old, new in zip(cues, out, strict=True)
@@ -13380,7 +13551,11 @@ def _apply_creator_spellings(cues: list, targets: tuple[str, ...]) -> list:
         record_pipeline_event(
             "captions",
             "creator_spellings",
-            {"targets": list(targets), "changed": len(changes), "changes": changes[:20]},
+            {
+                "targets": [*targets, *(n for n in request_names if n not in targets)],
+                "changed": len(changes),
+                "changes": changes[:20],
+            },
         )
     except Exception:  # noqa: BLE001 - observability only
         pass

@@ -1,0 +1,30 @@
+{
+ "id": "hook_copy_echoes_a_transcript",
+ "description": "Hook copy repeating three words the creator said is refused.",
+ "context": "fp_speech_and_broll",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "hook",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": "Welcome to my kitchen",
+    "rank": 1
+   }
+  ]
+ },
+ "transcripts": {
+  "1": "hey welcome to my kitchen today we make matcha"
+ },
+ "expect": {
+  "wording": "agent",
+  "drops": {
+   "copy_reused_footage_text": 1
+  }
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

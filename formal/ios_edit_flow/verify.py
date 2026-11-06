@@ -1073,6 +1073,9 @@ def main() -> None:
         k for k, v in hashes.items() if coverage.get("hashes", {}).get(k) != v
     )
     report["drift"] = drift
+    from verify_saved_receipt import run as verify_saved_receipt
+
+    report["saved_receipt"] = verify_saved_receipt(sys.modules[__name__])
     if drift:
         print(
             "DRIFT (review, not a bug): these covered functions changed since "

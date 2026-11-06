@@ -41,6 +41,13 @@ verified, for the app build ``--client-protocol`` (default 41); ``off`` is today
 by the real `place_talking_title`; the face boxes come from OUT_DIR/face_boxes.json
 (``[[x, y, w, h], ...]`` normalised, top-left origin, e.g. Apple Vision on the take) when
 present, else from the real face sampler.
+
+Qendresa case 1 (captions off the corner speaker's face): ``--styled-captions on`` compiles the
+captions the way the worker does -- the phone text-style policy stamped, a base pass with no
+lanes, then the lanes pass -- with the take's faces read from OUT_DIR/face_boxes.json (required
+then) and ``--speaker-frame-faces on|off`` setting ``SPEAKER_FRAME_CAPTION_FACES_ENABLED`` (off =
+the old placement, captions over her corner face). Measured 2026-11-06 on the iPhone 17 Pro
+simulator: caption text over her face in 39 of 132 frames with ``off``, 0 of 132 with ``on``.
 """
 
 from __future__ import annotations
@@ -230,6 +237,83 @@ def _title_row(
     return placed
 
 
+def _styled_compile(args, speaker, take_s, out, words, visuals, lanes_compile):  # noqa: ANN001, ANN202
+    """Caption placement as the worker does it: the phone text-style policy is stamped, then the
+    take compiles TWICE inside its scope -- a base pass with no lanes (the caption spot is chosen
+    before the corner frame is known), then the lanes pass with the background.
+
+    Only the face reads are faked: the proxy download copies talk.mp4 and
+    `render_geometry.sample_face_regions` returns OUT_DIR/face_boxes.json (Apple Vision on the
+    take). The font model call is skipped (`selection_calls = 2`)."""
+    import shutil
+    from types import SimpleNamespace
+
+    import app
+    import app.storage as storage
+    from app.pipeline import render_geometry
+    from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion
+    from app.services.phone_text_styling import (
+        PHONE_TEXT_STYLE_FIELD,
+        generation_caption_cues,
+        phone_text_policy_scope,
+        stamp_phone_text_style,
+    )
+
+    print(f"app loaded from {app.__file__}")
+    settings.phone_text_styling_enabled = True
+    settings.speaker_frame_caption_faces_enabled = args.speaker_frame_faces == "on"
+    boxes = json.loads((out / "face_boxes.json").read_text())
+
+    def fake_download(_remote, dest, **_kw):  # noqa: ANN001, ANN202
+        shutil.copyfile(out / "talk.mp4", dest)
+
+    def fake_faces(_path, points, **_kw):  # noqa: ANN001, ANN202
+        regions = [
+            ProtectedRegion(
+                start_s=0.0,
+                end_s=take_s,
+                box=NormalizedBox(left=x, top=y, right=x + w, bottom=y + h),
+                kind="face",
+            )
+            for x, y, w, h in boxes
+        ]
+        return regions, {"attempted": len(points), "decoded": len(points)}
+
+    real_download, real_faces = (
+        storage.download_to_file,
+        render_geometry.sample_face_regions,
+    )
+    storage.download_to_file = fake_download
+    render_geometry.sample_face_regions = fake_faces
+    try:
+        job = SimpleNamespace(
+            id=uuid.uuid4(),
+            assembly_plan={},
+            all_candidates={
+                "creator_client_protocol": args.client_protocol,
+                "voiceover_caption_style": "word",
+            },
+        )
+        stamp_phone_text_style(job)
+        policy = job.assembly_plan.get(PHONE_TEXT_STYLE_FIELD)
+        assert policy, "stamp_phone_text_style produced no policy"
+        policy["selection_calls"] = 2  # no font model call
+        policy["_source_bindings"] = [speaker.model_dump(mode="json")]
+        with phone_text_policy_scope(policy):
+            cues = generation_caption_cues(_cues(words), language="en")
+            # The worker's base pass: no lanes, so the corner frame is not known yet.
+            compile_phone_subtitled_plan(
+                (speaker,), caption_cues=cues, caption_style="sentence"
+            )
+            recipe = lanes_compile(cues)
+    finally:
+        storage.download_to_file, render_geometry.sample_face_regions = (
+            real_download,
+            real_faces,
+        )
+    return recipe
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("out_dir")
@@ -239,6 +323,8 @@ def main() -> None:
     parser.add_argument("--title", default=None)
     parser.add_argument("--focus", choices=("on", "off"), default="off")
     parser.add_argument("--client-protocol", type=int, default=None)
+    parser.add_argument("--styled-captions", choices=("on", "off"), default="off")
+    parser.add_argument("--speaker-frame-faces", choices=("on", "off"), default="on")
     args = parser.parse_args()
     if args.client_protocol is None:
         args.client_protocol = 42 if args.focus == "on" else 41
@@ -398,15 +484,24 @@ def main() -> None:
 
     from app.services.phone_rollout import background_focus_planned_for
 
-    recipe = compile_phone_subtitled_plan(
-        (speaker,),
-        caption_cues=_cues(words),
-        visuals=tuple(visuals),
-        lanes=PhoneSubtitledLanes(background=background),
-        text_elements=(title_row,) if title_row else (),
-        # As `_run_phone_subtitled_job` does: the approving build decides whether a focus is drawn.
-        background_focus_open=background_focus_planned_for(args.client_protocol),
-    )
+    def _lanes_compile(cues: list[dict] | None = None) -> object:
+        return compile_phone_subtitled_plan(
+            (speaker,),
+            caption_cues=cues if cues is not None else _cues(words),
+            visuals=tuple(visuals),
+            lanes=PhoneSubtitledLanes(background=background),
+            text_elements=(title_row,) if title_row else (),
+            # As `_run_phone_subtitled_job` does: the approving build decides whether a focus
+            # is drawn.
+            background_focus_open=background_focus_planned_for(args.client_protocol),
+        )
+
+    if args.styled_captions == "on":
+        recipe = _styled_compile(
+            args, speaker, take_s, out, words, visuals, _lanes_compile
+        )
+    else:
+        recipe = _lanes_compile()
     layer = recipe.speaker_background
     assert layer is not None and layer.windows, (
         "the recipe carries no background windows"

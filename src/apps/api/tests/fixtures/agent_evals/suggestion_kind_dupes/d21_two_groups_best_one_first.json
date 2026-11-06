@@ -1,0 +1,97 @@
+{
+  "name": "d21_two_groups_best_one_first",
+  "description": "A photo pair and a video burst; the burst (two removals) is offered first.",
+  "language": "en",
+  "clips": [
+    {
+      "media_id": "m1",
+      "kind": "image",
+      "duration_s": null,
+      "hashes": [
+        "dec1ede0758d8515",
+        "9e3408b2456f8785",
+        "9b9def52dd9b3d51"
+      ],
+      "sharpness": 100,
+      "mean_luma": 120.0
+    },
+    {
+      "media_id": "m2",
+      "kind": "image",
+      "duration_s": null,
+      "hashes": [
+        "dec1ede0758d8516",
+        "9e3408b2456f8786",
+        "9b9def52dd9b3d52"
+      ],
+      "sharpness": 300,
+      "mean_luma": 120.0
+    },
+    {
+      "media_id": "m3",
+      "kind": "video",
+      "duration_s": 4.0,
+      "hashes": [
+        "ff9018130dcf28ab",
+        "6f732d1174b3152f",
+        "b62e6c8793e658dc"
+      ],
+      "sharpness": 50,
+      "mean_luma": 120.0
+    },
+    {
+      "media_id": "m4",
+      "kind": "video",
+      "duration_s": 4.0,
+      "hashes": [
+        "ff9018130dcf28aa",
+        "6f732d1174b3152e",
+        "b62e6c8793e658dd"
+      ],
+      "sharpness": 90,
+      "mean_luma": 120.0
+    },
+    {
+      "media_id": "m5",
+      "kind": "video",
+      "duration_s": 4.0,
+      "hashes": [
+        "ff9018130dcf28a8",
+        "6f732d1174b3152c",
+        "b62e6c8793e658df"
+      ],
+      "sharpness": 70,
+      "mean_luma": 120.0
+    },
+    {
+      "media_id": "m6",
+      "kind": "video",
+      "duration_s": 4.0,
+      "hashes": [
+        "64300800c7681e43",
+        "2efd92ee3cdd95b5",
+        "88adf9b95ce4c4f7"
+      ],
+      "sharpness": 100.0,
+      "mean_luma": 120.0
+    }
+  ],
+  "slots": [
+    "m1",
+    "m2",
+    "m3",
+    "m4",
+    "m5",
+    "m6"
+  ],
+  "needed": [],
+  "expect": {
+    "offered": true,
+    "ops": [
+      2,
+      4
+    ],
+    "keep": "m4",
+    "reason": "sharper"
+  }
+}

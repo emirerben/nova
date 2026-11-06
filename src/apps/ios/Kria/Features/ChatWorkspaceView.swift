@@ -92,7 +92,7 @@ struct ChatWorkspaceView: View {
     /// The camera roll sits outside the chat's NavigationStack. It has its own, and a nested stack pushes its pages
     /// onto the outer one, where they outlive the switch to a chat.
     @ViewBuilder private var workspace: some View {
-        if model.showsCameraRoll, let cameraRoll {
+        if model.showsCameraRoll, model.pendingNewChat == nil, let cameraRoll {
             WorkspaceCrossfade(dismiss: {}) { _ in
                 CameraRollSurfaceView(model: cameraRoll, openProjects: { setDrawerOpen(!showsProjects) }, onSelected: { thread in
                     await model.loadProjects()
@@ -107,7 +107,7 @@ struct ChatWorkspaceView: View {
     private var chatWorkspace: some View {
         NavigationStack {
             Group {
-                if let project = model.selectedProject {
+                if let project = model.selectedProject, model.pendingNewChat == nil {
                     CreationWorkspaceView(
                         project: project,
                         openProjects: { setDrawerOpen(!showsProjects) },
@@ -117,7 +117,9 @@ struct ChatWorkspaceView: View {
                     .id(project.id)
                 } else {
                     Group {
-                        if model.isLoading || model.projectsState == .loading || model.projectsState == .idle {
+                        if let pending = model.pendingNewChat {
+                            PendingNewChatView(pending: pending)
+                        } else if model.isLoading || model.projectsState == .loading || model.projectsState == .idle {
                             WorkspaceLoadingView()
                         } else if model.projectsState == .empty {
                             WorkspaceEmptyView { Task { await model.createProject() } }
@@ -405,6 +407,46 @@ private struct WorkspaceEmptyView: View {
     }
 }
 
+/// The new conversation, shown the moment New chat is tapped while the server makes the real one. It has
+/// no thread id yet: the creator can type, but sending and attaching wait for the real one.
+private struct PendingNewChatView: View {
+    let pending: AppModel.PendingNewChat
+    @EnvironmentObject private var model: AppModel
+    @FocusState private var focus: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 14) {
+                if let failure = pending.failure {
+                    Text("Your chat couldn’t be created.").font(KriaFont.headline(22))
+                    Text(failure).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc).multilineTextAlignment(.center)
+                    Button("Try again") { model.startNewChat() }
+                        .buttonStyle(CanonicalPrimaryButtonStyle())
+                        .accessibilityIdentifier("pending-new-chat-retry")
+                    Button("Back to my chats") { model.cancelPendingNewChat() }
+                        .font(KriaFont.body(14))
+                        .accessibilityIdentifier("pending-new-chat-cancel")
+                } else {
+                    ProgressView().tint(KriaColor.ink)
+                    Text("Starting your chat…").font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("pending-new-chat")
+            // Typing works at once; sending and attaching wait for the real thread, so nothing typed can
+            // reach any other conversation.
+            ChatComposer(
+                text: Binding(get: { pending.draft }, set: { model.setPendingNewChatDraft($0) }),
+                isSending: false, canAttach: false, blocksSubmission: true,
+                isFocused: $focus, attach: {}, send: {}
+            )
+        }
+        .background(WorkspaceSurface())
+    }
+}
+
 private struct WorkspaceLoadingView: View {
     @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     var body: some View {
@@ -617,6 +659,9 @@ private struct CreationWorkspaceView: View {
     @State private var suggestionSet: SuggestionSet?
     /// The `suggestionScopeKey` that `suggestionSet` was fetched under; a set from another scope is never drawn.
     @State private var suggestionSetKey: String?
+    /// AI suggestion blocks: what each card is doing on this phone (sending, handled, stale) and the refresh nudge
+    /// that the editor Save and a stale tap give the poll.
+    @StateObject private var suggestionLedger = SuggestionCardLedger()
 
     init(project: ProjectSummary, openProjects: @escaping () -> Void, openAccount: @escaping () -> Void) {
         self.project = project
@@ -1112,6 +1157,7 @@ private struct CreationWorkspaceView: View {
 
     private var timelineUpdateToken: String {
         let feed = planFeed.paced(by: deviceBuildStage)
+        let readyCardsToken: String = readyCardsPresentation?.cards.map(\.id).joined(separator: ",") ?? ""
         let liveThoughtToken: String = liveThoughtSummaries.map { "\($0.id):\($0.status.rawValue):\($0.text.count)" }.joined(separator: "|")
         let timelineIDs: String = timeline.map(\.id).joined(separator: "|")
         let failureMessage: String = failure?.message ?? ""
@@ -1130,6 +1176,7 @@ private struct CreationWorkspaceView: View {
             "thoughts\(liveThoughtToken)",
             "finishedEdits\(finishedEditSuggestionUpdate)",
             "readyChips\(readyChipIDs)",
+            "readyCards\(readyCardsToken)",
         ]
         return parts.joined(separator: "|")
     }
@@ -1609,6 +1656,7 @@ private struct CreationWorkspaceView: View {
         // A completed device export updates the job without necessarily
         // advancing the chat revision. Re-read proposals on return.
         finishedEditSuggestionRefresh += 1
+        suggestionLedger.requestRefresh()
     }
 
     private func openAttachments(launch: AttachmentLaunch? = nil) {
@@ -1705,7 +1753,16 @@ private struct CreationWorkspaceView: View {
         SlidePostRouting.isFormatKnown(selectedFormat: selectedFormat, project: currentProject, thread: fullThread)
     }
 
+    private var hasSavedEditor: Bool {
+        guard let fullThread,
+              UUID(uuidString: fullThread.id) == currentProject.id,
+              fullThread.activeJobID.flatMap(UUID.init(uuidString:)) == currentProject.activeJobID,
+              fullThread.activePlanItemID == currentProject.activePlanItemID else { return false }
+        return fullThread.savedEditorVariant != nil
+    }
+
     private var hasAccessibleVideo: Bool {
+        if hasSavedEditor { return true }
         if currentProject.status == .ready { return true }
         guard let key = deviceRenderKey, let presentation = model.deviceRenders.presentations[key] else { return false }
         return presentation.localFile != nil && !presentation.outputVerificationPending
@@ -1813,6 +1870,10 @@ private struct CreationWorkspaceView: View {
             await capabilities
         }
         .task(id: suggestionFetchKey) { await loadSuggestions() }
+        // An editor Save changes the Job without a new thread revision, so cards built on the old edit are asked about again.
+        .onChange(of: editorSession.saveState) { old, new in
+            if case .saving = old, new == .saved || new == .previewPending { suggestionLedger.requestRefresh() }
+        }
         .task(id: thoughtRequestID) {
             guard let requestID = thoughtRequestID else { return }
             while !Task.isCancelled, (isSending || isThinking), thoughtRequestID == requestID {
@@ -1939,6 +2000,7 @@ private struct CreationWorkspaceView: View {
                     conversationAcceptedID: conversationAcceptedID,
                     conversationCloseID: editorConversationCloseID,
                     conversation: { AnyView(editorConversation) },
+                    improve: readyCardsPresentation,
                     onBack: close
                 )
                 .environmentObject(model)
@@ -2173,7 +2235,8 @@ private struct CreationWorkspaceView: View {
                 // Capability on: only server chips are drawn (none yet or none offered => no chips, never the generic fixed
                 // ones). Capability off: nil, the fixed chips.
                 serverSuggestions: SuggestionChipsPolicy.isEnabled(capabilities) ? suggestionChips(for: .ready) : nil,
-                sendSuggestion: { sendSuggestion($0) }
+                sendSuggestion: { sendSuggestion($0) },
+                suggestionCards: readyCardsPresentation
             )
             .id("ready")
             if capabilities?.livePlanReviewAvailable == true, currentProject.runtimeVersion == 2,
@@ -2224,6 +2287,11 @@ private struct CreationWorkspaceView: View {
                 deviceRenderPanel(deviceRenderKey)
             }
         case .failed:
+            if hasSavedEditor && canOpenVideoEditor {
+                Button("Open saved edit", action: openEditor)
+                    .buttonStyle(CanonicalSecondaryButtonStyle())
+                    .accessibilityIdentifier("open-saved-edit")
+            }
             if failedWorkspacePresentation == .legacyCreationConfirmation, let thread = fullThread {
                 CreationConfirmationStage(
                     recordAgain: canAttachMedia ? { openAttachmentsToReplaceFootage(launch: .record) } : nil,
@@ -2366,7 +2434,21 @@ private struct CreationWorkspaceView: View {
 
     /// What re-asks the server: a new scope, or (once ready) a new revision, which may carry a new render.
     private var suggestionFetchKey: String {
-        suggestionSurface == .ready ? "\(suggestionScopeKey)|\(threadRevision)" : suggestionScopeKey
+        suggestionSurface == .ready ? "\(suggestionScopeKey)|\(threadRevision)|\(suggestionLedger.refreshToken)" : suggestionScopeKey
+    }
+
+    /// The v2 cards for the finished video, or nil when the chat is not on the ready surface or the server's set has
+    /// none (then the chips stay in charge). The same value feeds the ready stage and the editor's Improve sheet.
+    private var readyCardsPresentation: SuggestionCardsPresentation? {
+        guard SuggestionChipsPolicy.isEnabled(capabilities), suggestionSurface == .ready,
+              suggestionSetKey == suggestionScopeKey,
+              case .cards(let cards) = SuggestionReadyContent.resolve(set: suggestionSet) else { return nil }
+        return SuggestionCardsPresentation(
+            cards: suggestionLedger.visible(cards),
+            tap: { sendSuggestionCard($0) }, dismiss: { dismissSuggestionCard($0) },
+            refresh: { suggestionLedger.requestRefresh() },
+            sendingID: cards.first { suggestionLedger.phase(of: $0.id) == .sending }?.id
+        )
     }
 
     /// The chips to draw for one surface; empty unless the chat is on that surface right now.
@@ -2391,8 +2473,37 @@ private struct CreationWorkspaceView: View {
         defer { suggestionsLoading = false }
         await SuggestionChipsPolicy.poll(
             fetch: { try await api.creationSuggestions(threadID: threadID) },
-            onSet: { suggestionSet = SuggestionChipsPolicy.merge(current: suggestionSet, incoming: $0) }
+            onSet: {
+                suggestionSet = SuggestionChipsPolicy.merge(current: suggestionSet, incoming: $0)
+                suggestionLedger.reconcile(with: suggestionSet)
+            }
         )
+    }
+
+    /// A card tap is the creator's chat message (`prompt`) pinned to the card it came from. It rides the ordinary
+    /// send path, so the bubble, idempotency key and revision handling are shared. The pin names the set the creator
+    /// SAW, not whatever set the chat holds by the time the request goes out; the server decides if it still fits.
+    /// A refused pin comes back as an ordinary accepted turn whose reply says the card no longer fits, so the card
+    /// is handled either way and the reply in the chat is the notice.
+    /// Returns whether the tap started, so the editor's Improve sheet closes only for a tap that is going out.
+    private func sendSuggestionCard(_ card: SuggestionCard) -> Bool {
+        guard !isSending, !isActing, !isThinking, let setID = suggestionSet?.setID, suggestionLedger.begin(card) else { return false }
+        let tap = SuggestionTap(setID: setID, chipID: card.id)
+        Task {
+            await send(message: card.prompt, suggestion: tap, keepsDraft: true) { _ in
+                suggestionLedger.finish(card, accepted: true)
+            }
+            // Nothing reached the server (offline, rejected, blocked): the card is tappable again.
+            suggestionLedger.finish(card, accepted: false)
+        }
+        return true
+    }
+
+    private func dismissSuggestionCard(_ card: SuggestionCard) {
+        guard let setID = suggestionSet?.setID else { return }
+        suggestionLedger.dismiss(card)
+        let api = model.api, threadID = project.id
+        Task { await api.dismissSuggestion(threadID: threadID, setID: setID, suggestionID: card.id) }
     }
 
     /// A chip tap is a real send of the chip's `message` (the old fixed chips only filled the composer), tagged
@@ -2408,7 +2519,7 @@ private struct CreationWorkspaceView: View {
         }
     }
 
-    private func send(message submittedMessage: String? = nil, clipSelection: ClipSelectionSubmission? = nil, songOrder: SongOrderSubmission? = nil, choiceSelection: ChoiceSelectionSubmission? = nil, songRange: SongRangeAnswer? = nil, suggestion: SuggestionTap? = nil, protectedRegion: ProtectedRegionAnswer? = nil, markQuestionID: String? = nil, momentOrder: MomentOrderAnswer? = nil, keepsDraft: Bool = false, retrying: ChatSendReceipt? = nil) async {
+    private func send(message submittedMessage: String? = nil, clipSelection: ClipSelectionSubmission? = nil, songOrder: SongOrderSubmission? = nil, choiceSelection: ChoiceSelectionSubmission? = nil, songRange: SongRangeAnswer? = nil, suggestion: SuggestionTap? = nil, protectedRegion: ProtectedRegionAnswer? = nil, markQuestionID: String? = nil, momentOrder: MomentOrderAnswer? = nil, keepsDraft: Bool = false, retrying: ChatSendReceipt? = nil, suggestionOutcome: ((SuggestionTapOutcome) -> Void)? = nil) async {
         // Steer now: a typed message may go while Kria works; it waits as "Up next". Card answers and chips still wait.
         let composerSend = submittedMessage == nil && clipSelection == nil && songOrder == nil && choiceSelection == nil
             && songRange == nil && suggestion == nil && protectedRegion == nil && momentOrder == nil && retrying == nil
@@ -2542,6 +2653,7 @@ private struct CreationWorkspaceView: View {
                 pendingTurnSubmission = nil
                 model.uploads.clearUnreadableFailures(projectID: project.id)
                 apply(thread, requestSequence: requestSequence)
+                suggestionOutcome?(.accepted)
                 conversationAcceptedID = UUID()
                 await editorSession.synchronizePromptRevision()
                 await fetchFinalThoughtSummary(requestID: submission.clientEventID)
@@ -2682,6 +2794,7 @@ private struct CreationWorkspaceView: View {
         // done its job; a conflict, a network error or an unsaved editor leaves it (and the draft) alone.
         model.uploads.clearUnreadableFailures(projectID: project.id)
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
+        suggestionOutcome?(.accepted)
         conversationAcceptedID = UUID()
         steerNote = nil
         let waitsUpNext = steerNowEnabled && accepted.status == "queued"

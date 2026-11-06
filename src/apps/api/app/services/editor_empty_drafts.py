@@ -117,6 +117,9 @@ async def attach_saved_editor_drafts(db: AsyncSession, job: Job | None) -> None:
     """Load pinned snapshots once; never overwrite ORM variant JSON on a read."""
     if job is None:
         return
+    # A repeated projection of this ORM instance must not retain an earlier
+    # snapshot after its reference, ownership graph or generation changes.
+    job._saved_editor_drafts = {}
     variants = [v for v in (job.assembly_plan or {}).get("variants") or [] if isinstance(v, dict)]
     references = {_reference(v): v for v in variants if _reference(v) is not None}
     if not references:
@@ -161,6 +164,7 @@ def public_empty_editor_variant(job: Job, variant: dict[str, Any]) -> dict[str, 
     if not is_empty_editor_variant(variant):
         return variant
     result = dict(variant)
+    result.pop("editor_draft_available", None)
     draft = getattr(job, "_saved_editor_drafts", {}).get(str(variant.get("variant_id")))
     result["editor_draft"] = draft.model_dump(mode="json") if draft else None
     result["editor_state"] = "empty"
@@ -183,6 +187,7 @@ def public_empty_editor_variant(job: Job, variant: dict[str, Any]) -> dict[str, 
     result["playback_available"] = False
     result["export_available"] = False
     if draft:
+        result["editor_draft_available"] = True
         sections = (draft.snapshot.get("editor_payload") or {}).get("sections") or {}
         for key in _DIRECT_SECTIONS:
             if key in sections:
@@ -531,7 +536,11 @@ def prepare_saved_render_windows(job: Job, variant_id: str, prep: dict[str, Any]
     admitted source's inability to supply a finite requested window is a
     durable render-recovery state.
     """
-    from app.pipeline.editor_render_window import RenderWindowUnavailable, effective_source_start
+    from app.pipeline.editor_render_window import (
+        RenderWindowUnavailable,
+        effective_source_start,
+        phone_source_window,
+    )
 
     variant = _variant(job, variant_id)
     if variant.get("editor_timeline_mode") != "authored":
@@ -556,13 +565,30 @@ def prepare_saved_render_windows(job: Job, variant_id: str, prep: dict[str, Any]
             continue
         try:
             requested = float(row["in_s"])
-            effective = effective_source_start(
+            arguments = (
                 requested,
                 float(row["duration_s"]),
                 float(row.get("playback_rate") or 1),
-                row.get("source_duration_s"),
-                start_locked=bool(row.get("source_start_locked")),
             )
+            try:
+                effective = effective_source_start(
+                    *arguments,
+                    row.get("source_duration_s"),
+                    start_locked=bool(row.get("source_start_locked")),
+                )
+            except RenderWindowUnavailable:
+                if variant.get("render_destination") != "device":
+                    raise
+                from app.services.phone_editor_sources import immutable_video_source_duration
+
+                # A stale row or proxy measurement cannot authorize padding.
+                # Use the same immutable identity and original as compilation.
+                source_duration = immutable_video_source_duration(job, variant, row["clip_index"])
+                effective, _span, _hold = phone_source_window(
+                    *arguments,
+                    source_duration,
+                    start_locked=bool(row.get("source_start_locked")),
+                )
             if effective != requested:
                 mappings.append(
                     {
@@ -573,7 +599,7 @@ def prepare_saved_render_windows(job: Job, variant_id: str, prep: dict[str, Any]
                     }
                 )
         except RenderWindowUnavailable as exc:
-            recovery = str(exc)
+            recovery = recovery or str(exc)
     assembly = copy.deepcopy(job.assembly_plan)
     updated = next(v for v in assembly["variants"] if v.get("variant_id") == variant_id)
     updated["render_window_mappings"] = mappings
@@ -596,13 +622,18 @@ def prepare_saved_render_windows(job: Job, variant_id: str, prep: dict[str, Any]
 
 def public_saved_editor_variant(job: Job, variant: dict[str, Any]) -> dict[str, Any]:
     """Expose authored lanes even when a render has not caught up to Save."""
+    result = dict(variant)
+    result.pop("editor_draft_available", None)
     if variant.get("editor_state_version") != 2 or is_empty_editor_variant(variant):
-        return variant
+        return result
     draft = getattr(job, "_saved_editor_drafts", {}).get(str(variant.get("variant_id")))
     if draft is None:
-        return variant
+        return result
     sections = (draft.snapshot.get("editor_payload") or {}).get("sections") or {}
-    result = dict(variant)
+    # Attachment validated owner, item, job, variant and current generation
+    # (or its published-source alias). Clients can offer the saved editor
+    # independently of whether its render succeeded, without guessing aliases.
+    result["editor_draft_available"] = True
     result["editor_draft"] = draft.model_dump(mode="json")
     for key in _DIRECT_SECTIONS:
         if key in sections:

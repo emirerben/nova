@@ -20,6 +20,7 @@ from app.kria.api_schemas import (
     RenderRetryBody,
     RenderRetryOut,
     SubmitTurnBody,
+    SuggestionTapIn,
     ThreadDeltaOut,
     TurnAccepted,
     TurnCancelBody,
@@ -65,6 +66,8 @@ from app.routes.creation_threads import (
     CreationCapabilitiesOut,
     CreationThreadOut,
     MessageBody,
+    ReplaceMediaBody,
+    SuggestionDismissOut,
     SuggestionSetOut,
     UploadBody,
     UploadTarget,
@@ -210,6 +213,7 @@ MOBILE_API_MODELS = (
     UploadBody,
     UploadTarget,
     AttachBody,
+    ReplaceMediaBody,
     ActionBody,
     MessageBody,
     SuggestionSetOut,
@@ -240,6 +244,7 @@ MOBILE_API_MODELS = (
     EditorCommitResponse,
     EditorSourceRequest,
     EditorSourceOut,
+    SuggestionDismissOut,
     *API_MODELS,
 )
 
@@ -640,6 +645,15 @@ def mobile_openapi_json() -> str:
                     "responses": _json_responses(SuggestionSetOut),
                 },
             },
+            "/creation-threads/{thread_id}/suggestions/dismiss": {
+                "parameters": [thread_id],
+                "post": {
+                    "operationId": "dismissCreationSuggestion",
+                    "security": bearer,
+                    "requestBody": _json_request(SuggestionTapIn),
+                    "responses": _json_responses(SuggestionDismissOut),
+                },
+            },
             "/creation-threads/{thread_id}/turns": {
                 "parameters": [thread_id],
                 "post": {
@@ -819,6 +833,18 @@ def mobile_openapi_json() -> str:
                     "security": bearer,
                     "requestBody": _json_request(AttachBody),
                     "responses": _json_responses(CreationThreadOut),
+                },
+            },
+            "/creation-threads/{thread_id}/media/replace": {
+                "parameters": [thread_id],
+                "post": {
+                    "operationId": "replaceCreationThreadMedia",
+                    "security": bearer,
+                    "requestBody": _json_request(ReplaceMediaBody),
+                    "responses": {
+                        **_json_responses(CreationThreadOut),
+                        "404": {"description": "Re-recording is unavailable"},
+                    },
                 },
             },
             "/creation-threads/{thread_id}/delta": {
