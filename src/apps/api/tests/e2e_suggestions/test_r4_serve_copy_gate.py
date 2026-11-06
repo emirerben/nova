@@ -15,8 +15,9 @@ Failure catalogue (written first; each row is a test below):
       answered wording question). The gate reads "stale" as "finish choosing the wording".
       Served cards used to be refused ``consent_required``.
   A3  a settled decision on the opening title: the creator's own words, a tapped wording, or "skip
-      it". Editor-ops cards cannot be proven against a plan, so they are not served; the legacy
-      chips (which go through the planner and its consent handling) are untouched.
+      it". The hook card writes the title and is not served; the editor-ops cards that leave the
+      title alone are (R5: ``test_r5_serve_copy_gate.py`` reads the ops); the legacy chips (which go
+      through the planner and its consent handling) are untouched.
   A4  a settled decision on the CLOSING title. The hook kind only looks at the opening title, so
       its card was served and refused. Same lane, same answer.
   A5  a restating card against a plan that agrees with the decision. The gate accepts it, so it is
@@ -61,9 +62,9 @@ from tests.tasks import kria_pinned_suggestion_harness as h
 CASSETTES = Path(__file__).resolve().parent / "cassettes"
 KEY = "nermin-matcha-update"
 PROFILES = (EDITOR, SIGNALS, TALKING)
-EDITOR_OPS_KINDS = frozenset(
-    {"captions", "music", "sfx", "transition", "duplicates", "hook", "title_animation"}
-)
+# The editor-ops cards that write the title: gated under every settled decision (R5 split the
+# rest off: a card whose ops leave the title alone does not carry copy).
+EDITOR_OPS_KINDS = frozenset({"hook"})
 STALE_DIGEST = "0" * 24
 
 
@@ -258,9 +259,9 @@ async def test_a_every_served_card_passes_the_consent_gate(
         )
     else:
         rec.negative(
-            f"{state} ({folds_to}, {profile}): the editor-ops cards are not offered",
+            f"{state} ({folds_to}, {profile}): the card that writes the title is not offered",
             KEY,
-            "no editor-ops card (the gate cannot prove one against a plan)",
+            "no hook card (the gate cannot prove one against a plan)",
             not (set(served) & EDITOR_OPS_KINDS),
             f"served {served}",
         )
@@ -315,9 +316,9 @@ async def test_a_a_restating_card_follows_the_plan_it_restates(talking_world, st
         f"served {served}",
     )
     rec.negative(
-        "the editor-ops cards are withheld either way",
+        "the card that writes the title is withheld either way",
         KEY,
-        "no editor-ops card",
+        "no hook card",
         not (set(served) & EDITOR_OPS_KINDS),
         f"served {served}",
     )

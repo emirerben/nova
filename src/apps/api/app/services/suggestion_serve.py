@@ -176,6 +176,10 @@ INPUT_KINDS = ("hook", "mute_clip", "filler_words", "duplicates")
 # only the variant's next revision while its head draft IS the plan (``pinned.restate_base``), and
 # only while the saved video is one the agent has read (``pinned.save_unread``).
 RESTATING_KINDS = frozenset({"mute_clip", "filler_words"})
+# The cards whose tap writes the on-screen title (a ``copy_decision`` action: one ``set_title`` op).
+# Every other editor-ops card runs only ops that leave the title lane alone, so the consent gate
+# reads its ops, not the mere existence of a title decision (``creative_copy_gate``).
+TITLE_LANE_KINDS = frozenset({"hook"})
 BRIEF_KEY = "brief"  # kind_inputs: the latest CreativeBrief (None = the thread has none)
 
 
@@ -635,15 +639,31 @@ async def _copy_gate_dead(
     """
     from app.kria import planner  # noqa: PLC0415
     from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
-    from app.services.creative_copy_gate import creative_copy_problem  # noqa: PLC0415
+    from app.services.creative_copy_gate import (  # noqa: PLC0415
+        TITLE_NEUTRAL_OPS,
+        creative_copy_problem,
+    )
     from app.services.suggestions import pinned  # noqa: PLC0415
 
     events = await planner._load_thread_events(db, thread.id, release=False)
     media = snapshot_media(item)
     dead: dict[str, str] = {}
     editor_ops = kinds - RESTATING_KINDS
-    if editor_ops and creative_copy_problem(events, media, strategy=None) is not None:
-        dead.update(dict.fromkeys(editor_ops, "copy_gate"))
+    # A card that writes the title is gated under any decision; one that leaves it alone (every
+    # op it can run is on the gate's allow-list, which the tap enforces) only under an open
+    # discussion. The commit asks the same function with the op names of the draft it carries.
+    titled = editor_ops & TITLE_LANE_KINDS
+    neutral = editor_ops - TITLE_LANE_KINDS
+    if titled and creative_copy_problem(events, media, strategy=None) is not None:
+        dead.update(dict.fromkeys(titled, "copy_gate"))
+    if (
+        neutral
+        and creative_copy_problem(
+            events, media, strategy=None, pinned_ops=sorted(TITLE_NEUTRAL_OPS)
+        )
+        is not None
+    ):
+        dead.update(dict.fromkeys(neutral, "copy_gate"))
     restating = kinds & RESTATING_KINDS
     if restating:
         base = await pinned.restate_base(db, thread_id=thread.id, ctx=ctx)

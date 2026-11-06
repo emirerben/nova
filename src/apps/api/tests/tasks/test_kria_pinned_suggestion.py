@@ -808,7 +808,10 @@ async def test_fm15_a_queued_pinned_tap_plans_against_what_its_predecessor_left(
 
 
 @pytest.mark.asyncio
-async def test_fm16_creative_copy_consent_blocks_a_tap_like_any_other_editor_draft(world):
+async def test_fm16_a_decided_title_does_not_block_a_tap_that_leaves_the_title_alone(world):
+    """R5: the consent gate reads the ops of a tapped card, not only that a title was decided. A
+    sound effect carries no copy, so the creator's own title is none of its business; the cards
+    that write the title stay gated (``test_r5_serve_copy_gate.py``)."""
     seeded = h.seed_ready_thread()
     await h.serve(seeded)
     digest = await h.media_digest_of(seeded)
@@ -835,12 +838,12 @@ async def test_fm16_creative_copy_consent_blocks_a_tap_like_any_other_editor_dra
         )
         db.commit()
     before = h.counts(seeded)
-    await _tap_and_run(seeded, "sfx")
-    assert (
-        _last_reply(seeded.thread_id)
-        == "Let's review the edit plan with your saved wording before changing this video."
+    _accepted, result = await _tap_and_run(seeded, "sfx")
+    assert result["status"] == "completed"
+    assert _last_reply(seeded.thread_id) != (
+        "Let's review the edit plan with your saved wording before changing this video."
     )
-    assert h.counts(seeded) == before
+    assert h.counts(seeded)["drafts"] == before["drafts"] + 1
 
 
 @pytest.mark.asyncio
