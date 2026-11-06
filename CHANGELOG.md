@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.7.0] - 2026-11-06
+
+### Changed
+- feat(text): her short-clip text look — one line in the middle, TikTok's own look (Qendresa item 21) (#2114) <!-- release-pr: 2114 -->
+
 ## [0.88.6.0] - 2026-11-06
 
 ### Changed
