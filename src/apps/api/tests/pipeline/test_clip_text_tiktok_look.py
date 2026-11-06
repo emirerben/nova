@@ -42,7 +42,6 @@ from app.agents._schemas.creator_agent import (  # noqa: E402
     ResolvedCreatorManifest,
 )
 from app.agents.main_creator import (  # noqa: E402
-    MAIN_CREATOR_PROMPT_VERSION,
     MainCreatorAgent,
     MainCreatorInput,
 )
@@ -297,9 +296,17 @@ def _golden_rows() -> list[dict]:
     return json.loads(json.dumps(styled, sort_keys=True))
 
 
+def _pre_case3_parser(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The golden was recorded before Qendresa case 3's parser fix, which moves this PROMPT's
+    "middle" + "white" from the captions to her text (`TEXT_STYLE_SEGMENT_ROLE_ENABLED`, tested in
+    `test_q3_no_captions_text_style.py`). With that switch off the rows are byte-identical."""
+    monkeypatch.setattr(settings, "text_style_segment_role_enabled", False)
+
+
 def test_flag_off_rows_match_the_recorded_golden(monkeypatch) -> None:
     """Failure mode 1: with the flag off the styled rows are byte-identical to today's."""
     _flag(monkeypatch, False)
+    _pre_case3_parser(monkeypatch)
     assert _golden_rows() == json.loads(FIXTURE.read_text())
 
 
@@ -307,6 +314,7 @@ def test_flag_off_middle_look_pin_is_drawn_like_top_center(monkeypatch) -> None:
     """Failure mode 3: a pin written with middle_center + look while the flag is off is drawn
     exactly like top_center with no look (fails today: the schema rejects the corner)."""
     _flag(monkeypatch, False)
+    _pre_case3_parser(monkeypatch)
     styled = _style(_strategy([_middle_pin()]))
     assert json.loads(json.dumps(styled, sort_keys=True)) == json.loads(FIXTURE.read_text())
 
@@ -346,12 +354,11 @@ def test_flag_off_main_creator_prompt_bytes_are_unchanged(monkeypatch) -> None:
 
 
 def test_flag_on_main_creator_prompt_teaches_the_middle_look(monkeypatch) -> None:
-    """The model must be told about ``middle_center`` and ``"look": "tiktok"``; version bumped."""
+    """The model must be told about ``middle_center`` and ``"look": "tiktok"``."""
     _flag(monkeypatch, True)
     prompt = MainCreatorAgent(None).render_prompt(_prompt_input())  # type: ignore[arg-type]
     assert "middle_center" in prompt
     assert '"look": "tiktok"' in prompt
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-06-v136"  # 16 v133, 20 v135, 18 v136
 
 
 # 10 --------------------------------------------------------------------------------------

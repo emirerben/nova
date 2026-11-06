@@ -77,34 +77,26 @@ struct KriaFloatingIconButton: View {
 struct NewChatButton: View {
     var compact = false
     var icon: KriaIcon.Kind = .pencil
+    /// Runs the moment the chat is tapped, e.g. to close the drawer onto the conversation that is starting.
     var afterCreate: () -> Void = {}
     @EnvironmentObject private var model: AppModel
-    @State private var busy = false
-    @State private var error: String?
     var body: some View {
         Button {
-            guard !busy else { return }
-            busy = true
-            let previousID = model.selectedProject?.id
-            Task {
-                await model.createProject()
-                busy = false
-                if model.selectedProject?.id != previousID { afterCreate() }
-                else { error = model.errorMessage ?? "Your chat couldn’t be created. Try again." }
-            }
+            guard !model.isCreatingProject else { return }
+            // The new conversation is on screen before this returns; the server creates it in the
+            // background, and a failure or a retry is shown on that conversation itself.
+            model.startNewChat()
+            afterCreate()
         } label: {
             HStack(spacing: 10) {
-                if busy { ProgressView() } else { KriaIcon(icon) }
+                KriaIcon(icon)
                 if !compact { Text("New chat").font(KriaFont.body(15).weight(.semibold)) }
             }
             .frame(minWidth: 44, minHeight: 44).padding(.horizontal, compact ? 0 : 16)
             .background(compact ? Color.clear : KriaColor.butter, in: Capsule())
         }
-        .disabled(busy || model.isCreatingProject || model.isLoading).accessibilityLabel("New chat")
+        .disabled(model.isCreatingProject).accessibilityLabel("New chat")
         .accessibilityIdentifier(compact ? "header-new-chat" : "drawer-new-chat")
-        .alert("Couldn’t create chat", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
-            Button("OK", role: .cancel) { error = nil }
-        } message: { Text(error ?? "") }
     }
 }
 

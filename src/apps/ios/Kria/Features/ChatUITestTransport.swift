@@ -87,6 +87,13 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     private var delayedResponse: DispatchWorkItem?
     override func startLoading() {
+        if request.httpMethod == "POST", request.url?.path == "/creation-threads",
+           let delay = ProcessInfo.processInfo.environment["KRIA_CHAT_CREATE_DELAY"].flatMap(Double.init), delay > 0 {
+            let work = DispatchWorkItem { [weak self] in self?.finishLoading() }
+            delayedResponse = work
+            DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: work)
+            return
+        }
         if PerfFixture.isFullProjectionRead(request) {
             Perf.mark("fixture.full.arrived")
             PerfCounters.shared.setOnce("fixture fullDelayMS", Int(PerfFixture.delay(for: request) * 1000))

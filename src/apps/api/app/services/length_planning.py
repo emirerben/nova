@@ -75,6 +75,9 @@ DESCRIBED_MOMENT_FLOOR_MAX_S = 4.0
 # KRI-585: a quiet stretch (``spoken_roles.quiet_window``) is its clip's window and its
 # ceiling, and keeps at least a readable shot when lengths are shared.
 QUIET_MOMENT_FLOOR_S = 1.2
+# Qendresa case 2: a take the creator asked to keep whole (``whole_take_ids``) is one window,
+# start to end, above every other moment, and that whole length is its floor.
+WHOLE_TAKE_ENERGY = 1000.0
 
 
 def _number(value: object) -> float | None:
@@ -96,6 +99,7 @@ def _sources(
     quiet_moments: Mapping[str, tuple[float, float]] | None = None,
     still_holds: Mapping[str, float] | None = None,
     kept_windows: Mapping[str, float] | None = None,
+    whole_take_ids: Collection[str] = (),
 ) -> list[dict[str, Any]]:
     selected = set(selected_ids)
     still_holds = still_holds or {}
@@ -172,6 +176,13 @@ def _sources(
             # KRI-1028: a clip kept audible for a line the creator named keeps its whole
             # sentence when lengths are shared, past the 4 s cap: the silent clips give way.
             spoken_floor_s = round(kept_windows[row["media_id"]], 3)
+        if kind == "video" and duration_s and row["media_id"] in whole_take_ids:
+            # Qendresa case 2: "keep the whole clip, don't cut it" plays it start to end; the
+            # pace or a story direction never trims it back to a moment.
+            analysis["best_moments"] = [
+                {"start_s": 0.0, "end_s": duration_s, "energy": WHOLE_TAKE_ENERGY}
+            ]
+            spoken_floor_s = round(duration_s, 3)
         sources.append(
             {
                 "media_id": row["media_id"],
@@ -387,6 +398,7 @@ def build_length_plan(
     attached_visual_ids: Collection[str] = (),
     visual_budget_s: float = 0.0,
     story_floor_s: float | None = None,
+    whole_take_ids: Collection[str] = (),
 ) -> dict[str, Any]:
     """Build the approved, serializable source-window plan.
 
@@ -445,6 +457,10 @@ def build_length_plan(
     song section nobody stated is extended by the least the holds need; a creator's length is
     never moved (when the holds do not fit it the plain windows stand and the render cuts a fast
     montage and says so). Recorded as ``story`` only when it changed the windows.
+
+    ``whole_take_ids`` (Qendresa case 2, ``planner._whole_take_ids``): video clips the creator
+    asked to keep whole, uncut. Each one's window is the clip, start to end, and that length is
+    its floor, so neither the pace nor a story direction cuts it back to one moment.
     """
 
     natural_owner = natural_length_owner(strategy)
@@ -463,6 +479,7 @@ def build_length_plan(
         quiet_moments,
         still_holds,
         kept_windows,
+        whole_take_ids,
     )
     by_id = {source["media_id"]: source for source in sources}
     if len(by_id) != len(sources):

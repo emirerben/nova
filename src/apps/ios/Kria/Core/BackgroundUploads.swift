@@ -489,7 +489,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             // launch instead of silently vanishing with no trace at all.
             var stagedURL: URL?
             if role == .clip {
-                let copy = try Self.stageIntoRecoveryDirectory(fileURL)
+                let copy = try Perf.measure("talk.use.stageCopy") { try Self.stageIntoRecoveryDirectory(fileURL) }
                 stagedURL = copy
                 startEarlyPreview(of: copy, recordID: recordID)
                 Self.persistPreparingUpload(PreparingUpload(id: recordID, projectID: projectID, localFilePath: copy.path,
@@ -503,7 +503,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 // Wait for a slot only AFTER staging: with a Photos pick that is now a rename, so a
                 // clip queued behind others is already durable and crash-resumable rather than
                 // sitting in tmp where a force-quit would lose it. Throws if cancelled while queued.
-                try await gate.acquire()
+                try await Perf.measureAsync("talk.use.proxyGateWait") { try await gate.acquire() }
                 holdsSlot = true
             }
             let prepared = role == .clip ? try await prepare(fileURL: stagedURL ?? fileURL, projectID: projectID, purpose: purpose, recordID: recordID) : (fileURL, nil, nil)
@@ -536,10 +536,12 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 beforeWait: { if holdsSlot { gate.release(); holdsSlot = false } },
                 afterWait: { if role == .clip { try await gate.acquire(); holdsSlot = true } }
             ) {
-                try await reserve(
-                    projectID: projectID, itemID: itemID, role: role, clientUploadID: clientUploadID,
-                    filename: fileURL.lastPathComponent, contentType: contentType, size: Int64(size), contract: prepared.2, replacesMediaID: replacesMediaID
-                )
+                try await Perf.measureAsync("talk.use.reserve") {
+                    try await reserve(
+                        projectID: projectID, itemID: itemID, role: role, clientUploadID: clientUploadID,
+                        filename: fileURL.lastPathComponent, contentType: contentType, size: Int64(size), contract: prepared.2, replacesMediaID: replacesMediaID
+                    )
+                }
             }
             preparedToDiscard = nil   // the upload owns these files from here on
             if let original = prepared.1 {
@@ -1476,6 +1478,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         // `cancel` suspends while it looks up the URLSession task, and this can fire in that window.
         // Letting it through would start an attach for an upload the user has just un-chosen.
         guard let record = records.first(where: { $0.taskIdentifier == taskIdentifier }), !cancellingRecords.contains(record.id) else { return }
+        Perf.end("talk.use.put", id: record.id.uuidString, "role=\(record.role) status=\(status ?? 0)")
         // Creation upload keys are unique to the persisted client upload id and
         // GCS writes are atomic. A retry after an app crash can therefore see
         // 412 from `if-generation-match: 0` only when our prior PUT already
@@ -1588,6 +1591,8 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         // No `lastError = nil` here: attaches now run concurrently with later enqueues, so a
         // success would erase a sibling clip's failure. Per-clip failures live in `failures`.
         guard isStillAttaching(record.id) else { return }
+        Perf.begin("talk.use.attach", id: record.id.uuidString)
+        defer { Perf.end("talk.use.attach", id: record.id.uuidString, "role=\(record.role)") }
         if record.role == .visual {
             do {
                 guard let itemID = record.itemID, let reservationID = record.visualReservationID,
@@ -1831,6 +1836,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         )
         records.append(record)
         persist()
+        Perf.begin("talk.use.put", id: recordID.uuidString)
         task.resume()
     }
 
@@ -1869,7 +1875,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         let project = Self.projectDirectory(projectID)
         // `fileURL` is the staged file for `.clip` (ours, never edited), so the import can
         // share its bytes instead of writing them a third time. An external source stays a copy.
-        let asset = try await AssetImportCoordinator(project: project).importAsset(from: fileURL, preferLink: Self.isAppOwned(fileURL))
+        let asset = try await Perf.measureAsync("talk.use.import") {
+            try await AssetImportCoordinator(project: project).importAsset(from: fileURL, preferLink: Self.isAppOwned(fileURL))
+        }
         updatePreparationHeartbeat(recordID: recordID) // import done
         let original = project.root.appending(path: asset.relativePath)
         // The import above already wrote the original into the project tree. If anything after it
@@ -1890,10 +1898,14 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             updatePreparationHeartbeat(recordID: recordID) // transcode started
             let proxy = project.proxies.appendingPathComponent("\(asset.id).mp4")
             proxyURL = proxy
-            let result = try await AVFoundationProxyGenerator(preset: ProxyPreset(width: 640, height: 360)).makeProxy(for: original, destination: proxy)
+            let result = try await Perf.measureAsync("talk.use.proxyTranscode") {
+                try await AVFoundationProxyGenerator(preset: ProxyPreset(width: 640, height: 360)).makeProxy(for: original, destination: proxy)
+            }
             updatePreparationHeartbeat(recordID: recordID) // transcode done
             guard let fingerprint = asset.fingerprint else { throw APIError.invalidResponse }
-            let contract = try await ProjectMediaUploadContract.analysisProxy(original: original, proxy: result, fingerprint: fingerprint)
+            let contract = try await Perf.measureAsync("talk.use.contract") {
+                try await ProjectMediaUploadContract.analysisProxy(original: original, proxy: result, fingerprint: fingerprint)
+            }
             succeeded = true
             return (result, asset, contract)
         }

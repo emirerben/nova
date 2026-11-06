@@ -51,8 +51,12 @@ def require_phone_text_style_client(policy, *, require_header=False):
         )
 
 
-def requested_style(strategy: dict, request: str) -> dict:
-    """Read only unambiguous current-video asks, never treating them as memory."""
+def requested_style(strategy: dict, request: str, *, captions_off: bool = False) -> dict:
+    """Read only unambiguous current-video asks, never treating them as memory.
+
+    ``captions_off``: the pinned brief's typed ``captions`` fact is "off" (`_brief_captions_off`).
+    No caption is drawn then, so a caption style from the words is her on-screen text's
+    ("No captions, white text in the middle"; Qendresa case 3)."""
     all_text = {}
     for source, dest in (
         ("font_family", "font_family"),
@@ -65,6 +69,8 @@ def requested_style(strategy: dict, request: str) -> dict:
     from app.schemas.phone_text_style import explicit_text_rule
 
     resolved = explicit_text_rule(request)
+    if captions_off and resolved is not None and resolved[0] == "caption":
+        resolved = ("all_text", resolved[1])
     if resolved is not None and resolved[0] != "all_text":
         # Strategy's legacy knobs have no role field. A scoped wording match
         # supplies that missing scope, rather than leaking the ask to every lane.
@@ -131,7 +137,9 @@ def stamp_phone_text_style(job) -> None:
         "version": PHONE_TEXT_STYLE_VERSION,
         "preferences": preferences,
         "requested": requested_style(
-            candidates.get("creator_strategy") or {}, str(candidates.get("creator_request") or "")
+            candidates.get("creator_strategy") or {},
+            str(candidates.get("creator_request") or ""),
+            captions_off=settings.text_style_segment_role_enabled and _brief_captions_off(current),
         ),
     }
     # KRI-1177: the look the creator typed onto the brief rides beside the parsed `requested`.
@@ -147,6 +155,24 @@ def stamp_phone_text_style(job) -> None:
         stamped["caption_ask"] = ask.as_dict()
     current[PHONE_TEXT_STYLE_FIELD] = stamped
     job.assembly_plan = current
+
+
+def _brief_captions_off(container: dict) -> bool:
+    """The job's pinned brief turns speech captions off: its last live typed ``captions`` fact
+    is "off" (KRI-667: the fact, never the creator's words). An unreadable binding is "not off"."""
+    raw_binding = container.get("creator_brief_binding")
+    if not raw_binding:
+        return False
+    from app.kria.brief_binding import BriefBinding
+    from app.kria.brief_checks import _caption_fact
+
+    try:
+        brief = BriefBinding.model_validate(raw_binding).resolve()
+    except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no fact"
+        log.warning("phone_text_style.captions_fact_binding_unreadable", error=str(exc)[:200])
+        return False
+    stated = [fact for req in brief.live() if (fact := _caption_fact(req))] if brief else []
+    return bool(stated) and stated[-1] == "off"
 
 
 def _brief_caption_ask(container: dict):
@@ -859,6 +885,14 @@ def register_generation_background(background, canvas=None, focus_for=None) -> N
     from app.config import settings
 
     policy = _POLICY.get()
+    if policy and background is not None:
+        # Qendresa case 1: where the speaker is drawn, recorded before the contrast gates below
+        # (a colour fill and the contrast switch do not move her out of the corner).
+        _record_speaker_layout(policy, background)
+    elif policy:
+        # Review on #2127: a background registered by an earlier compile pass can be dropped (its
+        # media fails to bind) and the worker compiles again without it: she is full-frame again.
+        _forget_speaker_background(policy)
     if (
         not policy
         or background is None
@@ -920,6 +954,113 @@ def register_generation_background(background, canvas=None, focus_for=None) -> N
         )
         if policy.get("caption_look") is not None and policy.get("_caption_auto_fill"):
             policy["caption_look"] = _auto_caption_colour(policy["caption_look"], policy)
+
+
+def _record_speaker_layout(policy: dict, background) -> None:
+    """Qendresa case 1: the speaker's corner frame and full-screen spans, for face placement.
+
+    Recorded for every background (a colour fill too). When the environment was already sampled
+    (a compile path that registers the background after styling), the face boxes are mapped again
+    from the raw samples, never from boxes that were already mapped."""
+    frame = getattr(background, "speaker_frame", None)
+    spans = getattr(background, "full_screen_windows", None) or ()
+    policy["_speaker_layout"] = {
+        "frame": None
+        if frame is None
+        else {"width": frame.width_fraction, "x": frame.x_fraction, "y": frame.y_fraction},
+        "full_screen": [{"start_s": float(s.start_s), "end_s": float(s.end_s)} for s in spans],
+    }
+    if policy.get("_environment_sampled") and "_face_boxes_raw" in policy:
+        before = policy.get("_face_boxes")
+        policy["_face_boxes"] = _faces_where_drawn(policy["_face_boxes_raw"], policy)
+        if policy["_face_boxes"] != before:
+            # The worker's base pass styled the captions before this background was known, so
+            # their spot dodged her face where it is NOT drawn.
+            _restyle_captions(policy)
+
+
+def _restyle_captions(policy: dict) -> None:
+    """Choose the caption look again on the next request (same fonts, no new model call): spot,
+    size, colour and the review are re-judged against the faces and frames the phone draws."""
+    if policy.get("caption_look") is not None:
+        for key in ("caption_look", "_caption_auto_fill", "_caption_look_receipt"):
+            policy.pop(key, None)
+
+
+def _forget_speaker_background(policy: dict) -> None:
+    """Review on #2127: no background on this compile pass. When an earlier pass registered one
+    (its corner frame, its contrast frames), the speaker is drawn full-frame now: face boxes go back
+    to the raw full-frame samples, the contrast frames back to the take's own frames, and the
+    caption look is chosen again. Nothing was registered: nothing changes (byte-identical)."""
+    layout = policy.pop("_speaker_layout", None)
+    contrast = policy.pop("_speaker_background", None)
+    if (layout is None and contrast is None) or not policy.get("_environment_sampled"):
+        return
+    changed = False
+    if "_face_boxes_raw" in policy:
+        restored = list(policy["_face_boxes_raw"])
+        changed |= restored != policy.get("_face_boxes")
+        policy["_face_boxes"] = restored
+    if contrast is not None and "_take_frames_raw" in policy:
+        policy["_background_frames"] = list(policy["_take_frames_raw"])
+        changed = True
+    if changed:
+        _restyle_captions(policy)
+
+
+def _inside(start: float, end: float, spans: list[dict]) -> list[tuple[float, float]]:
+    """The pieces of ``[start, end)`` that fall inside a full-screen span (Qendresa item 16)."""
+    pieces = []
+    for span in sorted(spans, key=lambda s: s["start_s"]):
+        a, b = max(start, span["start_s"]), min(end, span["end_s"])
+        if b - a > 1e-3:
+            pieces.append((a, b))
+    return pieces
+
+
+# Air kept around a face drawn small in a corner frame (canvas fraction, ~19 px tall / 11 px wide on
+# 1080x1920). Placement measures text with its own shaper; the compiled caption ink can sit a pixel
+# or two lower, which on a small corner face reads as text touching her forehead (two of the six
+# measured real faces, 2026-11-06).
+_DRAWN_FACE_MARGIN = 0.01
+
+
+def _in_frame(box, frame: dict) -> tuple[float, float, float, float]:
+    """``box`` (canvas fractions, full-frame take) where the phone draws it in ``frame``: the
+    canvas-sized speaker layer scaled uniformly by the frame width, centred at its x/y
+    (`RecipeVideoCompositor.framed`), with `_DRAWN_FACE_MARGIN` of air around it."""
+    scale, cx, cy = frame["width"], frame["x"], frame["y"]
+    left, top, right, bottom = box
+    return (
+        cx + (left - 0.5) * scale - _DRAWN_FACE_MARGIN,
+        cy + (top - 0.5) * scale - _DRAWN_FACE_MARGIN,
+        cx + (right - 0.5) * scale + _DRAWN_FACE_MARGIN,
+        cy + (bottom - 0.5) * scale + _DRAWN_FACE_MARGIN,
+    )
+
+
+def _faces_where_drawn(boxes: list[dict], policy: dict) -> list[dict]:
+    """Qendresa case 1: ``boxes`` (full-frame take faces on the timeline) where the phone draws
+    them. With a corner frame, a face is mapped into the frame outside any full-screen span and kept
+    full-frame inside one (item 16). No frame, no layout or the switch off: ``boxes`` unchanged."""
+    from app.config import settings
+
+    layout = policy.get("_speaker_layout") or {}
+    frame = layout.get("frame")
+    if not boxes or frame is None or not settings.speaker_frame_caption_faces_enabled:
+        return list(boxes)
+    spans = layout.get("full_screen") or []
+    mapped: list[dict] = []
+    for face in boxes:
+        start, end = float(face["start_s"]), float(face["end_s"])
+        for piece_start, piece_end in _inside(start, end, spans):
+            mapped.append({**face, "start_s": piece_start, "end_s": piece_end})
+        box = _in_frame(face["box"], frame)
+        if not (box[2] > 0 and box[0] < 1 and box[3] > 0 and box[1] < 1):
+            continue
+        for piece_start, piece_end in _outside(start, end, spans) if spans else [(start, end)]:
+            mapped.append({**face, "start_s": piece_start, "end_s": piece_end, "box": box})
+    return mapped
 
 
 def _segments(spec: dict, until: float) -> list[tuple[float, float, dict]]:
@@ -1190,9 +1331,11 @@ def _ensure_generation_environment(canvas):
             except Exception:  # noqa: BLE001 - no source paths/private text in receipts
                 source_errors += 1
                 continue
+    policy["_take_frames_raw"] = frames
     if policy.get("_speaker_background"):
         frames = _background_frames(policy["_speaker_background"], frames, canvas)
-    policy["_face_boxes"], policy["_background_frames"] = boxes, frames
+    policy["_face_boxes_raw"] = boxes
+    policy["_face_boxes"], policy["_background_frames"] = _faces_where_drawn(boxes, policy), frames
     record_pipeline_event(
         "text",
         "styling_environment_sample",

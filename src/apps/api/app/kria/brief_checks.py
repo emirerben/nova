@@ -422,6 +422,10 @@ class SpeakerBackgroundFact:
     opening_code: str | None = None
     # The app build the draft answers (None = unknown); the receipt reads the opening gate for it.
     client_protocol: int | None = None
+    # Qendresa case 5: on a finished video, the asked recordings its windows never show, as
+    # (spoken phrase or None, the worker's drop reason or None). Empty = none missing, or a
+    # render recorded before the worker wrote it (no claim either way).
+    unshown: tuple[tuple[str | None, str | None], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -567,6 +571,11 @@ class PlanFacts:
     # was not available and must remain unchecked.
     text_spans: tuple[tuple[str, str, float, float], ...] = ()
     text_timing_incomplete: bool = False
+    # Qendresa case 9: when on-screen text stays. ``text_windows`` is every timed text row of a
+    # finished phone montage as (folded text, start_s, end_s); None = the facts hold no times.
+    # ``timed_pin_texts`` (folded) is text a pin shows only for the time the creator named.
+    text_windows: tuple[tuple[str, float, float], ...] | None = None
+    timed_pin_texts: tuple[str, ...] = ()
     # Per-row style of the saved non-caption text rows (KRI-543). None means the text lane
     # was not available (a draft or render), which keeps a style ask unchecked.
     text_styles: tuple[TextStyleRow, ...] | None = None
@@ -777,6 +786,13 @@ class PlanFacts:
     # own length (media id, seconds). None = unknown.
     cut_clip_ids: tuple[str, ...] | None = None
     source_durations_s: tuple[tuple[str, float], ...] | None = None
+    # Qendresa case 2: those cuts as (media id, source start_s, source end_s), so a keep-whole
+    # ask can tell how much of a clip plays. None = unknown.
+    cut_source_spans: tuple[tuple[str, float, float], ...] | None = None
+    # True only when `cut_source_spans` are the cuts that really play (the plan's final cuts or
+    # the finished timeline); early windows (length plan, `best_parts`) are never judged for
+    # keep-whole.
+    cut_spans_final: bool = False
     # KRI-624: the plan lays a creator's song under the clips (their own sound is not alone).
     song_bed: bool = False
     # Every clip the creator added to this edit (footage and Visuals), whether or not the
@@ -1261,6 +1277,21 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
         full_screen_opening_s=opening_s,
         asked_full_opening=opening_s is not None or opening_code is not None,
         opening_code=opening_code if opening_s is None else None,
+        unshown=_unshown_recordings(detail.get("unshown")),
+    )
+
+
+def _unshown_recordings(rows: object) -> tuple[tuple[str | None, str | None], ...]:
+    """The worker's ``background.unshown`` rows (Qendresa case 5) as (phrase, reason) pairs."""
+
+    def text(row: Mapping[str, Any], key: str) -> str | None:
+        value = row.get(key)
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+    return tuple(
+        (text(row, "phrase"), text(row, "reason"))
+        for row in (rows if isinstance(rows, list) else [])
+        if isinstance(row, Mapping)
     )
 
 
@@ -1400,6 +1431,38 @@ def _pinned_text_values(pins: object) -> list[str]:
         for pin in (pins if isinstance(pins, list) else [])
         if isinstance(pin, Mapping) and pin.get("text")
     ]
+
+
+_PIN_TIME_KEYS = ("start_s", "end_s", "clip")
+
+
+def _timed_pin_texts(pins: object) -> tuple[str, ...]:
+    """Qendresa case 9: the folded lines of the pins with a time the creator named
+    (`main_creator` prompt: "With no time named a pin stays the whole video")."""
+    return tuple(
+        _fold(str(pin["text"]))
+        for pin in (pins if isinstance(pins, list) else [])
+        if isinstance(pin, Mapping)
+        and pin.get("text")
+        and any(pin.get(key) is not None for key in _PIN_TIME_KEYS)
+    )
+
+
+def _text_windows(rows: object) -> tuple[tuple[str, float, float], ...] | None:
+    """Qendresa case 9: a finished video's timed text rows as (folded text, start_s, end_s);
+    None when it lists no text rows (nothing is known about when text shows)."""
+    if not isinstance(rows, list):
+        return None
+    out: list[tuple[str, float, float]] = []
+    for row in rows:
+        if not isinstance(row, Mapping) or row.get("removed"):
+            continue
+        text = row.get("text")
+        start, end = _finite_number(row.get("start_s")), _finite_number(row.get("end_s"))
+        if isinstance(text, str) and text.strip() and start is not None and end is not None:
+            if end > start >= 0:
+                out.append((_fold(text), start, end))
+    return tuple(out)
 
 
 def _placement_key(text: object) -> str:
@@ -1712,6 +1775,8 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
     total length and how the order was decided), never what a model claimed.
     """
     record = record or {}
+    # Review of #2129: the plan's final cuts, when the record carries them and all parse.
+    final_spans = _window_spans(record.get(FINAL_SOURCE_CUTS))
     labels = [row for row in record.get("labels") or [] if isinstance(row, Mapping)]
     per_clip = {str(row["media_id"]): str(row["text"]) for row in labels if row.get("text")}
     inferred = {
@@ -1810,6 +1875,9 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
             )
             if text
         ),
+        # Qendresa case 9: a pin's time is the creator's; how long a title is held is read off
+        # the finished video (`judged_at_render`).
+        timed_pin_texts=_timed_pin_texts(record.get("pinned_texts")),
         label_scope_clip_ids=tuple(str(c) for c in record.get("label_scope_clip_ids") or []),
         unreadable_label_clip_ids=tuple(str(c) for c in record.get("short_label_clip_ids") or []),
         per_clip_label_kinds={
@@ -1823,6 +1891,8 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         named_lines=_named_line_facts(record.get("named_lines")),
         cut_lengths_s=_window_lengths(record.get("best_parts")),
         cut_clip_ids=_window_media_ids(record.get("best_parts")),
+        cut_source_spans=final_spans or _window_spans(record.get("best_parts")),
+        cut_spans_final=bool(final_spans),
         source_durations_s=_source_durations(record.get("clip_durations_s")),
         song_bed=bool(record.get("user_song")),
         # A record without the key was written by a planner that could not retime (KRI-689's
@@ -2007,6 +2077,44 @@ def _window_lengths(rows: object) -> tuple[float, ...] | None:
     return tuple(lengths) or None
 
 
+def _window_spans(rows: object) -> tuple[tuple[str, float, float], ...] | None:
+    """Qendresa case 2: plan / length-plan windows as (media id, source start, source end);
+    None when any row is unreadable (no partial claim about what plays)."""
+    spans = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, Mapping) or not isinstance(row.get("media_id"), str):
+            return None
+        start = _finite_number(row.get("source_start_s"))
+        end = _finite_number(row.get("source_end_s"))
+        if start is None or end is None or end <= start:
+            return None
+        spans.append((str(row["media_id"]), start, end))
+    return tuple(spans) or None
+
+
+FINAL_SOURCE_CUTS = "final_source_cuts"
+
+
+def montage_final_source_cuts(plan: Any) -> list[dict[str, Any]]:
+    """The plan's FINAL cuts as record rows, in screen order (after freezes, speeds, slides).
+
+    ``plan.cuts`` is what plays whatever the layout (a story plan keeps the fast plan's cuts it
+    was built from); an object without it falls back to its snapshot's fast cuts.
+    """
+    rows: list[dict[str, Any]] = []
+    cuts = getattr(plan, "cuts", None)
+    if cuts is None:
+        cuts = getattr(getattr(plan, "snapshot", None), "fast_cuts", None)
+    for cut in cuts or []:
+        media_id = getattr(cut, "media_id", None)
+        start = _finite_number(getattr(cut, "source_start_s", None))
+        end = _finite_number(getattr(cut, "source_end_s", None))
+        if not isinstance(media_id, str) or start is None or end is None or end <= start:
+            continue
+        rows.append({"media_id": media_id, "source_start_s": start, "source_end_s": end})
+    return rows
+
+
 def _window_media_ids(rows: object) -> tuple[str, ...] | None:
     ids = [
         row["media_id"] if isinstance(row, Mapping) and isinstance(row.get("media_id"), str) else ""
@@ -2052,6 +2160,8 @@ def with_planned_cuts(facts: PlanFacts, media_snapshot: Mapping[str, Any] | None
         facts,
         cut_lengths_s=lengths,
         cut_clip_ids=_window_media_ids(windows),
+        cut_source_spans=_window_spans(windows),
+        cut_spans_final=False,
         source_durations_s=_source_durations(
             {
                 row.get("media_id"): row.get("duration_s")
@@ -3360,6 +3470,11 @@ def plan_facts_from_rendered_montage(
         if isinstance(media_id, str) and media_id and isinstance(sha, str) and sha
     }
     kept = variant.get("source_audio_preserved")
+    rendered_spans = tuple(
+        (media_id, start, end)
+        for media_id, start, end in cuts
+        if start is not None and end is not None and end > start
+    )
     return dataclasses.replace(
         facts,
         **{name: getattr(plan, name) for name in _MONTAGE_ORDER_FIELDS},
@@ -3377,12 +3492,22 @@ def plan_facts_from_rendered_montage(
         )
         or plan.cut_lengths_s,
         cut_clip_ids=tuple(media_id for media_id, _start, _end in cuts) or plan.cut_clip_ids,
+        # Qendresa case 2: the finished timeline's windows when every cut says where it is from.
+        cut_source_spans=(
+            rendered_spans if cuts and len(rendered_spans) == len(cuts) else plan.cut_source_spans
+        ),
+        cut_spans_final=(
+            True if cuts and len(rendered_spans) == len(cuts) else plan.cut_spans_final
+        ),
         source_durations_s=plan.source_durations_s,
         asset_holds=_rendered_holds(plan.asset_holds, variant),
         song_bed=plan.song_bed,
         speed_unsupported=plan.speed_unsupported,
         clip_speeds=_rendered_speeds(plan.clip_speeds, variant),
         text_shapes=plan.text_shapes,
+        # Qendresa case 9: when each line really shows, read off the finished text lane.
+        text_windows=_text_windows(variant.get("text_elements")),
+        timed_pin_texts=plan.timed_pin_texts,
         timeline_non_video_ids=_rendered_non_video_ids(variant),
         freeze_frames=_rendered_freezes(plan.freeze_frames, variant),
         source_audio_kept=kept if isinstance(kept, bool) else None,
@@ -4840,6 +4965,9 @@ def _colour_extras_shortfalls(
                     tr="Tam boyutta kalıyorsun, köşede küçük değilsin.",
                 )
             )
+    missing = _unshown_sentence(fact) if rendered else None
+    if missing:
+        out.append(missing)  # Qendresa case 5: an asked recording never shows over the colour
     return out
 
 
@@ -4998,7 +5126,79 @@ def _check_speaker_background_core(req: BriefRequirement, facts: PlanFacts) -> R
         if corner:
             en += f"; you're {corner[0]}"
             tr += f"; sen {corner[1]}sın"
+    missing = _unshown_sentence(fact) if rendered else None
+    if missing:
+        # Qendresa case 5: a recording she asked for never shows, so the ask is not met.
+        return _receipt(req, "partial", f"{say(en=en + '.', tr=tr + '.')} {missing}")
     return _receipt(req, "met", say(en=en + ".", tr=tr + "."))
+
+
+def _quoted(values: Sequence[str]) -> list[str]:
+    return [f"“{value}”" for value in dict.fromkeys(values)]
+
+
+def _unshown_sentence(fact: SpeakerBackgroundFact) -> str | None:
+    """Qendresa case 5: the finished video's asked recordings that never show, named by the
+    phrase the plan waited for (KRI-667: a typed worker record, never the creator's words).
+
+    A phrase never heard on the word is said so; another named one is just missing; one with
+    no phrase is counted. None when nothing is missing.
+    """
+    if not fact.unshown:
+        return None
+    unheard = _quoted([p for p, why in fact.unshown if p and why == "phrase_not_heard"])
+    named = _quoted([p for p, why in fact.unshown if p and why != "phrase_not_heard"])
+    unnamed = sum(1 for p, _why in fact.unshown if not p)
+    parts: list[str] = []
+    if unheard:
+        if len(unheard) == 1:
+            parts.append(
+                say(
+                    en=f"I never heard {unheard[0]}, so that recording never shows.",
+                    tr=f"{unheard[0]} sözünü hiç duymadım, o yüzden o kayıt hiç görünmüyor.",
+                )
+            )
+        else:
+            parts.append(
+                say(
+                    en=(
+                        f"I never heard {_names_join_or(unheard)}, so those recordings never show."
+                    ),
+                    tr=(
+                        f"{_names_join_or(unheard)} sözlerini hiç duymadım, o yüzden o "
+                        "kayıtlar hiç görünmüyor."
+                    ),
+                )
+            )
+    if named:
+        parts.append(
+            say(
+                en=(
+                    f"The recording for {named[0]} never shows."
+                    if len(named) == 1
+                    else f"The recordings for {_names_join(named)} never show."
+                ),
+                tr=(
+                    f"{named[0]} kaydı hiç görünmüyor."
+                    if len(named) == 1
+                    else f"{_names_join(named)} kayıtları hiç görünmüyor."
+                ),
+            )
+        )
+    if unnamed:
+        parts.append(
+            say(
+                en=(f"{unnamed} of your recordings never {'shows' if unnamed == 1 else 'show'}."),
+                tr=f"Kayıtlarından {unnamed} tanesi hiç görünmüyor.",
+            )
+        )
+    return " ".join(parts)
+
+
+def _names_join_or(items: Sequence[str]) -> str:
+    if len(items) <= 1:
+        return items[0] if items else ""
+    return ", ".join(items[:-1]) + say(en=" or ", tr=" ya da ") + items[-1]
 
 
 # ----------------------------------------------- Qendresa item 16: she starts full screen
@@ -6821,8 +7021,61 @@ def _talking_uses_every_clip(video_clip_count: int) -> bool:
     return video_clip_count == 1
 
 
+_WHOLE_TAKE_TOLERANCE_S = 0.1
+
+
+def _one_clip_take_receipt(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """Qendresa case 2: "keep the whole clip" judged on the FINAL cuts of a one-clip plan.
+
+    Only cuts that really play are judged (review of #2129): the plan's final cuts or the
+    finished timeline. The early windows (the approval-time length plan, `best_parts`) are
+    changed afterwards by freezes, speeds and slides, so they say neither "whole" nor "cut"
+    (neutral). None when this is not a one-footage-clip plan with known windows (a Talking
+    edit keeps its own checks below).
+    """
+    if facts.edit_format == "subtitled" or not facts.cut_source_spans:
+        return None
+    sources = dict(facts.source_durations_s or ())
+    if len(sources) != 1:
+        return None
+    ((media_id, length),) = sources.items()
+    own = [(start, end) for clip, start, end in facts.cut_source_spans if clip == media_id]
+    if not own:
+        return None
+    if not facts.cut_spans_final:
+        return _receipt(req, "partial", _CANT_CHECK_TAKE)
+    kept = _covered_s(own, length)
+    if kept >= length - _WHOLE_TAKE_TOLERANCE_S:
+        return _receipt(req, "met", None)
+    shown, total = _seconds_words(kept), _seconds_words(length)
+    if facts.rendered_montage:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"The finished video plays {shown} s of your {total} s clip, so it's cut.",
+                tr=(
+                    f"Bitmiş video {total} sn'lik klibinin yalnızca {shown} sn'sini "
+                    "oynatıyor, yani klip kesiliyor."
+                ),
+            ),
+        )
+    return _receipt(
+        req,
+        "partial",
+        say(
+            en=f"This draft keeps {shown} s of your {total} s clip, so it's cut.",
+            tr=f"Bu taslak {total} sn'lik klibinin {shown} sn'sini tutuyor, yani klip kesiliyor.",
+        ),
+    )
+
+
 def _check_whole_take(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
-    """A single-clip subtitled edit renders its one clip full-length."""
+    """A single-clip subtitled edit renders its one clip full-length; a one-clip plan with
+    known windows is judged on what they keep (Qendresa case 2)."""
+    judged = _one_clip_take_receipt(req, facts)
+    if judged is not None:
+        return judged
     if facts.edit_format is None or facts.editor:
         return _receipt(req, "partial", _CANT_CHECK_TAKE)
     if facts.edit_format != "subtitled":
@@ -11824,6 +12077,9 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         arrow_reason = _closing_arrow_reason(req, facts)
         if arrow_reason is not None:
             return _receipt(req, "partial", arrow_reason)
+        whole_video = _whole_video_text_receipt(req, facts)
+        if whole_video is not None:
+            return whole_video
         return _receipt(req, "met", None)
     # Checked BEFORE the spoken-text branch: a wording cue ("when I talk about them") with no
     # trigger is the worker's list label, not KRI-791's "tell me the exact word".
@@ -11881,6 +12137,90 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         "partial",
         say(en="That exact text isn't in this draft.", tr="Bu tam yazı bu taslakta yok."),
     )
+
+
+def _asks_whole_video_text(req: BriefRequirement) -> bool:
+    """Qendresa case 9: a plain `text/global` line, which the brief records for text the
+    creator wants on screen for the whole video (or pinned in a corner, which stays the whole
+    video unless she names a time; such a pin keeps its own time, see `timed_pin_texts`).
+
+    KRI-667: read from the row's kind, scope and typed facts, never its words. Any fact beyond
+    a look (a spoken cue, an ending ``closing``, a timed card, research, a length) gives the
+    line a time of its own, so it is not judged here.
+    """
+    if req.kind != "text" or req.scope != "global" or not (req.literal or "").strip():
+        return False
+    if _is_spoken_text_cue(req):
+        return False
+    own = {key for key, value in req.facts.items() if value not in (None, "", False)}
+    return not (own - set(text_look_facts(req)))
+
+
+_WHOLE_VIDEO_TOLERANCE_S = 0.05
+
+
+def _covered_s(spans: Iterable[tuple[float, float]], total: float) -> float:
+    """Seconds of ``0..total`` that at least one span covers (overlaps counted once)."""
+    covered = 0.0
+    cursor = 0.0
+    for start, end in sorted(spans):
+        start, end = max(start, cursor, 0.0), min(end, total)
+        if end > start:
+            covered += end - start
+            cursor = end
+    return covered
+
+
+def _whole_video_text_receipt(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """Qendresa case 9: a whole-video line judged by the time it is really on screen.
+
+    A finished montage's text rows decide (a line held 2.2 s of an 11 s video is not met; one
+    held 0-11 s is). A plan record cannot see how long a title is held, so the render-ready
+    review always judges this ask again on the finished video (`judged_at_render`). None = no
+    time claim (not a whole-video ask, a chapter list on its clips, a pin with the time she
+    named, or facts without times: the words verdict stands).
+    """
+    if not _asks_whole_video_text(req):
+        return None
+    if chapter_list(req.literal, facts.texts) is not None:
+        return None  # chapter names, each on its own clips (not one line)
+    wanted = _fold(req.literal or "")
+    if any(_contains_text(text, wanted) for text in facts.timed_pin_texts):
+        return None
+    total = facts.duration_s
+    if facts.text_windows is not None and total and total > 0:
+        spans = [
+            (start, end) for text, start, end in facts.text_windows if _contains_text(text, wanted)
+        ]
+        if spans:
+            covered = _covered_s(spans, total)
+            if covered >= total - _WHOLE_VIDEO_TOLERANCE_S:
+                return None
+            shown, length = _seconds_words(covered), _seconds_words(total)
+            if len(spans) == 1 and spans[0][0] <= _WHOLE_VIDEO_TOLERANCE_S:
+                reason = say(
+                    en=(
+                        f"Your line shows only for the first {shown} s of the {length} s "
+                        "video, not the whole video."
+                    ),
+                    tr=(
+                        f"Yazın {length} sn'lik videonun yalnızca ilk {shown} sn'sinde "
+                        "görünüyor, videonun tamamında değil."
+                    ),
+                )
+            else:
+                reason = say(
+                    en=(
+                        f"Your line is on screen for {shown} s of the {length} s video, "
+                        "not the whole video."
+                    ),
+                    tr=(
+                        f"Yazın {length} sn'lik videonun {shown} sn'sinde görünüyor, "
+                        "videonun tamamında değil."
+                    ),
+                )
+            return _receipt(req, "partial", reason)
+    return None
 
 
 def _closing_arrow_reason(req: BriefRequirement, facts: PlanFacts) -> str | None:
@@ -12193,6 +12533,12 @@ def judged_at_render(req: BriefRequirement) -> bool:
         or requirement_sound_toggle(req) is not None
         # KRI-1027: bars/crop of the sideways clips is read off the render's framing receipt.
         or _asks_landscape_fit(req)
+        # Qendresa case 9: how long a whole-video line stays is read off the finished text
+        # lane; the plan record never knows how long a title is held.
+        or _asks_whole_video_text(req)
+        # Review of #2129: keep-whole is judged again on the finished montage's cuts; a stored
+        # plan receipt can be stale (a freeze or speed changes the cuts).
+        or _wants_whole_take(req)
     )
 
 
@@ -14259,6 +14605,8 @@ __all__ = [
     "is_no_title_reason",
     "is_spoken_text_cue",
     "judged_at_render",
+    "FINAL_SOURCE_CUTS",
+    "montage_final_source_cuts",
     "text_words_met",
     "narrated_alignment_recovery",
     "needs_creator_choice",

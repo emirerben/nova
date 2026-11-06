@@ -19,6 +19,7 @@ import UserNotifications
         // Every phone render coordinator keeps encoding briefly in the background.
         UIKitDeviceRenderBackgroundExecution.install()
         #if DEBUG
+        TalkBench.startIfRequested()
         // First, before anything can touch `URLSession.shared`: AsyncImage loads gallery posters through it.
         PerfPosterURLProtocol.registerIfNeeded()
         // Opt-in hardware journey: real HTTP/API + scratch database, separate QA bundle.
