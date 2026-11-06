@@ -43,6 +43,10 @@ TILT_ZOOM_PROTOCOL = 33
 # the dimmed not-yet-spoken word), so its preview and editor export match the rendered captions.
 CAPTION_SHAPE_PROTOCOL = 36
 
+# Qendresa item 15: the first build whose editor keeps a card marked `caption_clear` below y 0.62
+# (older editors pull every card centre up to 0.62, onto the Q1 captions).
+CARD_LAYOUT_PROTOCOL = 40
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()

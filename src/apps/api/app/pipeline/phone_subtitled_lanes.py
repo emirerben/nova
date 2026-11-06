@@ -125,6 +125,12 @@ class SubtitledOverlayCard(_LaneModel):
     # where the compile writes it). A pip card only: a full-canvas cutaway has nothing to turn
     # about. Omitted from the dump while 0, so an untilted card's row is byte-identical.
     rotation_deg: float = Field(default=0.0, ge=-180, le=180)
+    # Qendresa item 15: True only when the server laid this pip card out against the plan's
+    # MEASURED caption band (`phone_card_layout`), so it may sit below `CAPTION_BAND_TOP_FRAC`:
+    # the compiler keeps its `y_frac` instead of clamping it, and a new iPhone editor does too.
+    # Server-owned (an editor Save carries it by card id, never from the client). Omitted from
+    # the dump while False, so every other card's row is byte-identical.
+    caption_clear: bool = False
 
     @model_validator(mode="after")
     def _window(self) -> SubtitledOverlayCard:
@@ -148,6 +154,8 @@ class SubtitledOverlayCard(_LaneModel):
             payload.pop("display_mode", None)
         if self.rotation_deg == 0:
             payload.pop("rotation_deg", None)
+        if not self.caption_clear:
+            payload.pop("caption_clear", None)
         return payload
 
 
