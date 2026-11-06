@@ -191,7 +191,7 @@ def _visual(asset_id: str) -> PhoneVisualBinding:
     )
 
 
-def _bind(_open, *, job_id, pins):  # noqa: ARG001
+def _bind(_open, *, job_id, pins, measure_text=False):  # noqa: ARG001
     return tuple(_visual(media_id) for media_id in pins)
 
 

@@ -91,6 +91,12 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # all four hashes are v121's, unchanged (the pins cover v121 + v123).
 # v125 (Qendresa item 16): its teachings render only with SPEAKER_FULL_OPENING_ENABLED and the
 # `speaker_full_opening` capability, so the pins cover v125 too (renumbered v133 on top of v131).
+# v128 (Qendresa item 21): its section renders only with CLIP_TEXT_TIKTOK_LOOK_ENABLED, so the
+# pins cover v128 too.
+# v135 (Qendresa item 20): its rule renders only with TITLE_LOOK_ENABLED, so the pins cover
+# v135 too.
+# v136 (Qendresa item 18, was v126 / v132 / v134): its paragraph renders only with
+# BACKGROUND_FOCUS_ENABLED and the `background_focus` capability, so the pins cover v136 too.
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
 PRE_CHANGE_PROMPT_SHA = {
@@ -178,7 +184,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-06-v135"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-06-v136"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

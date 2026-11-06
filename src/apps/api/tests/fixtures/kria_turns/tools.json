@@ -1424,6 +1424,37 @@
           "title": "EditorCaptionLinePlacement",
           "type": "object"
         },
+        "EditorCommitBackgroundFocus": {
+          "additionalProperties": false,
+          "description": "Where a background picture is aimed (Qendresa item 18): the document's complete\n``{x, y, zoom}`` (0 = left/top edge, 1 = right/bottom edge; zoom a multiple of the cover\nscale). The same bounds as the recipe's `SpeakerBackgroundFocus`.",
+          "properties": {
+            "x": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "X",
+              "type": "number"
+            },
+            "y": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Y",
+              "type": "number"
+            },
+            "zoom": {
+              "maximum": 4.0,
+              "minimum": 0.2,
+              "title": "Zoom",
+              "type": "number"
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "zoom"
+          ],
+          "title": "EditorCommitBackgroundFocus",
+          "type": "object"
+        },
         "EditorCommitBackgroundMusic": {
           "description": "Full replacement background bed for editor commits.\n\n``track_id=None`` or ``enabled=false`` clears the bed. When a track is set,\nthe persisted renderer contract remains ``smart_music_treatment``.",
           "properties": {
@@ -1719,6 +1750,17 @@
               "default": null,
               "title": "Color"
             },
+            "focus": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EditorCommitBackgroundFocus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "full_screen_windows": {
               "anyOf": [
                 {
@@ -1809,6 +1851,17 @@
               "minimum": 0.0,
               "title": "End S",
               "type": "number"
+            },
+            "focus": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EditorCommitBackgroundFocus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
             },
             "kind": {
               "enum": [

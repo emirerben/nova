@@ -398,6 +398,16 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
             "Full-screen speaker openings await native parity and device qualification",
             capability="speakerFrameWindows",
         )
+    # Qendresa item 18: an aimed background needs its own verified token.
+    if (
+        recipe.speaker_background is not None
+        and getattr(recipe.speaker_background, "uses_focus", False)
+        and "backgroundFocus" not in set(settings.phone_render_verified_features)
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Aimed speaker backgrounds await native parity and device qualification",
+            capability="backgroundFocus",
+        )
     # KRI-1173: a solid-colour fill needs its own verified token (S50).
     if (
         recipe.speaker_background is not None
@@ -1133,6 +1143,89 @@ def speaker_full_opening_planned_reason(client_protocol: int | None) -> str | No
 def speaker_full_opening_planned_for(client_protocol: int | None) -> bool:
     """May a plan for the app build ``client_protocol`` start the speaker full screen?"""
     return speaker_full_opening_planned_reason(client_protocol) is None
+
+
+def background_focus_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode ``speaker_background.focus`` / ``windows[i].focus``?
+
+    At least ``background_focus_min_client_protocol`` (42) knows the key; an older build refuses
+    the whole layer (strict decoder). Same ``require_client`` contract as
+    `speaker_background_client_supported` (Qendresa item 18).
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.background_focus_min_client_protocol
+
+
+def background_focus_supported(*, require_client: bool | None = None) -> bool:
+    """May a phone recipe carry a background ``focus`` (the picture aimed at its text) right now?
+
+    ``BACKGROUND_FOCUS_ENABLED`` AND the base speaker-background gate (NOT the windows gate: a
+    single full-video background may be aimed too) AND ``backgroundFocus`` in
+    ``phone_render_verified_features`` AND the app-build gate
+    (`background_focus_client_supported`). When False, `strip_unsupported_background` drops every
+    focus and keeps everything else (Qendresa item 18).
+    """
+    return bool(
+        settings.background_focus_enabled
+        and speaker_background_supported(require_client=require_client)
+        and "backgroundFocus" in set(settings.phone_render_verified_features)
+        and background_focus_client_supported(require_client=require_client)
+    )
+
+
+def background_focus_unavailable_reason(*, require_client: bool | None = None) -> str | None:
+    """Why `background_focus_supported` is False, or None when open.
+
+    The base lane gate's reasons first (`disabled`, `token_not_verified`,
+    `client_protocol_below_min`), then ``focus_disabled`` (the kill switch),
+    ``focus_token_not_verified`` and ``client_protocol_below_min``. Named for the job-debug trace
+    (`background_focus_phone_fallback`) and the editor's 422/426 answers.
+    """
+    base = speaker_background_unavailable_reason(require_client=require_client)
+    if base is not None:
+        return base
+    if not settings.background_focus_enabled:
+        return "focus_disabled"
+    if "backgroundFocus" not in set(settings.phone_render_verified_features):
+        return "focus_token_not_verified"
+    if not background_focus_client_supported(require_client=require_client):
+        return "client_protocol_below_min"
+    return None
+
+
+def background_focus_planned_reason(client_protocol: int | None) -> str | None:
+    """Why a plan may NOT aim a background for the app build ``client_protocol``, or None when it
+    may (the planner's twin of `background_focus_unavailable_reason`).
+
+    Same reading as `speaker_full_opening_planned_reason`: there is no request context in Celery,
+    so the build the creator acted from is passed in. Codes: ``disabled`` (kill switch off),
+    ``unavailable`` (the background lane or the ``backgroundFocus`` token is closed),
+    ``app_too_old`` (no stamp, or a build below ``background_focus_min_client_protocol``).
+    """
+    if not settings.background_focus_enabled:
+        return "disabled"
+    if not (
+        speaker_background_supported(require_client=False)
+        and "backgroundFocus" in set(settings.phone_render_verified_features)
+    ):
+        return "unavailable"
+    if client_protocol is None or client_protocol < settings.background_focus_min_client_protocol:
+        return "app_too_old"
+    return None
+
+
+def background_focus_planned_for(client_protocol: int | None) -> bool:
+    """May a plan for the app build ``client_protocol`` aim a background at its text?"""
+    return background_focus_planned_reason(client_protocol) is None
 
 
 def recipe_has_clip_tilt(recipe: Any) -> bool:

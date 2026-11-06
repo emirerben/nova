@@ -71,6 +71,15 @@ BACKGROUND_REFUSALS: dict[str, tuple[str, str]] = {
         "Couldn't use those full-screen times: they overlap, are too short or run past the end",
         "Bu tam ekran sürelerini kullanamadım: üst üste biniyor, çok kısa ya da videonun dışında",
     ),
+    # Qendresa item 18: aim a background at its text.
+    "background_focus_disabled": (
+        "Couldn't aim or zoom the recordings: it isn't available right now",
+        "Kayıtları hizalayamadım ya da yakınlaştıramadım: şu anda kullanılamıyor",
+    ),
+    "background_focus_invalid": (
+        "Couldn't aim or zoom a plain colour: only photos and videos can be aimed",
+        "Düz bir rengi hizalayamadım: yalnızca fotoğraflar ve videolar hizalanabilir",
+    ),
     # KRI-1173: a solid-colour fill.
     "speaker_background_color_disabled": (
         "Couldn't put a colour behind you: it isn't available right now",
@@ -127,6 +136,48 @@ def _with_receipts(plan: dict, bound: Any) -> dict:
     return {**plan, PHONE_VISUALS_FIELD: rows}
 
 
+NEW_BACKGROUND_COLUMNS_ATTR = "_kria_new_background_columns"
+
+
+def _record_new_background_focus(job: Any, bound: Any) -> None:
+    """Qendresa item 18 (F14): keep, for THIS request only, where the text sits in each recording
+    this request newly pinned. A transient attribute on the job object, never persisted. A media
+    never pinned before cannot carry a creator's choice, so the Save may aim it automatically
+    without overwriting anything. Only with the focus gate open."""
+    from app.services import phone_rollout  # noqa: PLC0415
+
+    if not phone_rollout.background_focus_supported(require_client=None):
+        return
+    columns = {
+        v.media_id: v.text_column for v in bound if getattr(v, "text_column", None) is not None
+    }
+    if columns:
+        existing = getattr(job, NEW_BACKGROUND_COLUMNS_ATTR, None) or {}
+        setattr(job, NEW_BACKGROUND_COLUMNS_ATTR, {**existing, **columns})
+
+
+def new_background_focus(job: Any, canvas_w: int, canvas_h: int) -> dict[str, Any]:
+    """``{media_id: SubtitledBackgroundFocus}`` for the recordings this request newly pinned,
+    aimed for the recipe canvas (empty when nothing was measured or nothing is readable)."""
+    from app.pipeline.phone_subtitled_lanes import SubtitledBackgroundFocus  # noqa: PLC0415
+    from app.services.background_text_focus import focus_for_text_column  # noqa: PLC0415
+
+    out: dict[str, Any] = {}
+    for media_id, column in (getattr(job, NEW_BACKGROUND_COLUMNS_ATTR, None) or {}).items():
+        if not (column.source_width and column.source_height):
+            continue
+        focus = focus_for_text_column(
+            column,
+            source_w=column.source_width,
+            source_h=column.source_height,
+            canvas_w=canvas_w,
+            canvas_h=canvas_h,
+        )
+        if focus is not None:
+            out[media_id] = SubtitledBackgroundFocus(x=focus.x, y=focus.y, zoom=focus.zoom)
+    return out
+
+
 def _asset_uuid(media_id: str, not_in_pool: str) -> uuid.UUID:
     try:
         return uuid.UUID(media_id)
@@ -166,11 +217,16 @@ async def pin_pool_visual_for_background(
 
     try:
         bound = await run_in_threadpool(
-            bind_phone_visual_assets, sync_session, job_id=str(job.id), pins=pins
+            bind_phone_visual_assets,
+            sync_session,
+            job_id=str(job.id),
+            pins=pins,
+            measure_text=kind is not None,
         )
     except ValueError as exc:
         raise _refuse(unavailable) from exc
     job.assembly_plan = _with_receipts(plan, bound)
+    _record_new_background_focus(job, bound)
 
 
 def pin_pool_visual_for_background_sync(
@@ -197,10 +253,13 @@ def pin_pool_visual_for_background_sync(
     from app.services.phone_visuals import bind_phone_visual_assets  # noqa: PLC0415
 
     try:
-        bound = bind_phone_visual_assets(sync_session, job_id=str(job.id), pins=pins)
+        bound = bind_phone_visual_assets(
+            sync_session, job_id=str(job.id), pins=pins, measure_text=kind is not None
+        )
     except ValueError as exc:
         raise _refuse(unavailable) from exc
     job.assembly_plan = _with_receipts(plan, bound)
+    _record_new_background_focus(job, bound)
 
 
 def background_pin_requests(job: Any, variant_id: str, payload: Any) -> list[tuple[str, str]]:

@@ -846,12 +846,16 @@ def _auto_caption_colour(look, policy: dict):
     return look
 
 
-def register_generation_background(background, canvas=None) -> None:
+def register_generation_background(background, canvas=None, focus_for=None) -> None:
     """Green 5: on a Talk-to-camera edit with a speaker background, the pixels behind a caption
     are the background (the fill, or a timed window's photo or video) with the speaker take drawn
     in its frame, not the take filling the canvas. Recorded on the policy so the environment
     sampler judges text colour against that (`_background_frames`). A colour fill, no background,
-    no policy or the switch off records nothing (byte-identical)."""
+    no policy or the switch off records nothing (byte-identical).
+
+    Qendresa item 18: ``focus_for`` is the compile's own focus resolver (`_FocusResolver`, called
+    with the media id and the lane focus), so each picture is judged by the part of it the phone
+    shows, with the aim the recipe carries; no aim records no ``focus`` key (byte-identical)."""
     from app.config import settings
 
     policy = _POLICY.get()
@@ -863,20 +867,33 @@ def register_generation_background(background, canvas=None) -> None:
     ):
         return
     frame = getattr(background, "speaker_frame", None)
+
+    def aimed(entry: dict, media) -> dict:
+        focus = None if focus_for is None else focus_for(media.media_id, media.focus)
+        if focus is not None:
+            entry["focus"] = {"x": focus.x, "y": focus.y, "zoom": focus.zoom}
+        return entry
+
     policy["_speaker_background"] = {
-        "fill": {
-            "path": background.gcs_path,
-            "kind": background.kind,
-            "source_start": float(background.source_start_s or 0.0),
-        },
-        "windows": [
+        "fill": aimed(
             {
-                "path": window.gcs_path,
-                "kind": window.kind,
-                "source_start": float(window.source_start_s or 0.0),
-                "start_s": float(window.start_s),
-                "end_s": float(window.end_s),
-            }
+                "path": background.gcs_path,
+                "kind": background.kind,
+                "source_start": float(background.source_start_s or 0.0),
+            },
+            background,
+        ),
+        "windows": [
+            aimed(
+                {
+                    "path": window.gcs_path,
+                    "kind": window.kind,
+                    "source_start": float(window.source_start_s or 0.0),
+                    "start_s": float(window.start_s),
+                    "end_s": float(window.end_s),
+                },
+                window,
+            )
             for window in background.windows
         ],
         "frame": None
@@ -1006,7 +1023,7 @@ def _background_frames(spec: dict, take_frames: list[dict], canvas) -> list[dict
                     download_to_file(media["path"], path, timeout_s=10)
                     local[media["path"]] = path
                 at = media["source_start"] if media["kind"] == "video" else None
-                pixels = sample_background(path, at, canvas=canvas)
+                pixels = sample_background(path, at, canvas=canvas, focus=media.get("focus"))
                 if pixels is None:
                     raise ValueError(f"segment {index} unreadable")
                 for piece_start, piece_end in pieces:
