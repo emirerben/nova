@@ -231,10 +231,18 @@ log = structlog.get_logger()
 # it). Every other creator prompt is byte-identical.
 # v119 (KRI-1189 lands after #2088): v117's `cut_restarts` teaching on top of v118. The
 # KRI-1189 replay fixtures keep the `2026-11-03-v117` label they were recorded under.
+# v120 (Qendresa item 12): the shared brief section records the caption shape as typed facts,
+# `caption_words` (1-3 words at a time) and `caption_box` (a #RRGGBB box behind the captions).
+# On top of v119; brief_extractor v55 shares it.
 # v121 (Qendresa 13, tight pauses; on top of v120, Qendresa 12 caption shape): the shared brief
 # section records an "all my pauses / tight pace" ask as `pauses: "tight"` beside
 # `speech_cleanup`. On top of v119.
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-04-v121"
+# v123 (Qendresa item 17, follow-up of KRI-1175; v121-v122 reserved by items 13-14): one
+# paragraph after the windows section teaching how to write a sequence entry's `spoken_phrase`
+# (as said in the take, with the words only said where that visual is introduced). Shown only
+# with BACKGROUND_FOLLOWS_TALK_ENABLED and the windows capability; every other prompt keeps its
+# bytes.
+MAIN_CREATOR_PROMPT_VERSION = "2026-11-04-v123"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -732,6 +740,14 @@ the backgrounds: "small_bottom_right", "small_bottom_left", "small_top_right" or
 speaker full-screen. Pick only these names, never numbers. If no photo or video is attached to
 use, leave `background_media` out rather than guess an id. Say in `summary`, in plain words, how
 the backgrounds change and where the speaker sits.
+""".strip("\n")
+
+# Qendresa item 17: appended after the windows section ONLY with BACKGROUND_FOLLOWS_TALK_ENABLED.
+_BACKGROUND_FOLLOWS_TALK_PROMPT_SECTION = """
+Write each `spoken_phrase` in a `sequence` the way the creator says the name in the take's
+transcript, not the way it is spelled on screen ("trading agents", not "TradingAgents"). When a
+name is also said elsewhere in the take (a common word such as "agents"), copy the words said only
+where that one is introduced ("number four agents").
 """.strip("\n")
 
 # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED) on a phone Montage / Voiceover
@@ -1507,6 +1523,13 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 + (
                     "\n" + _SPEAKER_BACKGROUND_WINDOWS_PROMPT_SECTION
                     if speaker_background_windows_open(input.capability_manifest)
+                    else ""
+                )
+                # Qendresa item 17: "" unless the flag is on AND the windows are advertised.
+                + (
+                    "\n" + _BACKGROUND_FOLLOWS_TALK_PROMPT_SECTION
+                    if settings.background_follows_talk_enabled
+                    and speaker_background_windows_open(input.capability_manifest)
                     else ""
                 )
             ),

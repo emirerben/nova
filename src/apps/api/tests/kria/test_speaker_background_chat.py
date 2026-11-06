@@ -393,7 +393,7 @@ def test_a_closed_gate_prompt_is_byte_identical_to_one_with_no_background_suppor
 def test_the_prompt_version_is_bumped_for_the_new_field():
     from app.agents.main_creator import MAIN_CREATOR_PROMPT_VERSION
 
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-04-v121"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-04-v123"
 
 
 # ----------------------------------------------------------- KRI-1162: several backgrounds
@@ -901,3 +901,27 @@ def test_the_colour_notices_have_turkish_twins():
 
     for key in ("color_unavailable", "color_invalid"):
         assert capabilities.SPEAKER_BACKGROUND_NOTICES[key] in _KNOWN_TR
+
+
+# ------------------------------------------- Qendresa item 17: how to write a spoken_phrase
+
+
+def test_the_follows_talk_paragraph_needs_the_flag_and_the_windows_capability(monkeypatch):
+    from app.agents.main_creator import _BACKGROUND_FOLLOWS_TALK_PROMPT_SECTION as section
+
+    _open_windows(monkeypatch)
+    monkeypatch.setattr(settings, "background_follows_talk_enabled", False)
+    off = _render_prompt(_manifest())
+    assert section not in off
+    monkeypatch.setattr(settings, "background_follows_talk_enabled", True)
+    on = _render_prompt(_manifest())
+    assert on.count(section) == 1 and "spoken_phrase" in section
+    assert on.replace("\n" + section, "") == off
+    # flag on but no windows capability: nothing taught
+    _open_gate(monkeypatch)
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [f for f in settings.phone_render_verified_features if f != "speakerBackgroundWindows"],
+    )
+    assert section not in _render_prompt(_manifest())

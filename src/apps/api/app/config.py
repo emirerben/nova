@@ -951,6 +951,15 @@ class Settings(BaseSettings):
     # `speaker_background_color_phone_fallback`) and the creator keeps their own room.
     # Design: docs/reviews/speaker-background-color-failure-modes.md.
     speaker_background_color_min_client_protocol: int = 34
+    # Qendresa item 17 (follow-up of KRI-1175): a background sequence entry's spoken phrase is
+    # also heard when it is said another way -- joined / split words ("TradingAgents" / "trading
+    # agents"), a final plural "s" ("studio" / "studios", also with a KRI-961 sound-alike) -- and
+    # not inside another entry's longer phrase ("agents" in "trading agents"). Server only, no
+    # protocol. Default FALSE: off, windows and the Main Creator prompt are byte-identical.
+    # Apply: `fly secrets set BACKGROUND_FOLLOWS_TALK_ENABLED=true --app nova-video` + restart
+    # (api + worker); rollback = `...=false` + restart. Design:
+    # docs/reviews/speaker-background-windows-failure-modes.md (S64-S69).
+    background_follows_talk_enabled: bool = False
     # KRI-1192: the app bundles Noto Sans KR / Noto Sans Arabic (the script-fallback faces that
     # draw Hangul and Arabic captions) from protocol 35. A phone recipe naming one requires
     # `scriptFonts` (verified in PHONE_RENDER_VERIFIED_FEATURES after the device check) and an
