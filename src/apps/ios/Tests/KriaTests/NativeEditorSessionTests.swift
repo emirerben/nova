@@ -5380,8 +5380,20 @@ final class NativeEditorSessionTests: XCTestCase {
         let originalRequest = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
         var recipe = originalRequest.recipe
         if focusOnly {
+            let sourceFingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 1)
+            let fillFingerprint = AssetFingerprint(hex: String(repeating: "b", count: 64), byteCount: 1)
             recipe.schemaVersion = 2
-            recipe.assets.append(MediaAsset(id: "fill", relativePath: "fill"))
+            recipe.rendererVersion = "kria-ios-2"
+            recipe.assets = [
+                MediaAsset(id: "source", relativePath: "source", fingerprint: sourceFingerprint),
+                MediaAsset(id: "fill", relativePath: "fill", fingerprint: fillFingerprint)
+            ]
+            recipe.assetManifest = RenderAssetManifest(assets: [
+                RenderAssetReference(id: "source", fingerprint: try RenderFingerprint(sourceFingerprint),
+                                     source: .original(mediaID: "source")),
+                RenderAssetReference(id: "fill", fingerprint: try RenderFingerprint(fillFingerprint),
+                                     source: .visual(visualID: "fill", generation: "1", mediaKind: .image))
+            ])
             recipe.speakerBackground = SpeakerBackgroundLayer(
                 assetID: "fill", mediaKind: VisualMediaKind.image, subjectTrackID: "video",
                 focus: SpeakerBackgroundFocus(x: 0.2, y: 0.5, zoom: 0.5))
