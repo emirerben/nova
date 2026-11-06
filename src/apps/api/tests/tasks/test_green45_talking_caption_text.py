@@ -44,6 +44,12 @@ Ways this fix could fail (written before the fix):
 18. The exclusion reads new wording: it must be the clause rule the quoted asks already use
     (KRI-631), so "Do not write "Kervan"" drops the quoted ask and the typed name alike.
 19. Over-reach: Green 4 (no "don't" clause names "Kervan") stops respelling "Curvan" (1, 11).
+
+Third review (Emir, on 3704d6330): "Kervan x Lumo Pamukkale show. Do not use kervan in the
+captions." still respells "Curvan": only capitalised words in a "don't" clause were excluded, so
+the lowercase "kervan" missed and the earlier "Kervan" stayed a target. Ways it could fail:
+20. A name excluded in another case ("kervan", "KERVAN", "kervan'ı") stays a target.
+21. Over-reach: an ordinary lowercase word in a "don't" clause drops an unrelated name.
 """
 
 from __future__ import annotations
@@ -272,6 +278,10 @@ def test_a_lowercase_or_excluded_name_keeps_the_heard_word(monkeypatch, added):
         "Do not change curvan to Kervan.",  # the review's input (a)
         "Do not use Kervan in the captions.",  # the review's input (b)
         "Yorumla episode 9: Kervan x Lumo Pamukkale show. Do not use Kervan in the captions.",
+        # Third review (20): mentioned as "Kervan", excluded in lowercase.
+        "Yorumla episode 9: Kervan x Lumo Pamukkale show. Do not use kervan in the captions.",
+        "Yorumla episode 9: Kervan x Lumo Pamukkale show. Do not use KERVAN in the captions.",
+        "Yorumla episode 9: Kervan x Lumo Pamukkale show. kervan'ı altyazıda yazma.",
     ],
 )
 def test_the_reviews_inputs_change_neither_cue_text_nor_timed_words(request_text):
@@ -307,6 +317,11 @@ def test_an_excluded_name_is_never_a_request_name():
     quoted = f'{green4} Do not write "Kervan" in the captions.'
     assert extract_spelling_asks(quoted) == ()  # KRI-631, unchanged
     assert creator_request_names(quoted) == ("Pamukkale",)  # 18: the same clause rule
+    # 20: the exclusion matches the name in any case.
+    lower = f"{green4} Do not use kervan in the captions."
+    assert creator_request_names(lower) == ("Pamukkale",)
+    # 21: an ordinary word in a "don't" clause drops no name.
+    assert creator_request_names(f"{green4} Do not use music.") == ("Kervan", "Pamukkale")
 
 
 def test_names_switch_off_keeps_the_heard_name(monkeypatch):
@@ -323,3 +338,14 @@ def test_case_switch_off_keeps_whispers_capitals(monkeypatch):
     monkeypatch.setattr(settings, "caption_case_reference_enabled", False)
     variant = _run(monkeypatch, request=FIXTURE["green5_chip_request"], binding=None)
     assert "Sunrise Fashion Show" in _text(variant)
+
+
+def test_a_lowercase_exclusion_keeps_the_heard_word_in_the_writer(monkeypatch):
+    """Third review (20) through the real writer: cue text and every timed word."""
+    request = FIXTURE["green4_request"].replace(
+        "No music.", "No music. Do not use kervan in the captions."
+    )
+    variant = _run(monkeypatch, request=request, binding=FIXTURE["green4_brief_binding"])
+    assert "curvan celebrated its 10th year" in _text(variant).casefold(), _text(variant)
+    shown = [w["text"] for w in _shown(variant)]
+    assert "Curvan" in shown and "Kervan" not in shown, shown
