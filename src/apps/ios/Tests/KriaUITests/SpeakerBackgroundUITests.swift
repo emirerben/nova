@@ -69,6 +69,45 @@ final class SpeakerBackgroundUITests: XCTestCase {
         XCTAssertTrue(app.buttons["native-editor-save"].isEnabled, "a background is an unsaved edit")
     }
 
+    /// KRI-1173: the Colour section (the fixture opens `speaker_background_color`) puts a plain colour behind the
+    /// speaker; the stub Save keeps the `{kind: "color", color}` object, so a reopen shows the swatch selected.
+    func testPickingAColourSwatchMakesTheEditSaveable() {
+        let app = launch(reset: true)
+        openBackground(app)
+        let green = tile(app, "color-green")
+        XCTAssertTrue(green.waitForExistence(timeout: 5), "the server opened speaker_background_color, so the panel offers swatches")
+        for id in ["white", "black", "blue", "grey", "custom"] {
+            XCTAssertTrue(app.descendants(matching: .any)["native-editor-background-color-" + id].exists, id)
+        }
+        XCTAssertFalse(green.isSelected)
+
+        green.tap()
+        XCTAssertTrue(green.isSelected)
+        XCTAssertFalse(tile(app, "none").isSelected, "a colour is a background")
+        XCTAssertFalse(tile(app, "visual-fixture-bg-photo").isSelected)
+        attach(app, "Green colour selected")
+        tile(app, "color-white").tap()
+        XCTAssertTrue(tile(app, "color-white").isSelected, "swapping moves the selection")
+        XCTAssertFalse(green.isSelected)
+        green.tap()
+
+        tile(app, "visual-fixture-bg-photo").tap()
+        XCTAssertTrue(tile(app, "visual-fixture-bg-photo").isSelected, "a photo replaces the colour")
+        XCTAssertFalse(green.isSelected)
+        green.tap()
+        saveAndWait(app)
+
+        app.terminate()
+        let reopened = launch(reset: false)
+        openBackground(reopened)
+        XCTAssertTrue(tile(reopened, "color-green").waitForExistence(timeout: 5))
+        XCTAssertTrue(tile(reopened, "color-green").isSelected, "the saved colour survives a reopen")
+        XCTAssertFalse(tile(reopened, "none").isSelected)
+        attach(reopened, "Reopened with the saved green colour")
+        closePanel(reopened)
+        XCTAssertFalse(reopened.buttons["native-editor-save"].isEnabled, "nothing unsaved after reopening")
+    }
+
     func testNoneRemovesTheBackgroundAndBothChoicesSurviveSaveAndReopen() {
         let app = launch(reset: true)
         openBackground(app)

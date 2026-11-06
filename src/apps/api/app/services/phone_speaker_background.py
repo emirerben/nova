@@ -7,6 +7,10 @@ is the one receipt path (it rechecks owner, item, status and the pool namespace 
 downloads anything); this module is the Save-side caller of it, for the HTTP Save route and
 for the two chat apply paths (the async copilot edit and the sync approval task), which compile
 the same `speaker_background` section.
+
+A clip's tilt backdrop of kind ``media`` (KRI-1139) names a pool photo or video the same way, so
+its Save pins through the same receipt path under its own refusal codes
+(``clip_backdrop_media_*``): the receipt is the reference storage retention honours.
 """
 
 from __future__ import annotations
@@ -49,7 +53,56 @@ BACKGROUND_REFUSALS: dict[str, tuple[str, str]] = {
         "Couldn't use that start point: it's outside the video",
         "Bu başlangıç noktasını kullanamadım: videonun dışında",
     ),
+    # KRI-1162: timed backgrounds / the speaker frame.
+    "speaker_background_windows_disabled": (
+        "Couldn't change the backgrounds behind you over time: it isn't available right now",
+        "Arkandaki görselleri zamanla değiştiremedim: şu anda kullanılamıyor",
+    ),
+    "speaker_background_window_invalid": (
+        "Couldn't use those background times: they overlap or are too short",
+        "Bu arka plan sürelerini kullanamadım: üst üste biniyor ya da çok kısa",
+    ),
+    # Qendresa item 16: the speaker full screen before the corner.
+    "speaker_full_opening_disabled": (
+        "Couldn't start you full screen: it isn't available right now",
+        "Seni tam ekranda başlatamadım: şu anda kullanılamıyor",
+    ),
+    "speaker_full_opening_invalid": (
+        "Couldn't use those full-screen times: they overlap, are too short or run past the end",
+        "Bu tam ekran sürelerini kullanamadım: üst üste biniyor, çok kısa ya da videonun dışında",
+    ),
+    # Qendresa item 18: aim a background at its text.
+    "background_focus_disabled": (
+        "Couldn't aim or zoom the recordings: it isn't available right now",
+        "Kayıtları hizalayamadım ya da yakınlaştıramadım: şu anda kullanılamıyor",
+    ),
+    "background_focus_invalid": (
+        "Couldn't aim or zoom a plain colour: only photos and videos can be aimed",
+        "Düz bir rengi hizalayamadım: yalnızca fotoğraflar ve videolar hizalanabilir",
+    ),
+    # KRI-1173: a solid-colour fill.
+    "speaker_background_color_disabled": (
+        "Couldn't put a colour behind you: it isn't available right now",
+        "Arkana renk koyamadım: şu anda kullanılamıyor",
+    ),
+    "speaker_background_color_invalid": (
+        "Couldn't use that colour as your background",
+        "Bu rengi arka plan olarak kullanamadım",
+    ),
     "speaker_background_media_unavailable": (
+        "Couldn't read that photo or video",
+        "Bu fotoğraf ya da videoyu okuyamadım",
+    ),
+    "clip_backdrop_media_unavailable": (
+        "Couldn't put a photo or video behind a clip: it isn't available right now",
+        "Bir klibin arkasına fotoğraf ya da video koyamadım: şu anda kullanılamıyor",
+    ),
+    "clip_backdrop_media_not_in_pool": (
+        "Couldn't use that photo or video behind a clip: it isn't in this video's Visuals",
+        "Bu fotoğraf ya da videoyu klibin arkasına koyamadım: "
+        "bu videonun görselleri arasında değil",
+    ),
+    "clip_backdrop_media_unreadable": (
         "Couldn't read that photo or video",
         "Bu fotoğraf ya da videoyu okuyamadım",
     ),
@@ -66,9 +119,14 @@ def _scoped_row_query(plan_item_id: uuid.UUID, asset_id: uuid.UUID):
     )
 
 
-def _pool_pin(media_id: str, kind: str, row: Any) -> dict[str, tuple[str, str, str]] | None:
-    """The one pin a ready row of the asked kind yields, else None (S19)."""
-    if row is None or row.status != "ready" or row.kind != kind:
+def _pool_pin(media_id: str, kind: str | None, row: Any) -> dict[str, tuple[str, str, str]] | None:
+    """The one pin a ready row of the asked kind yields, else None (S19).
+
+    ``kind`` None accepts a photo or a video (a clip backdrop names the id only).
+    """
+    if row is None or row.status != "ready":
+        return None
+    if row.kind != (kind if kind is not None else row.kind) or row.kind not in {"image", "video"}:
         return None
     return {str(row.id): (row.kind, row.gcs_path, str(row.gcs_generation or ""))}
 
@@ -78,11 +136,53 @@ def _with_receipts(plan: dict, bound: Any) -> dict:
     return {**plan, PHONE_VISUALS_FIELD: rows}
 
 
-def _asset_uuid(media_id: str) -> uuid.UUID:
+NEW_BACKGROUND_COLUMNS_ATTR = "_kria_new_background_columns"
+
+
+def _record_new_background_focus(job: Any, bound: Any) -> None:
+    """Qendresa item 18 (F14): keep, for THIS request only, where the text sits in each recording
+    this request newly pinned. A transient attribute on the job object, never persisted. A media
+    never pinned before cannot carry a creator's choice, so the Save may aim it automatically
+    without overwriting anything. Only with the focus gate open."""
+    from app.services import phone_rollout  # noqa: PLC0415
+
+    if not phone_rollout.background_focus_supported(require_client=None):
+        return
+    columns = {
+        v.media_id: v.text_column for v in bound if getattr(v, "text_column", None) is not None
+    }
+    if columns:
+        existing = getattr(job, NEW_BACKGROUND_COLUMNS_ATTR, None) or {}
+        setattr(job, NEW_BACKGROUND_COLUMNS_ATTR, {**existing, **columns})
+
+
+def new_background_focus(job: Any, canvas_w: int, canvas_h: int) -> dict[str, Any]:
+    """``{media_id: SubtitledBackgroundFocus}`` for the recordings this request newly pinned,
+    aimed for the recipe canvas (empty when nothing was measured or nothing is readable)."""
+    from app.pipeline.phone_subtitled_lanes import SubtitledBackgroundFocus  # noqa: PLC0415
+    from app.services.background_text_focus import focus_for_text_column  # noqa: PLC0415
+
+    out: dict[str, Any] = {}
+    for media_id, column in (getattr(job, NEW_BACKGROUND_COLUMNS_ATTR, None) or {}).items():
+        if not (column.source_width and column.source_height):
+            continue
+        focus = focus_for_text_column(
+            column,
+            source_w=column.source_width,
+            source_h=column.source_height,
+            canvas_w=canvas_w,
+            canvas_h=canvas_h,
+        )
+        if focus is not None:
+            out[media_id] = SubtitledBackgroundFocus(x=focus.x, y=focus.y, zoom=focus.zoom)
+    return out
+
+
+def _asset_uuid(media_id: str, not_in_pool: str) -> uuid.UUID:
     try:
         return uuid.UUID(media_id)
     except ValueError as exc:
-        raise _refuse("speaker_background_media_not_in_pool") from exc
+        raise _refuse(not_in_pool) from exc
 
 
 async def pin_pool_visual_for_background(
@@ -91,7 +191,9 @@ async def pin_pool_visual_for_background(
     *,
     plan_item_id: uuid.UUID,
     media_id: str,
-    kind: str,
+    kind: str | None,
+    not_in_pool: str = "speaker_background_media_not_in_pool",
+    unavailable: str = "speaker_background_media_unavailable",
 ) -> None:
     """Make ``media_id`` a pinned visual of ``job``, or raise a 422 naming why not.
 
@@ -105,21 +207,26 @@ async def pin_pool_visual_for_background(
     if pinned_visual(plan, media_id) is not None:
         return
     row = (
-        await db.execute(_scoped_row_query(plan_item_id, _asset_uuid(media_id)))
+        await db.execute(_scoped_row_query(plan_item_id, _asset_uuid(media_id, not_in_pool)))
     ).scalar_one_or_none()
     pins = _pool_pin(media_id, kind, row)
     if pins is None:
-        raise _refuse("speaker_background_media_not_in_pool")
+        raise _refuse(not_in_pool)
     from app.database import sync_session  # noqa: PLC0415
     from app.services.phone_visuals import bind_phone_visual_assets  # noqa: PLC0415
 
     try:
         bound = await run_in_threadpool(
-            bind_phone_visual_assets, sync_session, job_id=str(job.id), pins=pins
+            bind_phone_visual_assets,
+            sync_session,
+            job_id=str(job.id),
+            pins=pins,
+            measure_text=kind is not None,
         )
     except ValueError as exc:
-        raise _refuse("speaker_background_media_unavailable") from exc
+        raise _refuse(unavailable) from exc
     job.assembly_plan = _with_receipts(plan, bound)
+    _record_new_background_focus(job, bound)
 
 
 def pin_pool_visual_for_background_sync(
@@ -128,60 +235,132 @@ def pin_pool_visual_for_background_sync(
     *,
     plan_item_id: uuid.UUID,
     media_id: str,
-    kind: str,
+    kind: str | None,
+    not_in_pool: str = "speaker_background_media_not_in_pool",
+    unavailable: str = "speaker_background_media_unavailable",
 ) -> None:
     """`pin_pool_visual_for_background` for a worker holding a sync session (the approval task)."""
     plan = job.assembly_plan or {}
     if pinned_visual(plan, media_id) is not None:
         return
-    row = db.execute(_scoped_row_query(plan_item_id, _asset_uuid(media_id))).scalar_one_or_none()
+    row = db.execute(
+        _scoped_row_query(plan_item_id, _asset_uuid(media_id, not_in_pool))
+    ).scalar_one_or_none()
     pins = _pool_pin(media_id, kind, row)
     if pins is None:
-        raise _refuse("speaker_background_media_not_in_pool")
+        raise _refuse(not_in_pool)
     from app.database import sync_session  # noqa: PLC0415
     from app.services.phone_visuals import bind_phone_visual_assets  # noqa: PLC0415
 
     try:
-        bound = bind_phone_visual_assets(sync_session, job_id=str(job.id), pins=pins)
+        bound = bind_phone_visual_assets(
+            sync_session, job_id=str(job.id), pins=pins, measure_text=kind is not None
+        )
     except ValueError as exc:
-        raise _refuse("speaker_background_media_unavailable") from exc
+        raise _refuse(unavailable) from exc
     job.assembly_plan = _with_receipts(plan, bound)
+    _record_new_background_focus(job, bound)
 
 
-def background_pin_request(job: Any, variant_id: str, payload: Any) -> tuple[str, str] | None:
-    """``(media_id, kind)`` a Save that SETS a background needs pinned first, else None.
+def background_pin_requests(job: Any, variant_id: str, payload: Any) -> list[tuple[str, str]]:
+    """Every ``(media_id, kind)`` a Save that SETS a background needs pinned first.
 
-    Only a Save the validator can accept is worth a download and a hash: a clear, an
-    untouched lane, a closed gate or a variant that cannot carry one reach
-    `_validate_speaker_background_section` and get their own refusal there. The one rule the
-    HTTP Save route and the chat apply paths (async copilot edit, sync approval task) share.
+    The fill first (none for a colour fill, KRI-1173), then each ``windows`` entry
+    (KRI-1162, S35), de-duplicated by id.
+    Empty for a Save the validator can accept nothing of: a clear, an untouched lane, a
+    closed gate or a variant that cannot carry one reach `_validate_speaker_background_section`
+    and get their own refusal there. Window ids are only worth a download while the windows
+    gate is open (else the validator refuses the Save as ``speaker_background_windows_disabled``
+    / 426 and nothing is pinned). The one rule the HTTP Save route and the chat apply paths
+    (async copilot edit, sync approval task) share.
     """
     if "speaker_background" not in getattr(payload, "model_fields_set", ()):
-        return None
-    if getattr(payload, "speaker_background", None) is None:
-        return None
+        return []
+    section = getattr(payload, "speaker_background", None)
+    if section is None:
+        return []
     from app.routes.generative_jobs import (  # noqa: PLC0415
         _find_variant,
         _speaker_background_shape_ok,
     )
-    from app.services.phone_rollout import speaker_background_unavailable_reason  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        speaker_background_unavailable_reason,
+        speaker_background_windows_unavailable_reason,
+    )
 
     variant = _find_variant(job, variant_id) or {}
     if not _speaker_background_shape_ok(job, variant):
-        return None
+        return []
     if speaker_background_unavailable_reason() is not None:
-        return None
-    return payload.speaker_background.media_id, payload.speaker_background.kind
+        return []
+    # KRI-1173: a colour fill is never pinned (S54); its windows still are.
+    requests: dict[str, str] = {}
+    if section.media_id is not None and section.kind != "color":
+        requests[section.media_id] = section.kind
+    if (
+        getattr(section, "windows", None)
+        and speaker_background_windows_unavailable_reason() is None
+    ):
+        for window in section.windows:
+            requests.setdefault(window.media_id, window.kind)
+    return list(requests.items())
+
+
+def background_pin_request(job: Any, variant_id: str, payload: Any) -> tuple[str, str] | None:
+    """``(media_id, kind)`` of the FILL a Save that SETS a background needs pinned, else None.
+
+    The first entry of `background_pin_requests` (kept for callers that only know the fill).
+    """
+    requests = background_pin_requests(job, variant_id, payload)
+    return requests[0] if requests else None
+
+
+def backdrop_pin_requests(job: Any, variant_id: str, payload: Any) -> list[str]:
+    """Pool ids a Save that SETS a clip's media backdrop needs pinned first (KRI-1139).
+
+    Like `background_pin_request`, only a Save the gate can accept is worth a download: a
+    closed gate, a cloud variant or a slot that leaves its tilt alone reach
+    `_require_clip_tilt_gates` and get their own refusal there.
+    """
+    slots = getattr(payload, "timeline_slots", None)
+    if not slots:
+        return []
+    from app.routes.generative_jobs import _find_variant, _tilt_media_asset  # noqa: PLC0415
+    from app.services.phone_rollout import clip_backdrop_media_supported  # noqa: PLC0415
+
+    variant = _find_variant(job, variant_id) or {}
+    if variant.get("render_destination") != "device":
+        return []
+    if not clip_backdrop_media_supported(require_client=False):
+        return []
+    ids: list[str] = []
+    for slot in slots:
+        if slot.removed or "tilt" not in slot.model_fields_set:
+            continue
+        media_id = _tilt_media_asset(slot.tilt)
+        if media_id is not None and media_id not in ids:
+            ids.append(media_id)
+    return ids
 
 
 async def pin_background_for_commit(
     db: AsyncSession, job: Any, variant_id: str, payload: Any, *, plan_item_id: uuid.UUID
 ) -> None:
-    """Pin the pool visual ``payload`` sets as the background (no-op for any other Save)."""
-    request = background_pin_request(job, variant_id, payload)
-    if request is not None:
+    """Pin the pool visuals ``payload`` sets: the speaker background (fill and windows, KRI-1162)
+    and every clip backdrop of kind ``media`` (KRI-1139); a no-op for a Save that sets neither."""
+    for media_id, kind in background_pin_requests(job, variant_id, payload):
         await pin_pool_visual_for_background(
-            db, job, plan_item_id=plan_item_id, media_id=request[0], kind=request[1]
+            db, job, plan_item_id=plan_item_id, media_id=media_id, kind=kind
+        )
+    for media_id in backdrop_pin_requests(job, variant_id, payload):
+        await pin_pool_visual_for_background(
+            db,
+            job,
+            plan_item_id=plan_item_id,
+            media_id=media_id,
+            kind=None,
+            not_in_pool="clip_backdrop_media_not_in_pool",
+            unavailable="clip_backdrop_media_unreadable",
         )
 
 
@@ -189,8 +368,17 @@ def pin_background_for_commit_sync(
     db: Session, job: Any, variant_id: str, payload: Any, *, plan_item_id: uuid.UUID
 ) -> None:
     """`pin_background_for_commit` for the sync approval task."""
-    request = background_pin_request(job, variant_id, payload)
-    if request is not None:
+    for media_id, kind in background_pin_requests(job, variant_id, payload):
         pin_pool_visual_for_background_sync(
-            db, job, plan_item_id=plan_item_id, media_id=request[0], kind=request[1]
+            db, job, plan_item_id=plan_item_id, media_id=media_id, kind=kind
+        )
+    for media_id in backdrop_pin_requests(job, variant_id, payload):
+        pin_pool_visual_for_background_sync(
+            db,
+            job,
+            plan_item_id=plan_item_id,
+            media_id=media_id,
+            kind=None,
+            not_in_pool="clip_backdrop_media_not_in_pool",
+            unavailable="clip_backdrop_media_unreadable",
         )

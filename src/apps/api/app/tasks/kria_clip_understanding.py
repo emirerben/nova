@@ -54,6 +54,9 @@ RUN_DEADLINE_S = 1100.0
 MAX_CHAIN = 8  # bound on self re-enqueues per attach burst (quota / deadline resumes)
 QUOTA_RESUME_DELAY_S = 300
 LOCK_TTL_S = 1560
+# Measuring signals (download + ffmpeg per clip) starts only with this much of the run's wall
+# clock left; otherwise the run re-enqueues itself and measures at the start of the next one.
+SIGNALS_RESERVE_S = 400.0
 
 
 def _needs_understanding(row: object) -> bool:
@@ -292,6 +295,35 @@ def _record_failure(item_id: uuid.UUID, raw: dict[str, Any]) -> None:
         log.warning("kria_clip_understanding_attempt_record_failed", exc_info=True)
 
 
+def _compute_signals(item_id: uuid.UUID, user_id: uuid.UUID, started: float) -> str:
+    """Measure the clips' suggestion signals once they are understood.
+
+    ``skipped`` (``KRIA_SUGGESTION_SIGNALS_ENABLED`` off, or the creator is not on the chips
+    allow-list: nothing is downloaded), ``deferred`` (not enough wall clock left), ``done`` or
+    ``error``. Never raises: signals are an enhancement. The backfill's own write path stores
+    them (row-locked, identity and generation fenced) and fires ``on_signals_computed`` AFTER
+    that commit, so no trigger runs under the plan item's lock.
+    """
+    if not (settings.kria_suggestion_signals_enabled and settings.suggestion_chips_for(user_id)):
+        return "skipped"
+    if time.monotonic() - started > RUN_DEADLINE_S - SIGNALS_RESERVE_S:
+        return "deferred"
+    try:
+        from app.cli.backfill_clip_signals import run as measure_signals  # noqa: PLC0415
+
+        report = measure_signals(item_id=item_id, write=True, rate_per_s=0.0)
+        log.info(
+            "kria_clip_signals_done",
+            item_id=str(item_id),
+            outcomes=report.get("outcomes"),
+            missing=report.get("missing_by_signal"),
+        )
+        return "done"
+    except Exception:  # noqa: BLE001 - a missing signal only means a kind offers nothing
+        log.warning("kria_clip_signals_failed", item_id=str(item_id), exc_info=True)
+        return "error"
+
+
 def _lock_key(item_id: str) -> str:
     return f"kria-clip-und:{item_id}"
 
@@ -444,6 +476,8 @@ def _run(item_id: str, chain: int) -> dict[str, Any]:
         stopped=stopped,
         chain=chain,
     )
+    if not stopped and not resumed and _compute_signals(identifier, user_id, started) == "deferred":
+        resumed = _resume(item_id, chain, countdown=5)
     if not stopped and not resumed:
         # KRI-756: the footage is understood: word the first-prompt suggestion chips. The
         # enqueue helper re-checks the flag and the run cap and never raises.

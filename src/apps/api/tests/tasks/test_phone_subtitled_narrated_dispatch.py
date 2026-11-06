@@ -643,7 +643,7 @@ def _fake_resolve_sfx(sfx: SubtitledSoundEffect) -> ResolvedSoundEffect:
 
 
 def _make_fake_bind(calls: list):
-    def _fake_bind(_open_session, *, job_id, pins):  # noqa: ARG001
+    def _fake_bind(_open_session, *, job_id, pins, measure_text=False):  # noqa: ARG001
         calls.append(dict(pins))
         bound = []
         for media_id, (kind, path, generation) in pins.items():
@@ -1313,7 +1313,7 @@ def test_subtitled_media_lanes_storage_failure_drops_lane_not_job(monkeypatch):
         _lanes_features("stillImages", "visualBlocks", "alphaOverlay", "soundEffects"),
     )
 
-    def _broken_bind(_open_session, *, job_id, pins):  # noqa: ARG001
+    def _broken_bind(_open_session, *, job_id, pins, measure_text=False):  # noqa: ARG001
         raise OSError("bucket unreachable")
 
     monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _broken_bind)

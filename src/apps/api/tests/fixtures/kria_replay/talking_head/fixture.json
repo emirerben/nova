@@ -17,7 +17,8 @@
       "the approval card is assembled offline from the real pure functions the draft turn calls (scripts/kria/score_route.py approval_card); the DB-bound turn body is not run",
       "phone source bindings: synthetic proxy paths (score_route.media_rows)",
       "capability manifest (score_route.manifest)",
-      "strategy.title_animation = \"pop\" and brief r6 (style, global, facts.animation = \"pop\", \"animate the big text in\") are NOT in the recording. They give the fixture an animation ask, the render target of the Talking lane (L2); the recorded request asked for a big \"1810\" without naming motion."
+      "strategy.title_animation = \"pop\" and brief r6 (style, global, facts.animation = \"pop\", \"animate the big text in\") are NOT in the recording. They give the fixture an animation ask, the render target of the Talking lane (L2); the recorded request asked for a big \"1810\" without naming motion.",
+      "replay_inputs.text_elements (lane talking): one spoken-text row in the window the recorded render drew its spoken-text row (prod_outcome.render.text_elements: 18.975-20.975 s, fade-in), shaped like phone_spoken_text.spoken_text_element at the title's default spot (the prod placement was not recorded). It carries no plan or ask value: placeholder text \"TEXT\" and no requirement id. The fixture builder does not write it: keep it when rebuilding."
     ],
     "redacted": [
       "user, thread, item, job, turn and draft ids",
@@ -33,6 +34,30 @@
     "Talking video, filmed horizontally: make it vertical and keep his face in frame. Maximo explains in English and I translate to Turkish in the middle, then we both say \"1810\". Keep every language as it was spoken: English captions for the English, Turkish captions for my Turkish, nothing translated. When he first says \"1810\", put a big \"1810\" on screen for a moment. When he says \"on the other side of the square\", show my Casa Rosada photo full screen for about two seconds with his voice still playing, then come back to him. Start at \"Okay, I'll translate it to Turkish\" and end after \"the government of the whole country\"."
   ],
   "client_protocol": 22,
+  "replay_inputs": {
+    "text_elements": [
+      {
+        "id": "spoken-text-replay",
+        "text": "TEXT",
+        "start_s": 18.975,
+        "end_s": 20.975,
+        "role": "generative_intro",
+        "position": "custom",
+        "x_frac": 0.5,
+        "y_frac": 0.15,
+        "font_family": "Playfair Display",
+        "size_px": 120.0,
+        "size_class": "large",
+        "alignment": "center",
+        "effect": "fade-in",
+        "source_params": {
+          "source": "spoken_text"
+        },
+        "removed": false,
+        "behind_subject": false
+      }
+    ]
+  },
   "planner_summary": "I'll trim the video to your exact start and end lines. The subtitles will stay in English and Turkish as spoken. I've set the Casa Rosada photo to take over the screen exactly when he says the phrase, and '1810' will pop up right when he says it!",
   "brief": {
     "version": 1,

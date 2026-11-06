@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from types import MappingProxyType
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -31,6 +32,26 @@ CURATED_PHONE_FONTS = (
 CAPTION_PREFERRED_FONT = "TikTok Sans Bold"
 DEFAULT_STROKE_WIDTH = 0
 DEFAULT_SHADOW_ENABLED = False
+
+# Named looks a creator-confirmed line can carry (``PinnedText.look``). Read-only on purpose:
+# callers copy (``dict(TIKTOK_TEXT_LOOK)``) and then apply their own overrides.
+CLIP_TEXT_LOOKS = ("tiktok",)
+# Qendresa item 21, measured on her videos: TikTok Sans Bold, white, 56 px on a 1080x1920
+# canvas, wrapping at 0.72 of the width, with a faint soft shadow (the authored shadow paint
+# at opacity 0.2).
+TIKTOK_TEXT_LOOK = MappingProxyType(
+    {
+        "font_family": "TikTok Sans Bold",
+        "color": "#FFFFFF",
+        "size_px": 56,
+        "max_width_frac": 0.72,
+        "shadow_enabled": True,
+        "shadow_color": "#000000",
+        "shadow_opacity": 0.2,
+        "stroke_width": 0,
+        "alignment": "center",
+    }
+)
 
 
 class TextStyleRule(BaseModel):
@@ -80,25 +101,118 @@ def preferences_from_direction(typed: dict) -> dict[str, dict]:
     }
 
 
+_TEXT_SUBJECT = re.compile(
+    r"\b(?:texts?|titles?|captions?|subtitles?|labels?|lyrics?|pinned)\b"
+    r"|altyaz[ıi]|başl[ıi]k|yaz[ıi]|etiket"
+)
+_OTHER_SUBJECT = re.compile(
+    r"\b(?:me|myself|i'm|i am|my face|the speaker|ben|beni|benim|bana)\b"
+    r"|\b(?:photo|picture|image|video|clip|card|logo|sticker|background|backdrop)\w*"
+    r"|\b(?:fotoğraf|resim|resm|video|kart|arka plan)"
+)
+# A colour word before one of these paints something else, not the text.
+_NOT_TEXT_COLOUR = "background|outline|stroke|shadow|box|card|frame|bar|logo|arka plan"
+# The text roles a message can style, each with the words that name it.
+_ROLE_WORDS = (
+    ("title", r"\btitles?\b|başlık"),
+    ("caption", r"\bcaptions?\b|altyazı"),
+    ("label", r"\blabels?\b|etiket"),
+    ("pinned", r"\bpinned\b"),
+    ("lyric", r"\blyrics?\b"),
+)
+_PLACES = (
+    ("lower left", "bottom_left"),
+    ("bottom left", "bottom_left"),
+    ("upper left", "top_left"),
+    ("top left", "top_left"),
+    ("lower right", "bottom_right"),
+    ("bottom right", "bottom_right"),
+    ("upper right", "top_right"),
+    ("top right", "top_right"),
+    ("sol alt", "bottom_left"),
+    ("sol üst", "top_left"),
+    ("in the middle", "middle"),
+    ("in the center", "middle"),
+    ("in the centre", "middle"),
+    ("ortada", "middle"),
+    ("ortaya", "middle"),
+)
+_COLOURS = (
+    ("white|beyaz", "#FFFFFF"),
+    ("black|siyah", "#000000"),
+    ("yellow|sar[ıi]", "#FFFF00"),
+    ("red|k[ıi]rm[ıi]z[ıi]", "#FF0000"),
+    ("blue|mavi", "#0000FF"),
+)
+# What a segment is about when it names no text role: on-screen text in general, or not text.
+_ALL_TEXT, _OTHER = "all_text", "other"
+
+
+def _roles_named(text: str) -> list[str]:
+    return [role for role, pattern in _ROLE_WORDS if re.search(pattern, text)]
+
+
+def _subject(part: str) -> str | None:
+    """The text role one segment names, "mixed" for several, ``_ALL_TEXT`` for plain text words,
+    ``_OTHER`` for the speaker or another object, None for no subject."""
+    if _TEXT_SUBJECT.search(part):
+        roles = _roles_named(part)
+        return roles[0] if len(roles) == 1 else "mixed" if roles else _ALL_TEXT
+    return _OTHER if _OTHER_SUBJECT.search(part) else None
+
+
+def _text_scope(text: str) -> list[tuple[str, str]]:
+    """The parts of a message about on-screen text, each with the text role it is about: a place
+    or colour counts only there.
+
+    Sentences split into segments (commas, colons, "and"); a segment naming no subject
+    follows the subject before it, or the first one after it, and a sentence naming none
+    follows the last one ("Captions in white. I'd like them in the middle"). A quoted string
+    is text. Plain text words after a named role describe that role ("Captions word by word,
+    black bold text ...", "Make the title bold. The text should be white"); only plain text
+    named before any role is all text ("Small white text, no captions")."""
+    scope = []
+    carried = None
+    named = None
+    text = re.sub(r'"[^"]*"|“[^”]*”', " text ", text)
+    for sentence in re.split(r"[.!?;…]+(?=\s|$)|\n", text):
+        segments = re.split(r"[,:]|\s(?:and|ve|but|ama)\s", sentence)
+        kinds = [_subject(part) for part in segments]
+        kind = next((k for k in kinds if k), carried)
+        for part, own in zip(segments, kinds, strict=True):
+            if own == _ALL_TEXT and named is not None:
+                own = named
+            elif own not in (None, _OTHER, _ALL_TEXT):
+                named = own
+            kind = own or kind
+            if kind not in (None, _OTHER):
+                scope.append((part, kind))
+        carried = kind
+    return scope
+
+
+def _styled_role(named: str, owners: set[str], *, whole_message_values: bool) -> str | None:
+    """The role a rule styles. ``named`` is the one role word anywhere in the message (or
+    ``_ALL_TEXT``); ``owners`` are the roles of the segments holding its place / colour words.
+
+    Qendresa case 3: a role named only where no place or colour sits ("Small white text in the
+    middle, no captions") is not the styled role; the words style all text. Outline, shadow and
+    font words are read from the whole message, so with any of them the role is unknown."""
+    if named == _ALL_TEXT or not owners or named in owners:
+        return named
+    return None if whole_message_values else _ALL_TEXT
+
+
 def explicit_text_rule(instruction: str) -> tuple[str, dict] | None:
     """Only executable styling words. The caller decides durable vs local scope."""
     from app.agents._schemas.text_element import _ALLOWED_FONTS
+    from app.config import settings
 
     text = instruction.casefold()
-    roles = [
-        role
-        for role, pattern in (
-            ("title", r"\btitles?\b|başlık"),
-            ("caption", r"\bcaptions?\b|altyazı"),
-            ("label", r"\blabels?\b|etiket"),
-            ("pinned", r"\bpinned\b"),
-            ("lyric", r"\blyrics?\b"),
-        )
-        if re.search(pattern, text)
-    ]
+    roles = _roles_named(text)
     if len(roles) > 1:
         return None
-    role = roles[0] if roles else "all_text"
+    role = roles[0] if roles else _ALL_TEXT
     values = {}
     if re.search(
         r"\b(no|without|never (?:add|use)) (?:text )?(?:outlines?|strokes?)\b"
@@ -114,24 +228,13 @@ def explicit_text_rule(instruction: str) -> tuple[str, dict] | None:
         values["stroke_width"] = 2
     if re.search(r"\b(add|use|with) (?:text )?shadows?\b", text) and "shadow_enabled" not in values:
         values["shadow_enabled"] = True
+    # Each place and colour, with the role of the text segment it sits in.
+    scope = _text_scope(text)
     places = [
-        position
-        for phrase, position in (
-            ("lower left", "bottom_left"),
-            ("bottom left", "bottom_left"),
-            ("upper left", "top_left"),
-            ("top left", "top_left"),
-            ("lower right", "bottom_right"),
-            ("bottom right", "bottom_right"),
-            ("upper right", "top_right"),
-            ("top right", "top_right"),
-            ("sol alt", "bottom_left"),
-            ("sol üst", "top_left"),
-        )
-        if phrase in text
+        (position, owner) for part, owner in scope for phrase, position in _PLACES if phrase in part
     ]
-    if len(set(places)) == 1:
-        values["position"] = places[0]
+    if len({position for position, _ in places}) == 1:
+        values["position"] = places[0][0]
     remaining = text
     fonts = []
     for font in sorted(_ALLOWED_FONTS, key=len, reverse=True):
@@ -154,26 +257,24 @@ def explicit_text_rule(instruction: str) -> tuple[str, dict] | None:
             values["favorite_fonts"] = fonts
         elif len(fonts) == 1:
             values["font_family"] = fonts[0]
-    colors = {
-        name: color
-        for name, color in (
-            ("white", "#FFFFFF"),
-            ("black", "#000000"),
-            ("yellow", "#FFFF00"),
-            ("red", "#FF0000"),
-            ("blue", "#0000FF"),
-        )
-        if re.search(
-            rf"\b{name} (?:text|titles?|captions?|labels?)\b"
-            r"|\b(?:text|titles?|captions?|labels?)\s+"
-            rf"(?:(?:should be|must be|in|are)\s+)?{name}\b",
-            text,
-        )
-    }
-    if len(colors) == 1:
-        values["color"] = next(iter(colors.values()))
+    colors = [
+        (color, owner)
+        for part, owner in scope
+        for words, color in _COLOURS
+        if re.search(rf"\b(?:{words})\b(?!\s+(?:{_NOT_TEXT_COLOUR}))", part)
+    ]
+    if len({color for color, _ in colors}) == 1:
+        values["color"] = colors[0][0]
     if not values:
         return None
+    if settings.text_style_segment_role_enabled:
+        role = _styled_role(
+            role,
+            {owner for _, owner in places + colors},
+            whole_message_values=bool(values.keys() - {"position", "color"}),
+        )
+        if role is None:
+            return None
     return role, TextStyleRule.model_validate(values).values()
 
 

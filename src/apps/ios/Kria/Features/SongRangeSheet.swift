@@ -117,19 +117,17 @@ struct SongRangeSheet: View {
     private var actions: some View {
         VStack(spacing: 8) {
             Button("Save") { Task { await save(draft?.range) } }
-                .buttonStyle(KriaPrimaryButtonStyle(minHeight: 48))
-                .frame(maxWidth: .infinity)
+                .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true))
                 .disabled(!canSave)
                 .accessibilityIdentifier("song-range-save")
             if existing != nil {
                 Button("Use the whole song") { Task { await save(nil) } }
-                    .buttonStyle(SongRangeFillButtonStyle())
+                    .buttonStyle(KriaButtonStyle(role: .secondary, fullWidth: true))
                     .disabled(saving)
                     .accessibilityIdentifier("song-range-clear")
             }
             Button("Cancel") { dismiss() }
-                .font(KriaFont.body(15)).foregroundStyle(KriaColor.mutedInk)
-                .frame(maxWidth: .infinity, minHeight: 44)
+                .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium, fullWidth: true))
                 .disabled(saving)
                 .accessibilityIdentifier("song-range-cancel")
         }
@@ -148,19 +146,6 @@ struct SongRangeSheet: View {
     }
 }
 
-/// A quiet filled capsule: secondary actions use a fill, not an outline.
-struct SongRangeFillButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(KriaFont.body(16).weight(.semibold))
-            .foregroundStyle(KriaColor.ink)
-            .frame(maxWidth: .infinity, minHeight: 48)
-            .background(KriaColor.fill, in: Capsule())
-            .opacity(isEnabled ? (configuration.isPressed ? 0.65 : 1) : 0.45)
-    }
-}
-
 /// The From / To time wheels, shared by the sheet (KRI-580) and the chat card (KRI-588). The caller owns the
 /// draft and its bindings, so the From-pushes-To rule lives in one place (`SongRangeDraft`).
 struct SongRangeWheelPair: View {
@@ -170,6 +155,8 @@ struct SongRangeWheelPair: View {
     let fromID: String
     let toID: String
     var isEnabled = true
+    /// The pair sits on a `fill` card, so the wheel tiles are paper.
+    var onFill = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -181,19 +168,25 @@ struct SongRangeWheelPair: View {
 
     private func wheel(title: String, selection: Binding<Int>, upper: Int, id: String) -> some View {
         VStack(spacing: 4) {
-            Text(title).font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.mutedInk)
+            Text(title).kriaType(.caption).fontWeight(.medium).foregroundStyle(KriaColor.mutedInk)
             Picker(title, selection: selection) {
                 ForEach(0...upper, id: \.self) { second in
-                    Text(SongRangeMath.timecode(Double(second))).tag(second)
+                    Text(SongRangeMath.timecode(Double(second)))
+                        .font(.custom("Inter", size: 20, relativeTo: .title3).weight(.semibold).monospacedDigit())
+                        .tag(second)
                 }
             }
             .pickerStyle(.wheel)
+            // The wheel rows are a fixed 120pt tall: larger digits would overlap their neighbours, so the digits
+            // stop growing at xxxLarge (the labels around the wheels still scale).
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .frame(height: 120)
             .clipped()
             .accessibilityLabel(title)
             .accessibilityIdentifier(id)
         }
+        .padding(.top, 12)
         .frame(maxWidth: .infinity)
-        .background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 12))
+        .background(onFill ? KriaColor.paper : KriaColor.fill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }

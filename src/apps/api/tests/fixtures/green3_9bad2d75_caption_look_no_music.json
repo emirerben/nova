@@ -1,0 +1,159 @@
+{
+  "_about": "Green 3 (KRI-1174 run; KRI-1177 / KRI-1164 / KRI-1178 / background count). Prod 2026-11-03, read-only via scripts/admin.py --prod. Speech transcript, media URLs and signed paths left out.",
+  "ids": {
+    "thread": "5A650474-5103-4A82-BF2A-3F7C46F5BD56",
+    "plan_item": "57d612ee-763a-46c9-bafc-441e91d10e6a",
+    "job": "9bad2d75-c4e9-4c6c-808d-69d26b4ca76c",
+    "testflight": "1876",
+    "server_revision": "72c060c0b91e5e60ac31d10aece058a2e2757ab9"
+  },
+  "request": "Yorumla episode 9: Kervan x Lumo Pamukkale show. Make the whole video like a green screen: me small at the bottom right in front, and behind me full screen whichever photo or video I'm talking about, changing every 3-5 seconds. Cut the pauses and the sentence I restarted. Captions small, white, lowercase, in the middle. No music.",
+  "brief_v1_requirements": [
+    {
+      "id": "r1",
+      "kind": "style",
+      "scope": "global",
+      "description": "Make the whole video like a green screen: me small at the bottom right in front, and behind me full screen whichever photo or video I'm talking about, changing every 3-5 seconds",
+      "facts": {
+        "speaker_small": true,
+        "background_changes": true,
+        "speaker_background": true
+      }
+    },
+    {
+      "id": "r2",
+      "kind": "style",
+      "scope": "global",
+      "description": "Cut the pauses and the sentence I restarted.",
+      "facts": {
+        "cut_lines": [
+          "So Lumo took its tech from cold hard, no again."
+        ],
+        "speech_cleanup": true
+      }
+    },
+    {
+      "id": "r3",
+      "kind": "style",
+      "scope": "global",
+      "description": "Captions small, white, lowercase, in the middle.",
+      "facts": {
+        "captions": "on",
+        "position": "middle"
+      }
+    },
+    {
+      "id": "r4",
+      "kind": "audio",
+      "scope": "global",
+      "description": "No music.",
+      "facts": {}
+    }
+  ],
+  "turn1_reply": "I can't make this yet:\n- Cut the pauses and the sentence I restarted.: If Clean up speech is offered when you approve, choose it to cut the long pauses; I'll cut the line you named out of your take if I find it said once, and tell you after\n- Captions small, white, lowercase, in the middle.: I can't confirm this draft does it yet.\n- No music.: A Talking video can't do this, so it stays as filmed\nI held this first draft back. The simpler version leaves out: Cut the pauses and the sentence I restarted.; Captions small, white, lowercase, in the middle.; No music.. Should I make it without these, or do you want to change your request?",
+  "turn1_readiness_rows": [
+    {
+      "requirement_id": "r1",
+      "disposition": "executable",
+      "reason": "4 photos or videos take turns behind you; you're small at the bottom right."
+    },
+    {
+      "requirement_id": "r2",
+      "disposition": "needs_choice",
+      "reason": "If Clean up speech is offered when you approve, choose it to cut the long pauses; I'll cut the line you named out of your take if I find it said once, and tell you after"
+    },
+    {
+      "requirement_id": "r3",
+      "disposition": "evidence_missing",
+      "reason": "I can't confirm this draft does it yet."
+    },
+    {
+      "requirement_id": "r4",
+      "disposition": "unsupported",
+      "reason": "A Talking video can't do this, so it stays as filmed"
+    }
+  ],
+  "turn1_simpler_version_leaves_out": [
+    "r2",
+    "r3",
+    "r4"
+  ],
+  "first_draft_caption_fields": {
+    "caption_size_px": 62,
+    "caption_text_color": "#767676",
+    "caption_margin_v": 662,
+    "caption_editor_style": {
+      "alignment": "right",
+      "max_width_frac": 0.68,
+      "position_x_frac": 0.7829021345350478,
+      "position_y_frac": 0.65521
+    },
+    "phone_text_style": {
+      "version": 1,
+      "requested": {
+        "caption": {
+          "position": "bottom_right"
+        }
+      },
+      "preferences": {
+        "all_text": {}
+      },
+      "selected_fonts": {},
+      "selection_calls": 1
+    }
+  },
+  "speech_cleanup_outcome": {
+    "status": "applied",
+    "removal_count": 3,
+    "removed_ms": 964
+  },
+  "phone_lane_receipt": {
+    "applied": [
+      "background"
+    ],
+    "dropped": [],
+    "background": {
+      "windows": 8,
+      "speaker_frame": "small_bottom_right"
+    }
+  },
+  "measured_background_changes_s": [
+    4,
+    8,
+    12,
+    16,
+    20,
+    24,
+    28
+  ],
+  "distinct_background_media": 5,
+  "post_render_r1_reason": "8 photos or videos take turns behind you; you're small at the bottom right.",
+  "expected": {
+    "caption_ask": {
+      "size": "small",
+      "position": "middle",
+      "color": "#FFFFFF",
+      "case": "lower"
+    },
+    "caption_parser": [
+      "caption",
+      {
+        "position": "middle",
+        "color": "#FFFFFF"
+      }
+    ],
+    "first_draft": {
+      "caption_size_px": 52,
+      "caption_text_color": "#FFFFFF",
+      "alignment": "center",
+      "position_x_frac": 0.5,
+      "position_y_frac": 0.5,
+      "cue_text_case": "lower"
+    },
+    "turn1_ready_with_typed_brief": true,
+    "r2_disposition_approvable": true,
+    "r3_receipt": "Captions are small, white, lowercase and in the middle.",
+    "r4_receipt": "No music, as asked.",
+    "r1_post_render_count": 5
+  }
+}

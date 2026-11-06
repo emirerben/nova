@@ -49,7 +49,12 @@ from app.kria.route_capabilities import (
 )
 from app.kria.route_capabilities import _legacy_unified as legacy_unified
 from app.kria.route_capabilities import _lines as lines
-from app.kria.route_capabilities._types import NOT_APPLIED_ON_ROUTE, RECORDED_ONLY_ON_ROUTE
+from app.kria.route_capabilities._types import (
+    NOT_APPLIED_ON_ROUTE,
+    RECORDED_ONLY_ON_ROUTE,
+    AskDecline,
+    GivenAsks,
+)
 
 NOT_APPLIED = NOT_APPLIED_ON_ROUTE
 RECORDED_ONLY = RECORDED_ONLY_ON_ROUTE
@@ -77,6 +82,35 @@ class Disclosure:
 # --- strategy fields a route does not read ---------------------------------------------------
 #
 # Source of truth: each route's ``FIELD_HANDLING`` (`app.kria.route_capabilities`).
+
+
+# Strategy fields the planner fills on its own for every draft (Green 4/5). A route that does not
+# read one is worth a card line only when the creator asked for something it carries.
+PLANNER_OWNED_FIELDS = frozenset({"intro_hook", "story_structure", "pacing", "direction"})
+
+
+def asked_only() -> bool:
+    """Registry off keeps every card exactly as before the registry, this rule included."""
+    return bool(settings.kria_headsup_asked_only_enabled) and registry_enabled()
+
+
+def creator_asked_for(field: str, requirements: Sequence[BriefRequirement] | None) -> bool:
+    """A live typed ask the planner-owned ``field`` carries: a clip order for the story structure,
+    on-screen text for the hook. Pacing and direction have no typed ask: an untyped one ("make it
+    fast") is the creator's own requirement and gets its own receipt on the card."""
+    live = [req for req in requirements or () if req.live]
+    if field == "story_structure":
+        return any(req.kind in {"order", "text_sequence"} for req in live)
+    if field == "intro_hook":
+        return any(req.kind == "text" for req in live)
+    return False
+
+
+def route_ignores(route: str | None, field: str) -> bool:
+    """The route's table says it does not follow ``field`` (`NotApplied` / `RecordedOnly`)."""
+    table = _table(route)
+    handling = getattr(table, "FIELD_HANDLING", {}).get(field) if table is not None else None
+    return isinstance(handling, NotApplied | RecordedOnly)
 
 
 def _table(route: str | None) -> ModuleType | None:
@@ -159,6 +193,12 @@ def strategy_notices(
                 if text:
                     out.append(Disclosure(handling.code, field, text))
                 continue
+        if (
+            field in PLANNER_OWNED_FIELDS
+            and asked_only()
+            and not creator_asked_for(field, requirements)
+        ):
+            continue  # the planner's own idea, not the creator's: nothing they asked is dropped
         try:
             build = handling.build
             text = (
@@ -196,6 +236,17 @@ def is_route_decline_reason(reason: object) -> bool:
     return isinstance(reason, str) and any(reason.startswith(p) for p in ROUTE_DECLINE_PREFIXES)
 
 
+def _declines(
+    ask: AskDecline,
+    req: BriefRequirement,
+    strategy: Mapping[str, Any],
+    live: Sequence[BriefRequirement],
+) -> bool:
+    """``ask`` declines ``req``; a `GivenAsks` test also reads the brief's live asks."""
+    test = ask.applies
+    return test.test(req, strategy, live) if isinstance(test, GivenAsks) else test(req, strategy)
+
+
 def ask_declines(
     requirements: Iterable[BriefRequirement],
     strategy: Mapping[str, Any] | None,
@@ -208,14 +259,13 @@ def ask_declines(
         return []
     asks = table.ASK_DECLINES
     strategy = strategy or {}
+    live = [req for req in requirements if req.live]
     out: list[Disclosure] = []
-    for req in requirements:
-        if not req.live:
-            continue
-        decline = next((ask for ask in asks if ask.applies(req, strategy)), None)
+    for req in live:
+        decline = next((ask for ask in asks if _declines(ask, req, strategy, live)), None)
         if decline is not None:
             out.append(
-                Disclosure(NOT_APPLIED, decline.subject, decline.text(), requirement_id=req.id)
+                Disclosure(NOT_APPLIED, decline.subject, decline.sentence(), requirement_id=req.id)
             )
     return out
 
@@ -376,12 +426,30 @@ def card_text(disclosures: Sequence[Disclosure], *, limit: int = 640) -> str:
     silently). A subject with no short name keeps its whole sentence. With the registry or the
     disclosure switch off the lines past the budget are dropped, as before the registry."""
     whole, rest = card_layout(disclosures, limit=limit)
+    return _card_lines(whole, rest if decoupled_from_readiness() else [])
+
+
+def card_text_within(disclosures: Sequence[Disclosure], room: int) -> str:
+    """``card_text`` in at most ``room`` characters, for a reply with a hard length limit (a
+    held draft): fewer whole sentences, the rest named on the compact line, so no line is cut
+    mid-sentence. Registry or disclosure switch off: ``card_text`` as it is."""
+    text = card_text(disclosures)
+    if len(text) <= room or not decoupled_from_readiness():
+        return text
+    whole, _rest = card_layout(disclosures)
+    for keep in range(len(whole) - 1, -1, -1):
+        text = _card_lines(disclosures[:keep], disclosures[keep:])
+        if len(text) <= room:
+            break
+    return text
+
+
+def _card_lines(whole: Sequence[Disclosure], rest: Sequence[Disclosure]) -> str:
     out = [f"- {item.text}" for item in whole]
-    if rest and decoupled_from_readiness():
-        named = [item.subject for item in rest if lines.subject_label(item.subject)]
-        if named:
-            out.append(f"- {lines.compact_line(named)}")
-        out += [f"- {item.text}" for item in rest if not lines.subject_label(item.subject)]
+    named = [item.subject for item in rest if lines.subject_label(item.subject)]
+    if named:
+        out.append(f"- {lines.compact_line(named)}")
+    out += [f"- {item.text}" for item in rest if not lines.subject_label(item.subject)]
     if not out:
         return ""
     heads_up = say(en="Heads-up for this video:", tr="Bu video için not:")

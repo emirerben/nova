@@ -1,0 +1,38 @@
+{
+ "id": "duplicate_rank",
+ "description": "Two picks with the same rank: the order the model wrote stands and ranks are renumbered (it used to void the whole answer).",
+ "context": "nermin-matcha-update::first_prompt",
+ "model_output": {
+  "ranked": [
+   {
+    "kind": "sfx",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 1
+   },
+   {
+    "kind": "hook",
+    "target_ids": [
+     "all"
+    ],
+    "why": "",
+    "copy": null,
+    "rank": 1
+   }
+  ]
+ },
+ "expect": {
+  "wording": "agent",
+  "kinds": [
+   "default_edit",
+   "sfx",
+   "hook"
+  ]
+ },
+ "tags": [
+  "adversarial"
+ ]
+}

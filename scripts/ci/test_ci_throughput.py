@@ -156,8 +156,6 @@ class ThroughputTests(unittest.TestCase):
         unit_only = {
             "Run selected iPhone UI scenarios",
             "Verify selected named native unit journeys",
-            "Save Xcode build data for the next run",
-            "Record compiled iPhone input timestamps",
         }
         every_leg = {
             "Build iPhone app and run selected unit tests",
@@ -181,6 +179,39 @@ class ThroughputTests(unittest.TestCase):
         self.assertIn("name: ios-native-test-diagnostics-${{ matrix.leg }}", job)
         self.assertIn("-${{ github.sha }}-${{ matrix.leg }}", job)
         self.assertEqual(job.count("upload-artifact@v4"), 2)
+        # PR runs only restore main's Xcode cache (ios.yml seeds it). Each PR
+        # save (~0.9 GB per push) evicted main's seed from the full 10 GB repo
+        # cache within 30-46 minutes (2026-11-04..06): 70 of 97 PR runs
+        # compiled cold, and only 6 of 27 hits came from a PR's own save.
+        self.assertIn("actions/cache/restore@v4", job)
+        self.assertNotIn("actions/cache/save", job)
+        self.assertNotIn("cache-inputs.py save", job)
+
+    def test_mac_queues_after_selection_but_never_for_an_unmapped_journey(self):
+        # Failure modes: an unmapped selection allocates a Mac (KRI-604); an
+        # iOS-only PR (no journey) loses its Mac; the output never reaches the
+        # job, which then silently skips; the Mac waits on the mapping job again.
+        self.assertTrue(ci.journey_mapped(False, "not_applicable", ""))
+        self.assertTrue(ci.journey_mapped(True, "covered", "kri-524-creation"))
+        self.assertFalse(ci.journey_mapped(True, "gap", ""))
+        self.assertFalse(ci.journey_mapped(True, "covered", ""))
+        self.assertFalse(
+            ci.journey_mapped(True, "covered", "kri-524-creation,kri-524-creation")
+        )
+        self.assertFalse(ci.journey_mapped(True, "covered", "not-a-journey"))
+        everything = ",".join(journey["id"] for journey in ci.JOURNEYS)
+        self.assertTrue(ci.journey_mapped(True, "covered", everything))
+        root = Path(__file__).resolve().parents[2] / ".github/workflows"
+        changes = (root / "ci-changes.yml").read_text()
+        self.assertIn("value: ${{ jobs.select.outputs.journey_mapped }}", changes)
+        self.assertIn(
+            "journey_mapped: ${{ steps.select.outputs.journey_mapped }}", changes
+        )
+        job = (root / "ci.yml").read_text().split("\n  journey-native:\n", 1)[1]
+        header = job.split("\n    steps:\n", 1)[0]
+        self.assertIn("\n    needs: [changes]\n", header)
+        self.assertIn("needs.changes.outputs.journey_mapped == 'true'", header)
+        self.assertNotIn("journey-mapping.result", header)
 
     def test_selector_starts_only_the_legs_with_selected_journeys(self):
         self.assertEqual(ci.native_legs([]), ["unit"])
@@ -257,6 +288,7 @@ class ThroughputTests(unittest.TestCase):
                     if journey == "true"
                     else "not_applicable",
                     "journey_ids": "kri-524-creation" if journey == "true" else "",
+                    "journey_mapped": "true",
                 },
             },
             "journey-mapping": {
@@ -340,6 +372,7 @@ class ThroughputTests(unittest.TestCase):
             "journey_needs_native",
             "journey_coverage",
             "journey_ids",
+            "journey_mapped",
         ):
             needs = self.needs()
             del needs["changes"]["outputs"][field]
@@ -349,6 +382,12 @@ class ThroughputTests(unittest.TestCase):
             needs = self.needs()
             needs["changes"]["outputs"]["journey_ids"] = ids
             with self.assertRaises(ValueError):
+                ci.gate_journey(needs, "pull_request")
+        # A Mac may queue only for a mapped or unselected journey.
+        for journey in ("true", "false"):
+            needs = self.needs(journey=journey)
+            needs["changes"]["outputs"]["journey_mapped"] = "false"
+            with self.subTest(journey=journey), self.assertRaises(ValueError):
                 ci.gate_journey(needs, "pull_request")
 
 
@@ -362,10 +401,10 @@ class ArtifactTransferTests(unittest.TestCase):
         (self.root / "fixture/source.mp4").write_bytes(b"synthetic media")
 
     def seal(self):
-        evidence.seal_bundle(self.root, "a" * 40, "123", "1")
+        evidence.seal_bundle(self.root, "a" * 40, "123", "1", "kri-524-creation")
 
     def verify(self, head="a" * 40, run="123", attempt="1"):
-        evidence.verify_bundle(self.root, head, run, attempt)
+        evidence.verify_bundle(self.root, head, run, attempt, "kri-524-creation")
 
     def test_transfer_preserves_paths_bytes_and_attempt_identity(self):
         self.seal()

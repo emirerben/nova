@@ -71,6 +71,72 @@ struct NativeSelectionInspector: View {
             NativeSelectedMusicInspector(selection: selection, session: session)
         case .soundEffect, .mediaOverlay, .visualBlock, .motionScene, .cameraEffect, .carousel, .drawing:
             NativeSelectedEffectInspector(selection: selection, session: session)
+        case .speakerBackgroundWindow:
+            NativeSelectedBackgroundWindowInspector(selection: selection, session: session)
+        case .speaker:
+            // The speaker opens its own bottom panel (`NativeSpeakerPanel`); this sheet is only a fallback.
+            Form { Section { Text("Drag yourself on the video to move. Pinch to resize.").foregroundStyle(KriaColor.zinc) } }
+        }
+    }
+}
+
+/// KRI-1162: one timed Talk-to-camera background picked on the BACKGROUND lane. Its span is edited by dragging the
+/// block, so the times here are read-only text; the Background tool owns picking and ordering.
+private struct NativeSelectedBackgroundWindowInspector: View {
+    let selection: EditorSelection
+    @ObservedObject var session: NativeEditorSession
+    @Environment(\.dismiss) private var dismiss
+
+    private var window: EditorSpeakerBackgroundWindow? { session.speakerBackgroundWindows.first { $0.localID == selection.id } }
+
+    private func name(_ window: EditorSpeakerBackgroundWindow) -> String {
+        session.visualLibrary.first { $0.id == window.mediaID }?.sourceFilename ?? (window.kind == .video ? "Video" : "Photo")
+    }
+
+    private func timeRow(_ title: String, seconds: Double, id: String) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(nativeTimecode(seconds))
+                .foregroundStyle(KriaColor.zinc)
+                .accessibilityValue(String(format: "%.3f", seconds))
+                .accessibilityIdentifier(id)
+        }
+    }
+
+    var body: some View {
+        Form {
+            if let window {
+                Section("Background") {
+                    LabeledContent("Shows", value: name(window))
+                    LabeledContent("Kind", value: window.kind == .video ? "Video" : "Photo")
+                    timeRow("Starts", seconds: window.startS, id: "native-editor-selected-\(selection.kind.rawValue)-start")
+                    timeRow("Ends", seconds: window.endS, id: "native-editor-selected-\(selection.kind.rawValue)-end")
+                }
+                if let index = session.speakerBackgroundWindows.firstIndex(where: { $0.localID == selection.id }),
+                   session.canEditSpeakerBackgroundFocus || session.speakerBackgroundWindows[index].focus != nil {
+                    // Qendresa item 18: aim this window's picture at its text (read-only while the server does not open it).
+                    Section { NativeBackgroundAimControls(session: session, windowIndex: index) }
+                }
+                Section {
+                    Button("Open Background tool") {
+                        dismiss()
+                        session.requestBackgroundTool()
+                    }
+                    .accessibilityIdentifier("native-editor-selected-background-open-tool")
+                    Button("Remove", role: .destructive) {
+                        _ = session.removeSpeakerBackgroundWindow(id: selection.id)
+                        dismiss()
+                    }
+                    .disabled(!session.canEditSpeakerBackgroundWindows)
+                    .accessibilityIdentifier("native-editor-selected-background-remove")
+                }
+                if !session.canEditSpeakerBackgroundWindows {
+                    Section { Label("Timed backgrounds are locked for this render.", systemImage: "lock") }
+                }
+            } else {
+                Section { Text("This background is no longer in the edit.").foregroundStyle(KriaColor.zinc) }
+            }
         }
     }
 }
@@ -405,8 +471,13 @@ private struct NativeSelectedClipInspector: View {
                 }
             }
             Section("Order and source window") {
-                Button("Move earlier") { session.moveSelected(by: -0.1) }
-                Button("Move later") { session.moveSelected(by: 0.1) }
+                // A phone Talking edit keeps its timeline closed and opens only Range, so ordering stays off
+                // while Range below decides for itself.
+                Group {
+                    Button("Move earlier") { session.moveSelected(by: -0.1) }
+                    Button("Move later") { session.moveSelected(by: 0.1) }
+                }
+                .disabled(!session.canEditTimeline || !session.canEdit(.timeline))
                 if clip != nil {
                     let blocked = session.sourceWindowBlockedReason(for: selection)
                     Button { showRange = true } label: {
@@ -421,7 +492,6 @@ private struct NativeSelectedClipInspector: View {
                     if let blocked { Text(blocked).font(.footnote).foregroundStyle(.secondary) }
                 }
             }
-            .disabled(!session.canEditTimeline)
             NativeFootagePanel(session: session, selection: selection)
                 .disabled(!session.canEdit(.timeline))
             Section("Look and transition") {
@@ -461,7 +531,10 @@ private struct NativeSelectedClipInspector: View {
             }
             NativeClipAudioSection(clipID: selection.id, session: session)
             if !session.canEditTimeline {
-                Section { Label("Clip edits are locked for this render.", systemImage: "lock") }
+                Section {
+                    Label(session.sourceWindowBlockedReason(for: selection) == nil
+                          ? "Only Range can change in this render." : "Clip edits are locked for this render.", systemImage: "lock")
+                }
             }
             Section {
                 Button("Delete clip", role: .destructive) {
@@ -1110,7 +1183,7 @@ private struct NativeSelectedEffectInspector: View {
         Form {
             Section {
                 Label(title, systemImage: editable ? "slider.horizontal.3" : "lock")
-                    .font(KriaFont.display(25))
+                    .font(KriaFont.headline(25))
                 if let record, let kind = record.kind { LabeledContent("Kind", value: kind) }
                 if let detail { LabeledContent(detail.0, value: detail.1) }
                 if !editable {

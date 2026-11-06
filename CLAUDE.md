@@ -89,7 +89,7 @@ Localhost sign-in bypasses Google consent via the `dev-login` NextAuth provider,
 
 ### Local-render parity (high-fidelity, slow iteration)
 
-Use `make local-render` when you need byte-equivalent output before merging a render-affecting change — it runs the prod Docker image with matching FFmpeg and fonts. Usage, divergence sources, cache-busting: `docs/runbooks/local-render.md`.
+Use `make local-render` for byte-equivalent output before merging a render-affecting change (prod image, matching FFmpeg and fonts). Usage, divergence sources, cache-busting: `docs/runbooks/local-render.md`.
 
 ## Quality checks
 - Backend tests: `cd src/apps/api && pytest` (asyncio mode auto; tests live in `src/apps/api/tests/`)
@@ -129,7 +129,6 @@ python scripts/admin.py --prod POST templates/abc/publish                     # 
 - Hook window: first 2-3 seconds must create a question in the viewer's mind
 - Processing is ASYNC — a 5-min source video takes 2-5 min to process
 - Jobs polled via GET /jobs/:id/status or websocket
-- Raw uploads and processed outputs are NEVER committed to git
 - Read agents/VIDEO_CONTEXT.md for full video domain context and FFmpeg patterns
 - Read agents/DECISIONS.md for why key choices were made
 
@@ -140,8 +139,8 @@ python scripts/admin.py --prod POST templates/abc/publish                     # 
 - Signed URLs stay short-lived (`_variants_for_response` refreshes ready generative URLs); authenticated generative uploads have 24h cleanup receipts until atomic Job attachment.
 
 ## ⚠️ Anti-pattern: do NOT use MoviePy / VideoFileClip
-VideoFileClip(path) buffers the entire video into RAM. On a 2GB source file this crashes.
-Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
+VideoFileClip(path) buffers the whole video in RAM (a 2GB source crashes).
+Use subprocess FFmpeg directly; patterns in agents/VIDEO_CONTEXT.md.
 
 ## Music beat-sync pipeline
 - Track lifecycle: `pending` → `analyzing` → `ready` | `failed`; only `ready`+`published` tracks appear in the public gallery
@@ -195,7 +194,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - `COPILOT_HONEST_REPLIES_ENABLED` — default `true` (KRI-186 kill switch); `false` ⇒ legacy chat-edit reply. Guard: `test_flag_off_is_byte_identical_to_legacy`. Apply: fly secret + restart.
 - `KRIA_COMPOSE_UNMET_WITH_OPS_ENABLED` — default `false` (KRI-1039); on ⇒ asks the ops can express are composed. Guards: `test_compose_unmet_flag_off_is_byte_identical`, `test_ios_editor_actions_have_agent_ops`.
 - `EDIT_WIDE_LOOKS_ENABLED` — off; rollout: `docs/pipelines/generative.md`.
-- `CLIP_INTENTS_ENABLED` / `CLIP_FACTS_ENABLED` — **ON in prod** (code default `false`); intents since 2026-10-01. Rollout/rollback: `docs/pipelines/clip-understanding.md`.
+- `CLIP_INTENTS_ENABLED` / `CLIP_FACTS_ENABLED` — **ON in prod** (code default `false`). Rollout/rollback: `docs/pipelines/clip-understanding.md`.
 - `CLIP_EXPOSURE_FACT_ENABLED` — default `false` (KRI-680); measured brightness in clip records. `docs/pipelines/clip-understanding.md`.
 - `EDIT_PROPOSAL_SEMANTIC_ENABLED` — `false`; requires 0107 + v8 on API/workers. See `docs/pipelines/guided-edit.md`.
 - `ORIENTATION_NORMALIZE_ENABLED` — default `true`; `false` + worker restart = `normalize_orientation` no-op.
@@ -209,7 +208,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - `SMART_MUSIC_BED_REQUIRES_REQUEST_ENABLED` — default `true` (KRI-20). Bed resolver only returns a creator-selected treatment; never auto-matches. `false` = pre-fix.
 - `SOUND_EFFECTS_ENABLED` / `MEDIA_OVERLAYS_ENABLED` — default **`false`**; gate SFX/overlay lane routes (404 off). **Dual-flag trap:** `NEXT_PUBLIC_` twins; web on + API off ⇒ saves 404. Fly first, then Vercel. Detail: DECISIONS.md "CLAUDE.md flag detail".
 - `MEDIA_OVERLAY_ALPHA_ENABLED` — defaults **`false`**. When true, transparent image pip cards keep alpha; off is byte-identical JPEG flatten. Apply: fly secret + worker restart.
-- `FULLSCREEN_CUTAWAYS_ENABLED` — default **`false`**; AI fullscreen branch. Dual-flag with `NEXT_PUBLIC_FULLSCREEN_CUTAWAYS_ENABLED`: **Fly first, then Vercel** (new web + OLD api bakes manual fullscreen as pip). Rollback = `MEDIA_OVERLAYS_ENABLED`. Guards: `tests/test_overlay_fullscreen_rules.py`, `tests/test_media_overlay_command.py`; plans/009.
+- `FULLSCREEN_CUTAWAYS_ENABLED` — default **`false`**; AI fullscreen branch. Dual-flag with `NEXT_PUBLIC_FULLSCREEN_CUTAWAYS_ENABLED`: **Fly first, then Vercel**. Rollback = `MEDIA_OVERLAYS_ENABLED`. Guards: `tests/test_overlay_fullscreen_rules.py`, `tests/test_media_overlay_command.py`; plans/009.
 - `SUBTITLED_TEXT_LANE_ENABLED` — default **`false`**; text burns onto the caption-free base first, captions last (`_compose_subtitled_final`); fast-reburns mint a NEW GCS key. Dual-flag `NEXT_PUBLIC_SUBTITLED_TEXT_LANE_ENABLED`; Fly first, then Vercel; restart api + worker. Internals: `docs/pipelines/generative.md`.
 - `SUBTITLED_ARCHETYPE_ENABLED` — **ON in prod** (code default `false`); off ⇒ montage. Dual-flag `NEXT_PUBLIC_SUBTITLED_ENABLED` (Vercel, build-time inlined ⇒ `vercel --prod`). Companions: `SUBTITLED_CAPTION_CORRECTION_ENABLED`, `CAPTION_CORRECTION_MODEL`. Rollback + detail: DECISIONS.md "CLAUDE.md flag detail".
 - `NARRATED_SELF_NARRATION_ENABLED` — default **`false`**; narrated items without a voiceover use the footage's own audio. SOLE gate, bypasses the archetype flags. Twin `NEXT_PUBLIC_NARRATED_SELF_NARRATION_ENABLED`; Fly first. Guards: `tests/tasks/test_generative_dispatch.py`. Detail: DECISIONS.md "CLAUDE.md flag detail".
@@ -219,8 +218,9 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - `SILENCE_CUT_ENABLED` / `RETAKE_CUT_ENABLED` — default `false`; speech paths only, fail-open. **"cleanup cut a word" is a guard bug, not this lever.** Runbook: `docs/runbooks/chat-speech-cleanup-rollout.md` (fingerprint levers: DECISIONS.md "CLAUDE.md flag detail"); pins `test_silence_cut*.py`; plans/010/019/021.
 - `PHONE_TALKING_HEAD_RENDERING_ENABLED` — default `false`. 2+-clip self-narration renders on the phone (speaker clip + muted cutaways). `docs/reviews/kri-132/phone-format-matrix.md`.
 - `USER_SONG_MONTAGE_ENABLED` — default `true` (KRI-374). Creator song montages; off hides `media.song` + refuses `user_song`. Needs `musicBed`+`audioMix` verified. Apply: fly secret `…=false` (api+worker) + restart; `phone-rendering.md`. Same for `SONG_CAPTIONS_ENABLED` (lyrics) and `SONG_CAPTIONS_AVAILABLE_BY_DEFAULT` (unasked = hidden).
+- `KRIA_INTENT_REVIEW_ENABLED` / `_PAID_ENABLED` / `_REPAIR_ENABLED` / `_USER_IDS` — off / `[]` (KRI-1171): paid frame review of the finished video; a repair needs the creator's Approve tap. A child flag needs its parent; tier decided only in `kria/intent_review_tier.py`. Also `_MAX_USD`, `_CANARY_ID`, `AI_OPENAI_INTENT_REVIEW_BUDGET_USD`. Rollout and kill: `docs/runbooks/intent-review-rollout.md`.
 - `CAPTION_ANIMATION_ENABLED` — default `true` (KRI-1007): caption entrance/exit/loop (protocol 24, `authoredText`); off = old captions. `phone-rendering.md`.
-- `SPEAKER_BACKGROUND_ENABLED` — default **`false`**. Talk-to-camera speaker background; needs `speakerBackground` verified + protocol ≥27. `docs/pipelines/speaker-background.md`.
+- `SPEAKER_BACKGROUND_ENABLED` — default **`false`**; token/protocol: `speakerBackground` 27, `speakerBackgroundWindows` 32, `speakerBackgroundColor` 34. `docs/pipelines/speaker-background.md`.
 - `MEDIA_TILT_ENABLED` — default **`false`** (KRI-1134). Clip tilt + backdrop; needs `clipTilt` verified + protocol ≥28. phone-rendering.md.
 - `CREATOR_EDITORIAL_TASTE_ENABLED` / `_USER_IDS` — default `false` / `[]` (empty admits nobody; `["*"]` = every account; ENABLED stays the kill switch). Personalizes nothing until a creator confirms a profile. `docs/runbooks/editorial-taste-calibration.md`.
 - `SLIDE_POSTS_ENABLED` — defaults `true`. Mixed-media posts; pipelines/slide-post.md. Rollback: fly secret `…=false` + restart (api+worker). `SLIDE_POST_STICKERS_ENABLED` (protocol `8`, KRI-647): default `true`; old builds 426 on save; sticker images never slides.
@@ -233,7 +233,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Per-agent quality eval harness lives at `src/apps/api/tests/evals/`. Covers the Big 5 (`template_recipe`, `clip_metadata`, `creative_direction`, `song_classifier`, `music_matcher`) plus the in-pipeline `transcript`, `platform_copy`, `audio_template`, and `template_text` agents.
 - Default: `cd src/apps/api && pytest tests/evals/ -v` — structural-only, replay mode, no network. Runs in CI.
 - With judge: `... --with-judge` (replay only; needs `ANTHROPIC_API_KEY`). Paid live Gemini requires an approved development-ledger run (hard cap $2, no judge); see `tests/evals/README.md`.
-- **Prompt-change rule:** editing `src/apps/api/prompts/` or a `render_prompt()` => bump its `prompt_version`; free replay evals must pass (live/judge: optional, paid). Enum lists come from `prompt_vocab.py` tokens; guard: `test_prompt_vocab_drift.py`.
+- **Prompt-change rule:** editing `src/apps/api/prompts/` or a `render_prompt()` => bump `prompt_version` (Main Creator/brief extractor: auto); free replay evals must pass (live/judge optional, paid). Enums: `prompt_vocab.py` tokens; guard `test_prompt_vocab_drift.py`.
 - **template_text live-eval wrapper:** `bash src/apps/api/scripts/run_template_text_eval.sh`. See `tests/evals/README.md` for the full prompt-iteration loop.
 - **Layer-2 cache-bump rule:** any PR touching `text_overlay_v2/`, the Stage E/F agents/schemas, or their prompts must bump `TEXT_OVERLAY_VERSION_V2` in `template_cache.py`. Guard: `.github/workflows/layer2-cache-guard.yml`. Escape hatch: `[skip-layer2-cache-bump]` in a commit message.
 - See `docs/pipelines/layer2-text-overlay.md` for Layer-2 stage details, OCR backend divergence (local Apple Vision ≠ prod Cloud Vision), and the template_text agent rubric.
@@ -276,10 +276,6 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - CORS: `ALLOWED_ORIGINS` env var — JSON array format
 
 ### Custom deploy hooks
-- Pre-merge: none
-- Deploy trigger (API): **Fly Deploy** (push or manual rerun)
-- Deploy trigger (Frontend): push to `main` (Vercel auto-deploy) or `cd src/apps/web && vercel --prod`
-- Deploy status (API): `fly status --app nova-video`
 - Health check (API): https://nova-video.fly.dev/health
 
 ### Fly.io Secrets (set via `fly secrets set`)

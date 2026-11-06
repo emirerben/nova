@@ -98,6 +98,23 @@ TAG = 'name tag when he first appears ("ATAKAN")'
 PROD_ASK = "Should I try a different approach, or make this simpler version?"
 ASK = "Should I make it without these, or do you want to change your request?"
 LOOK = "Have a look at these in the video:"
+# The phone Talking writer reads none of the draft's story structure, pacing or direction. They are
+# the planner's own choices (no live order or text ask carries them), so since Green 4/5
+# (`kria_headsup_asked_only_enabled`) the card no longer names them. With the switch off it does,
+# for every account (KRI-1097 route registry); the held draft's reply has a hard length limit:
+# there the three are named on one line instead of cut mid-sentence.
+HEADS_UP_LINES = [
+    "Heads-up for this video:",
+    "- I can't follow the planned story structure (Open on the question 'what do you think…, "
+    "Capture Atakan's enthusiastic reply, End the edit right after 'Nice!') on this video yet, so "
+    "it won't change the order of the clips",
+    "- The balanced pacing isn't applied on this video yet: the video follows your speech",
+    "- The native direction isn't applied on this video yet: the video follows your speech",
+]
+HELD_HEADS_UP = (
+    "Heads-up for this video:\n- Also not applied on this video yet: the planned story "
+    "structure, the planned pacing, the planned direction"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -591,3 +608,21 @@ def test_the_policy_refusal_question_carries_no_requirement_list() -> None:
     assert refusal["dropped_fields"] == ["target_duration_s"]
     assert "omitted_requirement_ids" not in refusal
     assert "omitted_requirement_ids" not in simpler_version_question()
+
+
+@pytest.mark.asyncio
+async def test_switch_off_names_the_planners_fields_as_before(monkeypatch) -> None:
+    """`kria_headsup_asked_only_enabled` off: the held draft and the tap draft are byte-identical
+    to before Green 4/5."""
+    monkeypatch.setattr(settings, "kria_headsup_asked_only_enabled", False)
+    user_id, thread_id = _seed_t1()
+    held = await _held_draft(monkeypatch, user_id, thread_id)
+    assert held.content == HELD["content"].replace(
+        f"I held this first draft back. {PROD_ASK}",
+        f"{HELD_HEADS_UP}\nI held this first draft back. The simpler version leaves out: {TAG}. "
+        f"{ASK}",
+    )
+    draft = await _tap_simpler(monkeypatch, user_id, thread_id, held)
+    assert sorted(draft.content.splitlines()) == sorted(
+        [*DRAFT["content"].splitlines(), *HEADS_UP_LINES]
+    )

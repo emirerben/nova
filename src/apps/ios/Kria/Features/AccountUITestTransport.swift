@@ -33,7 +33,7 @@ private final class AccountUITestURLProtocol: URLProtocol, @unchecked Sendable {
         let path = request.url?.path ?? ""
         let mode = ProcessInfo.processInfo.environment["KRIA_ACCOUNT_TEST_MODE"] ?? "normal"
         let result: (Int, String)
-        if path.hasPrefix("/me/memory"), mode.hasPrefix("text-preferences") {
+        if path.hasPrefix("/me/memory"), mode.hasPrefix("text-preferences") || mode == "whats-new" {
             let result = AccountTextPreferenceFixture.shared.reply(request, stale: mode.hasSuffix("stale"), learning: mode.hasSuffix("learning"),
                                                                    customColor: mode.hasSuffix("custom-color"))
             deliver(result)
@@ -44,6 +44,11 @@ private final class AccountUITestURLProtocol: URLProtocol, @unchecked Sendable {
             result = mode == "unavailable" ? (503, "{}") : (202, "{\"requested\":true}")
         case "/me/account/delete-confirm":
             result = mode == "invalid-code" ? (400, "{}") : (204, "")
+        case "/creation-threads/capabilities":
+            // `whats-new` is an account where every gated guide card is available; any other mode fails the read.
+            result = mode == "whats-new"
+                ? (200, "{\"formats\":[{\"id\":\"montage\",\"edit_format\":\"montage\",\"max_clips\":50},{\"id\":\"lipsync\",\"edit_format\":\"montage\",\"max_clips\":10}],\"clip_selection_questions\":true,\"media_collections\":true}")
+                : (503, "{}")
         case "/auth/mobile/revoke": result = (204, "")
         case "/auth/mobile/me":
             result = (200, "{\"id\":\"1\",\"email\":\"creator@example.com\",\"name\":\"Test creator\",\"onboarding_status\":\"complete\",\"linked_providers\":[\"google\"]}")

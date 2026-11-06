@@ -11,7 +11,8 @@
       "everything: creator message, Creative Brief, planner strategy and summary, clips",
       "the planner's choices are written as the planner returns them for this request (post-parse strategy, with the server's provenance flags where the creator states a pace or a length); no model is replayed",
       "the approval card is assembled offline from the real pure functions the draft turn calls (scripts/kria/score_route.py approval_card); the DB-bound turn body is not run",
-      "phone source bindings: synthetic proxy paths (score_route.media_rows)"
+      "phone source bindings: synthetic proxy paths (score_route.media_rows)",
+      "replay_inputs: the grounded sections the speech planner would hand the compiler (three speaker excerpts after three montage runs; the first run carries cut_s 0.8, the value the speech planner prompt's own example writes, the others none: the request names no cut length) and the b-roll clips; synthetic portrait originals. No plan or ask value"
     ],
     "redacted": [],
     "see": "tests/fixtures/kria_replay/speech_excerpt/README.md"
@@ -132,6 +133,49 @@
       "analysis": {}
     }
   ],
+  "replay_inputs": {
+    "sections": [
+      {
+        "kind": "montage",
+        "duration_s": 3.0,
+        "cut_s": 0.8
+      },
+      {
+        "kind": "speech",
+        "media_id": "analysis-proxy-speech_excerpt-01",
+        "source_start_s": 2.0,
+        "source_end_s": 8.5,
+        "visual": "speaker"
+      },
+      {
+        "kind": "montage",
+        "duration_s": 4.5
+      },
+      {
+        "kind": "speech",
+        "media_id": "analysis-proxy-speech_excerpt-02",
+        "source_start_s": 5.0,
+        "source_end_s": 12.0,
+        "visual": "speaker"
+      },
+      {
+        "kind": "montage",
+        "duration_s": 3.5
+      },
+      {
+        "kind": "speech",
+        "media_id": "analysis-proxy-speech_excerpt-03",
+        "source_start_s": 1.0,
+        "source_end_s": 7.0,
+        "visual": "speaker"
+      }
+    ],
+    "broll": [
+      "analysis-proxy-speech_excerpt-04",
+      "analysis-proxy-speech_excerpt-05",
+      "analysis-proxy-speech_excerpt-06"
+    ]
+  },
   "checks": {
     "fields": [
       "direction",

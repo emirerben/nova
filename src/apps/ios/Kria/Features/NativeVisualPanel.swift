@@ -18,6 +18,12 @@ struct NativeVisualPanel: View {
     @FocusState private var editingText: Bool
     private let visualKinds: Set<EditorSelectionKind> = [.mediaOverlay, .visualBlock, .motionScene, .cameraEffect]
     private var selected: EditorSelection? { session.selection.flatMap { visualKinds.contains($0.kind) ? $0 : nil } }
+    /// A Talking picture card can still turn when the rest of the style is closed (KRI-1141).
+    private var styleUnavailableNote: String {
+        let canTurn = selected.map { session.canRotateVisual($0) } ?? false
+        if canTurn { return "Zoom, fit and animation aren’t available for this edit yet. Placement, timing and rotation are still editable." }
+        return "Advanced visual editing isn’t available for this edit yet. Placement and timing are still editable."
+    }
     private var raw: [String: JSONValue] { selected.flatMap(session.visualRaw) ?? [:] }
     private var block: EditorVisualBlock? { session.document.visualBlocks.first { $0.id == selected?.id } }
     private var cardElement: EditorTextElement? {
@@ -102,7 +108,7 @@ struct NativeVisualPanel: View {
                     .accessibilityIdentifier("native-editor-pending-visual-import")
                 }
                 if mediaSelected && !session.canEdit("visual_editor_style") {
-                    Text("Advanced visual editing isn’t available for this edit yet. Placement and timing are still editable.")
+                    Text(styleUnavailableNote)
                         .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                         .accessibilityIdentifier("native-editor-visual-style-unavailable")
                 }
@@ -203,9 +209,8 @@ struct NativeVisualPanel: View {
     private var mediaLibrary: some View {
         VStack(spacing: 12) {
             Button { showsGenerator = true } label: {
-                Label("Generate media", systemImage: "sparkles").frame(maxWidth: .infinity, minHeight: 44)
-            }.buttonStyle(.plain)
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(KriaColor.line, lineWidth: 1))
+                Label("Generate media", systemImage: "sparkles")
+            }.buttonStyle(KriaButtonStyle(role: .secondary, fullWidth: true))
                 .disabled(!session.canGenerateOverlayPlan)
                 .accessibilityIdentifier("native-editor-generate-media")
             if !session.rendersOnDevice {
@@ -213,9 +218,8 @@ struct NativeVisualPanel: View {
                     .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
             }
             Button { showsImporter = true } label: {
-                Label("Add photo or video", systemImage: "plus").frame(maxWidth: .infinity, minHeight: 44)
-            }.buttonStyle(.plain)
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(KriaColor.line, lineWidth: 1))
+                Label("Add photo or video", systemImage: "plus")
+            }.buttonStyle(KriaButtonStyle(role: .secondary, fullWidth: true))
                 .disabled(!session.canImportVisuals)
                 .accessibilityIdentifier("native-editor-import-visual")
             if let message = session.visualImportUnavailableMessage {
@@ -476,7 +480,7 @@ struct NativeVisualPanel: View {
                         Button("Send backward") { session.moveVisualLayer(selected, by: -1) }.disabled(layerIndex == 0)
                     }
                     slider("Zoom", value: Binding(get: { style["zoom"]?.numberValue ?? 1 }, set: { session.setVisualEditorStyle(selected, key: "zoom", value: .number($0)) }), range: 1...4).disabled(!session.canEdit("visual_editor_style"))
-                    slider("Rotation", value: Binding(get: { style["rotation_deg"]?.numberValue ?? 0 }, set: { session.setVisualEditorStyle(selected, key: "rotation_deg", value: .number($0)) }), range: -180...180).disabled(!session.canEdit("visual_editor_style"))
+                    slider("Rotation", value: Binding(get: { style["rotation_deg"]?.numberValue ?? 0 }, set: { session.setVisualEditorStyle(selected, key: "rotation_deg", value: .number($0)) }), range: -180...180).disabled(!session.canRotateVisual(selected))
                     Text("Drag to position. Use the corner to resize or rotate.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                 } else if selected.kind == .cameraEffect {
                     slider("Intensity", value: Binding(get: { raw["intensity"]?.numberValue ?? 0.04 }, set: { session.setCameraEffectIntensity(id: selected.id, intensity: $0) }), range: 0.01...0.08)

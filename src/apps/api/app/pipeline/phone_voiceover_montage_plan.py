@@ -55,6 +55,7 @@ from app.pipeline.phone_recipe_shared import (
     display_dims,
     fit_transform,
     refit_source_window,
+    register_backdrop_visuals,
 )
 from app.services.phone_sources import PhoneSourceBinding, PhoneVisualBinding
 
@@ -308,7 +309,9 @@ def compile_phone_voiceover_montage_plan(
             is_proxy_available=True,
         )
         clip_id = f"step-{index}-{step.clip_id}"
-        tilt_patch, backdrop = clip_tilt_fields({"tilt": (clip_tilts or {}).get(clip_id)})
+        tilt_patch, backdrop = clip_tilt_fields(
+            {"tilt": (clip_tilts or {}).get(clip_id)}, fit_scale=transform.scale
+        )
         if color_grade == "golden_hour" and (tilt_patch or backdrop is not None):
             raise UnsupportedPhonePlan("a color grade cannot be combined with a tilted clip")
         clips.append(
@@ -329,6 +332,7 @@ def compile_phone_voiceover_montage_plan(
 
     if len({clip.id for clip in clips}) != len(clips):
         raise ValueError("phone montage clips must have unique identities")
+    register_backdrop_visuals(clips, visuals=visuals, assets=assets, manifest=manifest)
     selected_source_audio = _validated_source_audio_selection(
         source_audio_media_ids,
         bindings_by_media_id=bindings_by_media_id,

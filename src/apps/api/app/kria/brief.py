@@ -41,11 +41,13 @@ from pydantic.json_schema import SkipJsonSchema
 from sqlalchemy import func, select
 
 from app.agents._schemas.text_element import _ALLOWED_FONTS, _HEX_COLOR_RE
+from app.config import settings
 from app.kria.asset_holds import Authority, resolve_clip_scope, stamp_authority
 from app.kria.brief_route import fold_text, loose_text, wants_filming_time_text
 from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.duplicate_send import is_duplicate_answer
 from app.kria.order_replacement import OrderReplacementProof
+from app.kria.removed_messages import is_removed, removed_turn_ids_sync
 from app.kria.reply_language import detect_chat_language
 from app.kria.select_asks import withdrawn_photo_asks
 from app.kria.text_shape_ask import TEXT_SHAPE_FACT, with_text_shape
@@ -80,6 +82,35 @@ MAX_UPDATES_PER_TURN = 16
 # This bounds a single planner response, not the ledger.  A larger model batch
 # is rejected as a whole so the caller can recover without losing its tail.
 MAX_BRIEF_REQUEST_CHARS = 9_000
+# A long creation prompt (e.g. a screen walkthrough with five numbered labels) files ~17
+# asks, past the 16 cap.  32 is 2x, the same headroom KRI-422 chose.  Over 16 entries a
+# batch must also fit the size budget below, which keeps KRI-459's protection: a looping
+# model is still refused whole, and the budget is the size of one planning batch of the
+# brief context, so one turn can never by itself fill the next turn's planning context.
+# The new worst case (9,000 chars) is below today's 16-entry worst case (~40k chars).
+# Only reachable behind BRIEF_LONG_REQUEST_ENABLED.
+LONG_REQUEST_MAX_UPDATES = 32
+LONG_REQUEST_MAX_CHARS = MAX_BRIEF_REQUEST_CHARS
+
+
+def max_updates_per_turn() -> int:
+    return LONG_REQUEST_MAX_UPDATES if settings.brief_long_request_enabled else MAX_UPDATES_PER_TURN
+
+
+def brief_batch_chars(updates: Iterable[BriefUpdate]) -> int:
+    return sum(
+        len(
+            json.dumps(
+                u.model_dump(mode="json", exclude_none=True),
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
+        for u in updates
+    )
+
+
 _SCOPE_RE = re.compile(r"^(title|per_clip|global|clip:[A-Za-z0-9._:-]{1,100})$")
 _MAX_FACTS_BYTES = 2_000
 _MAX_DESCRIPTION_CHARS = 300
@@ -447,14 +478,17 @@ def parse_brief_updates(raw: object) -> list[BriefUpdate]:
     """Strictly parse a complete update batch without silently dropping entries.
 
     One entry the parser cannot read still refuses the whole batch, and the error names that
-    entry and the rule it broke so the model's retry can fix it (KRI-805).
+    entry and the rule it broke so the model's retry can fix it (KRI-805). The entry cap is 16,
+    or 32 with BRIEF_LONG_REQUEST_ENABLED when a batch over 16 fits LONG_REQUEST_MAX_CHARS;
+    a larger batch is refused whole, never truncated.
     """
     if not isinstance(raw, list):
         if raw in (None, []):
             return []
         raise BriefUpdateBatchError("brief_updates must be a list")
-    if len(raw) > MAX_UPDATES_PER_TURN:
-        raise BriefUpdateBatchError(f"brief_updates exceeds {MAX_UPDATES_PER_TURN} entries")
+    limit = max_updates_per_turn()
+    if len(raw) > limit:
+        raise BriefUpdateBatchError(f"brief_updates exceeds {limit} entries")
     out: list[BriefUpdate] = []
     for index, item in enumerate(raw):
         try:
@@ -468,6 +502,12 @@ def parse_brief_updates(raw: object) -> list[BriefUpdate]:
     targets = [update.target_requirement_id for update in out if update.operation != "add"]
     if len(targets) != len(set(targets)):
         raise BriefUpdateBatchError("brief_updates changes or removes one requirement twice")
+    if len(out) > MAX_UPDATES_PER_TURN and brief_batch_chars(out) > LONG_REQUEST_MAX_CHARS:
+        raise BriefUpdateBatchError(
+            f"brief_updates over {MAX_UPDATES_PER_TURN} entries exceed "
+            f"{LONG_REQUEST_MAX_CHARS} characters: shorten descriptions and facts, "
+            "keep every ask"
+        )
     return out
 
 
@@ -578,9 +618,15 @@ def merge_requirements(
 # changes the words ("the hook should say ...") restates the requirement without them; the
 # creator never withdrew them, so a same-kind, same-scope change keeps them unless it sets them.
 # KRI-841: so is the video a Talking edit ends on (`ending_clip`) and whether it keeps its sound.
+# Parent KRI-1151: and the clip it pauses the take for (`insert_clip`, where it goes).
 # KRI-945: and the server's mark on a title literal it copied from an approved wording.
+# KRI-1161: and the photo / video behind the speaker (`speaker_background`) with whether several
+# take turns (`background_changes`) and whether the speaker sits small in a corner
+# (`speaker_small`).
 # KRI-1029: and the text's shape ("curved title"), which "make the title just X" restates
 # without.
+# Qendresa item 16: and that the speaker starts full screen in their own take before the
+# background / corner (`speaker_full_opening`, with `speaker_full_opening_s` for a named length).
 STICKY_FACTS = frozenset(
     {
         "first_clip",
@@ -589,7 +635,16 @@ STICKY_FACTS = frozenset(
         "position",
         "placeholder",
         "ending_clip",
+        "insert_clip",
+        "insert_at_phrase",
+        "insert_at_s",
         "keep_audio",
+        "speaker_background",
+        "background_color",
+        "background_changes",
+        "speaker_small",
+        "speaker_full_opening",
+        "speaker_full_opening_s",
         APPROVED_COPY_FACT,
         TEXT_SHAPE_FACT,
     }
@@ -1776,10 +1831,14 @@ def _delegation_covers_request(
         )
     ).all()
     read = {str(event_id) for event_id in read_event_ids}
+    # Steer now: a waiting message the creator took back is owed no read.
+    removed = removed_turn_ids_sync(db, thread_id, (payload for _id, _content, payload in earlier))
     return all(
         str(event_id) in read
         for event_id, content, payload in earlier
-        if str(content).strip() and not is_duplicate_answer(payload)
+        if str(content).strip()
+        and not is_duplicate_answer(payload)
+        and not is_removed(payload, removed)
     )
 
 
@@ -1886,6 +1945,10 @@ def persist_brief_version_sync(
 
 
 __all__ = [
+    "LONG_REQUEST_MAX_CHARS",
+    "LONG_REQUEST_MAX_UPDATES",
+    "brief_batch_chars",
+    "max_updates_per_turn",
     "BriefContextOverflow",
     "BriefCoverage",
     "BriefCoverageError",

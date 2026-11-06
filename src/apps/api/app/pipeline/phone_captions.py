@@ -192,9 +192,30 @@ class PhoneCaptionLook:
     # sweep. None keeps today's pop-in / karaoke timing.
     default_animation_phases: dict | None = None
     line_overrides: dict | None = None
+    # Qendresa item 12 (the caption shape). ``box_color`` draws every caption in a rounded box of
+    # that colour (never karaoke: the device paints a karaoke layer's box once per word).
+    # ``dim_words`` draws the not-yet-spoken word dimmed and the spoken one in ``text_color``.
+    # Both default off: the default look compiles the same layers as before.
+    box_color: str | None = None
+    dim_words: bool = False
 
 
 _DEFAULT_CAPTION_LOOK = PhoneCaptionLook()
+
+# Qendresa item 12: the caption box. Padding and corner radius are fractions of the text size;
+# the iOS editor mirrors these exact numbers (keep both sides in step).
+_CAPTION_BOX_PAD_X_EM = 0.40
+_CAPTION_BOX_PAD_Y_EM = 0.18
+_CAPTION_BOX_RADIUS_EM = 0.35
+# The not-yet-spoken word of the dimmed look is the text colour at this fraction of each RGB
+# channel (white -> #A6A6A6); mirrored on iOS.
+_CAPTION_DIM_FACTOR = 0.65
+
+
+def dim_color(color: str) -> str:
+    """``color`` with each RGB channel scaled by `_CAPTION_DIM_FACTOR`, as ``#RRGGBB``."""
+    channels = (int(color[i : i + 2], 16) for i in (1, 3, 5))
+    return "#" + "".join(f"{round(c * _CAPTION_DIM_FACTOR):02X}" for c in channels)
 
 
 def _phases_or_none(value: object) -> dict | None:
@@ -395,7 +416,22 @@ def caption_look_from_variant(variant: dict) -> PhoneCaptionLook:
         single_word=_single_word_enabled(variant),
         default_animation_phases=_phases_or_none(variant.get("caption_animation_phases")),
         line_overrides=editor_style.get("line_overrides"),
+        **_caption_shape_fields(variant),
     )
+
+
+def _caption_shape_fields(variant: dict) -> dict:
+    """``box_color`` / ``dim_words`` from ``variant["caption_shape"]`` (version 1); {} otherwise."""
+    shape = variant.get("caption_shape")
+    if not isinstance(shape, dict) or shape.get("version") != 1:
+        return {}
+    fields: dict = {}
+    box = _clean_hex_or_none(shape.get("box"))
+    if box is not None:
+        fields["box_color"] = box
+    if shape.get("dim") is True:
+        fields["dim_words"] = True
+    return fields
 
 
 def caption_y_fields(variant: dict, y_frac: float) -> dict:
@@ -525,6 +561,8 @@ def compile_caption_layers(
             (phases is not None or resolved_look.animation_phases is None)
             and "words" in cue
             and (style == "word" or resolved_look.highlight_spoken_word is True)
+            # A box is painted once per karaoke word on the device, hiding earlier words.
+            and resolved_look.box_color is None
         )
         word_timings = _relative_word_timings(cue, cue["words"]) if use_karaoke else []
         layer_id = f"{id_prefix}-{index}"
@@ -535,6 +573,11 @@ def compile_caption_layers(
                 if resolved_look.highlight_spoken_word is False
                 else resolved_look.highlight_color
             )
+            if resolved_look.dim_words and resolved_look.highlight_spoken_word is None:
+                # The not-yet-spoken word is dimmed; only the spoken one is drawn in the colour.
+                overlay["highlight_color"] = overlay["text_color"]
+                overlay["text_color"] = dim_color(overlay["text_color"])
+                overlay["karaoke_active_only"] = True
             overlay["word_timings"] = word_timings
             if one_word_at_a_time:
                 try:
@@ -819,7 +862,20 @@ def _make_room_for_watermark(
     keepout = watermark_keepout_rect(canvas.width, canvas.height)
     try:
         typeface = cloud._resolve_typeface_for_overlay(overlays[0]).typeface
-        touching = [_layer_touches(layer, typeface, keepout) for layer in layers]
+        typefaces = [typeface] * len(overlays)
+        from app.pipeline.font_coverage import needs_non_latin_letter
+
+        if any(needs_non_latin_letter(cloud._overlay_text(overlay)) for overlay in overlays):
+            # KRI-1192: each cue's runs are glyph ids of ITS glyph-safe face (a Hangul
+            # cue in Noto Sans KR, a digits-only one in TikTok Sans), so each is measured
+            # in its own face. Latin caption sets keep the one shared face exactly.
+            typefaces = [
+                cloud._resolve_typeface_for_overlay(overlay).typeface for overlay in overlays
+            ]
+        touching = [
+            _layer_touches(layer, face, keepout)
+            for layer, face in zip(layers, typefaces, strict=True)
+        ]
     except Exception:  # noqa: BLE001 - making room is cosmetic; never fail a render on it
         return layers
     if not any(touching):
@@ -841,7 +897,7 @@ def _make_room_for_watermark(
                 layer,
                 canvas=canvas,
                 keepout=keepout,
-                typeface=typeface,
+                typeface=typefaces[index],
                 left_edge=left_edge,
             )
         except Exception:  # noqa: BLE001 - keep today's layer on any surprise
@@ -888,6 +944,7 @@ def _clear_of_watermark(
     from app.pipeline.portable_text_layout import (
         compile_text_overlay,
         legacy_glyphs_resolvable,
+        needs_text_shaping,
         resolve_legacy_glyphs,
     )
 
@@ -922,8 +979,17 @@ def _clear_of_watermark(
             if (text := str(entry.get("text", "")).strip())
         ]
         spacing = cloud._overlay_letter_spacing_px(overlay, size)
-        word_widths = [cloud._measure_line(font, word, spacing) for word in words]
-        word_inks = [_glyph_ink(font, resolve_legacy_glyphs(font, w, spacing)) for w in words]
+        # KRI-1192: Arabic karaoke words are shaped runs the phone lays out itself;
+        # bound each by its shaped advance and the font's ascent/descent.
+        shaped_words = needs_text_shaping(" ".join(words))
+        word_widths = [
+            cloud._measure_line(font, word, spacing, shape_text=shaped_words) for word in words
+        ]
+        if shaped_words:
+            metrics = font.getMetrics()
+            word_inks = [(0.0, metrics.fAscent, width, metrics.fDescent) for width in word_widths]
+        else:
+            word_inks = [_glyph_ink(font, resolve_legacy_glyphs(font, w, spacing)) for w in words]
         gap = font.measureText(" ") + 2 * spacing
 
         def measure(start: int, end: int) -> tuple[float, Box | None]:
@@ -1195,6 +1261,11 @@ def _base_overlay(cue: dict, look: PhoneCaptionLook) -> dict[str, Any]:
         overlay["shadow_opacity"] = look.shadow_opacity
     if look.shadow_enabled is not None:
         overlay["shadow_enabled"] = look.shadow_enabled
+    if look.box_color is not None:
+        overlay["background_color"] = look.box_color
+        overlay["background_padding_x_px"] = _CAPTION_BOX_PAD_X_EM * look.text_size_px
+        overlay["background_padding_y_px"] = _CAPTION_BOX_PAD_Y_EM * look.text_size_px
+        overlay["background_radius_px"] = _CAPTION_BOX_RADIUS_EM * look.text_size_px
     return overlay
 
 

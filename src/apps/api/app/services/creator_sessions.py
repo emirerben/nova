@@ -59,6 +59,17 @@ from app.services.edit_proposal_limits import (
     edit_proposal_task_id,
     queue_for_guided_contract,
 )
+from app.services.generated_image_grounding import (
+    grounding_label,
+    is_generated,
+    with_generated_grounding,
+)
+from app.services.intent_review_legacy import (
+    LEGACY_REVIEW_RETIRED,
+    OBSERVER_WINDOW,
+    legacy_review_retired,
+    retirement_probe,
+)
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
 from app.services.phone_destination import (
     has_native_device_only_intent,
@@ -179,6 +190,13 @@ CHAT_EVIDENCE_TRANSCRIPT_CHARS = 160
 CHAT_EVIDENCE_MAX_MOMENTS = 2
 CHAT_EVIDENCE_MAX_FACTS = 6
 CHAT_EVIDENCE_SEGMENT_CHARS = 480
+# The creator's own clips share one budget for their timed speech instead of 480 characters
+# each: a talking take is what the planner quotes `spoken_phrase`s, cut lines and insert anchors
+# from, and 480 characters is ~30 s of speech (S4 "fb 1", 2026-11-04: an 83 s take whose
+# sentences 6-14 never reached the planner, so no photo could land on a word after 30 s).
+# Each clip with segments gets max(480, budget / clips with segments), so one take is heard to
+# its stored end (segments are capped at 60) and many clips never exceed the old 480-each total.
+CHAT_EVIDENCE_SPEECH_BUDGET_CHARS = 6000
 CHAT_EVIDENCE_FIELD_CHARS = {
     "subject": 120,
     "summary": 200,
@@ -190,7 +208,13 @@ CHAT_EVIDENCE_MOMENT_CHARS = 80
 CHAT_EVIDENCE_PEOPLE_NOTE_CHARS = 80
 
 
-def _chat_evidence(analysis: object, *, kind: str, include_facts: bool = False) -> dict[str, Any]:
+def _chat_evidence(
+    analysis: object,
+    *,
+    kind: str,
+    include_facts: bool = False,
+    segment_chars: int = CHAT_EVIDENCE_SEGMENT_CHARS,
+) -> dict[str, Any]:
     """Compact per-clip AI evidence for the chat agent (KRI-127).
 
     Routes through the same ``clip_record`` projection the edit planner and
@@ -200,6 +224,8 @@ def _chat_evidence(analysis: object, *, kind: str, include_facts: bool = False) 
     once per clip for up to ``MAX_CREATOR_MEDIA_REFS`` clips in one prompt:
     brands carry no clip-identification value for chat (no sponsor/rights
     decision happens here) and only the first few notable moments are kept.
+    ``segment_chars`` is the timed-speech budget; footage clips pass their
+    share of ``CHAT_EVIDENCE_SPEECH_BUDGET_CHARS``, Visuals keep the default.
     """
     record = clip_record(analysis if isinstance(analysis, dict) else None, kind=kind)
     view = record.prompt_view(
@@ -207,7 +233,7 @@ def _chat_evidence(analysis: object, *, kind: str, include_facts: bool = False) 
         include_facts=include_facts,
         # KRI-282: timed sentences for a talking clip (empty/omitted until stored).
         include_segments=settings.speech_excerpt_montage_enabled,
-        segment_chars=CHAT_EVIDENCE_SEGMENT_CHARS,
+        segment_chars=segment_chars,
     )
     view.pop("brands", None)
     # KRI-845: the clip resolver reads props / actions / visual_quality; the chat agent's input
@@ -227,6 +253,20 @@ def _chat_evidence(analysis: object, *, kind: str, include_facts: bool = False) 
             for m in moments[:CHAT_EVIDENCE_MAX_MOMENTS]
         ]
     return view
+
+
+def _footage_segment_chars(footage: list[tuple[object, str]]) -> int:
+    """Each footage clip's share of the timed-speech budget (failure modes:
+    docs/reviews/planner-speech-budget-failure-modes.md). Only clips whose stored
+    analysis has segments split it; never below the old per-clip 480."""
+    talking = sum(
+        1
+        for analysis, kind in footage
+        if clip_record(analysis if isinstance(analysis, dict) else None, kind=kind).speech.segments
+    )
+    if not talking:
+        return CHAT_EVIDENCE_SEGMENT_CHARS
+    return max(CHAT_EVIDENCE_SEGMENT_CHARS, CHAT_EVIDENCE_SPEECH_BUDGET_CHARS // talking)
 
 
 def creator_narration_identity(item: PlanItem) -> CreatorNarrationIdentity | None:
@@ -464,6 +504,9 @@ async def resolve_item_creator_context(
     # with provenance) are shown to the chat agent only when the flag is on.
     facts_on = settings.clip_facts_for(persona.user_id)
     seen: set[str] = set()
+    # (entry, stored analysis, kind) per footage clip: the evidence is filled after the loop,
+    # once the number of talking clips (and so each one's speech budget) is known.
+    footage: list[tuple[dict[str, Any], object, str]] = []
     for index, assignment in enumerate((item.clip_assignments or [])[:MAX_CREATOR_MEDIA_REFS]):
         if not isinstance(assignment, dict):
             continue
@@ -501,16 +544,20 @@ async def resolve_item_creator_context(
             # on-screen text (also enforced in the main prompt). Populated
             # once the guided-planning clip analysis lands on this
             # assignment (app/tasks/edit_proposal_build.py); empty before
-            # that (the raw clip has no other analysis source).
-            "analysis_only_not_copy": _chat_evidence(
-                assignment.get("analysis"), kind=clip_kind, include_facts=False
-            ),
+            # that (the raw clip has no other analysis source). Filled below.
+            "analysis_only_not_copy": {},
         }
         if facts_on:
             facts = facts_for_prompt(assignment_facts(assignment)[:CHAT_EVIDENCE_MAX_FACTS])
             if facts:
                 clip_entry["facts"] = facts
+        footage.append((clip_entry, assignment.get("analysis"), clip_kind))
         media_context.append(clip_entry)
+    segment_chars = _footage_segment_chars([(analysis, kind) for _, analysis, kind in footage])
+    for clip_entry, analysis, clip_kind in footage:
+        clip_entry["analysis_only_not_copy"] = _chat_evidence(
+            analysis, kind=clip_kind, include_facts=False, segment_chars=segment_chars
+        )
 
     # Registered Visuals are creator-visible footage from the moment they are
     # registered; their AI analysis finishes later on the autoplace worker.
@@ -558,11 +605,16 @@ async def resolve_item_creator_context(
         )
         analysis_ready = getattr(asset, "status", "ready") == "ready"
         analysis = asset.analysis if analysis_ready and isinstance(asset.analysis, dict) else {}
+        generated = is_generated(analysis)
+        if generated:
+            # Same derivation autoplace reads, so the planner sees the text the matcher sees.
+            analysis = with_generated_grounding(analysis, asset.user_context)
+        generated_label = grounding_label(asset.user_context, analysis) if generated else None
         context_entry: dict[str, Any] = {
             "media_id": media_id,
             "kind": kind,
             "duration_s": _positive_duration_s(asset.duration_s),
-            "creator_context": context or None,
+            "creator_context": context or generated_label,
             # KRI-178: the uploaded filename ("02_greenwood.png") is the only
             # signal that can distinguish otherwise-identical pool images
             # (e.g. reaction-beat stickers/photos) when the creator names them
@@ -571,7 +623,10 @@ async def resolve_item_creator_context(
             # `canonical_manifest_hash`, and folding the filename into it
             # would flip every in-flight thread's manifest hash and trip the
             # "Footage or capabilities changed" confirm fence for no reason.
-            "filename": _clean(getattr(asset, "source_filename", None), 160) or None,
+            # An image Kria generated is always "generated.png", which names nothing.
+            "filename": (
+                None if generated else _clean(getattr(asset, "source_filename", None), 160) or None
+            ),
             # AI evidence is clearly segregated and must never be copied to
             # on-screen text (also enforced in the main prompt).
             "analysis_only_not_copy": _chat_evidence(analysis, kind=kind),
@@ -1032,7 +1087,7 @@ def compile_active_plan(
 # generic failure line is held back only this window: past it (observer never posts: v2 turned
 # off after dispatch, a stuck turn, the sweep's 50-row cap) the line is posted so a failure
 # is never lost (this branch has already moved the session to `failed`).
-OBSERVER_FAILURE_WINDOW = timedelta(minutes=5)
+OBSERVER_FAILURE_WINDOW = OBSERVER_WINDOW
 
 
 async def _failure_settled_by_observer(
@@ -1145,7 +1200,7 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
         # feedback receipts and must not be republished indefinitely.
         retryable_review_enqueue = pending_review.get("status") == "unavailable" and (
             pending_review.get("dispatch_status") == "failed"
-            or pending_review.get("error_code") == "review_enqueue_failed"
+            or pending_review.get("error_code") in {"review_enqueue_failed", LEGACY_REVIEW_RETIRED}
         )
         if not retryable_review_enqueue:
             return False
@@ -1450,6 +1505,19 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
         quality_review_enabled = (
             review_enabled and settings.main_creator_agent_quality_review_enabled
         )
+        if quality_review_enabled and settings.kria_intent_review_enabled:
+            probe = (
+                await db.execute(
+                    retirement_probe(
+                        session.id,
+                        job_id=job.id,
+                        variant_id=session.target_variant_id,
+                        generation_id=session.target_generation_id,
+                    )
+                )
+            ).first()
+            if legacy_review_retired(probe):
+                return pending_review.get("error_code") != LEGACY_REVIEW_RETIRED
         if quality_review_enabled and session.target_variant_id and session.target_generation_id:
             from app.tasks.creator_quality_review import (  # noqa: PLC0415
                 queue_creator_quality_review,

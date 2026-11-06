@@ -6,10 +6,11 @@ import hashlib
 import json
 import tempfile
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
+import structlog
 from google.api_core.exceptions import GoogleAPIError
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select, text
@@ -47,6 +48,7 @@ from app.services.generated_asset_contracts import (
     image_payload,
     narration_events,
 )
+from app.services.generated_image_grounding import prompt_metadata
 from app.services.generated_media_admission import (
     admit_generated_asset,
     cleanup_expired_generated_media,
@@ -109,16 +111,11 @@ class GeneratedMediaAccept(BaseModel):
 
 
 def generated_media_enabled(capability: str) -> bool:
-    try:
-        verified = date.fromisoformat(settings.generated_media_price_verified_at)
-    except ValueError:
-        return False
     return bool(
         settings.ai_cost_control_enabled
         and settings.generated_media_live_approved
         and settings.generated_media_billing_organization
         and settings.openai_api_key
-        and timedelta(0) <= date.today() - verified <= timedelta(days=7)
         and settings.generated_media_max_request_usd >= (0.1 if capability == "narration" else 2)
         and settings.ai_openai_monthly_budget_usd > 0
         and (
@@ -305,6 +302,17 @@ def retry_generated_storage(db, operation_id, *, owner_id, item_id):
     return operation
 
 
+def _request_metadata(body: GeneratedMediaRequest) -> dict:
+    return {
+        **{
+            k: v
+            for k, v in body.model_dump(mode="json").items()
+            if k not in {"prompt", "editable_title", "client_event_id", "capability"}
+        },
+        **prompt_metadata(body.capability, body.prompt),
+    }
+
+
 def execute_generated_media(
     db: Session, *, owner_id, item_id, body: GeneratedMediaRequest, ctx: RunContext, transport=None
 ):
@@ -355,11 +363,7 @@ def execute_generated_media(
         request_digest=digest,
         capability=body.capability,
         state="pending",
-        request_metadata={
-            k: v
-            for k, v in body.model_dump(mode="json").items()
-            if k not in {"prompt", "editable_title", "client_event_id", "capability"}
-        },
+        request_metadata=_request_metadata(body),
     )
     db.add(operation)
     db.commit()
@@ -417,12 +421,30 @@ def execute_generated_media(
             usage_json=asset.usage,
         )
     except ProviderRejected as exc:
+        log.warning(
+            "generated_media_provider_rejected",
+            operation_id=str(operation.id),
+            capability=body.capability,
+            model=model,
+            status_code=exc.status_code,
+            error_code=exc.error_code,
+            error_type=exc.error_type,
+            retryable=exc.retryable,
+        )
         release_paid_call(receipt)
         operation.state = "failed"
         operation.failure_code = "provider_rate_limited" if exc.retryable else "provider_rejected"
         db.commit()
         return operation
-    except Exception:
+    except Exception as exc:
+        log.error(
+            "generated_media_outcome_unknown",
+            operation_id=str(operation.id),
+            capability=body.capability,
+            model=model,
+            error_class=type(exc).__name__,
+            exc_info=True,
+        )
         db.rollback()
         mark_paid_call_unknown(receipt)
         operation = get_generated_operation(
@@ -518,6 +540,9 @@ def accept_generated_media(db, operation_id, *, owner_id, item_id, body: Generat
     db.commit()
     publish_preflight_after_commit(preflight)
     return operation
+
+
+log = structlog.get_logger()
 
 
 def operation_response(operation):

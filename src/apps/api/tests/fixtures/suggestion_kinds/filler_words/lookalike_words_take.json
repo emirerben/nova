@@ -1,0 +1,140 @@
+{
+ "about": "Synthetic take made only of words that resemble fillers but are real words or exclamations (like, you know, or, Turkish o/ee/aa/şey/yani). The engine counts none of them.",
+ "language": "en",
+ "duration_s": 10.51,
+ "words": [
+  {
+   "text": "So,",
+   "start_s": 0.0,
+   "end_s": 0.25
+  },
+  {
+   "text": "like,",
+   "start_s": 0.37,
+   "end_s": 0.67
+  },
+  {
+   "text": "I",
+   "start_s": 0.79,
+   "end_s": 0.94
+  },
+  {
+   "text": "went",
+   "start_s": 1.06,
+   "end_s": 1.36
+  },
+  {
+   "text": "to",
+   "start_s": 1.48,
+   "end_s": 1.63
+  },
+  {
+   "text": "the",
+   "start_s": 1.75,
+   "end_s": 1.9
+  },
+  {
+   "text": "market",
+   "start_s": 2.02,
+   "end_s": 2.47
+  },
+  {
+   "text": "yesterday",
+   "start_s": 2.59,
+   "end_s": 3.14
+  },
+  {
+   "text": "and",
+   "start_s": 3.26,
+   "end_s": 3.41
+  },
+  {
+   "text": "it",
+   "start_s": 3.53,
+   "end_s": 3.65
+  },
+  {
+   "text": "was",
+   "start_s": 3.77,
+   "end_s": 3.97
+  },
+  {
+   "text": "so",
+   "start_s": 4.09,
+   "end_s": 4.29
+  },
+  {
+   "text": "crowded.",
+   "start_s": 4.41,
+   "end_s": 5.01
+  },
+  {
+   "text": "You",
+   "start_s": 5.13,
+   "end_s": 5.31
+  },
+  {
+   "text": "know,",
+   "start_s": 5.43,
+   "end_s": 5.73
+  },
+  {
+   "text": "it's",
+   "start_s": 5.85,
+   "end_s": 6.05
+  },
+  {
+   "text": "the",
+   "start_s": 6.17,
+   "end_s": 6.29
+  },
+  {
+   "text": "or",
+   "start_s": 6.41,
+   "end_s": 6.53
+  },
+  {
+   "text": "anyway,",
+   "start_s": 6.65,
+   "end_s": 7.15
+  },
+  {
+   "text": "o",
+   "start_s": 7.27,
+   "end_s": 7.47
+  },
+  {
+   "text": "zaman",
+   "start_s": 7.59,
+   "end_s": 7.99
+  },
+  {
+   "text": "ee",
+   "start_s": 8.11,
+   "end_s": 8.31
+  },
+  {
+   "text": "aa",
+   "start_s": 8.43,
+   "end_s": 8.63
+  },
+  {
+   "text": "şey",
+   "start_s": 8.75,
+   "end_s": 9.05
+  },
+  {
+   "text": "yani",
+   "start_s": 9.17,
+   "end_s": 9.47
+  },
+  {
+   "text": "tamam.",
+   "start_s": 9.59,
+   "end_s": 9.99
+  }
+ ],
+ "expect": {
+  "filler_sounds": 0
+ }
+}

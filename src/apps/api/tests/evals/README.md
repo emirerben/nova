@@ -47,7 +47,8 @@ pytest tests/evals/test_narrated_storyboard_evals.py -v --with-judge
 | `nova.audio.template_recipe` (audio_template) | ✓ | `rubrics/audio_template.md` | exported | `MusicTrack.recipe_cached` |
 | `nova.audio.song_classifier` | ✓ | `rubrics/song_classifier.md` | exported + hand-authored golden | `MusicTrack.ai_labels` |
 | `nova.audio.music_matcher` | ✓ | `rubrics/music_matcher.md` | hand-authored golden only (not persisted) | — |
-| `nova.audio.retake_detector` | ✓ | `rubrics/retake_detector.md` | hand-authored golden only (spans not persisted); incl. TR/EN restarts + negative fixtures gated by `meta.expect_empty` | — |
+| `nova.kria.intent_review` | ✓ (the server validator) | `rubrics/intent_review.md` | hand-authored golden + hostile; golden `raw_text` is hand-written until the live qualification run replaces it with recorded replies; `meta.expect` pins the server judgment per tier, `meta.expect.void` the reason a hostile reply is thrown away | `Job.review` rows are not exported (frames never leave the row) |
+| `nova.audio.retake_detector` | ✓ | `rubrics/retake_detector.md` | hand-authored golden only (spans not persisted); incl. TR/EN restarts + negative fixtures gated by `meta.expect_empty`. KRI-1176 precision set: 2 restarts on real prod words (`meta.must_cut`/`must_keep`, gated by `test_positive_fixtures_cut_only_the_abandoned_take`) + 8 restart-free negatives sliced from recorded word lists (EN/TR/ES, `meta.source_fixture`). Every `raw_text` is a hand-authored expected answer, not a live capture | — |
 | `nova.creator.main` | ✓ | `rubrics/main_creator.md` | hand-authored golden + exported | — |
 | `nova.compose.sfx_placement` | ✓ | `rubrics/sfx_placement.md` | hand-authored golden (visual moments) | — |
 | `nova.compose.narrated_storyboard` | ✓ | `rubrics/narrated_storyboard.md` | hand-authored sports, non-sports, and adversarial golden fixtures | `Job.assembly_plan.variants[].narrated_storyboard` |
@@ -242,19 +243,20 @@ python -m tests.evals.request_following.report --phase P0 \
   is on the clip record, never in `facts`). Pass `guesses={clip_id: name}` to score a live
   `landmark_guess` run against the same footage.
 
-## Suggestion-chip replay eval (`test_suggestion_chips_evals.py`, `test_chip_suggester_evals.py`, KRI-756)
+## Suggestion-chip replay eval (`test_suggestion_chips_evals.py`, `test_suggestion_agent_evals.py`, KRI-756)
 
 iOS app only (the web client ignores the feature). Two layers, both free, offline, no network, no
 skia, no paid call:
 
 1. the **deterministic chip engine** (`app/services/suggestion_chips.py`) decides which chips MAY
    exist: is every chip real, enabled, not already in the edit, and executable on the compile path?
-2. the **wording agent** `nova.chat.suggester` only ranks and words those candidates: whatever it
-   says, can the served set break the contract, and how much of its wording survives validation?
+2. the **suggestion agent** `nova.chat.suggestion_agent` only picks and orders kinds the server
+   issued: whatever it says, can the served chips or cards break the contract? The server builds
+   every card's action from the registry and proves it with the kind's witness.
 
 ```bash
 cd src/apps/api
-pytest tests/evals/test_suggestion_chips_evals.py tests/evals/test_chip_suggester_evals.py \
+pytest tests/evals/test_suggestion_chips_evals.py tests/evals/test_suggestion_agent_evals.py \
   tests/services/test_suggestion_chips_guards.py tests/scripts/test_suggestion_chip_funnel.py -q
 .venv/bin/python scripts/suggestion_chip_report.py                   # -> <repo>/.chip-eval/report.md
 .venv/bin/python scripts/suggestion_chip_report.py --write-contract  # regenerate the iOS mock JSON
@@ -297,35 +299,39 @@ pytest tests/evals/test_suggestion_chips_evals.py tests/evals/test_chip_suggeste
   approval with a candidate", not "executes an op".
 - **Known gaps** are strict xfails (`KNOWN_GAPS` in `suggestion_chips_harness.py`; empty today).
 
-### Wording agent (`test_chip_suggester_evals.py`, `chip_suggester_harness.py`)
+### Suggestion agent (`test_suggestion_agent_evals.py`, `suggestion_agent_harness.py`)
 
-- **Cassettes** (`tests/fixtures/agent_evals/chip_suggester/*.json`, 25): hand-authored raw model
-  answers, NOT recorded output, natural and adversarial (invented / duplicate / guessed cids for
-  gated-off, already-in-edit and dark kinds, extra `message` / `kind` keys on a row, cross-kind,
-  hype, digit / quote / emoji, footage text in a label, prompt injection, unknown placeholders,
-  wrong language, ungrounded and handle / URL `why`, non-JSON, wrong shape, fenced JSON). Each is
-  replayed through the REAL agent `parse`, the REAL task body `kria_suggester._run_agent` (with the
-  model client and Redis swapped for in-memory fakes) and the REAL serve join. `{{cid:<kind>}}`
-  is the live candidate id; `{{guess:<kind>}}` is the id an adversary who knows the cid formula
-  would mint (live only if the engine allowed that kind).
-- **G10 fuzz.** 45 contexts x 30 seeded answers (random cids from this and other contexts, junk and
-  plausible labels, grounded and hostile `why`, extra row keys, broken JSON) must leave the served
-  set contract-clean: every chip a live candidate with `message`, `kind`, `capability`, `anchor`
-  and `requires_protocol` copied from it, no flag-off / already-in-edit / dark kind, label and
-  `why` valid, Gemini text out of labels and messages, limits held. Mutation controls break the
-  label validator, the `why` validator and the pool check in turn and require the fuzz to go red.
-- **Label acceptance** (`label_corpus.json`, 130 hand-authored labels): recall of plausible
-  creator-voiced rewordings (bar >= 80%), rejection of cringe / wrong-kind / leaking / hostile
-  labels (bar 100%), and how much loosening to stoplist-only would let through. The corpus is MY
-  guess of the model, so the rate is a floor on strictness, not a measurement of Flash.
-- **Backend gaps** found by the eval are strict xfails (`BACKEND_GAPS` in
-  `chip_suggester_harness.py`), listed in the report.
+- **Cassettes** (`tests/fixtures/agent_evals/suggestion_agent/*.json`, 31): hand-authored raw
+  model answers, NOT recorded output, natural and adversarial (an unissued or unissuable kind,
+  `default_edit`, a dark kind, an unissued handle or a raw media id, an op / message / label /
+  action smuggled into a pick, duplicate rank or pick, over the limit, prose, fenced JSON, an
+  instruction in a `why`, a transcript echoed into a `why`, a Turkish thread given an English
+  `why`, hook `copy` reusing a Gemini subject or a transcript, markup in copy). Each is replayed
+  through the REAL agent (prompt render, the strict schema handed to the client, `parse`), the REAL
+  task body `kria_suggester._run_agent` (with the model client, the cost ledger and Redis swapped
+  for in-memory fakes) and the REAL serve join and registry build. A cassette may carry
+  `"transcripts": {"<clip ordinal>": "..."}`.
+- **G10 fuzz.** 45 contexts x 30 seeded answers (about half plausible: issued kinds, real handles,
+  grounded and hostile `why`, hook copy; half junk, injection, extra keys, broken JSON) plus
+  thousands of random picks straight into `assemble_set` / `assemble_suggestions`. The served
+  chips must be live candidates with `label`, `message`, `kind`, `capability`, `anchor` copied from
+  them; every served v2 card must be an issued, enabled registry kind whose action passes its
+  witness on the live snapshot, with closed-template wording and no action on the wire.
+  Negative controls break the oracles one violation at a time and the engine's targeting gate and
+  require the fuzz to go red; a fake kind with an op the compiler refuses proves the witness is
+  what stops it.
+- **Wiring.** One ledger feature under the `suggestions` credit capability, the strict schema is
+  closed over the issued kinds, the model comes from `KRIA_SUGGESTER_MODEL`, the `edit-improver`
+  skill is in the prompt, transcripts sit under `untrusted`, and every failure reason
+  (budget, call cap, timeout, refusal, truncation, provider error, empty ranking) comes from its
+  real cause and makes exactly one paid attempt.
 
 ### Telemetry (contract section 8), asserted with `structlog.testing.capture_logs`
 
 `suggestion_chips.shown` (once per final `set_id`; the pending set does not emit),
-`suggestion_chips.agent_run` (one per run, with `fallback_reason` in schema_error | label_rejected |
-timeout | budget | stale_digest | flag_off | run_cap, each triggered from its real cause) and
+`suggestion_chips.agent_run` (one per run, with `fallback_reason` in budget | refusal | truncated |
+schema_error | provider_error | timeout | empty_ranking | no_usable_picks | stale_digest | flag_off |
+run_cap, each triggered from its real cause) and
 `suggestion_chips.tap` (the 8-key stamp). The stamp round-trips into
 `scripts/suggestion_chip_funnel.py`, which derives offered / tapped / kept, split by `label_source`
 and `wording`, and prints the chip-#1 bias (a media-only send counts as a tap of chip #1 because the
@@ -346,10 +352,11 @@ flag-on cohort, not a tap rate.
 3. **Blind old-vs-new pairwise judge** on about 20 real sessions (`llm_judge.py` has no pairwise
    mode, so this needs a new script beside it; the sessions are not in the repo). Pass bar >= 70%
    preference, founder agrees on 10. UNMEASURED.
-4. **Flash-vs-template wording A/B** by `label_source` in real taps (needs the flag on for a
-   cohort; fix the `label_source` attribution gap in the report first).
-5. **Live replay of `nova.chat.suggester`** on the nermin / east-run contexts to record real
-   outputs and replace the hand-authored label corpus with a measured acceptance rate.
+4. **Agent-picked vs deterministic order A/B** by `wording` in real taps (needs the flag on for a
+   cohort).
+5. **Live replay of `nova.chat.suggestion_agent`** (gpt-6.1-sol, about 10 real threads, approved
+   development-ledger run, cap $2, `AI_OPENAI_SUGGESTIONS_BUDGET_USD` set for the run) to record
+   real outputs, cost per run, latency and the share of picks that pass their witness.
 6. **`opener_clip` cassette** proving filename-to-hero resolution through the planner; only then
    may `CLIP_ORDINAL_PROVEN` flip.
 

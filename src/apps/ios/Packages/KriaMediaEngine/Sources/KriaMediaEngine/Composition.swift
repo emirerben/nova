@@ -28,6 +28,8 @@ public struct PreviewComposition: @unchecked Sendable {
     /// Playback stays at the mixed level (AVAudioMix cannot boost).
     var loudnessTargetLUFS: Double?
     public let playerItem: AVPlayerItem
+    /// How this composition drew its Talk-to-camera background; nil when the recipe has none.
+    public internal(set) var speakerTrace: SpeakerBackgroundTrace?
     public init(description: CompositionDescription, playerItem: AVPlayerItem) { self.description = description; self.playerItem = playerItem }
 #else
     public init(description: CompositionDescription) { self.description = description }
@@ -302,6 +304,7 @@ public struct PreviewComposition: @unchecked Sendable {
                         overlayCenter: CGPoint(x: canvas.width / 2 + clip.transform.positionX, y: canvas.height / 2 - clip.transform.positionY),
                         visualPlacement: clip.visualPlacement, visualOrder: overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0)))
                     layers[layers.count - 1].sourceCrop = clip.sourceCrop
+                    layers[layers.count - 1].placementTilt = clip.placementTiltDegrees
                     layers[layers.count - 1].backdrop = clip.backdrop
                     layers[layers.count - 1].overlayFade = OverlayFadeWindow(clip: clip, start: clip.timelineStart, end: layerEnd)
                     if clip.visualPlacement == nil && (recipeTrack.kind == .video || clip.overlayPreserveAlpha == nil) {
@@ -329,6 +332,7 @@ public struct PreviewComposition: @unchecked Sendable {
                         overlayCenter: CGPoint(x: canvas.width / 2 + clip.transform.positionX, y: canvas.height / 2 - clip.transform.positionY),
                         visualPlacement: clip.visualPlacement, visualOrder: overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0)))
                     layers[layers.count - 1].sourceCrop = clip.sourceCrop
+                    layers[layers.count - 1].placementTilt = clip.placementTiltDegrees
                     if clip.stillLayout == nil { layers[layers.count - 1].backdrop = clip.backdrop }
                     layers[layers.count - 1].overlayFade = OverlayFadeWindow(clip: clip, start: clip.timelineStart, end: end)
                 }
@@ -387,8 +391,12 @@ public struct PreviewComposition: @unchecked Sendable {
             StillClockLifetime.retain(clock, on: composition)
         }
         if let background = recipe.speakerBackground {
-            guard let url = assetURLs[background.assetID] else { throw MediaEngineError.missingAsset(background.assetID) }
-            layers.append(try await Self.speakerBackgroundLayer(background, url: url, composition: composition, canvas: canvas, duration: total))
+            layers += try await Self.speakerBackgroundLayers(background, assetURLs: assetURLs, composition: composition, canvas: canvas, duration: total)
+        }
+        for backdrop in Self.mediaBackdrops(in: recipe) {
+            guard let url = assetURLs[backdrop.assetID] else { throw MediaEngineError.missingAsset(backdrop.assetID) }
+            layers.append(try await Self.mediaBackdropLayer(poolID: backdrop.poolID, assetID: backdrop.assetID, kind: backdrop.kind,
+                                                            url: url, composition: composition, canvas: canvas, duration: total))
         }
         try Task.checkCancellation()
         if let musicID = recipe.audio.musicAssetID {
@@ -450,9 +458,10 @@ public struct PreviewComposition: @unchecked Sendable {
             let end = total + cached.duration.seconds
             layers.append(RecipeVideoLayer(
                 trackID: track.trackID, image: nil,
-                transform: KriaBranding.coverTransform(naturalSize: cached.naturalSize, preferred: cached.preferredTransform, canvas: canvas),
+                transform: KriaBranding.fitTransform(naturalSize: cached.naturalSize, preferred: cached.preferredTransform, canvas: canvas),
                 start: total, end: end, fadeIn: 0, isPrimary: false, clipID: "kria-outro",
-                naturalSize: cached.naturalSize, preferredTransform: cached.preferredTransform, visualOrder: 9_001))
+                naturalSize: cached.naturalSize, preferredTransform: cached.preferredTransform, visualOrder: 9_001,
+                extendsEdgesToCanvas: true))
             brandedTotal = end
         }
 
@@ -464,13 +473,15 @@ public struct PreviewComposition: @unchecked Sendable {
         let subjectMatte = recipe.textLayers.contains(where: { $0.behindSubject == true }) ? NativeSubjectMatte() : nil
         // Speaker background: one matte per composition, shared by the player and the exporter (S15).
         let speakerMatte = recipe.speakerBackground == nil ? nil : SpeakerMatte()
+        speakerMatte?.trace.noteBuilt(speakerClips: speakerClipIDs.count)
         // Instructions must span the whole asset: when the asset outlasts them AVPlayer renders no
         // video at all (audio over black, no error), while scrubbing and export stay correct.
         let covered = max(brandedTotal, composition.duration.seconds)
         videoComposition.instructions = RecipeInstructionTiming.tiledRanges(total: covered, layers: layers).map { range, active in
             RecipeVideoInstruction(timeRange: range, layers: active, text: textLayers, canvas: canvas,
                 cameraPulses: recipe.cameraPulses, motionScenes: motion, textStore: textStore, drawings: drawings, subjectMatte: subjectMatte,
-                speakerMatte: speakerMatte)
+                speakerMatte: speakerMatte, speakerFrame: recipe.speakerBackground?.speakerFrame,
+                fullScreenWindows: recipe.speakerBackground?.fullScreenWindows ?? [])
         }
         let audioMix = AVMutableAudioMix()
         audioMix.inputParameters = audioParameters
@@ -482,6 +493,7 @@ public struct PreviewComposition: @unchecked Sendable {
         item.audioMix = audioMix
         var result = PreviewComposition(description: CompositionDescription(duration: brandedTotal, canvas: recipe.canvas, hasVideo: true, hasAudio: !audioParameters.isEmpty), playerItem: item)
         result.loudnessTargetLUFS = recipe.audio.targetLUFS
+        result.speakerTrace = speakerMatte?.trace
         return result
     }
 

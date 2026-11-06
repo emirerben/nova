@@ -19,6 +19,7 @@ struct SlidePostWorkspaceView: View {
     let onAddMedia: (() -> Void)?
 
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var auth: AuthStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var session: SlidePostSession
@@ -52,6 +53,8 @@ struct SlidePostWorkspaceView: View {
     /// pasteboard holds text or a picture does not trigger the "Allow Paste" prompt; reading it would.
     @State private var clipboardHasContent = false
     @State private var showsSize = false
+    @State private var pictureDraft: GeneratedMediaDraft?
+    @State private var pictureSlideID: String?
     /// Bumped to put the keyboard back on the Edit field when the same text is tapped again.
     @State private var focusToken = 0
     @State private var uploadProgress: [UUID: Double] = [:]
@@ -148,6 +151,14 @@ struct SlidePostWorkspaceView: View {
         .toolbar(.hidden, for: .navigationBar)
         .onDisappear { exportTask?.cancel() }
         .sheet(isPresented: $showsCaption) { captionSheet }
+        .sheet(item: $pictureDraft, onDismiss: { session.endPictureGeneration(); Task { await refresh() } }) { draft in
+            if let itemID {
+                GeneratedMediaSheet(itemID: itemID, draft: draft, accepted: {}, useImage: { operation in
+                    guard let slideID = pictureSlideID, let assetID = operation.assetID else { throw APIError.invalidResponse }
+                    guard session.placeGeneratedPicture(slideID: slideID, assetID: assetID) != nil else { throw APIError.invalidResponse }
+                })
+            }
+        }
         .sheet(isPresented: $showsSize) {
             SlidePostSizeSheet(session: session, onDone: { showsSize = false })
                 .presentationDetents([.medium, .large])
@@ -294,7 +305,19 @@ struct SlidePostWorkspaceView: View {
     private var sizesOn: Bool { effectiveCapabilities?.slidePostSizesEnabled == true }
     private var drawingOn: Bool { effectiveCapabilities?.slidePostDrawingEnabled == true }
     private var tiltOn: Bool { effectiveCapabilities?.slidePostTiltEnabled == true }
+    private var tiltZoomOn: Bool { tiltOn && effectiveCapabilities?.slidePostTiltZoomEnabled == true }
     private var stickersOn: Bool { effectiveCapabilities?.slidePostStickersEnabled == true }
+    /// KRI-1142: Generate picture needs stickers (where it lands) and the account's generated-images gate.
+    private var generateOn: Bool { stickersOn && effectiveCapabilities?.generatedImages == true && itemID != nil }
+    private func openGeneratePicture(for slideID: String) {
+        guard let accountID = auth.localStorageIdentity, let itemID else { return }
+        let draft = GeneratedMediaDraft(capability: .image)
+        draft.transparentBackground = true
+        draft.configureRecovery(accountID: accountID, itemID: itemID, placementID: "slide-picture-" + slideID)
+        pictureSlideID = slideID
+        session.beginPictureGeneration()
+        pictureDraft = draft
+    }
     /// KRI-460: what a picture paste needs. UI tests swap the storage upload for a fixture one (see `SlidePostFixtureStickerUploader`).
     private var stickerPaste: SlidePostStickerPaste? {
         guard let itemID else { return nil }
@@ -467,7 +490,7 @@ struct SlidePostWorkspaceView: View {
                     .frame(maxHeight: .infinity)
                     .padding(.horizontal, 12).padding(.bottom, NativeEditorIslandMetrics.bottomPadding)
             } else if mode == .tilt, let slide {
-                SlidePostTiltPanel(session: session, slideID: slide.id, onDone: finishEditing)
+                SlidePostTiltPanel(session: session, slideID: slide.id, zoomEnabled: tiltZoomOn, onDone: finishEditing)
                     .frame(maxHeight: .infinity)
                     .padding(.horizontal, 12).padding(.bottom, NativeEditorIslandMetrics.bottomPadding)
             } else if mode == .look, let slide {
@@ -657,6 +680,7 @@ struct SlidePostWorkspaceView: View {
                 showsSize: sizesOn, onSize: { session.selectedTextID = nil; showsSize = true },
                 showsDraw: drawingOn, onDraw: beginDrawing,
                 canClearDrawing: slide?.edits?.drawing != nil, onClearDrawing: { if let id = slide?.id { session.clearDrawing(slideID: id) } },
+                onGenerate: generateOn ? slide.map { target in { openGeneratePicture(for: target.id) } } : nil,
                 onPaste: clipboardHasContent ? slide.map { target in { providers in Task { await session.paste(providers: providers, slideID: target.id, stickers: stickerPaste) } } } : nil,
                 onText: beginTextEditing,
                 onCover: { if let id = slide?.id { session.setCover(id: id); UINotificationFeedbackGenerator().notificationOccurred(.success) } },

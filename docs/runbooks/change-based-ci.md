@@ -107,7 +107,10 @@ The heavy native job uses `!cancelled()` so optional skipped preparation does
 not block it, while superseding a PR commit stops its obsolete native execution.
 Only the small aggregate checks use `always()` to report failed dependencies.
 
-Portable checks and synthetic fixture generation finish before a Mac queues.
+The Mac queues as soon as selection finishes. It does not wait for the `journey-mapping` job:
+the selector emits `journey_mapped` from the same check, so an unmapped selection still
+never allocates a Mac, and the `journey` aggregate rejects an inconsistent `journey_mapped`.
+Portable checks and synthetic fixture generation run while the Mac compiles.
 API-only journeys keep Linux evidence without requiring a native fixture bundle.
 Native fixtures use an artifact name containing the workflow run, attempt, and commit.
 The transfer manifest verifies that identity and every relative file hash; the

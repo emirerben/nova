@@ -158,3 +158,16 @@ def test_expired_result_not_uploaded(setup):
     with pytest.raises(ValueError, match="expired"):
         admit_generated_asset(db, op, **owner)
     assert not objects
+
+
+def test_admitted_image_carries_prompt_text_for_autoplace(setup):
+    db, op, owner, objects = setup
+    op.request_metadata = {"image_prompt": "a cold glass of beer on a pub table"}
+    persist_generated_asset(db, op, png(), **owner)
+    admit_generated_asset(db, op, **owner)
+    row = db.add.call_args.args[0]
+    assert row.analysis["source"] == "generated"
+    assert row.analysis["subject"] == row.analysis["description"] == "Editable"
+    assert row.analysis["generation_prompt"] == "a cold glass of beer on a pub table"
+    assert row.user_context == "Editable"
+    assert "on_screen_text" not in row.analysis

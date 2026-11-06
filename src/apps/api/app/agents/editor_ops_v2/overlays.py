@@ -22,9 +22,13 @@ level (circular); import lazily inside functions.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
+from app.agents._schemas.visual_editor import VisualEditorStyle
 from app.agents.editor_ops_v2 import OpSpec
+from app.kria.clip_tilt import wrap_degrees
+from app.kria.reply_language import say
 
 DISPLAY_MODES = ("pip", "fullscreen")
 KINDS = ("image", "video", "all")
@@ -32,6 +36,70 @@ KINDS = ("image", "video", "all")
 # caption band and of a centred face (the same default the card matcher starts from).
 PIP_DEFAULT_GEOMETRY = {"x_frac": 0.74, "y_frac": 0.22, "scale": 0.36}
 PATCHABLE = ("start_s", "end_s", "x_frac", "y_frac", "scale", "display_mode")
+# KRI-1141: a card's tilt, clockwise on screen like `patch_slots.tilt`. `rotation_deg` replaces the
+# card's angle, `rotation_delta_deg` adds to it. Both are patch_overlay keys only while the snapshot
+# opens `overlays.tilt`; they are stored as the card's `editor_style.rotation_deg`.
+TILT_KEYS = ("rotation_deg", "rotation_delta_deg")
+TILT_MAX_TURN_DEG = 360.0
+
+
+def tilt_open(snapshot: object) -> bool:
+    """Does this snapshot offer to tilt a picture card (`overlays.tilt`)?"""
+    overlays = snapshot.get("overlays") if isinstance(snapshot, dict) else None
+    return isinstance(overlays, dict) and overlays.get("tilt") is True
+
+
+def coerce_tilt_keys(patch: dict, state: Any) -> dict | None:
+    """The cleaned tilt keys of a `patch_overlay` patch, ``{}`` when it has none, None if invalid.
+
+    An absolute angle is wrapped into -180..180 here; a relative one is added to the card's own
+    angle when the op is applied. Either may be up to a full turn either way.
+    """
+    if "rotation_deg" in patch and "rotation_delta_deg" in patch:
+        state.invalid_value(_tilt_shape_note())
+        return None
+    clean: dict[str, float] = {}
+    for key in TILT_KEYS:
+        if key not in patch:
+            continue
+        value = patch[key]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or abs(value) > TILT_MAX_TURN_DEG
+        ):
+            state.invalid_value(
+                say(
+                    en="A tilt needs an angle in degrees, up to a full turn to the left or right.",
+                    tr="Eğim için en fazla tam bir tur sola veya sağa olacak şekilde derece "
+                    "cinsinden bir açı gerekiyor.",
+                )
+            )
+            return None
+        clean[key] = wrap_degrees(float(value)) if key == "rotation_deg" else float(value)
+    return clean
+
+
+def _tilt_shape_note() -> str:
+    return say(
+        en="A tilt is one angle: either the angle to set or the degrees to add, not both.",
+        tr="Eğim tek bir açıdır: ya ayarlanacak açı ya da eklenecek derece, ikisi birden değil.",
+    )
+
+
+def card_rotation(card: dict[str, Any]) -> float:
+    style = card.get("editor_style")
+    value = style.get("rotation_deg") if isinstance(style, dict) else None
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
+
+
+def _set_card_rotation(card: dict[str, Any], degrees: float) -> None:
+    """Store ``degrees`` as the card's angle; upright removes the style, like an untouched card."""
+    if degrees == 0:
+        card.pop("editor_style", None)
+        return
+    card["editor_style"] = VisualEditorStyle(rotation_deg=degrees).model_dump()
 
 
 def _coerce_set_overlay_display(
@@ -141,6 +209,8 @@ def _to_fullscreen(card: dict[str, Any]) -> None:
     if not _fullscreen_allowed():
         raise KriaEditorOpError("Full-screen pictures are turned off right now")
     card["display_mode"] = "fullscreen"
+    # A full-screen cutaway has nothing to turn about, and Save refuses its angle.
+    card.pop("editor_style", None)
 
 
 def _op_set_overlay_display(state: Any, op: dict[str, Any]) -> None:
@@ -178,9 +248,10 @@ def _op_patch_overlay(state: Any, op: dict[str, Any]) -> None:
 
     index = _require_index(state.media_overlays, op.get("overlay_index"), "Overlay")
     card = state.media_overlays[index]
-    raw = op.get("patch")
-    patch = {k: v for k, v in (raw if isinstance(raw, dict) else {}).items() if k in PATCHABLE}
-    if not patch:
+    raw = op.get("patch") if isinstance(op.get("patch"), dict) else {}
+    patch = {k: v for k, v in raw.items() if k in PATCHABLE}
+    tilt = {k: raw[k] for k in TILT_KEYS if k in raw}
+    if not patch and not tilt:
         raise KriaEditorOpError("No portable picture field was supplied")
     start = float(patch.get("start_s", card.get("start_s") or 0.0))
     end = float(patch.get("end_s", card.get("end_s") or 0.0))
@@ -193,12 +264,25 @@ def _op_patch_overlay(state: Any, op: dict[str, Any]) -> None:
             "A full-screen picture has no position -- put it on top of the video first"
         )
     was_fullscreen = (card.get("display_mode") or "pip") == "fullscreen"
+    if tilt and target == "fullscreen":
+        raise KriaEditorOpError(
+            "A full-screen picture can't be tilted -- put it on top of the video first"
+        )
     if target == "pip" and was_fullscreen:
         card.update(geometry)
         _to_pip(card)
     elif target == "fullscreen" and not was_fullscreen:
         _to_fullscreen(card)
     card.update({k: v for k, v in patch.items() if target == "pip" or k in ("start_s", "end_s")})
+    if tilt:
+        current = card_rotation(card)
+        if "rotation_delta_deg" in tilt:
+            turned = wrap_degrees(current + tilt["rotation_delta_deg"])
+        else:
+            turned = wrap_degrees(tilt["rotation_deg"])
+        if turned == current:
+            raise KriaEditorOpError("That picture is already tilted that way")
+        _set_card_rotation(card, turned)
     _check_fullscreen(state, [card])
     state.changed.add("media_overlays")
 

@@ -398,6 +398,7 @@ jobs:
           python -m alembic upgrade head
       - name: Run API test shard with timing reports
         env:
+          NOVA_REQUIRE_POSTGRES_TESTS: "1"
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_test
           REDIS_URL: redis://localhost:6379
           STORAGE_BUCKET: nova-test
@@ -411,8 +412,9 @@ jobs:
 
   # KRI-559 executes only incident-corpus journeys selected by ci-changes.
   # An affected source without a mapped fixture fails here, on a cheap Ubuntu
-  # runner (KRI-604): the macOS `journey` job needs this job, so an unmapped
-  # selection never queues for a macOS runner just to fail in its first step.
+  # runner (KRI-604). The macOS journey-native job checks the selector's
+  # journey_mapped output (the same validation) instead of waiting for this
+  # job, so an unmapped selection still never queues for a macOS runner.
   # The `test-api` gate still goes red because a skipped `journey` is not the
   # `success` it requires for a selected suite.
   journey-mapping:
@@ -1121,7 +1123,9 @@ jobs:
             | tee ../../../test-results/kri-559/camera-roll-api-tests.log
       - name: Seal portable fixture inputs for this exact workflow attempt
         if: needs.changes.outputs.journey_needs_native == 'true'
-        run: python3 scripts/ci/journey-gate.py seal-bundle --root test-results/kri-559 --head "${{ github.sha }}" --run "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"
+        env:
+          JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
+        run: python3 scripts/ci/journey-gate.py seal-bundle --root test-results/kri-559 --head "${{ github.sha }}" --run "${{ github.run_id }}" --attempt "${{ github.run_attempt }}" --journeys "$JOURNEY_IDS"
       - name: Transfer fixture inputs and offline evidence
         if: needs.changes.outputs.journey_needs_native == 'true'
         uses: actions/upload-artifact@v4
@@ -1145,11 +1149,15 @@ jobs:
     # Macs compile while the Linux journeys run (~11 min, 2026-10-27..30) and
     # block only where the fixture bundle is consumed (wait-for-jobs.py). The
     # `journey` aggregate still requires both portable jobs to pass.
-    needs: [changes, journey-mapping]
+    # It also starts without waiting for the journey-mapping job: the selector
+    # runs the same mapping check (journey_mapped), so an unmapped selection
+    # still never allocates a Mac (KRI-604), and the `journey` gate still
+    # requires journey-mapping. On 2026-11-04..06 that extra Linux hop delayed
+    # the Mac job's place in the 5-Mac queue by a mean 6.4 min (p90 24.4).
+    needs: [changes]
     if: >-
       !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.native_validation == 'true' &&
-      ((needs.changes.outputs.journey == 'true' && needs.journey-mapping.result == 'success') ||
-       (needs.changes.outputs.journey == 'false' && needs.journey-mapping.result == 'skipped'))
+      needs.changes.outputs.journey_mapped == 'true'
     permissions:
       contents: read
       actions: read
@@ -1217,21 +1225,11 @@ jobs:
           KRIA_JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
           KRIA_RESTORE_INPUT_TIMES: '1'
         run: bash scripts/ios/verify.sh
-      - name: Record compiled iPhone input timestamps
-        if: matrix.leg == 'unit' && github.event_name == 'pull_request' && (needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true')
-        run: python3 scripts/ios/cache-inputs.py save
-      - name: Save Xcode build data for the next run
-        if: matrix.leg == 'unit' && github.event_name == 'pull_request' && (needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true') && steps.build-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/Library/Caches/org.swift.swiftpm
-            src/apps/ios/.derived-data/Build
-            src/apps/ios/.derived-data/SourcePackages
-            src/apps/ios/.derived-data/ModuleCache.noindex
-            src/apps/ios/.derived-data/SDKStatCaches.noindex
-            src/apps/ios/.derived-data/CompilationCache.noindex
-          key: ${{ steps.build-cache.outputs.cache-primary-key }}
+      # PR runs restore main's Xcode cache but never save their own. A PR
+      # cache (~0.9 GB per push) is only usable by later pushes to the same PR,
+      # and in the full 10 GB repo cache it evicted main's seed within 30-46
+      # minutes: 70 of 97 PR runs on 2026-11-04..06 compiled cold (+~10 min),
+      # and only 6 of 27 hits came from a PR's own save. ios.yml seeds main.
       - name: Wait for the portable journeys this leg depends on
         if: needs.changes.outputs.journey == 'true'
         env:
@@ -1249,7 +1247,7 @@ jobs:
         env:
           JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
         run: |
-          python3 scripts/ci/journey-gate.py verify-bundle --root test-results/kri-559 --head "${{ github.sha }}" --run "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"
+          python3 scripts/ci/journey-gate.py verify-bundle --root test-results/kri-559 --head "${{ github.sha }}" --run "${{ github.run_id }}" --attempt "${{ github.run_attempt }}" --journeys "$JOURNEY_IDS"
           if [[ ",$JOURNEY_IDS," == *",kri-524-creation,"* ]]; then
             python3 scripts/ci/journey-gate.py verify-input --fixture test-results/kri-559/fixture --head "${{ github.sha }}"
           fi
@@ -1277,7 +1275,7 @@ jobs:
             --xctest NativeSpeedUITests/testDeviceClipSpeedAdjustsResetsAndUndoesThroughTheInspector \
             --xctest NativeSpeedUITests/testClosingSpeedInspectorCommitsResetForSingleUndo \
             --xctest NativeEditorInspectorUITests/testSourcePreviewTextCreationAndAnimations
-      - name: Verify server suggestion chips stay visible and send the chosen action
+      - name: Verify server suggestion chips and cards stay visible and send the chosen action
         if: matrix.leg == 'screens' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-756-suggestion-chips')
         working-directory: src/apps/ios
         run: |
@@ -1285,12 +1283,18 @@ jobs:
             -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
             -destination "platform=iOS Simulator,id=$(cat ../../../test-results/ios/simulator-id.txt)" \
             -only-testing:KriaUITests/CreationUITests/testServerSuggestionChipsSendOnTapAndReplaceFixedChips \
+            -only-testing:KriaUITests/CreationUITests/testSuggestionCardsInChatAndTheEditorImproveSheetShareOneSet \
+            -only-testing:KriaUITests/CreationUITests/testDeclinedSuggestionCardRepliesNoLongerFitsThenTheRefreshedSet \
+            -only-testing:KriaUITests/CreationUITests/testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize \
             -resultBundlePath ../../../test-results/kri-559/suggestion-chips-native.xcresult test-without-building
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/suggestion-chips-native.xcresult \
             > ../../../test-results/kri-559/suggestion-chips-native-tests.json
           python3 ../../../scripts/ci/journey-gate.py verify-tests \
             --test-results ../../../test-results/kri-559/suggestion-chips-native-tests.json \
-            --xctest CreationUITests/testServerSuggestionChipsSendOnTapAndReplaceFixedChips
+            --xctest CreationUITests/testServerSuggestionChipsSendOnTapAndReplaceFixedChips \
+            --xctest CreationUITests/testSuggestionCardsInChatAndTheEditorImproveSheetShareOneSet \
+            --xctest CreationUITests/testDeclinedSuggestionCardRepliesNoLongerFitsThenTheRefreshedSet \
+            --xctest CreationUITests/testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize
       - name: Verify both answer orders use one creation turn
         if: matrix.leg == 'screens' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-802-question-batch')
         working-directory: src/apps/ios

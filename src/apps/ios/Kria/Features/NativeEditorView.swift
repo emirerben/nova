@@ -9,6 +9,8 @@ struct NativeEditorView: View {
     private let conversationAcceptedID: UUID?
     /// Changes when the conversation asks to close its sheet (its "Open editor" while this editor is open).
     private let conversationCloseID: UUID?
+    /// AI suggestion blocks for this edit, read from the chat that owns the set. Nil = nothing to improve (or no chat).
+    private let improve: SuggestionCardsPresentation?
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -35,11 +37,14 @@ struct NativeEditorView: View {
     @State private var opensRetryConversation = false
     @State private var showsOriginalsRecovery = false
     @State private var showsConversation = false
+    @State private var showsImprove = false
+    /// A card was tapped in the Improve sheet: once it has closed, the conversation opens so the creator sees the message land.
+    @State private var opensConversationAfterImprove = false
     /// KRI-589: Draw mode. `appendingTo` is the drawing "Draw more" adds to; nil starts a new drawing.
     @State private var drawMode: DrawMode?
     @StateObject private var sketch = NativeDrawingSketch()
     private struct DrawMode: Equatable { var appendingTo: String? }
-    @State private var showsEmptyAddClip = false
+    @State private var emptyAddClip: AddClipLaunch?
     @State private var selectedTextForActions: String?
     @State private var selectedSoundEffectForActions: String?
     /// KRI-185: a block opened from the Text tab's list edits its words first and
@@ -81,6 +86,7 @@ struct NativeEditorView: View {
         conversationAcceptedID: UUID? = nil,
         conversationCloseID: UUID? = nil,
         conversation: (() -> AnyView)? = nil,
+        improve: SuggestionCardsPresentation? = nil,
         onBack: @escaping () -> Void
     ) {
         self.project = project
@@ -89,6 +95,7 @@ struct NativeEditorView: View {
         self.conversation = conversation
         self.conversationAcceptedID = conversationAcceptedID
         self.conversationCloseID = conversationCloseID
+        self.improve = improve
         _session = StateObject(
             wrappedValue: sharedSession ?? initialDraft.map {
                 NativeEditorSession(
@@ -147,13 +154,18 @@ struct NativeEditorView: View {
             .navigationBarBackButtonHidden(true)
             .sheet(isPresented: $showsResearchSources) { NativeResearchSourcesView(document: session.document) }
             .sheet(item: $inspector) { inspector in
-                NativeEditorInspectorView(inspector: inspector, session: session)
+                NativeEditorInspectorView(inspector: inspector, session: session, uploads: model.uploads, projectID: project.id)
                     // The sheet is its own presentation; hand it the editor's text size explicitly.
                     .environment(\.dynamicTypeSize, dynamicTypeSize)
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
             .onChange(of: session.selectionRequest) { _, _ in routeSelection() }
+            // KRI-1162: the BACKGROUND lane's fill strip and a window's inspector open the Background tool.
+            .onChange(of: session.backgroundToolRequest) { _, _ in
+                inspector = nil
+                changePanel(to: .background)
+            }
             // A tall panel is a per-session choice: opening a tool later must
             // never start out covering the preview.
             .onChange(of: panel == nil) { _, closed in
@@ -194,9 +206,32 @@ struct NativeEditorView: View {
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
-            .sheet(isPresented: $showsEmptyAddClip) { NativeEditorAddClipSheet(session: session) }
+            .sheet(item: $emptyAddClip) { NativeEditorAddClipSheet(session: session, launch: $0) }
             .onChange(of: deviceLocalFile) { _, file in
                 if let file { session.showDeviceOutput(file) }
+            }
+            .sheet(isPresented: $showsImprove, onDismiss: {
+                guard opensConversationAfterImprove else { return }
+                opensConversationAfterImprove = false
+                showsConversation = true
+            }) {
+                if let improve {
+                    ImproveSheet(
+                        presentation: SuggestionCardsPresentation(
+                            cards: improve.cards,
+                            tap: { card in
+                                guard improve.tap(card) else { return false }
+                                opensConversationAfterImprove = true
+                                showsImprove = false
+                                return true
+                            },
+                            dismiss: improve.dismiss, refresh: improve.refresh, sendingID: improve.sendingID
+                        ),
+                        close: { showsImprove = false }
+                    )
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                }
             }
             .sheet(isPresented: $showsConversation) {
                 if let conversation {
@@ -376,7 +411,7 @@ struct NativeEditorView: View {
             NativeVideoPreview(
                 session: session, onEmptyTap: handleEmptyPreviewTap,
                 onFindOriginals: { showsOriginalsRecovery = true },
-                onAddClip: { showsEmptyAddClip = true }
+                onAddClip: { emptyAddClip = $0 }
             )
                 .frame(width: previewHeight * session.previewAspectRatio, height: previewHeight)
                 .clipped()
@@ -410,6 +445,11 @@ struct NativeEditorView: View {
                 .overlay(alignment: .bottomTrailing) {
                     if conversation != nil, session.pendingText == nil, !lineEditing {
                         KriaAIButton(identifier: "native-editor-conversation") { showsConversation = true }
+                    }
+                }
+                .overlay(alignment: .bottomLeading) {
+                    if let improve, session.pendingText == nil, !lineEditing {
+                        ImproveEntryButton(count: improve.cards.count) { showsImprove = true }
                     }
                 }
                 // The centered preview leaves horizontal editor margins on
@@ -652,7 +692,7 @@ struct NativeEditorView: View {
                                     .transition(panelTransition)
                             }
                             if !keyboardVisible && !lineEditing {
-                                NativeEditorToolRail(selected: panel?.tool, availableWidth: area.size.width - 24, connected: true, showsDraw: session.canAddDrawing, showsBackground: session.canEditSpeakerBackground, onSelect: selectTool)
+                                NativeEditorToolRail(selected: panel?.tool, connected: true, showsDraw: session.canAddDrawing, showsBackground: session.canEditSpeakerBackground, onSelect: selectTool)
                             }
                         }
                         .frame(width: panelIsOpen ? max(0, area.size.width - 24) : min(328, max(0, area.size.width - 24)))
@@ -717,6 +757,11 @@ struct NativeEditorView: View {
             NativeVisualPanel(session: session, uploads: model.uploads, projectID: project.id, panelDrafts: panelDrafts) { changePanel(to: nil) }
         case .background:
             NativeBackgroundPanel(session: session, uploads: model.uploads, projectID: project.id) { changePanel(to: nil) }
+        case .speaker:
+            NativeSpeakerPanel(session: session) {
+                if session.selection?.kind == .speaker { session.select(nil, seekToStart: false) }
+                changePanel(to: nil)
+            }
         case .sounds:
             NativeSoundsPanel(session: session, panelDrafts: panelDrafts) { changePanel(to: nil) }
         case .drawing(let id):
@@ -746,6 +791,9 @@ struct NativeEditorView: View {
             if let selection = session.finishTextCreation() { textCreated(selection) }
         case .text: textEditingDone()
         case .captions, .visuals, .background, .sounds, .drawing: changePanel(to: nil)
+        case .speaker:
+            if session.selection?.kind == .speaker { session.select(nil, seekToStart: false) }
+            changePanel(to: nil)
         case nil: break
         }
     }
@@ -871,6 +919,7 @@ struct NativeEditorView: View {
         guard !session.isDirectManipulating, !session.isTimingGestureActive else { return }
         guard let selection = session.selection else {
             if case .text = panel { changePanel(to: nil) }
+            if panel == .speaker { changePanel(to: nil) }
             selectedTextForActions = nil
             selectedSoundEffectForActions = nil
             return
@@ -878,6 +927,10 @@ struct NativeEditorView: View {
         if selection.kind != .soundEffect { selectedSoundEffectForActions = nil }
         if [.mediaOverlay, .visualBlock, .motionScene, .cameraEffect].contains(selection.kind) {
             changePanel(to: .visuals)
+            return
+        }
+        if selection.kind == .speaker {
+            changePanel(to: .speaker)
             return
         }
         if selection.kind == .drawing {
@@ -983,14 +1036,13 @@ struct NativeEditorView: View {
             if project.runtimeVersion == 2 { await session.synchronizePromptRevision() }
             return
         }
-        if let libraryJobID {
-            await session.load(libraryJobID: libraryJobID, api: model.api)
-        } else {
+        let lifetime = session.editorLifetimeID
+        if libraryJobID == nil {
             // KRI-529: a thread revision bump alone (a chat turn) must not reload the editor.
             if await session.reconcileOnOpen(project: project, api: model.api) { return }
-            await session.load(project: project, api: model.api)
         }
-        await session.refreshDeviceRender()
+        guard let loadedLifetime = await session.loadForEditorOpen(project: project, libraryJobID: libraryJobID,
+            api: model.api, expectedLifetime: lifetime), session.editorLifetimeID == loadedLifetime else { return }
         if let file = deviceLocalFile { session.showDeviceOutput(file) }
     }
 
@@ -1054,7 +1106,7 @@ private struct NativeEditorLoadSurface: View {
             NativeEditorTopBar(title: projectTitle, onBack: onBack)
             VStack(alignment: .leading, spacing: 14) {
                 if isLoading { ProgressView().tint(KriaColor.ink) }
-                Text(title).font(KriaFont.display(29))
+                Text(title).font(KriaFont.headline(29))
                 Text(detail).font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
                 if let retry {
                     Button("Try again", action: retry)
@@ -1109,6 +1161,8 @@ private enum NativeEditorInspector: Identifiable {
             case .visualBlock, .motionScene, .cameraEffect: return "Visual"
             case .drawing: return "Drawing"
             case .carousel: return "Carousel"
+            case .speakerBackgroundWindow: return "Background"
+            case .speaker: return "You"
             }
         case .adjust: return "Adjust"
         case .crop: return "Crop"
@@ -1126,6 +1180,8 @@ private enum NativeEditorInspector: Identifiable {
 private struct NativeEditorInspectorView: View {
     let inspector: NativeEditorInspector
     @ObservedObject var session: NativeEditorSession
+    @ObservedObject var uploads: BackgroundUploadCoordinator
+    let projectID: UUID
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -1141,7 +1197,7 @@ private struct NativeEditorInspectorView: View {
                 case .selection(let selection): NativeSelectionInspector(selection: selection, session: session)
                 case .adjust: NativeAdjustInspector(session: session)
                 case .crop(let selection): NativeCropSheet(session: session, selection: selection, embedded: true)
-                case .tilt(let selection): NativeTiltSheet(session: session, selection: selection)
+                case .tilt(let selection): NativeTiltSheet(session: session, uploads: uploads, projectID: projectID, selection: selection)
                 case .sourceWindow(let selection): NativeSourceWindowSheet(session: session, selection: selection, embedded: true)
                 case .videoShape: NativeVideoShapeInspector(session: session)
                 }
@@ -1167,7 +1223,7 @@ private struct NativeKriaInspector: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Text("A considered next move")
-                    .font(KriaFont.display(29))
+                    .font(KriaFont.headline(29))
                 Text("Kria keeps proposals reversible. Pick one to make a small, visible change, then decide whether to save.")
                     .font(KriaFont.body(15))
                     .foregroundStyle(KriaColor.zinc)

@@ -215,6 +215,66 @@ import XCTest
         XCTAssertEqual(session.appendNewlyReadyAssets(), 1, "ordinary imports still join the post")
     }
 
+    // MARK: KRI-1142: a generated picture becomes a sticker, never a slide
+
+    private func slidePost(assets: [SlidePostAsset]) async -> SlidePostSession {
+        let draft = SlidePostDraft(version: 1, platformProfile: "tiktok_photo", slides: [.init(id: "s1", assetID: "a1", kind: "image")])
+        let session = SlidePostSession(defaults: defaults)
+        await refresh(session, assets: assets, draft: draft)
+        session.appendNewlyReadyAssets()      // the session has now looked at the pool
+        return session
+    }
+
+    func testAGeneratedPictureAppearingWhileTheSheetIsOpenIsNeverAppendedAsASlide() async throws {
+        let session = await slidePost(assets: [asset("a1")])
+        session.beginPictureGeneration()
+        await refresh(session, assets: [asset("a1"), asset("gen", name: "generated.png")], draft: session.draft)
+        XCTAssertEqual(session.appendNewlyReadyAssets(), 0)
+        XCTAssertEqual(session.draft?.slides.map(\.assetID), ["a1"])
+    }
+
+    func testAcceptingAGeneratedPicturePlacesItAsAStickerAndAddsNoSlide() async throws {
+        let session = await slidePost(assets: [asset("a1")])
+        session.beginPictureGeneration()
+        await refresh(session, assets: [asset("a1"), asset("gen", name: "generated.png")], draft: session.draft)
+        let stickerID = try XCTUnwrap(session.placeGeneratedPicture(slideID: "s1", assetID: "gen"))
+        session.endPictureGeneration()
+        await refresh(session, assets: [asset("a1"), asset("gen", name: "generated.png")], draft: session.draft)
+        XCTAssertEqual(session.appendNewlyReadyAssets(), 0)
+        XCTAssertEqual(session.draft?.slides.map(\.assetID), ["a1"])
+        XCTAssertEqual(session.draft?.slides[0].edits?.effectiveStickers.map(\.assetID), ["gen"])
+        XCTAssertEqual(session.selectedStickerID, stickerID)
+    }
+
+    func testAnAbandonedGeneratedPictureStaysOutOfThePostAfterTheSheetCloses() async throws {
+        let session = await slidePost(assets: [asset("a1")])
+        session.beginPictureGeneration()
+        await refresh(session, assets: [asset("a1"), asset("gen", name: "generated.png")], draft: session.draft)
+        session.endPictureGeneration()
+        await refresh(session, assets: [asset("a1"), asset("gen", name: "generated.png")], draft: session.draft)
+        XCTAssertEqual(session.appendNewlyReadyAssets(), 0)
+        XCTAssertEqual(session.draft?.slides.map(\.assetID), ["a1"])
+    }
+
+    func testOrdinaryImportsStillJoinThePostAfterAGenerationSession() async throws {
+        let session = await slidePost(assets: [asset("a1")])
+        session.beginPictureGeneration()
+        session.endPictureGeneration()
+        await refresh(session, assets: [asset("a1"), asset("a2")], draft: session.draft)
+        XCTAssertEqual(session.appendNewlyReadyAssets(), 1, "a normal upload after the sheet closed is still a slide")
+    }
+
+    func testAFullSlideRefusesAGeneratedPictureWithoutAddingASlide() async throws {
+        let session = await slidePost(assets: [asset("a1")])
+        for index in 0..<SlidePostEdits.maxStickers { _ = session.addSticker(slideID: "s1", assetID: "pic\(index)") }
+        session.beginPictureGeneration()
+        await refresh(session, assets: [asset("a1"), asset("gen", name: "generated.png")], draft: session.draft)
+        XCTAssertNil(session.placeGeneratedPicture(slideID: "s1", assetID: "gen"))
+        session.endPictureGeneration()
+        XCTAssertEqual(session.appendNewlyReadyAssets(), 0)
+        XCTAssertEqual(session.draft?.slides.count, 1)
+    }
+
     /// The paste end to end with a stand-in uploader: the picture lands in the pool as `processing`, then `ready`, and a
     /// refresh lands between those two moments (the workspace polls on its own). It becomes a sticker, never a slide,
     /// and a freshly created session over the same stored state (a relaunch) still does not offer it as one.

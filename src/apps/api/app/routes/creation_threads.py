@@ -10,10 +10,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import functools
 import hashlib
 import json
 import re
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal, NoReturn
@@ -44,7 +46,12 @@ from app.db_locks import (
     acquire_locked_rows,
     transient_sqlstate,
 )
-from app.kria.api_schemas import EDITOR_STATE_MAX_BYTES, KriaProblemOut, ThreadDeltaOut
+from app.kria.api_schemas import (
+    EDITOR_STATE_MAX_BYTES,
+    KriaProblemOut,
+    SuggestionTapIn,
+    ThreadDeltaOut,
+)
 from app.kria.device_render import DeviceRenderCapabilities
 from app.kria.http import KriaFailureRoute, problem_response
 from app.kria.language import is_status_question
@@ -60,7 +67,9 @@ from app.kria.media_sources import (
 )
 from app.kria.plan_contract import CONTRACT_VERSION
 from app.kria.reply_language import (
+    creator_typed_language,
     detect_chat_language,
+    needs_typed_history,
     remember_reply_language,
     reply_language_for,
     resolve_reply_language,
@@ -146,17 +155,32 @@ from app.services.phone_destination import (
     with_device_intent,
 )
 from app.services.song_range import SongRangeError, apply_song_range, normalized_range
+from app.services.source_replacement import (
+    MEDIA_REPLACED_EVENT,
+    REASON_RETAKE,
+    SOURCE_REPLACEMENT_STATE_KEY,
+    SourceReplacement,
+    check_retake_target,
+    current_speaker_media_ids,
+    render_in_flight,
+    retake_format_supported,
+    speakers_after_swap,
+)
 from app.services.speech_cleanup_decision import (
     SpeechCleanupDecisionConflict,
     evaluate_enforce_mode_decision,
 )
 from app.services.suggestion_chips import (
     SuggestionSetOut,
-    persist_suggestion_set,
     suggestion_tap_payload,
     unavailable_set,
 )
-from app.services.suggestion_serve import serve_suggestion_set
+from app.services.suggestion_serve import (
+    dismiss_suggestion,
+    editor_triggers_on,
+    persist_served_set,
+    serve_suggestion_set,
+)
 
 log = structlog.get_logger()
 
@@ -405,6 +429,9 @@ class CreationCapabilitiesOut(BaseModel):
     # KRI-1138: tilt a slide's photo or video. True only with MEDIA_TILT_ENABLED on AND a build
     # declaring X-Kria-Client-Protocol >= media_tilt_min_client_protocol (28).
     slide_post_tilt: bool = False
+    # KRI-1170: the Zoom slider in the slide Tilt panel. Only with `slide_post_tilt` open AND a
+    # build declaring X-Kria-Client-Protocol >= media_tilt_zoom_min_client_protocol (33).
+    slide_post_tilt_zoom: bool = False
     # KRI-646: text Bend on device-drawn text AND slide-post text. True only with the flag
     # on, `textBend` verified, and a build declaring X-Kria-Client-Protocol >=
     # text_bend_min_client_protocol.
@@ -415,8 +442,15 @@ class CreationCapabilitiesOut(BaseModel):
     # client_protocol. The per-edit editor capability (`editor_capabilities.speaker_background`)
     # narrows it to device-rendered Talk-to-camera variants.
     speaker_background: bool = False
+    # KRI-1173: the same lane may use a solid colour as the fill. True only with the base
+    # `speaker_background` gate open AND `speakerBackgroundColor` verified AND a build declaring
+    # X-Kria-Client-Protocol >= speaker_background_color_min_client_protocol.
+    speaker_background_color: bool = False
     # KRI-742: the chat composers show a mic button (VOICE_DICTATION_ENABLED).
     voice_dictation: bool = False
+    # Qendresa item 24: the Add media sheet shows the "screen recording belongs in Overlays"
+    # hint (UPLOAD_PLACE_HINT_ENABLED). Additive key; no client protocol gate.
+    upload_place_hint: bool = False
     slide_post_extended_device_export: bool = False
     # KRI-374: the server may ask the creator to confirm the order of takes it
     # could not place against their song (`song_order_question` on a turn plan).
@@ -447,6 +481,9 @@ class CreationCapabilitiesOut(BaseModel):
     # (KRIA_SUGGESTION_CHIPS_ENABLED or the cohort list). Clients gate on this bool; a 404 or
     # empty chips list means "render nothing". No NEXT_PUBLIC twin.
     suggestion_chips: bool = False
+    # Steer now: a message sent while Kria works waits as "Up next"; the app may cancel the
+    # running turn with `steer: true` (KRIA_STEER_NOW_ENABLED or the cohort list). iOS only.
+    steer_now: bool = False
     request_outcome_context: bool = False
     # KRI-815: a reply may carry `voiceover_script` (a footage-grounded script with a
     # record/import continuation) when KRIA_VOICEOVER_SCRIPT_ENABLED. False/absent = the app
@@ -574,11 +611,20 @@ class UploadFile(StrictBody):
     # role-agnostic (same content types, same object path); the role is only
     # used to refuse a second song early and to refuse a song when unavailable.
     role: Literal["voiceover", "song"] | None = None
+    # A re-recorded take replaces this attached clip, so it does not count against the clip
+    # cap (`MEDIA_REPLACE_ENABLED`). Only a video that really replaces an attached clip is
+    # exempt; the swap itself is count-preserving.
+    replaces_media_id: str | None = Field(default=None, min_length=1, max_length=160)
 
     @field_validator("client_upload_id")
     @classmethod
     def validate_client_upload_id(cls, value: str) -> str:
         return _client_id(value)
+
+    @field_validator("replaces_media_id")
+    @classmethod
+    def validate_replaces_media_id(cls, value: str | None) -> str | None:
+        return _client_id(value) if value is not None else None
 
 
 class UploadBody(StrictBody):
@@ -666,6 +712,20 @@ class AttachBody(StrictBody):
         if sum(item.role == "song" for item in self.media) > 1:
             raise ValueError("only one song can be attached")
         return self
+
+
+class ReplaceMediaBody(StrictBody):
+    replaced_media_id: str = Field(min_length=1, max_length=160)
+    media: MediaInput
+    # Room for a later generic clip replace without a breaking change.
+    reason: Literal["retake"] = REASON_RETAKE
+    client_event_id: str = Field(min_length=1, max_length=160)
+    expected_revision: int = Field(ge=0)
+
+    @field_validator("client_event_id", "replaced_media_id")
+    @classmethod
+    def validate_ids(cls, value: str) -> str:
+        return _client_id(value)
 
 
 class ArchiveBody(StrictBody):
@@ -969,6 +1029,15 @@ def _media_capabilities(
             "max_file_bytes": _MAX_BYTES_PER_FILE,
             "content_types": sorted(_ALLOWED_CONTENT_TYPES),
             "format": item.edit_format or "montage",
+            # Absent (not false) while the flag is off, so the payload is byte-identical.
+            **(
+                {"replace": True}
+                if settings.media_replace_enabled
+                and retake_format_supported(
+                    item.edit_format, item.audio_mode, item.voiceover_gcs_path
+                )
+                else {}
+            ),
         },
         "visuals": {
             "current": visual_count,
@@ -1134,8 +1203,15 @@ async def _probe_registered_media(
     generation: str,
     kind: str,
     proxy: AnalysisProxyDescriptor | None = None,
+    reject: Callable[..., NoReturn] | None = None,
 ) -> tuple[float, bool]:
-    """Range-probe one verified generation; never persist/log its signed URL."""
+    """Range-probe one verified generation; never persist/log its signed URL.
+
+    ``reject`` takes the same arguments as the verifier's (status, detail, cause, ``reason``
+    and log fields); the default keeps the legacy HTTP error and its log event.
+    """
+
+    reject = reject or functools.partial(_reject_media, "creation_thread.media_probe.rejected")
 
     signed_url = await asyncio.to_thread(
         storage.signed_get_url_for_generation,
@@ -1148,8 +1224,7 @@ async def _probe_registered_media(
         try:
             probe = await asyncio.to_thread(probe_video, signed_url)
         except ProbeError as exc:
-            _reject_media(
-                "creation_thread.media_probe.rejected",
+            reject(
                 422,
                 "Video could not be read",
                 cause=exc,
@@ -1165,8 +1240,7 @@ async def _probe_registered_media(
             or abs(probe.fps - proxy.frame_rate) > 0.01
             or probe.rotation_degrees != 0
         ):
-            _reject_media(
-                "creation_thread.media_probe.rejected",
+            reject(
                 422,
                 "Uploaded proxy geometry differs from its descriptor",
                 reason="proxy_geometry_mismatch",
@@ -1190,8 +1264,7 @@ async def _probe_registered_media(
     duration = await asyncio.to_thread(probe_duration, signed_url)
     has_audio = await asyncio.to_thread(probe_has_audio_stream, signed_url)
     if duration is None or duration <= 0 or not has_audio:
-        _reject_media(
-            "creation_thread.media_probe.rejected",
+        reject(
             422,
             "Narration audio could not be read",
             reason="audio_could_not_be_read",
@@ -2174,6 +2247,14 @@ async def _duplicate(
             )
         )
     ).scalar_one_or_none()
+
+
+def _job_projection_in_chat_language(
+    thread: CreationThread, job: Job | None, item: Any
+) -> dict[str, Any] | None:
+    """`_job_projection` with the chat's language bound, so render notes read in it."""
+    with reply_language_for(thread_reply_language(thread)):
+        return _job_projection(job, item=item)
 
 
 def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | None:
@@ -3356,6 +3437,65 @@ async def _render_shape_projection(
         return None
 
 
+async def _cleanup_ask_projection(
+    db: AsyncSession, thread: CreationThread, item: PlanItem
+) -> tuple[bool, bool]:
+    """Qendresa 13: ``(requested_in_chat, tight)`` for the speech-cleanup card.
+
+    Read off the newest pending approval's pinned brief, the same way ``_render_shape_projection``
+    does. ``requested_in_chat``: the creator's own words ask for speech cleanup. ``tight``: they
+    ask for EVERY pause to go AND the draft is a phone Talking single-clip edit (the only render
+    that cuts pauses tight). Best-effort: anything unreadable is ``(False, False)``; it must never
+    break the thread read."""
+    from app.kria.brief_checks import defers_caption_words_to_phone_render  # noqa: PLC0415
+    from app.kria.tight_pause_ask import (  # noqa: PLC0415
+        brief_tight_pauses,
+        brief_wants_speech_cleanup,
+    )
+    from app.services import render_shape  # noqa: PLC0415
+
+    try:
+        if int(getattr(thread, "runtime_version", 1)) != 2:
+            return False, False
+        snapshot = (
+            await db.execute(
+                select(CreatorEditDraft.snapshot_json)
+                .join(CreatorAgentApproval, CreatorAgentApproval.draft_id == CreatorEditDraft.id)
+                .where(
+                    CreatorAgentApproval.thread_id == thread.id,
+                    CreatorAgentApproval.status == "pending",
+                )
+                .order_by(CreatorAgentApproval.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if not isinstance(snapshot, dict):
+            return False, False
+        brief = render_shape.readable_brief(snapshot.get("brief_binding"))
+        if brief is None or not brief_wants_speech_cleanup(brief):
+            return False, False
+        if not brief_tight_pauses(brief):
+            return True, False
+        raw_strategy = snapshot.get("strategy")
+        strategy = raw_strategy if isinstance(raw_strategy, dict) else {}
+        edit_format = strategy.get("edit_format") or getattr(item, "edit_format", None)
+        clip_paths = tuple(getattr(item, "clip_gcs_paths", None) or ())
+        phone_talking = (
+            len(clip_paths) == 1
+            and edit_format in {"subtitled", "talking_head"}
+            and defers_caption_words_to_phone_render(
+                creator_id=thread.creator_id,
+                edit_format=edit_format,
+                audio_strategy=strategy.get("audio_strategy"),
+                clip_paths=clip_paths,
+            )
+        )
+        return True, bool(phone_talking)
+    except Exception:  # noqa: BLE001 - an optional projection never breaks a read
+        log.warning("creation_thread.cleanup_ask_projection_failed", exc_info=True)
+        return False, False
+
+
 async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadOut:
     if isinstance(db, AsyncSession) and (thread.state or {}).get("title_generation") == "pending":
         start_title_generation(thread.id)
@@ -3417,6 +3557,7 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
     public_state.pop("_creator_direction_snapshot_v1", None)
     # KRI-756: the offered-chip ring is server bookkeeping for tap detection.
     public_state.pop("suggestion_sets", None)
+    public_state.pop("suggestion_suppressed", None)
     private_direction = (
         thread.creator_direction_snapshot
         if isinstance(getattr(thread, "creator_direction_snapshot", None), dict)
@@ -3519,6 +3660,12 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
                 # every legacy required_v1 Job. An item genuinely in the cohort
                 # still gets its card through in_cohort.
                 speech_cleanup = None
+            if settings.tight_pause_cut_enabled and isinstance(speech_cleanup, dict):
+                requested, tight = await _cleanup_ask_projection(db, thread, item)
+                if requested:
+                    speech_cleanup["requested_in_chat"] = True
+                if tight:
+                    speech_cleanup["pause_style"] = "tight"
     render_shape_projection = None
     if isinstance(db, AsyncSession) and item is not None:
         render_shape_projection = await _render_shape_projection(db, thread, item, session)
@@ -3553,7 +3700,7 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
         else None,
         active_job_id=str(response_active_job_id) if response_active_job_id else None,
         creator_agent=_creator_agent_projection(session, item=item),
-        job=_job_projection(job, item=item),
+        job=_job_projection_in_chat_language(thread, job, item),
         media_capabilities=media_capabilities,
         direction_receipt=direction_receipt,
         speech_cleanup=speech_cleanup,
@@ -4053,6 +4200,12 @@ async def capabilities(
             and client_protocol is not None
             and client_protocol >= settings.media_tilt_min_client_protocol
         ),
+        "slide_post_tilt_zoom": bool(
+            settings.media_tilt_enabled
+            and client_protocol is not None
+            and client_protocol >= settings.media_tilt_min_client_protocol
+            and client_protocol >= settings.media_tilt_zoom_min_client_protocol
+        ),
         "text_bend": bool(
             settings.text_bend_enabled
             and "textBend" in set(settings.phone_render_verified_features)
@@ -4065,10 +4218,19 @@ async def capabilities(
             and client_protocol is not None
             and client_protocol >= settings.speaker_background_min_client_protocol
         ),
+        "speaker_background_color": bool(
+            settings.speaker_background_enabled
+            and "speakerBackground" in set(settings.phone_render_verified_features)
+            and "speakerBackgroundColor" in set(settings.phone_render_verified_features)
+            and client_protocol is not None
+            and client_protocol >= settings.speaker_background_min_client_protocol
+            and client_protocol >= settings.speaker_background_color_min_client_protocol
+        ),
         "voice_dictation": bool(
             settings.voice_dictation_enabled
             and (settings.openai_api_key or settings.whisper_backend != "openai-api")
         ),
+        "upload_place_hint": bool(settings.upload_place_hint_enabled),
         "creation_mode": (
             "device_only" if settings.ios_device_only_mode or native_device_only else "hybrid"
         ),
@@ -4121,6 +4283,7 @@ async def capabilities(
         "live_plan_review_enabled": bool(settings.live_plan_review_enabled),
         "live_plan_review_version": CONTRACT_VERSION if settings.live_plan_review_enabled else 1,
         "suggestion_chips": bool(settings.suggestion_chips_for(user.id)),
+        "steer_now": bool(settings.steer_now_for(user.id)),
         "request_outcome_context": True,
         "voiceover_script_cards": bool(settings.kria_voiceover_script_enabled),
     }
@@ -4239,13 +4402,24 @@ async def create_thread(
     # a short follow-up ("ok") keeps it. The device language only picks this
     # prompt's copy and is never stored.
     remember_reply_language(thread, detect_chat_language(body.message))
+    # Green 5: a new chat greets in the language the creator types in their other chats when
+    # its first message (if any) does not say; the device language is the last resort.
+    typed_elsewhere = (
+        await creator_typed_language(db, creator_id=user.id, exclude_thread_id=thread.id)
+        if needs_typed_history(body.message, None)
+        else None
+    )
     await _append(
         db,
         thread,
         event_type="format_prompt",
         role="assistant",
         content=_format_prompt_copy(
-            resolve_reply_language(body.message, locale=request.headers.get("accept-language"))
+            resolve_reply_language(
+                body.message,
+                locale=request.headers.get("accept-language"),
+                typed_elsewhere=typed_elsewhere,
+            )
         ),
         payload={
             "kind": "select_format",
@@ -4374,7 +4548,11 @@ async def list_threads(
                 title=getattr(row, "title", None) or _DEFAULT_TITLE,
                 status=row.status,
                 revision=row.revision,
-                state={k: v for k, v in (row.state or {}).items() if k != "suggestion_sets"},
+                state={
+                    k: v
+                    for k, v in (row.state or {}).items()
+                    if k not in {"suggestion_sets", "suggestion_suppressed"}
+                },
                 content_plan_id=str(row.content_plan_id) if row.content_plan_id else None,
                 active_plan_item_id=str(row.active_plan_item_id)
                 if row.active_plan_item_id
@@ -4615,18 +4793,11 @@ async def thread_suggestions(
             client_protocol,
             locale=request.headers.get("accept-language"),
         )
-        # Release the read transaction, then take the ring write on its own.
+        # Release the read transaction, then take the ring write on its own. Everything the write
+        # needs was built before this point (``serve_suggestion_set``), while the Job was live.
         await db.rollback()
-        await persist_suggestion_set(
-            db,
-            owner_thread_id,
-            served.out,
-            media_digest=served.media_digest,
-            protocol=client_protocol,
-            input_digest=served.input_digest,
-            witness_tiers=served.witness_tiers,
-        )
-        return served.out
+        await persist_served_set(db, owner_thread_id, served, protocol=client_protocol)
+        return await _with_pin_outcomes(db, owner_thread_id, served.out)
     except Exception:  # noqa: BLE001 - chips are an enhancement; never fail the screen
         log.warning(
             "suggestion_chips.error",
@@ -4639,6 +4810,91 @@ async def thread_suggestions(
         except Exception:  # noqa: BLE001
             pass
         return unavailable_set()
+
+
+async def _with_pin_outcomes(
+    db: AsyncSession, thread_id: uuid.UUID, out: SuggestionSetOut
+) -> SuggestionSetOut:
+    """Hide the cards a tap already applied or was refused for, and mint a new set on a refusal.
+
+    A tap marks its card on the ring entry of the set it came from
+    (``services/suggestions/pinned``). Here, and only when ``out`` still offers such a card: the
+    card is dropped by its id (whatever the editor-triggers flag says); and when a tap was REFUSED
+    the set gets a new id, so the phone's "hidden until the set changes" ledger lets go and
+    "refreshing the ideas" is true. The new set is stored (a copy of the entry minus those cards)
+    before it is returned: a card the ring cannot find answers "no longer fits". Anything else
+    leaves ``out`` exactly as it was.
+    """
+    if not out.suggestions:
+        return out
+    from app.services.suggestion_serve import _mutate_state  # noqa: PLC0415
+    from app.services.suggestions import pinned  # noqa: PLC0415
+
+    thread = await db.get(CreationThread, thread_id)
+    state = dict(getattr(thread, "state", None) or {})
+    await db.rollback()
+    moved = pinned.walk(state, out.set_id)
+    shown = {card.id for card in out.suggestions}
+    if not (moved.hidden & shown) and moved.set_id == out.set_id:
+        return out
+    kept = [card for card in out.suggestions if card.id not in moved.hidden]
+    result = out.model_copy(
+        update={"suggestions": [c.model_copy(update={"rank": i + 1}) for i, c in enumerate(kept)]}
+    )
+    if moved.mint is None:
+        return result.model_copy(update={"set_id": moved.set_id})
+    source_id, new_id = moved.mint
+    outcome = await _mutate_state(
+        db,
+        thread_id,
+        lambda current: pinned.derive_entry(current, source_id, new_id, moved.hidden),
+    )
+    if outcome in {"written", "current"}:
+        return result.model_copy(update={"set_id": new_id})
+    return result
+
+
+class SuggestionDismissOut(BaseModel):
+    """What happened to a dismiss. Every value is a normal outcome, never an error."""
+
+    # dismissed | already_dismissed | unknown | busy | unavailable
+    status: str
+
+
+@router.post("/{thread_id}/suggestions/dismiss", response_model=SuggestionDismissOut)
+async def dismiss_thread_suggestion(
+    thread_id: str,
+    body: SuggestionTapIn,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    response: Response,
+) -> SuggestionDismissOut:
+    """Hide a suggestion card for good. Additive, idempotent, owner-checked, revision-neutral.
+
+    ``set_id`` / ``chip_id`` are the card's own ids from the GET. The card is looked up in this
+    thread's own offered-set ring, so an id from another thread resolves to nothing. Flag off:
+    ``unavailable``. An id the ring does not hold (a card that already rolled out, or one that was
+    never offered) is ``unknown`` and writes nothing. ``busy`` means a turn held the thread for
+    the whole retry window; the app hides the card locally and may send it again.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    if not settings.suggestion_chips_for(user.id) or not editor_triggers_on():
+        return SuggestionDismissOut(status="unavailable")
+    thread = await _load(thread_id, user, db)
+    owner_thread_id = thread.id
+    await db.rollback()
+    try:
+        outcome = await dismiss_suggestion(db, owner_thread_id, body.set_id, body.chip_id)
+    except Exception:  # noqa: BLE001 - a dismiss is a nicety; never fail the screen
+        log.warning(
+            "suggestion_chips.error", stage="dismiss", thread_id=str(owner_thread_id), exc_info=True
+        )
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return SuggestionDismissOut(status="busy")
+    return SuggestionDismissOut(status=outcome)
 
 
 @router.get("/{thread_id}", response_model=CreationThreadOut | ThreadDeltaOut)
@@ -6196,6 +6452,16 @@ async def upload_urls(
         else _MAX_CLIPS_PER_ITEM
     )
     requested_clips = sum(1 for file in body.files if file.content_type.startswith("video/"))
+    replaced_ids = {file.replaces_media_id for file in body.files if file.replaces_media_id}
+    if replaced_ids:
+        _require_media_replace()
+        attached_clip_ids = {
+            row.get("media_id")
+            for row in (getattr(item, "clip_assignments", None) or [])
+            if isinstance(row, dict) and row.get("kind", "video") == "video"
+        }
+        # One exemption per attached clip actually being replaced, never per file.
+        requested_clips -= min(requested_clips, len(replaced_ids & attached_clip_ids))
     if current_clips + requested_clips > clip_limit:
         _reject_media(
             "creation_thread.upload_urls.rejected",
@@ -6436,6 +6702,357 @@ async def upload_urls(
     return targets
 
 
+def _clip_assignment_row(source: dict[str, Any]) -> dict[str, Any]:
+    """The PlanItem clip-assignment row for one verified video upload."""
+    return {
+        "gcs_path": source["_path"],
+        "media_id": source["media_id"],
+        "kind": source["kind"],
+        "shot_id": None,
+        "storage_generation": source["generation"],
+        "duration_s": source["duration_s"],
+        "has_audio": source["has_audio"],
+        "manifest_identity": source["media_id"],
+        **(
+            {
+                "library_asset_id": source["library_asset_id"],
+                "library_source_id": source["library_source_id"],
+            }
+            if source.get("library_asset_id")
+            else {}
+        ),
+        # KRI-614: the name the app shows for this clip ("IMG_7382.MOV"), so
+        # "first IMG_7382 then ..." can name it. Evidence only: never part of
+        # the manifest identity or hash.
+        **(
+            {"source_filename": filename}
+            if (filename := safe_media_basename(source["filename"]))
+            else {}
+        ),
+        # KRI-189: authoritative filming context (source of truth for
+        # the fact layer); coarse by construction.
+        **({"capture": source["_capture"]} if "_capture" in source else {}),
+        **({"upload_contract": source["upload_contract"]} if "upload_contract" in source else {}),
+    }
+
+
+async def _verify_registered_uploads(
+    db: AsyncSession,
+    *,
+    user: CurrentUser,
+    thread: CreationThread,
+    media_inputs: list[MediaInput],
+    library_sources: dict[str, Any],
+    native_client: bool,
+    reject: Callable[..., NoReturn],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Verify each reserved upload against storage and return its registration rows.
+
+    Shared by attach and replace so a retaken video passes exactly the checks a first take
+    does (object generation, probe, proxy descriptor, library registration). Returns the
+    rows (with the server-only ``_ATTACH_PRIVATE_KEYS``) and the physical upload paths.
+    ``reject`` raises; attach reports an HTTP error, replace a typed code.
+    """
+    proxy_contracts: dict[str, MediaUploadContract] = {}
+    proxy_ids = [
+        media.media_id
+        for media in media_inputs
+        if is_analysis_proxy_path(media.media_id) and media.media_id not in library_sources
+    ]
+    if proxy_ids:
+        reservations = (
+            (
+                await db.execute(
+                    select(CreationThreadUploadReservation)
+                    .where(
+                        CreationThreadUploadReservation.thread_id == thread.id,
+                        CreationThreadUploadReservation.creator_id == user.id,
+                        CreationThreadUploadReservation.media_id.in_(proxy_ids),
+                    )
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for reservation in reservations:
+            contract = MediaUploadContract.model_validate(reservation.upload_contract or {})
+            if contract.purpose != "analysis_proxy" or reservation.object_path != _media_path(
+                user.id, thread.id, reservation.media_id
+            ):
+                reject(
+                    409,
+                    "Proxy reservation does not match its source",
+                    reason="proxy_reservation_mismatch",
+                    thread_id=str(thread.id),
+                    media_id=reservation.media_id,
+                )
+            proxy_contracts[reservation.media_id] = contract
+        if set(proxy_contracts) != set(proxy_ids):
+            reject(
+                409,
+                "Proxy reservation is missing; upload again",
+                reason="proxy_reservation_missing",
+                thread_id=str(thread.id),
+                missing_media_ids=sorted(set(proxy_ids) - set(proxy_contracts)),
+            )
+    verified: list[dict[str, Any]] = []
+    physical_upload_paths: list[str] = []
+    for media in media_inputs:
+        library = library_sources.get(media.media_id)
+        expected_path = (
+            library[1].object_path if library else _media_path(user.id, thread.id, media.media_id)
+        )
+        if library is None:
+            from app.services.temporary_uploads import require_upload_available
+
+            try:
+                await require_upload_available(db, user.id, expected_path)
+            except HTTPException as exc:
+                reject(
+                    exc.status_code,
+                    str(exc.detail),
+                    cause=exc,
+                    reason="upload_target_unavailable",
+                    thread_id=str(thread.id),
+                    media_id=media.media_id,
+                    media_kind=media.kind,
+                )
+            physical_upload_paths.append(expected_path)
+        if library and library[1].role == "analysis_proxy":
+            proxy_contracts[media.media_id] = MediaUploadContract.model_validate(
+                library[0].metadata_json.get("upload_contract") or {}
+            )
+        try:
+            metadata = await asyncio.to_thread(storage.object_metadata, expected_path)
+        except FileNotFoundError as exc:
+            reject(
+                409,
+                "Upload has not finished",
+                cause=exc,
+                reason="upload_not_finished",
+                thread_id=str(thread.id),
+                media_id=media.media_id,
+                media_kind=media.kind,
+            )
+        except Exception as exc:
+            reject(
+                503,
+                "Upload verification unavailable",
+                cause=exc,
+                reason="upload_verification_error",
+                thread_id=str(thread.id),
+                media_id=media.media_id,
+                media_kind=media.kind,
+                error=str(exc),
+            )
+        content_type = (
+            str(metadata.content_type or media.content_type or "").split(";", 1)[0].lower()
+        )
+        kind_allowed = (media.kind == "video" and content_type in _ALLOWED_CONTENT_TYPES) or (
+            media.kind == "audio" and content_type in _SLOT_UPLOAD_AUDIO_CT
+        )
+        kind_limit = _MAX_BYTES_PER_FILE if media.kind == "video" else _MAX_VOICEOVER_BYTES
+        if metadata.size <= 0 or metadata.size > kind_limit or not kind_allowed:
+            reject(
+                422,
+                "Media kind does not match upload",
+                reason="kind_mismatch",
+                thread_id=str(thread.id),
+                media_id=media.media_id,
+                media_kind=media.kind,
+                content_type=content_type,
+                size_bytes=int(metadata.size),
+            )
+        generation = str(getattr(metadata, "generation", "") or "").strip()
+        if library and generation != library[1].object_generation:
+            raise HTTPException(409, "Library cloud copy changed; repair from the original")
+        if not generation:
+            reject(
+                503,
+                "Upload identity is unavailable",
+                reason="identity_unavailable",
+                thread_id=str(thread.id),
+                media_id=media.media_id,
+                media_kind=media.kind,
+            )
+        contract = proxy_contracts.get(media.media_id)
+        try:
+            if library:
+                duration_s = float(library[0].metadata_json.get("duration_s") or 0)
+                has_audio = bool(library[0].metadata_json.get("has_audio"))
+                if duration_s <= 0:
+                    raise HTTPException(409, "Library media has no verified duration")
+            else:
+                duration_s, has_audio = await _probe_registered_media(
+                    thread_id=str(thread.id),
+                    media_id=media.media_id,
+                    object_path=expected_path,
+                    generation=generation,
+                    kind=media.kind,
+                    reject=reject,
+                    **({"proxy": contract.proxy} if contract else {}),
+                )
+        except FileNotFoundError as exc:
+            reject(
+                409,
+                "Upload changed during registration",
+                cause=exc,
+                reason="registration_changed",
+                thread_id=str(thread.id),
+                media_id=media.media_id,
+                media_kind=media.kind,
+            )
+        except (HTTPException, RuntimeFailure):
+            raise
+        except Exception as exc:
+            reject(
+                503,
+                "Media verification unavailable",
+                cause=exc,
+                reason="media_verification_error",
+                thread_id=str(thread.id),
+                media_id=media.media_id,
+                media_kind=media.kind,
+                error=str(exc),
+            )
+        contract = proxy_contracts.get(media.media_id)
+        if contract is not None:
+            # `media.kind` (this attachment request) and `contract.proxy.original.kind`
+            # (the reserved proxy descriptor) are declared independently; a mismatch
+            # would let e.g. an audio-shaped proxy skip the video geometry check above
+            # while claiming to attach as video. verify_registered alone doesn't catch
+            # this — it only compares duration/audio presence, not kind.
+            if contract.proxy.original.kind != media.kind:
+                reject(
+                    422,
+                    "Media kind does not match its reserved proxy",
+                    reason="proxy_kind_mismatch",
+                    thread_id=str(thread.id),
+                    media_id=media.media_id,
+                    media_kind=media.kind,
+                    proxy_kind=contract.proxy.original.kind,
+                )
+            try:
+                contract.proxy.verify_registered(duration_s, has_audio)
+            except ValueError as exc:
+                reject(
+                    422,
+                    str(exc),
+                    cause=exc,
+                    reason="proxy_verification_failed",
+                    thread_id=str(thread.id),
+                    media_id=media.media_id,
+                    media_kind=media.kind,
+                    error=str(exc),
+                    descriptor_duration_s=contract.proxy.duration_s,
+                    probed_duration_s=duration_s,
+                    descriptor_has_audio=contract.proxy.original.has_audio,
+                    probed_has_audio=has_audio,
+                )
+        if media.role == "song":
+            if duration_s > settings.user_song_max_duration_s:
+                reject(
+                    422,
+                    f"Songs must be {int(settings.user_song_max_duration_s // 60)} minutes "
+                    "or shorter",
+                    reason="song_too_long",
+                    thread_id=str(thread.id),
+                    media_id=media.media_id,
+                    probed_duration_s=duration_s,
+                )
+            try:
+                int(generation)
+            except ValueError:
+                reject(
+                    503,
+                    "Upload identity is unavailable",
+                    reason="identity_unavailable",
+                    thread_id=str(thread.id),
+                    media_id=media.media_id,
+                    media_kind=media.kind,
+                )
+        if settings.media_library_enabled and native_client and library is None:
+            from app.services.media_library_ingest import (
+                register_verified_source,
+                track_library_duplicate,
+                verified_source_metadata,
+            )
+
+            legacy_payload = {
+                "kind": media.kind,
+                "content_type": content_type,
+                "file_size_bytes": int(metadata.size),
+                "upload_contract": contract.model_dump(mode="json")
+                if contract
+                else {"purpose": "cloud_render_source", "proxy": None},
+            }
+            proof = await asyncio.to_thread(
+                verified_source_metadata,
+                expected_path,
+                generation,
+                media.kind,
+                legacy_payload,
+                legacy=True,
+            )
+            original = contract.proxy.original if contract and contract.proxy else None
+            library = await register_verified_source(
+                db,
+                owner_id=user.id,
+                kind=media.kind,
+                object_path=expected_path,
+                generation=generation,
+                uploaded_sha256=proof["uploaded_sha256"],
+                byte_count=int(metadata.size),
+                content_type=content_type,
+                role=proof["role"],
+                original_declared_sha256=original.sha256 if original else None,
+                original_byte_count=original.byte_count if original else None,
+                metadata={
+                    **proof["metadata"],
+                    "filename": media.filename,
+                    "upload_contract": legacy_payload["upload_contract"],
+                },
+            )
+            library_sources[media.media_id] = library
+            if library[1].object_path != expected_path:
+                await track_library_duplicate(db, user.id, expected_path)
+            expected_path, generation = library[1].object_path, library[1].object_generation
+        verified.append(
+            {
+                "media_id": _client_id(media.media_id),
+                "kind": media.kind,
+                **({"role": "song"} if media.role == "song" else {}),
+                "filename": media.filename,
+                "content_type": content_type,
+                "size_bytes": int(metadata.size),
+                "generation": generation,
+                "duration_s": duration_s,
+                "has_audio": has_audio,
+                **(
+                    {
+                        "library_asset_id": str(library[0].id),
+                        "library_source_id": str(library[1].id),
+                    }
+                    if library
+                    else {}
+                ),
+                "_path": expected_path,
+                **(
+                    {"_capture": capture.model_dump(mode="json", exclude_none=True)}
+                    if (capture := media.capture()) is not None
+                    else {}
+                ),
+                # The capture lives ONLY on the assignment (`capture` below), never inside the
+                # stored proxy receipt: `OriginalMediaDescriptor` is extra="forbid", so a
+                # capture copy in there would make older code (a rollback, or a worker still
+                # on the previous image) reject the whole receipt and fail phone-job admission.
+                **({"upload_contract": contract.model_dump(mode="json")} if contract else {}),
+            }
+        )
+    return verified, physical_upload_paths
+
+
 @router.post("/{thread_id}/media", response_model=CreationThreadOut)
 @limiter.limit(_MEDIA_INTAKE_RATE_LIMIT)
 async def attach_media(
@@ -6637,303 +7254,15 @@ async def attach_media(
             reason="voiceover_exists",
             thread_id=str(thread.id),
         )
-    proxy_contracts: dict[str, MediaUploadContract] = {}
-    proxy_ids = [
-        media.media_id
-        for media in body.media
-        if is_analysis_proxy_path(media.media_id) and media.media_id not in library_sources
-    ]
-    if proxy_ids:
-        reservations = (
-            (
-                await db.execute(
-                    select(CreationThreadUploadReservation)
-                    .where(
-                        CreationThreadUploadReservation.thread_id == thread.id,
-                        CreationThreadUploadReservation.creator_id == user.id,
-                        CreationThreadUploadReservation.media_id.in_(proxy_ids),
-                    )
-                    .with_for_update()
-                )
-            )
-            .scalars()
-            .all()
-        )
-        for reservation in reservations:
-            contract = MediaUploadContract.model_validate(reservation.upload_contract or {})
-            if contract.purpose != "analysis_proxy" or reservation.object_path != _media_path(
-                user.id, thread.id, reservation.media_id
-            ):
-                _reject_media(
-                    "creation_thread.attach_media.rejected",
-                    409,
-                    "Proxy reservation does not match its source",
-                    reason="proxy_reservation_mismatch",
-                    thread_id=str(thread.id),
-                    media_id=reservation.media_id,
-                )
-            proxy_contracts[reservation.media_id] = contract
-        if set(proxy_contracts) != set(proxy_ids):
-            _reject_media(
-                "creation_thread.attach_media.rejected",
-                409,
-                "Proxy reservation is missing; upload again",
-                reason="proxy_reservation_missing",
-                thread_id=str(thread.id),
-                missing_media_ids=sorted(set(proxy_ids) - set(proxy_contracts)),
-            )
-    verified: list[dict[str, Any]] = []
-    physical_upload_paths: list[str] = []
-    for media in body.media:
-        library = library_sources.get(media.media_id)
-        expected_path = (
-            library[1].object_path if library else _media_path(user.id, thread.id, media.media_id)
-        )
-        if library is None:
-            from app.services.temporary_uploads import require_upload_available
-
-            await require_upload_available(db, user.id, expected_path)
-            physical_upload_paths.append(expected_path)
-        if library and library[1].role == "analysis_proxy":
-            proxy_contracts[media.media_id] = MediaUploadContract.model_validate(
-                library[0].metadata_json.get("upload_contract") or {}
-            )
-        try:
-            metadata = await asyncio.to_thread(storage.object_metadata, expected_path)
-        except FileNotFoundError as exc:
-            _reject_media(
-                "creation_thread.attach_media.rejected",
-                409,
-                "Upload has not finished",
-                cause=exc,
-                reason="upload_not_finished",
-                thread_id=str(thread.id),
-                media_id=media.media_id,
-                media_kind=media.kind,
-            )
-        except Exception as exc:
-            _reject_media(
-                "creation_thread.attach_media.rejected",
-                503,
-                "Upload verification unavailable",
-                cause=exc,
-                reason="upload_verification_error",
-                thread_id=str(thread.id),
-                media_id=media.media_id,
-                media_kind=media.kind,
-                error=str(exc),
-            )
-        content_type = (
-            str(metadata.content_type or media.content_type or "").split(";", 1)[0].lower()
-        )
-        kind_allowed = (media.kind == "video" and content_type in _ALLOWED_CONTENT_TYPES) or (
-            media.kind == "audio" and content_type in _SLOT_UPLOAD_AUDIO_CT
-        )
-        kind_limit = _MAX_BYTES_PER_FILE if media.kind == "video" else _MAX_VOICEOVER_BYTES
-        if metadata.size <= 0 or metadata.size > kind_limit or not kind_allowed:
-            _reject_media(
-                "creation_thread.attach_media.rejected",
-                422,
-                "Media kind does not match upload",
-                reason="kind_mismatch",
-                thread_id=str(thread.id),
-                media_id=media.media_id,
-                media_kind=media.kind,
-                content_type=content_type,
-                size_bytes=int(metadata.size),
-            )
-        generation = str(getattr(metadata, "generation", "") or "").strip()
-        if library and generation != library[1].object_generation:
-            raise HTTPException(409, "Library cloud copy changed; repair from the original")
-        if not generation:
-            _reject_media(
-                "creation_thread.attach_media.rejected",
-                503,
-                "Upload identity is unavailable",
-                reason="identity_unavailable",
-                thread_id=str(thread.id),
-                media_id=media.media_id,
-                media_kind=media.kind,
-            )
-        contract = proxy_contracts.get(media.media_id)
-        try:
-            if library:
-                duration_s = float(library[0].metadata_json.get("duration_s") or 0)
-                has_audio = bool(library[0].metadata_json.get("has_audio"))
-                if duration_s <= 0:
-                    raise HTTPException(409, "Library media has no verified duration")
-            else:
-                duration_s, has_audio = await _probe_registered_media(
-                    thread_id=str(thread.id),
-                    media_id=media.media_id,
-                    object_path=expected_path,
-                    generation=generation,
-                    kind=media.kind,
-                    **({"proxy": contract.proxy} if contract else {}),
-                )
-        except FileNotFoundError as exc:
-            _reject_media(
-                "creation_thread.attach_media.rejected",
-                409,
-                "Upload changed during registration",
-                cause=exc,
-                reason="registration_changed",
-                thread_id=str(thread.id),
-                media_id=media.media_id,
-                media_kind=media.kind,
-            )
-        except HTTPException:
-            raise
-        except Exception as exc:
-            _reject_media(
-                "creation_thread.attach_media.rejected",
-                503,
-                "Media verification unavailable",
-                cause=exc,
-                reason="media_verification_error",
-                thread_id=str(thread.id),
-                media_id=media.media_id,
-                media_kind=media.kind,
-                error=str(exc),
-            )
-        contract = proxy_contracts.get(media.media_id)
-        if contract is not None:
-            # `media.kind` (this attachment request) and `contract.proxy.original.kind`
-            # (the reserved proxy descriptor) are declared independently; a mismatch
-            # would let e.g. an audio-shaped proxy skip the video geometry check above
-            # while claiming to attach as video. verify_registered alone doesn't catch
-            # this — it only compares duration/audio presence, not kind.
-            if contract.proxy.original.kind != media.kind:
-                _reject_media(
-                    "creation_thread.attach_media.rejected",
-                    422,
-                    "Media kind does not match its reserved proxy",
-                    reason="proxy_kind_mismatch",
-                    thread_id=str(thread.id),
-                    media_id=media.media_id,
-                    media_kind=media.kind,
-                    proxy_kind=contract.proxy.original.kind,
-                )
-            try:
-                contract.proxy.verify_registered(duration_s, has_audio)
-            except ValueError as exc:
-                _reject_media(
-                    "creation_thread.attach_media.rejected",
-                    422,
-                    str(exc),
-                    cause=exc,
-                    reason="proxy_verification_failed",
-                    thread_id=str(thread.id),
-                    media_id=media.media_id,
-                    media_kind=media.kind,
-                    error=str(exc),
-                    descriptor_duration_s=contract.proxy.duration_s,
-                    probed_duration_s=duration_s,
-                    descriptor_has_audio=contract.proxy.original.has_audio,
-                    probed_has_audio=has_audio,
-                )
-        if media.role == "song":
-            if duration_s > settings.user_song_max_duration_s:
-                _reject_media(
-                    "creation_thread.attach_media.rejected",
-                    422,
-                    f"Songs must be {int(settings.user_song_max_duration_s // 60)} minutes "
-                    "or shorter",
-                    reason="song_too_long",
-                    thread_id=str(thread.id),
-                    media_id=media.media_id,
-                    probed_duration_s=duration_s,
-                )
-            try:
-                int(generation)
-            except ValueError:
-                _reject_media(
-                    "creation_thread.attach_media.rejected",
-                    503,
-                    "Upload identity is unavailable",
-                    reason="identity_unavailable",
-                    thread_id=str(thread.id),
-                    media_id=media.media_id,
-                    media_kind=media.kind,
-                )
-        if settings.media_library_enabled and native_client and library is None:
-            from app.services.media_library_ingest import (
-                register_verified_source,
-                track_library_duplicate,
-                verified_source_metadata,
-            )
-
-            legacy_payload = {
-                "kind": media.kind,
-                "content_type": content_type,
-                "file_size_bytes": int(metadata.size),
-                "upload_contract": contract.model_dump(mode="json")
-                if contract
-                else {"purpose": "cloud_render_source", "proxy": None},
-            }
-            proof = await asyncio.to_thread(
-                verified_source_metadata,
-                expected_path,
-                generation,
-                media.kind,
-                legacy_payload,
-                legacy=True,
-            )
-            original = contract.proxy.original if contract and contract.proxy else None
-            library = await register_verified_source(
-                db,
-                owner_id=user.id,
-                kind=media.kind,
-                object_path=expected_path,
-                generation=generation,
-                uploaded_sha256=proof["uploaded_sha256"],
-                byte_count=int(metadata.size),
-                content_type=content_type,
-                role=proof["role"],
-                original_declared_sha256=original.sha256 if original else None,
-                original_byte_count=original.byte_count if original else None,
-                metadata={
-                    **proof["metadata"],
-                    "filename": media.filename,
-                    "upload_contract": legacy_payload["upload_contract"],
-                },
-            )
-            library_sources[media.media_id] = library
-            if library[1].object_path != expected_path:
-                await track_library_duplicate(db, user.id, expected_path)
-            expected_path, generation = library[1].object_path, library[1].object_generation
-        verified.append(
-            {
-                "media_id": _client_id(media.media_id),
-                "kind": media.kind,
-                **({"role": "song"} if media.role == "song" else {}),
-                "filename": media.filename,
-                "content_type": content_type,
-                "size_bytes": int(metadata.size),
-                "generation": generation,
-                "duration_s": duration_s,
-                "has_audio": has_audio,
-                **(
-                    {
-                        "library_asset_id": str(library[0].id),
-                        "library_source_id": str(library[1].id),
-                    }
-                    if library
-                    else {}
-                ),
-                "_path": expected_path,
-                **(
-                    {"_capture": capture.model_dump(mode="json", exclude_none=True)}
-                    if (capture := media.capture()) is not None
-                    else {}
-                ),
-                # The capture lives ONLY on the assignment (`capture` below), never inside the
-                # stored proxy receipt: `OriginalMediaDescriptor` is extra="forbid", so a
-                # capture copy in there would make older code (a rollback, or a worker still
-                # on the previous image) reject the whole receipt and fail phone-job admission.
-                **({"upload_contract": contract.model_dump(mode="json")} if contract else {}),
-            }
-        )
+    verified, physical_upload_paths = await _verify_registered_uploads(
+        db,
+        user=user,
+        thread=thread,
+        media_inputs=body.media,
+        library_sources=library_sources,
+        native_client=native_client,
+        reject=functools.partial(_reject_media, "creation_thread.attach_media.rejected"),
+    )
     # Reused uploads can resolve to the same canonical path under different
     # client IDs. Reject those selections before references or media mutation.
     selected_paths = set(existing_paths)
@@ -6973,42 +7302,7 @@ async def attach_media(
             )
         if source["kind"] == "video":
             existing_paths.append(source["_path"])
-            assignments.append(
-                {
-                    "gcs_path": source["_path"],
-                    "media_id": source["media_id"],
-                    "kind": source["kind"],
-                    "shot_id": None,
-                    "storage_generation": source["generation"],
-                    "duration_s": source["duration_s"],
-                    "has_audio": source["has_audio"],
-                    "manifest_identity": source["media_id"],
-                    **(
-                        {
-                            "library_asset_id": source["library_asset_id"],
-                            "library_source_id": source["library_source_id"],
-                        }
-                        if source.get("library_asset_id")
-                        else {}
-                    ),
-                    # KRI-614: the name the app shows for this clip ("IMG_7382.MOV"), so
-                    # "first IMG_7382 then ..." can name it. Evidence only: never part of
-                    # the manifest identity or hash.
-                    **(
-                        {"source_filename": filename}
-                        if (filename := safe_media_basename(source["filename"]))
-                        else {}
-                    ),
-                    # KRI-189: authoritative filming context (source of truth for
-                    # the fact layer); coarse by construction.
-                    **({"capture": source["_capture"]} if "_capture" in source else {}),
-                    **(
-                        {"upload_contract": source["upload_contract"]}
-                        if "upload_contract" in source
-                        else {}
-                    ),
-                }
-            )
+            assignments.append(_clip_assignment_row(source))
         existing_media.append(
             {key: value for key, value in source.items() if key not in _ATTACH_PRIVATE_KEYS}
         )
@@ -7147,6 +7441,412 @@ async def attach_media(
 
         await asyncio.to_thread(enqueue_clip_understanding, item_id_for_analysis)
     return await _response(db, thread)
+
+
+def _require_media_replace() -> None:
+    if not settings.media_replace_enabled:
+        raise RuntimeFailure(404, "media_replace_unavailable", "Re-recording is unavailable")
+
+
+# Rejections the client fixes by trying again once its upload or the storage lookup settles.
+_REPLACE_RETRYABLE_REASONS = frozenset(
+    {
+        "upload_not_finished",
+        "upload_verification_error",
+        "identity_unavailable",
+        "media_verification_error",
+        "registration_changed",
+    }
+)
+
+
+def _reject_replace(
+    status_code: int,
+    detail: str,
+    *,
+    cause: BaseException | None = None,
+    current_revision: int | None = None,
+    **fields: Any,
+) -> NoReturn:
+    """Log the reason, then raise it as a typed code the app can branch on.
+
+    The shared upload verifier names every rejection with ``reason``; here that becomes the
+    ``problem.code`` instead of living only in the logs as it does for attach.
+    """
+
+    log.warning("creation_thread.replace_media.rejected", **fields)
+    reason = str(fields["reason"])
+    retryable = reason in _REPLACE_RETRYABLE_REASONS
+    failure = RuntimeFailure(
+        status_code,
+        reason,
+        detail,
+        recovery=(
+            "retry" if retryable else "refresh_replan" if current_revision is not None else "manual"
+        ),
+        retryable=retryable,
+        current_revision=current_revision,
+    )
+    if cause is not None:
+        raise failure from cause
+    raise failure
+
+
+async def _answer_replace_replay(
+    db: AsyncSession, user: CurrentUser, thread: CreationThread
+) -> CreationThreadOut:
+    """A retry of a swap that already committed: answer 200 and finish what may have been lost.
+
+    The post-commit approval retirement can be lost to a crash after the commit, so every
+    replay runs it again. It only closes approvals prepared against the replaced take, so it
+    cannot touch a plan made after the swap.
+    """
+
+    owner_id, thread_id, is_v2 = user.id, thread.id, int(thread.runtime_version) == 2
+    # rollback() expires every instance in the request session, ``user`` too.
+    await db.rollback()
+    if is_v2:
+        from app.kria.runtime import retire_pending_approvals_for_source_change  # noqa: PLC0415
+
+        await retire_pending_approvals_for_source_change(
+            db, thread_id=thread_id, creator_id=owner_id
+        )
+    return await _response(db, await _load(str(thread_id), user, db, creator_id=owner_id))
+
+
+@router.post("/{thread_id}/media/replace", response_model=CreationThreadOut)
+@limiter.limit(_MEDIA_INTAKE_RATE_LIMIT)
+async def replace_media(
+    request: Request,
+    thread_id: str,
+    body: ReplaceMediaBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    native_client: NativeClient = False,
+    client_protocol: KriaClientProtocol = None,
+) -> CreationThreadOut:
+    """Re-record a take: swap one attached speaker clip for a new upload, atomically.
+
+    A remove-then-attach pair can commit with zero speakers, or (multi-clip Talking) with
+    two. This keeps the clip count and position, so no committed state has either. The old
+    Job is not rewritten; the next strategy draft mints a new Job from the new take, and
+    ``SourceReplacement`` routes the creator's next message to that fresh plan.
+    """
+
+    _require_media_replace()
+    if rejected := creation_mutation_admission(
+        request, native_client=native_client, client_protocol=client_protocol
+    ):
+        return rejected
+    thread = await _load(thread_id, user, db, lock=True)
+    _stamp_device_intent(thread, user, native_client)
+    if thread.status != "active":
+        _reject_replace(
+            409, "Creation thread is archived", reason="thread_archived", thread_id=str(thread.id)
+        )
+    replaced_id, new_id = body.replaced_media_id, body.media.media_id
+    duplicate = await _duplicate(db, thread.id, body.client_event_id)
+    if duplicate:
+        previous = duplicate.payload or {}
+        previous_ids = {
+            str(entry.get("media_id"))
+            for entry in previous.get("media", [])
+            if isinstance(entry, dict)
+        }
+        if (
+            duplicate.event_type != MEDIA_REPLACED_EVENT
+            or previous.get("replaced_media_id") != replaced_id
+            or previous_ids != {new_id}
+            or previous.get("reason") != body.reason
+        ):
+            _reject_replace(
+                409,
+                "Idempotency key reused",
+                reason="idempotency_key_reused",
+                thread_id=str(thread.id),
+            )
+        return await _answer_replace_replay(db, user, thread)
+    existing_state = dict(getattr(thread, "state", None) or {})
+    existing_media = [entry for entry in existing_state.get("media", []) if isinstance(entry, dict)]
+    existing_media_ids = {str(entry.get("media_id")) for entry in existing_media}
+    previous_swap = SourceReplacement.from_state(existing_state)
+    if (
+        previous_swap is not None
+        and previous_swap.replaced_media_id == replaced_id
+        and previous_swap.media_id == new_id
+        and replaced_id not in existing_media_ids
+        and new_id in existing_media_ids
+    ):
+        # A double tap that minted a second client_event_id for the same swap.
+        return await _answer_replace_replay(db, user, thread)
+    if not matches_conversation_revision(thread, body.expected_revision):
+        _reject_replace(
+            409,
+            "Creation thread changed",
+            reason="revision_mismatch",
+            thread_id=str(thread.id),
+            current_revision=int(thread.revision),
+        )
+    media = body.media
+    if media.kind != "video":
+        _reject_replace(
+            422,
+            "A re-recorded take must be a video",
+            reason="retake_kind_mismatch",
+            thread_id=str(thread.id),
+        )
+    if media.library_asset_id is not None:
+        _reject_replace(
+            422,
+            "Re-record from a new recording, not a library clip",
+            reason="retake_library_unsupported",
+            thread_id=str(thread.id),
+        )
+    try:
+        expected_path = _media_path(user.id, thread.id, media.media_id)
+    except ValueError as exc:
+        _reject_replace(
+            422,
+            "Invalid media identifier",
+            cause=exc,
+            reason="invalid_media_id",
+            thread_id=str(thread.id),
+        )
+    if media.gcs_path is not None and media.gcs_path != expected_path:
+        _reject_replace(
+            422,
+            "Media path does not match reservation",
+            reason="path_mismatch",
+            thread_id=str(thread.id),
+            media_id=media.media_id,
+        )
+    try:
+        await _reject_input_mutation_while_rendering(db, thread)
+    except HTTPException as exc:
+        _reject_replace(
+            exc.status_code,
+            str(exc.detail),
+            reason="render_in_progress",
+            thread_id=str(thread.id),
+        )
+    item = (
+        await db.get(PlanItem, thread.active_plan_item_id, with_for_update=True)
+        if thread.active_plan_item_id
+        else None
+    )
+    if item is None:
+        _reject_replace(
+            409,
+            "Creation project is missing its draft",
+            reason="draft_missing",
+            thread_id=str(thread.id),
+        )
+    job = await db.get(Job, item.current_job_id) if item.current_job_id else None
+    if job is not None and render_in_flight(job.assembly_plan):
+        # A reburn or an editor Save keeps the Job terminal while a variant renders.
+        _reject_replace(
+            409,
+            "Wait for the current render before re-recording",
+            reason="render_in_progress",
+            thread_id=str(thread.id),
+            job_id=str(job.id),
+        )
+    if has_native_device_only_intent(thread.state) and not is_analysis_proxy_path(media.media_id):
+        _reject_replace(
+            422,
+            "This iPhone project requires an on-device video source.",
+            reason="device_render_unsupported",
+            thread_id=str(thread.id),
+        )
+    if new_id in existing_media_ids:
+        _reject_replace(
+            409,
+            "That media is already attached",
+            reason="source_already_attached",
+            thread_id=str(thread.id),
+        )
+    assignments = [
+        dict(assignment)
+        for assignment in (item.clip_assignments or [])
+        if isinstance(assignment, dict)
+    ]
+    speakers_before = current_speaker_media_ids(
+        existing_state, job.id if job else None, job.assembly_plan if job else None
+    )
+    if rejection := check_retake_target(
+        edit_format=item.edit_format,
+        audio_mode=item.audio_mode,
+        voiceover_gcs_path=item.voiceover_gcs_path,
+        assignments=assignments,
+        thread_media=existing_media,
+        replaced_media_id=replaced_id,
+        speaker_media_ids=speakers_before,
+    ):
+        _reject_replace(
+            rejection.status_code,
+            rejection.message,
+            reason=rejection.code,
+            thread_id=str(thread.id),
+            media_id=replaced_id,
+        )
+    verified, physical_upload_paths = await _verify_registered_uploads(
+        db,
+        user=user,
+        thread=thread,
+        media_inputs=[media],
+        library_sources={},
+        native_client=native_client,
+        reject=_reject_replace,
+    )
+    source = verified[0]
+    if not source["has_audio"]:
+        _reject_replace(
+            422,
+            "The new take has no sound. Record it again with the microphone on.",
+            reason="retake_has_no_audio",
+            thread_id=str(thread.id),
+            media_id=new_id,
+        )
+    index = next(i for i, row in enumerate(assignments) if row.get("media_id") == replaced_id)
+    replaced_path = assignments[index].get("gcs_path")
+    other_paths = {row.get("gcs_path") for i, row in enumerate(assignments) if i != index}
+    if source["_path"] == replaced_path or source["_path"] in other_paths:
+        from app.services.media_library_ingest import preserve_rejected_uploads  # noqa: PLC0415
+
+        owner_id, rejected_thread_id = user.id, thread.id
+        await preserve_rejected_uploads(db, owner_id, rejected_thread_id, physical_upload_paths)
+        _reject_replace(
+            409,
+            "That video source is already selected for this post",
+            reason="retake_same_source"
+            if source["_path"] == replaced_path
+            else ("source_already_attached"),
+            thread_id=str(rejected_thread_id),
+            media_id=new_id,
+        )
+    # Only the slot survives from the old row. Trims, speech coverage and sound toggles
+    # describe the old take's timeline and must not carry over.
+    assignments[index] = {
+        **_clip_assignment_row(source),
+        "shot_id": assignments[index].get("shot_id"),
+    }
+    if source.get("library_asset_id"):
+        from app.services.media_library_ingest import reference_library_source  # noqa: PLC0415
+
+        await reference_library_source(
+            db,
+            owner_id=user.id,
+            asset_id=uuid.UUID(source["library_asset_id"]),
+            source_id=uuid.UUID(source["library_source_id"]),
+            creation_thread_id=thread.id,
+        )
+    from app.services.plan_item_media import (  # noqa: PLC0415
+        current_detector_policy,
+        mutate_plan_item_media,
+        resolve_item_narration,
+    )
+    from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+        mutation_current_analysis_async,
+    )
+
+    current_cleanup = await mutation_current_analysis_async(db, item.id, for_update=True)
+    item_id_for_analysis = item.id  # read now: the commit below expires `item`
+    mutation = mutate_plan_item_media(
+        item,
+        detector_policy=current_detector_policy(),
+        current_analysis=current_cleanup,
+        clip_assignments=assignments,
+    )
+    if len(assignments) == 1:
+        spoken = resolve_item_narration(item, detector_policy=current_detector_policy()).source
+        if spoken is None or spoken.media_id != new_id:
+            failed_thread_id = str(thread.id)  # rollback expires `thread`
+            await db.rollback()
+            _reject_replace(
+                409,
+                "The new take could not be used as your speaking clip.",
+                reason="retake_source_unresolved",
+                thread_id=failed_thread_id,
+                media_id=new_id,
+            )
+    replaced_entry = next(
+        (entry for entry in existing_media if entry.get("media_id") == replaced_id), None
+    )
+    public = {key: value for key, value in source.items() if key not in _ATTACH_PRIVATE_KEYS}
+    next_media = (
+        [public if entry is replaced_entry else entry for entry in existing_media]
+        if replaced_entry is not None
+        else [*existing_media, public]
+    )
+    old_source_id = (replaced_entry or {}).get("library_source_id")
+    if old_source_id and not any(
+        entry.get("library_source_id") == old_source_id for entry in next_media
+    ):
+        await db.execute(
+            delete(MediaAssetReference).where(
+                MediaAssetReference.user_id == user.id,
+                MediaAssetReference.creation_thread_id == thread.id,
+                MediaAssetReference.source_id == uuid.UUID(old_source_id),
+            )
+        )
+    thread.state = {**existing_state, "media": next_media, "media_count": len(next_media)}
+    preflight_analysis_id = await _ensure_speech_cleanup_preflight(db, item)
+    if mutation.source_changed is True:
+        _repaired, repair_analysis_id = await _repair_stale_cleanup_failure_graph(db, thread, user)
+        preflight_analysis_id = preflight_analysis_id or repair_analysis_id
+    # Written with the event so the thread row takes one UPDATE (`_append` bumps the revision
+    # by one), not a second one after it.
+    thread.state = {
+        **dict(thread.state or {}),
+        SOURCE_REPLACEMENT_STATE_KEY: SourceReplacement(
+            replaced_media_id=replaced_id,
+            media_id=new_id,
+            superseded_job_id=str(job.id) if job is not None else None,
+            revision=int(thread.revision) + 1,
+            speaker_media_ids=speakers_after_swap(speakers_before, replaced_id, new_id),
+        ).to_state(),
+    }
+    await _append(
+        db,
+        thread,
+        event_type=MEDIA_REPLACED_EVENT,
+        role="user",
+        payload={
+            "replaced_media_id": replaced_id,
+            "media": [public],
+            "media_count": len(next_media),
+            "reason": body.reason,
+        },
+        client_event_id=body.client_event_id,
+    )
+    await db.execute(
+        delete(CreationThreadUploadReservation).where(
+            CreationThreadUploadReservation.thread_id == thread.id,
+            CreationThreadUploadReservation.media_id == new_id,
+        )
+    )
+    song_present_for_alignment = bool(getattr(item, "song_gcs_path", None))
+    owner_id, committed_thread_id, is_v2 = user.id, thread.id, int(thread.runtime_version) == 2
+    await db.commit()
+    await db.refresh(thread)
+    if preflight_analysis_id is not None:
+        from app.services.plan_item_media import publish_preflight_after_commit  # noqa: PLC0415
+
+        await asyncio.to_thread(publish_preflight_after_commit, preflight_analysis_id)
+    if song_present_for_alignment:
+        from app.tasks.user_song import enqueue_user_song_alignment  # noqa: PLC0415
+
+        await asyncio.to_thread(enqueue_user_song_alignment, item_id_for_analysis)
+    from app.tasks.kria_clip_understanding import enqueue_clip_understanding  # noqa: PLC0415
+
+    await asyncio.to_thread(enqueue_clip_understanding, item_id_for_analysis)
+    if is_v2:
+        from app.kria.runtime import retire_pending_approvals_for_source_change  # noqa: PLC0415
+
+        await retire_pending_approvals_for_source_change(
+            db, thread_id=committed_thread_id, creator_id=owner_id
+        )
+    return await _response(db, await _load(str(committed_thread_id), user, db, creator_id=owner_id))
 
 
 @router.patch("/{thread_id}", response_model=CreationThreadOut)

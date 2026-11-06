@@ -20,7 +20,12 @@ import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from app.agents._runtime import RunContext
+    from app.kria.editor_repair import PreparedEditorRepair
+    from app.kria.intent_review_repair import IntentRepairSpec
 
 import structlog
 from pydantic import ValidationError
@@ -61,7 +66,8 @@ from app.agents.main_creator import (
     MainCreatorOutput,
 )
 from app.config import settings
-from app.kria import voiceover_script
+from app.kria import ask_refusals, voiceover_script
+from app.kria.ask_refusals import stale_capability_refusal
 from app.kria.brief import (
     BriefCoverageError,
     BriefUpdate,
@@ -118,7 +124,9 @@ from app.kria.narration_notes import (
     with_note,
 )
 from app.kria.order_replacement import OrderReplacementProof
-from app.kria.reply_language import current_reply_language, say
+from app.kria.paid_call_scope import paid_call_request_id
+from app.kria.removed_messages import is_removed, removed_turn_ids
+from app.kria.reply_language import current_reply_language, is_client_stock_message, say
 from app.kria.strategy_policy import (
     RefusedStrategy,
     check_strategy_for_runtime_v2,
@@ -208,12 +216,14 @@ from app.services.creative_copy_decisions import (
     question_message,
     wording_question,
 )
+from app.services.creator_capabilities import insert_clip_candidates
 from app.services.creator_model_comparison import configure_creator_agent
 from app.services.creator_sessions import (
     creator_context,
     load_intent_clips_for_item,
     resolve_item_creator_context,
 )
+from app.services.creator_song_rule import planner_catalog_song_blocked, withheld_song_notice
 from app.services.kept_sound_lines import kept_line_records
 from app.services.kria_editor_ops import (
     EDITOR_STATE_STALE_REPLY,
@@ -231,6 +241,7 @@ from app.services.kria_editor_ops import (
     editor_state_has_lanes,
     failed_editor_draft_basis,
     resolve_editor_base,
+    timeline_patch_capabilities,
     unknown_editor_render_query,
 )
 from app.services.music_genre import (
@@ -259,6 +270,7 @@ from app.services.song_range import (
     song_range_of,
     song_range_question_text,
 )
+from app.services.source_replacement import source_replacement_supersedes
 from app.services.spoken_quotes import (
     Transcribe,
     closing_quote_notice,
@@ -270,6 +282,7 @@ from app.services.spoken_quotes import (
 )
 from app.services.spoken_roles import SpokenSeats
 from app.services.story_intent_reconciliation import reconcile_story_intents
+from app.services.turn_checkpoint import checkpointed
 
 log = structlog.get_logger()
 
@@ -439,6 +452,18 @@ def _enrich_best_parts_snapshot(
         else None
     )
     held = _held_closing_ids(closing_quote)
+    whole_take_ids = _whole_take_ids(
+        strategy,
+        media_snapshot,
+        brief,
+        selected=selected,
+        creator_target_s=creator_target_s,
+        other_windows=bool(
+            moments is not None
+            or held
+            or (moment_pins is not None and getattr(moment_pins, "pins", None))
+        ),
+    )
     grounded = {str(row.get("quote")): row for row in named_lines or () if isinstance(row, Mapping)}
     named = [
         dict(grounded.get(row["quote"], row))
@@ -552,6 +577,7 @@ def _enrich_best_parts_snapshot(
                 [pin.json() for pin in moment_pins.skipped] if moment_pins is not None else None
             ),
             story_floor_s=story_floor_s,
+            whole_take_ids=whole_take_ids,
         )
 
     # KRI-585: the clips' words seat the welcome's line and a quiet ending. "Fast cuts" is
@@ -590,6 +616,75 @@ def _enrich_best_parts_snapshot(
         {"code": item["code"], "message": item["message"]} for item in length_plan["conflicts"]
     ]
     return enriched
+
+
+def keeps_whole_take(brief: CreativeBrief | None) -> bool:
+    """A live ``timing/global {keep_whole_take: true}`` ask with no length of its own (Qendresa
+    case 2). The typed fact only (KRI-667); a duration on the same row is a length ask."""
+    if brief is None:
+        return False
+    for req in brief.live():
+        if req.kind != "timing" or req.scope != "global":
+            continue
+        if req.facts.get("keep_whole_take") is not True:
+            continue
+        duration = req.facts.get("duration_s")
+        if isinstance(duration, (int, float)) and not isinstance(duration, bool) and duration > 0:
+            continue
+        return True
+    return False
+
+
+def _whole_take_ids(
+    strategy: Mapping[str, Any],
+    media_snapshot: Mapping[str, Any],
+    brief: CreativeBrief | None,
+    *,
+    selected: Sequence[str],
+    creator_target_s: float | None,
+    other_windows: bool,
+) -> tuple[str, ...]:
+    """The one video clip a "keep the whole clip, don't cut it" montage plays whole, else ().
+
+    Qendresa Q3 case 2: an 11 s single shot was cut to its 4 s best moment. Only where the ask
+    can name nothing else: a footage-owned ``montage`` with exactly one video clip, no creator
+    length (a stated length decides), no moment ask, named moment or closing line on the take
+    (those choose its windows), no mixed-media timing profile (its bounds cap every clip) and
+    a clip the edit cap can hold. Everything else is unchanged; the receipt says what was cut.
+    """
+    from app.pipeline.best_parts import edit_cap_s  # noqa: PLC0415
+    from app.services.length_policy import natural_length_owner  # noqa: PLC0415
+
+    if not settings.keep_whole_take_plan_enabled or not keeps_whole_take(brief):
+        return ()
+    owner = natural_length_owner(strategy)
+    if (
+        strategy.get("edit_format") != "montage"
+        or owner != "footage"
+        or creator_target_s is not None
+        or other_windows
+        or strategy.get("mixed_media_timing") is not None
+    ):
+        return ()
+    chosen = set(selected)
+    videos = [
+        row
+        for row in media_snapshot.get("clip_assignments") or []
+        if isinstance(row, Mapping)
+        and isinstance(row.get("media_id"), str)
+        and row.get("kind") != "image"
+        and (not chosen or row["media_id"] in chosen)
+    ]
+    if len(videos) != 1:
+        return ()
+    duration = videos[0].get("duration_s")
+    if (
+        not isinstance(duration, (int, float))
+        or isinstance(duration, bool)
+        or not 0 < float(duration) <= edit_cap_s(owner)
+    ):
+        return ()
+    return (str(videos[0]["media_id"]),)
 
 
 def _described_clip_texts(brief: CreativeBrief | None) -> list[str]:
@@ -840,12 +935,15 @@ async def _freeze_licensed_music_section(
     run_context: RunContext,
     target_s: float | None = None,
     music_ask: str = "",
+    catalog_withheld: bool = False,
 ) -> dict[str, Any] | None:
     """Match once in a real live session and return an immutable catalog section.
 
     ``target_s`` is the creator's own length; the section follows it (KRI-679).
     ``music_ask`` is the creator's own words about the song; the matcher weighs it first.
     ``run_context`` owns the matcher run: no render Job exists yet (KRI-809).
+    ``catalog_withheld`` (`creator_song_rule.planner_catalog_song_blocked`): the catalog is
+    never asked and the draft gets the footage fallback, with the genre asked recorded.
     """
     if not isinstance(db, AsyncSession) or not isinstance(snapshot, dict):
         return None
@@ -853,6 +951,8 @@ async def _freeze_licensed_music_section(
         return None
     if strategy.get("has_voiceover") or strategy.get("voice_mode") == "continuous":
         return None
+    if catalog_withheld:
+        return {"status": "fallback_footage", **genre_record(asked_genres(music_ask), None)}
     rows = snapshot.get("clip_assignments")
     if not isinstance(rows, list) or not rows:
         return {"status": "fallback_footage"}
@@ -965,11 +1065,17 @@ class PlannedKriaTurn:
     # the selected renderer cannot draw that field. Runtime binds the same omission.
     policy_omitted_texts: dict[str, tuple[str, ...]] = field(default_factory=dict)
     creative_copy_resolution: dict | None = None
+    # KRI-1151: the Main Creator answer this turn actually planned when the corrective re-run
+    # replaced the one the caller passed in (`_plan_from_creator_output`); None otherwise. The
+    # caller reads its brief updates and its action, not the answer it started with.
+    main_creator_output: MainCreatorOutput | None = field(default=None, compare=False, repr=False)
     # KRI-709: the plan is a "still checking, come back later" reply, and the work behind
     # it can still progress (cached vision answers, clip analysis or song alignment in
     # flight). The runtime re-runs the same turn instead of asking the creator to say
     # "go ahead". Server-only: never reaches `KriaTurnPlan`, which forbids extra fields.
     continuable: bool = False
+    # Why it asked to run again (a reason code, never text): recorded on the turn and the trace.
+    continue_reason: str = ""
     prepared_collection_story: dict | None = None
     # KRI-881: research done before approval (`app.kria.research_preview`), server-owned.
     prepared_research: dict | None = None
@@ -978,6 +1084,13 @@ class PlannedKriaTurn:
     # KRI-1068: what the turn just withdrew ("skip that" about the clip the last reply was
     # stuck on), said by the draft or by whatever reply holds it back.
     pin_notices: tuple[str, ...] = ()
+    editor_repair: PreparedEditorRepair | None = None
+    editor_repair_run_context: RunContext | None = None
+    intent_repair: IntentRepairSpec | None = None
+    # A tapped suggestion card's pin (`plan_pinned_suggestion_turn`): set_id, id, kind, whether
+    # the stored action ran as built, and the digest of the editor state it compiles against,
+    # which the draft commit re-checks inside the row lock. None for every other turn.
+    suggestion_pin: dict | None = field(default=None, compare=False, repr=False)
 
 
 async def _withdraw_stuck_pins(
@@ -1337,7 +1450,14 @@ async def _load_raw_creator_request(
         .all()
     )
     # KRI-552: a re-sent copy of a message adds no instruction; read twice it doubled every ask.
-    rows = [row for row in rows if not is_duplicate_answer(getattr(row, "payload", None))]
+    # Steer now: a waiting message the creator removed adds none either.
+    removed = await removed_turn_ids(db, thread_id, (getattr(row, "payload", None) for row in rows))
+    rows = [
+        row
+        for row in rows
+        if not is_duplicate_answer(getattr(row, "payload", None))
+        and not is_removed(getattr(row, "payload", None), removed)
+    ]
     return _full_creator_request(rows, current_message=user_message)
 
 
@@ -1614,12 +1734,18 @@ async def _load_thread_events(
             .order_by(CreationThreadEvent.sequence)
         )
     ).all()
+    # Steer now: a waiting message the creator removed is not history.
+    removed = await removed_turn_ids(
+        db, thread_id, (payload for role, payload, _type, _content in rows if role == "user")
+    )
     if release:
         await db.rollback()  # no connection pinned across what follows
     # KRI-476: tagged with the event type and a user message's text so a choice question
     # is closed only by a real reply, never by an async event (see `tag_event`).
     return [
-        tag_event(role, payload, event_type, content) for role, payload, event_type, content in rows
+        tag_event(role, payload, event_type, content)
+        for role, payload, event_type, content in rows
+        if not (role == "user" and is_removed(payload, removed))
     ]
 
 
@@ -2065,7 +2191,11 @@ async def _copilot_clip_context(
     try:
         # KRI-1117: the photos and videos a Talking edit's background can be. No query while
         # the lane is closed for this variant, so every other turn reads exactly what it read.
-        if background_state(job, variant)[0]:
+        # KRI-1139: the same pool backs a tilt's media backdrop, so that edit reads it too.
+        if (
+            background_state(job, variant)[0]
+            or timeline_patch_capabilities(job, variant).get("tilt_backdrop_media") is True
+        ):
             pool = await _background_pool_rows(db, item)
             if pool:
                 context["background_pool"] = pool
@@ -2274,6 +2404,11 @@ async def _load_editor_target(
         _miss("no_current_job", session_id=None)
         return None
     thread = await db.get(CreationThread, thread_id)
+    if thread is not None and source_replacement_supersedes(getattr(thread, "state", None), job_id):
+        # Not in _GUARDED_MISSES: this Job's cuts and captions belong to a take the creator
+        # replaced, so every follow-up re-plans from the new take instead of editing them.
+        _miss("source_replaced", session_id=None)
+        return None
     if thread is None or thread.active_creator_agent_session_id is None:
         _miss("no_active_session", session_id=None)
         return None
@@ -2425,8 +2560,14 @@ async def _load_editor_target(
         .scalars()
         .all()
     )
-    # KRI-552: a re-sent copy of a message is not conversation.
-    rows = [row for row in rows if not is_duplicate_answer(getattr(row, "payload", None))]
+    # KRI-552: a re-sent copy of a message is not conversation; Steer now: nor is a removed one.
+    removed = await removed_turn_ids(db, thread_id, (getattr(row, "payload", None) for row in rows))
+    rows = [
+        row
+        for row in rows
+        if not is_duplicate_answer(getattr(row, "payload", None))
+        and not is_removed(getattr(row, "payload", None), removed)
+    ]
     rows.reverse()
     conversation = [
         {"role": row.role, "content": model_text(getattr(row, "payload", None), row.content)[:1000]}
@@ -2646,15 +2787,77 @@ async def _unrecorded_creator_lines(
         .scalars()
         .all()
     )
+    removed = await removed_turn_ids(db, thread_id, (getattr(row, "payload", None) for row in rows))
     rows = [
         row
         for row in rows
-        if str(row.content).strip() and not is_duplicate_answer(getattr(row, "payload", None))
+        if str(row.content).strip()
+        and not is_duplicate_answer(getattr(row, "payload", None))
+        and not is_removed(getattr(row, "payload", None), removed)
     ]
     # Same rule as `_full_creator_request`: the newest line is the current message.
     if rows and str(rows[-1].content).strip() == user_message.strip():
         rows.pop()
     return rows
+
+
+async def _steered_away_lines(db: AsyncSession, *, thread_id: uuid.UUID) -> list[str]:
+    """Steer now: the creator's messages whose turns were stopped for the one being planned.
+
+    Follows the chain (A stopped for B, B stopped for C: planning C reads A and B), oldest
+    first. A stock sentence the app sends on the creator's behalf (the "Suggest an edit."
+    chip) carries no creator words and is left out. Empty outside a worker-planned turn.
+    """
+    through = answering_through_sequence.get()
+    if through is None:
+        return []
+    rows = (
+        await db.execute(
+            select(
+                CreationThreadEvent.sequence,
+                CreationThreadEvent.event_type,
+                CreationThreadEvent.content,
+                CreationThreadEvent.payload,
+            )
+            .where(
+                CreationThreadEvent.thread_id == thread_id,
+                or_(
+                    # The Steer that handed over to this message comes after it.
+                    CreationThreadEvent.event_type == "turn_cancelled",
+                    (CreationThreadEvent.role == "user")
+                    & (CreationThreadEvent.event_type == "user_message")
+                    & (CreationThreadEvent.sequence <= through),
+                ),
+            )
+            .order_by(CreationThreadEvent.sequence)
+        )
+    ).all()
+    messages: dict[str, tuple[int, str]] = {}
+    steered_to: dict[str, str] = {}
+    current: str | None = None
+    for sequence, event_type, content, payload in rows:
+        payload = payload if isinstance(payload, dict) else {}
+        turn_id = str(payload.get("turn_id") or "")
+        if event_type == "turn_cancelled":
+            if payload.get("steered_to_turn_id"):
+                steered_to[turn_id] = str(payload["steered_to_turn_id"])
+            continue
+        if sequence == through:
+            current = turn_id
+        if turn_id and isinstance(content, str) and not is_duplicate_answer(payload):
+            messages[turn_id] = (sequence, content)
+    if not current:
+        return []
+    chain: set[str] = set()
+    frontier = {current}
+    while frontier:
+        frontier = {stopped for stopped, to in steered_to.items() if to in frontier} - chain
+        chain |= frontier
+    return [
+        text
+        for _sequence, text in sorted(messages[turn] for turn in chain if turn in messages)
+        if text.strip() and not is_client_stock_message(text)
+    ]
 
 
 async def _load_creator_inputs(
@@ -2727,7 +2930,14 @@ async def _load_creator_inputs(
         .all()
     )
     # KRI-552: a re-sent copy of a message, and the one-line answer it got, are not conversation.
-    rows = [row for row in rows if not is_duplicate_answer(getattr(row, "payload", None))]
+    # Steer now: nor is a waiting message the creator removed.
+    removed = await removed_turn_ids(db, thread_id, (getattr(row, "payload", None) for row in rows))
+    rows = [
+        row
+        for row in rows
+        if not is_duplicate_answer(getattr(row, "payload", None))
+        and not is_removed(getattr(row, "payload", None), removed)
+    ]
     rows.reverse()
     creator_summary, item_summary = creator_context(persona, item)
     extra: dict = {}
@@ -2735,7 +2945,19 @@ async def _load_creator_inputs(
     delegation_read_ids: tuple[str, ...] = ()
     if brief_on:
         extra["brief_enabled"] = True
-        context = brief_context(prior_brief, latest_message=user_message, max_batches=3)
+        # Steer now: the creator's own messages whose turns were stopped for this one are
+        # read with it, so their asks are not lost once a brief exists (with no brief the
+        # KRI-814 branch below already reads every unrecorded line).
+        steered = (
+            await _steered_away_lines(db, thread_id=thread_id)
+            if settings.steer_now_for(creator_id)
+            else []
+        )
+        context = brief_context(
+            prior_brief,
+            latest_message="\n".join([*steered, user_message]) if steered else user_message,
+            max_batches=3,
+        )
         batches = context.batches
         if batches:
             extra["creator_request"] = batches[0].text
@@ -2819,12 +3041,14 @@ async def _call_main_creator(
 ) -> MainCreatorOutput:
     from app.services.thought_summaries import current_thought_publisher  # noqa: PLC0415
 
+    request_id = paid_call_request_id(thread_id)
+
     def _run_agent():  # noqa: ANN202 - inferred MainCreatorOutput
         deadline = turn_deadline.get()
         return configure_creator_agent(MainCreatorAgent(default_client()), "main_creator").run(
             inputs.agent_input,
             ctx=RunContext(
-                request_id=str(thread_id),
+                request_id=request_id,
                 creator_id=str(creator_id),
                 plan_item_id=str(item_id) if item_id else None,
                 creator_agent_session_id=(
@@ -2838,15 +3062,26 @@ async def _call_main_creator(
             ),
         )
 
-    try:
-        return await asyncio.to_thread(_run_agent)
-    except (ProviderOutcomeUnknownError, ProviderQuotaExceededError, AiBudgetExceededError):
-        # Provider work may still be billable, or a spend cap answers the same on every
-        # retry. Never disguise either as a recoverable planning failure ("try again"):
-        # the turn fails with its own code and copy.
-        raise
-    except TerminalError as exc:
-        raise RuntimeError("Kria could not produce a reliable editorial plan") from exc
+    async def _call() -> MainCreatorOutput:
+        try:
+            return await asyncio.to_thread(_run_agent)
+        except (ProviderOutcomeUnknownError, ProviderQuotaExceededError, AiBudgetExceededError):
+            # Provider work may still be billable, or a spend cap answers the same on every
+            # retry. Never disguise either as a recoverable planning failure ("try again"):
+            # the turn fails with its own code and copy.
+            raise
+        except TerminalError as exc:
+            raise RuntimeError("Kria could not produce a reliable editorial plan") from exc
+
+    # A continued run takes the first run's answer for this exact input instead of paying again.
+    return await checkpointed(
+        "main_creator",
+        agent_cls=MainCreatorAgent,
+        agent_input=inputs.agent_input,
+        output_cls=MainCreatorOutput,
+        call=_call,
+        variant=settings.main_creator_output_mode,
+    )
 
 
 # Prompt fidelity (errors unit): the extractor is read-only, so ONE bounded retry after a
@@ -2886,6 +3121,13 @@ def _extractor_retry_allowed(exc: TerminalError) -> bool:
     )
 
 
+def _insert_clips_open(inputs: _CreatorInputs) -> bool:
+    """Parent KRI-1151: can this item pause the creator's take for one of its clips right now?
+    The brief extractor is taught the ask only then (the same gate as the creator prompt)."""
+    manifest = getattr(inputs.agent_input, "capability_manifest", None)
+    return manifest is not None and bool(insert_clip_candidates(manifest))
+
+
 async def _call_brief_extractor(
     inputs: _CreatorInputs,
     *,
@@ -2904,6 +3146,7 @@ async def _call_brief_extractor(
         conversation=inputs.agent_input.conversation,
         current_brief=prior_brief,
         require_request_scope=True,
+        insert_clips_open=_insert_clips_open(inputs),
     )
 
     def _run_agent(request_id: str):  # noqa: ANN202 - inferred BriefExtractionOutput
@@ -2923,24 +3166,41 @@ async def _call_brief_extractor(
             ),
         )
 
-    try:
-        return await asyncio.to_thread(_run_agent, str(thread_id))
-    except (ProviderOutcomeUnknownError, ProviderQuotaExceededError, AiBudgetExceededError):
-        # A spend cap is not a reading failure: the turn fails with its own code (A1).
-        raise
-    except TerminalError as exc:
-        if not _extractor_retry_allowed(exc):
-            raise RuntimeError("Kria could not extract the creative brief reliably") from exc
-        log.warning("kria_extractor_retry", **_recovery_cause("followup_extraction", exc))
-        await asyncio.sleep(_EXTRACTOR_RETRY_BACKOFF_S)
+    async def _call() -> BriefExtractionOutput:
         try:
-            # A distinct request id: the paid-call reservation key is stable per request id
-            # and attempt number, so the retry must not collide with the failed run's.
-            return await asyncio.to_thread(_run_agent, f"{thread_id}:extractor-retry")
+            return await asyncio.to_thread(_run_agent, paid_call_request_id(thread_id))
         except (ProviderOutcomeUnknownError, ProviderQuotaExceededError, AiBudgetExceededError):
+            # A spend cap is not a reading failure: the turn fails with its own code (A1).
             raise
-        except TerminalError as retry_exc:
-            raise RuntimeError("Kria could not extract the creative brief reliably") from retry_exc
+        except TerminalError as exc:
+            if not _extractor_retry_allowed(exc):
+                raise RuntimeError("Kria could not extract the creative brief reliably") from exc
+            log.warning("kria_extractor_retry", **_recovery_cause("followup_extraction", exc))
+            await asyncio.sleep(_EXTRACTOR_RETRY_BACKOFF_S)
+            try:
+                # A distinct request id: the paid-call reservation key is stable per request id
+                # and attempt number, so the retry must not collide with the failed run's.
+                return await asyncio.to_thread(
+                    _run_agent, paid_call_request_id(thread_id, "extractor-retry")
+                )
+            except (
+                ProviderOutcomeUnknownError,
+                ProviderQuotaExceededError,
+                AiBudgetExceededError,
+            ):
+                raise
+            except TerminalError as retry_exc:
+                raise RuntimeError(
+                    "Kria could not extract the creative brief reliably"
+                ) from retry_exc
+
+    return await checkpointed(
+        "brief_extractor",
+        agent_cls=BriefExtractorAgent,
+        agent_input=agent_input,
+        output_cls=BriefExtractionOutput,
+        call=_call,
+    )
 
 
 def _extraction_request_scope(
@@ -3028,7 +3288,137 @@ async def _kick_clip_understanding(item_id: uuid.UUID, clips: list[IntentClip]) 
         log.warning("kria_clip_understanding_kick_failed", item_id=str(item_id), exc_info=True)
 
 
+# What a corrective Main Creator re-run needs left in the turn (the call's own timeout is 130 s;
+# the typical answer is well under a minute). Below it the first answer stands.
+_REFUSAL_RERUN_MIN_BUDGET_S = 60.0
+
+
+async def _rerun_after_stale_refusal(
+    db: AsyncSession,
+    *,
+    capability: str,
+    thread_id: uuid.UUID,
+    item_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    inputs: _CreatorInputs,
+    creator_agent_session_id: uuid.UUID | None,
+) -> MainCreatorOutput | None:
+    """The Main Creator's answer to ONE corrective re-run, else None (the first answer stands).
+
+    The model declined an ask the server's own gates say this edit builds (thread 6fa36e51).
+    No re-run when the turn has no room for another model call; a failed re-run never costs the
+    creator the answer they already have, including the provider outcomes
+    `_call_main_creator` re-raises.
+    """
+    deadline = turn_deadline.get()
+    if (
+        deadline is not None
+        and deadline - _POST_UNDERSTANDING_RESERVE_S - time.monotonic()
+        < _REFUSAL_RERUN_MIN_BUDGET_S
+    ):
+        log.info("kria_ask_refusal_rerun_skipped", thread_id=str(thread_id), reason="turn_budget")
+        return None
+    log.info("kria_ask_refusal_rechecked", thread_id=str(thread_id), capability=capability)
+    # No connection stays pinned across a model call (every other call in this file does this).
+    await db.rollback()
+    try:
+        return await _call_main_creator(
+            replace(
+                inputs,
+                agent_input=inputs.agent_input.model_copy(
+                    update={
+                        "server_note": ask_refusals.correction_note(
+                            capability,
+                            inserts_open=bool(
+                                insert_clip_candidates(inputs.agent_input.capability_manifest)
+                            ),
+                        )
+                    }
+                ),
+            ),
+            thread_id=thread_id,
+            creator_id=creator_id,
+            item_id=item_id,
+            creator_agent_session_id=creator_agent_session_id,
+        )
+    except (
+        ProviderOutcomeUnknownError,
+        ProviderQuotaExceededError,
+        AiBudgetExceededError,
+        RuntimeError,
+        ValidationError,
+    ) as exc:
+        log.warning(
+            "kria_ask_refusal_rerun_failed",
+            thread_id=str(thread_id),
+            error_type=type(exc).__name__,
+            exc_info=True,
+        )
+        return None
+
+
 async def _plan_from_creator_output(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    item_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    manifest,  # noqa: ANN001 - resolved creator manifest
+    inputs: _CreatorInputs,
+    output: MainCreatorOutput,
+    effective_brief: CreativeBrief | None = None,
+    creator_agent_session_id: uuid.UUID | None = None,
+    rerun_inputs: _CreatorInputs | None = None,
+    **rest: Any,
+) -> PlannedKriaTurn:
+    """`_plan_creator_answer` after ONE corrective re-run of a refusal the gates contradict.
+
+    A refusal-shaped answer to an ask this edit builds (`app.kria.ask_refusals`) is re-run once
+    with a server note, on ``rerun_inputs`` (the last brief batch's) when the caller has them.
+    If that answer still refuses, the creator reads the plain unmet reply, never the model's
+    invented reason. ``PlannedKriaTurn.main_creator_output`` names the answer that was planned
+    when it is not ``output``.
+    """
+    replaced: MainCreatorOutput | None = None
+    capability = stale_capability_refusal(output.action, manifest, effective_brief)
+    if capability is not None:
+        replaced = await _rerun_after_stale_refusal(
+            db,
+            capability=capability,
+            thread_id=thread_id,
+            item_id=item_id,
+            creator_id=creator_id,
+            inputs=rerun_inputs or inputs,
+            creator_agent_session_id=creator_agent_session_id,
+        )
+    if replaced is not None:
+        output = replaced
+        if stale_capability_refusal(output.action, manifest, effective_brief) is not None:
+            return PlannedKriaTurn(
+                plan=KriaTurnPlan(
+                    mode="respond",
+                    turn_value="question",
+                    response=ask_refusals.unmet_reply(),
+                ),
+                manifest_hash=manifest.manifest_hash,
+                context_hash=manifest.context_hash,
+                main_creator_output=replaced,
+            )
+    planned = await _plan_creator_answer(
+        db,
+        thread_id=thread_id,
+        item_id=item_id,
+        creator_id=creator_id,
+        manifest=manifest,
+        inputs=inputs,
+        output=output,
+        effective_brief=effective_brief,
+        **rest,
+    )
+    return planned if replaced is None else replace(planned, main_creator_output=replaced)
+
+
+async def _plan_creator_answer(
     db: AsyncSession,
     *,
     thread_id: uuid.UUID,
@@ -3232,6 +3622,7 @@ async def _plan_voiceover_script(
                 response=_clips_still_checking_reply(len(pending)),
             ),
             continuable=True,
+            continue_reason="clip_analysis_pending",
             **hashes,
         )
     deadline = turn_deadline.get()
@@ -3606,7 +3997,7 @@ async def _plan_turn_clip_intents(
         # KRI-1076: the plan item makes the planner's and resolver's agent_run rows
         # (their input and answer) land, so a missed match can be read afterwards.
         run_context=RunContext(
-            request_id=str(thread_id),
+            request_id=paid_call_request_id(thread_id),
             creator_id=str(creator_id),
             plan_item_id=str(item_id),
         ),
@@ -3811,6 +4202,7 @@ async def _look_inside_clips_first(
             context_hash=manifest.context_hash,
             # KRI-709: only a budget/deadline stop continues.
             continuable=resolution.status == "pending" and not resolution.needs_creator,
+            continue_reason="clip_intent_resolution_pending",
         )
     looked = after_looking(resolution.intents, planned.rejected_selections)
     if looked.outcome == FOUND and answers_found_card(thread_events):
@@ -4181,6 +4573,7 @@ async def _plan_creator_action(
                 manifest_hash=manifest.manifest_hash,
                 context_hash=manifest.context_hash,
                 continuable=gate.pending,
+                continue_reason="song_order_pending",
             )
         if gate.strategy is not None:
             # The model flipped away from lip-sync mid-exchange and the gate kept it:
@@ -4393,6 +4786,7 @@ async def _plan_creator_action(
                 continuable=(
                     planned.resolution.status == "pending" and not planned.resolution.needs_creator
                 ),
+                continue_reason="clip_intent_resolution_pending",
             )
         # Leverkusen M2: a part with its clip but no edge or seconds (or one that leaves nothing
         # of the clip) is asked about in plain words; it is never drafted with the part showing.
@@ -5525,7 +5919,13 @@ async def _gate_unresolved_choices(
         and creator_target > 0
         else None
     )
-    frozen_music = _prior_frozen_music(events, music_input_digest, music_pool_digest)
+    catalog_withheld = planner_catalog_song_blocked()
+    # A song an earlier turn of the thread froze is a catalog song too.
+    frozen_music = (
+        None
+        if catalog_withheld
+        else _prior_frozen_music(events, music_input_digest, music_pool_digest)
+    )
     if isinstance(frozen_music, dict) and GENRE_FIT not in frozen_music and asked_genres(music_ask):
         # KRI-848: frozen before the song's genre was checked, so nobody has looked at it.
         frozen_music = None
@@ -5545,6 +5945,7 @@ async def _gate_unresolved_choices(
             ),
             target_s=music_target_s,
             music_ask=music_ask,
+            catalog_withheld=catalog_withheld,
         )
     elif isinstance(frozen_music, dict):
         # A section frozen before KRI-600 may be longer than the footage can fill, and
@@ -5685,7 +6086,9 @@ async def _gate_unresolved_choices(
     # KRI-848: say which song is suggested and whether its labels fit the genre asked for.
     # The receipts reply replaces the summary whenever a judged ask is unmet and keeps only
     # the policy notices, so the song notice rides both.
-    song_notice = music_genre_notice(frozen_music)
+    song_notice = (
+        withheld_song_notice(frozen_music) if catalog_withheld else music_genre_notice(frozen_music)
+    )
     if song_notice and song_notice not in planned.policy_notices:
         planned = replace(planned, policy_notices=(*planned.policy_notices, song_notice))
     # KRI-1068: the clip the creator just dropped is said like the song, on both replies.
@@ -6056,6 +6459,19 @@ async def _plan_scoped_turn(
             )
         if miss == "editor_state_stale":
             return _reply(_editor_state_stale_reply())
+        if miss == "source_replaced":
+            return _reply(
+                say(
+                    en=(
+                        "Those parts belonged to your old take. Ask me to make the video "
+                        "again and I'll plan it from your new one."
+                    ),
+                    tr=(
+                        "Bu bölümler eski çekimine aitti. Videoyu yeniden yapmamı iste, "
+                        "yeni çekiminle planlayayım."
+                    ),
+                )
+            )
         return _reply(
             say(
                 en="I couldn't open your current video to update it. Try again in a moment.",
@@ -6194,6 +6610,325 @@ async def _plan_scoped_turn(
             brief_expected_version=expected_version,
         )
     return planned
+
+
+_NO_LONGER_FITS = (
+    "This suggestion no longer fits your edit. Nothing was changed, and I'm refreshing the ideas."
+)
+_NO_LONGER_FITS_TR = (
+    "Bu öneri artık düzenlemene uymuyor. Hiçbir şey değişmedi, önerileri yeniliyorum."
+)
+
+
+def no_longer_fits_reply() -> str:
+    return say(en=_NO_LONGER_FITS, tr=_NO_LONGER_FITS_TR)
+
+
+_UNSAVED_EDITS_REPLY = "Save your edits first, then tap this suggestion again. Nothing was changed."
+_UNSAVED_EDITS_REPLY_TR = (
+    "Önce düzenlemelerini kaydet, sonra bu öneriye tekrar dokun. Hiçbir şey değişmedi."
+)
+
+
+async def plan_pinned_suggestion_turn(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    item_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    user_message: str,
+    pin: Mapping[str, Any],
+    editor_state: Any = None,
+    client_protocol: int | None = None,
+) -> PlannedKriaTurn:
+    """A tapped suggestion card as a planned turn: the action it was proven with, no model.
+
+    The result is either ``[draft.apply_editor_ops]`` built from the card's stored action (or the
+    registry's rebuild of it when the editor state moved since the card was served), or a reply
+    that says the card no longer fits. It is never a free interpretation of the card's words:
+    every failure here is a reply, not a fall-through to the planner. The draft commit
+    (``tasks/kria_runtime._complete_draft_turn``) is the only apply path and re-checks the
+    editor state inside its row lock (``suggestion_pin``).
+    """
+    from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+    from app.services.suggestions import pinned, restate_judgment  # noqa: PLC0415
+    from app.services.suggestions.models import (  # noqa: PLC0415
+        BriefUpdateAction,
+        CopyDecisionAction,
+        EditorOpsAction,
+        ItemSettingAction,
+    )
+
+    item = await db.get(PlanItem, item_id)
+    if item is None:
+        raise RuntimeError("Kria target item is unavailable")
+    plan_row = await db.get(ContentPlan, item.content_plan_id)
+    if plan_row is None or plan_row.user_id != creator_id:
+        raise RuntimeError("Kria target item ownership changed")
+    persona = await db.get(Persona, plan_row.persona_id)
+    if persona is None or persona.user_id != creator_id:
+        raise RuntimeError("Kria creator context is unavailable")
+    # Reads only (capabilities, media refs): the manifest hash needs no model call.
+    manifest, _ = await resolve_item_creator_context(
+        db, item, persona=persona, runs_guided_voiceover=False
+    )
+    set_id, suggestion_id = str(pin.get("set_id") or ""), str(pin.get("id") or "")
+
+    def _record(outcome: str, **extra: Any) -> dict[str, Any]:
+        return {
+            "suggestion_pin": {
+                "set_id": set_id,
+                "id": suggestion_id,
+                "outcome": outcome,
+                **extra,
+            }
+        }
+
+    def _reply(text: str, reason: str) -> PlannedKriaTurn:
+        log.info("suggestion_pin.refused", thread_id=str(thread_id), reason=reason)
+        return PlannedKriaTurn(
+            plan=KriaTurnPlan(
+                mode="respond",
+                turn_value="recovery",
+                response=text,
+                diagnostics=_record("refused", reason=reason),
+            ),
+            manifest_hash=manifest.manifest_hash,
+            context_hash=manifest.context_hash,
+        )
+
+    def _no_longer_fits(reason: str) -> PlannedKriaTurn:
+        return _reply(no_longer_fits_reply(), reason)
+
+    thread = await db.get(CreationThread, thread_id)
+    resolved = pinned.resolve_pin(thread.state if thread is not None else None, pin, user_message)
+    if resolved.card is None:
+        return _no_longer_fits(resolved.reason or pinned.UNRESOLVED)
+    card = resolved.card
+    suggestion = card.suggestion
+    action = suggestion.action
+    restate = pinned.restates_strategy(action)
+    ops = pinned.editor_ops(action)
+    allow = pinned.PINNED_OP_ALLOW
+    if ops is None and (ops := pinned.copy_ops(action)) is not None:
+        allow = pinned.COPY_OP_ALLOW
+    if ops is None and not restate:
+        return _no_longer_fits(pinned.ACTION_UNSUPPORTED)
+    if (ops is not None and pinned.disallowed_op(ops, allow) is not None) or (
+        not pinned.kind_enabled(suggestion)
+    ):
+        return _no_longer_fits(pinned.OP_NOT_ALLOWED)
+    if restate and editor_state is not None and editor_state_has_lanes(editor_state):
+        # The creator's hand edits are not saved yet. Restating the plan would re-plan over them.
+        # The card is still good once they save, so it is not "no longer fits" and stays tappable.
+        return _reply(
+            say(en=_UNSAVED_EDITS_REPLY, tr=_UNSAVED_EDITS_REPLY_TR), pinned.UNSAVED_EDITS
+        )
+
+    target = await _load_editor_target(
+        db, thread_id=thread_id, item=item, **_state_kw(editor_state)
+    )
+    if target is None:
+        miss = _editor_target_miss.get()
+        if miss == "render_in_flight":
+            return _reply(
+                say(en=_EDITOR_TARGET_IN_FLIGHT_REPLY, tr=_EDITOR_TARGET_IN_FLIGHT_REPLY_TR),
+                pinned.TARGET_UNAVAILABLE,
+            )
+        if miss == "editor_state_stale":
+            return _reply(_editor_state_stale_reply(), pinned.TARGET_UNAVAILABLE)
+        return _no_longer_fits(pinned.TARGET_UNAVAILABLE)
+    if target.recovery_basis is not None:
+        # A failed render's correction carries a pinned recovery basis only the copilot path mints.
+        return _no_longer_fits(pinned.TARGET_UNAVAILABLE)
+
+    # Every card is proven again against the facts as they are now, whatever its action type:
+    # the editor may be on the exact base the card was built for while something else moved (the
+    # creator named the clip a duplicates card removes, a title was decided, the analysis was
+    # replaced). The kind's own witness is the one judge of that (it also compares the base).
+    ctx = None
+    try:
+        ctx = await pinned.ready_context(
+            db, thread=thread, item=item, manifest=manifest, target=target, protocol=client_protocol
+        )
+    except Exception:  # noqa: BLE001 - facts that cannot be read prove nothing: rebuild or refuse
+        log.warning("suggestion_pin.context_failed", thread_id=str(thread_id), exc_info=True)
+    exact = ctx is not None and pinned.proves(suggestion, action, ctx)
+    if (
+        not exact
+        and isinstance(action, EditorOpsAction)
+        and pinned.snapshot_digest(target.snapshot) == action.base_digest
+    ):
+        # The editor is on the exact base the card was built for, yet its own proof fails: a
+        # stored op the compiler or the kind now refuses. That is not an edit that moved, so
+        # nothing is rebuilt around it.
+        return _no_longer_fits(pinned.OP_REFUSED)
+    if not exact:
+        # The edit moved since the card was served: build it again from the registry and the
+        # current facts. A card the registry cannot prove now is a card that no longer fits, and
+        # so is one a tap already applied: its rebuild would be a new change, not the offer.
+        if pinned.is_consumed(thread.state, set_id, suggestion_id):
+            return _no_longer_fits(pinned.CONSUMED)
+        rebuilt = await pinned.rebuild_action(
+            db,
+            suggestion=suggestion,
+            thread=thread,
+            item=item,
+            manifest=manifest,
+            target=target,
+            protocol=client_protocol,
+            ctx=ctx,
+        )
+        if rebuilt is None or type(rebuilt) is not type(action):
+            return _no_longer_fits(pinned.BASE_MOVED)
+        action = rebuilt
+        ops = pinned.editor_ops(action)
+        if ops is None:
+            ops = pinned.copy_ops(action)
+        if (ops is None and not restate) or (
+            ops is not None and pinned.disallowed_op(ops, allow) is not None
+        ):
+            return _no_longer_fits(pinned.BASE_MOVED)
+
+    brief_fields: dict[str, Any] = {}
+    parsed: list[dict] | None = None
+    typed_updates: tuple[Any, ...] = ()
+    restated_head_hash: str | None = None
+    restated_pinned_media: dict[str, Any] | None = None
+    if ops is not None:
+        parsed = pinned.parse_ops(ops, target.snapshot)
+        if parsed is None:
+            return _no_longer_fits(pinned.OP_REFUSED)
+        plan_out = adapt_editor_action(
+            reply=say(en=_PHONE_STAGED_REPLY, tr=_PHONE_STAGED_REPLY_TR), ops=parsed
+        )
+        if plan_out.mode != "act":
+            return _no_longer_fits(pinned.OP_REFUSED)
+        typed_updates = pinned.brief_updates_for(
+            suggestion,
+            parsed,
+            language=(ctx.language if ctx is not None else current_reply_language()) or "en",
+        )
+        route = "editor_ops"
+    else:
+        restate_base = await pinned.restate_base(db, thread_id=thread_id, ctx=ctx)
+        if restate_base.strategy is None:
+            return _no_longer_fits(restate_base.reason or pinned.NO_STRATEGY)
+        plan_out = _restated_strategy_plan(restate_base.strategy, suggestion.prompt)
+        restated_head_hash = restate_base.head_hash
+        restated_pinned_media = restate_base.media
+        typed_updates = pinned.restate_updates(suggestion, action)
+        route = "replan"
+    if settings.creative_brief_for(creator_id):
+        # The tap's typed requirement, so the receipt names what changed and a later replan
+        # reads it as a requirement. Deterministic: no extraction, no deferred brief.
+        try:
+            prior_brief = await load_latest_brief(db, thread_id)
+            ids = [
+                req.id
+                for req in apply_updates(prior_brief, typed_updates, source_turn_id=None).live()
+            ]
+        except (BriefCoverageError, BriefUpdateBatchError, ValidationError, ValueError):
+            log.warning("suggestion_pin.brief_unavailable", thread_id=str(thread_id), exc_info=True)
+            return _no_longer_fits(pinned.BRIEF_UNAVAILABLE)
+        current_version = prior_brief.version if prior_brief else 0
+        if isinstance(action, BriefUpdateAction) and action.expected_version != current_version:
+            return _no_longer_fits(pinned.BASE_MOVED)
+        brief_fields = {
+            "brief_updates": typed_updates,
+            "brief_route": route,
+            "brief_clip_ids": tuple(str(media.media_id) for media in manifest.media),
+            "brief_manifest": manifest,
+            "brief_coverage": {
+                "applicable_ids": ids,
+                "retrieved_ids": [],
+                "enforced_ids": [],
+                "unresolved_ids": ids,
+            },
+            "brief_expected_version": current_version,
+        }
+    elif isinstance(action, BriefUpdateAction):
+        return _no_longer_fits(pinned.BRIEF_UNAVAILABLE)
+    from app.services.creative_copy_decisions import (  # noqa: PLC0415
+        media_digest,
+        suggestion_resolution,
+    )
+
+    extra: dict[str, Any] = {}
+    pin_state: dict[str, Any] = {}
+    if isinstance(action, CopyDecisionAction):
+        extra["creative_copy_resolution"] = suggestion_resolution(
+            text=action.text,
+            dependency_digest=media_digest(snapshot_media(item)),
+            set_id=set_id,
+            suggestion_id=suggestion_id,
+        )
+    if restate:
+        # An account on approval readiness is judged on the length plan the head draft pinned
+        # (the serve asks the same, ``restate_judgment``); every other account on the bare media.
+        extra["media_snapshot"] = (
+            restate_judgment.plan_media(snapshot_media(item), restated_pinned_media)
+            if settings.approval_readiness_for(creator_id)
+            else snapshot_media(item)
+        )
+        pin_state["head_hash"] = restated_head_hash
+        # A native-editor Save moves the saved video without writing a draft, so the head hash
+        # cannot tell. The commit compares this with the video it finds under the row lock.
+        pin_state["generation_id"] = variant_render_baseline(target.variant or {})
+        if isinstance(action, ItemSettingAction):
+            pin_state["setting"] = {"field": action.field, "value": action.value}
+    else:
+        pin_state["projected_digest"] = pinned.projected_digest(target.variant)
+    log.info(
+        "suggestion_pin.planned",
+        thread_id=str(thread_id),
+        kind=suggestion.kind,
+        exact=exact,
+        lane="restate" if restate else "ops",
+        ops=[op.get("op") for op in parsed or []],
+    )
+    return PlannedKriaTurn(
+        plan=plan_out.model_copy(
+            update={"diagnostics": _record("planned", kind=suggestion.kind, exact=exact)}
+        ),
+        manifest_hash=manifest.manifest_hash,
+        context_hash=manifest.context_hash,
+        suggestion_pin={
+            "set_id": set_id,
+            "id": suggestion_id,
+            "kind": suggestion.kind,
+            "exact": exact,
+            **pin_state,
+        },
+        **brief_fields,
+        **extra,
+    )
+
+
+def _restated_strategy_plan(strategy: dict[str, Any], summary: str) -> KriaTurnPlan:
+    """The thread's current plan as a draft plus its exact render approval: the route that
+    re-reads the brief (a clip's sound, the speech-cleanup setting). The plan itself is not
+    changed; the typed update and the item setting are what the tap adds."""
+    return KriaTurnPlan(
+        mode="act",
+        turn_value="action",
+        evidence_ids=["trusted-project-manifest"],
+        intents=[
+            {
+                "intent_id": "apply-strategy",
+                "tool_name": "draft.apply_strategy",
+                "tool_version": 1,
+                "arguments": {"strategy": strategy, "summary": summary},
+            },
+            {
+                "intent_id": "request-render",
+                "tool_name": "render.request",
+                "tool_version": 1,
+                "arguments": {},
+                "depends_on": ["apply-strategy"],
+            },
+        ],
+    )
 
 
 async def _plan_live_turn(
@@ -6505,6 +7240,7 @@ async def _plan_live_turn(
                     manifest_hash=manifest.manifest_hash,
                     context_hash=manifest.context_hash,
                     continuable=True,
+                    continue_reason="clip_analysis_pending",
                     brief_updates=pre_extracted_updates,
                     # KRI-814: a delegating request paused on analysis is still read.
                     brief_delegated=extracted_delegation,
@@ -6532,7 +7268,7 @@ async def _plan_live_turn(
                 target = await _load_editor_target(
                     db, thread_id=thread_id, item=item, **_state_kw(editor_state)
                 )
-                if target is None:
+                if target is None and _editor_target_miss.get() != "source_replaced":
                     if failed_editor_correction and _editor_target_miss.get() == "no_render":
                         _editor_target_miss.set("failed_draft_unavailable")
                     recovery = _editor_target_recovery(manifest)
@@ -6542,7 +7278,9 @@ async def _plan_live_turn(
                         brief_expected_version=prior_brief.version if prior_brief else 0,
                         defer_brief=False,
                     )
-                shape = plan_shape_from_editor_snapshot(target.snapshot)
+                # A replaced take leaves no target, so the shape reads "no render" and routes
+                # to a fresh plan rather than to the recovery reply above.
+                shape = plan_shape_from_editor_snapshot(target.snapshot if target else None)
                 await db.rollback()
                 route = route_requirements(fresh, shape, message=user_message, full_replan=False)
             if route == "editor_ops":
@@ -6751,6 +7489,8 @@ async def _plan_live_turn(
             manifest=manifest,
             inputs=inputs,
             output=output,
+            creator_agent_session_id=creator_agent_session_id,
+            rerun_inputs=batch_inputs,
             **({"batch_questions": True} if batch_questions else {}),
         )
 
@@ -6855,6 +7595,7 @@ async def _plan_live_turn(
             manifest_hash=manifest.manifest_hash,
             context_hash=manifest.context_hash,
             continuable=True,
+            continue_reason="clip_analysis_pending",
             brief_updates=updates,
             brief_expected_version=prior_brief.version if prior_brief else 0,
             brief_coverage={
@@ -6951,13 +7692,21 @@ async def _plan_live_turn(
         spoken_text=spoken_text_literals(effective),
         effective_brief=effective,
         keeps_sound=sound_asks_unchanged(prior_brief, effective),
+        creator_agent_session_id=creator_agent_session_id,
+        rerun_inputs=batch_inputs,
         **({"batch_questions": True} if batch_questions else {}),
     )
+    # The corrective re-run (`_plan_from_creator_output`) may have replaced the answer: its
+    # action decides what this turn was, and its brief updates are kept with the first's.
+    output = planned.main_creator_output or output
     if isinstance(output.action, DraftVoiceoverScript):
         # KRI-815: a script draft or revision is not an edit request. "Make it shorter" is
         # about the script, so it must not become a timing requirement on the video, and
         # nothing the brief already holds changes.
         return planned
+    updates = _updates_with_rerun(
+        prior_brief, updates, planned.main_creator_output, creator_text=user_message
+    )
     planned, updates, pin_notices = _without_excluded_anchors(
         planned, prior_brief, updates, pin_notices
     )
@@ -6975,6 +7724,49 @@ async def _plan_live_turn(
         brief_coverage=coverage,
         brief_expected_version=prior_brief.version if prior_brief else 0,
     )
+
+
+def _update_signature(update: BriefUpdate) -> tuple:
+    return (
+        update.operation,
+        update.target_requirement_id,
+        update.kind,
+        update.scope,
+        json.dumps(update.facts, sort_keys=True, default=str),
+    )
+
+
+def _updates_with_rerun(
+    prior: CreativeBrief | None,
+    updates: tuple[BriefUpdate, ...],
+    rerun: MainCreatorOutput | None,
+    *,
+    creator_text: str,
+) -> tuple[BriefUpdate, ...]:
+    """``updates`` plus the requirements only the corrective re-run's answer stated.
+
+    The re-run answers the same creator message as the first answer, so most of its updates are
+    the first answer's again (same operation, target, kind, scope and facts) and add nothing.
+    An update the server cannot apply is dropped with the rest of the re-run's extras: the first
+    answer's updates alone are the turn's brief, as before the re-run existed.
+    """
+    if rerun is None:
+        return updates
+    held = {_update_signature(update) for update in updates}
+    extra = [
+        update
+        for update in bind_updates(prior, rerun.brief_updates)
+        if _update_signature(update) not in held
+    ]
+    if not extra:
+        return updates
+    merged = (*updates, *extra)
+    try:
+        apply_updates(prior, merged, source_turn_id=None, creator_text=creator_text)
+    except BriefUpdateBatchError:
+        log.warning("kria_ask_refusal_rerun_updates_dropped", exc_info=True)
+        return updates
+    return merged
 
 
 async def extract_deferred_brief(

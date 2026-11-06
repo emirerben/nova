@@ -77,7 +77,9 @@
         "speaker_position_x",
         "additional_speakers",
         "output_orientation",
-        "clip_tilts"
+        "clip_tilts",
+        "inserts",
+        "background_focus_open"
       ],
       "recipe": {
         "title_animation": "text_layers[id^=text-].animation_phases.entrance",
@@ -154,6 +156,7 @@
         "pinned_font_family"
       ],
       "recipe": {
+        "pace": "0.tracks[kind=video].clips[volume=0.0].source_duration",
         "length_s": "0.duration"
       }
     },

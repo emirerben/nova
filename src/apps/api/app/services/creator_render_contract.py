@@ -462,6 +462,15 @@ FIELD_MATRIX: dict[str, FieldRule] = {
     **_rules(
         "upstream_resolved",
         "render_contract:text",
+        "pinned_texts[].look",
+        note=(
+            "the pinned-text compiler resolves the look into the row's font, colour, size and "
+            "shadow; the contract still verifies the pin's exact text"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
+        "render_contract:text",
         "pinned_texts[].start_s",
         "pinned_texts[].end_s",
         "pinned_texts[].clip",
@@ -644,6 +653,7 @@ FIELD_MATRIX: dict[str, FieldRule] = {
                 "following_clip_id",
                 "sound",
                 "hold_s",
+                "anchor",
             )
         ),
         "closing_media",
@@ -690,10 +700,39 @@ FIELD_MATRIX: dict[str, FieldRule] = {
     ),
     **_rules(
         "upstream_resolved",
+        "insert_clips_repair",
+        "insert_clips[]",
+        "insert_clips[].media_id",
+        "insert_clips[].at_phrase",
+        "insert_clips[].at_s",
+        "insert_clips[].keep_audio",
+        note=(
+            "Parent KRI-1151: kept or dropped by creator_capabilities.repair_creator_insert_clips "
+            "(a row with no at_phrase and no at_s is placed at the end of the sentence about the "
+            "clip, chosen by meaning); "
+            "the phone Talking worker pauses the take for each clip "
+            "(app.pipeline.phone_talking_inserts) and records variant['phone_insert_clips'], "
+            "which the brief receipts judge. The contract itself does not verify placement"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
         "speaker_background_repair",
         "background_media",
         "background_media.media_id",
+        "background_media.color",
         "background_media.source_start_s",
+        "background_media.sequence[]",
+        "background_media.sequence[].media_id",
+        "background_media.sequence[].source_start_s",
+        "background_media.sequence[].spoken_phrase",
+        "background_media.sequence[].hold_s",
+        "background_media.cadence_s",
+        "background_media.full_screen_opening",
+        "background_media.full_screen_opening_s",
+        "background_media.focus",
+        "background_media.focus_zoom",
+        "background_media.speaker_frame",
         note=(
             "KRI-1117: kept, filled from the creator's camera pick, or dropped by "
             "creator_capabilities.repair_creator_speaker_background; the phone Talking worker "
@@ -1084,6 +1123,29 @@ def _digest(data: Mapping[str, Any]) -> str:
     )
 
 
+def _talking_list_label(requirement: Any, raw: Mapping[str, Any]) -> bool:
+    """Item 19: flag on and the Talking worker would read this whole-video text as a list label."""
+    from app.pipeline.phone_list_labels import is_list_label_candidate  # noqa: PLC0415
+    from app.services.phone_rollout import phone_list_labels_supported  # noqa: PLC0415
+
+    if requirement.scope != "global" or not phone_list_labels_supported():
+        return False
+    from app.config import settings  # noqa: PLC0415
+
+    # Like the worker (`_phone_list_label_follow`): a label follows a recording only with item
+    # 17's windows; without them only a marked label is one.
+    background = raw.get("background_media") if settings.background_follows_talk_enabled else None
+    sequence = background.get("sequence") if isinstance(background, Mapping) else None
+    phrases = tuple(
+        entry["spoken_phrase"].strip()
+        for entry in sequence or ()
+        if isinstance(entry, Mapping)
+        and isinstance(entry.get("spoken_phrase"), str)
+        and entry["spoken_phrase"].strip()
+    )
+    return is_list_label_candidate(requirement, phrases)
+
+
 def _strategy(raw: Mapping[str, Any] | None) -> CreativeStrategy | None:
     if raw is None:
         return None
@@ -1432,6 +1494,18 @@ def _one_unkeyed_clip(
     return len(selected) == 1 and len(rows) == 1 and not rows[0].get("media_id")
 
 
+def creator_mutes_whole_video(brief: CreativeBrief | None) -> bool:
+    """The brief silences every clip's own sound and ``CREATOR_MUTE_WINS_ENABLED`` is on.
+
+    Typed facts only (`clip_sound_toggle_ask.brief_mutes_whole_video`, KRI-667): a partial mute
+    or any "on" ask keeps whatever camera audio the contract pins.
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.kria.clip_sound_toggle_ask import brief_mutes_whole_video  # noqa: PLC0415
+
+    return bool(settings.creator_mute_wins_enabled) and brief_mutes_whole_video(brief)
+
+
 def build_render_contract(
     strategy: Mapping[str, Any] | None,
     *,
@@ -1624,6 +1698,12 @@ def build_render_contract(
                     # take says it (`phone_spoken_text`). Its own receipt answers it ("not
                     # heard" / "can't"), so pinning it would refuse an honest render.
                     # KRI-791: so does one whose word the ask doesn't name ("which word?").
+                    continue
+                if talking_edit and _talking_list_label(requirement, raw):
+                    # Item 19: a Talking edit draws a numbered list label (or the name of a
+                    # planned recording) only where its item's part starts
+                    # (`phone_list_labels`). An item never heard gets no label and its own
+                    # receipt says so, so pinning it would refuse an honest render.
                     continue
                 shot_index = None
                 if requirement.is_shot_text:
@@ -1956,6 +2036,11 @@ def build_render_contract(
             tuple(str(value) for value in ids) if typed.montage_audio.preserve_source_audio else ()
         )
         original_audio = "require" if typed.montage_audio.preserve_source_audio else "forbid"
+    if (original_audio == "require" or source_ids) and creator_mutes_whole_video(brief):
+        # Qendresa case 4: the creator's typed whole-video mute outranks the strategy's camera
+        # audio (`original_audio` is the planner's pick when no song fits). Pinning it would
+        # refuse the muted recipe the draft already promised; "forbid" already agrees.
+        original_audio, source_ids = None, ()
     data: dict[str, Any] = dict(
         version=1,
         generation_id=generation_id,
@@ -2562,6 +2647,12 @@ def _verify_hidden_parts(
                 )
 
 
+def _text_layer_index(layer_id: str) -> int | None:
+    """N of a compiled `text-N` layer id (None for any other id)."""
+    head, _, tail = layer_id.rpartition("-")
+    return int(tail) if head == "text" and tail.isdigit() else None
+
+
 def verify_phone_recipe(
     contract: CreatorRenderContract,
     recipe: EditRecipeV2,
@@ -2720,9 +2811,9 @@ def verify_phone_recipe(
                 lines[-1].append(text)
         return "\n".join("".join(line) for line in lines)
 
-    def text_layers() -> list[tuple[str, str, float, float]]:
+    def text_layers() -> list[tuple[str, str, float, float, float]]:
         return [
-            (layer.id, _normal(_layer_text(layer)), layer.start, layer.end)
+            (layer.id, _normal(_layer_text(layer)), layer.start, layer.end, layer.anchor_y)
             for layer in recipe.text_layers
             if layer.runs
             and all(
@@ -2739,9 +2830,47 @@ def verify_phone_recipe(
 
     rendered = text_layers()
     rendered_evidence = [
-        {"element_id": layer_id, "text": text, "start_s": start, "end_s": end}
-        for layer_id, text, start, end in rendered
+        {
+            "element_id": layer_id,
+            "text": text,
+            "start_s": start,
+            "end_s": end,
+            "anchor_y": anchor_y,
+        }
+        for layer_id, text, start, end, anchor_y in rendered
     ]
+    # Item 14: Qendresa's "comment READ" ending is drawn as two layers (a small "comment"
+    # over a big keyword) in the same window, so the confirmed closing text is never ONE
+    # layer. A recipe carries only `text-<index>` layer ids (no element ids), so the pair is
+    # recognised structurally: two visible layers that follow each other in the text lane,
+    # share a window (within a frame), and read "comment <keyword>". One joined row is added.
+    from app.pipeline.phone_cta_text import cta_ending_parts  # noqa: PLC0415
+
+    # Each rendered layer also carries its `anchor_y` (item 20's stacked-title check reads it).
+    for (lead_id, lead_text, lead_start, lead_end, lead_y), (
+        key_id,
+        key_text,
+        key_start,
+        key_end,
+        _key_y,
+    ) in zip(rendered, rendered[1:], strict=False):
+        lead_index = _text_layer_index(lead_id)
+        if (
+            lead_index is not None  # `text-0` is a real layer: never `or` the index
+            and _text_layer_index(key_id) == lead_index + 1
+            and abs(lead_start - key_start) <= frame
+            and abs(lead_end - key_end) <= frame
+            and cta_ending_parts(f"{lead_text} {key_text}") == (lead_text, key_text)
+        ):
+            rendered_evidence.append(
+                {
+                    "element_id": f"{lead_id}+{key_id}",
+                    "text": _normal(f"{lead_text} {key_text}"),
+                    "start_s": lead_start,
+                    "end_s": lead_end,
+                    "anchor_y": lead_y,
+                }
+            )
     for requirement in contract.exact_texts:
         matches = text_matches(
             rendered_evidence,
@@ -2749,6 +2878,11 @@ def verify_phone_recipe(
             role=requirement.role,
             tolerance_s=frame,
         )
+        if not matches and requirement.role == "opening":
+            # Item 20: a " / " title drawn as one row per line, stacked top to bottom.
+            from app.pipeline.phone_title_look import stacked_title_matches  # noqa: PLC0415
+
+            matches = stacked_title_matches(rendered_evidence, requirement.text, tolerance_s=frame)
         if (
             not matches
             and requirement.role == "any"

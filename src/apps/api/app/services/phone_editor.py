@@ -6,7 +6,7 @@ import copy
 import hashlib
 import json
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import structlog
@@ -47,6 +47,7 @@ from app.pipeline.phone_recipe_shared import (
     PhoneNarrationBed,
     PhoneSongBed,
     apply_landscape_fit,
+    clip_tilt_zoom,
     timeline_end_s,
     with_drawings,
 )
@@ -54,6 +55,10 @@ from app.pipeline.phone_subtitled_lanes import (
     PhoneSubtitledLanes,
     ResolvedSoundEffect,
     SubtitledBackground,
+    SubtitledBackgroundFocus,
+    SubtitledBackgroundWindow,
+    SubtitledFullScreenWindow,
+    SubtitledSpeakerFrame,
     lane_names,
 )
 from app.pipeline.phone_subtitled_plan import (
@@ -65,6 +70,7 @@ from app.pipeline.phone_subtitled_plan import (
     sfx_duck_receipt,
     speaker_binding_from_recipe,
 )
+from app.pipeline.phone_talking_inserts import inserts_from_recipe
 from app.pipeline.phone_timed_cards import TIMED_CARDS_FIELD, timed_cards_from_rows
 from app.pipeline.phone_voiceover_cut import replace_voiceover_cut
 from app.services.creator_render_contract import (
@@ -84,13 +90,18 @@ from app.services.phone_editor_sources import (
 )
 from app.services.phone_rollout import (
     SINGLE_WORD_CAPTIONS_STAMP,
+    background_focus_client_supported,
+    card_tilt_supported,
     freehand_drawing_client_supported,
     freeze_frame_client_supported,
     phone_guided_sfx_supported,
     phone_narrated_caption_edits_supported,
     phone_narrated_title_edits_supported,
     phone_subtitled_editor_lanes_supported,
+    phone_subtitled_editor_media_supported,
     phone_subtitled_title_supported,
+    phone_talking_cutaway_sound_supported,
+    phone_talking_range_supported,
     phone_timed_cards_supported,
     phone_voiceover_editor_lanes_supported,
     phone_voiceover_editor_media_supported,
@@ -99,6 +110,9 @@ from app.services.phone_rollout import (
     single_word_text_client_supported,
     single_word_text_verified,
     speaker_background_client_supported,
+    speaker_background_color_client_supported,
+    speaker_background_windows_client_supported,
+    speaker_full_opening_client_supported,
     text_bend_client_supported,
     validate_phone_pilot_recipe,
 )
@@ -114,8 +128,13 @@ from app.services.phone_subtitled_editor import (
     is_phone_subtitled_editor_variant,
     lanes_from_editor_sections,
     lanes_from_recipe,
+    lanes_with_recipe_focus,
     sections_from_lanes,
+    variant_carries_background_focus,
     variant_carries_speaker_background,
+    variant_carries_speaker_background_color,
+    variant_carries_speaker_background_windows,
+    variant_carries_speaker_full_opening,
 )
 from app.services.phone_voiceover_timeline import (
     narrated_timings_and_assignments,
@@ -860,6 +879,69 @@ def prepare_phone_editor_commit(
                 "minimum_client_protocol": settings.speaker_background_min_client_protocol,
             },
         )
+    if (
+        stored_variant is not None
+        and not speaker_background_windows_client_supported()
+        and variant_carries_speaker_background_windows(job.assembly_plan or {}, stored_variant)
+    ):
+        # KRI-1162 (S32): a recompile would pin `windows` / `speaker_frame`, which this app
+        # build cannot decode, or (compile strips them for such a build) silently take them off.
+        # Nothing is committed.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "speaker_background_windows",
+                "minimum_client_protocol": settings.speaker_background_windows_min_client_protocol,
+            },
+        )
+    if (
+        stored_variant is not None
+        and not speaker_full_opening_client_supported()
+        and variant_carries_speaker_full_opening(job.assembly_plan or {}, stored_variant)
+    ):
+        # Qendresa item 16 (S76): a recompile would pin `full_screen_windows`, which this app
+        # build cannot decode, or (compile strips them for such a build) silently take the
+        # opening off. Nothing is committed.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "speaker_full_opening",
+                "minimum_client_protocol": settings.speaker_full_opening_min_client_protocol,
+            },
+        )
+    if (
+        stored_variant is not None
+        and not background_focus_client_supported()
+        and variant_carries_background_focus(job.assembly_plan or {}, stored_variant)
+    ):
+        # Qendresa item 18 (F1): a recompile would pin a `focus` this app build cannot decode,
+        # or (compile strips it for such a build) silently un-aim the recordings.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "background_focus",
+                "minimum_client_protocol": settings.background_focus_min_client_protocol,
+            },
+        )
+    if (
+        stored_variant is not None
+        and not speaker_background_color_client_supported()
+        and variant_carries_speaker_background_color(job.assembly_plan or {}, stored_variant)
+    ):
+        # KRI-1173 (S49): a recompile would pin `media_kind: "color"`, which this app build
+        # cannot decode, or (compile strips it for such a build) silently take the colour off.
+        # Nothing is committed.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "speaker_background_color",
+                "minimum_client_protocol": settings.speaker_background_color_min_client_protocol,
+            },
+        )
     try:
         _rebind_editor_render_contract(
             staged,
@@ -954,6 +1036,66 @@ def prepare_phone_editor_commit(
                 "code": "client_update_required",
                 "feature": "speaker_background",
                 "minimum_client_protocol": settings.speaker_background_min_client_protocol,
+            },
+        )
+    staged_background = getattr(
+        device_status(staged, variant_id).request.recipe, "speaker_background", None
+    )
+    if (
+        staged_background is not None
+        and staged_background.uses_windows
+        and not speaker_background_windows_client_supported()
+    ):
+        # KRI-1162: the belt for a recompile that pinned windows this build cannot decode.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "speaker_background_windows",
+                "minimum_client_protocol": settings.speaker_background_windows_min_client_protocol,
+            },
+        )
+    if (
+        staged_background is not None
+        and staged_background.uses_full_screen
+        and not speaker_full_opening_client_supported()
+    ):
+        # Qendresa item 16: the belt for a recompile that pinned an opening this build cannot
+        # decode.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "speaker_full_opening",
+                "minimum_client_protocol": settings.speaker_full_opening_min_client_protocol,
+            },
+        )
+    if (
+        staged_background is not None
+        and staged_background.uses_focus
+        and not background_focus_client_supported()
+    ):
+        # Qendresa item 18: the belt for a recompile that pinned a focus this build cannot decode.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "background_focus",
+                "minimum_client_protocol": settings.background_focus_min_client_protocol,
+            },
+        )
+    if (
+        staged_background is not None
+        and staged_background.uses_color
+        and not speaker_background_color_client_supported()
+    ):
+        # KRI-1173: the belt for a recompile that pinned a colour this build cannot decode.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "speaker_background_color",
+                "minimum_client_protocol": settings.speaker_background_color_min_client_protocol,
             },
         )
     if not freeze_frame_client_supported() and recipe_has_freeze_frame(
@@ -1117,6 +1259,10 @@ def _previous_lane_state(
         previous_lanes = lanes_from_recipe(
             previous.recipe, visuals=visuals, duck_receipt=variant.get(SFX_DUCK_RECEIPT_FIELD)
         )
+    elif isinstance(previous.recipe, EditRecipeV2):
+        # Qendresa item 18 (F12/F14): a focus only the pinned recipe holds (the measured one)
+        # must travel on through a Save that leaves the background alone.
+        previous_lanes = lanes_with_recipe_focus(previous_lanes, previous.recipe, visuals=visuals)
     return previous_lanes, labels, paths
 
 
@@ -1170,6 +1316,13 @@ def _settle_lane_labels_and_paths(
     return labels, paths
 
 
+def _focus_from_document(value: object) -> SubtitledBackgroundFocus | None:
+    """A document ``focus`` ({x, y, zoom}, already validated by the route) as a lane focus."""
+    if not isinstance(value, dict):
+        return None
+    return SubtitledBackgroundFocus(x=value.get("x"), y=value.get("y", 0.5), zoom=value.get("zoom"))
+
+
 def _background_lane(
     document: dict | None, visuals: tuple[PhoneVisualBinding, ...]
 ) -> SubtitledBackground | None:
@@ -1180,15 +1333,55 @@ def _background_lane(
     """
     if not document:
         return None
-    binding = next((v for v in visuals if v.media_id == document["media_id"]), None)
-    if binding is None:
-        raise ValueError("that background isn't a visual Kria pinned for this Talking edit")
+    is_color = document.get("kind") == "color"
+    binding = None
+    if not is_color:
+        binding = next((v for v in visuals if v.media_id == document["media_id"]), None)
+        if binding is None:
+            raise ValueError("that background isn't a visual Kria pinned for this Talking edit")
+    windows: list[SubtitledBackgroundWindow] = []
+    for entry in document.get("windows") or ():
+        # KRI-1162: every window is a pinned pool visual too (the route validated each id).
+        window_binding = next((v for v in visuals if v.media_id == entry["media_id"]), None)
+        if window_binding is None:
+            raise ValueError("that background isn't a visual Kria pinned for this Talking edit")
+        windows.append(
+            SubtitledBackgroundWindow(
+                media_id=window_binding.media_id,
+                gcs_path=window_binding.gcs_path,
+                generation=window_binding.generation,
+                kind=window_binding.kind,
+                source_start_s=entry.get("source_start_s", 0.0),
+                start_s=entry["start_s"],
+                end_s=entry["end_s"],
+                focus=_focus_from_document(entry.get("focus")),
+            )
+        )
+    frame = document.get("speaker_frame")
+    # Qendresa item 16: the route validated the spans (sorted, disjoint, inside the edit).
+    full_screen = tuple(
+        SubtitledFullScreenWindow(start_s=entry["start_s"], end_s=entry["end_s"])
+        for entry in document.get("full_screen_windows") or ()
+    )
+    if is_color:
+        # KRI-1173: a colour fill pins nothing; the document carries the (already uppercase) hex.
+        return SubtitledBackground(
+            kind="color",
+            color=document["color"],
+            windows=tuple(windows),
+            speaker_frame=SubtitledSpeakerFrame(**frame) if frame else None,
+            full_screen_windows=full_screen,
+        )
     return SubtitledBackground(
         media_id=binding.media_id,
         gcs_path=binding.gcs_path,
         generation=binding.generation,
         kind=binding.kind,
         source_start_s=document.get("source_start_s", 0.0),
+        focus=_focus_from_document(document.get("focus")),
+        windows=tuple(windows),
+        speaker_frame=SubtitledSpeakerFrame(**frame) if frame else None,
+        full_screen_windows=full_screen,
     )
 
 
@@ -1224,6 +1417,23 @@ def _persist_lane_state(
         row.pop(SFX_DUCK_RECEIPT_FIELD, None)
 
 
+def _require_card_tilt_supported(previous: Any, lanes: Any) -> None:
+    """KRI-1141: refuse a NEW or CHANGED card angle while the tilt gates are closed.
+
+    Keeping a stored angle and straightening one are always allowed (a Save that does not touch
+    the tilt of a card the edit already holds must not fail because the kill switch was flipped
+    afterwards).
+    """
+    held = {card.id: card.rotation_deg for card in (previous.overlays if previous else [])}
+    changed = [
+        card
+        for card in lanes.overlays
+        if card.rotation_deg != 0 and card.rotation_deg != held.get(card.id, 0.0)
+    ]
+    if changed and not card_tilt_supported():
+        raise ValueError("tilting a picture isn't available on this edit yet")
+
+
 def _compile_subtitled_editor_commit(
     staged: Any,
     assembly: dict,
@@ -1247,8 +1457,16 @@ def _compile_subtitled_editor_commit(
         raise ValueError("phone Talking edits aren't editable yet")
 
     active_sections = {key for key, value in prep["sections"].items() if value}
-    allowed_sections = _SUBTITLED_EDITOR_SECTIONS | (
-        _SUBTITLED_TEXT_SECTIONS if phone_subtitled_title_supported() else frozenset()
+    # Range: the speaker's own window rows (`phone_talking_range`), never any other timeline edit.
+    range_rows = prep.get("timeline_override") if "timeline" in active_sections else None
+    if range_rows is not None and not phone_talking_range_supported():
+        range_rows = None
+    media_supported = phone_subtitled_editor_media_supported()
+    allowed_sections = (
+        _SUBTITLED_EDITOR_SECTIONS
+        | (_SUBTITLED_TEXT_SECTIONS if phone_subtitled_title_supported() else frozenset())
+        | (frozenset({"timeline"}) if range_rows is not None else frozenset())
+        | (frozenset({"visual_blocks"}) if media_supported else frozenset())
     )
     unsupported_sections = active_sections - allowed_sections
     if unsupported_sections:
@@ -1261,6 +1479,13 @@ def _compile_subtitled_editor_commit(
     bindings = tuple(
         PhoneSourceBinding.model_validate(row) for row in assembly[PHONE_SOURCES_FIELD]
     )
+    range_keep: list[tuple[float, float]] | None = None
+    if range_rows is not None:
+        if not isinstance(previous.recipe, EditRecipeV2) or len(bindings) != 1:
+            raise ValueError("Range needs a single-clip pinned Talking recipe")
+        range_keep, previous_lanes = _apply_talking_range(
+            range_rows, previous.recipe, bindings[0], previous_lanes
+        )
     lanes = lanes_from_editor_sections(
         previous=previous_lanes,
         sound_effects=prep.get("sfx_override"),
@@ -1269,6 +1494,8 @@ def _compile_subtitled_editor_commit(
         background_touched=bool(prep.get("speaker_background_touched")),
         background=_background_lane(prep.get("speaker_background_override"), visuals),
     )
+
+    _require_card_tilt_supported(previous_lanes, lanes)
 
     caption_cues = prep.get("caption_cues_override")
     caption_cues_overridden = caption_cues is not None
@@ -1294,14 +1521,22 @@ def _compile_subtitled_editor_commit(
     speaker = bindings[0]
     cutaways: tuple = ()
     additional_speakers: tuple = ()
+    inserts: tuple = ()
     if isinstance(previous.recipe, EditRecipeV2):
         speaker = speaker_binding_from_recipe(previous.recipe, bindings)
         cutaways = cutaways_from_recipe(previous.recipe, bindings)
+        if not phone_talking_cutaway_sound_supported():
+            cutaways = tuple(c.model_copy(update={"sound": False}) for c in cutaways)
         additional_speakers = additional_speakers_from_recipe(previous.recipe, bindings)
+        # Parent KRI-1151: a clip the take was paused for comes back where it was, whatever the
+        # insert flag says now; the rows below are already on the final timeline.
+        inserts = inserts_from_recipe(previous.recipe, bindings)
     elif len(bindings) != 1:
         raise ValueError("multi-clip phone Talking edits need a pinned recipe")
     keep_segments = (
-        _previous_keep_segments(previous.recipe, speaker.render_asset().id)
+        range_keep
+        if range_keep is not None
+        else _previous_keep_segments(previous.recipe, speaker.render_asset().id)
         if isinstance(previous.recipe, EditRecipeV2)
         else None
     )
@@ -1352,6 +1587,7 @@ def _compile_subtitled_editor_commit(
         caption_look=caption_look,
         cutaways=cutaways,
         additional_speakers=additional_speakers,
+        **({"inserts": inserts} if inserts else {}),
         landscape_fit=landscape_fit,
         # KRI-467: the staged row's text (already this Save's, when it carries
         # a text section), in the cut-timeline seconds the cues use.
@@ -1363,6 +1599,18 @@ def _compile_subtitled_editor_commit(
         **({"clip_tilts": tilts} if (tilts := _previous_clip_tilts(previous.recipe)) else {}),
     )
     recipe = with_drawings(recipe, variant.get("drawings"))
+    # KRI-1142: added pictures are rebuilt from the saved blocks on EVERY Talking Save, not only a
+    # Save that touches them. This compiler rebuilds the recipe from scratch, so skipping the media
+    # layer here would silently drop a picture on the next caption or sound edit. The blocks are
+    # fitted to the final cut (Range, inserts and speech cleanup all change it).
+    recipe = _talking_editor_media(
+        recipe,
+        assembly=assembly,
+        variant=variant,
+        prep=prep,
+        previous=previous.recipe,
+        media_supported=media_supported,
+    )
     # A native same-source cut normally borrows 25 ms of removed audio to
     # smooth pause cleanup. An explicit spoken-word removal must instead keep
     # its source edges closed, including on a processed-audio derivative.
@@ -1409,7 +1657,11 @@ def _compile_subtitled_editor_commit(
             recipe, receipts_by_source=processed_receipts
         )
     duck_receipt = sfx_duck_receipt(lanes, recipe)
-    validate_phone_pilot_recipe(recipe, allow_editor_media=bool(lanes.overlays or cutaways))
+    validate_phone_pilot_recipe(
+        recipe,
+        allow_editor_media=bool(lanes.overlays or cutaways)
+        or _voiceover_allows_editor_media(recipe),
+    )
     request = make_device_request(
         job_id=previous.identity.job_id,
         variant_id=variant_id,
@@ -1440,7 +1692,7 @@ def _compile_subtitled_editor_commit(
         _restale_protected_text(
             row,
             speaker=speaker,
-            keep_segments=keep_segments,
+            keep_segments=_without_insert_splits(keep_segments),
             landscape_fit=landscape_fit,
             speaker_position_x=speaker_position_x,
             canvas_changed=canvas_changed,
@@ -1448,6 +1700,32 @@ def _compile_subtitled_editor_commit(
         _persist_lane_state(
             row, lanes, labels, paths, caption_style=caption_style, duck_receipt=duck_receipt
         )
+
+
+def _apply_talking_range(
+    rows: list[dict],
+    recipe: EditRecipeV2,
+    speaker: PhoneSourceBinding,
+    previous_lanes: PhoneSubtitledLanes | None,
+) -> tuple[list[tuple[float, float]], PhoneSubtitledLanes | None]:
+    """The new keep segments from the Range rows, and the pinned card/effect lanes moved from
+    the old layout onto it (a lane the Save also carries replaces its moved copy)."""
+    from app.services.phone_talking_range import (  # noqa: PLC0415
+        keep_segments_from_rows,
+        layout_slots,
+        reproject_lanes,
+    )
+
+    old_keep = _previous_keep_segments(recipe, speaker.render_asset().id)
+    if old_keep is None or len(old_keep) != len(rows):
+        raise ValueError("The pinned cut no longer matches this Range edit")
+    ids = [str(row["slot_id"]) for row in rows]
+    new_keep = keep_segments_from_rows(rows)
+    speaker_end = sum(end - start for start, end in old_keep)
+    tail_s = max(0.0, float(recipe.duration) - speaker_end)
+    old_slots = layout_slots(old_keep, ids, tail_s=tail_s)
+    new_slots = layout_slots(new_keep, ids, tail_s=tail_s)
+    return new_keep, reproject_lanes(previous_lanes, old_slots, new_slots)
 
 
 def _restale_protected_text(
@@ -1522,6 +1800,7 @@ def _commit_voiceover_lanes(
         media_overlays=prep.get("media_overlays_override"),
         visuals=visuals,
     )
+    _require_card_tilt_supported(previous_lanes, lanes)
     recipe = replace_editor_lanes(
         recipe, lanes=lanes, visuals=visuals, video_track_id=video_track_id
     )
@@ -1549,6 +1828,7 @@ def _swap_voiceover_cut(
     *,
     archetype: str,
     landscape_fit: str | None = None,
+    visuals: Sequence[PhoneVisualBinding] = (),
 ) -> EditRecipeV2:
     """KRI-290: the committed creator cut (resolved by
     `resolve_phone_voiceover_slots`) swapped into ``recipe``'s video track."""
@@ -1564,6 +1844,7 @@ def _swap_voiceover_cut(
         bindings=bindings,
         pool=pool,
         landscape_fit=landscape_fit,
+        visuals=visuals,
     )
     for slot in prep["timeline_override"]:
         # A cleared tilt was the compile's instruction; the stored row is simply upright.
@@ -1578,6 +1859,41 @@ def _has_editor_lanes(recipe: EditRecipeV2, variant: dict) -> bool:
     persisted lane state still remembers."""
     return bool(variant.get(PHONE_SUBTITLED_EDITOR_LANES_FIELD)) or any(
         track.id in _EDITOR_LANE_TRACK_IDS for track in recipe.tracks
+    )
+
+
+def _talking_editor_media(
+    recipe: EditRecipeV2,
+    *,
+    assembly: dict,
+    variant: dict,
+    prep: dict,
+    previous: Any,
+    media_supported: bool,
+) -> EditRecipeV2:
+    """The Talking recipe with its added-picture layer recompiled from the saved blocks.
+
+    With the media rollout off, a variant that already carries pictures refuses the Save instead
+    of dropping them; one that never had any is returned untouched (byte-identical)."""
+    carries_media = (
+        _has_editor_media(previous, variant)
+        if isinstance(previous, EditRecipeV2)
+        else bool(variant.get("visual_blocks"))
+    )
+    submitted = prep.get("visual_blocks_override")
+    if not media_supported:
+        if carries_media or submitted:
+            raise ValueError("pictures aren't supported on phone Talking edits right now")
+        return recipe
+    if not carries_media and not submitted:
+        return recipe
+    return _commit_voiceover_media(
+        recipe,
+        assembly=assembly,
+        variant=variant,
+        prep=prep,
+        video_track_id="subtitled",
+        always_fit=True,
     )
 
 
@@ -1611,6 +1927,7 @@ def _commit_voiceover_media(
     variant: dict,
     prep: dict,
     video_track_id: str,
+    always_fit: bool = False,
 ) -> EditRecipeV2:
     """Recompile a phone Voiceover recipe's editor media layer from the saved
     ``visual_blocks`` (KRI-287), against the generation's pinned visuals plus
@@ -1620,7 +1937,7 @@ def _commit_voiceover_media(
     if blocks is None:
         blocks = variant.get("visual_blocks") or []
     blocks = list(blocks)
-    if prep["sections"].get("timeline"):
+    if always_fit or prep["sections"].get("timeline"):
         video = next(track for track in recipe.tracks if track.id == video_track_id)
         blocks = _fit_media_blocks_to_cut(blocks, timeline_end_s(video.clips))
     return replace_editor_media(
@@ -1733,7 +2050,14 @@ def _compile_narrated_editor_commit(
     recipe = with_drawings(previous.recipe, None)
     if cut_active:
         bindings, pool = _voiceover_sources(staged, assembly)
-        recipe = _swap_voiceover_cut(recipe, prep, bindings, pool, archetype="narrated")
+        recipe = _swap_voiceover_cut(
+            recipe,
+            prep,
+            bindings,
+            pool,
+            archetype="narrated",
+            visuals=_assembly_visuals(assembly) + editor_visual_bindings(variant),
+        )
     title_elements: list[dict] = []
     if text_active:
         # The STAGED row: `_prepare_editor_commit` validated the Save's
@@ -1895,6 +2219,7 @@ def _compile_voiceover_montage_editor_commit(
             landscape_fit=_resolved_landscape_fit(
                 variant, previous.recipe, prep.get("landscape_fit_override")
             ),
+            visuals=_assembly_visuals(assembly) + editor_visual_bindings(variant),
         )
     fit_override = prep.get("landscape_fit_override")
     if fit_override is not None:
@@ -1951,9 +2276,28 @@ def _previous_clip_tilts(recipe: Any) -> dict[str, dict]:
     for track in recipe.tracks:
         if track.kind == "video" and track.id in FIT_VIDEO_TRACK_IDS:
             for clip in track.clips:
-                if (tilt := row_tilt_from_clip(clip)) is not None:
+                zoom = clip_tilt_zoom(recipe, clip)
+                if (tilt := row_tilt_from_clip(clip, zoom=zoom)) is not None:
                     tilts[clip.id] = tilt
     return tilts
+
+
+def _without_insert_splits(
+    keep_segments: list[tuple[float, float]] | None,
+) -> list[tuple[float, float]] | None:
+    """The take's keep segments as the cleanup cut made them. A clip inserted into the take
+    (parent KRI-1151) splits one segment in two at the point, back to back in the source; the
+    receipts measured the unsplit take, so compare on that. A real cut leaves a gap, so it is
+    never merged."""
+    if not keep_segments:
+        return keep_segments
+    merged = [keep_segments[0]]
+    for start, end in keep_segments[1:]:
+        if abs(start - merged[-1][1]) <= 1e-4:
+            merged[-1] = (merged[-1][0], end)
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def _previous_keep_segments(

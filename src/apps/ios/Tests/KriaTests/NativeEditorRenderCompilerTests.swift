@@ -124,7 +124,10 @@ import KriaMediaEngine
             let recipe = try compiler.compile(document: document, clips: clips, items: [], sources: [0: source]).recipe
             let rendered = try XCTUnwrap(recipe.tracks.first(where: { $0.kind == .video })?.clips)
             XCTAssertEqual(rendered[0].duration, 3, accuracy: 0.0001)
-            XCTAssertEqual(rendered[0].sourceDuration, min(3, 3 * rate), accuracy: 0.0001)
+            // No explicit source endpoint: duration × authored rate owns the span.
+            // The measured six-second original supplies all of the 2× window.
+            XCTAssertEqual(rendered[0].sourceDuration, 3 * rate, accuracy: 0.0001)
+            XCTAssertNil(rendered[0].holdDuration)
             XCTAssertEqual(rendered[1].timelineStart, 3)
             XCTAssertEqual(rendered[1].duration, 3)
             XCTAssertNoThrow(try recipe.validate())
@@ -332,6 +335,44 @@ import KriaMediaEngine
         XCTAssertEqual(low.transform.positionY, (0.4 * 1920).rounded(.toNearestOrEven) - 960, "a card already above the band is untouched")
     }
 
+    /// Qendresa item 15. Ways this could fail: the exemption leaks to cards without the key; `false` or a non-bool
+    /// (string "true") exempts; the exemption moves a card that should still clamp; the y changes when exempt.
+    private func talkingCardCentreY(yFrac: Double, captionClear: JSONValue?) throws -> Double {
+        let (source, clip) = talkingSource(duration: 4)
+        var raw: [String: JSONValue] = ["kind": .string("image"), "display_mode": .string("pip"), "x_frac": .number(0.5),
+                                        "y_frac": .number(yFrac), "scale": .number(0.35), "z": .number(1)]
+        if let captionClear { raw["caption_clear"] = captionClear }
+        let card = EditorTimedEffect(id: "card", startS: 1, endS: 2.5, kind: "image", raw: raw)
+        let document = EditorDocument(editFormat: "subtitled", clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: 4)],
+            captionCues: [.init(id: "cue", startS: 0.5, endS: 3.5, text: "One more game")], mediaOverlays: [card])
+        let items = [NativeEditorTimelineItem(selection: .init(kind: .mediaOverlay, id: "card"), start: 1, end: 2.5),
+                     NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue"), start: 0.5, end: 3.5)]
+        let media = ResolvedEditorSource(preserveAlpha: false, clipIndex: -1, mediaID: "card-media",
+            asset: MediaAsset(id: "card-asset", relativePath: "card.png", fingerprint: AssetFingerprint(hex: String(repeating: "b", count: 64), byteCount: 50),
+                naturalSize: MediaSize(width: 400, height: 200)), url: URL(fileURLWithPath: "/fixture/card.png"))
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let program = try compiler.compile(document: document, clips: [clip], items: items, sources: [0: source],
+                                           mediaSources: ["overlay:card": media], deviceCaptions: true)
+        let cards = try XCTUnwrap(program.recipe.tracks.first(where: { $0.id == "overlays" })).clips
+        return try XCTUnwrap(cards.first { $0.id == "overlay:card" }).transform.positionY
+    }
+
+    func testCaptionClearCardKeepsItsBottomBandPosition() throws {
+        let y = try talkingCardCentreY(yFrac: 0.82, captionClear: .bool(true))
+        XCTAssertEqual(y, (0.82 * 1920).rounded(.toNearestOrEven) - 960)
+    }
+
+    func testCardWithoutCaptionClearIsStillClampedToTheCaptionBandTop() throws {
+        let y = try talkingCardCentreY(yFrac: 0.82, captionClear: nil)
+        XCTAssertEqual(y, (0.62 * 1920).rounded(.toNearestOrEven) - 960)
+    }
+
+    func testCaptionClearFalseOrNonBoolIsStillClamped() throws {
+        let clamped = (0.62 * 1920).rounded(.toNearestOrEven) - 960
+        XCTAssertEqual(try talkingCardCentreY(yFrac: 0.82, captionClear: .bool(false)), clamped)
+        XCTAssertEqual(try talkingCardCentreY(yFrac: 0.82, captionClear: .string("true")), clamped)
+    }
+
     /// KRI-719: a Talking edit with several videos shows its footage full frame and muted over the speakers,
     /// right above them and under every card, exactly in the receipt's windows. Same clamps as the server's
     /// `_compile_cutaway_track`: never past the speakers or the footage, and a window under 0.5 s is dropped.
@@ -443,6 +484,75 @@ import KriaMediaEngine
         let layer = try XCTUnwrap(compiler.compile(document: document, clips: [clip], items: [item], sources: [0: source], deviceCaptions: true).recipe.textLayers.first)
         XCTAssertNil(layer.karaoke?.singleWord)
         XCTAssertNotNil(layer.karaoke)
+    }
+
+    // Qendresa item 12 (caption shape). Ways this could fail: box missing; box drawn per word (karaoke layer);
+    // wrong padding/radius; dim applied over the creator's own highlight choice; dim colour wrong; a document
+    // without `caption_shape` changing at all.
+    private func shapedCaptionLayers(shape: JSONValue?, appearance: [String: JSONValue] = [:], text: String = "One more",
+                                     color: String = "#FFFFFF") throws -> [PortableTextLayer] {
+        let (source, clip) = talkingSource(duration: 4)
+        var meta: [String: JSONValue] = ["style": .string("word"), "color": .string(color), "highlight_color": .string("#FFFFFF")]
+        if !appearance.isEmpty { meta["appearance"] = .object(appearance) }
+        if let shape { meta["shape"] = shape }
+        let document = EditorDocument(editFormat: "subtitled", clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: 4)],
+            captionMeta: meta, captionCues: [.init(id: "cue", startS: 0.5, endS: 3.5, text: text)])
+        let item = NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue"), start: 0.5, end: 3.5)
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        return try compiler.compile(document: document, clips: [clip], items: [item], sources: [0: source], deviceCaptions: true).recipe.textLayers
+    }
+
+    func testCaptionShapeBoxDrawsOneStaticLayerPerCueOnAPaddedRoundedBox() throws {
+        let layers = try shapedCaptionLayers(shape: .object(["version": .number(1), "words": .number(2), "box": .string("#E5E5E5")]),
+                                             color: "#000000")
+        XCTAssertEqual(layers.count, 1)
+        let layer = layers[0]
+        XCTAssertNil(layer.karaoke, "a karaoke layer would paint the box once per word")
+        let box = try XCTUnwrap(layer.background)
+        let grey = 229.0 / 255
+        XCTAssertEqual(box.color, TextInk(red: grey, green: grey, blue: grey, alpha: 1))
+        let size = try XCTUnwrap(layer.runs.first?.fontSize)
+        XCTAssertEqual(box.radius, 0.35 * size, accuracy: 0.001)
+        let left = layer.runs.map(\.x).min() ?? 0
+        XCTAssertEqual(left - box.left, 0.40 * size, accuracy: 0.001, "padding x")
+        XCTAssertEqual(layer.runs.first?.fill, TextInk(red: 0, green: 0, blue: 0, alpha: 1))
+        let plain = try shapedCaptionLayers(shape: nil, appearance: ["highlight_spoken_word": .bool(false)])
+        XCTAssertNil(plain[0].background)
+    }
+
+    func testCaptionShapeBoxIgnoresAnInvalidHex() throws {
+        let layers = try shapedCaptionLayers(shape: .object(["box": .string("grey")]))
+        XCTAssertNil(layers[0].background)
+    }
+
+    func testCaptionShapeDimKeepsOnlyTheSpokenWordBright() throws {
+        let layers = try shapedCaptionLayers(shape: .object(["version": .number(1), "words": .number(2), "dim": .bool(true)]))
+        XCTAssertEqual(layers.count, 1)
+        let karaoke = try XCTUnwrap(layers[0].karaoke)
+        XCTAssertEqual(karaoke.activeOnly, true)
+        XCTAssertEqual(karaoke.highlight, TextInk(red: 1, green: 1, blue: 1, alpha: 1))
+        XCTAssertNil(layers[0].background)
+        XCTAssertFalse(layers[0].runs.isEmpty)
+        for run in layers[0].runs {
+            XCTAssertEqual(run.fill, TextInk(red: 0.65, green: 0.65, blue: 0.65, alpha: 1))
+        }
+    }
+
+    func testCaptionShapeDimYieldsToTheCreatorsHighlightChoice() throws {
+        let dimShape = JSONValue.object(["dim": .bool(true)])
+        for highlighted in [false, true] {
+            let appearance: [String: JSONValue] = ["highlight_spoken_word": .bool(highlighted)]
+            let shaped = try shapedCaptionLayers(shape: dimShape, appearance: appearance)
+            let plain = try shapedCaptionLayers(shape: nil, appearance: appearance)
+            XCTAssertEqual(shaped, plain, "an explicit highlight setting wins over dim (highlighted=\(highlighted))")
+        }
+    }
+
+    func testNoCaptionShapeLeavesTheLayersUnchanged() throws {
+        let without = try shapedCaptionLayers(shape: nil)
+        let empty = try shapedCaptionLayers(shape: .object(["version": .number(1), "words": .number(2)]))
+        XCTAssertEqual(without, empty)
+        XCTAssertEqual(without[0].runs.first?.fill, TextInk(red: 1, green: 1, blue: 1, alpha: 1))
     }
 
     /// Nothing left to fall back to: the failure is named, permanent (no Retry that cannot work) and honest.
@@ -1814,6 +1924,56 @@ import KriaMediaEngine
         }
         XCTAssertEqual(try sourceTime(spokenWords[0].1), 7.256, accuracy: 0.01)
         XCTAssertEqual(try sourceTime(try XCTUnwrap(spokenWords.first { $0.0 == "Yılda" }).1), 11.476, accuracy: 0.01)
+    }
+
+    /// Parent KRI-1151: a Talking take paused for an inserted clip. The server persists the captions on the FINAL
+    /// timeline (later by the clip's length after the pause), so the preview must play the same video the recipe
+    /// does: the take, the other clip with its own sound, the take again from where it stopped. A caption that
+    /// the creator says at take second 25 shows at 40 and must burn over take second 25, not 40.
+    func testInsertedClipPausesTheTakePreviewAndCaptionsStayOnTheWordsTheySpeak() throws {
+        let cue = EditorCaptionCue(id: "after", startS: 40, endS: 42, text: "Sonra kulüp açıkladı")
+        var document = EditorDocument(editFormat: "subtitled", captionCues: [cue],
+            capabilities: ["timeline": .init(editable: false)], revision: .init(baseGeneration: "g"))
+        document = try NativePhoneTalkingSource.hydrate(document, speakers: [.init(clipIndex: 0, duration: 57.97)],
+            inserts: [(.init(clipIndex: 1, atTake: 21.8, duration: 15, keepAudio: true), 15)])
+        let projection = NativeEditorInteraction.timelineProjection(slots: document.clips, carousel: nil)
+        XCTAssertEqual(projection.totalDuration, 72.97, accuracy: 0.001, "the preview is as long as the rendered video")
+        let clips = projection.clipWindows.map { window -> EditorClip in
+            let slot = document.clips[window.sourceIndex]
+            return EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: slot.clipIndex, start: window.start, end: window.end,
+                trimIn: slot.inS, trimOut: slot.inS + (slot.durationS ?? 0), sourceDuration: slot.clipIndex == 0 ? 57.97 : 15, slotID: slot.id)
+        }
+        func source(_ index: Int, _ duration: Double) -> ResolvedEditorSource {
+            ResolvedEditorSource(clipIndex: index, mediaID: "original-\(index)", asset: MediaAsset(id: "local-\(index)", relativePath: "original-\(index).mov",
+                fingerprint: AssetFingerprint(hex: String(repeating: index == 0 ? "a" : "b", count: 64), byteCount: 100), duration: duration),
+                url: URL(fileURLWithPath: "/fixture/original-\(index).mov"))
+        }
+        let items = [NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "after"), start: 40, end: 42)]
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let recipe = try compiler.compile(document: document, clips: clips, items: items,
+                                          sources: [0: source(0, 57.97), 1: source(1, 15)]).recipe
+        XCTAssertNoThrow(try recipe.validate())
+        let video = try XCTUnwrap(recipe.tracks.first { $0.kind == .video }?.clips)
+        XCTAssertEqual(video.map(\.sourceAssetID), ["source-0", "source-1", "source-0"])
+        XCTAssertEqual(video.map(\.sourceStart), [0, 0, 21.8])
+        for (clip, expected) in zip(video, [(0.0, 21.8), (21.8, 15.0), (36.8, 36.17)]) {
+            XCTAssertEqual(clip.timelineStart, expected.0, accuracy: 0.0001)
+            XCTAssertEqual(clip.sourceDuration, expected.1, accuracy: 0.0001)
+        }
+        XCTAssertEqual(video[1].volume, 1, "the inserted clip plays its own sound")
+        func sourceTime(_ t: Double) throws -> Double {
+            let clip = try XCTUnwrap(video.last { $0.timelineStart <= t + 0.000_001 })
+            return clip.sourceStart + (t - clip.timelineStart) * clip.rate
+        }
+        let layer = try XCTUnwrap(recipe.textLayers.first)
+        XCTAssertEqual(layer.start, 40, accuracy: 0.001)
+        XCTAssertEqual(try sourceTime(layer.start), 25, accuracy: 0.001, "burned over the take second he says it at")
+        // A muted insert is silent on the preview, like the recipe's volume 0.
+        var silent = document
+        silent.clips[1].raw["muted"] = .bool(true)
+        let muted = try compiler.compile(document: silent, clips: clips, items: items,
+                                         sources: [0: source(0, 57.97), 1: source(1, 15)]).recipe
+        XCTAssertEqual(try XCTUnwrap(muted.tracks.first { $0.kind == .video }?.clips)[1].volume, 0)
     }
 
     func testClipTrimAndAuthoredTextCompileFromPublicDocument() throws {

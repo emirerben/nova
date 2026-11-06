@@ -264,7 +264,6 @@ def _inventory(*guards: dict, digest: str = DIGEST, state: str = "started") -> l
         _managed_machine("api", digest=digest, state=state, autostop=True),
         _managed_machine("worker", digest=digest, state=state),
         _managed_machine("light", digest=digest, state=state),
-        _managed_machine("autoplace", digest=digest, state=state),
         *guards,
     ]
 
@@ -440,7 +439,6 @@ def test_launcher_accepts_autostopped_managed_machines_on_the_exact_digest(
             ),
             _managed_machine("worker", state="stopped", requested_stop=True),
             _managed_machine("light"),
-            _managed_machine("autoplace"),
             *guards,
         ]
 
@@ -473,7 +471,6 @@ def test_launcher_accepts_never_started_dormant_worker_on_the_exact_digest(
             _managed_machine("api", autostop=True),
             _managed_machine("worker", state="stopped"),
             _managed_machine("light"),
-            _managed_machine("autoplace"),
             *guards,
         ]
 
@@ -514,7 +511,6 @@ def test_launcher_rejects_managed_machine_that_never_settles(tmp_path: Path) -> 
         "all-api-stopped",
         "api-stopped-without-autostop",
         "light-stopped",
-        "autoplace-stopped",
         "worker-crashed",
     ],
 )
@@ -526,7 +522,6 @@ def test_launcher_rejects_stopped_machine_without_documented_lifecycle(
         _managed_machine("api", autostop=True),
         _managed_machine("worker"),
         _managed_machine("light"),
-        _managed_machine("autoplace"),
     ]
     if failure == "all-api-stopped":
         machines[0] = _managed_machine("api", state="stopped", autostop=True)
@@ -534,8 +529,6 @@ def test_launcher_rejects_stopped_machine_without_documented_lifecycle(
         machines.append(_managed_machine("api", state="stopped", machine_id="feedapi0002"))
     elif failure == "light-stopped":
         machines[2] = _managed_machine("light", state="stopped")
-    elif failure == "autoplace-stopped":
-        machines[3] = _managed_machine("autoplace", state="stopped")
     else:
         machines[1] = _managed_machine("worker", state="stopped", oom_killed=True)
 
@@ -554,7 +547,6 @@ def test_launcher_rejects_missing_required_process_group(tmp_path: Path) -> None
     missing_light = [
         _managed_machine("api", autostop=True),
         _managed_machine("worker"),
-        _managed_machine("autoplace"),
     ]
     result = _run(
         tmp_path,
@@ -563,7 +555,7 @@ def test_launcher_rejects_missing_required_process_group(tmp_path: Path) -> None
     )
 
     assert result.returncode == 1
-    assert "missing a required api, worker, light, or autoplace" in result.stderr
+    assert "missing a required api, worker, or light" in result.stderr
     assert not (tmp_path / "create.args").exists()
 
 
@@ -1858,7 +1850,7 @@ def test_workflows_pin_revision_keep_historical_lock_and_gate_deploy() -> None:
         assert "managed_fleet_has_transitional_states" in workflow
         assert "managed_fleet_is_operationally_stable" in workflow
         assert '.fly_process_group) == "light"' in workflow
-        assert '.fly_process_group) == "autoplace"' in workflow
+        assert '.fly_process_group) == "autoplace"' not in workflow
         assert "($lifecycle_events | length == 0)" in workflow
         assert "$last_exit.requested_stop == true" in workflow
         assert '.autostop == true or .autostop == "stop"' in workflow

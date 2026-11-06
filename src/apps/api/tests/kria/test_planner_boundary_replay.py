@@ -323,14 +323,12 @@ def test_a_stored_decline_validates_to_the_strategy_without_it_once_its_switch_i
 
 
 @pytest.mark.parametrize("looks", [True, False])
-def test_only_the_quote_rule_reports_the_v109_prompt(monkeypatch, looks: bool) -> None:
-    """F10: with the quote rule off the rendered prompt is v108's byte for byte, so the run
-    records v108; the look switch changes no prompt."""
+def test_planner_switches_preserve_the_prompt_fingerprint(monkeypatch, looks: bool) -> None:
     monkeypatch.setattr(settings, "planner_unknown_look_decline_enabled", looks)
-    monkeypatch.setattr(settings, "planner_boundary_honest_enabled", False)
-    assert MainCreatorAgent(None).spec.prompt_version == "2026-11-01-v108"
-    monkeypatch.setattr(settings, "planner_boundary_honest_enabled", True)
-    assert MainCreatorAgent(None).spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
+    for quotes in (False, True):
+        monkeypatch.setattr(settings, "planner_boundary_honest_enabled", quotes)
+        assert MainCreatorAgent(None).spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
+        assert MAIN_CREATOR_PROMPT_VERSION.startswith("mc-")
 
 
 def test_the_shipped_defaults_keep_the_quote_rule_dark() -> None:

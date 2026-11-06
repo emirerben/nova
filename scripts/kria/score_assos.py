@@ -38,13 +38,24 @@ Checks:
 12. registry claims: every field the unified table marks applied is read off the strategy in
     the route's code, or names a ``file:symbol`` carrier that reads it (`score_route`
     ``10.claims``). Scored.
+13. plan-time song (owner rule: catalog songs never, uploads only): the draft turn's real song
+    step (`planner._gate_unresolved_choices`, after the Main Creator) runs for this creator job
+    over the recorded strategy without the server-owned frozen section, with a catalog matcher
+    that answers prod's song (Daft Punk). The draft and any length question carry no selected
+    catalog section, the catalog matcher is not asked, and the approval card built from that
+    draft neither takes its length from a catalog song nor names one (title or artist in the
+    card, the summary or the notices).
 
 Checks 3 and 4 accept the card only through that field's own registry line, never free text.
 
 Negative controls (mandatory): checks 1 and 2 each get a synthetic output that ignores the ask
 (the check must FAIL) and one that honours it (the check must PASS); check 10 gets a synthetic
-new field and a synthetic applied claim with no reader (both must be flagged). A failed control
-makes the whole scorecard INVALID.
+new field and a synthetic applied claim with no reader (both must be flagged); check 13 gets a
+synthetic draft with the frozen section, a song-owned card length, a card naming the song and a
+length question carrying it (each must FAIL), a clean footage fallback (must PASS), and the
+real song step with the lane switch off, which must reach the matcher and FAIL (so a harness
+that never reaches the freeze cannot pass the check). A failed control makes the whole
+scorecard INVALID.
 
 ``--fixture-dir`` replays another capture of the same shape (default: the assos fixture).
 """
@@ -1102,6 +1113,195 @@ def check_11_song_rule(fx: dict, base: dict) -> dict:
     )
 
 
+# ------------------------------------------------------------------- the plan-time song (13)
+
+
+def recorded_song(fx: dict) -> dict[str, Any]:
+    """The catalog section prod's planner froze for this creator job (recorded)."""
+    return dict(fx["strategy"]["selected_music_section"])
+
+
+def _catalog_track(fx: dict) -> SimpleNamespace:
+    """Prod's frozen song as the catalog matcher returns it (a MusicTrack's surface)."""
+    song = recorded_song(fx)
+    return SimpleNamespace(
+        id=uuid.UUID("00000000-0000-4000-8000-00000000a550"),
+        title=song["title"],
+        artist=song["artist"],
+        duration_s=song["catalog_duration_s"],
+        beat_timestamps_s=list(song["beat_timestamps_s"]),
+        track_config={"best_start_s": song["start_s"], "best_end_s": song["end_s"]},
+        best_sections=None,
+        section_version=None,
+    )
+
+
+def planner_song_turn(fx: dict, *, switch: bool | None = None) -> dict[str, Any]:
+    """The draft turn's song step for this creator job, through the REAL planner gate.
+
+    ``plan_live_turn`` runs ``_gate_unresolved_choices`` on the Main Creator's draft; that gate
+    freezes the song. It gets the recorded strategy as the model wrote it (the server owns
+    ``selected_music_section``, so it is removed), the recorded brief and clips, no earlier
+    thread events, and a catalog matcher (`generative_build._match_best_track`) that answers
+    prod's song. ``switch`` sets the lane switch for the run (None: as configured). Returns
+    what the gate hands the approval: the draft strategy and summary, the notices, the song a
+    length question carries, and every matcher call."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.config import settings
+    from app.kria import planner
+    from app.kria.brief import CreativeBrief
+    from app.kria.contracts import KriaToolIntent, KriaTurnPlan
+    from app.tasks import generative_build
+
+    calls: list[list[str]] = []
+    track = _catalog_track(fx)
+
+    def match(_metas: Any, **kwargs: Any) -> Any:
+        calls.append(sorted(kwargs))
+        return track
+
+    strategy = copy.deepcopy(fx["strategy"])
+    strategy.pop("selected_music_section", None)
+    rows = media_rows(fx)
+    draft = KriaTurnPlan(
+        mode="act",
+        turn_value="action",
+        intents=[
+            KriaToolIntent(
+                intent_id="assos-draft",
+                tool_name="draft.apply_strategy",
+                tool_version=1,
+                arguments={"strategy": strategy, "summary": fx["planner_summary"]},
+            )
+        ],
+    )
+    planned = planner.PlannedKriaTurn(
+        plan=draft,
+        manifest_hash=None,
+        context_hash=None,
+        media_snapshot={"clip_paths": [r["gcs_path"] for r in rows], "clip_assignments": rows},
+        brief_manifest=manifest(fx),
+        client_protocol=fx["client_protocol"],
+    )
+    brief = CreativeBrief.model_validate(fx["brief"])
+    quiet = io.StringIO()
+    with contextlib.ExitStack() as stack:
+        if switch is not None:
+            stack.enter_context(
+                patch.object(settings, "creator_jobs_no_catalog_song_freeze_enabled", switch)
+            )
+        stack.enter_context(
+            patch.object(planner, "_load_thread_events", AsyncMock(return_value=[]))
+        )
+        stack.enter_context(
+            patch.object(planner, "load_latest_brief", AsyncMock(return_value=brief))
+        )
+        stack.enter_context(patch.object(generative_build, "_match_best_track", match))
+        stack.enter_context(contextlib.redirect_stdout(quiet))
+        stack.enter_context(contextlib.redirect_stderr(quiet))
+        out = asyncio.run(
+            planner._gate_unresolved_choices(
+                AsyncSession(),
+                planned,
+                thread_id=uuid.uuid4(),
+                creator_id=uuid.uuid4(),
+                item_id=uuid.uuid4(),
+                creator_text=fx["message"],
+            )
+        )
+    arguments = out.plan.intents[0].arguments if out.plan.intents else {}
+    question = out.plan.choice_question or {}
+    return {
+        "mode": out.plan.mode,
+        "turn_value": out.plan.turn_value,
+        "response": out.plan.response,
+        "strategy": arguments.get("strategy") if out.plan.mode == "act" else None,
+        "summary": str(arguments.get("summary") or ""),
+        "notices": list(out.policy_notices),
+        "question_song": (question.get("length_context") or {}).get("licensed_music"),
+        "matcher_calls": calls,
+    }
+
+
+def song_draft_card(fx: dict, turn: dict) -> dict[str, Any]:
+    """The approval card for the draft the song step returned, and the length plan behind it."""
+    if turn["strategy"] is None:
+        raise RuntimeError(
+            f"the song step did not reach a draft (mode {turn['mode']!r}, "
+            f"turn {turn['turn_value']!r}): {str(turn['response'] or '')[:160]!r}"
+        )
+    job = build_job(fx, strategy=turn["strategy"])
+    card = approval_card({**fx, "planner_summary": turn["summary"]}, job)
+    plan = job.media.get("length_plan") or {}
+    return {
+        "text": "\n".join([card["text"], turn["summary"], *turn["notices"]]),
+        "length_owner": plan.get("owner"),
+        "licensed_music": plan.get("licensed_music"),
+        "draft_target_duration_s": card["draft_target_duration_s"],
+    }
+
+
+def _catalog_section(section: Any) -> bool:
+    return isinstance(section, dict) and (
+        section.get("status") == "selected" or section.get("track_id") is not None
+    )
+
+
+def catalog_song_verdict(turn: dict, card: dict, song: dict) -> dict[str, Any]:
+    """A creator draft carries no catalog song, and its approval card claims none."""
+    why: list[str] = []
+    label = f"{song.get('title')!r} by {song.get('artist')}"
+    if _catalog_section((turn.get("strategy") or {}).get("selected_music_section")):
+        why.append(f"the planner froze the catalog song {label} into a creator draft")
+    if _catalog_section(turn.get("question_song")):
+        why.append(f"a length question carries the catalog song {label}")
+    if turn.get("matcher_calls"):
+        why.append("the planner asked the catalog matcher for a creator job")
+    if card.get("length_owner") == "song" or _catalog_section(card.get("licensed_music")):
+        why.append(
+            f"the card's length ({card.get('draft_target_duration_s')} s) is set by the catalog "
+            f"song {label}, which nothing plays"
+        )
+    text = str(card.get("text") or "").casefold()
+    named = [
+        str(song[key])
+        for key in ("title", "artist")
+        if str(song.get(key) or "").strip() and str(song[key]).casefold() in text
+    ]
+    if named:
+        why.append(f"the approval card names the catalog song ({', '.join(named)})")
+    return {"pass": not why, "why": why}
+
+
+def check_13_plan_time_song(fx: dict) -> dict:
+    turn = planner_song_turn(fx)
+    card = song_draft_card(fx, turn)
+    verdict = catalog_song_verdict(turn, card, recorded_song(fx))
+    section = (turn["strategy"] or {}).get("selected_music_section")
+    return _result(
+        13,
+        "plan-time song: no catalog song is frozen for the creator job, and the card claims none",
+        verdict["pass"],
+        verdict["why"],
+        {
+            "draft_music_section": (
+                {k: v for k, v in section.items() if k != "beat_timestamps_s"}
+                if isinstance(section, dict)
+                else section
+            ),
+            "matcher_calls": len(turn["matcher_calls"]),
+            "question_song": turn["question_song"],
+            "notices": turn["notices"],
+            "card_length_owner": card["length_owner"],
+            "card_length_s": card["draft_target_duration_s"],
+            "recorded_prod_song": {
+                k: v for k, v in recorded_song(fx).items() if k != "beat_timestamps_s"
+            },
+        },
+    )
+
+
 # ------------------------------------------------------------------------ negative controls
 
 
@@ -1286,6 +1486,82 @@ def hold_controls(fx: dict) -> list[dict]:
     return rows
 
 
+def song_controls(fx: dict) -> list[dict]:
+    """Check 13 must tell a creator draft that carries a catalog song from one that does not.
+
+    The synthetic rows feed its predicate one leak at a time over prod's recorded song. The live
+    row runs the real song step with the lane switch off: it must reach the matcher and freeze
+    the song (FAIL), or the check could pass on a harness that never reaches the freeze."""
+    song = recorded_song(fx)
+    footage = {"status": "fallback_footage"}
+    clean_turn = {
+        "strategy": {"selected_music_section": footage},
+        "question_song": None,
+        "matcher_calls": [],
+    }
+    clean_card = {
+        "text": "Have a look at these in the video",
+        "length_owner": "footage",
+        "licensed_music": footage,
+        "draft_target_duration_s": 44.94,
+    }
+    cases = [
+        (
+            "a draft with the frozen catalog section",
+            {**clean_turn, "strategy": {"selected_music_section": song}},
+            clean_card,
+            False,
+        ),
+        (
+            "a card whose length the catalog song sets",
+            clean_turn,
+            {**clean_card, "length_owner": "song", "licensed_music": song},
+            False,
+        ),
+        (
+            "a card that names the catalog song",
+            clean_turn,
+            {**clean_card, "text": f"Music: {song['title']} by {song['artist']}"},
+            False,
+        ),
+        (
+            "a length question carrying the catalog song",
+            {**clean_turn, "question_song": song},
+            clean_card,
+            False,
+        ),
+        ("the footage fallback and a card with no song", clean_turn, clean_card, True),
+    ]
+    rows = []
+    for name, turn, card, expect in cases:
+        got = catalog_song_verdict(turn, card, song)["pass"]
+        rows.append(
+            {
+                "name": f"13 {name} must {'PASS' if expect else 'FAIL'}",
+                "expected_pass": expect,
+                "got_pass": got,
+                "ok": got == expect,
+                "detail": "",
+            }
+        )
+    with _prod_flags():
+        turn = planner_song_turn(fx, switch=False)
+        verdict = catalog_song_verdict(turn, song_draft_card(fx, turn), song)
+    reached = bool(turn["matcher_calls"])
+    got = verdict["pass"] or not reached
+    rows.append(
+        {
+            "name": "13 the real song step with the lane switch off reaches the matcher and "
+            "freezes the song: must FAIL",
+            "expected_pass": False,
+            "got_pass": got,
+            "ok": not got,
+            "detail": {"matcher_calls": len(turn["matcher_calls"]), "why": verdict["why"]},
+        }
+    )
+    return rows
+
+
 # --------------------------------------------------------------------------- reproduction
 
 
@@ -1420,7 +1696,7 @@ def all_controls(fx: dict) -> list[dict]:
     except _ROUTE.RegistryBroken as exc:
         return [broken(exc)]
     controls: list[dict] = []
-    for build in (negative_controls, lambda: hold_controls(fx)):
+    for build in (negative_controls, lambda: hold_controls(fx), lambda: song_controls(fx)):
         try:
             controls += build()
         except Exception as exc:  # noqa: BLE001
@@ -1458,6 +1734,7 @@ def run_offline(fixture_dir: Path = FIXTURE_DIR) -> dict:
             },
             _guarded(11, "song rule", lambda: check_11_song_rule(fx, base())),
             _guarded(12, "registry claims", lambda: check_12_registry_claims(base())),
+            _guarded(13, "plan-time song", lambda: check_13_plan_time_song(fx)),
         ]
         try:
             repro = reproduction(fx, base())

@@ -11,13 +11,13 @@ import json
 import re
 import unicodedata
 from collections.abc import Callable, Mapping
-from dataclasses import replace
 from typing import Any, ClassVar, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.agents._runtime import Agent, AgentSpec, ModelClient, SchemaError
+from app.agents._prompt_fingerprint import prompt_fingerprint
+from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import (
     CREATOR_AGENT_OUTPUT_ADAPTER,
     CREATOR_REQUEST_MAX_CHARS,
@@ -40,10 +40,12 @@ from app.agents._skills import load_skill
 from app.agents._writing_context import turkish_audience_instruction
 from app.agents.prompt_vocab import render_vocab_tokens
 from app.config import settings
-from app.kria.brief import BriefUpdate, parse_brief_updates
+from app.kria.brief import LONG_REQUEST_MAX_UPDATES, BriefUpdate, parse_brief_updates
 from app.kria.reply_language import prompt_language_line
 from app.kria.take_trim import refile_take_trim
 from app.kria.text_sequence import last_quoted_literal, refile_text_sequences
+from app.pipeline.phone_talking_cutaways import HOOK_FREE_S, MAX_WINDOW_S, TAIL_FREE_S
+from app.pipeline.phone_talking_mentions import SOUND_WINDOW_S
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import (
     MAX_OPENING_TITLE_DURATION_S,
@@ -61,136 +63,39 @@ from app.schemas.text_style_intent import normalize_label_position, normalize_ti
 from app.services.creator_capabilities import (
     CAPABILITY_REACTION_BEATS,
     CAPABILITY_TIMED_CARDS,
+    TalkingCutawayAvailability,
     ending_clip_candidates,
+    insert_clip_candidates,
+    speaker_background_color_open,
     speaker_background_open,
+    speaker_background_windows_open,
+    talking_footage_cutaways,
 )
 from app.services.length_policy import creator_duration_s
 
 log = structlog.get_logger()
 
-# Named sound effects are model-read with verbatim licensed_sfx evidence (v35).
-# KRI-178: reaction beats (name/word-triggered photo/sticker + sound pop-ins,
-# plus a held closing shot) on a phone `subtitled` (Talking) edit (v36).
-# KRI-188: Creative Brief requirement extraction (`brief_updates`, taught only
-# when the brief is on for the creator) -- v37.
-# KRI-189: when/where clip facts with provenance (v38).
-# KRI-190: brief `facts` (distance/activity/start/end) and an `order` requirement
-# are always captured when the creator asks the edit to follow a route or sequence (v39).
-# KRI-244: descriptive footage chronology remains creative context unless the
-# creator actually asks the edit to order, group, label, include, or caption it (v40).
-# KRI-374: a creator-uploaded song as the music (`audio_strategy="user_song"` +
-# `song_sync`), taught only when the manifest carries a usable song (v42).
-# KRI-422: dictated per-shot texts are one per_clip brief entry per shot (they all
-# stay in force); `brief_updates` cap 8 -> 16 (v43).
-# KRI-459: stable IDs make changes and removals unambiguous (v44).
-# KRI-470: a stated video length ALWAYS becomes a `timing` requirement; the clarification
-# gate cannot compare a number the brief lost (v45; brief_extractor v2 shares the section).
-# KRI-506: delegated creative copy is proposed for a separate server approval (v46).
-# KRI-479: `voice_mode` (continuous | excerpts) for a montage that keeps one clip's camera
-# audio, taught only when the manifest advertises `phone_source_audio` AND the route can render
-# (`Settings.voice_behind_footage_enabled`) (v47).
-# KRI-522: brief facts for first_clip/last_clip, animation, position, placeholder (v48).
-# KRI-523: `pinned_texts` (whole-video corner text) + choice-answer brief rule (v49).
-# KRI-520: a Turkish chat gets a reply-language line at the end of the prompt; English is
-# byte-identical (v50).
-# KRI-519: reaction beats on an iPhone Voiceover edit, worded for the voiceover (v51).
-# KRI-525/526: pins may carry `start_s`/`end_s` or `clip`; the 4-line / 120-character limits are
-# taught so an over-long ask becomes a question, not a schema failure (v52).
-# KRI-598: no `execution_contract` where `guided_voiceover` is unavailable (runtime v2); on a
-# Voiceover edit a cue for an own clip is `include`, never `order`, and beats persist (v55).
-# KRI-614: a clip's `filename` (the name the app shows) identifies it when the creator writes it
-# (v56).
-# KRI-667: brief `facts` carry what an ask means in English keys and values (`triggers`,
-# `keep_whole_take`, `closing`, `speech_cleanup`, `captions`, `caption_language`) whatever the
-# creator's language, so the server checks them without re-reading the words (v58).
-# v59 combines these facts with KRI-669 heading groups and relative sizes.
-# KRI-700: a brighten / darken ask carries `footage_light`, so the server can say no draft
-# changes the footage's light instead of the summary promising it (v60).
-# v61 (KRI-674 live verification): per-clip camera sound is not spoken excerpts.
-# KRI-793: a captions ask that lists words to spell records them in `spellings`, which the
-# phone Talking writer applies to its captions and the render-ready review checks (v65).
-# KRI-791: an on-screen text timed to a spoken word carries `triggers` too (it was taught only
-# for photos, videos, stickers and sounds, so "Show MEROPE ... the first time she says Merope"
-# arrived with no trigger), plus `speaker` when someone other than the creator says it.
-# KRI-806: optional editorial plans pair only with licensed music and no kept clip sound.
-# v67 retains caption spellings, spoken triggers/speaker and the editorial audio pairing rule.
-# v66 combines both authored changes without losing either prompt instruction.
-# v66 (KRI-792): named spoken cuts carry cut_lines; caption spellings remain intact.
-# KRI-789: quoted start / end LINES inside a take are a `timing` trim (`start_line` /
-# `end_line`), never an `order` requirement; route places keep `order` (v67).
-# v68 combines caption spelling, spoken-text triggers/speaker, quoted trims and named cuts.
-# v69 retains all shared brief instructions plus editorial audio pairing.
-# v70 (KRI-851): the Talking reaction-beats section no longer forbids `opening_title`; a requested
-# title / closing text still goes in `opening_title` / `closing_title` alongside the beats.
-# KRI-814: a typed `delegates_all_choices` declaration for a message that states no requirement
-# and hands every choice to Kria, so readiness need not match the stock sentence (v71).
-# v72 (KRI-814): earlier creator lines never read into the brief are read with the current one.
-# v74 combines delegation v72 with subtitle-semantics v73, retaining all instructions.
-# v75 adds N2 fullscreen photo-then-original sequences to the complete v74 union.
-# v76 (KRI-816): a typed `starts_fresh` declaration withdraws the saved brief ("Start fresh").
-# v76 (KRI-815): `$voiceover_script_section` teaches `draft_voiceover_script` when footage is
-# attached and no voiceover is (a script request returns a script, not a doomed narrated draft).
-# v77 combines both v76 branches (KRI-816 starts_fresh + KRI-815 voiceover script section).
-# v77 (KRI-827): "no text on her face or on the plate" => `keep_text_off` facts.
-# v78 combines main's v77 (KRI-815 + KRI-816) with KRI-827's v77 (keep_text_off).
-# v77 (KRI-821): "mute the camera / crowd sound" is a typed `source_muted` audio intent.
-# v78 (KRI-821): a named cut of a repeated line records which take (`cut_line_occurrences`).
-# v79 combines main's v77 (KRI-815 + KRI-816) with KRI-821's v78.
-# v80 combines main's v79 (KRI-815/816/821) with KRI-827's keep_text_off (branch v78).
-# KRI-724: the Nth time a quoted phrase is said carries `speech_remove` {quote, occurrence}
-# beside its cut_lines, and an engine/motor noise ask carries `noise_reduction: "engine"`, so
-# the phone Talking worker cuts / filters from facts, never from the words (KRI-667) (v76,
-# on top of v75).
-# v76 (KRI-840): Talking reaction beats can ask for a photo full screen at a word
-# (`display_mode` "fullscreen"), and the shared brief records `display_mode`.
-# v76 (KRI-841): `ending_clip` (a video added after the talk, with its own sound, Talking only) and
-# the brief fact that records it next to `last_clip` (brief_extractor v21 shares the section).
-# v76 (KRI-842) adds the `clip_sound` fact: one clip's own sound under, or after, a voiceover.
-# KRI-847: a ceiling ("at most 15 seconds") carries `duration_bound: "at_most"` beside
-# `duration_s`, so a shorter draft meets it instead of missing 15 s +/- 10 % (v76).
-# v76 (KRI-849): "if you can't tell what he says, ask me instead of guessing" is a captions fact
-# (`ask_if_unclear`), and the creator's later answer is `unclear_answer` ("omit" or their own
-# words); the server compares two hearings of the speech and asks, it never reads the words.
-# v92 (KRI-881): main's v91 plus a research / sources ask as a typed `text` requirement with
-# `facts.research` ({topic, request_quote}); the server researches it before approval.
-# v93 combines main v92 research-before-approval with runtime creative skills.
-# v95 (KRI-689): the shared brief section records a clip-speed ask as `facts.playback_rate`
-# (0.25-4; "slow motion" = 0.5, "speed up" = 2) on a `style` requirement, never for pacing /
-# text / music or a speed ramp; the phone montage plans the rate onto the named clips.
-# v96: exact-timed small cards (`timed_cards`, flag PHONE_TIMED_CARDS_ENABLED) on phone
-# Montage / Voiceover edits, and the shared brief records a `timed_card` fact for the ask.
-# v97 (KRI-945): the described-text exception covers text on particular clips only; an
-# intro, explanation or facts for the whole video is never a clip intent.
-# v98 (KRI-942): the shared brief records clip sound on / off (`clip_sound` "on"/"off" with
-# `sound_clip`, `sound_from_s`/`sound_to_s`, `sound_line`, `sound_except`) for montages.
-# v99 (KRI-957): an after-voice clip ask's `triggers` is the line said in that clip, never the
-# creator's own last voiceover words ("after my last words \"before we eat\"").
-# v100 (KRI-994): a select ask records the media kind it restricts to / includes
-# (`only_media_kind` "video", `include_media_kind` "photo"), so the server can judge "clips
-# only" on the finished timeline and withdraw an earlier photo ask a later clips-only ask replaces.
-# v102 (29 Ekim lane D, KRI-1038): words shown a piece at a time are a `text_sequence`
-# requirement, not `captions: word_by_word`; "say" plus a quote with no voiceover is on-screen
-# text. (v101 is lane B's order-key edit; they merge in that order.)
-# v103 (KRI-1027): the shared brief records how sideways clips sit in a vertical video
-# (`landscape_fit` "fill" / "fit"), which preselects crop or black bars on the confirm screen.
-# v104 (30 Ekim): prompt-cache layout only, no rule change. The per-turn INPUT block
-# (creator context, footage, manifest, conversation, message) moved to
-# prompts/main_creator_turn.txt at the end so the rules above it form a shared prefix.
-# v105 (KRI-1077): title animation names come from the vocab registry (all designed edges).
-# v106 (prompt fidelity, animation): an UNNAMED animation ask ("with animations", "animated
-# text") is a `text` requirement carrying `animation: "any"`, not prose only; a named one
-# keeps its id. One fact for both: the disclosure unit's interim `animated: true` fact is gone.
-# v107 (KRI-1117): `background_media` (a photo / looping video behind the Talking speaker), taught
-# only where the manifest advertises `speaker_background`; every other prompt is byte-identical.
-# v108 (KRI-1093): the Lip-sync picker card (`manifest.chosen_format`) defaults an attached song
-# to `lipsync`; the song section gains one paragraph only on that manifest, so every other
-# render is byte-identical.
-# v109 (KRI-1097 wave 2, planner boundary): `render_intent_evidence` gains `mixed_media_timing`,
-# `montage_cadence` and `video_reuse_policy` quotes, taught only with
-# PLANNER_BOUNDARY_HONEST_ENABLED (default off); off, the prompt is byte-identical to v108 and a
-# run reports v108 (`MainCreatorAgent.__init__`).
-MAIN_CREATOR_PROMPT_VERSION = "2026-11-01-v109"
-_PRE_BOUNDARY_PROMPT_VERSION = "2026-11-01-v108"
+# The prompt version is a fingerprint of these files, so it moves exactly when they change
+# (app/agents/_prompt_fingerprint.py). Don't bump or pin it and don't add a history here;
+# describe a prompt change in its PR. The hand-numbered history (to v136) is frozen in
+# docs/pipelines/prompt-version-history.md. A new prompt file or skill must be listed here
+# (tests/agents/test_prompt_fingerprint.py checks every load_prompt / load_skill).
+MAIN_CREATOR_PROMPT_SOURCES = (
+    "app/agents/main_creator.py",
+    "app/agents/prompt_vocab.py",
+    "app/agents/_schemas/text_animation_phases.py",  # {{TEXT_ANIMATION_EDGES}}
+    "app/agents/_writing_context.py",
+    "app/kria/reply_language.py",
+    "app/kria/brief.py",
+    "app/pipeline/phone_talking_cutaways.py",
+    "app/pipeline/phone_talking_mentions.py",
+    "app/agents/skills/edit-story/SKILL.md",
+    "app/agents/skills/grounded-hook/SKILL.md",
+    "app/agents/skills/meaningful-moment/SKILL.md",
+    "prompts/main_creator.txt",
+    "prompts/main_creator_turn.txt",
+)
+MAIN_CREATOR_PROMPT_VERSION = prompt_fingerprint("mc", MAIN_CREATOR_PROMPT_SOURCES)
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -364,6 +269,14 @@ replace a title: when the creator asks for a hook/opening title or closing text,
 `opening_title` / `closing_title` by the title rules above, alongside the beats.
 """.strip("\n")
 
+# Item 20: appended to the Talking reaction-beats section ONLY while `title_look_enabled` is on.
+# Kept outside `_FIELDS_START`/`_FIELDS_END` (that slice is byte-shared with Voiceover).
+_TITLE_ANCHOR_PROMPT_RULE = """
+A logo or sticker she wants WITH or ABOVE the opening title ("the GitHub logo above it") is a
+beat with `"anchor": "title"`, `visual_id` = that Visual and `trigger` = the Visual's name (it is
+never listened for). Keep the title itself in `opening_title` exactly as typed, " / " included.
+""".strip("\n")
+
 # KRI-841: a video appended AFTER the talk, with its own sound, on a phone `subtitled` (Talking)
 # edit. Appended to the `$reaction_beats_section` slot (the slot after `$clip_intents_section`, so
 # "" adds no bytes) ONLY when `ending_clip_candidates(manifest)` names a video the phone can end
@@ -387,6 +300,251 @@ itself is not an `ending_clip`. Say in `summary`, in plain words, that the video
 the talk with its own sound.
 """.strip("\n")
 
+# KRI-1151: footage clips of a multi-clip phone Talking edit shown full screen over the take.
+# Appended to the `$reaction_beats_section` slot ONLY when `talking_footage_cutaways(manifest)`
+# is open, i.e. the same gates the render worker reads, so every other prompt is byte-identical.
+# Each paragraph is true for exactly the gate combination it is shown for, and every duration is
+# the scheduler's own constant (`phone_talking_cutaways`, `phone_talking_mentions`).
+_CUTAWAY_S = f"{MAX_WINDOW_S:g} seconds"
+_CUTAWAY_SOUND_S = f"{SOUND_WINDOW_S:g} seconds"
+
+_TALKING_CUTAWAYS_HEAD_OPEN = """
+CLIPS SHOWN FULL SCREEN OVER THE TALK (iPhone Talking, several clips)
+This edit has several of the creator's own clips. The clip where they talk to camera is the spine
+of the video and other clips can cover it full screen for a few seconds. This is available here:
+when the creator asks for it, """
+
+_TALKING_CUTAWAYS_HEAD_CLOSE = """never claim the
+format cannot do it, and never offer a Montage as the answer. Propose the strategy: `edit_format`
+"subtitled" with every clip in `selected_media_ids`; the server places the clips and checks the
+ask. An earlier reply in this chat that said this works only on a montage made on the iPhone, or
+not in this edit, is out of date."""
+
+_TALKING_CUTAWAYS_NO_ASK = "never use `ask_user` to say it is unsupported, "
+
+# With the insert lane also open, one clarifying question is allowed, and only for wording that
+# genuinely fits both lanes (the insert section says which wording that is).
+_TALKING_CUTAWAYS_ONE_ASK = (
+    "never use `ask_user` to say it is unsupported (the single exception is ONE short question "
+    "when the wording has no spoken anchor and no pause word and so fits both this and a clip "
+    "played while the talk pauses, see the section on a clip played in the middle of the talk), "
+)
+
+_TALKING_CUTAWAYS_HEAD = (
+    _TALKING_CUTAWAYS_HEAD_OPEN + _TALKING_CUTAWAYS_NO_ASK + _TALKING_CUTAWAYS_HEAD_CLOSE
+)
+
+_TALKING_CUTAWAYS_MENTION = f"""
+Placement: "show the talks when I talk about them", "show the stadium full screen when I mention
+it", "place them in between my speech", "konuştuğum yerde tam ekran göster". A clip the creator
+names, or for "the talks" with no name each clip that is not the creator speaking to camera, is
+shown full screen where the creator talks about what it shows, for up to {_CUTAWAY_S}, never in
+the first {HOOK_FREE_S:g} seconds or the last {TAIL_FREE_S:g} second. The creator has to ask for
+it full screen. A clip no spoken mention matches is spread out over the talk instead, and
+`summary` says so when the creator asked for a particular moment. The creator's take keeps
+advancing underneath: this is an overlay and does not pause the take and resume it later."""
+
+_TALKING_CUTAWAYS_SPREAD = f"""
+Placement: each clip that is not the creator speaking to camera is shown full screen over the
+talk for up to {_CUTAWAY_S}, spread out in upload order. It cannot be pinned to a word the creator
+says; say so plainly in `summary` when the creator asked for a particular moment. A clip with
+clear speech of its own keeps playing in turn, not over the talk, so do not promise it covers the
+talk. The creator's take keeps advancing underneath: this is an overlay and does not pause the
+take and resume it later."""
+
+_TALKING_CUTAWAYS_SOUND_MENTION = f"""
+Sound: "use their audio", "with their own sound", "kendi sesiyle" makes a shown clip play its own
+sound while the creator's voice is muted under it, so what the creator says in that window is not
+heard. A clip placed at a mention plays for up to {_CUTAWAY_SOUND_S}, starting right after the
+creator has said the word. A clip no mention matched stays silent when the creator asked for it
+full screen, and otherwise plays its sound for up to {_CUTAWAY_S}. Say in `summary`, in plain
+words, that their voice is muted under each clip that plays its sound, so they know before they
+approve. Do not offer a silent version instead. "Keep my audio" or "keep my voice" for a clip
+means it stays silent and the creator's voice plays over it, which is also what a shown clip does
+when no sound is asked. Leave `montage_audio` unset on this edit: a list of sound sources that is
+not exactly the clips that play sound drops the clips' sound."""
+
+_TALKING_CUTAWAYS_SOUND_SPREAD = f"""
+Sound: "use their audio", "with their own sound", "kendi sesiyle" makes a shown clip play its own
+sound for the time it is shown (up to {_CUTAWAY_S}) while the creator's voice is muted under it,
+so what the creator says in that window is not heard. Say in `summary`, in plain words, that
+their voice is muted under each clip that plays its sound, so they know before they approve. Do
+not offer a silent version instead. "Keep my audio" or "keep my voice" for a clip means it stays
+silent and the creator's voice plays over it, which is also what a shown clip does when no sound
+is asked. Leave `montage_audio` unset on this edit: a list of sound sources that is not exactly
+the clips that play sound drops the clips' sound."""
+
+_TALKING_CUTAWAYS_NO_SOUND = """
+Sound: a shown clip is silent over the creator's voice here. If the creator asks to use a clip's
+own audio, still propose the edit and say in `summary` that the clips play without their sound;
+the server tells them again before they approve."""
+
+_TALKING_CUTAWAYS_LIMITS_MENTION = """
+Nothing moves when the creator also gave an order for the clips, or when no clip is the creator
+speaking to camera. A take cut for silence or retakes has no word timeline, so every clip is
+spread. Cutting the speech as a requirement is not available with several clips."""
+
+_TALKING_CUTAWAYS_LIMITS = """
+Cutting the speech as a requirement is not available with several clips."""
+
+_TALKING_CUTAWAYS_TAIL_PREFIX = """
+Only when the exact thing asked is impossible, say so and offer what exists. """
+
+_TALKING_CUTAWAYS_TAIL_NO_INSERT = """A clip that stops the
+talk and lets it continue afterwards is not available on iPhone; the nearest are the full-screen
+overlay above%s."""
+
+_TALKING_CUTAWAYS_TAIL_INSERT = """A clip that stops the
+talk and lets it continue afterwards exists only as `insert_clips` (see the section on a clip
+played in the middle of the talk), and only when the creator asks the talk to pause or stop, or
+to put a clip with speech or sound of its own in between my speech (a clip with no sound of its
+own in between my speech is the same insert, played silent); for anything else the nearest are the
+full-screen overlay above%s."""
+
+
+# While the insert lane is open "place them in between my speech" belongs to it (the insert section
+# says when), so the overlay paragraph names its own phrasings instead.
+_MENTION_BETWEEN_EXAMPLE = '"place them in between my speech", '
+_MENTION_OVER_EXAMPLE = '"show them over my speech while I keep talking", '
+
+
+def _mention_paragraph(inserts_open: bool) -> str:
+    if not inserts_open:
+        return _TALKING_CUTAWAYS_MENTION
+    assert _TALKING_CUTAWAYS_MENTION.count(_MENTION_BETWEEN_EXAMPLE) == 1
+    return _TALKING_CUTAWAYS_MENTION.replace(_MENTION_BETWEEN_EXAMPLE, _MENTION_OVER_EXAMPLE)
+
+
+def _talking_cutaways_section(
+    availability: TalkingCutawayAvailability, *, ending_open: bool, inserts_open: bool = False
+) -> str:
+    """The prompt section for the footage-cutaway lane; the same gates the worker reads decide
+    which paragraphs the model sees (`talking_footage_cutaways`). `inserts_open` is the other
+    lane's own gate (`insert_clip_candidates`): closed, the section is exactly what it was
+    before the insert lane existed; open, it stops claiming a pausing clip does not exist."""
+
+    ending = " or a video at the very end (`ending_clip`)" if ending_open else ""
+    if availability.sound:
+        sound = (
+            _TALKING_CUTAWAYS_SOUND_MENTION
+            if availability.mention
+            else _TALKING_CUTAWAYS_SOUND_SPREAD
+        )
+    else:
+        sound = _TALKING_CUTAWAYS_NO_SOUND
+    parts = [
+        (
+            _TALKING_CUTAWAYS_HEAD_OPEN + _TALKING_CUTAWAYS_ONE_ASK + _TALKING_CUTAWAYS_HEAD_CLOSE
+            if inserts_open
+            else _TALKING_CUTAWAYS_HEAD
+        ),
+        _mention_paragraph(inserts_open) if availability.mention else _TALKING_CUTAWAYS_SPREAD,
+        sound,
+        _TALKING_CUTAWAYS_LIMITS_MENTION if availability.mention else _TALKING_CUTAWAYS_LIMITS,
+        _TALKING_CUTAWAYS_TAIL_PREFIX
+        + (_TALKING_CUTAWAYS_TAIL_INSERT if inserts_open else _TALKING_CUTAWAYS_TAIL_NO_INSERT)
+        % ending,
+    ]
+    return "".join(parts).strip("\n")
+
+
+# Parent KRI-1151: a clip of the creator's own footage played while his take is PAUSED, on a phone
+# `subtitled` (Talking) edit. Appended to the `$reaction_beats_section` slot ONLY when
+# `insert_clip_candidates(manifest)` names a clip the phone can pause the take for (the rollout
+# is open and the project has several clips), so every other prompt stays byte-identical. The
+# repair (`creator_capabilities.repair_creator_insert_clips`) never trusts the model's choice.
+_INSERT_CLIP_PROMPT_SECTION = """
+A CLIP PLAYED IN THE MIDDLE OF THE TALK (iPhone Talking only)
+Two kinds of ask put one of the project's own clips in the middle of the talk, with the talk
+PAUSED while the clip plays and going on afterwards where it stopped.
+(1) The creator explicitly asks for their talk to PAUSE or STOP while a clip plays ("when I say
+congress, pause my talk and play the congress clip with its sound, then go on", "kongre
+dediğimde konuşmamı durdur, kongre videosunu sesiyle oynat, sonra devam et"): set
+`insert_clips`: [{"media_id": "<the matching media_context VIDEO entry's exact media_id>",
+"at_phrase": "<the words the creator says it after, in their own language>", "keep_audio":
+true}]. Use `at_s` (a second of the talk) instead of `at_phrase` only when they state a second.
+(2) The creator puts clips in between their speech ("place them in between my speech", "show the
+talks in between my speech", "konuşmamın arasına koy"), with or without "when I talk about them"
+or "when I mention it", and whether or not a clip has speech or sound of its own: set one row per
+such clip with no `at_phrase` and no `at_s`: {"media_id": "<exact media_id>", "keep_audio":
+true}. A clip with no sound of its own (a drone shot, b-roll) is the same insert and the clip
+plays silent while the talk pauses for its picture: {"media_id": "<exact media_id>",
+"keep_audio": false}. The server then pauses the talk at the end of the sentence the creator says
+about that clip, chosen by its meaning and not by matching one keyword, so never invent a phrase.
+A clip the server cannot place by meaning still plays, at its best guess, and the reply says so;
+a clip the server is sure nothing they say is about is left out, named, and offered back. "The
+talks" with no names is every VIDEO entry whose evidence shows people speaking who are not the
+creator. Whatever position the
+creator names wins: a word, a phrase, a time ("at 0:20", "right when I say congress") is used
+exactly there (`at_phrase` is the words they say it after, `at_s` the second), even in the first
+seconds, at the very end or next to another clip, and the server never moves it; only with no
+position named is it the end of the sentence about the clip. These are defaults: an explicit
+instruction from the creator about where a clip goes, whether it has sound, or in what order is
+always followed as asked.
+Routing: the creator's position words decide, never their sound words. A pause, a stop or in
+between my speech makes an insert, for a clip with sound of its own and for one without. Showing
+a clip WHILE the talk keeps running ("show the congress video when I mention congress",
+"kongre dediğimde kongre videosunu göster", "use their audio", "over my speech", "while I keep
+talking", "keep my voice", "as b-roll") is NOT an insert, with or without the clip's sound.%s
+A request for the clip's own sound never decides which one it is: next to in between my speech or
+a pause it is still an insert, and next to over my speech it is still the clip shown over the
+talk.
+Without a pause, a stop, an in-the-middle-while-I-wait wording or "in between my speech" (for any
+clip, with sound of its own or not), do not set `insert_clips`. Find the clip by matching what
+the creator named against the VIDEO entries in
+`media_context` (its `filename`, its `creator_context`, or its `analysis_only_not_copy` evidence),
+then copy THAT entry's exact `media_id`; never invent, shorten or guess an id, and never use the
+clip they speak in. `keep_audio` is true unless they ask for it silent or the clip has no sound of
+its own. Up to 20 clips; a creator who asks for more is told that 20 is the most. The talk is not
+cut: the video simply gets as much longer as the clip. That clip plays only there, so never also
+use it as a cutaway, in `reaction_beats` or as `ending_clip`. It is not a cutaway (the talk keeps
+running under a cutaway) and not an `ending_clip` (that follows the whole talk). Say in
+`summary`, in plain words, where each clip is shown (at the end of the sentence where they talk
+about it, or after the words they named), that the talk pauses for it, and that a clip they never
+talk about is left out unless they want it anyway. An earlier reply in this chat that said the
+talk cannot stop for a clip and carry on is out of date.
+""".strip("\n")
+
+# Insert lane open, full-screen clip lane closed: say what exists. Showing a clip over a talk that
+# keeps running is not available then (the cutaway lane is the only thing that does it), and the
+# only nearby thing that exists is the pause form, so that is the only thing offered.
+_INSERT_NOT_THIS_CLOSED = (
+    " The talk keeps running there, so leave `insert_clips` empty. A clip shown over a talk that"
+    " keeps running is not available in this edit: say so plainly. Only when the creator's ask is"
+    " really to see one of the clips, with its sound, at a point in the talk, offer the nearest"
+    " thing that exists: the same clip played with its sound while the talk pauses and then"
+    " carries on (`insert_clips`, once they say yes). Never promise a clip shown over the talk"
+    " while it keeps running, in full or silent."
+)
+
+# With the full-screen clip lane open too: showing a clip WHILE the talk keeps running belongs to
+# that lane, a clip with no sound of its own is shown over the talk unless the creator says "in
+# between my speech" or asks for a pause, and wording that genuinely fits both gets one short
+# question instead of a guess.
+_INSERT_NOT_THIS_CUTAWAYS_OPEN = (
+    " That is the clip shown over the talk (the full-screen clip lane above, with or without its"
+    " sound), not this. A clip with no speech or sound of its own (a drone shot, b-roll) is shown"
+    ' over the talk when the creator says "place the stadium full screen when I talk", and it'
+    ' pauses the talk, played silent, only when they say "in between my speech" or ask for a'
+    " pause."
+    ' If the wording genuinely fits both, with no mention anchor, no "in between my speech"'
+    ' and no pause word ("put the congress clip in the middle of my talk"), use `ask_user` ONCE'
+    " with one short question: should the talk pause while the clip plays and then carry on, or"
+    " should the clip cover the talk while it keeps running? Never ask when the wording says"
+    ' where it is said ("when I talk about it", "when I mention it") without "in between my'
+    ' speech", or when it says pause, stop or "while I wait".'
+)
+
+
+def _insert_clip_section(*, cutaways_open: bool) -> str:
+    """The insert section; `cutaways_open` is the full-screen clip lane's own gate
+    (`talking_footage_cutaways`), so each lane's text depends on its own gate only."""
+
+    return _INSERT_CLIP_PROMPT_SECTION % (
+        _INSERT_NOT_THIS_CUTAWAYS_OPEN if cutaways_open else _INSERT_NOT_THIS_CLOSED
+    )
+
+
 # KRI-1117: a photo or looping video shown BEHIND the speaker for the whole talk (a green screen
 # without the green). Appended to the `$reaction_beats_section` slot ONLY when the manifest
 # advertises `speaker_background`, so every other prompt stays byte-identical. The repair
@@ -409,6 +567,146 @@ A background is only the backdrop: never also use the same photo or video in `re
 this. Say in `summary`, in plain words, that it sits behind them for the whole video.
 """.strip("\n")
 
+# KRI-1173: a plain colour instead of a photo or video. Appended after the paragraph above ONLY
+# when the manifest advertises `speaker_background_color`, so a closed colour gate keeps every
+# prompt byte-identical. The repair (`creator_capabilities.repair_creator_speaker_background`)
+# normalises names and case to `#RRGGBB` and drops anything else with a notice.
+_SPEAKER_BACKGROUND_COLOR_PROMPT_SECTION = """
+PLAIN COLOUR BEHIND THE SPEAKER (iPhone Talking only)
+When the creator wants a single flat colour behind them instead of a photo or video ("a plain
+white background", "make my background green", "arkam düz beyaz olsun"), set `background_media`:
+{"color": "#RRGGBB"} with NO `media_id` and no `source_start_s`: exactly one of `media_id` or
+`color`. Named colours are exact: white #FFFFFF, black #000000, green #00FF00, blue #0000FF, red
+#FF0000, yellow #FFFF00, grey #808080 (beyaz, siyah, yeşil, mavi, kırmızı, sarı, gri). For a hex
+the creator gives, copy it; for any other colour name use the standard hex only when you are
+sure of it, otherwise leave `background_media` out and ask which colour. A colour needs no photo
+or video from `media_context`. Say in `summary`, in plain words, which colour sits behind them.
+""".strip("\n")
+
+# KRI-1162: several backgrounds in time + the speaker small in a corner. Appended after the
+# paragraph above ONLY when the manifest advertises `speaker_background_windows`.
+_SPEAKER_BACKGROUND_WINDOWS_PROMPT_SECTION = """
+SEVERAL BACKGROUNDS, SPEAKER IN A CORNER (commentary-style green screen)
+When the creator wants SEVERAL photos or videos to take turns behind them ("make the whole video
+like a green screen: me small at the bottom right in front, and behind me full screen whichever
+photo or video I'm talking about, changing every 3-5 seconds", "her konuştuğum fotoğraf arkamda
+dursun"), extend `background_media` with `sequence`: an ordered list of up to 40 objects
+{"media_id": "<exact media_context IMAGE or VIDEO media_id>", "spoken_phrase": "<the words they
+say when this one should appear, in their language, optional>", "hold_s": <seconds, optional>}.
+When the creator wants each photo or video to show while they talk about it ("whichever photo or
+video I'm talking about", "when I mention it", "hangi fotoğraftan bahsediyorsam o arkamda
+olsun"), give every entry a `spoken_phrase`: the few words from THIS take that name what it shows,
+copied as spoken from the speaker clip's timed `segments` (or transcript) in
+`analysis_only_not_copy` (e.g. "the night market", "her new tablet", "drones"). List the entries
+in the order those words are spoken; each one shows on its words and stays until the next. Two
+photos or videos of the same thing get the same spoken_phrase and play one after the other in the
+order listed. Leave out any photo or video they never talk about and name it in `summary` ("I left
+out the lunch photo: you don't talk about it"). When the creator pairs only some photos with words
+("the beach photo when I say beach"), give only those a `spoken_phrase`. Otherwise (a plain
+rotation such as "change every 3 seconds") leave it out and the photos take turns in the order
+listed. Without a stated rhythm they change every 4 seconds; set `cadence_s` (2 to 10) when the
+creator names one ("every 3 seconds", "5 saniyede bir"), and use the midpoint of a range ("3-5
+seconds" = 4). List each photo or video once unless the creator wants repeats; the list repeats by
+itself until the talk ends. Copy exact `media_id`s from `media_context`, never invent one, never
+use the speaker's own clips. With a `sequence`, `background_media.media_id` is the FILL shown
+wherever no window covers the time: use the first entry's id unless the creator names a different
+fill. `speaker_frame` places the speaker (cut out of their own background) as a small picture over
+the backgrounds: "small_bottom_right", "small_bottom_left", "small_top_right" or "small_top_left"
+("me small at the bottom right" = "small_bottom_right"). Leave it out, or "full", to keep the
+speaker full-screen. Pick only these names, never numbers. If no photo or video is attached to
+use, leave `background_media` out rather than guess an id. Say in `summary`, in plain words, how
+the backgrounds change and where the speaker sits.
+""".strip("\n")
+
+# Qendresa item 17: appended after the windows section ONLY with BACKGROUND_FOLLOWS_TALK_ENABLED.
+_BACKGROUND_FOLLOWS_TALK_PROMPT_SECTION = """
+Write each `spoken_phrase` in a `sequence` the way the creator says the name in the take's
+transcript, not the way it is spelled on screen ("trading agents", not "TradingAgents"). When a
+name is also said elsewhere in the take (a common word such as "agents"), copy the words said only
+where that one is introduced ("number four agents").
+""".strip("\n")
+
+# Qendresa item 16: appended after the windows section ONLY with SPEAKER_FULL_OPENING_ENABLED and
+# the `speaker_full_opening` capability. The repair
+# (`creator_capabilities.repair_creator_speaker_background`) keeps the field only while a
+# background survives.
+_FULL_OPENING_PROMPT_SECTION = """
+START FULL SCREEN, THEN THE BACKGROUND (iPhone Talking only)
+When the creator asks to START (or open) the video full screen as themselves in their own room,
+before the background or the corner ("start with me full screen and the title, after that my
+screen recordings and me small in the bottom right", "önce ben tam ekran, sonra kayıtlar"), set
+`background_media.full_screen_opening` true next to the background itself. Add
+`full_screen_opening_s` (1 to 15 seconds) only when they name a length ("for the first 5
+seconds"). The switch happens on its own, on the words of the first recording or after about 5
+seconds, and the opening title shows during it. It needs a `background_media`: never set it
+without one. "Put my recordings full screen" is the photos or videos behind them, never this:
+leave it off for that. Say in `summary`, in plain words, that they start full screen and then
+move into the corner.
+""".strip("\n")
+
+_BRIEF_FULL_OPENING_SENTENCE = (
+    " When the creator wants to START full screen as themselves in their own room before the"
+    ' background or the corner ("start with me full screen", "önce ben tam ekran"), add'
+    ' "speaker_full_opening": true to the requirement it belongs to (the background ask, or its own'
+    ' `style` requirement) and "speaker_full_opening_s": <seconds> only when they name a length'
+    ' ("for the first 5 seconds"); "put my recordings full screen" is not this.'
+)
+_BRIEF_FULL_OPENING_ANCHOR = '"arkam düz yeşil olsun"). Sound that merely'
+
+
+def with_full_opening_brief(section: str) -> str:
+    """``section`` (the shared brief section, or the extractor's narrowing of it) with the one
+    full-screen-opening sentence added. Only called where the opening is open, so every other
+    prompt keeps the bytes it had before (Qendresa item 16)."""
+    assert section.count(_BRIEF_FULL_OPENING_ANCHOR) == 1, "brief full-opening anchor moved"
+    return section.replace(
+        _BRIEF_FULL_OPENING_ANCHOR,
+        '"arkam düz yeşil olsun").' + _BRIEF_FULL_OPENING_SENTENCE + " Sound that merely",
+    )
+
+
+# Qendresa item 18: appended after the full-opening section ONLY with BACKGROUND_FOCUS_ENABLED and
+# the `background_focus` capability. The repair
+# (`creator_capabilities.repair_creator_speaker_background`) drops both fields where the build
+# cannot decode them.
+_BACKGROUND_FOCUS_PROMPT_SECTION = """
+AIMING THE RECORDINGS BEHIND THE SPEAKER (iPhone Talking only)
+Screen recordings and screenshots behind the speaker are already aimed at their readable text,
+and zoomed to read it, automatically. So "zoom in so the text is readable" needs NOTHING from you:
+set neither field below for it. Set `background_media.focus` ("left", "center" or "right") only
+when the creator names a side of the recordings ("show the left part of my recordings"). Set
+`background_media.focus_zoom` (1 = fills the frame's height, bigger = closer, smaller = more of
+the screen, from 0.3 to 3) only when they ask to zoom in or out by a named amount, or say "closer"
+or "wider". "Left" or "right" about where THEY sit is `speaker_frame`, never `focus`.
+""".strip("\n")
+
+
+def background_focus_taught(manifest: ResolvedCreatorManifest) -> bool:
+    """True when the aiming teaching belongs in the prompt: the flag is on AND the manifest
+    advertises the capability (`background_focus`, on top of the background)."""
+    if not settings.background_focus_enabled:
+        return False
+    from app.services import creator_capabilities  # noqa: PLC0415
+
+    return bool(creator_capabilities.background_focus_open(manifest))
+
+
+def speaker_full_opening_taught(manifest: ResolvedCreatorManifest) -> bool:
+    """True when the full-screen-opening teachings belong in the prompt: the flag is on AND the
+    manifest advertises the capability (`speaker_full_opening`, on top of the background)."""
+    if not settings.speaker_full_opening_enabled:
+        return False
+    from app.services import creator_capabilities  # noqa: PLC0415
+
+    open_fn = getattr(creator_capabilities, "speaker_full_opening_open", None)
+    if open_fn is not None:
+        return bool(open_fn(manifest))
+    capability = manifest.capabilities.get("speaker_full_opening")
+    return bool(
+        capability is not None and capability.available and speaker_background_open(manifest)
+    )
+
+
 # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED) on a phone Montage / Voiceover
 # edit. Appended to the `$reaction_beats_section` slot ONLY when the manifest advertises
 # `timed_cards`; "" otherwise, so every other prompt stays byte-identical.
@@ -428,6 +726,28 @@ THAT entry's `media_id` verbatim; never invent or shorten an id. A photo timed t
 ("when I say X") is a reaction beat (where available), never a timed card; a photo that should
 fill the whole screen or play as its own moment is a selected media / clip intent, never a timed
 card. Say in `summary`, in plain words, where and for how long each small card shows.
+""".strip("\n")
+
+# Qendresa item 21: appended to the `$reaction_beats_section` slot ONLY when
+# `settings.clip_text_tiktok_look_enabled`; "" otherwise, so the flag-off prompt keeps its bytes.
+_CLIP_TEXT_LOOK_PROMPT_SECTION = """
+ONE LINE IN THE MIDDLE, IN TIKTOK'S LOOK
+When the creator wants ONE line of text in the middle / centre of the screen / across the middle
+("put this text in the middle", "metni ekranın ortasına koy") for the whole video (or for a stated
+time), set a `pinned_texts` entry with `"corner": "middle_center"` and the words copied exactly.
+Never also put the same words in `opening_title`, `closing_title` or `shot_labels`.
+When she says "like TikTok's", "TikTok text / style / font", "TikTok native", "the normal TikTok
+text" ("TikTok'taki gibi", "TikTok yazısı"), add `"look": "tiktok"` on that pin (white, TikTok's
+own font, small, soft shadow). A colour she names still goes in `text_color`, a size she names in
+`size_px`. "Small white" is already the look: do not add `size_px` for "small".
+"No captions" turns speech captions off; it says nothing about this line's place or colour.
+Example: "Just put this text in the middle for the whole video: \"The prompt I run at the end of
+every Claude session\". Small white text like TikTok's, no captions and nothing else. Make it 11
+seconds. Mute my sound." ->
+"pinned_texts": [{"text": "The prompt I run at the end of every Claude session", "corner":
+"middle_center", "look": "tiktok"}] and no `opening_title`.
+The server keeps the line off any face: if a face is in the middle it moves the line just below
+or above and tells her. Never refuse "in the middle".
 """.strip("\n")
 
 # KRI-519: the same beats on a phone Voiceover edit, grounded against the recorded
@@ -609,7 +929,8 @@ Preserve EVERY independently requested behavior, including modifiers and relatio
 parts of a compound request. An entrance animation does not describe segmentation, ordering,
 overlap, duration, or when one text replaces another. Keep these instructions in the requirement's
 complete description and structured facts; if they need separate verification, record a separate
-style or timing requirement as well. Never shorten a compound request to the one field the
+style or timing requirement as well (never for the captions' look, which stays on the one
+captions requirement). Never shorten a compound request to the one field the
 strategy happens to expose. Descriptions may retain behavior requiring composition of operations.
 Do not duplicate an opening hook as a per-clip caption unless the creator requests both.
 
@@ -677,7 +998,15 @@ very end, add the cheers video with its own sound", "en sona Atakan'ın ilk ıs�
 sesiyle ekle") is not a clip order: record it as a `style` requirement with {"ending_clip": "<the
 creator's words for that video>", "keep_audio": true} (`keep_audio` false only when they want it
 silent), whatever language they write in, and never as `last_clip` or `closing`. On a montage,
-adding or ending on a clip keeps `last_clip` as above. How on-screen text should look goes in the
+adding or ending on a clip keeps `last_clip` as above. A photo or video the creator wants BEHIND
+them on a talking-to-camera edit ("put the beach photo behind me", "make it like a green screen",
+"arkamda bu fotoğraf dursun") is a `style` requirement with {"speaker_background": true}, whatever
+language they write in; add "background_changes": true when several photos or videos take turns
+behind them, "speaker_small": true when they want to be small in a corner and "background_color":
+"<the colour as said, or its hex>" for a plain colour instead of a photo or video ("a plain white
+background", "arkam düz yeşil olsun"). Sound that merely
+plays in the background ("background music", "arka plan müziği") is NOT this and records no such
+fact. How on-screen text should look goes in the
 `facts` of its text requirement, only what the creator said: `animation` (an id from
 {{TEXT_ANIMATION_EDGES}}, never none or the name in brackets) for "animated with typewriter";
 `position` ("top_left", "top", "top_right", "middle", "bottom_left", "bottom", "bottom_right")
@@ -707,9 +1036,22 @@ Merope" => a text requirement, literal "MEROPE", facts {"triggers": ["Merope"], 
 the creator says neither; two photos shown differently in one message => ONE requirement per
 photo, each with its own display_mode; keep a take whole, uncut =>
 {"keep_whole_take": true}; end on a
-particular shot, photo or badge => {"closing": "<the creator's words for it>"}; remove pauses,
-filler sounds or retakes from the speech => {"speech_cleanup": true}, keep them =>
-{"speech_cleanup": false}; cut out particular spoken words (a slip, a half question, a line, "the
+particular shot, photo or badge => {"closing": "<the creator's words for it>"}; remove pauses or
+filler sounds from the speech => {"speech_cleanup": true}, keep them => {"speech_cleanup": false},
+every pause gone or a tight, fast pace, not only the long ones ("cut out all my pauses so it's
+tight", "cut all my pauses", "no pauses at all", "bütün boşlukları kes, sıkı olsun") =>
+{"speech_cleanup": true, "pauses": "tight"}: ALL or EVERY pause is tight even without the word
+tight, while "cut the pauses", "cut the long pauses" or "cut all the long pauses" is the plain
+cleanup; remove a sentence they restarted, their retakes, false starts or spoken mistakes without
+quoting or naming which one ("the sentence I restarted", "the places I restarted", "my retakes",
+"all my mistakes", "yanlış başladığım cümleleri", "tekrar aldığım cümleyi") => {"speech_cleanup":
+true, "cut_restarts": true} and no `cut_lines` for it ("Cut out all my pauses and mistakes so it's
+tight" => {"speech_cleanup": true, "pauses": "tight", "cut_restarts": true}):
+never copy words from the take or its transcript into `cut_lines`, which hold
+only the creator's own words. A restart they quote or name ("the part where I restart the
+kilometer thirty sentence") is a cut line, not `cut_restarts`; "start over" about the edit or a
+clip ("start over with a clip", "make it again from scratch", "videoyu baştan yap") is no restart;
+cut out particular spoken words (a slip, a half question, a line, "the
 part where I say ...") => {"speech_cleanup": true, "cut_lines": ["with bread, no,"]}, one item per
 stretch in the creator's exact words, quoted or described, never translated; when they say
 which time a repeated line to cut ("cut the FIRST take of 'welcome to my channel'", "the last
@@ -725,7 +1067,24 @@ or places still use the order requirement's "start"/"end". Captions =>
 {"caption_language": "en"} (a two-letter code) when they name the captions' language
 ("Türkçe altyazı" => "tr"), plus {"spellings": ["Oblea de la Casa", "Merope"]} when they list
 words or names to spell a certain way in the captions, each exactly as the creator wrote it
-(never corrected or translated), plus
+(never corrected or translated), plus the look they ask the captions to have, each only when
+they say it: {"caption_size": "small"} or "large"; {"caption_position": "middle"} (or "top",
+"bottom", "top_left", "top_right", "bottom_left", "bottom_right"); {"caption_color": "#FFFFFF"}
+(a literal #RRGGBB hex: white #FFFFFF, black #000000, yellow #FFFF00, red #FF0000, blue
+#0000FF); {"caption_case": "lower"} or "upper"; "Captions small, white, lowercase, in the middle"
+=> {"captions": "on", "caption_size": "small", "caption_color": "#FFFFFF", "caption_case":
+"lower", "caption_position": "middle"}; {"caption_words": 2} (1, 2 or 3) ONLY when the creator
+says how many words show at a time ("two words at a time" => 2, "one word at a time" => 1);
+{"caption_box": "#E5E5E5"} (a literal #RRGGBB: light grey #E5E5E5, grey #9E9E9E, white #FFFFFF,
+black #000000) ONLY when they ask for a box, pill or background behind the captions; "Captions
+word by word in a light grey box near the bottom" => {"captions": "word_by_word", "caption_box":
+"#E5E5E5", "caption_position": "bottom"}; "word by word" names the karaoke style, never a count:
+alone it sets no caption_words, and with a count the count wins ("Captions word by word in the
+middle of the screen, white, two words at a time" => {"captions": "word_by_word",
+"caption_words": 2, "caption_position": "middle", "caption_color": "#FFFFFF"}); in one message
+the captions' whole look goes on the same requirement as `captions`, never split into a second
+requirement; where the creator puts themselves, a photo, a card or the background ("me small at
+the bottom right") is never a caption position, plus
 {"ask_if_unclear": "the third sauce he names"} (the creator's own words for WHICH word) when they
 say they could not make out a word and want to be asked instead of having it guessed ("I didn't
 catch the third sauce he names: if you can't tell what he says, ask me"), on the captions
@@ -768,6 +1127,8 @@ Mute or remove the footage's own sound (camera, crowd, ambient, original audio) 
 voice is heard ("mute the crowd noise under my voice", "kamera sesini kapat") => an `audio`
 requirement with {"audio_intent": "source_muted"}; "keep it low / quieter under my voice" is
 not a mute and records no audio_intent.
+"No music" / "without music" / "müzik olmasın" / "müziksiz" => an `audio` requirement with
+{"audio_intent": "no_music"}; it never mutes the footage's own sound.
 Research, fact checking or sources for the on-screen explanations ("include sources for the
 historical facts", "research it online", "kaynakları ekle") => ONE `text` requirement, scope
 "global", the ask in `description`, with {"research": {"topic": "<a public topic, never a link or
@@ -829,6 +1190,21 @@ than 15 seconds", "up to 15 seconds", "15 seconds or less", "en fazla 15 saniye"
 geçmesin" all become {"duration_s": 15, "duration_bound": "at_most"}; every other length has no
 `duration_bound` (omitting it means exact), and a change to a timing requirement must restate
 `duration_bound` if it still applies.
+Seconds tied to ONE moment are never the video's length: an opening title "for the first 3 seconds"
+or ending words "for the last 3 seconds" record NO `timing` requirement and no `duration_s`; the
+seconds stay in the `description` of that moment's own requirement (the opening title is a `text`
+requirement with scope "title" and `facts` {}; the ending words a `text` requirement with scope
+"global" whose `facts` hold {"closing": "<the ending words, exactly as written>"}, which marks them
+as the ending, never a line for the whole video), and the strategy carries them
+(`opening_title_duration_s`, `pinned_texts` `end_s`). `Start with a big title "lets build an agent
+that reads an APP before I trust it!!" for the first 3 seconds` => {"kind": "text", "scope":
+"title", "literal": "lets build an agent that reads an APP before I trust it!!", "description": "a
+big opening title for the first 3 seconds", "facts": {}}; `End with "comment READ" and an arrow for
+the last 3 seconds` => {"kind": "text", "scope": "global", "literal": "comment READ", "description":
+"end with comment READ and an arrow for the last 3 seconds", "facts": {"closing": "comment READ"}};
+neither adds a timing requirement. A length for the whole video in the same message still does ("...
+and make the video 30 seconds long" => {"kind": "timing", "scope": "global", "facts": {"duration_s":
+30}}).
 The exception is exact text the creator dictates for particular shots ("1. The
 bookshop photo: "..." 2. The bowling video: "..."): add one {"operation":"add", "kind": "text",
 "scope":
@@ -893,6 +1269,67 @@ message itself states, even one the contract already had. Otherwise set it to fa
 """.strip("\n")
 )
 
+_BRIEF_INSERT_CLIP_SENTENCE = (
+    " A clip the creator asks to play IN THE MIDDLE of the talk, with the talk PAUSED until the"
+    ' clip ends and then going on from where it stopped ("when I say congress, pause my talk and'
+    ' play the congress clip with its sound", "kongre dediğimde konuşmamı durdur, kongre'
+    ' videosunu sesiyle oynat, sonra devam et"), or clips put in between my speech, with or'
+    ' without sound of their own ("place them in between my speech", "show the talks in between'
+    ' my speech", "bunları konuşmamın arasına koy"), is a `style` requirement'
+    ' with {"insert_clip": "<the creator\'s words for that clip or clips>"} plus'
+    ' "insert_at_phrase": "<the words they say it after>" (or `insert_at_s` for a stated second)'
+    " only when they name a moment; when they name none, record no position: the server pauses the"
+    " talk at the end of the sentence where they talk about each clip. `keep_audio` false only when"
+    " they want it silent or the clip has no sound, whatever language they write in. The clip's"
+    " sound is part of this requirement, so do not also record a `clip_sound` requirement for a"
+    " clip that plays in the"
+    " middle; it is not a cutaway, an `ending_clip` or a clip order. Only an explicit pause, stop,"
+    " in-the-middle-while-I-wait ask or in between my speech is an insert, whether or not the"
+    " clip has sound of its own, and a request for the clip's sound never decides it. A clip"
+    ' shown while the talk keeps running ("show the congress video when'
+    ' I mention congress", "over my speech", "while I keep talking", "kongre dediğimde kongre'
+    ' videosunu sesiyle göster", "use their audio") is NOT an insert, with or without the clip\'s'
+    " sound: record it exactly as the full-screen"
+    " (`display_mode`) and clip-sound (`clip_sound`) asks are recorded, never as `triggers` and"
+    ' never as `insert_clip`: a `style` requirement with {"display_mode": "fullscreen"} and, for'
+    ' their sound, an `audio` one with {"clip_sound": "on"} (or "off" for "keep my audio"), scope'
+    " `clip:<media_id>` for a clip they name, else `global`; a photo, sticker or sound timed to a"
+    " spoken word keeps `triggers`, as below."
+)
+_BRIEF_INSERT_ANCHOR = "or `closing`. On a montage,"
+
+
+def with_insert_clip_brief(section: str) -> str:
+    """``section`` (the shared brief section, or the extractor's narrowing of it) with the one
+    insert paragraph added. Only called where inserts are open (the same availability that
+    teaches `insert_clips`, `insert_clip_candidates(manifest)`); a closed rollout never calls
+    it, so those prompts keep the bytes they had before inserts existed."""
+    assert section.count(_BRIEF_INSERT_ANCHOR) == 1, "brief insert anchor moved"
+    return section.replace(
+        _BRIEF_INSERT_ANCHOR,
+        "or `closing`." + _BRIEF_INSERT_CLIP_SENTENCE + " On a montage,",
+    )
+
+
+_BRIEF_CAP_ANCHOR = "at most 16 objects"
+
+
+def with_long_request_cap(section: str) -> str:
+    """``section`` with the per-turn entry cap raised to the long-request ceiling."""
+    assert section.count(_BRIEF_CAP_ANCHOR) == 1, "brief cap anchor moved"
+    return section.replace(_BRIEF_CAP_ANCHOR, f"at most {LONG_REQUEST_MAX_UPDATES} objects")
+
+
+def brief_prompt_section(insert_clips_open: bool = False, full_opening_open: bool = False) -> str:
+    section = (
+        with_insert_clip_brief(_BRIEF_PROMPT_SECTION)
+        if insert_clips_open
+        else _BRIEF_PROMPT_SECTION
+    )
+    if settings.brief_long_request_enabled:
+        section = with_long_request_cap(section)
+    return with_full_opening_brief(section) if full_opening_open else section
+
 
 class MainCreatorInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -916,6 +1353,10 @@ class MainCreatorInput(BaseModel):
     # KRI-815: footage attached, no voiceover, script flag on. False => the prompt is
     # byte-identical, the field is left out of input dumps, and the action is refused.
     voiceover_script_available: bool = Field(default=False, exclude_if=lambda v: not v)
+    # KRI-1151: the planner's one corrective re-run after an `ask_user` refusal the server's own
+    # gates contradict (`app.kria.ask_refusals`). Empty => the prompt is byte-identical and the
+    # field is left out of input dumps. Server-authored; never the creator's words.
+    server_note: str = Field(default="", max_length=1000, exclude_if=lambda v: not v)
 
 
 class MainCreatorOutput(BaseModel):
@@ -998,12 +1439,6 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
     # retries once at "low".
     max_output_tokens = 16_384
 
-    def __init__(self, model_client: ModelClient) -> None:
-        super().__init__(model_client)
-        if not settings.planner_boundary_honest_enabled:
-            # KRI-1097 wave 2: off, the rendered prompt is v108's byte for byte; runs say so.
-            self.spec = replace(type(self).spec, prompt_version=_PRE_BOUNDARY_PROMPT_VERSION)
-
     def required_fields(self) -> list[str]:
         return ["action"]
 
@@ -1067,15 +1502,82 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     if _timed_cards_available(input.capability_manifest)
                     else ""
                 )
+                # Qendresa item 21: middle line + TikTok look; "" unless the flag is on.
+                + (
+                    "\n" + _CLIP_TEXT_LOOK_PROMPT_SECTION
+                    if settings.clip_text_tiktok_look_enabled
+                    else ""
+                )
+                # KRI-1151: footage clips shown full screen over the talk; "" unless the
+                # worker's own gates are open for this edit. Cutaway section first.
+                + (
+                    "\n"
+                    + _talking_cutaways_section(
+                        cutaways,
+                        ending_open=bool(ending_clip_candidates(input.capability_manifest)),
+                        inserts_open=bool(insert_clip_candidates(input.capability_manifest)),
+                    )
+                    if (cutaways := talking_footage_cutaways(input.capability_manifest))
+                    else ""
+                )
+                # Parent KRI-1151: a clip played while the take pauses; "" unless the rollout
+                # is open and the project has several clips. Its own gate, not the cutaways'.
+                + (
+                    "\n"
+                    + _insert_clip_section(
+                        cutaways_open=bool(talking_footage_cutaways(input.capability_manifest))
+                    )
+                    if insert_clip_candidates(input.capability_manifest)
+                    else ""
+                )
                 # KRI-1117: a photo / looping video behind the speaker; "" unless advertised.
                 + (
                     "\n" + _SPEAKER_BACKGROUND_PROMPT_SECTION
                     if speaker_background_open(input.capability_manifest)
                     else ""
                 )
+                # KRI-1173: a plain colour fill; "" unless advertised.
+                + (
+                    "\n" + _SPEAKER_BACKGROUND_COLOR_PROMPT_SECTION
+                    if speaker_background_color_open(input.capability_manifest)
+                    else ""
+                )
+                # KRI-1162: timed backgrounds + the speaker frame; "" unless advertised.
+                + (
+                    "\n" + _SPEAKER_BACKGROUND_WINDOWS_PROMPT_SECTION
+                    if speaker_background_windows_open(input.capability_manifest)
+                    else ""
+                )
+                # Qendresa item 17: "" unless the flag is on AND the windows are advertised.
+                + (
+                    "\n" + _BACKGROUND_FOLLOWS_TALK_PROMPT_SECTION
+                    if settings.background_follows_talk_enabled
+                    and speaker_background_windows_open(input.capability_manifest)
+                    else ""
+                )
+                # Qendresa item 16: "" unless the flag is on AND the capability is advertised.
+                + (
+                    "\n" + _FULL_OPENING_PROMPT_SECTION
+                    if speaker_full_opening_taught(input.capability_manifest)
+                    else ""
+                )
+                # Qendresa item 18: "" unless the flag is on AND the capability is advertised.
+                + (
+                    "\n" + _BACKGROUND_FOCUS_PROMPT_SECTION
+                    if background_focus_taught(input.capability_manifest)
+                    else ""
+                )
             ),
             # KRI-188: "" (flag off) adds no bytes; same line-suffix trick.
-            brief_section=("\n" + _BRIEF_PROMPT_SECTION if input.brief_enabled else ""),
+            brief_section=(
+                "\n"
+                + brief_prompt_section(
+                    bool(insert_clip_candidates(input.capability_manifest)),
+                    speaker_full_opening_taught(input.capability_manifest),
+                )
+                if input.brief_enabled
+                else ""
+            ),
             # KRI-374: "" (no usable song) adds no bytes; same line-suffix trick.
             user_song_section=(
                 "\n"
@@ -1131,6 +1633,8 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         # KRI-520: the reply-language instruction goes last, where it wins over the
         # English examples above. "" for English/unknown: byte-identical prompt.
         language_line = prompt_language_line(input.reply_language)
+        if input.server_note:
+            prompt = f"{prompt.rstrip(chr(10))}\n\nSERVER CHECK\n{input.server_note}\n"
         return f"{prompt.rstrip(chr(10))}\n\n{language_line}\n" if language_line else prompt
 
     def parse(self, raw_text: str, input: MainCreatorInput) -> MainCreatorOutput:  # noqa: A002
@@ -1894,6 +2398,12 @@ def _timed_cards_available(manifest: ResolvedCreatorManifest) -> bool:
     return bool(capability is not None and capability.available)
 
 
+def _title_look_on() -> bool:
+    """TITLE_LOOK_ENABLED (Qendresa item 20), read per prompt render."""
+
+    return settings.title_look_enabled
+
+
 def _reaction_beats_section(manifest: ResolvedCreatorManifest) -> str:
     """KRI-519: the beats guidance worded for the edit that advertises them --
     the capability resolver only opens it on a phone Talking or a phone
@@ -1901,6 +2411,8 @@ def _reaction_beats_section(manifest: ResolvedCreatorManifest) -> str:
 
     if manifest.has_voiceover and manifest.edit_format in NARRATED_EDIT_FORMATS:
         return _VOICEOVER_REACTION_BEATS_PROMPT_SECTION
+    if _title_look_on():
+        return _REACTION_BEATS_PROMPT_SECTION + "\n" + _TITLE_ANCHOR_PROMPT_RULE
     return _REACTION_BEATS_PROMPT_SECTION
 
 

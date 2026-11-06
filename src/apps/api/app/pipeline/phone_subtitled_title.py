@@ -38,13 +38,17 @@ photo appears (else the last 3 s) to the end. With a closing photo it sits on
 the photo's lower edge like a sticker badge (`place_closing_on_photo`; the
 photo is already off the face); without one it takes the title's top spot and
 face check (`place_talking_title`).
+
+Entrance (KRI-1097 wave 2): every title row the writer draws (the title, the text on a spoken
+word, the closing tag) fades in unless the creator asked for another entrance;
+`talking_title_entrances` applies the planned ``title_animation`` and the animation asks.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import structlog
 
@@ -59,6 +63,9 @@ from app.pipeline.render_geometry import (
     _union_box,
     sample_face_regions,
 )
+
+if TYPE_CHECKING:
+    from app.kria.animation_ask import EntranceForm
 
 log = structlog.get_logger(__name__)
 
@@ -181,6 +188,109 @@ def talking_title_element(
         source_params={"source": TALKING_TITLE_SOURCE},
     )
     return element.model_dump(mode="json", exclude_none=True)
+
+
+def _row_source(row: Mapping[str, Any]) -> str | None:
+    params = row.get("source_params")
+    source = params.get("source") if isinstance(params, Mapping) else None
+    return source if isinstance(source, str) else None
+
+
+def _entrance(nearest: Any, other: Any, planned: str | None) -> str | None:
+    """A named ask (the one nearest the row, then the other) over the plan's
+    ``title_animation``, over an unnamed ask's plain fade: the creator's own words first
+    (KRI-129)."""
+    asks = [ask for ask in (nearest, other) if ask is not None]
+    named = next((ask.edge for ask in asks if ask.named), None)
+    return named or planned or (asks[0].resolved_edge() if asks else None)
+
+
+def talking_title_entrance_form() -> EntranceForm | None:
+    """How the phone plays the title rows' asked entrance, else None: the lane switch
+    (``TALKING_HEAD_ROUTE_FOLLOWS_PROMPT_ENABLED``) is off or the phone plays no text entrance
+    (`text_entrance_form`)."""
+    from app.config import settings  # noqa: PLC0415
+    from app.kria.animation_ask import text_entrance_form  # noqa: PLC0415
+
+    if not settings.talking_head_route_follows_prompt_enabled:
+        return None
+    return text_entrance_form()
+
+
+def talking_title_rows_planned(strategy: Mapping[str, Any], requirements: Iterable[Any]) -> bool:
+    """The writer draws a title row for this plan and these asks: the confirmed title, the
+    closing text or a text on a spoken word, each only while its rollout is on (the reads
+    `_run_phone_subtitled_job` makes before it places them)."""
+    from app.kria.spoken_text_ask import spoken_text_asks  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_subtitled_closing_title_supported,
+        phone_subtitled_spoken_text_supported,
+        phone_subtitled_title_supported,
+    )
+
+    title = strategy.get("opening_title")
+    if isinstance(title, str) and title.split() and phone_subtitled_title_supported():
+        return True
+    closing = strategy.get("closing_title")
+    if isinstance(closing, str) and closing.strip() and phone_subtitled_closing_title_supported():
+        return True
+    return phone_subtitled_spoken_text_supported() and bool(spoken_text_asks(requirements))
+
+
+def talking_title_rows_animate(strategy: Mapping[str, Any], requirements: Iterable[Any]) -> bool:
+    """The approval card's view of `talking_title_entrances`: a title row this plan and these
+    asks draw plays the planned or asked entrance."""
+    return talking_title_entrance_form() is not None and talking_title_rows_planned(
+        strategy, requirements
+    )
+
+
+def talking_title_entrances(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    title_animation: object,
+    requirements: Iterable[Any] = (),
+) -> Sequence[Mapping[str, Any]]:
+    """The writer's title rows entering the way the creator asked (KRI-1097 wave 2).
+
+    The opening title takes a named title-scope animation ask, else a named whole-video ask
+    ("animate the big text in": `animation_ask(req, styles=True)`), else the plan's
+    ``title_animation``, else the plain fade of an ask that names none. The text on a spoken
+    word and the closing tag, drawn in the title's look, take a whole-video ask; when the edit
+    has no opening title they are the title it shows, so they take the title's ask and the
+    plan's too, a named whole-video ask still first. Captions and any other row keep their own
+    look.
+
+    ``rows`` comes back as it was with ``TALKING_HEAD_ROUTE_FOLLOWS_PROMPT_ENABLED`` off, with
+    nothing asked, or on a phone that plays no text entrance (`talking_title_entrance_form`); a
+    phone that only plays the legacy effects gets the closest one (`entrance_patch`).
+    """
+    from app.kria.animation_ask import animation_targets, entrance_patch  # noqa: PLC0415
+    from app.pipeline.phone_spoken_text import SPOKEN_TEXT_SOURCE  # noqa: PLC0415
+    from app.schemas.text_style_intent import normalize_title_animation  # noqa: PLC0415
+
+    form = talking_title_entrance_form()
+    if form is None:
+        return rows
+    asks = dict(animation_targets(requirements, styles=True))
+    title_ask, whole_ask = asks.get("title"), asks.get("all")
+    planned = normalize_title_animation(title_animation)
+    has_title = any(_row_source(row) == TALKING_TITLE_SOURCE for row in rows)
+    title = _entrance(title_ask, whole_ask, planned)
+    other = (
+        _entrance(whole_ask, None, None) if has_title else _entrance(whole_ask, title_ask, planned)
+    )
+    edges = {
+        TALKING_TITLE_SOURCE: title,
+        SPOKEN_TEXT_SOURCE: other,
+        TALKING_CLOSING_SOURCE: other,
+    }
+    if not any(edges.values()):
+        return rows
+    return [
+        {**row, **entrance_patch(edge, form)} if (edge := edges.get(_row_source(row))) else row
+        for row in rows
+    ]
 
 
 def _output_to_source_s(at_s: float, keep_segments: Sequence[tuple[float, float]]) -> float | None:
@@ -411,6 +521,67 @@ def _face_boxes(
     return [], receipt
 
 
+def frame_face_box(box: NormalizedBox, frame: tuple[float, float, float]) -> NormalizedBox:
+    """A full-frame face box where the matted speaker is drawn in a speaker frame.
+
+    ``frame`` is (width_fraction, x_fraction, y_fraction): the speaker layer is scaled
+    uniformly by ``w`` (same aspect as the canvas) and centred at (x, y), so a full-frame
+    fraction ``f`` lands at ``centre + (f - 0.5) * w``."""
+    width, x_center, y_center = (float(value) for value in frame)
+
+    def x_at(value: float) -> float:
+        return x_center + (value - 0.5) * width
+
+    def y_at(value: float) -> float:
+        return y_center + (value - 0.5) * width
+
+    return NormalizedBox(x_at(box.left), y_at(box.top), x_at(box.right), y_at(box.bottom))
+
+
+def _as_drawn(
+    sample: Callable[[tuple[float, float]], tuple[list[NormalizedBox], Any]],
+    window: tuple[float, float],
+    speaker_frame: tuple[float, float, float] | None,
+    full_screen_windows: Sequence[tuple[float, float]],
+) -> tuple[list[NormalizedBox], list[Any]]:
+    """Boxes from the speaker's own video (faces, marked objects) where they are drawn over
+    ``window``: mapped into ``speaker_frame`` (item 19), except inside a full-screen span
+    (Qendresa item 16: she fills the canvas there, unmapped). ``sample(part)`` returns the
+    full-frame boxes over a part of the window and its receipt; the receipts come back in order.
+    No span overlapping the window: one sample over the whole window, exactly as before."""
+    start, end = window
+    spans = sorted(
+        (max(start, a), min(end, b))
+        for a, b in full_screen_windows
+        if speaker_frame is not None and a < end and start < b
+    )
+    if not spans:
+        boxes, receipt = sample(window)
+        if speaker_frame is not None:
+            boxes = [frame_face_box(box, speaker_frame) for box in boxes]
+        return boxes, [receipt]
+    parts: list[tuple[float, float, bool]] = []
+    cursor = start
+    for a, b in spans:
+        if a > cursor:
+            parts.append((cursor, a, False))
+        parts.append((max(a, cursor), b, True))
+        cursor = max(cursor, b)
+    if cursor < end:
+        parts.append((cursor, end, False))
+    boxes_out: list[NormalizedBox] = []
+    receipts: list[Any] = []
+    for a, b, full_screen in parts:
+        if b - a <= 1e-6:
+            continue
+        boxes, receipt = sample((a, b))
+        if not full_screen:
+            boxes = [frame_face_box(box, speaker_frame) for box in boxes]  # type: ignore[arg-type]
+        boxes_out.extend(boxes)
+        receipts.append(receipt)
+    return boxes_out, receipts
+
+
 def place_talking_title(
     row: dict,
     *,
@@ -425,6 +596,8 @@ def place_talking_title(
     avoid: Sequence[NormalizedBox] = (),
     objects: Sequence[ObjectTrack] = (),
     protect_all_faces: bool = False,
+    speaker_frame: tuple[float, float, float] | None = None,
+    full_screen_windows: Sequence[tuple[float, float]] = (),
 ) -> tuple[dict, dict[str, Any]]:
     """``row`` moved off the speaker's face (and clear of the captions), plus
     a receipt for the job debug view. Never raises: anything that goes wrong
@@ -443,7 +616,13 @@ def place_talking_title(
     when nothing clears them is it left at the least-covering spot with
     ``object_collision`` set -- a face never wins over the object. Without any, the
     placement is exactly what it was. ``protect_all_faces`` keeps every detected face
-    clear, not only the dominant one (the creator named "her face")."""
+    clear, not only the dominant one (the creator named "her face").
+
+    ``speaker_frame`` (width, x, y fractions; item 19) is where the matted speaker is drawn
+    small in a corner: every sampled face box is mapped there (`frame_face_box`) so a row is
+    kept off the face as drawn. ``None`` (the default) leaves the placement unchanged.
+    ``full_screen_windows`` (Qendresa item 16, cut-timeline seconds) are where she is drawn
+    full-frame instead: the part of the row's time inside one keeps off her full-frame face."""
     default_y = float(row.get("y_frac") or 0.15)
     if objects or protect_all_faces:
         return place_protected_title(
@@ -459,19 +638,29 @@ def place_talking_title(
             avoid=avoid,
             objects=objects,
             protect_all_faces=protect_all_faces,
+            speaker_frame=speaker_frame,
+            full_screen_windows=full_screen_windows,
         )
     try:
-        faces, receipt = _face_boxes(
-            clip_path,
-            window=(float(row["start_s"]), float(row["end_s"])),
-            keep_segments=keep_segments,
-            display_width=display_width,
-            display_height=display_height,
-            canvas=canvas,
-            scale=scale,
-            sample=sample or sample_face_regions,
-            position_x=position_x,
+        faces, receipts = _as_drawn(
+            lambda part: _face_boxes(
+                clip_path,
+                window=part,
+                keep_segments=keep_segments,
+                display_width=display_width,
+                display_height=display_height,
+                canvas=canvas,
+                scale=scale,
+                sample=sample or sample_face_regions,
+                position_x=position_x,
+            ),
+            (float(row["start_s"]), float(row["end_s"])),
+            speaker_frame,
+            full_screen_windows,
         )
+        receipt = receipts[0]
+        if len(receipts) > 1:
+            receipt = {**receipt, "full_screen_parts": len(receipts)}
         probe = _translate_centered_box_to_y(_measure_title_box(row, canvas=canvas), default_y)
         chosen, decision = choose_title_y_frac(probe, default_y, faces, avoid=avoid)
         if avoid:
@@ -581,6 +770,8 @@ def place_protected_title(
     position_x: float = 0.0,
     avoid: Sequence[NormalizedBox] = (),
     protect_all_faces: bool = False,
+    speaker_frame: tuple[float, float, float] | None = None,
+    full_screen_windows: Sequence[tuple[float, float]] = (),
 ) -> tuple[dict, dict[str, Any]]:
     """KRI-827: ``row`` kept off every face and every marked object for its whole window.
 
@@ -593,28 +784,43 @@ def place_protected_title(
     default_y = float(row.get("y_frac") or 0.15)
     window = (float(row["start_s"]), float(row["end_s"]))
     try:
-        faces, receipt = _face_boxes(
-            clip_path,
-            window=window,
-            keep_segments=keep_segments,
-            display_width=display_width,
-            display_height=display_height,
-            canvas=canvas,
-            scale=scale,
-            sample=sample or sample_face_regions,
-            position_x=position_x,
-            all_faces=protect_all_faces,
+        faces, receipts = _as_drawn(
+            lambda part: _face_boxes(
+                clip_path,
+                window=part,
+                keep_segments=keep_segments,
+                display_width=display_width,
+                display_height=display_height,
+                canvas=canvas,
+                scale=scale,
+                sample=sample or sample_face_regions,
+                position_x=position_x,
+                all_faces=protect_all_faces,
+            ),
+            window,
+            speaker_frame,
+            full_screen_windows,
         )
-        object_boxes, object_receipts = _object_boxes_for(
-            objects,
-            window=window,
-            keep_segments=keep_segments,
-            display_width=display_width,
-            display_height=display_height,
-            canvas=canvas,
-            scale=scale,
-            position_x=position_x,
+        receipt = receipts[0]
+        if len(receipts) > 1:
+            receipt = {**receipt, "full_screen_parts": len(receipts)}
+        # The marked object is in the speaker's own video: it moves with the face.
+        object_boxes, object_parts = _as_drawn(
+            lambda part: _object_boxes_for(
+                objects,
+                window=part,
+                keep_segments=keep_segments,
+                display_width=display_width,
+                display_height=display_height,
+                canvas=canvas,
+                scale=scale,
+                position_x=position_x,
+            ),
+            window,
+            speaker_frame,
+            full_screen_windows,
         )
+        object_receipts = [r for part in object_parts for r in part]
         verified = bool(object_receipts) and all(
             r["status"] == "seen" and r["track_status"] == "tracked" for r in object_receipts
         )

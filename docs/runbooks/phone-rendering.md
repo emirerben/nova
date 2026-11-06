@@ -932,9 +932,332 @@ butcher clip", "no sound from 5 to 8 seconds" on a phone Montage (every edit thr
   so. Apply / rollback: `fly secrets set PHONE_CLIP_SOUND_WINDOWS_ENABLED=true|false --app
   nova-video` + restart api + worker. Tests: `tests/tasks/test_kri942_clip_sound_toggle.py`;
   design, failure modes and native export evidence: `docs/reviews/kri-942-clip-sound-toggle.md`.
+- **Under a sound cutaway**: a caption with more than half of it inside a speaker mute window is
+  dropped from the recipe (its words are not heard); titles stay. A sound that would change the
+  approved contract's camera-audio sources (`audio_source_ids` list, `original_audio: forbid`) is
+  not turned on and the ask records `contract_conflict`, the same refusal the montage lane makes.
+  While the gate is off the render-ready review judges a Talking recipe exactly as before.
 - **Known gaps**: the in-app editor preview doesn't show part-of-a-clip mutes and an editor Save
   drops them (the receipt then says so); the speech-excerpt route doesn't apply the asks (its
   recipe is judged as it is).
+
+#### Footage cutaway plays its own sound in a Talking edit (KRI-1151, `PHONE_TALKING_CUTAWAY_SOUND_ENABLED`)
+
+"Show the talks full screen and use their audio" on a multi-clip Talking (`subtitled`) edit:
+the footage clips cover the speaker full screen (`phone_talking_cutaways`), silent by default.
+With the flag on, a cutaway the creator turned the sound on for plays its own file for its
+window with the speaker muted under it.
+
+- **Request**: the same typed `clip_sound` facts as the montage lane (`app/kria/clip_sound_toggle_ask.py`).
+  `app/pipeline/phone_talking_cutaway_sound.py` (pure) resolves them: whole-video asks first, then
+  asks naming a clip; a cutaway plays nothing unless an "on" ask paints it. Seconds, a spoken line,
+  "first/last clip" and `sound_except` are not expressible on a cutaway (`cutaway_only`). A
+  whole-video "off" or an ask about the speaker builds nothing and records no row.
+- **Recipe, no new capability or protocol**: `PhoneCutaway(sound=True)` adds an `audio` track
+  `talking-head-cutaway-audio` (clip `cutaway-sound-<i>`: the cutaway's own file, same window) and one
+  recipe `mute_windows` entry over the speaker's main-track clips. That is the shape the engine already
+  renders for the speech-excerpt montage (audio track from a video asset) and KRI-942 mute windows
+  (25 ms ramps per edge). A cutaway file with no audio track is refused at compile
+  (`UnsupportedPhonePlan`): the engine throws on an audio clip whose asset has no audio.
+- **Gate**: `phone_rollout.phone_talking_cutaway_sound_supported()` = this flag AND
+  `phone_clip_sound_windows_supported()` (`PHONE_CLIP_SOUND_WINDOWS_ENABLED` + `visualBlocks`) AND
+  `audioMix`, `visualVideos`, `alphaOverlay` verified. Off (default): the draft still says clip
+  sound by clip works on a montage, no cutaway gets sound, nothing changes for existing recipes.
+  An editor Save drops cutaway sound while the gate is off (otherwise the pilot refuses the
+  mute window). Apply / rollback: `fly secrets set PHONE_TALKING_CUTAWAY_SOUND_ENABLED=true|false
+  --app nova-video` + restart api + worker. Fly only (no `NEXT_PUBLIC_` twin, no app build).
+- **Receipt**: `variants[i].clip_sound_toggles` (the KRI-942 row shape), judged against the
+  compiled recipe by `judge_cutaway_sound` (met only when the cutaway's file plays across its
+  window AND the speaker is muted across it; sound but no mute = partial). The render-ready review
+  re-judges the pinned recipe (`rendered_cutaway_receipt`, editor Saves included).
+- **Known gaps**: the in-app editor preview does not play the cutaway's sound or mute the
+  speaker (it previews cutaways from the receipt, silent). A clip the classifier files as an extra
+  *speaker* (clear speech, e.g. the thread 6fa36e51 "talks") plays back to back on the main track
+  unless `PHONE_TALKING_MENTION_CUTAWAYS_ENABLED` is on (next section).
+- **Evidence** (real `KriaMediaEngine` exporter, macOS host, not a physical iPhone):
+  `python scripts/ios/phone-audio-parity.py prepare OUT --cases talking_cutaway_sound`, then
+  `(cd src/apps/ios/Packages/KriaMediaEngine && KRIA_AUDIO_PARITY_DIR=OUT swift test --filter
+  AudioParityFixtureTests)`, then `... compare OUT`: the export holds the speaker tone outside
+  the window, the cutaway tone inside it only, the speaker silent inside it, with two negative
+  controls (`_no_mute`, `_no_audio`) the harness must catch. Tests:
+  `tests/pipeline/test_phone_talking_cutaway_sound.py`,
+  `tests/kria/test_kri1151_talking_cutaway_sound_checks.py` (replay of thread 6fa36e51),
+  `tests/tasks/test_kri1151_talking_cutaway_sound_dispatch.py`.
+
+#### A clip played while the creator's take is paused (parent KRI-1151, `PHONE_TALKING_INSERT_CLIPS_ENABLED`)
+
+"After I say congress, show the congress clip with its own sound" on a multi-clip Talking
+(`subtitled`) edit. Not a cutaway (the take keeps running under a cutaway) and not the
+`ending_clip` (that follows the whole talk): the picture switches to the clip and its audio
+plays while the take is PAUSED, then the take resumes at the second it stopped. Nothing he said
+is lost and the video grows by the clip's length.
+
+- **Strategy**: `insert_clips: [{media_id, at_phrase | at_s, keep_audio}]` (at most 3 play; up to
+  8 rows parse so a 4th and beyond get the named notice "a talk can pause for at most three clips"
+  instead of vanishing; at most one of the two positions: a row with NEITHER is "in between my
+  speech", paused at the end of the sentence about the clip, see **Topic placement**; one of the item's OWN footage clips, a
+  Visuals video is refused for now). Model-hidden like `ending_clip`. **Prompt gating**: the
+  creator prompt's insert section AND the shared brief paragraph (brief extractor v46, creator v110)
+  are added only where `creator_capabilities.insert_clip_candidates(manifest)` is non-empty (rollout
+  open, 2+ own clips); the planner tells the brief extractor through
+  `BriefExtractionInput.insert_clips_open`. With the rollout closed both prompts are byte-identical
+  to before inserts existed (pinned by `PRE_CHANGE_PROMPT_SHA` and
+  `test_a_closed_rollout_leaves_the_brief_section_byte_identical_to_before_inserts`). **Ask
+  routing**: only an explicit pause / stop / in-the-middle-while-I-wait ask is an insert; "show it
+  when I mention X" (the talk keeps running), with or without "use their audio", is the existing
+  show-when-mentioned / cutaway-sound ask, recorded exactly as the full-screen (`display_mode`)
+  and clip-sound (`clip_sound`) asks are (the cutaway lane reads those two typed facts and ignores
+  a `display_mode` that carries `triggers`), never as `triggers` and never as `insert_clip`. With
+  both planner lanes open, "place them in between my speech" (with or without "when I talk about
+  them") for clips that have speech or sound of their own is an insert, one row per clip with no
+  position (creator v112, brief extractor v48; thread b61b7673 meant exactly that and got an
+  overlay before); "over my speech", "while I keep talking", "keep my voice" and a clip with no
+  speech or sound of its own (a drone shot) stay the full-screen cutaway lane; wording with no
+  mention anchor, no "in between my speech" and no pause word ("put the congress clip in the
+  middle of my talk") gets ONE `ask_user` question (pause the talk, or cover it?); with only the
+  insert lane open the plain show-it asks leave `insert_clips` empty and the model says plainly
+  that a clip over a running talk is not available, offering only the pause form. The insert's
+  sound is its `keep_audio`; the brief records no separate `clip_sound` for it. The brief records the
+  insert as a `style` requirement with `facts.insert_clip` (+ `insert_at_phrase` / `insert_at_s`,
+  `keep_audio`). The server repair (`repair_creator_insert_clips`) drops what the phone cannot play
+  with a plain notice.
+- **Data shape**: one number per insert, `PhoneInsert.at_take_s`, a position on the TAKE timeline
+  (the first speaker's seconds with no insert counted). `compile_phone_subtitled_plan(inserts=)`
+  splits the take there and emits a main-track clip `insert-<n>` (volume 1, or 0 for a silent
+  ask, which declares `audioMix`). Everything the compiler is given stays on the FINAL timeline;
+  `phone_talking_inserts.warp_for_inserts` moves captions, text rows, cards, effects and cutaways
+  onto it first. A window that spans the point is split around it (a video card resumes where it
+  stopped), so nothing is drawn over the inserted clip. A caption whose words are all on one side
+  of the point plays there once (never a copy on both sides); a text row split by the point keeps
+  only parts of at least 0.3 s (the longer side when both are short). Every speaker time in the
+  insert path sits on a microsecond grid, so a no-op Save recompiles the recipe bit for bit.
+  Recipe-only: the engine already plays a
+  different clip between two clips of one source; no capability, no protocol, no app build.
+- **Placement** (`place_inserts`, in `_run_phone_subtitled_job` after the captions are final).
+  **An explicit position always wins over a default.** A phrase pauses the take exactly at the end
+  of its last word (found in what he SAID: the spoken words on the take timeline, never the
+  caption words; `ground_excerpt`, fuzzy for Whisper drift); a second pauses exactly there, even
+  inside a word; both hold in the first 2.5 s, in the last second, at the very start or end of the
+  take and beside another clip (clips at one instant play one after the other, in the order
+  given). The receipt records which defaults it overrode (`overrode`: `hook_window`,
+  `tail_window`, `near_another_clip`, `mid_word`) and `as_asked: true`, and the reply says so
+  ("one clip plays in the first seconds, as you asked"). Only a point past the end of the take
+  moves (to the end, `adjusted: take_end`). The defaults (stay off the first 2.5 s and the last
+  second, 2 s between clips) only choose a position he did not name, see **Topic placement**.
+  A point within 0.1 s of a speech-cleanup seam, of the start of the take or of its end moves onto
+  it (no sliver of speech beside the clip; the start and the end of the take are seams too, and the
+  point is clamped AFTER it is rounded to the millisecond, so a point never lands past the take
+  end whatever the take length; the compiler also moves two points closer than a frame onto one
+  instant and plays whatever is left at the end of the take, so an insert at the take end or
+  start never raises and never leaves a sliver). A phrase he never says (also one inside a region
+  speech cleanup cut out) is placed by meaning instead and the receipt says
+  `fallback: phrase_not_found`; only when the check is SURE nothing he says is about the clip is
+  it left out (`phrase_not_found`, with the nearest sentence offered). Refused, with the clip left out of
+  the video and said in the receipt, only what the engine cannot play: `too_long` (over the 5
+  minutes a Talking clip can be), `duplicate_clip`, `clip_in_use` (the speaker, the ending, or the
+  one clip analysed as speaking to camera), `too_many` (past `MAX_INSERTS` = 20, the size the
+  compiler and the sentence check are built for; the reply says the number), `clip_not_found`,
+  `not_a_video`, `speaker_background` (the matte would cut the clip out), `talking_multi_off` /
+  `only_clip` (no other clip to play). **The device builds at most 30 minutes**
+  (`recipes_v2.MAX_TIMELINE_S`), and the approved length is a pin: `fit_inserts` drops the LAST
+  clips (latest on the take) until the video fits, each named with the length it would have
+  reached (`over_device_budget` / `over_length_limit`, `would_be_s`; the reply says the number),
+  and a recipe the device still refuses is an `UnsupportedPhonePlan` in words, never a pydantic
+  error retried as a bug. The clip is taken out of the speakers and the footage
+  cutaways before they are scheduled; cutaways keep clear of the point.
+- **Topic placement** (a row with no phrase and no second; `phone_talking_insert_topics`,
+  `_resolve_insert_topics` in `generative_build.py`): the creator's spoken words (take timeline,
+  after speech cleanup) are cut into numbered sentences (Whisper's terminal punctuation, a pause
+  of 0.8 s, a 40-word cap cut at the longest gap). ONE model call (`nova.compose.talking_insert_
+  sentence`, via `phone_insert_topic_picker`) gets every clip's facts (summary, transcript,
+  subject, activity, brands, props) and the numbered sentences and returns, per clip, the first
+  and last sentence of the thought that covers it, a confidence, or null (an honest abstain);
+  it matches by meaning across languages, which the lexical matcher cannot (English "alcohol"
+  against Turkish "alkol"). The insert goes at the END of the last sentence (`snap:
+  sentence_end`): never moved to a later pause or caption end, never earlier, never onto another
+  clip. It is held half the silence that follows the sentence (at most 0.2 s) so his last word is
+  not clipped; an explicit second is never held. **A default can never keep a clip out.** Outcomes:
+  the check's answer (`via: meaning`; a span outside the talk or over many sentences is clamped to
+  the talk, there is no sentence cap); a clip with no usable answer (omitted, a null that is not
+  sure, a guess, numbers that name no sentence, an outage) is asked ONCE more (a second call keyed
+  apart), then placed by the keyword matcher (`via: keyword`), then at a labelled guess
+  (`via: guess`: the check's own low-confidence sentence, else the sentence sharing the most words
+  with the clip, else an even spread across the talk); `why` says which of `check_unavailable`,
+  `unclear`, `invalid_answer`, `low_confidence`, `no_facts` (nothing known about the clip) sent it
+  there. Only two things leave a clip out: no speech (`no_speech`) and a null the check gave with
+  HIGH confidence (`no_matching_sentence`: the receipt names the clip and the reply offers 'Put the
+  <clip> after "<nearest sentence>" anyway?'). The last sentence of the talk is paused AFTER it (the
+  compiler plays a clip at the very end of the take), a sentence ending in the first 2.5 s is paused
+  after the next one (`adjusted: hook_window`), and two clips on one sentence play at one instant,
+  one after the other (`adjusted: near_another_clip`, no movement). **Retries**: the sentence answer
+  is stored the moment it is known (`insert_pick_checkpoint`, Redis, fail-open, keyed by job and the
+  digest of the whole request), a Celery retry of the render takes it instead of calling again, and
+  a retry that must call keys its paid call apart (`<task id>:r<n>:p<k>`); a
+  `ProviderOutcomeUnknownError` is NOT "unavailable" (it reaches the task's retry machinery).
+  Seams between the take and a clip get the engine's own ~25 ms declick edge on every clip; there
+  is no extra crossfade (the per-clip `audio_fade_in/out` exists but a ramp over a clip edge would
+  dip his voice).   own take (the one clip analysed as speaking to camera) can never be inserted
+  (`clip_in_use`). The model call is unproven against the real model (the tests replay
+  hand-written stand-in answers, not recordings of the model; no live eval of it exists);
+  evidence to collect after the first prod renders: the receipt's `via`, `confidence`,
+  `sentence_first/last` per clip.
+- **Receipt**: `variants[i].phone_insert_clips = {placed: [{media_id, start_s, end_s, at_take_s,
+  duration_s, keep_audio, volume, basis: phrase|second|topic, snap:
+  cue_end|pause|word_end|exact|seam|sentence_end, via?: meaning|keyword|guess, confidence?,
+  sentence_first?, sentence_last?, why?, name?, overrode?, adjusted?, fallback?}], dropped:
+  [{media_id, reason, name?, after_s?, after_text?, would_be_s?}]}` (only with the flag on and an
+  ask; `name` is the name the app shows, so the reply can say which clip). `start_s`/`end_s` are where the clip plays on the final video; `at_take_s` (6 decimals) is
+  where the take pauses on the TAKE timeline. The brief check (`_check_insert_clip`) reads it: met
+  only when every asked clip plays, partial when some do, not possible with the reason. **The iPhone
+  editor preview is rebuilt from this receipt**, not from the recipe: add fields here, never
+  rename, and old builds ignore what they do not read.
+- **Editor**: Save reads the insert back from the pinned recipe (`inserts_from_recipe`, ids
+  `insert-<n>`) whatever the flag says now, and compiles the saved rows (already final-timeline
+  seconds) around it, so a caption or text edit neither drops nor shifts it. The protected-text
+  receipt (KRI-827) is compared on the take without the insert splits, so a Save does not mark
+  "no text on the object" stale because of an insert. Range stays closed
+  (`talking_range_multi_clip`). **Preview (iPhone)**: `NativePhoneTalkingSource.inserts` reads
+  the receipt above and `hydrate(..., inserts:)` splits the take at `at_take_s` (a position on the
+  cut timeline: the kept segments after speech cleanup, in order), plays the inserted clip whole
+  (its own sound, or muted when `keep_audio` is false) and resumes the take. A pause at take
+  second 0, at (or up to 0.05 s past, clamped to) the take end and several clips at one
+  `at_take_s` are all drawn (same-instant clips play one after another in row order, no speaker
+  piece between them; guards `NativeEditorSourcesTests.testPhoneTalkingInsertAtTheStartOfThe
+  TakeOrItsEndOrSeveralAtOneInstant` and `testPhoneTalkingInsertsAcceptTheStartOfTheTakeAnd
+  SeveralAtOneInstant`); captions, text and
+  cutaway windows are already final-timeline seconds. No receipt (an old render, the flag off)
+  keeps the preview exactly as it was; a receipt the app cannot draw (clip not in the source pool,
+  a speaker, a repeated clip, a negative or far-past-the-end point, a malformed row) falls back to
+  the finished MP4. Known gaps: the inserted clip's own
+  speech is not captioned; the editor's timeline STRIP does not draw the inserted clip as its own
+  segment (the preview does; the strip is closed on Talking edits); clip delete / trim /
+  silence-cut edits do not know about it (closed on multi-clip Talking edits today); text that
+  spans the point shows on both sides of it, so a whole-video corner text is two rows around the
+  clip and an opening title's entrance plays again after it.
+- **Known limits** (left as they are on purpose): the phrase match is Whisper-fuzzy and does not
+  treat a Turkish suffix after an apostrophe ("İstanbul'a") as the bare name; `at_s` is a second of
+  the TAKE (speech cleanup already applied), which a creator watching the uncut clip may not mean;
+  an extra speaker's words are not searched for the phrase (refused as `phrase_not_found`); the
+  planner may keep an insert the worker then drops when a speaker background is set
+  (`speaker_background` in the receipt); the text-style lookups run on the take timeline before the
+  warp, so none read a final-timeline second.
+- **Gate / apply**: `phone_rollout.phone_talking_insert_clips_supported()` = the flag +
+  `TALKING_MULTI_CLIP_ENABLED` (with its verified features) + `audioMix` verified. Apply: `fly
+  secrets set PHONE_TALKING_INSERT_CLIPS_ENABLED=true --app nova-video` + restart api + worker (Fly
+  only, no Vercel twin). Rollback: `=false` the same way (an already-rendered insert keeps playing
+  and keeps surviving Saves). Tests: `tests/pipeline/test_phone_talking_inserts.py` (failure-mode
+  list), `tests/tasks/test_talking_insert_clip.py` (prod thread 6fa36e51 replay),
+  `tests/routes/test_phone_talking_insert_commit.py`, `tests/kria/test_insert_clip_planner.py`.
+- **With the full-screen cutaway lane** (below; #2057, creator prompt v109 -> v110 here): each lane
+  is taught on its OWN gate. `insert_clip_candidates` = the insert flag + multi-clip Talking +
+  `audioMix` (so it already needs `TALKING_MULTI_CLIP_ENABLED`); `talking_footage_cutaways` = a
+  cutaway flag (mention or sound) + multi-clip Talking. Four states: neither (main's bytes), cutaways
+  only (main's bytes, the tail still says a pausing clip is "not available on iPhone"), insert only
+  (the insert section, no mention of a lane that is not in the prompt), both (cutaway section, then
+  insert section; the cutaway tail says a pausing clip "exists only as `insert_clips`" on an explicit
+  pause / stop ask; one routing question allowed). Pinned by `tests/kria/test_insert_and_cutaway_lanes.py`
+  (sha of what origin/main renders) and the golden fixtures `kri1151_talking_cutaways_insert_open_*`
+  (the prod request with both lanes open => cutaway, not insert) and `kri1151_talking_insert_pause_form`
+  (all hand-authored contract fixtures, not model recordings: they pin the prompt and the answer
+  shape, and no live eval of the routing exists).
+- **Worker footprint**: the insert adds only pure-Python steps (`place_inserts`, `warp_for_inserts`)
+  to the phone recipe compile in `_run_phone_subtitled_job` (inside `orchestrate_generative_job`,
+  soft limit 1740 s); no media is read, no ffmpeg or Skia runs, the clip is one of the item's own
+  footage clips already fetched. The shared-cpu-4x / 4 GB unified worker of #2055 (api / worker /
+  light only) changes nothing for it. Flag order: deploy (Fly API + worker) first, then
+  `PHONE_TALKING_INSERT_CLIPS_ENABLED=true` only after a TestFlight build with the editor preview
+  is out; the cutaway flags are independent of it.
+
+#### Talks shown full screen where the creator mentions them (parent KRI-1151, `PHONE_TALKING_MENTION_CUTAWAYS_ENABLED`)
+
+"Show the talks full screen when I mention them" on a multi-clip Talking (`subtitled`) edit
+(thread 6fa36e51, job 8cb3fc21). Before, `classify_talking_clips` filed the three podium clips as
+speakers from Whisper pace alone (24/26/30 words at 1.7-2.5 words/s, while their Gemini records
+said `speaks_to_camera: false`), played them back to back ahead of the creator, and set
+`lanes_skipped: multiple_speakers` (overlay grounding, beats, video overlays off). Footage was
+then spread mechanically, never at a mention.
+
+- **Request**: the one typed fact the brief already carries, a live `style`/`select`/`timing`
+  requirement with `facts.display_mode = fullscreen` and no `triggers` (a photo pop-in on a spoken word,
+  KRI-840, is not this ask) (`app/kria/cutaway_show_ask.py`; no wording is matched, KRI-667).
+  `clip:<id>` scope names a clip (a Visuals-pool photo or a clip outside this edit means no ask);
+  `global` names none. A live `order`
+  requirement means the creator also arranged the clips, so nothing moves (`kept:
+  clip_order_asked`). No full-screen ask, or the flag off: today's behavior, byte-identical.
+- **Roles** (`phone_talking_mentions.demote_speakers_to_cutaways`, runs right after the pace
+  classifier): a named clip becomes footage; for a global ask a clip whose analysis says it is NOT
+  the creator speaking to camera becomes footage when another clip does speak to camera. A failed or
+  degraded analysis is "unknown", never evidence. A clip left that the analysis says speaks to
+  camera (not the ending clip) must remain and leads the main track, else nothing moves (`kept:
+  no_creator_take_left`, the edit is left exactly as before). Speakers and spread follow upload order. The ending clip (KRI-841) keeps its own rule.
+- **Placement** (`schedule_mention_cutaways`, called from `_schedule_talking_footage`): each footage
+  clip's words (its own Whisper words plus its analysis: transcript, hook, summary, subject, brands,
+  props) are compared with the creator's spoken-pass word timeline. Words are folded, split at
+  letter/digit seams ("Euro2032"), cut to a 5-letter stem (Turkish endings) and weighted by rarity
+  (1 / times the creator says it / clips that carry it). A mention needs two distinct shared words
+  within 6 s, one of them distinctive (a number of 3+ digits or a word of 6+ letters), and a weighted
+  total of 1.0. The clip's English summary is not compared. The window starts at the first matched
+  word and runs up to 4 s; when the clip's own sound plays (`PHONE_TALKING_CUTAWAY_SOUND_ENABLED`) it
+  starts after the last matched word, so his mention stays audible, runs up to 6 s and a clip no
+  mention placed stays silent. It stops where the next
+  clip's mention starts, keeps the 2.5 s hook and the last second clear, and shifts at most 3 s to
+  find room. No match or no room: the mechanical spread, with `reason`
+  `no_mention_found` / `no_room_at_mention`. Only timing comes from the analysis; none of it reaches
+  the screen. A cut take (speech cleanup) has no uncut word timeline, so every clip is spread.
+- **Sound**: nothing new. With the sound lane off a cutaway is muted and
+  `mention_cutaways.sound = {asked: true, applied: false, reason: sound_not_enabled}` says so (the
+  creator-facing note reads "Their own sound isn't available on this edit yet"). With this flag on,
+  the sound lane (every Talking edit, ask or not) also matches a brief scope written as the phone's
+  file name to the edit's `analysis-proxy-ios-` id; without that, "keep my audio while the stadium is
+  shown" never matched and the whole-video "on" ask turned the stadium's sound on too. Flag off:
+  the old exact match, unchanged. The talk plays from its own start (`source_start_s` 0): the editor
+  preview assumes it.
+- **Receipt**: `variants[i].phone_talking_multi_clip.mention_cutaways` = `{version, demoted[{clip_id,
+  media_id, reason}], kept, placements[{media_id, basis: mention|spread, start_s, end_s, at_s?,
+  reason?}], sound?}` (only with the flag on and a full-screen ask); the roles receipt `clips` marks
+  a moved clip `{role: footage, was: speaker, reason}`. `render_notes` (nova_steps) says how many
+  clips sit at a mention, how many were spread, and a missing sound.
+- **Gate / apply**: `phone_rollout.phone_talking_mention_cutaways_supported()` = the flag, on top of
+  `TALKING_MULTI_CLIP_ENABLED`. Apply: `fly secrets set PHONE_TALKING_MENTION_CUTAWAYS_ENABLED=true
+  --app nova-video` + restart api + worker (Fly only, no Vercel twin, no app build: recipe-only, no
+  new protocol). Rollback: `=false` the same way. To hear the talks' own audio also set
+  `PHONE_TALKING_CUTAWAY_SOUND_ENABLED` and `PHONE_CLIP_SOUND_WINDOWS_ENABLED` (above).
+- **Planner knowledge**: the chat planner (Main Creator, prompt v110) is taught this lane only
+  while `creator_capabilities.talking_footage_cutaways(manifest)` is open (the gates above plus
+  2+ own clips on a phone Talking edit), so a flag-off prompt is byte-identical. The paragraphs
+  follow the gates: mention only (clips at a mention, silent), sound only (clips spread, sound for
+  the slot, a speaking clip keeps playing in turn), both, neither. Durations are the scheduler's
+  constants. It says the creator's voice is muted under a clip that plays its sound, that the clip
+  is an overlay (the take keeps advancing underneath; an insert that pauses the take is "not
+  available on iPhone" while `PHONE_TALKING_INSERT_CLIPS_ENABLED` is off, and with it open the
+  same sentence says it exists only as `insert_clips` on an explicit pause / stop ask), the worker
+  fallbacks, and that
+  the earlier "works on a montage, not in this edit" reply is out of date. A refusal the open lane
+  contradicts gets ONE corrective re-run with `MainCreatorInput.server_note`
+  (`app.kria.ask_refusals`): an `ask_user` whose reason code, question or options (read as tokens,
+  never prose patterns) are a refusal about audio / intercut / cutaway / Montage, or a strategy that
+  moves the edit to a Montage, against a live full-screen or clip-sound-on ask. A refusal whose
+  own reason code names an insert or a pause, footage and hook questions are never re-run; a
+  refusal coded as the audio / cutaway ask whose question merely names a pause is the model's
+  honest "no pause" answer while the insert lane is closed, and is re-run (the note then points
+  an explicit pause ask at `insert_clips`) while it is open. The re-run note's pause sentence
+  follows the insert gate too (`correction_note(inserts_open=)`). The re-run keeps the agent session, takes
+  the last brief batch, is skipped under 60 s of turn budget, and any provider or validation
+  failure keeps the first answer (`kria_ask_refusal_rerun_failed`). A second refusal becomes the
+  plain unmet reply, never the model's invented reason. The re-run's action and new brief updates
+  replace / join the first answer's (`PlannedKriaTurn.main_creator_output`). Origin: prod thread
+  6fa36e51, turn 7aa16b1a. The real model's answer to that request needs the paid live eval of
+  `kri1151_talking_cutaways_show_when_mentioned` (tests/evals/README.md).
+- **Known gaps**: a creator take the analysis marks not-to-camera next to another person's clip
+  marked to-camera is read the other way round under a global ask; the signal is the display fact plus the clip analysis; a creator who says "when I
+  mention them" without a full-screen word gets today's behavior (a typed "show when mentioned" fact
+  would need a brief-extractor prompt bump and live evals). Matching is lexical on the clip's own
+  speech and analysis against the creator's words, so a clip about something the creator never
+  names (the congress talk, a drone shot) is spread, and a different language between clip and
+  creator matches only names and numbers.
+- **Evidence**: `tests/tasks/test_talking_show_when_mentioned.py` replays the prod job's clips,
+  words and analyses (`tests/fixtures/talking_show_when_mentioned_6fa36e51.json`) through
+  `_run_generative_job`; `tests/pipeline/test_phone_talking_mentions.py` lists the failure modes.
 
 #### Phase 2: PiP cards grounded from the transcript (KRI-176)
 
@@ -2602,6 +2925,32 @@ PHONE_VOICEOVER_EDITOR_LANES_ENABLED=true SOUND_EFFECTS_ENABLED=true
 MEDIA_OVERLAYS_ENABLED=true --app nova-video` + restart (api + worker), after
 the iOS build that declares protocol 3 is out. Rollback: set the first to false.
 
+**Added pictures on Talking edits (KRI-1142).** A phone `subtitled` (Talking to camera) edit
+can add a picture from Visuals (including Generate media). The single gate is
+`phone_rollout.phone_subtitled_editor_media_supported()`: `PHONE_SUBTITLED_EDITOR_MEDIA_ENABLED`
+(its own kill switch, default off) AND `PHONE_EDITOR_MEDIA_ENABLED` AND `VISUAL_BLOCKS_ENABLED`
+AND `PHONE_EDITOR_MEDIA_FEATURES` verified AND the Talking lanes gate
+(`phone_subtitled_editor_lanes_supported`). No newer app build is needed (see the Voiceover
+added-media section). `generative_jobs._phone_subtitled_editor_media_available` advertises
+`phone_editor_media`, opens `visual_blocks` (no add-clip) and emits `editor_revision_number`;
+Save accepts the section. `_compile_subtitled_editor_commit` rebuilds the recipe from scratch, so
+`_talking_editor_media` recompiles the `editor-media` layer from the saved `visual_blocks` on
+EVERY Talking Save (fitted to the final cut: Range, inserts, speech cleanup), otherwise a caption
+or sound edit would silently drop the picture. With the rollout off, a variant that already
+carries pictures refuses the Save (422 `unsupported_phone_edit`) instead of dropping them; one
+without pictures compiles byte-identically. Apply: `fly secrets set
+PHONE_SUBTITLED_EDITOR_MEDIA_ENABLED=true` (+ the flags above) and restart api + worker, after a
+device smoke test of a Talking edit with captions, a cutaway and a picture. Rollback: set it false.
+
+**Added pictures on authored and empty edits (KRI-1142).** An authored or empty phone
+edit already advertised `phone_editor_media` (`authored_phone_sources_available`) but kept
+the top-level `visual_blocks` closed (`no_clean_base`). `_phone_authored_media_available`
+(that gate AND `VISUAL_BLOCKS_ENABLED`) now lifts only that closure in the clamp, and the
+generic Save check in `prepare_editor_commit` accepts blocks for it; the authored compile
+(`phone_authored_timeline`) already compiled them. Any other closure reason (a lyrics
+variant) stays closed. Rollback: set `VISUAL_BLOCKS_ENABLED=false`. The same gate is what
+lets Visuals → Generate media appear on these edits.
+
 **Added photos and videos (KRI-287).** Visuals → "Add photo or video" places
 a media Visual block (`visual_blocks`), not a Visuals card. The single gate is
 `phone_rollout.phone_voiceover_editor_media_supported()`: the lanes gate above
@@ -2986,6 +3335,60 @@ draft said "that exact text isn't in this draft" and the contract pinned the tex
 
 Tests: `tests/tasks/test_kri791_spoken_text_trigger.py` (replays the T1 brief, strategy
 and speech segments).
+
+### Numbered list labels on phone Talking edits (Qendresa item 19)
+
+"Add a label when each one starts: "1. Spec-kit", "2. Impeccable", ..." (her screen
+walkthrough) and "When I list the four things, show each one as big text, like "1. which
+company it sends data to?"" (her talking head) name no spoken word, so KRI-707 drew nothing
+and the draft said "that exact text isn't in this draft". Behind
+`SPOKEN_LIST_LABELS_ENABLED` (default off; gate `phone_list_labels_supported()` = the flag
+and the KRI-707 spoken-text gate), with no model or prompt change:
+
+- **Asks.** `phone_list_labels.list_label_asks`: live whole-video text requirements with no
+  spoken trigger (KRI-707 keeps those). Only a content match makes one a label: it names a
+  background recording, or it carries a list marker ("1.", "01:", "1)"; a marker is 1-2 digits and a "." / ":" / ")"
+  followed by a space, so "#1 PICK", "3.5 million views" and "10:30 routine" are not labels).
+- **Screen walkthrough.** Each label is paired by name with a `background_media.sequence`
+  entry (`match_labels`: assigned globally by tier -- all loose-equal pairs, then contained,
+  then overlapping -- against EVERY phrased entry, anchored or not; one entry per label; an
+  unmarked text pairs only when it IS the name) and appears where
+  `lay_out` anchored that entry (`SequenceLayout.anchor_s`), never the 0 s lead-in window.
+  Labels follow the recordings only with item 17's flag (`BACKGROUND_FOLLOWS_TALK_ENABLED`)
+  on, and only recordings still shown in the final lanes; **turn item 17 on first** so the
+  recordings and the labels agree ("4. Agents" waits for "fourth one is agents", not the
+  "agents" inside "trading agents"). With it off every marked label grounds on its own words.
+- **Talking head.** A lone label numbered 1 that no recording names is found in the take's
+  words (tolerant: "company" typed, "companies" said), then `find_spoken_list` reads the
+  items that follow from a repeated opening word ("what ... what ... and what ..."): the
+  opener must come right after item 1 (or one 1-3 letter joiner later), each item is
+  `max(2, n1 // 2)` to `2 * n1 + 2` tokens long, a 0.6 s pause inside an item ends the list,
+  and an opener led by a new short joiner ("... and what") is the last. Labels 2..N copy the
+  example's marker, case and final "?". A typed list is never extended. If only item 1 is
+  found the requirement is `partial` ("couldn't find the rest of your list").
+- **Rows.** Ordinary text rows (`list-label-<requirement id>[-<n>]`) on the KRI-467 lane
+  (no new phone capability or protocol), each until the next label starts or 3 s (a label
+  squeezed by a next one starting within 0.8 s is `same_moment`; `no_time` is the take end's),
+  placed by
+  `place_talking_title` clear of the captions, other text and cards on screen, with the
+  face and any KRI-827 marked object mapped into a corner speaker frame (`speaker_frame=`);
+  the placements are also in the KRI-827 protected-text receipt (`list:<id>-<n>`). Receipt:
+  `list_label_placement` (`placed` / `not_heard` / `no_time` / `same_moment` / `error`,
+  `list_found` on a spoken list).
+- **Receipts and contract.** Draft: "I'll show it when that part of your talk starts ...".
+  After render: met when placed off the face; otherwise the reason, never met. A Talking
+  edit does not pin such a label in `exact_texts` (its receipt answers it).
+
+Limits: lists whose items start with different words ("the first thing is ... the second
+thing is ...") or a 1-3 letter word are not found (only the typed item 1 shows, and the
+receipt says so); a lone "1." label is always read as the start of a list; talk right after a
+list that repeats the opener without a closing joiner ("this matters because this ...") can
+still be read as items.
+Kill switch: `fly secrets set SPOKEN_LIST_LABELS_ENABLED=false --app nova-video` + restart
+(api + worker). Design and failure modes: `docs/reviews/qendresa-list-labels-failure-modes.md`.
+Tests: `tests/tasks/test_qendresa_list_labels_worker.py`,
+`tests/tasks/test_qendresa_spoken_list_worker.py`, `tests/pipeline/test_phone_list_labels.py`.
+Simulator check: `scripts/ios/qendresa-list-labels-e2e.py`.
 
 ## Your song montages (KRI-374)
 
@@ -3592,6 +3995,21 @@ before rollout. API/workers must run the same revision and flags before new jobs
 are admitted. Release 2's repeated-edit learning remains separately gated under
 KRI-336 and is not activated by the typography flag.
 
+### Middle line in TikTok's look (Qendresa item 21; related KRI-523)
+
+`CLIP_TEXT_TIKTOK_LOOK_ENABLED` defaults off (API + worker read it; no client protocol or
+verified token). On, Main Creator v128 may write a whole-video pin with
+`corner: "middle_center"` and `look: "tiktok"`. The pinned-text compiler centres it and paints
+`schemas/phone_text_style.TIKTOK_TEXT_LOOK` (TikTok Sans Bold, white, 56 px, 0.72 wrap, authored
+shadow at opacity 0.2), listing the look fields in `creator_style_fields` so this pass keeps them.
+`_place` slides a middle line to the nearest y clear of faces, other text and the wordmark
+(`source_params.moved_off`), or records `source_params.covers` when no spot is clear; the brief
+receipt then says so. An identical `opening_title` is drawn once. Off: a stray middle pin is
+drawn as `top_center` with no look. Failure modes and measurements:
+`docs/reviews/qendresa-item21-clip-text-look.md`; simulator harness:
+`scripts/ios/qendresa-clip-text-look-e2e.py` + `DeviceClipTextLookRenderE2ETests`.
+Rollback: `fly secrets set CLIP_TEXT_TIKTOK_LOOK_ENABLED=false` + restart api and worker.
+
 
 ## Text Bend capability (KRI-646)
 
@@ -3632,6 +4050,76 @@ capability) + `authoredText` verified + client protocol >= `CAPTION_ANIMATION_MI
 `editor_capabilities.caption_animation`. A Save from an older build that carries caption
 phases, or replaces cues / guided `caption_meta` holding them, gets `426 client_update_required`
 (`feature: "caption_animation"`).
+
+## Caption shape on phone Talking edits (Qendresa item 12)
+
+A creator types the SHAPE of her captions: "two words at a time" and/or "in a light grey box".
+The brief records typed facts on the captions requirement (Main Creator v120): `caption_words`
+(1, 2 or 3) and `caption_box` (`#RRGGBB`, light grey `#E5E5E5`). They ride the KRI-1177 caption
+ask (`app/kria/caption_look_ask.py`); a box with no count shows two words.
+
+What the phone Talking writer draws (`phone_text_styling.generation_caption_cues` /
+`generation_caption_look`, `phone_captions.compile_caption_layers`):
+
+| Ask | Cues | Look | Spot (block centre) |
+|---|---|---|---|
+| N words, no box | split to <= N words on the cue's word times, no gaps inside a cue | white (or the asked colour); only the spoken word takes it, the others are that colour x 0.65 (`karaoke.active_only`); no lime | middle -> y 0.62, bottom -> y 0.79, otherwise as before |
+| box (+ N words) | <= N words (2 when not asked) | black or white text, whichever reads on the box (or the asked colour; one under 3:1 on the box gets a 4 px outline in that readable ink, stored as `caption_editor_style.stroke_color`), otherwise no outline, no shadow, 64 px unless a size was asked, one static layer per cue on an opaque rounded `TextBackground` (padding 0.40 x 0.18 em, radius 0.35 em) | bottom or no spot -> y 0.79, middle -> y 0.62 |
+
+A box is never put under a karaoke layer: the engine paints a karaoke layer's box once per word,
+so a later word's box would hide the earlier words. The variant keeps
+`caption_shape = {"version": 1, "words": N, "box" | "dim": ...}` beside the usual caption fields,
+so an editor Save, a chat edit and a reburn recompile the same shape (`caption_look_from_variant`).
+The native editor reads it as `caption_meta.shape` from protocol 36 and draws the same box and
+dimmed word in its preview and editor export. Setting "highlight spoken word" in the editor wins
+over the dimmed word.
+
+Gate (all required; any off = today's captions byte for byte, and the caption receipt says what
+was not drawn): `PHONE_CAPTION_SHAPE_ENABLED` (default off) + `captionShape` and `authoredText` in
+`PHONE_RENDER_VERIFIED_FEATURES` + the approving app build (`creator_client_protocol`) >=
+`CAPTION_SHAPE_PROTOCOL` (36). `captionShape` is a rollout token, not a recipe capability (the
+recipe only uses `authoredText`): add it after a device check of the editor box. Guard:
+`tests/tasks/test_qendresa_caption_shape_worker.py`. Rollback: `fly secrets set
+PHONE_CAPTION_SHAPE_ENABLED=false` (api + worker) + restart; stored shapes keep compiling.
+
+## Talking card layout (Qendresa item 15)
+
+Screenshot and recording cards on a phone Talking edit take her size and place: up to the full
+width, in the band above her face or the band below her caption row, never on her face or her
+captions; up to 14 cards; a named screenshot may open the video; a recording starts at its best
+moment. The geometry is in `phone_card_layout.py` / `phone_overlay_grounding.py`; the worker
+passes `CardLayoutContext` (the MEASURED caption band from the item-12 reserve compile's
+`_caption_boxes`, plus the title / listed-text windows mapped from the cut take back to source
+seconds, `_take_window_to_source`) only when the layout is open. Closed = the grounding call and
+every card are byte-identical to before.
+
+A card laid out against the measured captions carries `caption_clear` (`SubtitledOverlayCard`),
+so it may sit below y 0.62. The editor projection marks it (`media_overlays[].caption_clear`), a
+Save keeps the mark only for a card the server marked (never the client's value), and a recipe
+derived lane marks a portrait pip card whose centre is below 0.62.
+
+Gate (all required): `TALKING_CARD_LAYOUT_ENABLED` (default off) + `cardLayout` in
+`PHONE_RENDER_VERIFIED_FEATURES` + the approving build (`creator_client_protocol`) >=
+`CARD_LAYOUT_PROTOCOL` (40; older editors pull every card centre up to 0.62, onto the captions)
++ a portrait pip render with no speaker background, no KRI-547 face fill, a "fill" (not "fit")
+take and a source no taller than 9:16 (source face boxes only map exactly in y then). Stays
+today's: alpha stickers, landscape, speaker background, face-filled close-ups, fullscreen
+layouts, old builds. Faces are sampled for every card and must not overlap at all (no IoU
+tolerance); the Kria wordmark the phone draws at the lower left (KRI-548) keeps its corner, so a
+bottom card sits beside it (~0.78 wide for 16:9) or below it, whichever is bigger. Guards:
+`tests/services/test_talking_card_layout_gate.py`, `tests/tasks/test_qendresa_card_layout_worker.py`.
+
+Apply order: iOS build >= protocol 40 shipped -> device check of a card in the bottom band ->
+add `cardLayout` to `PHONE_RENDER_VERIFIED_FEATURES` -> `fly secrets set
+TALKING_CARD_LAYOUT_ENABLED=true` (api + worker) + restart. Rollback: `fly secrets set
+TALKING_CARD_LAYOUT_ENABLED=false` (api + worker) + restart; stored cards keep their spots.
+
+Simulator before/after: `scripts/ios/qendresa-card-layout-e2e.py prepare OUT --foot FOOT`
+(real worker, flag off vs on), render with `KRIA_CARD_LAYOUT_E2E_DIR=OUT` +
+`DeviceTalkingCardLayoutRenderE2ETests`, then `score OUT --kit <Qendresa kit>`: the kit's
+`screen` must flip, `card_hook` (a card's text in the first 3 s; the kit's own `hook` also
+passes on a misread dimmed caption) must flip, `full_speaker` stays, and the rendered-frame face
+check plus its negative control and the watermark check must hold.
 
 ## Actual-export verifier v3 rollout boundary (KRI-832)
 
@@ -3760,6 +4248,35 @@ carries a background. The app reads `capabilities.speaker_background` (creation)
 `editor_capabilities.speaker_background` (per variant). Rollback is the kill switch, never a
 code revert. Detail: `docs/pipelines/speaker-background.md`.
 
+KRI-1173 adds a solid-colour fill (`media_kind: "color"` + `color: "#RRGGBB"`, no asset) on the same lane
+behind its own verified token `speakerBackgroundColor` and client protocol >= 34
+(`SPEAKER_BACKGROUND_COLOR_MIN_CLIENT_PROTOCOL`); no new env flag, `SPEAKER_BACKGROUND_ENABLED` stays the one
+kill switch. Add the token only after a physical-iPhone preview + export check (white then green fill, a colour
+under photo windows, a 60 s export within 120 s). With the token or the build missing the whole background is
+stripped (trace `speaker_background_color_phone_fallback`) and the creator keeps their own room; builds below
+34 get `426 client_update_required` (`feature: "speaker_background_color"`) for a variant that carries a colour,
+and `editor_capabilities.speaker_background_color` / the thread capability of the same name hide the Colour
+control. Detail: `docs/pipelines/speaker-background.md` "Solid-colour fill (KRI-1173)".
+
+Qendresa item 16 adds `full_screen_windows` on the same layer (the speaker's own take full screen, no mask and
+no background, before the corner) behind `SPEAKER_FULL_OPENING_ENABLED` (default off), the verified token
+`speakerFrameWindows` and client protocol >= 41 (`SPEAKER_FULL_OPENING_MIN_CLIENT_PROTOCOL`). Add the token only
+after a physical-iPhone check: the opening in preview and export, a clean cut-out on the switch frame, and the
+corner fallback when the mask fails there. With the flag, the token or the build missing, the windows are laid
+out as today (corner from 0 s) and the receipt says the opening was not made; builds below 41 get `426
+client_update_required` (`feature: "speaker_full_opening"`) only for a recipe already pinned with it. Detail:
+`docs/pipelines/speaker-background.md` "Full screen first, then the corner".
+
+Qendresa item 18 adds an optional `focus` (`{x, y, zoom}`) on the fill and on each window: a landscape recording
+is aimed at its measured text column (free, measured while the worker binds the Visual) or at the side / zoom the
+creator named in chat or in the editor. Behind `BACKGROUND_FOCUS_ENABLED` (default off), the verified token
+`backgroundFocus` and client protocol >= 42 (`BACKGROUND_FOCUS_MIN_CLIENT_PROTOCOL`). Add the token only after a
+physical-iPhone check: an aimed recording in preview and export, black bands when zoomed out below cover, the
+Left / Centre / Right buttons and the zoom slider. With the flag, the token or the build missing, recordings are
+centre-cropped as today; builds below 42 get `426 client_update_required` (`feature: "background_focus"`) only
+for a recipe already pinned with a focus. Detail: `docs/pipelines/speaker-background.md` "Aimed at the readable
+text".
+
 
 ## Clip tilt (KRI-1134)
 
@@ -3799,11 +4316,49 @@ edit". The prompt fragment is `prompts/edit_copilot_ops/clip_tilt.txt` (`EDIT_CO
 A clip with a look, or a card photo asked for a new backdrop, is refused by the compiler in a sentence
 (`editor_ops_v2/timeline.py::_tilted`).
 
-Picture cards cannot be rotated from chat: the phone Talking compile drops `editor_style`
-(`SubtitledOverlayCard` has no angle), so `patch_overlay` with `rotation_deg` is refused on every edit
-that offers the overlay family. Teach the angle to the card op only after that compile keeps it.
+Picture cards tilt through `patch_overlay` (KRI-1141, below). While the card gate is closed, a
+`patch_overlay` that carries `rotation_deg` or `rotation_delta_deg` on a v2 snapshot is still refused in a
+sentence ("I can't tilt a picture on this edit yet"), never applied without its angle.
 
 routes and phone writers (PR B, below) and the AI ops and slides (later PRs) land in the follow-ups of the same project.
+
+### Picture card tilt (KRI-1141)
+
+A phone Talking edit's picture cards (`SubtitledOverlayCard`, drawn from a clip with a `visual_placement`) turn
+by one angle, clockwise on screen, -180..180, 0 upright. The same value travels end to end:
+
+| Stage | Where the angle lives |
+|---|---|
+| Editor gesture / Rotation slider | `media_overlays[i].editor_style.rotation_deg` (an upright card carries no `editor_style`) |
+| Save -> `_overlays_from_sections` | `SubtitledOverlayCard.rotation_deg` (wrapped to `(-180, 180]`, omitted from the row while 0) |
+| Talking compile (`_compile_overlay_track`, `_compile_video_overlay_clip`) | the card clip's `transform.rotation_degrees`, the field a main-track tilt uses |
+| Pinned recipe -> editor read-back | `lanes_from_recipe` reads it back; `sections_from_lanes` projects `editor_style.rotation_deg` |
+| Device render | `RecipeVideoLayer.placementTilt` (= `TimelineClip.placementTiltDegrees`); `positionedSource` turns the placed card about its centre |
+
+Where it used to be lost: `SubtitledOverlayCard` had no angle, so `_overlays_from_sections` dropped
+`editor_style`, the recipe never carried it, and the server clamp kept `visual_editor_style` closed on every device
+variant so the editor offered no rotation either. A placed clip positions itself, so the compositor also ignored
+`transform.rotationDegrees` on it; it now reads it.
+
+Capability: no new recipe field and no new token. Python and Swift already infer `clipTilt` from any clip with a
+non-zero rotation, so the existing `clipTilt` verified token covers a tilted card. Add nothing else to
+`PHONE_RENDER_VERIFIED_FEATURES`; include a rotated Talking card in the `clipTilt` physical-device check.
+
+Gates (all must hold for `editor_capabilities.media_overlay_tilt`, present only when ON, on a device-rendered
+Talking variant with the card lane open): `MEDIA_TILT_ENABLED`, `clipTilt` verified, and a build declaring protocol
+>= `MEDIA_CARD_TILT_MIN_CLIENT_PROTOCOL` (30). Builds 28 and 29 decode `clipTilt` but draw a placed card upright, so a
+pinned recipe that carries a tilted card answers `426 client_update_required` (`feature: "card_tilt"`,
+`minimum_client_protocol: 30`) to them. The capability opens only the rotate gesture and the Rotation slider;
+`visual_editor_style` (zoom, fit, animation) stays closed, and Save refuses a card style that sets anything but the
+angle, and an angle on a full-screen card (422, never silently dropped). A new or changed angle while a gate is
+closed is a 422 `unsupported_phone_edit` ("tilting a picture isn't available on this edit yet"); keeping a stored
+angle and straightening one always work. Rollback is `MEDIA_TILT_ENABLED=false` (+ restart), never a code revert.
+
+Chat: `patch_overlay` takes `rotation_deg` (replaces) or `rotation_delta_deg` (adds), only while the snapshot's
+`overlays.tilt` is true (prompt fragment `prompts/edit_copilot_ops/overlay_tilt.txt`, `EDIT_COPILOT_PROMPT_VERSION`
+v101). A tilted card lists `tilt=(rotation_deg=...)` in OVERLAY CARDS. Proof: `tests/routes/test_overlay_card_tilt.py`,
+`tests/routes/test_overlay_card_tilt_chat.py`, the `overlay_tilt_*` replay goldens, `PlacedCardTiltTests`
+(`tests/fixtures/card-tilt-parity/v1.json` is read by both sides) and `NativeOverlayCardTiltTests`.
 
 ### Video editor (KRI-1136, PR B)
 
@@ -3845,3 +4400,236 @@ clockwise, like the Nudge right button and the corner-rotate handle), +-1 degree
 Background row (Blank / Colour / Blur, plus "use this background on every clip", which leaves clips that cannot
 tilt untouched). The preview updates through the live-composition path. The overlay corner-rotate gesture snaps
 to 90 degrees too.
+
+### Media backdrop (KRI-1139, PR E)
+
+A tilted clip, or an untilted clip with bars, can sit on one of the creator's own Visuals-pool photos or videos instead
+of black, a colour or a blur. Wire (row and recipe alike, strict, no colour): `{"kind": "media", "asset_id":
+"<Visuals-pool visual id>"}`. `asset_id` is the pool row id (`PlanItemAsset.id`, the `visual_id` of the recipe's
+`VisualRenderAsset`), so a row's `tilt` is the recipe's `backdrop` byte for byte. Blank, colour and blur keep their
+wire shapes and pixels; `tests/fixtures/clip-tilt-parity/v1.json` and `clip-tilt-row/v1.json` pin both languages.
+Slide posts are out of scope: a slide backdrop stays blank, colour or blur, and the slide decoder refuses `media`.
+
+| Capability | Where it is derived | Gate |
+|---|---|---|
+| `clipBackdropMedia` | any main-track clip whose `backdrop.kind` is `media` (V2 recipe only; always with `clipTilt`) | `MEDIA_TILT_ENABLED` + `clipTilt` verified, then `clipBackdropMedia` in `PHONE_RENDER_VERIFIED_FEATURES` and client protocol >= `MEDIA_BACKDROP_MIN_CLIENT_PROTOCOL` (31) |
+
+**Renderer.** No new renderer. The compositor reuses the speaker background's layer builder
+(`AVPlayerPreviewComposer.speakerBackgroundLayer`): one layer per distinct pool asset spans the edit, a photo is
+fitted to the canvas once, a video gets its own muted composition track looped from its first frame on the edit clock
+(its audio is never inserted), and the layer is read under every clip that names it, inside that clip's own layer, so it
+sits behind the clip and below text and is never composed alone. That was chosen over a per-clip layer because it
+reuses the photo orientation and looping code the green screen already proves and keeps one decoder per asset.
+Live preview takes the full rebuild when a media backdrop was not built into the composition.
+
+**Server.** Every phone writer (guided, authored, voiceover cut, voiceover montage, subtitled) calls
+`phone_recipe_shared.register_backdrop_visuals`, which declares the pinned `PhoneVisualBinding` as a
+`VisualRenderAsset` + `MediaAsset` and fails the compile closed (`UnsupportedPhonePlan`, capability
+`clipBackdropMedia`) when the job never pinned it. A cut that drops the last backdrop drops the asset.
+Save (`_require_clip_tilt_gates`): a backdrop is accepted only for a ready photo or video of THIS item's pool
+(`422 clip_backdrop_media_not_in_pool` otherwise), `422 clip_backdrop_media_unavailable` while the gate is closed, and
+`426 client_update_required` (`feature: "clip_backdrop_media"`, minimum 31) for a build below 31 that polls a recipe
+with one or replaces the timeline of a variant that stores one. Before validation the Save pins the pool visual through
+the speaker background's receipt path (`phone_speaker_background.pin_background_for_commit`, also used by both chat
+apply paths): the receipt in `assembly_plan["_phone_visuals_v1"]` is what the storage-retention scanner treats as a
+live reference, so retention cannot delete the file while a variant uses it. Capability:
+`editor_capabilities.clips.tilt_backdrop_media`, present only while the gate is open.
+
+**Editor.** The Tilt sheet's Background row gains a fourth option, "Photo or video", only where the server lists
+`clips.tilt_backdrop_media`. It opens the editor's shared `NativeVisualPoolPicker` (the same view the Talking
+Background tool shows, now extracted from `NativeBackgroundPanel`), shows the chosen thumbnail with a Change button, and
+Reset returns to blank. A photo or video the session cannot read drops out of the preview only; the sheet says it is
+gone and the row still saves.
+
+**Chat.** `patch_slots.tilt.backdrop` accepts `{"kind": "media", "asset_id": ...}` only while
+`timeline_patch_capabilities.tilt_backdrop_media` is open and only for an id in the snapshot's `tilt_backdrop_pool`
+(`clip_tilt_media.txt` teaches it, `EDIT_COPILOT_PROMPT_VERSION` `2026-11-01-v102`); an id outside the pool is refused in
+a plain sentence and never reaches the draft.
+
+Failure modes and what pins each: an older build decodes the recipe (426 above, `test_clip_backdrop_media.py`);
+asset not in the pool or not ready (the 422 and `test_clip_backdrop_media_save.py`); asset deleted after Save (the
+pin receipt, plus the preview's soft drop); video not looping or audio leaking
+(`ClipBackdropMediaCompositionTests.testVideoBackdropAdvancesAndLoopsAndExportsWithoutItsAudio`); backdrop over the
+clip or text (`testBackdropNeverShowsThroughAClipThatCoversTheCanvas`, and the layer is composed inside the clip's own
+layer, below text by construction); blur, colour and blank bytes changing (the shared fixtures and the existing tilt
+tests); Python and Swift JSON drift (the shared fixtures); a media backdrop on a clip with a look (refused like any
+tilt); the AI naming an id outside the pool (`test_clip_tilt_media_ai.py` and a replay golden).
+
+Rollout: after `MEDIA_TILT_ENABLED` is on, add `clipBackdropMedia` to `PHONE_RENDER_VERIFIED_FEATURES` on Fly (api and
+worker, restart) once a physical-device preview and export check has passed, then ship the TestFlight build that
+declares protocol 31. Rollback is removing the token or `MEDIA_TILT_ENABLED=false`, never a code revert.
+
+### Tilt zoom (KRI-1169)
+
+A clip's Tilt sheet has a Zoom slider (0.5x to 3x, 1x as framed, a detent at 1x). Zoom is a scale about the CANVAS
+CENTRE applied before the turn; it works on a clip with no angle and a blank backdrop, and it is how a creator fills the
+corners a tilt uncovers (`zoom >= cos(A) + H/W * sin(A)` for a clip that fills the frame at angle A: 1.30 at 10 degrees, 1.55
+at 20, on a 9:16 canvas).
+
+| Stage | Where the zoom lives |
+|---|---|
+| Row (`clips[i].raw["tilt"]`) | `{"rotation_deg": ..., "zoom": 1.3, "backdrop": ...}`; `zoom` rounded to hundredths, omitted while 1, 0.5..3 or the Save is refused (422, not clamped). `ClipTilt.row()` / `rowValue` are `None` only for angle 0, zoom 1, blank backdrop |
+| Recipe | no new field and no new token: `transform.scale` = the clip's own framing scale (letterbox, else 1) x zoom. Older renderers already honour `transform.scale`, so the recipe needs no gate |
+| Writers | `phone_recipe_shared.clip_tilt_fields(row, fit_scale=...)` composes it for all five writers (guided, authored, voiceover cut, voiceover montage, subtitled); the Swift twin is `ClipTilt.recipeScale(framing:)` in `NativeEditorRenderCompiler` |
+| Back to a row | the scale carries two numbers, so `split_clip_scale(scale, letterbox)` splits it: a scale equal to 1 or the letterbox scale is unzoomed, else the zoom is the hundredth over one of the two framings. Used by the voiceover timeline projection, the subtitled lane Save (`_previous_clip_tilts`), `apply_landscape_fit` (keeps the zoom, changes only the letterbox part) and `landscape_fit_from_recipe` (a zoom-out is never read as a letterbox). The one unreadable case is a source whose letterbox scale times a zoom equals 1 (for example a 9:8 source at 2x): it reads as unzoomed |
+
+A supporting card photo takes the turn only (server ignores its zoom, the editor already blocks tilt there). A clip with a
+look cannot tilt, so it cannot zoom (`TIMELINE_TILT_WITH_LOOK`).
+
+Gate: no second master flag and no new verified token. `editor_capabilities.clips.tilt_zoom` is present only while the tilt
+gate is open (`MEDIA_TILT_ENABLED`, `clipTilt` verified) and the build declares protocol >= `MEDIA_TILT_ZOOM_MIN_CLIENT_PROTOCOL`
+(33, `TILT_ZOOM_PROTOCOL`). Save: a build below 33 that replaces the timeline of a variant holding a stored zoom gets
+`426 client_update_required` (`feature: "tilt_zoom"`, `minimum_client_protocol: 33`), because its strict `ClipTilt` reads the
+unknown `zoom` key as no tilt and its Save would erase the zoom; a new zoom while the capability is closed is
+`422 clip_tilt_zoom_unavailable` (in the editor-save catalog and the app's copy map). Keeping or removing a stored zoom is
+always allowed. Rollback is `MEDIA_TILT_ENABLED=false` (+ restart); raising `MEDIA_TILT_ZOOM_MIN_CLIENT_PROTOCOL` hides
+only the slider. Rollout: ship the protocol-33 build first (a build below 33 never sees the capability), then the flag is
+already the tilt flag.
+
+Editor: `NativeTiltSheet` shows the slider only where `canTiltZoom` (`clips.tilt_zoom`); a drag within 0.05 of 1x lands on 1x
+with a light haptic, Reset returns the zoom to 1x, the preview updates through the live-composition path, VoiceOver gets a
+Zoom slider with a "1.5x" value. `setClipTilt` refuses a new zoom while the capability is closed but always lets a stored one
+be kept or removed.
+
+Chat: `patch_slots.tilt.zoom` (absolute) and `zoom_delta` (added to each clip's own zoom); an absolute zoom past 0.5..3 is
+clamped with a sentence, a relative one is clamped against each clip's own zoom and the receipt names the result ("Zoomed clip
+2 to 1.3x", "Reset the zoom of clip 2"). The prompt fragment `prompts/edit_copilot_ops/clip_tilt_zoom.txt` (cover table for
+"fill the corners", `EDIT_COPILOT_PROMPT_VERSION` `2026-11-02-v108`), the snapshot's per-clip zoom and
+`timeline_patch_capabilities.tilt_zoom` exist only while `clips.tilt_zoom` is open, so a closed gate leaves every prompt and
+snapshot byte-identical. `{"tilt":null}` resets the zoom with the rest; `{"tilt":{"zoom":1}}` resets only the zoom.
+
+Failure modes and what pins each: zoom after the rotation or about the wrong pivot (`ClipTiltCompositionTests.testZoom*`,
+`ClipTiltRenderTests`, pixel reads of a red marker and the corners); double application on a letterboxed clip
+(`test_every_phone_writer_composes_the_zoom_with_the_letterbox`, five writers x fit/fill x three zooms; `testCompilerMapsAZoomOnto...`);
+one writer dropping it (same test); zoom 1.0 changing bytes (`test_a_zoom_of_one_leaves_every_writer_byte_identical`,
+`testAZoomOfOneIsTheSameRecipeAndTheSameFrameAsNoZoom`, the goldens hash); an older build erasing a stored zoom
+(`test_clip_tilt_zoom_save.py`); the capability without flag or protocol (same file); chat zoom out of range and a look clip
+(`test_clip_tilt_zoom_ai.py`); Reset leaving the zoom (`testZoomIsStoredOnTheRowResetClearsIt...`, `NativeTiltUITests`);
+Python/Swift drift (`tests/fixtures/clip-tilt-row/v1.json`, valid, invalid and compose cases read by both).
+
+## Range on phone Talking edits
+
+The editor's Range sheet (`KriaSourceWindowEditor`, KRI-717) chooses which part of a clip plays. On a
+phone Talking (`subtitled`, device) edit it picks which part of the speaker take plays. Related: KRI-717,
+KRI-1149.
+
+**Gate:** `PHONE_TALKING_RANGE_EDITS_ENABLED` (default `false`, also the kill switch), through
+`phone_rollout.phone_talking_range_supported()` (flag AND the Talking editor lanes). No client protocol
+bump and no `PHONE_RENDER_VERIFIED_FEATURES` token: the recipe is the same hard-cut keep segments that
+speech cleanup already ships. Builds that predate this ignore the new capability and stay blocked.
+
+**Contract.** `editor_capabilities.clips.source_window = {editable, reason}` appears only while the flag
+is on (`timeline` stays `false`). `reason` is one of `talking_range_multi_clip`, `talking_range_word_cuts`
+(explicit spoken-word cuts applied), `talking_range_processed_audio` (noise reduction applied),
+`talking_range_cut_mismatch` (the stored rows, or an empty editor state, no longer match the speaker's
+clips on the pinned recipe). The speaker's clips are the main-track clips over the speaker's own asset;
+a muted ending clip on the same track is not part of the cut and never closes Range. A Talking edit that
+became authored (a clip delete, KRI-852) gets no `source_window` leaf at all: it edits through the open
+`timeline` capability. One predicate, `phone_talking_range.talking_range_reason`, drives both the capability and
+Save. A Save carries `timeline_slots`: the SAME `native-phone-talking-source[-n]` ids, order and count
+the server derived (`editor_deletion_timeline`), with new `in_s` / `duration_s`. Anything else is
+`422 talking_range_structure_changed` (a `muted` row is `422 talking_range_muted`); segments that no
+longer run in cut order are `422 talking_range_order`; a window reaching into the next segment's footage
+is `422 talking_range_overlap`; a window the Save changed shorter than the editor minimum (0.1 s, with
+the KRI-770 float tolerance) is `TIMELINE_INVALID_WINDOW`, while an untouched short cleanup segment keeps
+its length; past the source is `TIMELINE_OUT_OF_BOUNDS`; widening into footage with no
+caption timing while captions are on is `422 talking_range_captions_missing` (no silent caption gap).
+
+**Compile.** The rows become `keep_segments` for `compile_phone_subtitled_plan`
+(`phone_editor._apply_talking_range`). Lanes move through the existing speech projection
+(`speech_cut_state.reproject_authored_speech_records`; the KRI-852 basis sync was factored into
+`authored_editor.sync_talking_source_lanes` and is shared, not copied). A lane the Save carries is
+already on the new clock and is never moved twice. The variant never enters authored mode, so
+cutaways, speaker background, ending clip and framing keep compiling through the Talking compiler. A
+lane under the ending clip shifts with the cut (the ending is a tail pseudo-slot of its length).
+The rows persist as `variant.user_timeline.slots`; the pinned recipe stays the source of truth. A
+regenerate builds a fresh variant entry without `user_timeline`, so it reopens Range with rows that
+match its new pinned cut.
+
+**App.** The app reads the leaf only while its own `timeline` capability is closed. A closed Range is not
+a banner: the Range button stays tappable and the sheet names the reason when the creator asks for it.
+The app also refuses a staged window that overlaps a neighbour or jumps out of the cut's order.
+
+**Not in this slice (follow-ups).** Delete / split / reorder of speech segments, several-clip Talking
+(per-speaker windows and cutaway re-projection), a cutaway's own source start, variants with spoken-word
+cuts or noise reduction, copilot `set_source_window`, and a "your take is 0:58, the video uses 0:41"
+line in the editor.
+
+**Deploy order.** API first with the flag off (payloads byte-identical), then the iOS build, then flip
+`PHONE_TALKING_RANGE_EDITS_ENABLED=true` (fly secret, restart api and worker). Rollback: set it to
+`false`; saved Range windows stay in their pinned recipes and keep rendering.
+
+## Comment-keyword ending on phone Talking edits (item 14, `CREATOR_CTA_ENDING_ENABLED`)
+
+**What it does.** A confirmed closing text of the form "comment <keyword>" ("comment READ", at most three
+keyword words, 24 characters) on a phone Talking edit is drawn the way creators like Qendresa end their
+posts, for the last 3 s: a small white handwritten "comment" (Caveat Brush), the keyword big and bold in
+cream #FCF3C3 (Bricolage Grotesque, shrunk to one line) under it, and, when an ask about the ending wants
+an arrow, a white curly arrow drawn in as a freehand drawing (`closing-arrow`) to the right. Measured from
+her posts (V4/V5/V7). The keyword is kept verbatim ("comment READ!" -> "READ!") so the two rows join back
+to the exact confirmed text; "Comment: READ" keeps the tag. The arrow head is three straight 2-point
+strokes: the phone smooths every stroke through its points (`NativeDrawingPainter.smoothPath`), so a
+corner inside one stroke would draw as a loop. Builder: `app.pipeline.phone_cta_ending.build_cta_ending`;
+worker hook: `_phone_talking_closing_rows`.
+
+**What the phone gets.** Two ordinary text rows (`closing-title`, `closing-title-keyword`, source
+`closing_title`, `cta_part` lead/keyword) and one `drawings` row, so the editor moves or deletes them like
+any other text or drawing. Both fonts ship in every build's font bundle and drawings need `freehandDrawing`
+(protocol 6), so no new protocol or verified token.
+
+**Placement.** The block (both rows and the arrow) goes just under the speaker's face when it clears the
+face and the captions on screen, else the nearest row that does, else the nearest that clears the face.
+An unconfirmed face (the KRI-183 fallback box) starts the block at her spot (top 0.60), never just under
+the box. With a closing photo, protected objects (KRI-827), an inserted clip (KRI-1151) inside the ending,
+no room off the face, a font that can't draw a character, or a text that isn't "comment <keyword>",
+today's lime tag is drawn instead (`cta_fallback` on the placement receipt when the text was a CTA).
+
+**Gates.** `CREATOR_CTA_ENDING_ENABLED` (default off) + the closing-title lane + `freehand_drawing_enabled`
++ `freehandDrawing` in `PHONE_RENDER_VERIFIED_FEATURES` + the approving build's `creator_client_protocol`
+>= `freehand_drawing_min_client_protocol`. Anything else keeps the lime tag (byte-identical; guard:
+`tests/tasks/test_phone_cta_ending_worker.py::test_switched_off_the_job_is_exactly_todays`).
+
+**Receipts.** A "comment <keyword>" closing text whose ask also names an arrow ("no arrow" is not an ask)
+is "met" only when a drawing whose time window overlaps the ending text (the `closing-arrow` drawing, or one
+she made herself) is on the finished video; the ID alone never counts, so an arrow she moves off the ending
+does not; otherwise it is "partial" and says the arrow isn't there and that she can draw one with the pen in
+the editor. An arrow asked next to any other text is never drawn, so it is always "partial"
+(`tests/kria/test_cta_ending_receipt.py`). Known gap: the draft's "I'll draw a curly arrow" does not know
+the approving app build, a closing photo or an inserted clip; the finished-video receipt corrects it. The approved contract's exact closing
+text matches the two rows joined (`creator_render_contract.verify_phone_recipe`).
+
+**Rollout.** `fly secrets set CREATOR_CTA_ENDING_ENABLED=true --app nova-video`, restart api + worker.
+Rollback: set it to `false`; endings already rendered keep their rows and arrow.
+
+## Title look on phone Talking edits (Qendresa item 20)
+
+`TITLE_LOOK_ENABLED` (default **false**, API + worker; server only, no protocol or verified token).
+A confirmed `opening_title` typed with " / " (or newlines) on a phone Talking edit is drawn as her
+stacked hook title: one ordinary text row per line (`opening-title`, `opening-title-line-N`,
+`source_params.title_look`), her exact words, a face and colour per line.
+
+- **Look per line:** her own per-line words in a sentence about the title ("bold caps, serif,
+  yellow handwriting") > a title/all-text font or colour she named or saved > the default stack
+  measured on her V5 (Bricolage Grotesque 145 / Instrument Serif 100 / Patrick Hand 105). A
+  strategy font knob is never read as her ask (it can be a provisional face). Every font already
+  ships in the iPhone bundle (`project.yml` bundles `assets/fonts`), so old builds draw it.
+- **Placement** (`phone_title_look.place_title_look`): one block, centred or top-left when she
+  asks; asked spot, under the face, between face and captions, above the face, then 0.85 / 0.72
+  / 0.6 size. Faces and marked objects are hard limits; captions are kept clear whenever any spot
+  allows it. Held 3 s unless she gave a hold. The styling pass leaves these rows as built.
+- **Logo above the title:** a reaction beat with `anchor: "title"` (Main Creator v135 teaches it
+  only while the flag is on) becomes a card right above the block for the title's window
+  (`beat-<id>-1`, source time like every beat card). The title is placed so the biggest logo
+  fits off her face and her captions (with captions up in the title band, the block drops just
+  enough for the logo to sit between them and the title); the worker places the logo against
+  the same caption boxes (`caption_boxes` in the title receipt). A logo with no room is
+  reported `no_room_above_title` (her face) or `no_room_off_captions` (only her captions).
+- **Receipts / approval:** the brief and `verify_phone_recipe` find her title in its " / " form
+  when it is drawn line by line (exact lines, shown together, top to bottom).
+- **Rollback:** `fly secrets set TITLE_LOOK_ENABLED=false` + restart api and worker. Strategies
+  approved while it was on keep `anchor: "title"` beats; with it off they go to word grounding
+  and are reported as never heard.
+- **Known limits:** the iPhone editor lists lines 2..N as "Text" blocks; a chat "change the
+  title" edits line 1 only; a sound on a title-anchored beat is not played.
+- Evidence: `tests/tasks/test_title_look_worker.py`, `tests/pipeline/test_phone_title_look*.py`,
+  `scripts/ios/qendresa-title-look-e2e.py` (+ `DeviceTitleLookRenderE2ETests`).

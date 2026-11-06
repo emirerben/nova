@@ -436,6 +436,7 @@ def claim_exact_review(
 ) -> tuple[Any, str, dict[str, Any]] | None:
     """Claim a pending review only if the Job/variant/generation still match."""
 
+    from app.config import settings
     from app.db_locks import acquire_locked_rows_sync  # noqa: PLC0415
     from app.models import CreatorAgentSession, Job  # noqa: PLC0415
 
@@ -457,6 +458,33 @@ def claim_exact_review(
         reclaim_running and current.get("status") == "running"
     ):
         return None
+    if settings.kria_intent_review_enabled:
+        from app.services.intent_review_legacy import (
+            LEGACY_REVIEW_RETIRED,
+            legacy_review_retired,
+            retirement_probe,
+        )
+
+        probe = db.execute(
+            retirement_probe(
+                row.id,
+                job_id=uuid.UUID(job_id),
+                variant_id=variant_id,
+                generation_id=generation_id,
+            )
+        ).first()
+        if legacy_review_retired(probe):
+            row.last_review = {
+                **current,
+                "status": "unavailable",
+                "decision": "unavailable",
+                "dispatch_status": "retired",
+                "error_code": LEGACY_REVIEW_RETIRED,
+                "error_message": "The intent review checks this video instead.",
+                "failed_at": _now(),
+            }
+            db.commit()
+            return None
     variants = (job.assembly_plan or {}).get("variants") if job else []
     variant = next(
         (

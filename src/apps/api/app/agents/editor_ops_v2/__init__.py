@@ -45,11 +45,28 @@ FAMILY_FRAGMENTS: dict[str, str] = {
     "caption": "captions.txt",
     # KRI-1117: only while the snapshot offers the background family (the capability is open).
     "background": "speaker_background.txt",
+    # KRI-1162: timed backgrounds + the speaker frame, only while the windows gate is open.
+    "background_windows": "speaker_background_windows.txt",
+    # Qendresa item 18: aim / zoom the recordings, only while the focus gate is open.
+    "background_focus": "speaker_background_focus.txt",
 }
 # KRI-1137: fragments appended only while `snapshot["timeline_patch_capabilities"]` opens the named
 # patch_slots field (and the `clip` family is offered), so a closed gate leaves every prompt
 # byte-identical.
-FIELD_FRAGMENTS: dict[str, str] = {"tilt": "clip_tilt.txt"}
+FIELD_FRAGMENTS: dict[str, str] = {
+    "tilt": "clip_tilt.txt",
+    # KRI-1139: appended after `clip_tilt.txt` only while the pool-photo backdrop is open too, so
+    # a tilt-open edit without it keeps its exact prompt.
+    "tilt_backdrop_media": "clip_tilt_media.txt",
+    # KRI-1169: appended last, only while the zoom is open too.
+    "tilt_zoom": "clip_tilt_zoom.txt",
+}
+# KRI-1141: appended only while the `overlay` family is offered AND `snapshot["overlays"]["tilt"]`
+# is true (`editor_capabilities.media_overlay_tilt`), so a closed gate leaves the prompt identical.
+OVERLAY_TILT_FRAGMENT = "overlay_tilt.txt"
+# KRI-1170: appended only on a slide post whose `post.tilt_zoom_enabled` is true (MEDIA_TILT_ENABLED
+# and a protocol-33 build), so a closed gate leaves the slide prompt identical.
+SLIDE_TILT_ZOOM_FRAGMENT = "slide_tilt_zoom.txt"
 _FRAGMENT_DIR = Path(__file__).resolve().parents[3] / "prompts" / "edit_copilot_ops"
 
 
@@ -157,6 +174,12 @@ def family_fragments(snapshot: object) -> str:
     names = [name for family, name in FAMILY_FRAGMENTS.items() if family in allowed]
     if isinstance(fields, dict):
         names += [name for key, name in FIELD_FRAGMENTS.items() if fields.get(key) is True]
+    overlays = snapshot.get("overlays") if "overlay" in allowed else None
+    if isinstance(overlays, dict) and overlays.get("tilt") is True:
+        names.append(OVERLAY_TILT_FRAGMENT)
+    post = snapshot.get("post") if surface_of(snapshot) == "slide_post" else None
+    if isinstance(post, dict) and post.get("tilt_zoom_enabled") is True:
+        names.append(SLIDE_TILT_ZOOM_FRAGMENT)
     parts: list[str] = []
     for name in names:
         try:

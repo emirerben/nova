@@ -11,6 +11,15 @@ Failure modes pinned here, each through the real manifest / repair / prompt / sc
     is kept after its photo left the pool;
  6. the same photo is also a pop-in on a spoken word, or the closing shot;
  7. the creator prompt teaches backgrounds on an edit that cannot show one.
+
+KRI-1162 (commentary-style green screen) adds, each through the same real manifest / repair /
+prompt / schema:
+
+ 8. a strategy without `sequence` / `cadence_s` / `speaker_frame` dumps and hashes as before;
+ 9. the windows capability or its prompt paragraph appears while the windows gate is closed;
+10. a sequence entry outside THIS item's pool is kept (S35), or dropped without a receipt;
+11. a corner preset or a sequence survives a phone app that cannot draw it (S37);
+12. a sequence photo is also a pop-in or the closing shot (S43).
 """
 
 from __future__ import annotations
@@ -381,7 +390,670 @@ def test_a_closed_gate_prompt_is_byte_identical_to_one_with_no_background_suppor
     assert "PHOTO OR VIDEO BEHIND THE SPEAKER" not in closed
 
 
-def test_the_prompt_version_is_bumped_for_the_new_field():
-    from app.agents.main_creator import MAIN_CREATOR_PROMPT_VERSION
+# ----------------------------------------------------------- KRI-1162: several backgrounds
 
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-01-v109"
+
+def _open_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    _open_gate(monkeypatch)
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [*settings.phone_render_verified_features, "speakerBackgroundWindows"],
+    )
+
+
+def _sequence(*ids: str, **extra: Any) -> dict[str, Any]:
+    return {"media_id": ids[0], "sequence": [{"media_id": i} for i in ids], **extra}
+
+
+def test_unused_window_fields_are_omitted_from_every_dump():
+    from app.agents._schemas.reaction_beats import BackgroundMedia
+
+    plain = BackgroundMedia(media_id=POOL_PHOTO)
+    assert plain.model_dump(mode="json") == {"media_id": POOL_PHOTO}
+    dumped = _strategy(
+        background_media=_sequence(
+            POOL_PHOTO,
+            POOL_VIDEO,
+            cadence_s=3.0,
+            speaker_frame="small_bottom_right",
+        )
+    ).model_dump(mode="json", exclude_none=True)["background_media"]
+    assert dumped["sequence"] == [{"media_id": POOL_PHOTO}, {"media_id": POOL_VIDEO}]
+    assert dumped["cadence_s"] == 3.0
+    assert dumped["speaker_frame"] == "small_bottom_right"
+    assert (
+        CreativeStrategy.model_validate(
+            _strategy(background_media=_sequence(POOL_PHOTO)).model_dump(
+                mode="json", exclude_none=True
+            )
+        )
+        .background_media.sequence[0]
+        .media_id
+        == POOL_PHOTO
+    )
+
+
+def test_speaker_frame_presets_mirror_the_portable_contract():
+    from typing import get_args
+
+    from app.agents._schemas import reaction_beats
+    from app.kria import portable_speaker_background as portable
+
+    assert get_args(reaction_beats.SpeakerFramePreset) == get_args(portable.SpeakerFramePreset)
+
+
+def test_a_model_cannot_author_raw_frame_geometry_or_an_oversized_sequence():
+    from app.agents._schemas.reaction_beats import BackgroundMedia
+
+    with pytest.raises(ValueError):
+        BackgroundMedia(media_id=POOL_PHOTO, speaker_frame={"width_fraction": 0.4})
+    with pytest.raises(ValueError):
+        BackgroundMedia(media_id=POOL_PHOTO, speaker_frame="small_middle")
+    with pytest.raises(ValueError):
+        BackgroundMedia(media_id=POOL_PHOTO, sequence=[{"media_id": POOL_PHOTO}] * 41)
+    with pytest.raises(ValueError):
+        BackgroundMedia(media_id=POOL_PHOTO, cadence_s=1.0)
+
+
+def test_the_windows_capability_is_advertised_only_while_its_token_is_verified(monkeypatch):
+    _open_gate(monkeypatch)
+    base = _manifest()
+    assert capabilities.CAPABILITY_SPEAKER_BACKGROUND_WINDOWS not in base.capabilities
+    assert not capabilities.speaker_background_windows_open(base)
+    _open_windows(monkeypatch)
+    wide = _manifest()
+    assert wide.capabilities[capabilities.CAPABILITY_SPEAKER_BACKGROUND_WINDOWS].available is True
+    assert capabilities.speaker_background_windows_open(wide)
+    assert wide.manifest_hash != base.manifest_hash
+    montage = _manifest(edit_format="montage")
+    assert capabilities.CAPABILITY_SPEAKER_BACKGROUND_WINDOWS not in montage.capabilities
+
+
+def test_the_windows_paragraph_is_taught_only_with_the_windows_capability(monkeypatch):
+    _open_gate(monkeypatch)
+    single = _render_prompt(_manifest())
+    assert "background_media" in single
+    assert "SEVERAL BACKGROUNDS, SPEAKER IN A CORNER" not in single
+    assert "spoken_phrase" not in single
+    _open_windows(monkeypatch)
+    wide = _render_prompt(_manifest())
+    assert "SEVERAL BACKGROUNDS, SPEAKER IN A CORNER" in wide
+    for taught in ("sequence", "spoken_phrase", "cadence_s", "small_bottom_right"):
+        assert taught in wide
+    from app.agents.main_creator import _SPEAKER_BACKGROUND_WINDOWS_PROMPT_SECTION
+
+    assert wide.count(_SPEAKER_BACKGROUND_WINDOWS_PROMPT_SECTION) == 1
+    assert _SPEAKER_BACKGROUND_WINDOWS_PROMPT_SECTION not in single
+    monkeypatch.setattr(settings, "speaker_background_enabled", False)
+    assert "SEVERAL BACKGROUNDS" not in _render_prompt(_manifest())
+
+
+def test_the_windows_paragraph_puts_each_visual_on_the_words_that_name_it():
+    """KRI-1175 (prod "Green 3"): the section quoted the creator's "whichever photo or video I'm
+    talking about" and then told the planner to leave `spoken_phrase` out unless a photo was
+    paired with words, so it wrote a rotation in filename order. The ask now means a phrase on
+    every entry from the take's own words; a plain rotation keeps the list order."""
+    from app.agents.main_creator import _SPEAKER_BACKGROUND_WINDOWS_PROMPT_SECTION
+
+    taught = " ".join(_SPEAKER_BACKGROUND_WINDOWS_PROMPT_SECTION.split())
+    assert "otherwise leave it out and the photos take turns in the order listed" not in taught
+    assert "whichever photo or video I'm talking about" in taught
+    for rule in (
+        "every entry",  # all phrased = laid out on the word
+        "spoken_phrase",
+        "same spoken_phrase",  # two visuals of one thing share the mention
+        "never talk",  # a visual nobody talks about is left out ...
+        "summary",  # ... and named in the reply
+        "take turns in the order listed",  # a plain rotation is unchanged
+    ):
+        assert rule in taught, rule
+
+
+def test_sequence_entries_outside_the_pool_are_dropped_with_a_receipt(monkeypatch):
+    _open_windows(monkeypatch)
+    manifest = _manifest()
+    kept, notices = _repair(
+        manifest,
+        _strategy(
+            background_media=_sequence(
+                POOL_PHOTO, FOREIGN, TAKE, "beach.jpg", POOL_OTHER.removeprefix("asset-")
+            )
+        ),
+    )
+    assert [e.media_id for e in kept.background_media.sequence] == [
+        POOL_PHOTO,
+        POOL_PHOTO,
+        POOL_OTHER,
+    ]
+    assert notices == [capabilities.SPEAKER_BACKGROUND_NOTICES["sequence_not_found"]]
+    assert notices[0].startswith("Couldn't")
+
+
+def test_a_sequence_that_loses_every_entry_falls_back_to_the_fill(monkeypatch):
+    _open_windows(monkeypatch)
+    manifest = _manifest()
+    kept, notices = _repair(
+        manifest,
+        _strategy(
+            background_media={
+                "media_id": POOL_PHOTO,
+                "sequence": [{"media_id": FOREIGN}, {"media_id": TAKE}],
+                "cadence_s": 3.0,
+            }
+        ),
+    )
+    assert kept.background_media.media_id == POOL_PHOTO
+    assert kept.background_media.sequence == ()
+    assert kept.background_media.model_dump(mode="json") == {"media_id": POOL_PHOTO}
+    assert notices == [capabilities.SPEAKER_BACKGROUND_NOTICES["sequence_not_found"]]
+
+
+def test_the_first_usable_entry_fills_when_the_model_named_no_usable_fill(monkeypatch):
+    _open_windows(monkeypatch)
+    kept, notices = _repair(
+        _manifest(),
+        _strategy(
+            background_media={
+                "media_id": FOREIGN,
+                "sequence": [{"media_id": POOL_OTHER}, {"media_id": POOL_PHOTO}],
+            }
+        ),
+    )
+    assert kept.background_media.media_id == POOL_OTHER
+    assert notices == [capabilities.SPEAKER_BACKGROUND_NOTICES["not_found"]]
+
+
+def test_speaker_frame_preset_is_dropped_when_windows_are_closed(monkeypatch):
+    _open_gate(monkeypatch)
+    manifest = _manifest()
+    kept, notices = _repair(
+        manifest,
+        _strategy(
+            background_media=_sequence(
+                POOL_PHOTO, POOL_OTHER, cadence_s=3.0, speaker_frame="small_bottom_right"
+            )
+        ),
+    )
+    # One notice for the whole window request; the fill stays, exactly the single-background ask.
+    assert kept.background_media.model_dump(mode="json") == {"media_id": POOL_PHOTO}
+    assert notices == [capabilities.SPEAKER_BACKGROUND_NOTICES["windows_unavailable"]]
+    assert "iPhone app can't switch backgrounds yet" in notices[0]
+    frame_only, frame_notices = _repair(
+        manifest,
+        _strategy(background_media={"media_id": POOL_PHOTO, "speaker_frame": "small_top_left"}),
+    )
+    assert frame_only.background_media.speaker_frame == "full"
+    assert frame_notices == notices
+
+
+def test_a_frame_and_cadence_are_kept_while_windows_are_open(monkeypatch):
+    _open_windows(monkeypatch)
+    kept, notices = _repair(
+        _manifest(),
+        _strategy(
+            background_media=_sequence(
+                POOL_PHOTO, POOL_VIDEO, cadence_s=3.0, speaker_frame="small_bottom_right"
+            )
+        ),
+    )
+    assert notices == []
+    assert kept.background_media.speaker_frame == "small_bottom_right"
+    assert kept.background_media.cadence_s == 3.0
+    assert [e.media_id for e in kept.background_media.sequence] == [POOL_PHOTO, POOL_VIDEO]
+
+
+def test_a_photos_sequence_start_is_zero_and_a_videos_is_kept(monkeypatch):
+    _open_windows(monkeypatch)
+    kept, _ = _repair(
+        _manifest(),
+        _strategy(
+            background_media={
+                "media_id": POOL_PHOTO,
+                "sequence": [
+                    {"media_id": POOL_PHOTO, "source_start_s": 3.0},
+                    {"media_id": POOL_VIDEO, "source_start_s": 2.5},
+                ],
+            }
+        ),
+    )
+    assert [e.source_start_s for e in kept.background_media.sequence] == [0.0, 2.5]
+
+
+def test_sequence_photos_are_not_also_pop_ins_or_the_closing_shot(monkeypatch):
+    _open_windows(monkeypatch)
+    strategy = _strategy(
+        background_media=_sequence(POOL_PHOTO, POOL_OTHER),
+        reaction_beats=[
+            {"beat_id": "a", "trigger": "desk", "visual_id": POOL_OTHER},
+            {"beat_id": "b", "trigger": "wow", "visual_id": POOL_VIDEO},
+        ],
+        closing_media={"visual_id": POOL_OTHER},
+    )
+    kept, notices = _repair(_manifest(), strategy)
+    assert [(b.beat_id, b.visual_id) for b in kept.reaction_beats] == [("b", POOL_VIDEO)]
+    assert kept.closing_media is None
+    assert notices == [capabilities.SPEAKER_BACKGROUND_NOT_ALSO_A_POP_IN_NOTICE]
+
+
+def test_window_notices_have_turkish_twins_and_a_strategy_without_windows_is_untouched(
+    monkeypatch,
+):
+    from app.kria.strategy_policy import _KNOWN_TR
+
+    for key in ("windows_unavailable", "sequence_not_found"):
+        assert capabilities.SPEAKER_BACKGROUND_NOTICES[key] in _KNOWN_TR
+    _open_windows(monkeypatch)
+    plain = _strategy(background_media={"media_id": POOL_PHOTO})
+    kept, notices = _repair(_manifest(), plain)
+    assert kept.background_media == plain.background_media and notices == []
+
+
+# ------------------------------------------------- KRI-1173: a plain colour behind the speaker
+#
+# Failure modes pinned here, each through the real manifest / repair / prompt / schema:
+#
+# 13. a media-only strategy dumps, hashes and schemas as before; a colour is exactly one of
+#     `media_id` / `color` (never both, never neither);
+# 14. the colour capability or its prompt paragraph appears while the colour gate is closed;
+# 15. the model writes a named colour or lowercase hex and the lane gets it unnormalised (S57), or
+#     an invalid / unavailable colour is dropped without a receipt (never a failed turn);
+# 16. the creator's camera pick (a media pick) overrides or fills in beside an asked colour;
+# 17. `placed_media` / the render contract trip over a strategy with no media_id.
+
+
+def _open_colour(monkeypatch: pytest.MonkeyPatch, *, windows: bool = False) -> None:
+    _open_windows(monkeypatch) if windows else _open_gate(monkeypatch)
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [*settings.phone_render_verified_features, "speakerBackgroundColor"],
+    )
+
+
+def test_a_background_is_exactly_one_of_media_or_colour_and_omits_what_it_does_not_use():
+    from app.agents._schemas.reaction_beats import BackgroundMedia
+
+    assert BackgroundMedia(media_id=POOL_PHOTO).model_dump(mode="json") == {"media_id": POOL_PHOTO}
+    white = BackgroundMedia(color="#FFFFFF")
+    assert white.model_dump(mode="json") == {"color": "#FFFFFF"}
+    assert (
+        CreativeStrategy.model_validate(
+            _strategy(background_media={"color": "#FFFFFF"}).model_dump(
+                mode="json", exclude_none=True
+            )
+        ).background_media
+        == white
+    )
+    # The model may write any short string here; the repair normalises or drops it (S57), so a
+    # bad colour can never fail the turn's schema.
+    assert BackgroundMedia(color="white").color == "white"
+    for bad in (
+        {},
+        {"media_id": POOL_PHOTO, "color": "#FFFFFF"},
+        {"color": "#FFFFFF", "source_start_s": 2.0},
+        {"color": ""},
+        {"color": "x" * 33},
+    ):
+        with pytest.raises(ValueError):
+            BackgroundMedia(**bad)
+
+
+def test_the_render_contract_and_placed_media_know_a_strategy_without_a_media_id():
+    from app.kria.clip_scope import placed_media
+    from app.services.creator_render_contract import FIELD_MATRIX
+
+    assert "background_media.color" in FIELD_MATRIX
+    only_colour = placed_media(_strategy(background_media={"color": "#FFFFFF"}))
+    assert POOL_PHOTO not in only_colour
+    with_windows = placed_media(
+        _strategy(background_media={"color": "#FFFFFF", "sequence": [{"media_id": POOL_PHOTO}]})
+    )
+    assert POOL_PHOTO in with_windows
+
+
+def test_the_colour_capability_is_advertised_only_while_its_token_is_verified(monkeypatch):
+    _open_gate(monkeypatch)
+    base = _manifest()
+    assert capabilities.CAPABILITY_SPEAKER_BACKGROUND_COLOR not in base.capabilities
+    assert not capabilities.speaker_background_color_open(base)
+    _open_colour(monkeypatch)
+    wide = _manifest()
+    assert wide.capabilities[capabilities.CAPABILITY_SPEAKER_BACKGROUND_COLOR].available is True
+    assert capabilities.speaker_background_color_open(wide)
+    assert wide.manifest_hash != base.manifest_hash
+    montage = _manifest(edit_format="montage")
+    assert capabilities.CAPABILITY_SPEAKER_BACKGROUND_COLOR not in montage.capabilities
+    # The kill switch closes the colour with the lane it belongs to.
+    monkeypatch.setattr(settings, "speaker_background_enabled", False)
+    assert capabilities.CAPABILITY_SPEAKER_BACKGROUND_COLOR not in _manifest().capabilities
+
+
+def test_a_closed_colour_gate_leaves_the_manifest_and_the_prompt_byte_identical(monkeypatch):
+    _open_gate(monkeypatch)
+    closed_manifest = _manifest()
+    closed_prompt = _render_prompt(closed_manifest)
+    assert "PLAIN COLOUR BEHIND THE SPEAKER" not in closed_prompt
+    assert "background_color" not in closed_manifest.model_dump_json()
+    _open_colour(monkeypatch)
+    wide_prompt = _render_prompt(_manifest())
+    from app.agents.main_creator import _SPEAKER_BACKGROUND_COLOR_PROMPT_SECTION
+
+    assert wide_prompt.count(_SPEAKER_BACKGROUND_COLOR_PROMPT_SECTION) == 1
+    assert _SPEAKER_BACKGROUND_COLOR_PROMPT_SECTION not in closed_prompt
+    # Taught beside the photo / video paragraph, never instead of it, and with the presets.
+    assert "PHOTO OR VIDEO BEHIND THE SPEAKER" in wide_prompt
+    for preset in ("#FFFFFF", "#000000", "#00FF00", "#0000FF", "#FF0000", "#FFFF00", "#808080"):
+        assert preset in _SPEAKER_BACKGROUND_COLOR_PROMPT_SECTION
+    assert "SEVERAL BACKGROUNDS" not in wide_prompt  # the windows paragraph stays its own gate
+    monkeypatch.setattr(settings, "speaker_background_enabled", False)
+    assert "PLAIN COLOUR" not in _render_prompt(_manifest())
+
+
+@pytest.mark.parametrize(
+    ("said", "expected"),
+    [
+        ("#ffffff", "#FFFFFF"),
+        ("#FFFFFF", "#FFFFFF"),
+        ("white", "#FFFFFF"),
+        ("White", "#FFFFFF"),
+        ("beyaz", "#FFFFFF"),
+        ("black", "#000000"),
+        ("siyah", "#000000"),
+        ("green", "#00FF00"),
+        ("yeşil", "#00FF00"),
+        ("blue", "#0000FF"),
+        ("mavi", "#0000FF"),
+        ("red", "#FF0000"),
+        ("kırmızı", "#FF0000"),
+        ("yellow", "#FFFF00"),
+        ("sarı", "#FFFF00"),
+        ("grey", "#808080"),
+        ("gray", "#808080"),
+        ("gri", "#808080"),
+        ("#1a2B3c", "#1A2B3C"),
+    ],
+)
+def test_strategy_colour_is_normalised_or_dropped(monkeypatch, said, expected):
+    _open_colour(monkeypatch)
+    kept, notices = _repair(_manifest(), _strategy(background_media={"color": said}))
+    assert kept.background_media is not None
+    assert kept.background_media.color == expected
+    assert kept.background_media.media_id is None
+    assert notices == []
+
+
+@pytest.mark.parametrize("bad", ["turquoise", "#FFF", "#12345678", "#GGGGGG", "pink", "12"])
+def test_an_invalid_colour_is_dropped_with_a_plain_notice_not_a_failed_turn(monkeypatch, bad):
+    _open_colour(monkeypatch)
+    kept, notices = _repair(_manifest(), _strategy(background_media={"color": bad}))
+    assert kept.background_media is None
+    assert notices == [capabilities.SPEAKER_BACKGROUND_NOTICES["color_invalid"]]
+    assert notices[0].startswith("Couldn't")
+
+
+def test_a_closed_colour_gate_drops_the_colour_with_a_notice_and_keeps_media_working(monkeypatch):
+    _open_gate(monkeypatch)  # the photo / video lane is open, the colour token is not verified
+    manifest = _manifest()
+    kept, notices = _repair(manifest, _strategy(background_media={"color": "white"}))
+    assert kept.background_media is None
+    assert notices == [capabilities.SPEAKER_BACKGROUND_NOTICES["color_unavailable"]]
+    assert notices[0].startswith("Couldn't")
+    photo, none = _repair(manifest, _strategy(background_media={"media_id": POOL_PHOTO}))
+    assert photo.background_media.media_id == POOL_PHOTO and none == []
+    # Cloud / montage: the whole lane is closed, so the colour is dropped the same honest way.
+    montage, notices = _repair(
+        _manifest(edit_format="montage"), _strategy(background_media={"color": "white"})
+    )
+    assert montage.background_media is None and len(notices) == 1
+
+
+def test_the_camera_pick_is_not_consulted_for_a_colour_strategy(monkeypatch):
+    _open_colour(monkeypatch)
+    manifest = _manifest(pick=POOL_PHOTO)
+    kept, notices = _repair(manifest, _strategy(background_media={"color": "black"}))
+    assert kept.background_media.color == "#000000" and kept.background_media.media_id is None
+    assert notices == []
+    # An invalid colour does NOT fall back to the pick either: the whole ask is dropped, said.
+    dropped, notices = _repair(manifest, _strategy(background_media={"color": "turquoise"}))
+    assert dropped.background_media is None
+    assert notices == [capabilities.SPEAKER_BACKGROUND_NOTICES["color_invalid"]]
+    # With no colour asked the pick still fills in as before.
+    filled, _ = _repair(manifest, _strategy())
+    assert filled.background_media.media_id == POOL_PHOTO
+
+
+def test_a_colour_keeps_its_sequence_and_corner_while_the_windows_gate_is_open(monkeypatch):
+    _open_colour(monkeypatch, windows=True)
+    manifest = _manifest()
+    asked = _strategy(
+        background_media={
+            "color": "white",
+            "sequence": [{"media_id": POOL_PHOTO}, {"media_id": POOL_VIDEO}, {"media_id": FOREIGN}],
+            "cadence_s": 3.0,
+            "speaker_frame": "small_bottom_right",
+        }
+    )
+    kept, notices = _repair(manifest, asked)
+    background = kept.background_media
+    assert background.color == "#FFFFFF" and background.media_id is None
+    assert [entry.media_id for entry in background.sequence] == [POOL_PHOTO, POOL_VIDEO]
+    assert background.cadence_s == 3.0 and background.speaker_frame == "small_bottom_right"
+    assert notices == [capabilities.SPEAKER_BACKGROUND_NOTICES["sequence_not_found"]]
+
+
+def test_a_colour_with_windows_closed_keeps_the_colour_and_says_the_windows_were_dropped(
+    monkeypatch,
+):
+    _open_colour(monkeypatch)
+    kept, notices = _repair(
+        _manifest(),
+        _strategy(
+            background_media={
+                "color": "red",
+                "sequence": [{"media_id": POOL_PHOTO}],
+                "speaker_frame": "small_top_left",
+            }
+        ),
+    )
+    assert kept.background_media.color == "#FF0000"
+    assert not kept.background_media.sequence
+    assert kept.background_media.speaker_frame == "full"
+    assert notices == [capabilities.SPEAKER_BACKGROUND_NOTICES["windows_unavailable"]]
+
+
+def test_a_colour_backdrop_does_not_take_a_photo_out_of_the_pop_ins(monkeypatch):
+    # The colour is no pool media, so only its own sequence photos are backdrops (S43).
+    _open_colour(monkeypatch, windows=True)
+    strategy = _strategy(
+        background_media={"color": "white", "sequence": [{"media_id": POOL_VIDEO}]},
+        reaction_beats=[
+            {"beat_id": "a", "trigger": "beach", "visual_id": POOL_PHOTO},
+            {"beat_id": "b", "trigger": "waves", "visual_id": POOL_VIDEO},
+        ],
+    )
+    kept, notices = _repair(_manifest(), strategy)
+    assert [(b.beat_id, b.visual_id) for b in kept.reaction_beats] == [("a", POOL_PHOTO)]
+    assert notices == [capabilities.SPEAKER_BACKGROUND_NOT_ALSO_A_POP_IN_NOTICE]
+
+
+def test_compiling_the_plan_keeps_the_colour_and_surfaces_a_drop(monkeypatch):
+    _open_colour(monkeypatch)
+    plan = capabilities.compile_strategy_to_plan(
+        _manifest(), _strategy(background_media={"color": "gray"})
+    )
+    assert plan.strategy.background_media.color == "#808080"
+    gone = capabilities.compile_strategy_to_plan(
+        _manifest(), _strategy(background_media={"color": "mauve"})
+    )
+    assert gone.strategy.background_media is None
+    assert capabilities.SPEAKER_BACKGROUND_NOTICES["color_invalid"] in gone.notices
+
+
+def test_the_colour_notices_have_turkish_twins():
+    from app.kria.strategy_policy import _KNOWN_TR
+
+    for key in ("color_unavailable", "color_invalid"):
+        assert capabilities.SPEAKER_BACKGROUND_NOTICES[key] in _KNOWN_TR
+
+
+# ------------------------------------------- Qendresa item 17: how to write a spoken_phrase
+
+
+def test_the_follows_talk_paragraph_needs_the_flag_and_the_windows_capability(monkeypatch):
+    from app.agents.main_creator import _BACKGROUND_FOLLOWS_TALK_PROMPT_SECTION as section
+
+    _open_windows(monkeypatch)
+    monkeypatch.setattr(settings, "background_follows_talk_enabled", False)
+    off = _render_prompt(_manifest())
+    assert section not in off
+    monkeypatch.setattr(settings, "background_follows_talk_enabled", True)
+    on = _render_prompt(_manifest())
+    assert on.count(section) == 1 and "spoken_phrase" in section
+    assert on.replace("\n" + section, "") == off
+    # flag on but no windows capability: nothing taught
+    _open_gate(monkeypatch)
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [f for f in settings.phone_render_verified_features if f != "speakerBackgroundWindows"],
+    )
+    assert section not in _render_prompt(_manifest())
+
+
+# ----------------------------------------- Qendresa item 16: start full screen (S79, S82)
+
+
+def _open_full_opening(monkeypatch: pytest.MonkeyPatch, *, advertised: bool = True) -> None:
+    """Flag on and (optionally) the `speaker_full_opening` capability advertised.
+
+    The capability helper belongs to the strategy / render worker; the prompt gate asks it first
+    (`speaker_full_opening_taught`), so it is stubbed here to keep this test independent of it.
+    """
+    _open_windows(monkeypatch)
+    monkeypatch.setattr(settings, "speaker_full_opening_enabled", True)
+    monkeypatch.setattr(
+        capabilities, "speaker_full_opening_open", lambda _m: advertised, raising=False
+    )
+
+
+def _full_opening_section() -> str:
+    from app.agents.main_creator import _FULL_OPENING_PROMPT_SECTION
+
+    return _FULL_OPENING_PROMPT_SECTION
+
+
+def _brief_prompt(manifest) -> str:
+    from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
+
+    return MainCreatorAgent(None).render_prompt(
+        MainCreatorInput(
+            user_message="start with me full screen",
+            media_context=[{"media_id": POOL_PHOTO, "kind": "image", "filename": "beach.jpg"}],
+            capability_manifest=manifest,
+            brief_enabled=True,
+        )
+    )
+
+
+def test_the_full_opening_strategy_teaching_needs_the_flag_and_the_capability(monkeypatch):
+    section = _full_opening_section()
+    _open_full_opening(monkeypatch)
+    on = _render_prompt(_manifest())
+    assert on.count(section) == 1
+    assert "full_screen_opening" in on and "full_screen_opening_s" in on
+    assert "never this" in section  # "put my recordings full screen" is the window media
+
+    # flag on, capability absent: nothing taught
+    _open_full_opening(monkeypatch, advertised=False)
+    assert "full_screen_opening" not in _render_prompt(_manifest())
+
+    # capability advertised, flag off: nothing taught, and the rest of the prompt is unchanged
+    _open_full_opening(monkeypatch)
+    monkeypatch.setattr(settings, "speaker_full_opening_enabled", False)
+    off = _render_prompt(_manifest())
+    assert "full_screen_opening" not in off
+    assert on.replace("\n" + section, "") == off
+
+
+def test_the_full_opening_brief_fact_is_taught_to_both_agents_only_with_the_flag(monkeypatch):
+    from app.agents._schemas.brief_extractor import BriefExtractionInput
+    from app.agents.brief_extractor import BriefExtractorAgent
+    from app.agents.main_creator import _BRIEF_FULL_OPENING_SENTENCE
+
+    def extractor() -> str:
+        return BriefExtractorAgent(None).render_prompt(
+            BriefExtractionInput(user_message="start with me full screen")
+        )
+
+    _open_full_opening(monkeypatch)
+    assert _BRIEF_FULL_OPENING_SENTENCE in _brief_prompt(_manifest())
+    assert _BRIEF_FULL_OPENING_SENTENCE in extractor()
+    assert "speaker_full_opening_s" in extractor()
+
+    # the main planner also needs the capability; a closed capability keeps its bytes
+    _open_full_opening(monkeypatch, advertised=False)
+    assert "speaker_full_opening" not in _brief_prompt(_manifest())
+
+    monkeypatch.setattr(settings, "speaker_full_opening_enabled", False)
+    assert "speaker_full_opening" not in extractor()
+    _open_full_opening(monkeypatch)
+    monkeypatch.setattr(settings, "speaker_full_opening_enabled", False)
+    assert "speaker_full_opening" not in _brief_prompt(_manifest())
+
+
+def test_flag_off_the_brief_sections_are_the_bytes_they_were_before_the_opening(monkeypatch):
+    import hashlib
+
+    from app.agents._schemas.brief_extractor import BriefExtractionInput
+    from app.agents.brief_extractor import BriefExtractorAgent, _narrow_brief_section
+    from app.agents.main_creator import _BRIEF_PROMPT_SECTION, brief_prompt_section
+
+    def digest(text: str) -> str:
+        return hashlib.sha256(text.encode()).hexdigest()
+
+    monkeypatch.setattr(settings, "speaker_full_opening_enabled", False)
+    # Frozen from the tree before item 16 (the shared brief section and its extractor narrowing):
+    # main 653beb1de (item 12's caption facts + Qendresa 13's `pauses: "tight"`); item 17's #2110
+    # leaves these bytes unchanged. Re-freeze deliberately when the shared brief section changes
+    # underneath item 16. Re-frozen for the says-done group E rewording (#2131: caption count /
+    # one captions requirement / "all my pauses" / unnamed mistakes / one-moment holds / typed
+    # ending); the flag-off section was 14ad8c6e… before it.
+    assert brief_prompt_section() is _BRIEF_PROMPT_SECTION
+    assert digest(brief_prompt_section()) == (
+        "001bd937bb08cea812fa52d0379a1af9ea6a81108011c563c60a543d4fdfe206"
+    )
+    assert digest(brief_prompt_section(True)) == (
+        "e4ff46099102d441e877d9f55d8f810625c9a9ad32e1af79ded325f240fa20fb"
+    )
+    assert digest(_narrow_brief_section(False)) == (
+        "cd6f085855e93c80412d19821fe58d021a1e67e4938073a779adaa37e0a5f892"
+    )
+    assert digest(_narrow_brief_section(True)) == (
+        "5a809b8de16c41b9ab7e9c228090ac3a4bbe887e7457b84d62b79cf66d9afc3d"
+    )
+    # and the whole extractor prompt, byte for byte (captured from that same tree)
+    for insert_open, expected in (
+        (False, "272624dc94494efbb27b71e7ab6982ab1156227d32dbbd86531b92272bac0471"),
+        (True, "c2df22186588af07bb9a882fe0bc58e8c20ca0120274cb48fc55a06e00e3c83e"),
+    ):
+        rendered = BriefExtractorAgent(None).render_prompt(
+            BriefExtractionInput(
+                user_message="start with me full screen", insert_clips_open=insert_open
+            )
+        )
+        assert digest(rendered) == expected
+
+
+def test_the_brief_anchor_exists_exactly_once_in_both_agents_sections():
+    from app.agents.brief_extractor import _NARROW_BRIEF_SECTION
+    from app.agents.main_creator import _BRIEF_FULL_OPENING_ANCHOR, _BRIEF_PROMPT_SECTION
+
+    assert _BRIEF_PROMPT_SECTION.count(_BRIEF_FULL_OPENING_ANCHOR) == 1
+    assert _NARROW_BRIEF_SECTION.count(_BRIEF_FULL_OPENING_ANCHOR) == 1
+
+
+def test_the_full_opening_facts_stay_on_the_requirement_through_a_reword():
+    from app.kria.brief import STICKY_FACTS
+
+    assert {"speaker_full_opening", "speaker_full_opening_s"} <= STICKY_FACTS

@@ -45,11 +45,11 @@ final class ClipTiltCompositionTests: XCTestCase {
         return url
     }
 
-    private func recipe(backdrop: ClipBackdrop?, rotation: Double) -> EditRecipe {
+    private func recipe(backdrop: ClipBackdrop?, rotation: Double, scale: Double = 1) -> EditRecipe {
         EditRecipe(canvas: Canvas(width: width, height: height), assets: [MediaAsset(id: "scene", relativePath: "scene")], tracks: [
             TimelineTrack(id: "photos", kind: .video, clips: [
                 TimelineClip(id: "tilted", sourceAssetID: "scene", sourceDuration: 1,
-                             transform: MediaTransform(rotationDegrees: rotation), backdrop: backdrop)
+                             transform: MediaTransform(scale: scale, rotationDegrees: rotation), backdrop: backdrop)
             ])
         ])
     }
@@ -249,18 +249,141 @@ final class ClipTiltCompositionTests: XCTestCase {
         XCTAssertEqual(updated.bytes, rebuilt.bytes)
     }
 
+    // MARK: Zoom (KRI-1169): `transform.scale` is the zoom about the canvas centre, applied before the turn.
+
+    /// The smallest scale at which a clip that fills the canvas, turned `degrees`, still covers every corner.
+    private func coverScale(degrees: Double) -> Double {
+        let radians = degrees * .pi / 180
+        return max(cos(radians) + Double(height) / Double(width) * sin(radians), cos(radians) + Double(width) / Double(height) * sin(radians))
+    }
+
+    private func distance(_ pixel: [Int], _ colour: [Int]) -> Int {
+        let deltas: [Int] = zip(pixel, colour).map { abs($0 - $1) }
+        return deltas.max() ?? 255
+    }
+
+    private func isBackdrop(_ pixel: [Int]) -> Bool { distance(pixel, backdropRGB) <= 2 }
+
+    private func isScene(_ pixel: [Int]) -> Bool { distance(pixel, sceneA) <= 4 || distance(pixel, sceneB) <= 4 }
+
+    @MainActor func testZoomScalesTheClipAboutTheCanvasCentre() async throws {
+        let directory = try makeDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
+        let urls = ["scene": try writeScene(in: directory)]
+
+        // The marker sits (+30, -100) from the centre, so a zoom z carries it to (90 + 30 z, 160 - 100 z).
+        let closer = try await previewFrame(recipe(backdrop: nil, rotation: 0, scale: 1.2), urls: urls)
+        let near = try XCTUnwrap(closer.redCentroid())
+        XCTAssertEqual(near.x, 126, accuracy: 2, "marker x at 1.2x"); XCTAssertEqual(near.y, 40, accuracy: 2, "marker y at 1.2x")
+        XCTAssertEqual(Double(near.count), 24 * 24 * 1.2 * 1.2, accuracy: 60, "the marker grows with the zoom")
+        assertClose(closer.pixel(width / 2, height / 2), sceneCentre, within: 2, "the centre stays put")
+
+        let further = try await previewFrame(recipe(backdrop: .color(backdropHex), rotation: 0, scale: 0.5), urls: urls)
+        let far = try XCTUnwrap(further.redCentroid())
+        XCTAssertEqual(far.x, 105, accuracy: 2, "marker x at 0.5x"); XCTAssertEqual(far.y, 110, accuracy: 2, "marker y at 0.5x")
+        XCTAssertEqual(Double(far.count), 12 * 12, accuracy: 30)
+    }
+
+    @MainActor func testHalfZoomShowsAHalfSizeClipCentredOnTheBackdrop() async throws {
+        let directory = try makeDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
+        let urls = ["scene": try writeScene(in: directory)]
+        let frame = try await previewFrame(recipe(backdrop: .color(backdropHex), rotation: 0, scale: 0.5), urls: urls)
+        // The clip now covers x 45..<135, y 80..<240.
+        for corner in frame.corners { assertClose(corner, backdropRGB, within: 1, "backdrop corner") }
+        assertClose(frame.pixel(30, 160), backdropRGB, within: 1, "left of the clip is backdrop")
+        assertClose(frame.pixel(150, 160), backdropRGB, within: 1, "right of the clip is backdrop")
+        assertClose(frame.pixel(90, 60), backdropRGB, within: 1, "above the clip is backdrop")
+        assertClose(frame.pixel(90, 260), backdropRGB, within: 1, "below the clip is backdrop")
+        assertClose(frame.pixel(60, 200), sceneA, within: 2, "the left half of the clip")
+        assertClose(frame.pixel(120, 200), sceneB, within: 2, "the right half of the clip")
+        assertClose(frame.pixel(90, 160), sceneCentre, within: 2, "the centre block is half size and still centred")
+        assertClose(frame.pixel(105, 160), sceneB, within: 2, "the centre block ends at x 100")
+
+        let blank = try await previewFrame(recipe(backdrop: nil, rotation: 0, scale: 0.5), urls: urls)
+        assertClose(blank.pixel(30, 160), [0, 0, 0], within: 2, "no backdrop is black")
+    }
+
+    @MainActor func testTheCoverZoomHidesTheCornersATiltUncovers() async throws {
+        let directory = try makeDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
+        let urls = ["scene": try writeScene(in: directory)]
+        let cover = coverScale(degrees: 20)
+        XCTAssertEqual(cover, 1.548, accuracy: 0.001)
+
+        let bare = try await previewFrame(recipe(backdrop: .color(backdropHex), rotation: 20), urls: urls)
+        for (index, corner) in bare.corners.enumerated() { assertClose(corner, backdropRGB, within: 1, "zoom 1.0 uncovers corner \(index)") }
+
+        let covered = try await previewFrame(recipe(backdrop: .color(backdropHex), rotation: 20, scale: cover + 0.012), urls: urls)
+        for (index, corner) in covered.corners.enumerated() {
+            XCTAssertFalse(isBackdrop(corner), "the cover zoom still shows the backdrop in corner \(index): \(corner)")
+        }
+        for corner in covered.corners { XCTAssertTrue(isScene(corner), "corner is the scene: \(corner)") }
+
+        let short = try await previewFrame(recipe(backdrop: .color(backdropHex), rotation: 20, scale: cover - 0.12), urls: urls)
+        XCTAssertTrue(short.corners.contains(where: isBackdrop), "a zoom below the cover scale leaves a corner open")
+    }
+
+    @MainActor func testZoomAndTiltComposeAboutTheSameCentre() async throws {
+        let directory = try makeDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
+        let urls = ["scene": try writeScene(in: directory)]
+        // Offset (+36, -120) after a 1.2x zoom, then 10 degrees clockwise: (146.3, 48.1).
+        let frame = try await previewFrame(recipe(backdrop: .color(backdropHex), rotation: 10, scale: 1.2), urls: urls)
+        let marker = try XCTUnwrap(frame.redCentroid())
+        XCTAssertEqual(marker.x, 146.3, accuracy: 3, "marker x"); XCTAssertEqual(marker.y, 48.1, accuracy: 3, "marker y")
+        assertClose(frame.pixel(width / 2, height / 2), sceneCentre, within: 2, "the centre does not move")
+    }
+
+    @MainActor func testAZoomOfOneRendersByteIdenticallyToNoZoom() async throws {
+        let directory = try makeDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
+        let urls = ["scene": try writeScene(in: directory)]
+        for rotation in [0.0, 20.0] {
+            let none = try await previewFrame(recipe(backdrop: .blur, rotation: rotation), urls: urls)
+            let one = try await previewFrame(recipe(backdrop: .blur, rotation: rotation, scale: 1.0), urls: urls)
+            XCTAssertEqual(none.bytes, one.bytes, "rotation \(rotation)")
+        }
+    }
+
+    @MainActor func testZoomSurvivesTheExporter() async throws {
+        let directory = try makeDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
+        let urls = ["scene": try writeScene(in: directory)]
+        let output = directory.appendingPathComponent("zoom.mp4")
+        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none)
+            .export(recipe: recipe(backdrop: .color(backdropHex), rotation: 0, scale: 0.5), assetURLs: urls, outputURL: output)
+        let exported = AVURLAsset(url: output)
+        let reader = try AVAssetReader(asset: exported)
+        let tracks = try await exported.loadTracks(withMediaType: .video)
+        let track = try XCTUnwrap(tracks.first)
+        let trackOutput = AVAssetReaderTrackOutput(track: track, outputSettings: bgra)
+        reader.add(trackOutput)
+        reader.timeRange = CMTimeRange(start: CMTime(seconds: 0.5, preferredTimescale: 600), duration: CMTime(seconds: 0.2, preferredTimescale: 600))
+        let frame = try readFrame(from: trackOutput, reader: reader)
+        for corner in frame.corners { assertClose(corner, backdropRGB, within: 8, "exported zoomed-out corner") }
+        let marker = try XCTUnwrap(frame.redCentroid())
+        XCTAssertEqual(marker.x, 105, accuracy: 3); XCTAssertEqual(marker.y, 110, accuracy: 3)
+    }
+
+    @MainActor func testLivePreviewTakesAZoomEditWithoutARebuild() async throws {
+        let directory = try makeDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
+        let urls = ["scene": try writeScene(in: directory)]
+        let live = try await LivePreviewComposition(recipe: recipe(backdrop: .blur, rotation: 10), assetURLs: urls)
+        try live.updateText(recipe: recipe(backdrop: .blur, rotation: 10, scale: 1.4))
+        let updated = try await frame(of: live.preview.playerItem)
+        let rebuilt = try await previewFrame(recipe(backdrop: .blur, rotation: 10, scale: 1.4), urls: urls)
+        XCTAssertEqual(updated.bytes, rebuilt.bytes)
+    }
+
     func testBackdropWireShapeIsStrict() throws {
         let encoder = RecipeJSON.encoder(); encoder.outputFormatting = [.sortedKeys]
         func json(_ value: ClipBackdrop) throws -> String { String(decoding: try encoder.encode(value), as: UTF8.self) }
         XCTAssertEqual(try json(.blank), ##"{"kind":"blank"}"##)
         XCTAssertEqual(try json(.blur), ##"{"kind":"blur"}"##)
         XCTAssertEqual(try json(.color("#E91E8C")), ##"{"color":"#E91E8C","kind":"color"}"##)
-        for value in [ClipBackdrop.blank, .blur, .color("#e91e8c")] {
+        XCTAssertEqual(try json(.media("pool-1")), ##"{"asset_id":"pool-1","kind":"media"}"##)
+        for value in [ClipBackdrop.blank, .blur, .color("#e91e8c"), .media("pool-1")] {
             XCTAssertEqual(try RecipeJSON.decoder().decode(ClipBackdrop.self, from: encoder.encode(value)), value)
         }
         for bad in [##"{"kind":"color"}"##, ##"{"kind":"blur","color":"#000000"}"##, ##"{"kind":"blank","color":"#000000"}"##,
                     ##"{"kind":"color","color":"red"}"##, ##"{"kind":"color","color":"#12345"}"##, ##"{"kind":"color","color":"#+12345"}"##,
-                    ##"{"kind":"media","asset_id":"x"}"##, ##"{"kind":"blur","extra":1}"##, ##"{"color":"#000000"}"##] {
+                    ##"{"kind":"media"}"##, ##"{"kind":"media","asset_id":"x","color":"#000000"}"##, ##"{"kind":"blur","asset_id":"x"}"##,
+                    ##"{"kind":"blur","extra":1}"##, ##"{"color":"#000000"}"##] {
             XCTAssertThrowsError(try RecipeJSON.decoder().decode(ClipBackdrop.self, from: Data(bad.utf8)), bad)
         }
     }

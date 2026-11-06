@@ -320,6 +320,7 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         or (
             clip.hold_duration is not None
             and not _main_track_freeze(clip, track, recipe.frame_rate)
+            and not _main_track_frame_padding(clip, track, recipe.frame_rate)
         )
         or clip.overlay_above_text is not None
         or clip.overlay_pop_in is not None
@@ -360,6 +361,15 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
             "Bent text awaits native parity and device qualification",
             capability="textBend",
         )
+    # KRI-1192: same explicit gate for text drawn in a script-fallback face (Noto Sans KR /
+    # Arabic): only a device check that verified `scriptFonts` may receive one.
+    if recipe_uses_script_fonts(recipe) and "scriptFonts" not in set(
+        settings.phone_render_verified_features
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Korean and Arabic captions await native parity and device qualification",
+            capability="scriptFonts",
+        )
     # Speaker background: same explicit gate; the compile strips the lane unless verified.
     if recipe.speaker_background is not None and "speakerBackground" not in set(
         settings.phone_render_verified_features
@@ -367,6 +377,46 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         raise PhoneCapabilityUnavailable(
             "Speaker backgrounds await native parity and device qualification",
             capability="speakerBackground",
+        )
+    # KRI-1162: timed windows / a speaker frame need their own verified token (S33).
+    if (
+        recipe.speaker_background is not None
+        and recipe.speaker_background.uses_windows
+        and "speakerBackgroundWindows" not in set(settings.phone_render_verified_features)
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Timed speaker backgrounds await native parity and device qualification",
+            capability="speakerBackgroundWindows",
+        )
+    # Qendresa item 16: the full-screen opening needs its own verified token (S77).
+    if (
+        recipe.speaker_background is not None
+        and recipe.speaker_background.uses_full_screen
+        and "speakerFrameWindows" not in set(settings.phone_render_verified_features)
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Full-screen speaker openings await native parity and device qualification",
+            capability="speakerFrameWindows",
+        )
+    # Qendresa item 18: an aimed background needs its own verified token.
+    if (
+        recipe.speaker_background is not None
+        and getattr(recipe.speaker_background, "uses_focus", False)
+        and "backgroundFocus" not in set(settings.phone_render_verified_features)
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Aimed speaker backgrounds await native parity and device qualification",
+            capability="backgroundFocus",
+        )
+    # KRI-1173: a solid-colour fill needs its own verified token (S50).
+    if (
+        recipe.speaker_background is not None
+        and recipe.speaker_background.uses_color
+        and "speakerBackgroundColor" not in set(settings.phone_render_verified_features)
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Colour speaker backgrounds await native parity and device qualification",
+            capability="speakerBackgroundColor",
         )
     # Text behind people: same explicit gate (`compile_text_overlay` strips the flag before
     # it gets here unless verified; this catches a caller that stamped it afterwards).
@@ -421,6 +471,13 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         raise PhoneCapabilityUnavailable(
             "Tilted clips await native parity and device qualification",
             capability="clipTilt",
+        )
+    if recipe_has_clip_backdrop_media(recipe) and "clipBackdropMedia" not in set(
+        settings.phone_render_verified_features
+    ):
+        raise PhoneCapabilityUnavailable(
+            "A photo or video behind a clip awaits native parity and device qualification",
+            capability="clipBackdropMedia",
         )
     missing = recipe.required_capabilities - set(settings.phone_render_verified_features)
     if missing:
@@ -550,6 +607,45 @@ def text_bend_planned_for(client_protocol: int | None) -> bool:
     )
 
 
+def caption_shape_planned_for(client_protocol: int | None) -> bool:
+    """May a phone Talking render draw the caption shape the creator typed (Qendresa item 12)?
+
+    Read like `freeze_frame_planned_for`: ``client_protocol`` is the approving app build
+    (``creator_client_protocol`` on the Job). True iff the kill switch is on, ``captionShape``
+    (device check of the editor's caption box) and ``authoredText`` (the engine's text box and
+    active-word highlight) are in ``phone_render_verified_features``, and that build declares
+    at least ``CAPTION_SHAPE_PROTOCOL``. No stamp, an older build or any gate off: captions are
+    exactly today's, and the caption receipt says the shape was not drawn.
+    """
+    from app.services.client_protocol import CAPTION_SHAPE_PROTOCOL  # noqa: PLC0415
+
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        settings.phone_caption_shape_enabled
+        and {"captionShape", "authoredText"} <= verified
+        and client_protocol is not None
+        and client_protocol >= CAPTION_SHAPE_PROTOCOL
+    )
+
+
+def talking_card_layout_planned_for(client_protocol: int | None) -> bool:
+    """May a phone Talking render lay cards out in her size and place (Qendresa item 15)?
+
+    Read like `caption_shape_planned_for`: ``client_protocol`` is the approving app build.
+    True iff the kill switch is on, ``cardLayout`` is in ``phone_render_verified_features``
+    and that build declares at least ``CARD_LAYOUT_PROTOCOL``. Any gate off: cards are
+    exactly today's.
+    """
+    from app.services.client_protocol import CARD_LAYOUT_PROTOCOL  # noqa: PLC0415
+
+    return bool(
+        settings.talking_card_layout_enabled
+        and "cardLayout" in set(settings.phone_render_verified_features)
+        and client_protocol is not None
+        and client_protocol >= CARD_LAYOUT_PROTOCOL
+    )
+
+
 def clip_speed_planned_for() -> bool:
     """May a phone montage plan retime a cut for the creator's speed ask (KRI-689)?
 
@@ -566,6 +662,15 @@ def stamped_client_protocol(value: object) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     return value
+
+
+def _main_track_frame_padding(clip: Any, track: Any, frame_rate: float) -> bool:
+    """Match recipe/native validation: at most one output frame is rounding padding."""
+    return (
+        track.kind == "video"
+        and clip.hold_duration is not None
+        and 0 <= clip.hold_duration <= 1 / frame_rate + 1e-6
+    )
 
 
 def _main_track_freeze(clip: Any, track: Any, frame_rate: float) -> bool:
@@ -772,6 +877,357 @@ def speaker_background_unavailable_reason(*, require_client: bool | None = None)
     return None
 
 
+def speaker_background_windows_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode a background's ``windows`` / ``speaker_frame``?
+
+    At least ``speaker_background_windows_min_client_protocol`` (32) knows the keys; an
+    older build refuses the whole layer (strict decoder). Same ``require_client`` contract
+    as `speaker_background_client_supported` (KRI-1162).
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return (
+        protocol is not None and protocol >= settings.speaker_background_windows_min_client_protocol
+    )
+
+
+def speaker_background_windows_supported(*, require_client: bool | None = None) -> bool:
+    """May a phone recipe carry a background with ``windows`` / ``speaker_frame`` right now?
+
+    The base lane gate (`speaker_background_supported`) AND ``speakerBackgroundWindows`` in
+    ``phone_render_verified_features`` AND the app-build gate
+    (`speaker_background_windows_client_supported`). When False while the base gate holds, the
+    compile keeps the fill background and strips the windows and the frame (KRI-1162, S33).
+    """
+    return bool(
+        speaker_background_supported(require_client=require_client)
+        and "speakerBackgroundWindows" in set(settings.phone_render_verified_features)
+        and speaker_background_windows_client_supported(require_client=require_client)
+    )
+
+
+def speaker_background_windows_unavailable_reason(
+    *, require_client: bool | None = None
+) -> str | None:
+    """Why `speaker_background_windows_supported` is False, or None when open.
+
+    The base lane's reasons first (`disabled`, `token_not_verified`,
+    `client_protocol_below_min`, from `speaker_background_unavailable_reason`), then
+    ``windows_token_not_verified`` and ``client_protocol_below_min`` for the windows build gate.
+    Named for the job-debug trace (`speaker_background_windows_phone_fallback`) and the
+    editor's 422/426 answers.
+    """
+    base = speaker_background_unavailable_reason(require_client=require_client)
+    if base is not None:
+        return base
+    if "speakerBackgroundWindows" not in set(settings.phone_render_verified_features):
+        return "windows_token_not_verified"
+    if not speaker_background_windows_client_supported(require_client=require_client):
+        return "client_protocol_below_min"
+    return None
+
+
+def speaker_background_color_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode a background fill of ``media_kind: "color"``?
+
+    At least ``speaker_background_color_min_client_protocol`` (34) knows the literal and the
+    ``color`` key; an older build refuses the whole layer (strict decoder). Same
+    ``require_client`` contract as `speaker_background_client_supported` (KRI-1173).
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return (
+        protocol is not None and protocol >= settings.speaker_background_color_min_client_protocol
+    )
+
+
+def recipe_uses_script_fonts(recipe: Any) -> bool:
+    """True when a text run of ``recipe`` is drawn in a script-fallback face (KRI-1192).
+
+    Read from the font assets themselves, not ``required_capabilities``: a caller may mutate
+    a recipe after compile without recomputing the capability set.
+    """
+    from app.pipeline.font_coverage import script_fallback_files  # noqa: PLC0415
+
+    manifest = getattr(recipe, "asset_manifest", None)
+    assets = {asset.id: asset for asset in getattr(manifest, "assets", None) or []}
+    files = script_fallback_files()
+    return any(
+        getattr(assets.get(run.font_asset_id), "catalog_id", None) in files
+        for layer in getattr(recipe, "text_layers", None) or []
+        for run in getattr(layer, "runs", None) or []
+    )
+
+
+def script_fonts_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build bundle the script-fallback faces (KRI-1192)?
+
+    At least ``script_fonts_min_client_protocol`` (35) ships Noto Sans KR / Noto Sans Arabic;
+    an older build has no such file and would fail the render. Same ``require_client``
+    contract as `speaker_background_client_supported` (open outside an HTTP request).
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.script_fonts_min_client_protocol
+
+
+def script_fonts_planned_for(client_protocol: int | None) -> bool:
+    """May a phone plan draw Hangul/Arabic text in a script-fallback face (KRI-1192)?
+
+    ``client_protocol`` is the app build the creator acted from (read like
+    `text_bend_planned_for`). True iff ``scriptFonts`` is verified on device and that build
+    declares at least ``script_fonts_min_client_protocol``; otherwise the phone caption
+    compile keeps declining Hangul/Arabic with its honest reason.
+    """
+    return (
+        "scriptFonts" in set(settings.phone_render_verified_features)
+        and client_protocol is not None
+        and client_protocol >= settings.script_fonts_min_client_protocol
+    )
+
+
+def script_fonts_update_detail(recipe: Any) -> dict | None:
+    """The 426 detail for a build that cannot draw ``recipe``'s script faces, else None."""
+    if not recipe_uses_script_fonts(recipe) or script_fonts_client_supported():
+        return None
+    return {
+        "code": "client_update_required",
+        "feature": "script_fonts",
+        "minimum_client_protocol": settings.script_fonts_min_client_protocol,
+    }
+
+
+def speaker_background_color_supported(*, require_client: bool | None = None) -> bool:
+    """May a phone recipe carry a solid-colour background fill right now?
+
+    The base lane gate (`speaker_background_supported`) AND ``speakerBackgroundColor`` in
+    ``phone_render_verified_features`` AND the app-build gate
+    (`speaker_background_color_client_supported`). When False, a colour request is stripped
+    whole by `strip_unsupported_background` (KRI-1173, S49/S50): never a wrong colour.
+    """
+    return bool(
+        speaker_background_supported(require_client=require_client)
+        and "speakerBackgroundColor" in set(settings.phone_render_verified_features)
+        and speaker_background_color_client_supported(require_client=require_client)
+    )
+
+
+def speaker_background_color_unavailable_reason(
+    *, require_client: bool | None = None
+) -> str | None:
+    """Why `speaker_background_color_supported` is False, or None when open.
+
+    The base lane's reasons first (`disabled`, `token_not_verified`,
+    `client_protocol_below_min`), then ``color_token_not_verified`` and
+    ``client_protocol_below_min`` for the colour build gate. Named for the job-debug trace
+    (`speaker_background_color_phone_fallback`) and the editor's 422/426 answers.
+    """
+    base = speaker_background_unavailable_reason(require_client=require_client)
+    if base is not None:
+        return base
+    if "speakerBackgroundColor" not in set(settings.phone_render_verified_features):
+        return "color_token_not_verified"
+    if not speaker_background_color_client_supported(require_client=require_client):
+        return "client_protocol_below_min"
+    return None
+
+
+def speaker_full_opening_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode ``speaker_background.full_screen_windows``?
+
+    At least ``speaker_full_opening_min_client_protocol`` (41) knows the key; an older build
+    refuses the whole layer (strict decoder). Same ``require_client`` contract as
+    `speaker_background_client_supported` (Qendresa item 16).
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.speaker_full_opening_min_client_protocol
+
+
+def speaker_full_opening_supported(*, require_client: bool | None = None) -> bool:
+    """May a phone recipe carry ``full_screen_windows`` (the speaker full screen in their own
+    take before the background / corner) right now?
+
+    ``SPEAKER_FULL_OPENING_ENABLED`` AND the windows gate (`speaker_background_windows_supported`)
+    AND ``speakerFrameWindows`` in ``phone_render_verified_features`` AND the app-build gate
+    (`speaker_full_opening_client_supported`). When False, `strip_unsupported_background` drops
+    the full-screen windows and keeps everything else (Qendresa item 16, S77).
+    """
+    return bool(
+        settings.speaker_full_opening_enabled
+        and speaker_background_windows_supported(require_client=require_client)
+        and "speakerFrameWindows" in set(settings.phone_render_verified_features)
+        and speaker_full_opening_client_supported(require_client=require_client)
+    )
+
+
+def speaker_full_opening_unavailable_reason(*, require_client: bool | None = None) -> str | None:
+    """Why `speaker_full_opening_supported` is False, or None when open.
+
+    The windows gate's reasons first (`disabled`, `token_not_verified`,
+    `client_protocol_below_min`, `windows_token_not_verified`), then ``full_opening_disabled``
+    (the kill switch), ``full_opening_token_not_verified`` and ``client_protocol_below_min``.
+    Named for the job-debug trace (`speaker_full_opening_phone_fallback`) and the editor's
+    422/426 answers.
+    """
+    base = speaker_background_windows_unavailable_reason(require_client=require_client)
+    if base is not None:
+        return base
+    if not settings.speaker_full_opening_enabled:
+        return "full_opening_disabled"
+    if "speakerFrameWindows" not in set(settings.phone_render_verified_features):
+        return "full_opening_token_not_verified"
+    if not speaker_full_opening_client_supported(require_client=require_client):
+        return "client_protocol_below_min"
+    return None
+
+
+def speaker_full_opening_planned_reason(client_protocol: int | None) -> str | None:
+    """Why a plan may NOT start the speaker full screen for the app build ``client_protocol``,
+    or None when it may (the planner's twin of `speaker_full_opening_unavailable_reason`).
+
+    Read like `text_bend_planned_for`: ``client_protocol`` is the build the creator acted from
+    (the drafting message, then ``creator_client_protocol`` on the Job); there is no request
+    context here because the draft, the pre-approval check and the render all run in Celery.
+    Codes (stable, for receipts): ``disabled`` (the kill switch is off), ``unavailable`` (the
+    background / windows lane or the ``speakerFrameWindows`` token is closed), ``app_too_old``
+    (no stamp, or a build below ``speaker_full_opening_min_client_protocol``).
+    """
+    if not settings.speaker_full_opening_enabled:
+        return "disabled"
+    if not (
+        speaker_background_windows_supported(require_client=False)
+        and "speakerFrameWindows" in set(settings.phone_render_verified_features)
+    ):
+        return "unavailable"
+    if (
+        client_protocol is None
+        or client_protocol < settings.speaker_full_opening_min_client_protocol
+    ):
+        return "app_too_old"
+    return None
+
+
+def speaker_full_opening_planned_for(client_protocol: int | None) -> bool:
+    """May a plan for the app build ``client_protocol`` start the speaker full screen?"""
+    return speaker_full_opening_planned_reason(client_protocol) is None
+
+
+def background_focus_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode ``speaker_background.focus`` / ``windows[i].focus``?
+
+    At least ``background_focus_min_client_protocol`` (42) knows the key; an older build refuses
+    the whole layer (strict decoder). Same ``require_client`` contract as
+    `speaker_background_client_supported` (Qendresa item 18).
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.background_focus_min_client_protocol
+
+
+def background_focus_supported(*, require_client: bool | None = None) -> bool:
+    """May a phone recipe carry a background ``focus`` (the picture aimed at its text) right now?
+
+    ``BACKGROUND_FOCUS_ENABLED`` AND the base speaker-background gate (NOT the windows gate: a
+    single full-video background may be aimed too) AND ``backgroundFocus`` in
+    ``phone_render_verified_features`` AND the app-build gate
+    (`background_focus_client_supported`). When False, `strip_unsupported_background` drops every
+    focus and keeps everything else (Qendresa item 18).
+    """
+    return bool(
+        settings.background_focus_enabled
+        and speaker_background_supported(require_client=require_client)
+        and "backgroundFocus" in set(settings.phone_render_verified_features)
+        and background_focus_client_supported(require_client=require_client)
+    )
+
+
+def background_focus_unavailable_reason(*, require_client: bool | None = None) -> str | None:
+    """Why `background_focus_supported` is False, or None when open.
+
+    The base lane gate's reasons first (`disabled`, `token_not_verified`,
+    `client_protocol_below_min`), then ``focus_disabled`` (the kill switch),
+    ``focus_token_not_verified`` and ``client_protocol_below_min``. Named for the job-debug trace
+    (`background_focus_phone_fallback`) and the editor's 422/426 answers.
+    """
+    base = speaker_background_unavailable_reason(require_client=require_client)
+    if base is not None:
+        return base
+    if not settings.background_focus_enabled:
+        return "focus_disabled"
+    if "backgroundFocus" not in set(settings.phone_render_verified_features):
+        return "focus_token_not_verified"
+    if not background_focus_client_supported(require_client=require_client):
+        return "client_protocol_below_min"
+    return None
+
+
+def background_focus_planned_reason(client_protocol: int | None) -> str | None:
+    """Why a plan may NOT aim a background for the app build ``client_protocol``, or None when it
+    may (the planner's twin of `background_focus_unavailable_reason`).
+
+    Same reading as `speaker_full_opening_planned_reason`: there is no request context in Celery,
+    so the build the creator acted from is passed in. Codes: ``disabled`` (kill switch off),
+    ``unavailable`` (the background lane or the ``backgroundFocus`` token is closed),
+    ``app_too_old`` (no stamp, or a build below ``background_focus_min_client_protocol``).
+    """
+    if not settings.background_focus_enabled:
+        return "disabled"
+    if not (
+        speaker_background_supported(require_client=False)
+        and "backgroundFocus" in set(settings.phone_render_verified_features)
+    ):
+        return "unavailable"
+    if client_protocol is None or client_protocol < settings.background_focus_min_client_protocol:
+        return "app_too_old"
+    return None
+
+
+def background_focus_planned_for(client_protocol: int | None) -> bool:
+    """May a plan for the app build ``client_protocol`` aim a background at its text?"""
+    return background_focus_planned_reason(client_protocol) is None
+
+
 def recipe_has_clip_tilt(recipe: Any) -> bool:
     """Does any clip of this recipe turn (`rotation_degrees != 0`) or carry a `backdrop`?"""
     return any(
@@ -802,6 +1258,49 @@ def clip_tilt_client_supported(*, require_client: bool | None = None) -> bool:
     return protocol is not None and protocol >= settings.media_tilt_min_client_protocol
 
 
+def recipe_has_clip_backdrop_media(recipe: Any) -> bool:
+    """Does any clip of this recipe draw a Visuals-pool photo or video behind it?"""
+    return any(
+        getattr(getattr(clip, "backdrop", None), "kind", None) == "media"
+        for track in getattr(recipe, "tracks", None) or []
+        for clip in track.clips
+    )
+
+
+def clip_backdrop_media_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode a clip backdrop of kind ``media``?
+
+    At least ``media_backdrop_min_client_protocol`` (31) knows the ``clipBackdropMedia``
+    token and the ``asset_id`` key; an older build fails the whole recipe on either.
+    ``require_client`` follows `clip_tilt_client_supported`.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.media_backdrop_min_client_protocol
+
+
+def clip_backdrop_media_supported(*, require_client: bool | None = None) -> bool:
+    """Single source of truth for "may a tilted clip take a pool photo or video behind it".
+
+    The tilt gate (`clip_tilt_supported`: ``media_tilt_enabled``, ``clipTilt`` verified, a
+    build at protocol 28) plus ``clipBackdropMedia`` in ``phone_render_verified_features`` and
+    a build at protocol 31.
+    """
+    return bool(
+        clip_tilt_supported(require_client=require_client)
+        and "clipBackdropMedia" in set(settings.phone_render_verified_features)
+        and clip_backdrop_media_client_supported(require_client=require_client)
+    )
+
+
 def clip_tilt_supported(*, require_client: bool | None = None) -> bool:
     """Single source of truth for "may a phone edit be tilted right now".
 
@@ -813,6 +1312,82 @@ def clip_tilt_supported(*, require_client: bool | None = None) -> bool:
         settings.media_tilt_enabled
         and "clipTilt" in set(settings.phone_render_verified_features)
         and clip_tilt_client_supported(require_client=require_client)
+    )
+
+
+def clip_tilt_zoom_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build read and keep a tilt row's ``zoom`` (KRI-1169)?
+
+    At least ``media_tilt_zoom_min_client_protocol`` (33). ``require_client`` as in
+    `clip_tilt_client_supported`.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.media_tilt_zoom_min_client_protocol
+
+
+def clip_tilt_zoom_supported(*, require_client: bool | None = None) -> bool:
+    """Single source of truth for "may a tilted or untilted clip be zoomed right now".
+
+    The tilt gate (`clip_tilt_supported`) plus a build at protocol 33. No second flag and no
+    second verified token: zoom is ``transform.scale``, which every renderer already honours.
+    """
+    return bool(
+        clip_tilt_supported(require_client=require_client)
+        and clip_tilt_zoom_client_supported(require_client=require_client)
+    )
+
+
+def recipe_has_tilted_card(recipe: Any) -> bool:
+    """Does any placed picture card of this recipe turn (KRI-1141)?
+
+    A card is a clip with a ``visual_placement`` on an overlay track; its angle is the clip's own
+    ``transform.rotation_degrees``, the same field a main-track tilt uses.
+    """
+    return any(
+        getattr(clip, "visual_placement", None) is not None and clip.transform.rotation_degrees != 0
+        for track in getattr(recipe, "tracks", None) or []
+        for clip in track.clips
+    )
+
+
+def card_tilt_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build turn a placed card by its clip's rotation?
+
+    At least ``media_card_tilt_min_client_protocol`` (30). Builds 28 and 29 decode the ``clipTilt``
+    token but draw a placed card upright. ``require_client`` as in `clip_tilt_client_supported`.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.media_card_tilt_min_client_protocol
+
+
+def card_tilt_supported(*, require_client: bool | None = None) -> bool:
+    """Single source of truth for "may a Talking edit's picture card be tilted right now".
+
+    The clip tilt switch and verified token (`clip_tilt_supported` minus its build gate) plus the
+    card's own build gate.
+    """
+    return bool(
+        settings.media_tilt_enabled
+        and "clipTilt" in set(settings.phone_render_verified_features)
+        and card_tilt_client_supported(require_client=require_client)
     )
 
 
@@ -1053,6 +1628,20 @@ def phone_subtitled_editor_lanes_supported() -> bool:
     )
 
 
+def phone_talking_range_supported() -> bool:
+    """Single source of truth for "may the Range sheet choose which part of a phone Talking
+    take plays right now": the kill switch (``phone_talking_range_edits_enabled``) AND the
+    Talking editor lanes it rides on. The recipe shape (several hard-cut keep segments) is the
+    one cleanup already ships, so no extra verified token is needed.
+
+    Consulted by ``generative_jobs._editor_capabilities`` (whether ``clips.source_window``
+    appears) and by the Talking Save (whether ``timeline_slots`` recompiles or 422s), so the
+    capability never advertises a Save the server would refuse."""
+    return bool(
+        settings.phone_talking_range_edits_enabled and phone_subtitled_editor_lanes_supported()
+    )
+
+
 # Device features a phone Voiceover (`narrated` / montage `voiceover`) Save needs
 # to recompile its sound-effect and Visuals lanes (KRI-281): the same set the
 # Talking lanes need, since both reuse `phone_subtitled_plan`'s lane compilers.
@@ -1215,6 +1804,44 @@ def phone_clip_sound_windows_supported() -> bool:
     )
 
 
+def phone_talking_cutaway_sound_supported() -> bool:
+    """Can a phone Talking edit play a footage cutaway's own sound right now (KRI-1151)?
+
+    True iff `phone_talking_cutaway_sound_enabled` AND `phone_clip_sound_windows_supported()`
+    (the speaker is muted under the cutaway with a recipe mute window) AND the cutaway
+    track's own features (`audioMix`, `visualVideos`, `alphaOverlay`) are verified. Read by the
+    draft check (whether the ask is met), the subtitled worker (whether it builds the sound)
+    and nothing else: the recipe itself needs no capability beyond what the cutaway track
+    already declares.
+    """
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        getattr(settings, "phone_talking_cutaway_sound_enabled", False)
+        and phone_clip_sound_windows_supported()
+        and {"audioMix", "visualVideos", "alphaOverlay"} <= verified
+    )
+
+
+def phone_talking_mention_cutaways_supported() -> bool:
+    """May a multi-clip phone Talking edit show clips full screen where the creator mentions
+    them right now (parent KRI-1151)? The kill switch alone: the cutaway track is the one
+    `phone_talking_multi_clip_supported()` already requires, and a cutaway's own sound has its
+    own gate (`phone_talking_cutaway_sound_supported`)."""
+    return bool(getattr(settings, "phone_talking_mention_cutaways_enabled", False))
+
+
+def phone_talking_insert_clips_supported() -> bool:
+    """May a multi-clip phone Talking edit pause the creator's take for an inserted clip right
+    now (parent KRI-1151)? The kill switch AND everything that edit already needs: the
+    multi-clip Talking shape (the clip is one of the item's own footage clips) and the audio
+    mix the clip's own sound plays through. Recipe-only, so nothing else is gated."""
+    return bool(
+        getattr(settings, "phone_talking_insert_clips_enabled", False)
+        and phone_talking_multi_clip_supported()
+        and "audioMix" in set(settings.phone_render_verified_features)
+    )
+
+
 def phone_timed_video_cards_supported() -> bool:
     """`phone_timed_cards_supported()` AND the device plays Visuals videos
     (`visualVideos` verified): a timed card may then bind a video, played muted
@@ -1264,6 +1891,30 @@ def phone_voiceover_editor_media_supported(*, require_client: bool | None = None
         and settings.visual_blocks_enabled
         and all(feature in verified for feature in PHONE_EDITOR_MEDIA_FEATURES)
         and phone_voiceover_editor_lanes_supported(require_client=require_client)
+    )
+
+
+def phone_subtitled_editor_media_supported() -> bool:
+    """Single source of truth for "can a phone-rendered `subtitled` (Talking to camera)
+    variant add a picture as a media Visual block right now" (KRI-1142).
+
+    Consulted by `generative_jobs._phone_subtitled_editor_media_available` (the
+    `phone_editor_media` capability, source registration and the `visual_blocks` clamp) and by
+    `phone_editor._compile_subtitled_editor_commit` (whether Save compiles the blocks into the
+    pinned recipe or refuses), so the editor never offers a picture Save would refuse.
+
+    True iff ALL of: its own kill switch, the editor media and visual-block switches, every
+    `PHONE_EDITOR_MEDIA_FEATURES` entry verified, and the Talking lanes gate. No newer app
+    build is needed: the app already registers, places, previews and reopens editor media
+    for any archetype (see `phone_voiceover_editor_media_supported`).
+    """
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        settings.phone_subtitled_editor_media_enabled
+        and settings.phone_editor_media_enabled
+        and settings.visual_blocks_enabled
+        and all(feature in verified for feature in PHONE_EDITOR_MEDIA_FEATURES)
+        and phone_subtitled_editor_lanes_supported()
     )
 
 
@@ -1336,12 +1987,47 @@ def phone_subtitled_closing_title_supported() -> bool:
     )
 
 
+def cta_ending_available() -> bool:
+    """Server-wide: may a phone Talking edit draw the creator's CTA ending (item 14)?
+
+    The ending is two text rows on the closing-title lane plus a freehand arrow, so it
+    needs the flag, the closing-title lane, and the drawing lane verified on device."""
+
+    return bool(
+        settings.creator_cta_ending_enabled
+        and phone_subtitled_closing_title_supported()
+        and settings.freehand_drawing_enabled
+        and "freehandDrawing" in set(settings.phone_render_verified_features)
+    )
+
+
+def cta_ending_planned_for(client_protocol: int | None) -> bool:
+    """May this creator's phone Talking edit draw the CTA ending (item 14)?
+
+    Read like `text_bend_planned_for`: ``client_protocol`` is the app build the creator
+    acted from (``creator_client_protocol`` on the Job). No stamp, or a build below
+    ``freehand_drawing_min_client_protocol``, keeps today's lime closing tag."""
+
+    return bool(
+        cta_ending_available()
+        and client_protocol is not None
+        and client_protocol >= settings.freehand_drawing_min_client_protocol
+    )
+
+
 def phone_subtitled_spoken_text_supported() -> bool:
     """Can a phone-rendered `subtitled` (Talking) edit show a creator's text at
     the word they say (KRI-707)? It is a plain text row on the KRI-467 lane,
     drawn like the title (one fade-in positioned text layer)."""
 
     return bool(settings.phone_subtitled_spoken_text_enabled and phone_subtitled_title_supported())
+
+
+def phone_list_labels_supported() -> bool:
+    """Can a phone Talking edit show numbered list labels (Qendresa item 19)? The flag AND the
+    spoken-text gate: the rows ride the same authoredText text lane, so no new capability."""
+
+    return bool(settings.spoken_list_labels_enabled and phone_subtitled_spoken_text_supported())
 
 
 def phone_narrated_title_preview_supported() -> bool:

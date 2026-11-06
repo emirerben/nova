@@ -125,7 +125,7 @@ import UIKit
     /// With a `tilt` the media turns about the canvas centre over the tilt's backdrop instead (`tiltedBase`).
     nonisolated static func framedBase(_ source: CIImage, crop: NormalizedSourceRect?, fit: SlidePostFit?, pixels: CGSize, blurSigma: CGFloat,
                                        tilt: SlidePostTilt? = nil) -> CIImage {
-        if let tilt, !tilt.isUpright {
+        if let tilt, !tilt.isNeutral {
             return tiltedBase(source, crop: crop, fit: fit != nil, pixels: pixels, blurSigma: blurSigma, tilt: tilt)
         }
         let extent = CGRect(origin: .zero, size: pixels)
@@ -174,18 +174,20 @@ import UIKit
         return turned(media, over: placed(source, in: cover, pixels: pixels), tilt: tilt, pixels: pixels, blurSigma: blurSigma)
     }
 
-    /// `media` (already placed in canvas pixels, any size) turned clockwise by `tilt` about the canvas centre over the
-    /// tilt's backdrop, cropped to the canvas. `cover` is the frame a blur backdrop softens (a cover-fit copy of the same
+    /// `media` (already placed in canvas pixels, any size) scaled by `tilt.zoom` and then turned clockwise by `tilt` about
+    /// the canvas centre over the tilt's backdrop, cropped to the canvas. The zoom and the turn share one pivot, so the
+    /// order is the contract: zoom first. `cover` is the frame a blur backdrop softens (a cover-fit copy of the same
     /// media). Shared by photo slides and, per frame, by the exported video slides.
     nonisolated static func turned(_ media: CIImage, over cover: CIImage, tilt: SlidePostTilt, pixels: CGSize, blurSigma: CGFloat) -> CIImage {
         let extent = CGRect(origin: .zero, size: pixels)
         let centre = CGPoint(x: pixels.width / 2, y: pixels.height / 2)
         let turn = CGAffineTransform(translationX: -centre.x, y: -centre.y)
+            .concatenating(CGAffineTransform(scaleX: CGFloat(tilt.zoom), y: CGFloat(tilt.zoom)))
             .concatenating(CGAffineTransform(rotationAngle: SlidePostTiltGeometry.coreImageAngle(degrees: tilt.rotationDeg)))
             .concatenating(CGAffineTransform(translationX: centre.x, y: centre.y))
         let under: CIImage
         switch tilt.backdrop {
-        case .blank:
+        case .blank, .media:
             under = CIImage(color: .black).cropped(to: extent)
         case .color(let hex):
             guard let rgb = SlidePostTilt.rgb(hex) else { under = CIImage(color: .black).cropped(to: extent); break }

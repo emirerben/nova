@@ -140,16 +140,17 @@ import UIKit
 struct SlidePostVideoPicture: View {
     @ObservedObject var playback: SlidePostVideoPlayback
     let assetID: String
-    /// KRI-1138: the slide's turn. The poster beneath draws the backdrop; this turns the picture about the canvas centre.
+    /// KRI-1138: the slide's turn and zoom. The poster beneath draws the backdrop; this zooms then turns the picture about the canvas centre.
     var tilt: SlidePostTilt? = nil
 
     var body: some View {
         if playback.assetID == assetID, playback.phase == .ready {
-            if let tilt, !tilt.isUpright {
+            if let tilt, !tilt.isNeutral {
                 GeometryReader { proxy in
                     let media = Self.coverSize(video: playback.videoSize, canvas: proxy.size)
                     SlidePostVideoSurface(player: playback.player, gravity: playback.videoSize == nil ? .resizeAspectFill : .resizeAspect)
                         .frame(width: media.width, height: media.height)
+                        .scaleEffect(tilt.zoom)
                         .rotationEffect(.degrees(tilt.rotationDeg))
                         .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
                 }

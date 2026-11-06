@@ -23,6 +23,11 @@ from pathlib import Path
 
 import pytest
 
+# The module fixture scores all six routes (fresh replay interpreters, the consumer gate and
+# its controls) inside the first test's setup, which a busy CI runner can take past the suite's
+# 60 s per-test limit.
+pytestmark = pytest.mark.timeout(300)
+
 REPO = Path(__file__).resolve().parents[5]
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "kria_replay"
 ROUTES = (

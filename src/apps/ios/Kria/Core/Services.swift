@@ -204,7 +204,6 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgro
     /// One page of chats, newest first. `nextCursor` is nil on the last page.
     func projectsPage(cursor: String?) async throws -> ProjectPage
     func project(threadID: UUID) async throws -> CreationThread
-    func nativeActivities(before: String?) async throws -> NativeActivityPage
     func nativeActivity(id: UUID) async throws -> NativeActivity
     func readNativeActivity(id: UUID) async throws -> NativeActivity
     func nativeActivity(id: UUID, owner: String) async throws -> NativeActivity
@@ -226,6 +225,8 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgro
     func creationBrief(threadID: UUID) async throws -> CreativeBrief
     /// KRI-756: footage-aware suggestion chips. Nil = the server has none to offer (no endpoint, or unreadable).
     func creationSuggestions(threadID: UUID) async throws -> SuggestionSet?
+    /// AI suggestion blocks: tells the server a card was dismissed so it is never offered again. Never throws.
+    func dismissSuggestion(threadID: UUID, setID: String, suggestionID: String) async
     func sendCreationMessage(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
     func creationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int, clientActionID: String) async throws -> CreationThread
     func reserveVisualUpload(itemID: String, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> VisualUploadTarget
@@ -312,6 +313,11 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgro
     func undoDraft(threadID: UUID, expectedRevision: Int, render: Bool) async throws -> DraftSnapshot
     /// KRI-443: Stop on the live plan feed. A 409 `turn_not_cancellable` means the render can no longer be stopped.
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled
+    /// Steer now: stop the running turn `turnID` so the message waiting behind it runs now.
+    func steerNow(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled
+    /// Steer now's trash and Edit: cancel the waiting message `turnID` only while it still waits. A 409
+    /// `turn_no_longer_queued` means Kria already picked it up; it is never stopped by this call.
+    func removeWaitingMessage(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot
     func retryApprovedRender(threadID: UUID, executionID: UUID, expectedRevision: Int) async throws -> RenderRetryAccepted
     /// `speechCleanupAware` must always be sent `true` from this client build --
@@ -341,6 +347,12 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgro
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, role: CreationMediaRole) async throws -> ProjectUploadReservation
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
+    /// Re-record: the same reservations, naming the attached clip the new take replaces so it does not count against
+    /// the clip limit. Only a server that advertises `media_capabilities.clips.replace` accepts the field.
+    func reserveProjectReplacementUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, replacing mediaID: String) async throws -> ProjectUploadReservation
+    func reserveProjectReplacementProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract, replacing mediaID: String) async throws -> ProjectUploadReservation
+    /// Swaps one attached video for a reserved one in a single server transaction (`POST creation-threads/{id}/media/replace`).
+    func replaceProjectMedia(threadID: UUID, replacedMediaID: String, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread
     /// KRI-189: the same attach, plus when/where the clip was filmed. `capture` is nil when the user turned
     /// the setting off or nothing could be read; a client that does not implement this drops it.
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread
@@ -417,7 +429,10 @@ extension KriaAPIClient {
 /// implemented by a substitute.
 extension KriaAPIClient {
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
+    func steerNow(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
+    func removeWaitingMessage(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
     func creationSuggestions(threadID: UUID) async throws -> SuggestionSet? { nil }
+    func dismissSuggestion(threadID: UUID, setID: String, suggestionID: String) async {}
     func transcribeDictation(audio: Data, contextTerms: [String]) async throws -> DictationTranscriptResponse { throw APIError.unsupported }
     func planSnapshot(threadID: UUID) async throws -> PlanSnapshot { throw APIError.unsupported }
     func submitScopedTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, scope: [PlanSectionID], manualEdits: [ManualPlanEdit]) async throws -> TurnAccepted { throw APIError.unsupported }
@@ -442,6 +457,9 @@ extension KriaAPIClient {
     func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws { throw APIError.unsupported }
     func reportRecorderDiagnostic(_ report: RecorderDiagnosticReport) async throws { throw APIError.unsupported }
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation { throw APIError.invalidResponse }
+    func reserveProjectReplacementUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, replacing mediaID: String) async throws -> ProjectUploadReservation { throw APIError.unsupported }
+    func reserveProjectReplacementProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract, replacing mediaID: String) async throws -> ProjectUploadReservation { throw APIError.unsupported }
+    func replaceProjectMedia(threadID: UUID, replacedMediaID: String, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread { throw APIError.unsupported }
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, role: CreationMediaRole) async throws -> ProjectUploadReservation {
         try await reserveProjectUpload(threadID: threadID, clientUploadID: clientUploadID, filename: filename, contentType: contentType, size: size)
     }
@@ -709,6 +727,21 @@ struct CreationThread: Codable, Identifiable, Sendable {
         )
     }
 
+    /// Reference-only list projections and failed first renders cannot grant recovery.
+    var savedEditorVariant: CreationVariant? {
+        guard runtimeVersion == 2, let activeJobID, let activePlanItemID,
+              let job, job.id == activeJobID,
+              let format = state?["format"]?.stringValue ?? state?["edit_format"]?.stringValue,
+              ["montage", "lipsync", "narrated", "talking_to_camera"].contains(format),
+              !job.variants.contains(where: { $0.variantID == "slides" }) else { return nil }
+        let selectedID = state?["selected_variant_id"]?.stringValue ?? selectedVariantID
+        let selected: CreationVariant?
+        if let selectedID { selected = job.variants.first { $0.variantID == selectedID } }
+        else { selected = job.variants.count == 1 ? job.variants.first : nil }
+        guard let selected, selected.matchesSavedEditor(jobID: activeJobID, itemID: activePlanItemID) else { return nil }
+        return selected
+    }
+
     /// List projections intentionally omit media URLs, but their state and
     /// variant lifecycle still identify the edit the user selected.
     private var selectedVariantID: String? {
@@ -800,6 +833,32 @@ struct CreationVariant: Codable, Sendable {
     /// (`awaiting_device|syncing|published|needs_attention`), or nil for a
     /// cloud job, an older generation, or an older server (KRI-823).
     var deliveryPhase: String? = nil
+    var editorStateVersion: Int? = nil
+    var editorDraftAvailable: Bool? = nil
+    var editorDraft: [String: JSONValue]? = nil
+
+    func matchesSavedEditor(jobID: String, itemID: String) -> Bool {
+        guard editorStateVersion == 2, let variantID, let renderGenerationID, !renderGenerationID.isEmpty,
+              let draft = editorDraft,
+              draft["draft_id"]?.stringValue.flatMap(UUID.init(uuidString:)) != nil,
+              draft["etag"]?.stringValue?.isEmpty == false,
+              draft["created_at"]?.stringValue?.isEmpty == false,
+              draft["can_undo"]?.boolValue != nil,
+              draft["item_id"]?.stringValue == itemID,
+              draft["variant_key"]?.stringValue == variantID,
+              draft["base_job_id"]?.stringValue.flatMap(UUID.init(uuidString:)) == UUID(uuidString: jobID),
+              UUID(uuidString: jobID) != nil,
+              let savedGeneration = draft["base_generation_id"]?.stringValue, !savedGeneration.isEmpty,
+              savedGeneration == renderGenerationID || editorDraftAvailable == true,
+              draft["snapshot_hash"]?.stringValue?.isEmpty == false,
+              let revision = draft["draft_revision"]?.numberValue, revision.isFinite, revision >= 0, revision.rounded() == revision,
+              let snapshot = draft["snapshot"]?.objectValue, snapshot["kind"] == .string("editor"),
+              let payload = snapshot["editor_payload"]?.objectValue,
+              payload["editor_state_version"] == .number(2),
+              payload["base_generation"] == .string(savedGeneration),
+              payload["sections"]?.objectValue != nil else { return false }
+        return true
+    }
 
     var needsDeliveryAttention: Bool {
         deliveryPhase == "needs_attention" || renderStatus?.lowercased() == "needs_attention"
@@ -822,6 +881,9 @@ struct CreationVariant: Codable, Sendable {
         case failureReason = "failure_reason"
         case renderDestination = "render_destination"
         case deliveryPhase = "delivery_phase"
+        case editorStateVersion = "editor_state_version"
+        case editorDraftAvailable = "editor_draft_available"
+        case editorDraft = "editor_draft"
     }
 }
 
@@ -1240,7 +1302,49 @@ enum KriaClientProtocolContract {
     /// `transform.rotation_degrees` (clockwise on screen). The server offers tilt only to this protocol (and only
     /// with `MEDIA_TILT_ENABLED` + `clipTilt` verified) and answers 426 `client_update_required` (`clip_tilt`)
     /// to an older build polling a recipe that already carries one.
-    static let version = 28
+    /// 30 (KRI-1141): turns a PLACED picture card (a Talking card, a clip with a `visual_placement`) by its clip's
+    /// `transform.rotation_degrees`. Builds 28 and 29 decode `clipTilt` but draw such a card upright, so the server
+    /// answers 426 `client_update_required` (`card_tilt`) to them for a recipe that carries a tilted card, and
+    /// offers `editor_capabilities.media_overlay_tilt` only from here.
+    /// 31 (KRI-1139): decodes a clip backdrop of kind `media` (a Visuals-pool photo or video behind the clip) and the
+    /// `clipBackdropMedia` capability, and draws it. The server offers it only to this protocol (and only with
+    /// `MEDIA_TILT_ENABLED` + `clipBackdropMedia` verified) and answers 426 `client_update_required`
+    /// (`clip_backdrop_media`) to an older build polling a recipe that already carries one.
+    /// 32 (KRI-1162): decodes a recipe's `speaker_background.windows` / `speaker_frame` and the
+    /// `speakerBackgroundWindows` capability, and edits them (Background tool + timeline lane). 29 is unused,
+    /// 30 is the card-tilt build (KRI-1141) and 31 the media-backdrop build (KRI-1139). The server offers timed backgrounds only to this protocol (and only with
+    /// `speakerBackgroundWindows` verified) and answers 426 `client_update_required` (`speaker_background_windows`)
+    /// to an older build polling or saving a recipe that already carries them.
+    /// 33 (KRI-1169): reads and keeps a clip tilt row's `zoom` (`0.5...3`, carried in the recipe's `transform.scale`).
+    /// The server offers `clips.tilt_zoom` only to this protocol and answers 426 `client_update_required`
+    /// (`tilt_zoom`) to an older build whose Save would replace a timeline holding a stored zoom.
+    /// 33 (KRI-1170): decodes and round-trips a tilt's `zoom` (a slide's media scaled 0.5 to 3x before it turns). The server
+    /// offers `slide_post_tilt_zoom` only to this protocol and answers 426 `client_update_required` (`slide_tilt_zoom`) to an
+    /// older build that would save over a zoomed tilt, since it re-encodes the tilt without the key.
+    /// 34 (KRI-1173): decodes and round-trips a solid-colour speaker background (`media_kind: "color"` + `color`) and the
+    /// `speakerBackgroundColor` capability. The server offers `editor_capabilities.speaker_background_color` only to this
+    /// protocol (and only with `speakerBackgroundColor` verified) and answers 426 `client_update_required`
+    /// (`speaker_background_color`) to an older build polling or saving a recipe that already carries one.
+    /// 35 (KRI-1192): bundles Noto Sans KR / Noto Sans Arabic script-fallback faces and draws Greek, Cyrillic, Hangul
+    /// and Arabic captions in one covering face (`scriptFonts`). The server sends a recipe naming those faces only to
+    /// this protocol and answers 426 `client_update_required` (`script_fonts`) to an older build.
+    /// 36 (Qendresa item 12): the editor reads `caption_meta.shape` (`caption_shape`) and draws the creator's typed
+    /// caption box / dimmed-word look exactly like the cloud recipe. The server renders a shaped caption only for this
+    /// protocol (`CAPTION_SHAPE_PROTOCOL`).
+    /// 37-39 are unused (held for items 14, 16 and 18 while they were in review).
+    /// 40 (Qendresa item 15): the editor keeps a picture card marked `caption_clear` in the top or bottom band instead of
+    /// clamping its centre above y 0.62, matching the cloud recipe. The server places such cards only for this protocol.
+    /// 41 (Qendresa item 16): decodes and draws `speaker_background.full_screen_windows` (the speaker's own take full-frame,
+    /// unmasked, with no background or corner frame, for an opening or ending) and the `speakerFrameWindows` capability, and
+    /// round-trips them in the editor. The server offers `editor_capabilities.speaker_full_opening` only to this protocol (and
+    /// only with `speakerFrameWindows` verified) and answers 426 `client_update_required` (`speaker_full_opening`) to an
+    /// older build polling or saving a recipe that already carries them.
+    /// 42 (Qendresa item 18): decodes and draws `speaker_background.focus` and `windows[i].focus` (`{x, y, zoom}`: a photo or
+    /// video background aimed at its text, below cover with black bands) and the `backgroundFocus` capability, and round-trips
+    /// them in the editor. The server offers `editor_capabilities.background_focus` only to this protocol (and only with
+    /// `backgroundFocus` verified) and answers 426 `client_update_required` (`background_focus`) to an older build polling or
+    /// saving a recipe that already carries them.
+    static let version = 42
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -1639,7 +1743,9 @@ struct KriaAPI: KriaAPIClient {
         throw APIError.conflict
     }
     func editorCommit(itemID: String, variantID: String, request commit: EditorCommitRequest) async throws -> EditorCommitResponse {
-        try await request(path: "plan-items/\(itemID)/variants/\(variantID)/editor-commit", method: "POST", bodyData: try JSONEncoder().encode(commit), decode: EditorCommitResponse.self)
+        try await Perf.measureAsync("talk.save.editorCommit") {
+            try await request(path: "plan-items/\(itemID)/variants/\(variantID)/editor-commit", method: "POST", bodyData: try JSONEncoder().encode(commit), decode: EditorCommitResponse.self)
+        }
     }
     func registerEditorSource(_ target: EditorSourceRegistrationTarget, sourceID: String) async throws -> EditorSourceRegistrationResponse {
         struct Body: Encodable {
@@ -1676,6 +1782,14 @@ struct KriaAPI: KriaAPIClient {
     }
     func undoPlanSection(threadID: UUID, sectionID: PlanSectionID, expectedThreadRevision: Int, expectedBlockRevision: Int, expectedDraftRevision: Int) async throws -> PlanSectionUndoResult {
         try await request(path: "creation-threads/\(threadID.uuidString)/plan/sections/\(sectionID.rawValue)/undo", method: "POST", bodyData: try JSONEncoder().encode(PlanSectionUndoRequest(expectedThreadRevision: expectedThreadRevision, expectedBlockRevision: expectedBlockRevision, expectedDraftRevision: expectedDraftRevision)), decode: PlanSectionUndoResult.self)
+    }
+    func steerNow(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled {
+        try await request(path: "creation-threads/\(threadID.uuidString)/turns/\(turnID)/cancel", method: "POST",
+            bodyData: try JSONEncoder().encode(SteerNowRequest(expectedThreadRevision: revision)), decode: TurnCancelled.self)
+    }
+    func removeWaitingMessage(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled {
+        try await request(path: "creation-threads/\(threadID.uuidString)/turns/\(turnID)/cancel", method: "POST",
+            bodyData: try JSONEncoder().encode(RemoveWaitingMessageRequest(expectedThreadRevision: revision)), decode: TurnCancelled.self)
     }
     func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled {
         try await request(path: "creation-threads/\(threadID.uuidString)/turns/\(turnID)/cancel-render", method: "POST", bodyData: try JSONEncoder().encode(CancelRenderRequest(expectedThreadRevision: revision)), decode: TurnCancelled.self)
@@ -1733,6 +1847,25 @@ struct KriaAPI: KriaAPIClient {
         guard reservations.count == 1, let reservation = reservations.first,
               reservation.mediaID.hasPrefix("analysis-proxy-") else { throw APIError.invalidResponse }
         return reservation
+    }
+    func reserveProjectReplacementUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, replacing mediaID: String) async throws -> ProjectUploadReservation {
+        let body = ProjectUploadReservationRequest(files: [.init(filename: filename, contentType: contentType, fileSizeBytes: size, clientUploadID: clientUploadID, replacesMediaID: mediaID)])
+        let reservations = try await request(path: "creation-threads/\(threadID.uuidString)/upload-urls", method: "POST", bodyData: try JSONEncoder().encode(body), decode: [ProjectUploadReservation].self)
+        guard let reservation = reservations.first, reservations.count == 1 else { throw APIError.invalidResponse }
+        return reservation
+    }
+    func reserveProjectReplacementProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract, replacing mediaID: String) async throws -> ProjectUploadReservation {
+        guard contract.purpose == .analysisProxy, contract.proxy != nil else { throw APIError.invalidResponse }
+        let body = ProjectUploadReservationRequest(files: [.init(filename: filename, contentType: "video/mp4", fileSizeBytes: size, clientUploadID: clientUploadID, uploadContract: contract, replacesMediaID: mediaID)])
+        let reservations = try await request(path: "creation-threads/\(threadID.uuidString)/upload-urls", method: "POST", bodyData: try JSONEncoder().encode(body), decode: [ProjectUploadReservation].self)
+        guard reservations.count == 1, let reservation = reservations.first,
+              reservation.mediaID.hasPrefix("analysis-proxy-") else { throw APIError.invalidResponse }
+        return reservation
+    }
+    func replaceProjectMedia(threadID: UUID, replacedMediaID: String, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread {
+        let media = ProjectMediaInput(mediaID: mediaID, gcsPath: gcsPath, kind: "video", filename: filename, contentType: contentType, capture: capture)
+        let body = ProjectMediaReplacementRequest(replacedMediaID: replacedMediaID, media: media, clientEventID: clientEventID, expectedRevision: expectedRevision)
+        return try await request(path: "creation-threads/\(threadID.uuidString)/media/replace", method: "POST", bodyData: try JSONEncoder().encode(body), decode: CreationThread.self)
     }
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread {
         try await attachProjectMedia(threadID: threadID, mediaID: mediaID, gcsPath: gcsPath, filename: filename, contentType: contentType, expectedRevision: expectedRevision, clientEventID: clientEventID, capture: nil)
@@ -1878,6 +2011,11 @@ struct KriaAPI: KriaAPIClient {
                         : saveError.diagnosticCode,
                 ])
                 throw saveError
+            }
+            // KRI-1162: a Save the server holds back for an older build (`client_update_required`, e.g. for
+            // `speaker_background_windows`) reads as a plain sentence, not as a failure with a code.
+            if http.statusCode == 426, path.hasSuffix("/editor-commit"), Self.decodeCodedDetail(from: data)?.code == "client_update_required" {
+                throw EditorSaveError.timeline(code: "client_update_required")
             }
             #if DEBUG
             NativePreviewDiagnostics.record("http-failure", fields: ["status": String(http.statusCode)])
@@ -2104,7 +2242,10 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "LOOK_PRESET_NOT_AVAILABLE": "That clip look isn’t available for this video. Remove it and save again. Your edits are still here.",
             "phone_edit_unsupported": "That clip look can’t be saved on this iPhone yet. Remove it and save again. Your edits are still here.",
             "TIMELINE_TILT_WITH_LOOK": "A clip with a colour look can’t be tilted. Remove the look or reset the tilt, then save again. Your edits are still here.",
+            "clip_backdrop_media_not_in_pool": "That photo or video isn’t in this video’s Visuals any more. Choose another background or reset the tilt, then save again. Your edits are still here.",
+            "clip_backdrop_media_unavailable": "A photo or video behind a clip isn’t available right now. Choose another background or reset the tilt, then save again. Your edits are still here.",
             "clip_tilt_unavailable": "Tilt isn’t available right now. Reset the tilt on that clip and save again. Your edits are still here.",
+            "clip_tilt_zoom_unavailable": "Zoom isn’t available right now. Set the zoom back to 1x on that clip and save again. Your edits are still here.",
             "transitions_disabled": "Transitions aren’t available right now. Set the clip to a cut and save again. Your edits are still here.",
             "song_shorter_than_video": "The song is shorter than your video. Pick a longer song or shorten the video, then save again. Your edits are still here.",
             "music_track_unavailable": "That song isn’t available any more. Pick another song and save again. Your edits are still here.",
@@ -2117,8 +2258,33 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "speaker_background_media_unavailable": "That background isn’t ready yet. Wait a moment or pick another, then save again. Your edits are still here.",
             "speaker_background_kind_mismatch": "That background doesn’t match its file. Pick it again and save again. Your edits are still here.",
             "speaker_background_start_out_of_range": "The background video starts past its end. Pick it again and save again. Your edits are still here.",
+            // Range on a phone Talking edit. The four reasons are the `clips.source_window` leaf's own codes; the
+            // server can also answer a Save with one when the edit changed after the app last looked.
+            "talking_range_multi_clip": EditorSaveError.talkingRangeSaveCopy("talking_range_multi_clip"),
+            "talking_range_word_cuts": EditorSaveError.talkingRangeSaveCopy("talking_range_word_cuts"),
+            "talking_range_processed_audio": EditorSaveError.talkingRangeSaveCopy("talking_range_processed_audio"),
+            "talking_range_cut_mismatch": EditorSaveError.talkingRangeSaveCopy("talking_range_cut_mismatch"),
+            "talking_range_structure_changed": "Only the range of each part can change in this video. Undo your last change and save again. Your edits are still here.",
+            "talking_range_overlap": "A part now reaches into the part next to it. Shorten it and save again. Your edits are still here.",
+            "talking_range_order": "The parts of this video have to stay in their order. Put them back in order and save again. Your edits are still here.",
+            "talking_range_muted": "Range can’t mute a part of this video. Turn the sound back on for it and save again. Your edits are still here.",
+            "talking_range_captions_missing": "Part of your range has no captions yet. Add captions for it, turn captions off, or put the range back, then save again. Your edits are still here.",
+            "speaker_background_color_disabled": "A plain colour behind you isn’t available on this edit yet. Pick a photo or video, or remove the background, then save again. Your edits are still here.",
+            "speaker_background_color_invalid": "That colour can’t be used. Pick a swatch or a solid colour, then save again. Your edits are still here.",
+            "speaker_background_windows_disabled": "Timed backgrounds aren’t available right now. Remove them and save again. Your edits are still here.",
+            "speaker_full_opening_disabled": "Starting full screen isn’t available right now. Remove it and save again. Your edits are still here.",
+            "speaker_full_opening_invalid": "The full-screen opening doesn’t fit this video. Remove it and save again. Your edits are still here.",
+            "background_focus_disabled": "Aiming the background isn’t available for this video yet. Your edits are still here.",
+            "background_focus_invalid": "That background aim isn’t valid. Pick left, centre or right and a zoom between 0.3x and 3x, then save again. Your edits are still here.",
+            "speaker_background_window_invalid": "The timed backgrounds overlap or one is too short. Give each at least half a second without overlap, then save again. Your edits are still here.",
+            // 426 from the editor-commit route: this build is older than the feature the edit uses (see the call site).
+            "client_update_required": "Update Kria to save this edit. Your edits are still here.",
         ]
     }()
+
+    private static func talkingRangeSaveCopy(_ code: String) -> String {
+        NativePhoneTalkingSource.rangeClosedCopy(reason: code) + " Your edits are still here."
+    }
 
     /// A plain-English sentence (not a machine code) short enough to show as is.
     static func isReadableServerMessage(_ text: String) -> Bool {
@@ -2286,7 +2452,7 @@ private struct LibraryPosterRequest: Encodable {
 /// KRI-653: why the in-app recorder produced (or is producing) a silent take. Enumerated labels and
 /// numbers only: no file names, script text, or anything the creator typed or said.
 struct RecorderDiagnosticReport: Encodable, Equatable, Sendable {
-    enum Kind: String, Encodable, Sendable { case takeSilent = "take_silent", liveMicSilent = "live_mic_silent" }
+    enum Kind: String, Encodable, Sendable { case takeSilent = "take_silent", liveMicSilent = "live_mic_silent", takeFinished = "take_finished" }
     let kind: Kind
     let audioCategory: String?
     let audioMode: String?
@@ -2299,11 +2465,24 @@ struct RecorderDiagnosticReport: Encodable, Equatable, Sendable {
     let maxPowerDb: Double?
     let takeDurationS: Double?
     let appBuild: String?
+    /// `TakeStopReason.rawValue` of the take this report describes; nil for a live recording that has not stopped.
+    let stopReason: String?
+    /// `take_finished` only: how long the movie output took to close the file after Stop, and how long everything after
+    /// that (validation, Cinematic bake, level measurement) took before the take reached Review.
+    var finalizeMs: Int? = nil
+    var finishMs: Int? = nil
+    /// What separates the sound hypotheses: the session's sample rate, the active mic mode (standard, wide spectrum,
+    /// voice isolation) and how many audio tracks the finished file holds.
+    var audioSampleRateHz: Double? = nil
+    var microphoneMode: String? = nil
+    var audioTrackCount: Int? = nil
     enum CodingKeys: String, CodingKey {
+        case finalizeMs = "finalize_ms", finishMs = "finish_ms", audioSampleRateHz = "audio_sample_rate_hz"
+        case microphoneMode = "microphone_mode", audioTrackCount = "audio_track_count"
         case kind, audioCategory = "audio_category", audioMode = "audio_mode"
         case routeInputs = "route_inputs", routeOutputs = "route_outputs", otherAudioPlaying = "other_audio_playing"
         case phaseHistory = "phase_history", channelCount = "channel_count", maxPowerDb = "max_power_db"
-        case takeDurationS = "take_duration_s", appBuild = "app_build"
+        case takeDurationS = "take_duration_s", appBuild = "app_build", stopReason = "stop_reason"
     }
 }
 /// Identity of a failed editor player item: numeric AVFoundation codes and domains only, never URLs or error text.
@@ -2316,10 +2495,13 @@ struct PlaybackFailureReport: Encodable, Equatable, Sendable {
     let underlyingCode: Int?
     let sourceState: String
     let appBuild: String?
+    /// Fixed labels and counts describing how a Talk-to-camera background was drawn
+    /// (`SpeakerBackgroundTrace.Snapshot.summary`); absent from the wire when the edit has none.
+    var trace: String? = nil
     enum CodingKeys: String, CodingKey {
         case playerKind = "player_kind", errorDomain = "error_domain", errorCode = "error_code"
         case underlyingDomain = "underlying_domain", underlyingCode = "underlying_code"
-        case sourceState = "source_state", appBuild = "app_build"
+        case sourceState = "source_state", appBuild = "app_build", trace
     }
 }
 private struct PlaybackResponse: Decodable { let videoURL: String; enum CodingKeys: String, CodingKey { case videoURL = "video_url" } }
@@ -2410,7 +2592,15 @@ struct ProjectUploadFileRequest: Encodable {
     var uploadContract: ProjectMediaUploadContract? = nil
     /// KRI-374: `"song"` for a creator-uploaded song; nil (omitted from the JSON) for footage and voiceover.
     var role: String? = nil
-    enum CodingKeys: String, CodingKey { case uploadContract = "upload_contract"; case filename; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes"; case clientUploadID = "client_upload_id"; case role }
+    /// Re-record: the attached clip this file replaces. Omitted for every ordinary reservation.
+    var replacesMediaID: String? = nil
+    enum CodingKeys: String, CodingKey { case uploadContract = "upload_contract"; case filename; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes"; case clientUploadID = "client_upload_id"; case role; case replacesMediaID = "replaces_media_id" }
+}
+/// `reason` is the route's only value today, sent explicitly so a later reason is a new case, not a changed meaning.
+struct ProjectMediaReplacementRequest: Encodable {
+    let replacedMediaID: String; let media: ProjectMediaInput; let clientEventID: String; let expectedRevision: Int
+    var reason = "retake"
+    enum CodingKeys: String, CodingKey { case media, reason; case replacedMediaID = "replaced_media_id"; case clientEventID = "client_event_id"; case expectedRevision = "expected_revision" }
 }
 struct ProjectMediaAttachmentRequest: Encodable { let media: [ProjectMediaInput]; let clientEventID: String; let expectedRevision: Int; enum CodingKeys: String, CodingKey { case media; case clientEventID = "client_event_id"; case expectedRevision = "expected_revision" } }
 /// One attached media item. The three optional filming-context fields (KRI-189) are omitted from the JSON
@@ -2432,6 +2622,19 @@ struct ProjectMediaInput: Encodable {
 }
 private struct CreateThreadRequest: Encodable { let message: String?; let clientEventID: String; let runtimeVersion: Int; enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case runtimeVersion = "runtime_version" } }
 private struct DraftWriteRequest: Encodable { let expectedRevision: Int; let snapshot: [String: JSONValue]; enum CodingKeys: String, CodingKey { case expectedRevision = "expected_draft_revision"; case snapshot } }
+/// `POST …/turns/{id}/cancel` with `steer: true` (docs/pipelines/steer-now.md).
+private struct SteerNowRequest: Encodable {
+    let expectedThreadRevision: Int
+    var steer = true
+    enum CodingKeys: String, CodingKey { case steer; case expectedThreadRevision = "expected_thread_revision" }
+}
+/// `POST …/turns/{id}/cancel` with `only_if_queued: true`: the server cancels the turn only while it still waits, in the
+/// same statement that locks it, so a retry that raced Kria picking the message up never stops it.
+private struct RemoveWaitingMessageRequest: Encodable {
+    let expectedThreadRevision: Int
+    var onlyIfQueued = true
+    enum CodingKeys: String, CodingKey { case onlyIfQueued = "only_if_queued"; case expectedThreadRevision = "expected_thread_revision" }
+}
 private struct CancelRenderRequest: Encodable { let expectedThreadRevision: Int; enum CodingKeys: String, CodingKey { case expectedThreadRevision = "expected_thread_revision" } }
 private struct DraftUndoRequest: Encodable {
     let expectedRevision: Int
@@ -2787,7 +2990,7 @@ extension DraftSnapshot {
                 "caption_margin_v", "caption_y_frac", "caption_animation_phases",
                 "music_track_id", "music_window", "background_music", "lyrics", "orientation", "landscape_fit",
                 "sound_effects", "media_overlays", "visual_blocks", "motion_scenes",
-                "motion_runtime_hash", "camera_effects", "drawings", "carousel_moment",
+                "motion_runtime_hash", "camera_effects", "drawings", "carousel_moment", "speaker_background",
             ]
             // A chat-authored editor draft (kind `editor`, flat commit-shaped
             // lane keys) carries its edited lanes in `sections`. The rendered
@@ -2804,6 +3007,10 @@ extension DraftSnapshot {
             // must not bring it back.
             if !isIntentionalEmpty, authoritativeVariant["caption_animation_phases"] == nil {
                 sections["caption_animation_phases"] = nil
+            }
+            // Likewise a cleared Talk-to-camera background leaves the key off the variant (KRI-1165).
+            if !isIntentionalEmpty, authoritativeVariant["speaker_background"] == nil {
+                sections["speaker_background"] = nil
             }
             if !isIntentionalEmpty, sections["music_window"] == nil, let start = authoritativeVariant["music_preview_start_s"] {
                 sections["music_window"] = .object(["start_s": start, "alignment": .string("preserve_cuts")])

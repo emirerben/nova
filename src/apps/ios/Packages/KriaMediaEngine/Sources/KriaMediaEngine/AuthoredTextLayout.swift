@@ -57,11 +57,17 @@ public enum AuthoredTextLayout {
         public var shadows: [TextBlurLayer]
         public var bottomAligned: Bool
         public var background: TextInk?
+        /// Box padding / corner radius in canvas px. Defaults mirror `portable_text_layout`'s 8/4/4 box.
+        public var backgroundPaddingX: Double = 8
+        public var backgroundPaddingY: Double = 4
+        public var backgroundRadius: Double = 4
         public init(fontAssetID: String, size: Double = 72, widthFraction: Double = 0.9,
                     xFraction: Double = 0.5, yFraction: Double = 0.5, rotation: Double = 0,
                     alignment: Alignment = .center, color: TextInk,
                     stroke: TextInk = .init(red: 0, green: 0, blue: 0, alpha: 1),
-                    strokeWidth: Double = 0, shadows: [TextBlurLayer] = [], background: TextInk? = nil, bottomAligned: Bool = false, fontVariations: [String: Double] = [:], letterSpacing: Double = 0, lineSpacing: Double = 1.15, wrapsLines: Bool = true, bend: Double = 0) {
+                    strokeWidth: Double = 0, shadows: [TextBlurLayer] = [], background: TextInk? = nil, bottomAligned: Bool = false, fontVariations: [String: Double] = [:], letterSpacing: Double = 0, lineSpacing: Double = 1.15, wrapsLines: Bool = true, bend: Double = 0,
+                    backgroundPaddingX: Double = 8, backgroundPaddingY: Double = 4, backgroundRadius: Double = 4) {
+            self.backgroundPaddingX = backgroundPaddingX; self.backgroundPaddingY = backgroundPaddingY; self.backgroundRadius = backgroundRadius
             self.bend = bend
             self.wrapsLines = wrapsLines
             self.lineSpacing = lineSpacing
@@ -86,7 +92,8 @@ public enum AuthoredTextLayout {
             throw RecipeError.invalidTimeline
         }
         try phases?.validate()
-        let normalized = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        let normalized = ordinarySpaces(text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n"),
+                                        graphics: graphics)
         // KRI-826: the creator's own lines (`wrapsLines == false`) keep their breaks and size, but stay
         // inside the frame: the same rule as cloud `text_overlay_skia._authored_lines` (see `AuthoredTextFit`).
         let authoredWidth = AuthoredTextFit.safeWidth(canvasWidth: Double(canvas.width), xFraction: style.xFraction,
@@ -199,8 +206,9 @@ public enum AuthoredTextLayout {
         let background = style.background.map { color in
             let left = runs.map(\.x).min() ?? anchorX
             let right = zip(runs, lines).map { $0.0.x + $0.1.1 }.max() ?? anchorX
-            return TextBackground(color: color, left: left - 8, top: top - 4,
-                                  width: right - left + 16, height: blockHeight + 8, radius: 4)
+            return TextBackground(color: color, left: left - style.backgroundPaddingX, top: top - style.backgroundPaddingY,
+                                  width: right - left + 2 * style.backgroundPaddingX, height: blockHeight + 2 * style.backgroundPaddingY,
+                                  radius: style.backgroundRadius)
         }
         let layerEffect: PortableTextLayer.Effect = phases == nil ? legacyEffect : (typewriter ? .typewriter : .none)
         let bend: Double? = !TextBend.isStraight(style.bend) && PortableTextLayer.bendSupported(effect: layerEffect, phasesTypewriter: typewriter)
@@ -208,6 +216,29 @@ public enum AuthoredTextLayout {
         return PortableTextLayer(id: id, start: start, end: end, anchorX: anchorX, anchorY: anchorY,
             rotationDegrees: style.rotation, runs: runs, effect: layerEffect, motion: motion, revealBounds: inkBounds,
             discreteReveal: reveal, smoothReveal: smooth, animationPhases: phases, background: background, bend: bend)
+    }
+
+    /// KRI-1192: `text` with every space separator the face has no glyph for replaced by U+0020. French
+    /// typography's thin and narrow no-break spaces (U+2009, U+202F) are missing from faces such as Poppins, and
+    /// CoreText would borrow a system face for them, which refuses the whole layer. A face that has the character
+    /// keeps it, so text that drew before is unchanged.
+    static func ordinarySpaces(_ text: String, graphics: CGFont) -> String {
+        func exotic(_ scalar: Unicode.Scalar) -> Bool { scalar.properties.generalCategory == .spaceSeparator && scalar != " " }
+        guard text.unicodeScalars.contains(where: exotic) else { return text }
+        let font = CTFontCreateWithGraphicsFont(graphics, 12, nil, nil)
+        var result = String.UnicodeScalarView()
+        for scalar in text.unicodeScalars {
+            if exotic(scalar) {
+                var units = Array(String(scalar).utf16)
+                var glyphs = [CGGlyph](repeating: 0, count: units.count)
+                if !CTFontGetGlyphsForCharacters(font, &units, &glyphs, units.count) || glyphs.contains(0) {
+                    result.append(" ")
+                    continue
+                }
+            }
+            result.append(scalar)
+        }
+        return String(result)
     }
     /// The laid-out block of a layer `compile` produced, in canvas pixels: the leftmost line start to the rightmost
     /// line end, first ascent to last descent. Every run's `x` is its line's left edge whatever the alignment, so only
@@ -264,9 +295,25 @@ public enum AuthoredTextLayout {
     public static func compileHighlightedWords(id: String, text: String, start: Double, end: Double,
                                                starts: [Double], highlight: TextInk,
                                                style: Style, fontURL: URL, canvas: Canvas) throws -> PortableTextLayer {
-        let layout = try compile(id: id, text: text, start: start, end: end, style: style, fontURL: fontURL, canvas: canvas)
+        var layout = try compile(id: id, text: text, start: start, end: end, style: style, fontURL: fontURL, canvas: canvas)
         guard let provider = CGDataProvider(url: fontURL as CFURL), let graphics = CGFont(provider) else {
             throw RecipeError.invalidTimeline
+        }
+        let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        if layout.runs.flatMap({ $0.text.split(whereSeparator: \.isWhitespace).map(String.init) }) != words {
+            // KRI-1192: CoreText's line breaker split a word wider than the box (a long German compound) between
+            // two lines, and a highlighted word must stay one run. Keep every word whole like the cloud's karaoke
+            // (`_wrap_word_indices`): greedy rows at the box width, a wider word alone on its row, shrunk only if it
+            // would leave the frame's safe width (`AuthoredTextFit`). Text whose words all fit never gets here.
+            var rows = style
+            rows.wrapsLines = false
+            let probe = NativeFontIdentity.font(graphics, size: style.size, variations: style.fontVariations)
+            let lines = AuthoredTextFit.wordRows(text, attributes: [
+                NSAttributedString.Key(kCTFontAttributeName as String): probe,
+                NSAttributedString.Key(kCTKernAttributeName as String): style.letterSpacing * style.size,
+            ], width: Double(canvas.width) * style.widthFraction)
+            layout = try compile(id: id, text: lines.joined(separator: "\n"), start: start, end: end, style: rows,
+                                 fontURL: fontURL, canvas: canvas)
         }
         // KRI-826: authored lines may have been fitted smaller than `style.size`.
         let size = layout.runs.first?.fontSize ?? style.size

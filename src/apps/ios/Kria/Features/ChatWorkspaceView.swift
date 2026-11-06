@@ -11,7 +11,6 @@ struct ChatWorkspaceView: View {
     @State private var drawerMounted = false
     @State private var showsGallery = false
     @State private var showsAccount = false
-    @State private var showsActivity = false
     @State private var collectionsEnabled = false
     @State private var collectionCacheOnlyRequired = false
     /// Kept for the life of the workspace so uploads and analysis carry on while the creator is in a chat.
@@ -31,7 +30,6 @@ struct ChatWorkspaceView: View {
                 close: { setDrawerOpen(false) },
                 openGallery: { setDrawerOpen(false); Perf.begin("gallery.open"); showsGallery = true },
                 openAccount: { setDrawerOpen(false); showsAccount = true },
-                openActivity: { setDrawerOpen(false); showsActivity = true },
                 openCollections: collectionsEnabled ? { openCameraRoll() } : nil
             ),
             content: workspace
@@ -78,9 +76,6 @@ struct ChatWorkspaceView: View {
             NavigationStack { GalleryView(openProjects: { showsGallery = false; setDrawerOpen(true) }) }
                 .environmentObject(model)
         }
-        .sheet(isPresented: $showsActivity) {
-            NavigationStack { ActivityView() }.environmentObject(model)
-        }
         .sheet(isPresented: $showsAccount) {
             NavigationStack { AccountView() }
         }
@@ -97,7 +92,7 @@ struct ChatWorkspaceView: View {
     /// The camera roll sits outside the chat's NavigationStack. It has its own, and a nested stack pushes its pages
     /// onto the outer one, where they outlive the switch to a chat.
     @ViewBuilder private var workspace: some View {
-        if model.showsCameraRoll, let cameraRoll {
+        if model.showsCameraRoll, model.pendingNewChat == nil, let cameraRoll {
             WorkspaceCrossfade(dismiss: {}) { _ in
                 CameraRollSurfaceView(model: cameraRoll, openProjects: { setDrawerOpen(!showsProjects) }, onSelected: { thread in
                     await model.loadProjects()
@@ -112,7 +107,7 @@ struct ChatWorkspaceView: View {
     private var chatWorkspace: some View {
         NavigationStack {
             Group {
-                if let project = model.selectedProject {
+                if let project = model.selectedProject, model.pendingNewChat == nil {
                     CreationWorkspaceView(
                         project: project,
                         openProjects: { setDrawerOpen(!showsProjects) },
@@ -122,7 +117,9 @@ struct ChatWorkspaceView: View {
                     .id(project.id)
                 } else {
                     Group {
-                        if model.isLoading || model.projectsState == .loading || model.projectsState == .idle {
+                        if let pending = model.pendingNewChat {
+                            PendingNewChatView(pending: pending)
+                        } else if model.isLoading || model.projectsState == .loading || model.projectsState == .idle {
                             WorkspaceLoadingView()
                         } else if model.projectsState == .empty {
                             WorkspaceEmptyView { Task { await model.createProject() } }
@@ -395,7 +392,7 @@ private struct WorkspaceEmptyView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Start your first video.").font(KriaFont.display(29))
+            Text("Start your first video.").font(KriaFont.headline(29))
             Text("Create a project, then tell Kria what you want the finished cut to feel like.")
                 .font(KriaFont.body(14))
                 .foregroundStyle(KriaColor.zinc)
@@ -406,6 +403,46 @@ private struct WorkspaceEmptyView: View {
         }
         .padding(24)
         .frame(maxWidth: 480, maxHeight: .infinity, alignment: .leading)
+        .background(WorkspaceSurface())
+    }
+}
+
+/// The new conversation, shown the moment New chat is tapped while the server makes the real one. It has
+/// no thread id yet: the creator can type, but sending and attaching wait for the real one.
+private struct PendingNewChatView: View {
+    let pending: AppModel.PendingNewChat
+    @EnvironmentObject private var model: AppModel
+    @FocusState private var focus: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 14) {
+                if let failure = pending.failure {
+                    Text("Your chat couldn’t be created.").font(KriaFont.headline(22))
+                    Text(failure).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc).multilineTextAlignment(.center)
+                    Button("Try again") { model.startNewChat() }
+                        .buttonStyle(CanonicalPrimaryButtonStyle())
+                        .accessibilityIdentifier("pending-new-chat-retry")
+                    Button("Back to my chats") { model.cancelPendingNewChat() }
+                        .font(KriaFont.body(14))
+                        .accessibilityIdentifier("pending-new-chat-cancel")
+                } else {
+                    ProgressView().tint(KriaColor.ink)
+                    Text("Starting your chat…").font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("pending-new-chat")
+            // Typing works at once; sending and attaching wait for the real thread, so nothing typed can
+            // reach any other conversation.
+            ChatComposer(
+                text: Binding(get: { pending.draft }, set: { model.setPendingNewChatDraft($0) }),
+                isSending: false, canAttach: false, blocksSubmission: true,
+                isFocused: $focus, attach: {}, send: {}
+            )
+        }
         .background(WorkspaceSurface())
     }
 }
@@ -433,7 +470,7 @@ private struct WorkspaceRecoveryView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Your workspace couldn’t open.").font(KriaFont.display(29))
+            Text("Your workspace couldn’t open.").font(KriaFont.headline(29))
             Text(model.errorMessage ?? "Check your connection, then try again. Your projects are safe.")
                 .font(KriaFont.body(14))
                 .foregroundStyle(KriaColor.zinc)
@@ -556,9 +593,17 @@ private struct CreationWorkspaceView: View {
     @State private var answeredClipSelections: [String: ClipSelectionSubmission] = [:]
     /// Conflict-choice answers sent from this device, by question id, for the collapsed "answered" summary.
     @State private var answeredChoices: [String: ChoiceSelectionSubmission] = [:]
+    /// A suggestions request is in flight (or re-asking while the server says pending), so the first prompt shows
+    /// its placeholders rather than nothing.
+    @State private var suggestionsLoading = false
     /// KRI-802: answers held for a reply that asks a choice card and a clip picker together, by message id. Both go
     /// out on one turn once both are in.
     @State private var questionBatches: [String: QuestionBatch] = [:]
+    /// The question the creator chose to answer in their own words ("Type my own"): shown above the composer
+    /// while they type, and the answer blocks are disabled meanwhile.
+    @State private var answeringQuestion: String?
+    /// The suggestion chip whose message is on its way (it shows a spinner while the others dim).
+    @State private var sendingSuggestionID: String?
     /// KRI-588: song-range questions the server has said are closed (409 `song_range_stale`), and the server's
     /// reason for refusing the last range, shown on that question's card.
     @State private var closedSongRangeQuestions: Set<String> = []
@@ -586,12 +631,26 @@ private struct CreationWorkspaceView: View {
     /// KRI-443: Stop on the live plan feed.
     @State private var isStoppingRender = false
     @State private var stopMessage: String?
+    /// Steer now: a Steer request is in flight; earlier turns the server refused to stop (their video is being made);
+    /// the plain note under the Up next row (a third message, a Steer that came too late).
+    @State private var isSteering = false
+    @State private var steerRefusedTurnIDs: Set<String> = []
+    @State private var steerNote: String?
+    /// Steer now: a message being sent while Kria works shows in the bar at once (not as a chat bubble) until the
+    /// server's queued `user_message` takes over; cleared when the send ends.
+    @State private var pendingWaitingText: String?
+    @State private var waitingClientEventID: String?
     @State private var stopUnavailableJobID: String?
     /// The server's reason the last confirmation was rejected, shown inside the card.
     @State private var confirmationConflict: CreationConfirmationConflict?
     @State private var showsAttachments = false
+    /// The creator's own re-record steps; the rest of the flow is read from uploads and the thread (`rerecordPhase`).
+    @State private var rerecordLocal: RerecordPhase.Local = .none
+    /// The camera for a re-record. Open independently of `rerecordLocal` so it is not torn down by the flow moving on.
+    @State private var rerecordCamera: RerecordTarget?
     /// KRI-815: the script the attachment sheet shows on its voiceover step; nil = the sheet as before.
     @State private var attachmentScript: VoiceoverScript?
+    @State private var attachmentLaunch: AttachmentLaunch?
     @State private var showsResult = false
     /// Live plan & review: the "Review your video" sheet, opened from the feed's CTA / Change or the project.
     @State private var reviewPresentation: ReviewPlanPresentation?
@@ -604,6 +663,9 @@ private struct CreationWorkspaceView: View {
     @State private var suggestionSet: SuggestionSet?
     /// The `suggestionScopeKey` that `suggestionSet` was fetched under; a set from another scope is never drawn.
     @State private var suggestionSetKey: String?
+    /// AI suggestion blocks: what each card is doing on this phone (sending, handled, stale) and the refresh nudge
+    /// that the editor Save and a stale tap give the poll.
+    @StateObject private var suggestionLedger = SuggestionCardLedger()
 
     init(project: ProjectSummary, openProjects: @escaping () -> Void, openAccount: @escaping () -> Void) {
         self.project = project
@@ -620,8 +682,70 @@ private struct CreationWorkspaceView: View {
     private var canAttachMedia: Bool {
         selectedFormat != nil && !isSending && !isActing && !isThinking
             && (selectedFormat != .slides || hasDedicatedSlideWorkspace)
-            && currentProject.status != .rendering && (selectedFormat == .slides || currentProject.status != .ready)
+            && currentProject.status != .rendering
     }
+
+    private var rerecordFacts: RerecordPhase.Facts {
+        let swapping = uploadRecords.contains { $0.projectID == project.id && $0.replacesMediaID != nil && $0.uploadFailed != true }
+            || uploadInFlight.values.contains { $0.projectID == project.id && $0.replacesMediaID != nil }
+        let failure = uploadFailures.first { $0.projectID == project.id && $0.replacesMediaID != nil }
+        let offer: RerecordOffer = workspaceStage == .ready && currentProject.status == .ready && !isSending && !isActing && !isThinking
+            ? .resolve(thread: fullThread) : .none
+        return RerecordPhase.Facts(
+            offer: offer, replaceInFlight: swapping,
+            failure: failure.map { RerecordFailure(code: nil, message: $0.message, retryable: $0.cause == .uploadFailed) },
+            debt: RerecordPlanDebt.owed(state: threadState, activeJobID: fullThread?.activeJobID ?? currentProject.activeJobID?.uuidString, events: events)
+        )
+    }
+
+    private var rerecordPhase: RerecordPhase { .resolve(local: rerecordLocal, facts: rerecordFacts) }
+
+    private var rerecordActions: RerecordActions {
+        RerecordActions(
+            start: {
+                switch rerecordFacts.offer {
+                case .none: break
+                case let .one(target): rerecordLocal = .confirming([target])
+                case let .choose(targets): rerecordLocal = .confirming(targets)
+                }
+            },
+            retry: { if let id = rerecordFacts.failureRecordID(in: uploadFailures, project: project.id) { Task { await model.uploads.retryUpload(recordID: id) } } },
+            dismissFailure: {
+                guard let id = rerecordFacts.failureRecordID(in: uploadFailures, project: project.id) else { return }
+                Task { await model.uploads.cancel(recordID: id); model.uploads.dismissFailure(id: id) }
+            },
+            makeAgain: { if let debt = rerecordFacts.debt { Task { await sendRerecordPlan(debt) } } }
+        )
+    }
+
+    /// The fresh-plan turn the swap owes. A failed send leaves the swap owed, so the button is still there to retry.
+    private func sendRerecordPlan(_ debt: SourceReplacement) async {
+        rerecordLocal = .planning(debt)
+        for _ in 0..<30 where isSending || isActing || isThinking || pendingUploadCount > 0 { try? await Task.sleep(for: .milliseconds(100)) }
+        // `send` returns silently while a turn runs or an earlier receipt is pending; staying `.planning` then would
+        // hide the Make it again button with nothing left to send the turn.
+        guard !isSending, !isActing, !isThinking, sendReceipt == nil else { rerecordLocal = .none; return }
+        await send(message: RerecordPlanDebt.message, keepsDraft: true)
+        if rerecordFacts.debt == debt, !isThinking, sendReceipt == nil { rerecordLocal = .none }
+    }
+
+    private func rerecordCameraClosed() {
+        // Nothing was handed over: the creator backed out, so this session has no swap to follow.
+        if case .swapping = rerecordLocal, !rerecordFacts.replaceInFlight, rerecordFacts.debt == nil { rerecordLocal = .none }
+    }
+
+    private func rerecordDebtChanged(_ debt: SourceReplacement?) {
+        guard let debt else { return }
+        if case .swapping = rerecordLocal { Task { await sendRerecordPlan(debt) } }
+    }
+
+    private var rerecordConfirmation: Binding<Bool> {
+        Binding(
+            get: { if case .confirming = rerecordLocal { true } else { false } },
+            set: { if !$0, case .confirming = rerecordLocal { rerecordLocal = .none } }
+        )
+    }
+
 
     private var readyMediaCount: Int {
         guard workspaceStage == .footage else { return 0 }
@@ -672,11 +796,13 @@ private struct CreationWorkspaceView: View {
     }
 
     private var suppressedTimelineMessages: Set<String> {
+        // Steer now: the waiting message lives in the bar, and a message the creator took back is gone.
+        let waiting = steerNowEnabled ? SteerNowPolicy.hiddenMessageEventIDs(in: events) : []
         if workspaceStage == .format, let event = events.last(where: { $0.eventType == "format_prompt" }) {
-            return [event.id]
+            return waiting.union([event.id])
         }
-        if workspaceStage == .direction, let event = activeProposalEvent { return [event.id] }
-        return []
+        if workspaceStage == .direction, let event = activeProposalEvent { return waiting.union([event.id]) }
+        return waiting
     }
 
     private var activeUploadIDs: Set<UUID> {
@@ -703,6 +829,7 @@ private struct CreationWorkspaceView: View {
             hasher.combine(message.afterSequence); hasher.combine(message.localOrder)
         }
         hasher.combine(stage?.id); hasher.combine(stage?.afterSequence)
+        hasher.combine(waitingClientEventID)
         for id in suppressed.sorted() { hasher.combine(id) }
         for upload in uploads { hasher.combine(upload.id); hasher.combine(upload.afterSequence); hasher.combine(upload.localOrder) }
         for requestID in completedThoughtSummaries.keys.sorted() {
@@ -715,7 +842,7 @@ private struct CreationWorkspaceView: View {
         if cacheable, derived.timelineKey == key { return derived.timeline }
         Perf.event("timeline.build")
         let built = ChatTimeline.build(
-            events: events, pending: pendingMessages, stage: stage,
+            events: events, pending: pendingMessages.filter { $0.clientEventID != waitingClientEventID }, stage: stage,
             suppressedMessageIDs: suppressed, uploads: uploads, thoughtSummaries: completedThoughtSummaries
         )
         derived.timelineKey = cacheable ? key : nil
@@ -958,15 +1085,166 @@ private struct CreationWorkspaceView: View {
         try await model.api.cancelRender(threadID: project.id, turnID: turnID, revision: threadRevision)
     }
 
+    // MARK: Steer now
+
+    private var steerNowEnabled: Bool { capabilities?.steerNowEnabled == true && currentProject.runtimeVersion == 2 }
+    private var upNext: SteerNowPolicy.Waiting? { steerNowEnabled ? SteerNowPolicy.waiting(in: events) : nil }
+    private var steerStrings: SteerStrings { SteerStrings(ClipAnswerLanguage(threadState: threadState)) }
+
+    /// Kria is planning, its card is up, or a video is being made: a typed message now waits.
+    private var kriaIsBusy: Bool { isThinking || approval != nil || workspaceStage == .rendering }
+
+    /// Steer now: the bar on top of the input box. Tucked 13 pt under the composer's top edge (its outer padding is 12)
+    /// and inset 12 pt from its sides, like Codex's bar.
+    @ViewBuilder private var waitingBar: some View {
+        if steerNowEnabled, let waiting = upNext {
+            WaitingMessageBar(
+                text: waiting.text, strings: steerStrings, canSteer: canSteer(waiting), isBusy: isSteering, note: steerNote,
+                steer: { steerNow(waiting) }, remove: { removeWaiting(waiting, edit: false) }, edit: { removeWaiting(waiting, edit: true) }
+            )
+            .padding(.horizontal, 26).padding(.bottom, -13)
+        } else if steerNowEnabled, let text = pendingWaitingText {
+            WaitingMessageBar(text: text, strings: steerStrings, canSteer: false, isBusy: true, note: nil,
+                              steer: {}, remove: {}, edit: {})
+                .padding(.horizontal, 26).padding(.bottom, -13)
+        }
+    }
+
+    /// The trash and Edit: cancel the waiting turn only while it still waits (the server checks that atomically). The
+    /// server marks it so Kria never reads it; Edit then puts the words back in the box (ahead of anything already typed
+    /// there). A message Kria already picked up is never stopped: the bar says so and keeps the words out of the box.
+    private func removeWaiting(_ waiting: SteerNowPolicy.Waiting, edit: Bool) {
+        guard !isSteering else { return }
+        isSteering = true
+        steerNote = nil
+        Task {
+            defer { isSteering = false }
+            for attempt in 0..<2 {
+                do {
+                    let removed = try await model.api.removeWaitingMessage(threadID: project.id, turnID: waiting.turnID, revision: threadRevision)
+                    threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: removed.threadRevision)
+                    if edit {
+                        let typed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                        prompt = typed.isEmpty ? waiting.text : waiting.text + " " + typed
+                        composerFocused = true
+                    }
+                    _ = try? await refreshDelta()
+                    return
+                } catch let error as APIError where error.isConflict {
+                    if error.conflictCode == "turn_no_longer_queued" || error.conflictCode == "turn_not_cancellable" {
+                        steerNote = steerStrings.alreadyStarted
+                        await refreshNow()
+                        return
+                    }
+                    guard attempt == 0 else {
+                        steerNote = steerStrings.couldNotRemove
+                        await refreshNow()
+                        return
+                    }
+                    // The project moved on since the last read: take the latest and decide again before the second try.
+                    // Kria may have picked the message up in between; then it is not tried again.
+                    _ = try? await refreshDelta()
+                    switch SteerNowPolicy.removalRetry(for: waiting, in: events) {
+                    case .retry:
+                        continue
+                    case .alreadyStarted:
+                        steerNote = steerStrings.alreadyStarted
+                        return
+                    case .alreadyRemoved:
+                        // Gone already (removed elsewhere): Edit still gets its words back.
+                        if edit {
+                            let typed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                            prompt = typed.isEmpty ? waiting.text : waiting.text + " " + typed
+                            composerFocused = true
+                        }
+                        return
+                    }
+                } catch {
+                    steerNote = steerStrings.couldNotRemove
+                    return
+                }
+            }
+        }
+    }
+
+    private func canSteer(_ waiting: SteerNowPolicy.Waiting) -> Bool {
+        guard let behind = waiting.behindTurnID, !steerRefusedTurnIDs.contains(behind) else { return false }
+        return SteerNowPolicy.canSteer(waiting, events: events)
+    }
+
+    /// Stops the turn Kria is working on so the waiting message runs now. A stale revision (a worker event landed
+    /// since the last read) refreshes and tries once more; a turn whose video already started keeps its message
+    /// waiting and says so; a turn that already finished just refreshes.
+    private func steerNow(_ waiting: SteerNowPolicy.Waiting) {
+        guard let behind = waiting.behindTurnID, !isSteering else { return }
+        isSteering = true
+        steerNote = nil
+        Task {
+            defer { isSteering = false }
+            for attempt in 0..<2 {
+                do {
+                    let stopped = try await model.api.steerNow(threadID: project.id, turnID: behind, revision: threadRevision)
+                    threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: stopped.threadRevision)
+                    // Kria works on the waiting message now: it gets the Thinking row until its own reply lands.
+                    thinkingAnchor = afterSequence
+                    thinkingTurnID = waiting.turnID
+                    thinkingSettlesOnJobStatus = false
+                    isThinking = true
+                    _ = try? await refreshDelta()
+                    settleThinking()
+                    return
+                } catch let error as APIError where error.isConflict {
+                    switch error.conflictCode {
+                    case "turn_not_cancellable":
+                        steerRefusedTurnIDs.insert(behind)
+                        steerNote = steerStrings.videoAlreadyStarted
+                        await refreshNow()
+                        return
+                    case "nothing_to_steer_to":
+                        steerRefusedTurnIDs.insert(behind)
+                        await refreshNow()
+                        return
+                    default:
+                        // The project moved on since the last read: take the latest and try once more.
+                        guard attempt == 0 else {
+                            steerNote = steerStrings.couldNotSwitch
+                            await refreshNow()
+                            return
+                        }
+                        _ = try? await refreshDelta()
+                    }
+                } catch {
+                    steerNote = steerStrings.couldNotSwitch
+                    return
+                }
+            }
+        }
+    }
+
     private var timelineUpdateToken: String {
         let feed = planFeed.paced(by: deviceBuildStage)
-        let liveThoughtToken = liveThoughtSummaries.map { "\($0.id):\($0.status.rawValue):\($0.text.count)" }.joined(separator: "|")
-        return timeline.map(\.id).joined(separator: "|") + "|\(isThinking)|\(isSending)|\(failure?.message ?? "")"
-            + "|feed\(feed.decidedCount)/\(feed.totalCount)"
-            + "|thoughts\(liveThoughtToken)"
-            + "|finishedEdits\(finishedEditSuggestionUpdate)"
-            // KRI-769: the after-render chips arrive after the card, below the fold; a reader at the bottom follows them in.
-            + "|readyChips\(suggestionChips(for: .ready).map(\.id).joined(separator: ","))"
+        let readyCardsToken: String = readyCardsPresentation?.cards.map(\.id).joined(separator: ",") ?? ""
+        let liveThoughtToken: String = liveThoughtSummaries.map { "\($0.id):\($0.status.rawValue):\($0.text.count)" }.joined(separator: "|")
+        let timelineIDs: String = timeline.map(\.id).joined(separator: "|")
+        let failureMessage: String = failure?.message ?? ""
+        let upNextTurnID: String = upNext?.turnID ?? ""
+        let steerNoteText: String = steerNote ?? ""
+        // KRI-769: the after-render chips arrive after the card, below the fold; a reader at the bottom follows them in.
+        let readyChipIDs: String = suggestionChips(for: .ready).map(\.id).joined(separator: ",")
+        // Separate parts keep this within the compiler's type-check time limit on CI.
+        let parts: [String] = [
+            timelineIDs,
+            "\(isThinking)",
+            "\(isSending)",
+            failureMessage,
+            "upNext\(upNextTurnID)/\(steerNoteText)",
+            "feed\(feed.decidedCount)/\(feed.totalCount)",
+            "thoughts\(liveThoughtToken)",
+            "finishedEdits\(finishedEditSuggestionUpdate)",
+            "readyChips\(readyChipIDs)",
+            "readyCards\(readyCardsToken)",
+        ]
+        return parts.joined(separator: "|")
     }
 
     private var streamingThoughtSummaries: [KriaThoughtSummary] {
@@ -998,6 +1276,10 @@ private struct CreationWorkspaceView: View {
     }
 
     @ViewBuilder private var conversationContent: some View {
+        // The video type leads the transcript while footage is being chosen, so the timeline reads in order.
+        if workspaceStage == .footage, let selectedFormat {
+            VideoTypeRow(format: selectedFormat) { isChoosingFormat = true }
+        }
         ForEach(ChatTimelineGroup.group(timeline)) { group in
             if case .media = group.entries[0].content {
                 mediaReceipts(group.entries)
@@ -1038,34 +1320,42 @@ private struct CreationWorkspaceView: View {
         )
     }
 
+    private func messageRow(_ message: ChatTranscriptMessage) -> some View {
+        ChatMessageRow(message: message, onSelectOption: { option in Task { await send(message: option) } },
+                       responseStartedAt: responsePresentation.startTime(for: message.id),
+                       requirements: briefRequirements,
+                       briefSettled: briefSettled,
+                       onCorrectGuess: { label in
+                           // One tap: the sentence is started (after whatever the creator already
+                           // typed), the keyboard is up, and only the right name is left to type.
+                           prompt = label.correctionDraft(appendingTo: prompt)
+                           composerFocused = true
+                       },
+                       clipSelectionMode: clipSelectionMode(for: message),
+                       clipSelectionMedia: clipSelectionMedia(for: message),
+                       clipSelectionLanguage: ClipAnswerLanguage(threadState: threadState),
+                       songOrderMode: songOrderMode(for: message),
+                       songOrderMedia: CreationAttachedMedia.parse(threadState),
+                       songTimeline: songTimelineConfiguration,
+                       songDurationS: CreationAttachedMedia.song(threadState)?.durationS,
+                       projectID: project.id,
+                       choiceQuestionMode: choiceQuestionMode(for: message),
+                       hidesAnswerEcho: echoesChoiceAnswer(message),
+                       questionBatch: asksTogether(message) ? questionBatches[message.id] ?? QuestionBatch() : nil,
+                       songRangeMode: songRangeMode(for: message),
+                       objectMarkMode: objectMarkMode(for: message),
+                       momentOrderMode: momentOrderMode(for: message),
+                       replyOptionsMode: replyOptionsMode(for: message),
+                       voiceoverScriptMode: voiceoverScriptMode(for: message),
+                       answerOwn: { startAnsweringOwn(message) },
+                       isAnsweringOwn: answeringQuestion != nil && composerFocused,
+                       changeHeldChoice: { questionBatches[message.id]?.releaseChoice() })
+    }
+
     @ViewBuilder private func timelineRow(_ entry: ChatTimelineEntry) -> some View {
         switch entry.content {
         case .message(let message):
-            ChatMessageRow(message: message, onSelectOption: { option in Task { await send(message: option) } },
-                           responseStartedAt: responsePresentation.startTime(for: message.id),
-                           requirements: briefRequirements,
-                           briefSettled: briefSettled,
-                           onCorrectGuess: { label in
-                               // One tap: the sentence is started (after whatever the creator already
-                               // typed), the keyboard is up, and only the right name is left to type.
-                               prompt = label.correctionDraft(appendingTo: prompt)
-                               composerFocused = true
-                           },
-                           clipSelectionMode: clipSelectionMode(for: message),
-                           clipSelectionMedia: clipSelectionMedia(for: message),
-                           clipSelectionLanguage: ClipAnswerLanguage(threadState: threadState),
-                           songOrderMode: songOrderMode(for: message),
-                           songOrderMedia: CreationAttachedMedia.parse(threadState),
-                           songTimeline: songTimelineConfiguration,
-                           songDurationS: CreationAttachedMedia.song(threadState)?.durationS,
-                           projectID: project.id,
-                           choiceQuestionMode: choiceQuestionMode(for: message),
-                           questionBatch: asksTogether(message) ? questionBatches[message.id] ?? QuestionBatch() : nil,
-                           songRangeMode: songRangeMode(for: message),
-                           objectMarkMode: objectMarkMode(for: message),
-                           momentOrderMode: momentOrderMode(for: message),
-                           replyOptionsMode: replyOptionsMode(for: message),
-                           voiceoverScriptMode: voiceoverScriptMode(for: message))
+            messageRow(message)
                 .id(entry.id)
             if let operationID = message.memoryOperationID {
                 SavedTextPreferenceUndo(operationID: operationID, api: model.api)
@@ -1073,13 +1363,11 @@ private struct CreationWorkspaceView: View {
         case .stage:
             stageContent.id(entry.id)
         case .pendingUpload(let recordID):
-            HStack(spacing: 10) {
+            KriaMediaRow(name: uploadRecords.first { $0.id == recordID }.map { BackgroundUploadCoordinator.displayFilename($0.filename) }
+                            ?? uploadInFlight[recordID]?.filename ?? "Preparing media…",
+                         status: uploadRecords.contains { $0.id == recordID } ? .uploading(uploadProgress.values[recordID] ?? 0) : .preparing,
+                         onFill: true) {
                 CreationRecordThumbnail(recordID: recordID, version: previewVersion)
-                Text(uploadRecords.first { $0.id == recordID }.map { BackgroundUploadCoordinator.displayFilename($0.filename) }
-                     ?? uploadInFlight[recordID]?.filename ?? "Preparing media…")
-                    .font(KriaFont.body(12)).lineLimit(1)
-                Spacer()
-                UploadProgressBar(store: uploadProgress, recordID: recordID)
             }
             .accessibilityIdentifier("chat-upload-\(recordID.uuidString)")
             .id(entry.id)
@@ -1132,7 +1420,8 @@ private struct CreationWorkspaceView: View {
                 Task { await send(message: text, clipSelection: submission) }
             }
         }
-        return nil
+        // Not the newest clip question and nothing answered it: a newer one replaced it.
+        return .superseded
     }
 
     /// The song timeline (instead of the vertical order list) when the server also advertises
@@ -1148,7 +1437,7 @@ private struct CreationWorkspaceView: View {
     }
 
     /// Order card only when the server advertises `song_order_questions`. Interactive on the newest question
-    /// that no later user message has answered; read-only afterwards; hidden once a newer question replaced it.
+    /// that no later user message has answered; read-only afterwards; a quiet "replaced" line once a newer question replaced it.
     private func songOrderMode(for message: ChatTranscriptMessage) -> SongOrderCardMode? {
         guard transcriptIsFresh, capabilities?.songOrderQuestionsEnabled == true,
               let question = message.songOrderQuestion else { return nil }
@@ -1166,14 +1455,14 @@ private struct CreationWorkspaceView: View {
             let positions = SongOrderPositions.map(media: CreationAttachedMedia.parse(threadState), question: question)
             let summary = submission.summary(positions: positions)
             return .answered(summary: summary.isEmpty ? nil : summary)
-        case .superseded, nil:
-            return nil
+        case .superseded: return .superseded
+        case nil: return nil
         }
     }
 
     /// KRI-588: the "which part of the song did you film?" card, only when the server advertises
     /// `song_range_questions` (and the song affordance). Interactive on the newest question no `song_range`
-    /// has answered; read-only once answered; hidden once a newer question replaced it or the server closed it.
+    /// has answered; read-only once answered; a quiet "replaced" line once a newer question replaced it or the server closed it.
     private func songRangeMode(for message: ChatTranscriptMessage) -> SongRangeCardMode? {
         guard transcriptIsFresh, capabilities?.songRangeQuestionsEnabled == true,
               let question = message.songRangeQuestion else { return nil }
@@ -1191,13 +1480,13 @@ private struct CreationWorkspaceView: View {
             }
         case .answered(let answer):
             return .answered(summary: answer.summary, spoken: answer.spokenSummary)
-        case .superseded, nil:
-            return nil
+        case .superseded: return .superseded
+        case nil: return nil
         }
     }
 
     /// KRI-901: the "Mark the plate" card, only when the server advertises `protected_region_marks`. Interactive on
-    /// the newest question no mark of that object has answered; read-only once answered; hidden once replaced.
+    /// the newest question no mark of that object has answered; read-only once answered; a quiet "replaced" line once replaced.
     private func objectMarkMode(for message: ChatTranscriptMessage) -> ObjectMarkCardMode? {
         guard transcriptIsFresh, capabilities?.protectedRegionMarks == true,
               let question = message.protectedRegionQuestion else { return nil }
@@ -1216,13 +1505,13 @@ private struct CreationWorkspaceView: View {
             }
         case .answered(let answer):
             return .answered(summary: answer.message)
-        case .superseded, nil:
-            return nil
+        case .superseded: return .superseded
+        case nil: return nil
         }
     }
 
     /// KRI-723: the "show me your moments" card, only when the server advertises `moment_order_questions`.
-    /// Interactive on the newest question no answer has closed; read-only once answered; hidden once replaced.
+    /// Interactive on the newest question no answer has closed; read-only once answered; a quiet "replaced" line once replaced.
     private func momentOrderMode(for message: ChatTranscriptMessage) -> MomentOrderCardMode? {
         guard transcriptIsFresh, capabilities?.momentOrderQuestions == true,
               let question = message.momentOrderQuestion else { return nil }
@@ -1242,8 +1531,8 @@ private struct CreationWorkspaceView: View {
             }
         case .answered(let answer):
             return .answered(summary: MomentOrderStrings(language).answered(count: answer.answers.count))
-        case .superseded, nil:
-            return nil
+        case .superseded: return .superseded
+        case nil: return nil
         }
     }
 
@@ -1258,10 +1547,12 @@ private struct CreationWorkspaceView: View {
         guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return nil }
         let later = messages[(index + 1)...]
         if let answer = later.first(where: { $0.role == .user }) {
+            // The answer's message is still pending: the card stays open so a refused send reopens it with a reason.
+            if answer.isPending { return .active(isSending: true) { _, _ in } }
             let chosen = answeredChoices[question.questionID].flatMap { question.option(key: $0.optionKey)?.label }
             return .answered(summary: chosen ?? answer.content)
         }
-        guard !later.contains(where: { $0.choiceQuestion != nil }) else { return nil }
+        guard !later.contains(where: { $0.choiceQuestion != nil }) else { return .superseded }
         return .active(isSending: isSending || isActing || isThinking) { submission, text in
             if asksTogether(message) {
                 holdBatchAnswer(for: message) { $0.hold(choice: submission, text: text) }
@@ -1271,6 +1562,27 @@ private struct CreationWorkspaceView: View {
             // A rejected send removes the pending message, which reopens the card for a retry.
             Task { await send(message: text, choiceSelection: submission) }
         }
+    }
+
+    /// The user message that is nothing more than the "You chose" capsule of the choice question it answers (same
+    /// text, confirmed by the server). The capsule stands alone then; a combined batch message, a typed answer that
+    /// differs from the capsule, or a pending send keep their bubble.
+    private func echoesChoiceAnswer(_ message: ChatTranscriptMessage) -> Bool {
+        guard message.role == .user, !message.isPending, transcriptIsFresh,
+              capabilities?.choiceQuestionsEnabled == true else { return false }
+        let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
+            if case .message(let message) = entry.content { message } else { nil }
+        }
+        guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return false }
+        // The nearest question above, with no other user message in between: this one is its answer.
+        for earlier in messages[..<index].reversed() {
+            if earlier.role == .user { return false }
+            guard let question = earlier.choiceQuestion else { continue }
+            if earlier.clipQuestion != nil { return false }
+            let shown = answeredChoices[question.questionID].flatMap { question.option(key: $0.optionKey)?.label } ?? message.content
+            return shown == message.content
+        }
+        return false
     }
 
     /// KRI-815: the script card only when the server advertises it. Interactive on the newest script of THIS
@@ -1301,6 +1613,7 @@ private struct CreationWorkspaceView: View {
     /// KRI-815: the attachment sheet, opened on the voiceover step with this script to read along.
     private func openVoiceoverStep(with script: VoiceoverScript) {
         guard canAttachMedia else { return }
+        attachmentLaunch = nil
         attachmentScript = script
         scrollRequest += 1
         showsAttachments = true
@@ -1328,8 +1641,9 @@ private struct CreationWorkspaceView: View {
         Task { await send(message: ready.message, clipSelection: ready.clips, choiceSelection: ready.choice) }
     }
 
-    /// Chips for a plain `assistant_response` question, interactive only on the newest question that no later
-    /// user message has answered. Anything later (an answer, a newer question) removes them from history.
+    /// Answer blocks for a plain `assistant_response` question, interactive on the newest question that no later
+    /// user message has answered. A later message that is still pending keeps them open (the tapped one spins);
+    /// anything later that landed (an answer, a newer question) removes them from history.
     private func replyOptionsMode(for message: ChatTranscriptMessage) -> ReplyOptionsMode? {
         guard transcriptIsFresh, !message.replyOptions.isEmpty else { return nil }
         let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
@@ -1337,14 +1651,21 @@ private struct CreationWorkspaceView: View {
         }
         guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return nil }
         let later = messages[(index + 1)...]
-        guard !later.contains(where: { $0.role == .user || !$0.replyOptions.isEmpty || !$0.options.isEmpty }) else { return nil }
+        guard !later.contains(where: { ($0.role == .user && !$0.isPending) || !$0.replyOptions.isEmpty || !$0.options.isEmpty }) else { return nil }
+        let pending = later.first(where: { $0.role == .user && $0.isPending })
         return ReplyOptionsMode(
             select: { option in Task { await send(message: option) } },
-            other: {
-                // Nothing is sent and nothing typed is lost: the creator writes their own answer.
-                composerFocused = true
-            }
+            other: { startAnsweringOwn(message) },
+            isSending: pending != nil,
+            pendingOption: pending.flatMap { pending in message.replyOptions.first { $0 == pending.content } },
+            isTyping: answeringQuestion != nil && composerFocused
         )
+    }
+
+    /// "Type my own": the composer takes focus, names the question above it, and nothing is sent.
+    private func startAnsweringOwn(_ message: ChatTranscriptMessage) {
+        answeringQuestion = message.displayedContent
+        composerFocused = true
     }
 
     private func mediaReceipts(_ entries: [ChatTimelineEntry]) -> some View {
@@ -1353,18 +1674,16 @@ private struct CreationWorkspaceView: View {
             let current = Dictionary(CreationAttachedMedia.parse(threadState).map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
             return CreationAttachedMedia.parse(event.payload ?? [:]).map { current[$0.id] ?? $0 }
         }
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .top, spacing: 10) {
-                ForEach(Array(media.enumerated()), id: \.offset) { _, attachment in
-                    VStack(alignment: .leading, spacing: 5) {
-                        CreationAttachmentThumbnail(media: attachment)
-                        Text(attachment.displayName).font(KriaFont.body(11)).lineLimit(2)
-                    }
-                    .frame(width: 92, alignment: .leading)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("Uploaded \(attachment.displayName)")
-                    .accessibilityIdentifier("chat-media-\(attachment.id)")
+        return VStack(spacing: 8) {
+            ForEach(Array(media.enumerated()), id: \.offset) { _, attachment in
+                KriaMediaRow(name: attachment.displayName,
+                             status: .ready(attachment.isSong ? "Song · Ready" : attachment.isVoiceover ? "Voiceover · Ready" : "Video · Ready"),
+                             trailing: .check, onFill: true) {
+                    CreationAttachmentThumbnail(media: attachment)
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Uploaded \(attachment.displayName)")
+                .accessibilityIdentifier("chat-media-\(attachment.id)")
             }
         }
     }
@@ -1403,13 +1722,44 @@ private struct CreationWorkspaceView: View {
         // A completed device export updates the job without necessarily
         // advancing the chat revision. Re-read proposals on return.
         finishedEditSuggestionRefresh += 1
+        suggestionLedger.requestRefresh()
     }
 
-    private func openAttachments() {
+    private func attachmentSheet(rerecordTarget: RerecordTarget?) -> some View {
+        AttachmentSheet(
+            projectID: project.id,
+            maximumClipCount: selectedMaximumClipCount,
+            attachedClipCount: attachedClipCount,
+            format: selectedFormat,
+            thread: fullThread,
+            capabilities: capabilities,
+            capabilitiesLoaded: capabilitiesAreAuthoritative,
+            voiceoverScript: rerecordTarget == nil ? attachmentScript : nil,
+            launch: rerecordTarget == nil ? attachmentLaunch : nil,
+            rerecordTarget: rerecordTarget,
+            refresh: {
+                if !capabilitiesAreAuthoritative { await refreshCapabilities() }
+                await refreshNow()
+            }
+        )
+            .environmentObject(model)
+            .environment(\.dynamicTypeSize, dynamicTypeSize)
+    }
+
+    private func openAttachments(launch: AttachmentLaunch? = nil) {
         guard canAttachMedia else { return }
+        attachmentLaunch = launch
         attachmentScript = nil
         scrollRequest += 1
         showsAttachments = true
+    }
+
+    /// "Record again" / "Upload another" after a silent video. When the edit already holds its most clips (a one-clip
+    /// Talk to camera), a new take would be refused, so open Add media on its clip list where the silent one can be removed.
+    private func openAttachmentsToReplaceFootage(launch: AttachmentLaunch) {
+        let pendingClips = uploadRecords.filter { $0.projectID == project.id && $0.role == .clip }.count
+        let isFull = attachedClipCount + pendingClips >= selectedMaximumClipCount
+        openAttachments(launch: isFull ? nil : launch)
     }
 
     private func rememberUploadAnchors() {
@@ -1490,7 +1840,16 @@ private struct CreationWorkspaceView: View {
         SlidePostRouting.isFormatKnown(selectedFormat: selectedFormat, project: currentProject, thread: fullThread)
     }
 
+    private var hasSavedEditor: Bool {
+        guard let fullThread,
+              UUID(uuidString: fullThread.id) == currentProject.id,
+              fullThread.activeJobID.flatMap(UUID.init(uuidString:)) == currentProject.activeJobID,
+              fullThread.activePlanItemID == currentProject.activePlanItemID else { return false }
+        return fullThread.savedEditorVariant != nil
+    }
+
     private var hasAccessibleVideo: Bool {
+        if hasSavedEditor { return true }
         if currentProject.status == .ready { return true }
         guard let key = deviceRenderKey, let presentation = model.deviceRenders.presentations[key] else { return false }
         return presentation.localFile != nil && !presentation.outputVerificationPending
@@ -1551,7 +1910,7 @@ private struct CreationWorkspaceView: View {
                     conversationCloseID: editorConversationCloseID,
                     // Back returns to the chats drawer (where the user came from), never the format chooser.
                     onBack: openProjects,
-                    onAddMedia: openAttachments
+                    onAddMedia: { openAttachments() }
                 )
                 .environmentObject(model)
             case .resolvingFormat:
@@ -1598,6 +1957,10 @@ private struct CreationWorkspaceView: View {
             await capabilities
         }
         .task(id: suggestionFetchKey) { await loadSuggestions() }
+        // An editor Save changes the Job without a new thread revision, so cards built on the old edit are asked about again.
+        .onChange(of: editorSession.saveState) { old, new in
+            if case .saving = old, new == .saved || new == .previewPending { suggestionLedger.requestRefresh() }
+        }
         .task(id: thoughtRequestID) {
             guard let requestID = thoughtRequestID else { return }
             while !Task.isCancelled, (isSending || isThinking), thoughtRequestID == requestID {
@@ -1680,24 +2043,23 @@ private struct CreationWorkspaceView: View {
             apply(thread)
         }
         .sheet(isPresented: $showsAttachments) {
-            AttachmentSheet(
-                projectID: project.id,
-                maximumClipCount: selectedMaximumClipCount,
-                attachedClipCount: attachedClipCount,
-                format: selectedFormat,
-                thread: fullThread,
-                capabilities: capabilities,
-                capabilitiesLoaded: capabilitiesAreAuthoritative,
-                voiceoverScript: attachmentScript,
-                refresh: {
-                    if !capabilitiesAreAuthoritative { await refreshCapabilities() }
-                    await refreshNow()
-                }
-            )
-                .environmentObject(model)
-                .environment(\.dynamicTypeSize, dynamicTypeSize)
+            attachmentSheet(rerecordTarget: nil)
                 .presentationDetents([.large])
         }
+        .fullScreenCover(item: $rerecordCamera, onDismiss: rerecordCameraClosed) { target in
+            attachmentSheet(rerecordTarget: target)
+        }
+        .confirmationDialog("Re-record your take?", isPresented: rerecordConfirmation, titleVisibility: .visible) {
+            if case let .confirming(targets) = rerecordLocal {
+                ForEach(targets) { target in
+                    Button(targets.count == 1 ? "Record new take" : "Re-record \(target.displayName)") { rerecordLocal = .swapping; rerecordCamera = target }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Kria keeps your script, background and other clips, then makes the video again from your new take. Text and caption changes you made to this video won’t carry over. Your current video stays until the new one is ready.")
+        }
+        .onChange(of: rerecordFacts.debt) { _, debt in rerecordDebtChanged(debt) }
         .sheet(item: $reviewPresentation) { presentation in
             ReviewPlanView(
                 seed: presentation.seed, initialFlag: presentation.initialFlag,
@@ -1723,6 +2085,7 @@ private struct CreationWorkspaceView: View {
                     conversationAcceptedID: conversationAcceptedID,
                     conversationCloseID: editorConversationCloseID,
                     conversation: { AnyView(editorConversation) },
+                    improve: readyCardsPresentation,
                     onBack: close
                 )
                 .environmentObject(model)
@@ -1764,25 +2127,42 @@ private struct CreationWorkspaceView: View {
                 // KRI-756: the first-prompt chips sit just above the composer, not inside the scrolling transcript.
                 let firstPromptChips = suggestionChips(for: .firstPrompt)
                 if !firstPromptChips.isEmpty {
-                    SuggestionChipRow(chips: firstPromptChips) { sendSuggestion($0) }
+                    SuggestionChipRow(chips: firstPromptChips, sendingID: sendingSuggestionID) { sendSuggestion($0) }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 4)
                         .background(KriaColor.paper)
                         .accessibilityIdentifier("first-prompt-suggestions")
+                } else if suggestionsLoading, suggestionSurface == .firstPrompt,
+                          prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    // The first prompt's chips are still being written (Paper S2.09 state A): two quiet placeholders.
+                    HStack(spacing: 8) {
+                        KriaSkeletonBar(width: 140, height: 44)
+                        KriaSkeletonBar(width: 112, height: 44)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 4)
+                    .background(KriaColor.paper)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Loading suggestions")
+                    .accessibilityIdentifier("first-prompt-suggestions-loading")
                 }
+                waitingBar
                 ChatComposer(
                     text: promptBinding,
                     isSending: isSending || isActing,
                     canAttach: canAttachMedia,
                     canSendWithoutText: readyMediaCount > 0,
                     // be99a3f12 (origin/main): a failed attach never blocks Send.
-                    blocksSubmission: isThinking || sendReceipt != nil || pendingUploadCount > 0,
-                    placeholder: readyMediaCount > 0 ? "Add instructions (optional)" : "Tell Kria what you want…",
+                    blocksSubmission: (isThinking && !steerNowEnabled) || sendReceipt != nil || pendingUploadCount > 0,
+                    placeholder: answeringQuestion != nil ? "Type your answer" : (readyMediaCount > 0 ? "Add instructions (optional)" : "Tell Kria what you want…"),
+                    answering: answeringQuestion,
+                    cancelAnswering: { answeringQuestion = nil },
                     isFocused: $composerFocused,
                     dictation: dictationForComposer,
                     dictationTerms: dictationContextTerms,
-                    attach: openAttachments,
-                    send: { Task { await send() } }
+                    attach: { openAttachments() },
+                    send: { Task { await send() } },
+                    attachMenu: attachMenu
                 )
             }
             .accessibilityHidden(projectsDrawerOpen)
@@ -1790,15 +2170,33 @@ private struct CreationWorkspaceView: View {
         }
     }
 
+    /// What the composer's + offers (Paper S3.05): Record and Upload for every format, and the optional script and
+    /// voiceover rows only where they mean something.
+    private var attachMenu: ChatAttachMenu {
+        return ChatAttachMenu(
+            disabledReason: canAttachMedia ? nil : "Choose a video format first.",
+            offersSaved: capabilities?.mediaLibrary == true,
+            record: selectedFormat?.usesVisualPool == true ? nil : { openAttachments(launch: .record) },
+            upload: { openAttachments(launch: .source($0)) },
+            addScript: selectedFormat == .talkingToCamera ? { openAttachments(launch: .recordWithScript) } : nil,
+            addVoiceover: selectedFormat == .narrated ? { openAttachments(launch: .voiceover) } : nil,
+            addSong: capabilities?.songUploadEnabled == true && selectedFormat?.runsAsMontage == true ? { openAttachments(launch: .step(.song)) } : nil,
+            addOverlays: capabilities?.visualsEnabled == true && selectedFormat?.usesVisualPool == false ? { openAttachments(launch: .step(.overlays)) } : nil
+        )
+    }
+
     private var editorConversation: some View {
         ChatConversationScroll(isLoaded: initialConversationLoaded, updateToken: timelineUpdateToken, scrollRequest: scrollRequest, dismissKeyboard: { composerFocused = false }) {
             conversationContent
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            ChatComposer(
-                text: promptBinding, isSending: isSending || isActing,
-                canAttach: false, blocksSubmission: isThinking || sendReceipt != nil || pendingUploadCount > 0, isFocused: $composerFocused, dictation: dictationForComposer, dictationTerms: dictationContextTerms, attach: {}, send: { Task { await send() } }
-            )
+            VStack(spacing: 0) {
+                waitingBar
+                ChatComposer(
+                    text: promptBinding, isSending: isSending || isActing,
+                    canAttach: false, blocksSubmission: (isThinking && !steerNowEnabled) || sendReceipt != nil || pendingUploadCount > 0, isFocused: $composerFocused, dictation: dictationForComposer, dictationTerms: dictationContextTerms, attach: {}, send: { Task { await send() } }
+                )
+            }
         }
         .onAppear { activateDraftStorage() }
         .background(KriaColor.paper)
@@ -1808,7 +2206,14 @@ private struct CreationWorkspaceView: View {
     @ViewBuilder private var stageContent: some View {
         switch workspaceStage {
         case .format:
-            FormatStage(formats: availableFormats, isBusy: isActing || !capabilitiesAreAuthoritative, select: selectFormat).id("format-picker")
+            if let selectedFormat {
+                FormatReselectStage(formats: availableFormats, selected: selectedFormat, isBusy: isActing || !capabilitiesAreAuthoritative, unavailableReason: formatSwitchBlock) { format in
+                    if format == selectedFormat { isChoosingFormat = false } else { selectFormat(format) }
+                }
+                .id("format-reselect")
+            } else {
+                FormatStage(formats: availableFormats, isBusy: isActing || !capabilitiesAreAuthoritative, select: selectFormat).id("format-picker")
+            }
             if let capabilitiesFailure {
                 RecoveryCard(failure: capabilitiesFailure) { Task { await refreshCapabilities() } }
             } else if !capabilitiesAreAuthoritative {
@@ -1824,11 +2229,10 @@ private struct CreationWorkspaceView: View {
                     preparingCount: 0,
                     previewVersion: previewVersion,
                     progress: uploadProgress,
-                    addFootage: openAttachments,
-                    changeFormat: { isChoosingFormat = true },
-                    attachedMedia: [],
+                    addFootage: { openAttachments(launch: .chooseSource) },
+                    recordFootage: canAttachMedia ? { openAttachments(launch: .record) } : nil,
+                    manageFootage: { openAttachments() },
                     isBusy: isSending || isActing || isThinking,
-                    removeMedia: { mediaID in performAction("remove_media", payload: ["media_id": .string(mediaID)]) },
                     failures: uploadFailures.filter { $0.projectID == project.id },
                     dismissFailure: { model.uploads.dismissFailure(id: $0) },
                     retryFailure: { id in Task { await model.uploads.retryUpload(recordID: id) } },
@@ -1846,6 +2250,8 @@ private struct CreationWorkspaceView: View {
         case .direction:
             if let approval {
                 DirectionStage(
+                    recordAgain: canAttachMedia ? { openAttachmentsToReplaceFootage(launch: .record) } : nil,
+                    chooseAnother: canAttachMedia ? { openAttachmentsToReplaceFootage(launch: .chooseSource) } : nil,
                     approval: approval,
                     format: selectedFormat,
                     speechCleanup: approval.retryOfExecutionID == nil ? fullThread?.speechCleanup : nil,
@@ -1865,6 +2271,8 @@ private struct CreationWorkspaceView: View {
                 .id("approval-\(approval.id)")
             } else if let thread = fullThread {
                 CreationConfirmationStage(
+                    recordAgain: canAttachMedia ? { openAttachmentsToReplaceFootage(launch: .record) } : nil,
+                    chooseAnother: canAttachMedia ? { openAttachmentsToReplaceFootage(launch: .chooseSource) } : nil,
                     thread: thread,
                     isBusy: isActing || isSending || pendingUploadCount > 0,
                     responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },
@@ -1912,7 +2320,10 @@ private struct CreationWorkspaceView: View {
                 // Capability on: only server chips are drawn (none yet or none offered => no chips, never the generic fixed
                 // ones). Capability off: nil, the fixed chips.
                 serverSuggestions: SuggestionChipsPolicy.isEnabled(capabilities) ? suggestionChips(for: .ready) : nil,
-                sendSuggestion: { sendSuggestion($0) }
+                sendSuggestion: { sendSuggestion($0) },
+                suggestionCards: readyCardsPresentation,
+                rerecord: rerecordPhase,
+                rerecordActions: rerecordActions
             )
             .id("ready")
             if capabilities?.livePlanReviewAvailable == true, currentProject.runtimeVersion == 2,
@@ -1963,8 +2374,15 @@ private struct CreationWorkspaceView: View {
                 deviceRenderPanel(deviceRenderKey)
             }
         case .failed:
+            if hasSavedEditor && canOpenVideoEditor {
+                Button("Open saved edit", action: openEditor)
+                    .buttonStyle(CanonicalSecondaryButtonStyle())
+                    .accessibilityIdentifier("open-saved-edit")
+            }
             if failedWorkspacePresentation == .legacyCreationConfirmation, let thread = fullThread {
                 CreationConfirmationStage(
+                    recordAgain: canAttachMedia ? { openAttachmentsToReplaceFootage(launch: .record) } : nil,
+                    chooseAnother: canAttachMedia ? { openAttachmentsToReplaceFootage(launch: .chooseSource) } : nil,
                     thread: thread,
                     isBusy: isActing || isSending || pendingUploadCount > 0,
                     responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },
@@ -2103,7 +2521,21 @@ private struct CreationWorkspaceView: View {
 
     /// What re-asks the server: a new scope, or (once ready) a new revision, which may carry a new render.
     private var suggestionFetchKey: String {
-        suggestionSurface == .ready ? "\(suggestionScopeKey)|\(threadRevision)" : suggestionScopeKey
+        suggestionSurface == .ready ? "\(suggestionScopeKey)|\(threadRevision)|\(suggestionLedger.refreshToken)" : suggestionScopeKey
+    }
+
+    /// The v2 cards for the finished video, or nil when the chat is not on the ready surface or the server's set has
+    /// none (then the chips stay in charge). The same value feeds the ready stage and the editor's Improve sheet.
+    private var readyCardsPresentation: SuggestionCardsPresentation? {
+        guard SuggestionChipsPolicy.isEnabled(capabilities), suggestionSurface == .ready,
+              suggestionSetKey == suggestionScopeKey,
+              case .cards(let cards) = SuggestionReadyContent.resolve(set: suggestionSet) else { return nil }
+        return SuggestionCardsPresentation(
+            cards: suggestionLedger.visible(cards),
+            tap: { sendSuggestionCard($0) }, dismiss: { dismissSuggestionCard($0) },
+            refresh: { suggestionLedger.requestRefresh() },
+            sendingID: cards.first { suggestionLedger.phase(of: $0.id) == .sending }?.id
+        )
     }
 
     /// The chips to draw for one surface; empty unless the chat is on that surface right now.
@@ -2124,10 +2556,41 @@ private struct CreationWorkspaceView: View {
         // Another scope's set is dropped at once; the same scope keeps what it holds until a new set_id arrives.
         if suggestionSetKey != scope { suggestionSet = nil; suggestionSetKey = scope }
         let api = model.api, threadID = project.id
+        suggestionsLoading = true
+        defer { suggestionsLoading = false }
         await SuggestionChipsPolicy.poll(
             fetch: { try await api.creationSuggestions(threadID: threadID) },
-            onSet: { suggestionSet = SuggestionChipsPolicy.merge(current: suggestionSet, incoming: $0) }
+            onSet: {
+                suggestionSet = SuggestionChipsPolicy.merge(current: suggestionSet, incoming: $0)
+                suggestionLedger.reconcile(with: suggestionSet)
+            }
         )
+    }
+
+    /// A card tap is the creator's chat message (`prompt`) pinned to the card it came from. It rides the ordinary
+    /// send path, so the bubble, idempotency key and revision handling are shared. The pin names the set the creator
+    /// SAW, not whatever set the chat holds by the time the request goes out; the server decides if it still fits.
+    /// A refused pin comes back as an ordinary accepted turn whose reply says the card no longer fits, so the card
+    /// is handled either way and the reply in the chat is the notice.
+    /// Returns whether the tap started, so the editor's Improve sheet closes only for a tap that is going out.
+    private func sendSuggestionCard(_ card: SuggestionCard) -> Bool {
+        guard !isSending, !isActing, !isThinking, let setID = suggestionSet?.setID, suggestionLedger.begin(card) else { return false }
+        let tap = SuggestionTap(setID: setID, chipID: card.id)
+        Task {
+            await send(message: card.prompt, suggestion: tap, keepsDraft: true) { _ in
+                suggestionLedger.finish(card, accepted: true)
+            }
+            // Nothing reached the server (offline, rejected, blocked): the card is tappable again.
+            suggestionLedger.finish(card, accepted: false)
+        }
+        return true
+    }
+
+    private func dismissSuggestionCard(_ card: SuggestionCard) {
+        guard let setID = suggestionSet?.setID else { return }
+        suggestionLedger.dismiss(card)
+        let api = model.api, threadID = project.id
+        Task { await api.dismissSuggestion(threadID: threadID, setID: setID, suggestionID: card.id) }
     }
 
     /// A chip tap is a real send of the chip's `message` (the old fixed chips only filled the composer), tagged
@@ -2136,11 +2599,23 @@ private struct CreationWorkspaceView: View {
     private func sendSuggestion(_ chip: SuggestionChip) {
         guard !isSending, !isActing, !isThinking else { return }
         let tap = suggestionSet?.setID.map { SuggestionTap(setID: $0, chipID: chip.id) }
-        Task { await send(message: chip.message, suggestion: tap, keepsDraft: true) }
+        sendingSuggestionID = chip.id
+        Task {
+            await send(message: chip.message, suggestion: tap, keepsDraft: true)
+            sendingSuggestionID = nil
+        }
     }
 
-    private func send(message submittedMessage: String? = nil, clipSelection: ClipSelectionSubmission? = nil, songOrder: SongOrderSubmission? = nil, choiceSelection: ChoiceSelectionSubmission? = nil, songRange: SongRangeAnswer? = nil, suggestion: SuggestionTap? = nil, protectedRegion: ProtectedRegionAnswer? = nil, markQuestionID: String? = nil, momentOrder: MomentOrderAnswer? = nil, keepsDraft: Bool = false, retrying: ChatSendReceipt? = nil) async {
-        guard selectedFormat != .slides, !isSending, !isActing, !isThinking else { return }
+    private func send(message submittedMessage: String? = nil, clipSelection: ClipSelectionSubmission? = nil, songOrder: SongOrderSubmission? = nil, choiceSelection: ChoiceSelectionSubmission? = nil, songRange: SongRangeAnswer? = nil, suggestion: SuggestionTap? = nil, protectedRegion: ProtectedRegionAnswer? = nil, markQuestionID: String? = nil, momentOrder: MomentOrderAnswer? = nil, keepsDraft: Bool = false, retrying: ChatSendReceipt? = nil, suggestionOutcome: ((SuggestionTapOutcome) -> Void)? = nil) async {
+        // Steer now: a typed message may go while Kria works; it waits as "Up next". Card answers and chips still wait.
+        let composerSend = submittedMessage == nil && clipSelection == nil && songOrder == nil && choiceSelection == nil
+            && songRange == nil && suggestion == nil && protectedRegion == nil && momentOrder == nil && retrying == nil
+        guard selectedFormat != .slides, !isSending, !isActing, !isThinking || (steerNowEnabled && composerSend) else { return }
+        if steerNowEnabled, composerSend, upNext != nil {
+            // The server keeps one message waiting. A third stays in the composer with a plain note, never an error card.
+            steerNote = steerStrings.oneAlreadyWaiting
+            return
+        }
         if let retrying {
             guard let current = chatDrafts.submission(for: project.id),
                   current.clientEventID == retrying.clientEventID, current.phase == .unconfirmed else {
@@ -2188,6 +2663,18 @@ private struct CreationWorkspaceView: View {
             ownsSendAttempt = false
             chatDrafts.endSubmission(clientEventID: receipt.clientEventID, for: project.id)
         }
+        // Steer now: sent while Kria works, the message goes straight to the bar (it will wait), never a chat bubble.
+        let waitsBehindKria = steerNowEnabled && composerSend && kriaIsBusy
+        if waitsBehindKria {
+            pendingWaitingText = message
+            waitingClientEventID = submission.clientEventID
+        }
+        defer {
+            if waitsBehindKria {
+                pendingWaitingText = nil
+                waitingClientEventID = nil
+            }
+        }
         nextLocalOrder += 1
         let optimistic = submissionAnchor ?? ChatPendingMessage(content: message, clientEventID: submission.clientEventID,
             afterSequence: receipt.afterSequence, localOrder: nextLocalOrder, songOrder: songOrder, songRange: songRange,
@@ -2199,6 +2686,7 @@ private struct CreationWorkspaceView: View {
             }
         }
         if !keepsDraft && retrying == nil { prompt = "" }
+        if retrying == nil { answeringQuestion = nil }
         scrollRequest += 1
         // Edits staged from a chat draft already live in the server's draft head;
         // committing them here would render on every send. Only real local edits flush.
@@ -2233,6 +2721,7 @@ private struct CreationWorkspaceView: View {
             pendingTurnSubmission = submission
         }
         guard model.chatDrafts.submission(for: project.id)?.clientEventID == receipt.clientEventID else { return }
+        let earlierThoughts = (requestID: thoughtRequestID, summaries: liveThoughtSummaries)
         thoughtRequestID = submission.clientEventID
         liveThoughtSummaries = []
         songRangeProblem = nil
@@ -2251,6 +2740,7 @@ private struct CreationWorkspaceView: View {
                 pendingTurnSubmission = nil
                 model.uploads.clearUnreadableFailures(projectID: project.id)
                 apply(thread, requestSequence: requestSequence)
+                suggestionOutcome?(.accepted)
                 conversationAcceptedID = UUID()
                 await editorSession.synchronizePromptRevision()
                 await fetchFinalThoughtSummary(requestID: submission.clientEventID)
@@ -2391,17 +2881,26 @@ private struct CreationWorkspaceView: View {
         // done its job; a conflict, a network error or an unsaved editor leaves it (and the draft) alone.
         model.uploads.clearUnreadableFailures(projectID: project.id)
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
+        suggestionOutcome?(.accepted)
         conversationAcceptedID = UUID()
-        thinkingAnchor = receipt.afterSequence
-        thinkingTurnID = accepted.turnID
-        thinkingSettlesOnJobStatus = false
-        isThinking = true
-        settleThinking()
+        steerNote = nil
+        let waitsUpNext = steerNowEnabled && accepted.status == "queued"
+        if waitsUpNext {
+            // Steer now: the message waits as "Up next"; whatever Kria is doing keeps its own Thinking row.
+            thoughtRequestID = earlierThoughts.requestID
+            liveThoughtSummaries = earlierThoughts.summaries
+        } else {
+            thinkingAnchor = receipt.afterSequence
+            thinkingTurnID = accepted.turnID
+            thinkingSettlesOnJobStatus = false
+            isThinking = true
+            settleThinking()
+        }
         failure = await acceptedMutationRefreshError(
             "Your message was sent, but the conversation couldn’t refresh.",
             refresh: { try await refreshDelta() }
         )
-        await fetchFinalThoughtSummary(requestID: submission.clientEventID)
+        if !waitsUpNext { await fetchFinalThoughtSummary(requestID: submission.clientEventID) }
     }
 
     /// A turn can settle before the one-second live poll sees its completed
@@ -2415,15 +2914,19 @@ private struct CreationWorkspaceView: View {
         if !completed.isEmpty { completedThoughtSummaries[requestID] = completed }
     }
 
-    private func selectFormat(_ format: CreationFormat) {
-        guard capabilitiesAreAuthoritative, availableFormats.contains(format) else { return }
+    /// Why the project can't switch to `format` right now (the clips it already holds don't fit), or nil.
+    private func formatSwitchBlock(_ format: CreationFormat) -> String? {
         if format.usesVisualPool, attachedClipCount > 0 {
-            failure = ChatFailure("Sliders use Photos & videos. Remove primary footage before switching formats.")
-            return
+            return "Sliders use Photos & videos. Remove primary footage before switching formats."
         }
         let pendingClips = model.uploads.records.filter { $0.projectID == project.id && $0.role == .clip }.count
-        if let capacityError = formatClipCapacityError(format: format, clipLimit: CreationFormat.maximumClipCount(for: format, serverLimits: maximumClipsByFormat), occupiedClipCount: attachedClipCount + pendingClips) {
-            failure = ChatFailure(capacityError)
+        return formatClipCapacityError(format: format, clipLimit: CreationFormat.maximumClipCount(for: format, serverLimits: maximumClipsByFormat), occupiedClipCount: attachedClipCount + pendingClips)
+    }
+
+    private func selectFormat(_ format: CreationFormat) {
+        guard capabilitiesAreAuthoritative, availableFormats.contains(format) else { return }
+        if let blocked = formatSwitchBlock(format) {
+            failure = ChatFailure(blocked)
             return
         }
         performAction("select_format", payload: ["format": .string(format.serverValue)])

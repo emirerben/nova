@@ -44,11 +44,15 @@ from app.pipeline.phone_narrated_plan import _fit_step_window
 from app.pipeline.phone_recipe_shared import (
     EXPORT_SAFETY_MARGIN_S,
     audio_fade,
+    backdrop_asset_ids,
     clip_tilt_fields,
     display_dims,
     fit_transform,
     landscape_fit_from_recipe,
+    letterbox_scale,
     refit_source_window,
+    register_backdrop_visuals,
+    split_clip_scale,
     timeline_end_s,
 )
 from app.services.phone_sources import PhoneSourceBinding
@@ -223,6 +227,7 @@ def _video_clips(
         )
         look = old.look if old is not None else default_look
         original = binding.original
+        letterbox = letterbox_scale(display_dims(original), canvas)
         if look == "golden_hour" and (
             (original.width, original.height) != (canvas.width, canvas.height)
             or original.orientation_degrees != 0
@@ -244,7 +249,8 @@ def _video_clips(
         if old is not None and old.source_asset_id == asset.id and not clearing_crop:
             if crop is not None:
                 update["transform"] = MediaTransform(
-                    rotation_degrees=old.transform.rotation_degrees
+                    rotation_degrees=old.transform.rotation_degrees,
+                    scale=split_clip_scale(old.transform.scale, letterbox)[1],
                 )
             placed = old.model_copy(update=update)
         else:
@@ -264,36 +270,51 @@ def _video_clips(
                 placed = old.model_copy(update={**update, "transform": transform})
             else:
                 placed = TimelineClip(**update, transform=transform, look=default_look)
-        clips.append(_with_tilt(placed, slot, old))
+        clips.append(_with_tilt(placed, slot, old, letterbox))
         cursor = timeline_start + source_duration / rate
     if per_clip_sound:
         clips = _keep_clip_sound(previous, clips, slots)
     return clips
 
 
-def _with_tilt(placed: TimelineClip, slot: dict, old: TimelineClip | None) -> TimelineClip:
+def _with_tilt(
+    placed: TimelineClip, slot: dict, old: TimelineClip | None, letterbox: float
+) -> TimelineClip:
     """``placed`` carrying the slot's tilt (KRI-1136).
 
     A slot that sends ``tilt`` owns it (``None`` straightens). One that omits it keeps the
     pinned clip's tilt while it plays the same footage; a repointed or new slot starts
-    upright, like a crop.
+    upright, like a crop. The zoom is part of ``transform.scale`` (KRI-1169): it multiplies
+    the clip's own framing scale (``letterbox`` or 1) instead of replacing it.
     """
+    framing, _ = split_clip_scale(placed.transform.scale, letterbox)
     if "tilt" in slot:
-        patch, backdrop = clip_tilt_fields(slot)
+        patch, backdrop = clip_tilt_fields(slot, fit_scale=framing)
         rotation = patch.get("rotation_degrees", 0.0)
+        scale = patch.get("scale", framing)
     elif old is not None and old.source_asset_id == placed.source_asset_id:
-        rotation, backdrop = old.transform.rotation_degrees, old.backdrop
+        rotation, backdrop, scale = (
+            old.transform.rotation_degrees,
+            old.backdrop,
+            (placed.transform.scale),
+        )
     else:
-        rotation, backdrop = 0.0, None
+        rotation, backdrop, scale = 0.0, None, framing
     if placed.still_layout is not None:
-        backdrop = None
-    if (rotation, backdrop) == (placed.transform.rotation_degrees, placed.backdrop):
+        backdrop, scale = None, framing
+    if (rotation, backdrop, scale) == (
+        placed.transform.rotation_degrees,
+        placed.backdrop,
+        placed.transform.scale,
+    ):
         return placed
-    if placed.look is not None and (rotation or backdrop is not None):
+    if placed.look is not None and (rotation or backdrop is not None or scale != 1):
         raise UnsupportedPhonePlan("a color grade cannot be combined with a tilted clip")
     return placed.model_copy(
         update={
-            "transform": placed.transform.model_copy(update={"rotation_degrees": rotation}),
+            "transform": placed.transform.model_copy(
+                update={"rotation_degrees": rotation, "scale": scale}
+            ),
             "backdrop": backdrop,
         }
     )
@@ -402,6 +423,7 @@ def replace_voiceover_cut(
     bindings: Sequence[PhoneSourceBinding],
     pool: Sequence[str],
     landscape_fit: str | None = None,
+    visuals: Sequence[Any] = (),
 ) -> EditRecipeV2:
     """``recipe`` with its main video track rebuilt from ``slots`` (KRI-290).
 
@@ -418,6 +440,9 @@ def replace_voiceover_cut(
     ``variant["landscape_fit"]`` should pass it, since an all-portrait cut
     compiled with ``"fit"`` is indistinguishable from ``"fill"``. Narrated
     recipes never letterbox (KRI-307).
+
+    ``visuals`` are the job's pinned Visuals-pool receipts: a clip whose tilt names a media
+    backdrop (KRI-1139) declares that photo or video as a recipe asset from them.
 
     Raises `UnsupportedPhonePlan` when a slot cannot be built on the phone.
     """
@@ -459,6 +484,7 @@ def replace_voiceover_cut(
             and any(clip.volume != 1 for clip in video.clips)
         ),
     )
+    register_backdrop_visuals(clips, visuals=visuals, assets=assets, manifest=manifest)
     old_end = timeline_end_s(video.clips)
     new_end = timeline_end_s(clips)
 
@@ -486,12 +512,25 @@ def replace_voiceover_cut(
             if kept:
                 tracks.append(track.model_copy(update={"clips": kept}))
 
-    still_used = {clip.source_asset_id for track in tracks for clip in track.clips}
-    dropped = {clip.source_asset_id for clip in video.clips} - still_used
+    still_used = {clip.source_asset_id for track in tracks for clip in track.clips} | (
+        backdrop_asset_ids(clips)
+    )
+    dropped = (
+        {clip.source_asset_id for clip in video.clips} | backdrop_asset_ids(video.clips)
+    ) - still_used
     assets = {key: value for key, value in assets.items() if key not in dropped}
     manifest = {key: value for key, value in manifest.items() if key not in dropped}
 
-    required = set(recipe.required_capabilities) - {"variableSpeed", "crossfade", "clipTilt"}
+    required = set(recipe.required_capabilities) - {
+        "variableSpeed",
+        "crossfade",
+        "clipTilt",
+        "clipBackdropMedia",
+    }
+    if dropped & backdrop_asset_ids(video.clips):
+        # A pool visual that only a backdrop used is gone; the recipe validator re-derives
+        # `stillImages` / `visualVideos` from the visuals the manifest still declares.
+        required -= {"stillImages", "visualVideos"}
     if any(clip.rate != 1 for clip in clips):
         required.add("variableSpeed")
     if any(clip.transition is not None for clip in clips):

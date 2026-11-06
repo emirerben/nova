@@ -256,6 +256,8 @@ def validate(path: Path, head: str) -> None:
 
 
 BUNDLE_MANIFEST = "fixture-bundle.json"
+PROVENANCE = "selected-journeys.json"
+JOURNEY_MANIFEST = Path(__file__).with_name("journey-manifest.json")
 
 
 def bundle_files(root: Path) -> dict:
@@ -268,7 +270,57 @@ def bundle_files(root: Path) -> dict:
     return files
 
 
-def seal_bundle(root: Path, head: str, run: str, attempt: str) -> None:
+def selected_rows(journeys: str) -> list:
+    """Manifest rows for a comma-separated selection; unknown ids fail closed."""
+    ids = [item for item in journeys.split(",") if item]
+    require(ids, "no journeys selected for the fixture bundle")
+    rows = {row["id"]: row for row in load(JOURNEY_MANIFEST)["journeys"]}
+    unknown = sorted(set(ids) - set(rows))
+    require(not unknown, f"unknown journey ids for the fixture bundle: {unknown}")
+    return [rows[item] for item in sorted(set(ids))]
+
+
+def require_declared_fixtures(root: Path, rows: list) -> list:
+    """A journey that declares a fixture_dir must have produced files there.
+
+    Journeys without one (for example native-notification-runtime) own no
+    offline fixtures. Returns the declared directories.
+    """
+    declared = []
+    for row in rows:
+        directory = row.get("fixture_dir")
+        if not directory:
+            continue
+        folder = root / directory
+        produced = folder.is_dir() and any(
+            item.is_file() for item in folder.rglob("*")
+        )
+        require(
+            produced,
+            f"journey {row['id']} declares fixtures in {directory}/ but its "
+            "generator produced none",
+        )
+        declared.append(directory)
+    return sorted(declared)
+
+
+def provenance_record(head: str, run: str, attempt: str, rows: list, declared: list):
+    return {
+        "head_sha": head,
+        "run_id": run,
+        "run_attempt": attempt,
+        "journeys": [row["id"] for row in rows],
+        "fixtures": declared or "none required",
+    }
+
+
+def seal_bundle(root: Path, head: str, run: str, attempt: str, journeys: str) -> None:
+    rows = selected_rows(journeys)
+    declared = require_declared_fixtures(root, rows)
+    (root / PROVENANCE).write_text(
+        json.dumps(provenance_record(head, run, attempt, rows, declared), indent=2)
+        + "\n"
+    )
     manifest = {
         "head_sha": head,
         "run_id": run,
@@ -278,7 +330,7 @@ def seal_bundle(root: Path, head: str, run: str, attempt: str) -> None:
     (root / BUNDLE_MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n")
 
 
-def verify_bundle(root: Path, head: str, run: str, attempt: str) -> None:
+def verify_bundle(root: Path, head: str, run: str, attempt: str, journeys: str) -> None:
     manifest = load(root / BUNDLE_MANIFEST)
     for key, expected in (
         ("head_sha", head),
@@ -289,6 +341,21 @@ def verify_bundle(root: Path, head: str, run: str, attempt: str) -> None:
     require(
         manifest.get("files") == bundle_files(root),
         "fixture bundle files are missing or changed",
+    )
+    rows = selected_rows(journeys)
+    declared = require_declared_fixtures(root, rows)
+    record = load(root / PROVENANCE)
+    for key, expected in (
+        ("head_sha", head),
+        ("run_id", run),
+        ("run_attempt", attempt),
+    ):
+        require(
+            record.get(key) == expected, f"fixture bundle {PROVENANCE} {key} is stale"
+        )
+    require(
+        record == provenance_record(head, run, attempt, rows, declared),
+        "fixture bundle was sealed for different journeys",
     )
 
 
@@ -395,14 +462,15 @@ def main() -> None:
         command.add_argument("--head", required=True)
         command.add_argument("--run", required=True)
         command.add_argument("--attempt", required=True)
+        command.add_argument("--journeys", required=True)
     unit_parser = commands.add_parser("native-units")
     unit_parser.add_argument("--ids", required=True)
     unit_parser.add_argument("--require-unit", action="store_true")
     args = parser.parse_args()
     if args.command == "seal-bundle":
-        seal_bundle(args.root, args.head, args.run, args.attempt)
+        seal_bundle(args.root, args.head, args.run, args.attempt, args.journeys)
     elif args.command == "verify-bundle":
-        verify_bundle(args.root, args.head, args.run, args.attempt)
+        verify_bundle(args.root, args.head, args.run, args.attempt, args.journeys)
     elif args.command == "native-units":
         native_units(args.ids, args.require_unit)
     elif args.command == "verify-input":

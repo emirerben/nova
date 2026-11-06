@@ -24,6 +24,9 @@ enum Perf {
         guard registry.reserve(key) else { return }
         let state = signposter.beginInterval(name, id: signposter.makeSignpostID(), "\(detail, privacy: .public)")
         registry.store(key, state)
+        #if DEBUG
+        TalkBench.shared.began(key)
+        #endif
     }
 
     /// Closes the interval opened by `begin`. A no-op when none is open, which makes "first time X happens"
@@ -31,6 +34,9 @@ enum Perf {
     static func end(_ name: StaticString, id: String = "", _ detail: String = "") {
         guard let state = registry.take(Registry.key(name, id)) else { return }
         signposter.endInterval(name, state, "\(detail, privacy: .public)")
+        #if DEBUG
+        TalkBench.shared.ended(Registry.key(name, id), name: String(describing: name), detail: detail)
+        #endif
     }
 
     /// Closes `name` once it has been ticked `needed` times ("the first 6 posters are drawn").
@@ -71,17 +77,51 @@ enum Perf {
         #endif
     }
 
+    /// Counts something that happens per frame or per file (dropped frames, held masks). A signpost event, and in a bench
+    /// run a timestamped tally. A non-empty `detail` also splits the tally (`name.detail`), which is how drops are
+    /// counted per reason.
+    static func count(_ name: StaticString, _ detail: String = "") {
+        signposter.emitEvent(name, "\(detail, privacy: .public)")
+        #if DEBUG
+        TalkBench.shared.count(String(describing: name), detail: detail)
+        #endif
+    }
+
+    /// Records a measured value in milliseconds that is not a span of work (the delay between capture and screen).
+    static func sample(_ name: StaticString, milliseconds: Double, _ detail: String = "") {
+        signposter.emitEvent(name, "\(milliseconds, format: .fixed(precision: 2), privacy: .public) ms \(detail, privacy: .public)")
+        #if DEBUG
+        TalkBench.shared.sample(String(describing: name), milliseconds: milliseconds, detail: detail)
+        #endif
+    }
+
     /// Times a synchronous block.
     static func measure<T>(_ name: StaticString, _ detail: String = "", _ body: () throws -> T) rethrows -> T {
         let state = signposter.beginInterval(name, id: signposter.makeSignpostID(), "\(detail, privacy: .public)")
-        defer { signposter.endInterval(name, state) }
+        #if DEBUG
+        let start = TalkBench.isEnabled ? DispatchTime.now().uptimeNanoseconds : 0
+        #endif
+        defer {
+            signposter.endInterval(name, state)
+            #if DEBUG
+            TalkBench.shared.finished(String(describing: name), since: start, detail: detail)
+            #endif
+        }
         return try body()
     }
 
     /// Times an async block.
-    static func measureAsync<T>(_ name: StaticString, _ detail: String = "", _ body: () async throws -> T) async rethrows -> T {
+    static func measureAsync<T>(_ name: StaticString, _ detail: String = "", isolation: isolated (any Actor)? = #isolation, _ body: () async throws -> T) async rethrows -> T {
         let state = signposter.beginInterval(name, id: signposter.makeSignpostID(), "\(detail, privacy: .public)")
-        defer { signposter.endInterval(name, state) }
+        #if DEBUG
+        let start = TalkBench.isEnabled ? DispatchTime.now().uptimeNanoseconds : 0
+        #endif
+        defer {
+            signposter.endInterval(name, state)
+            #if DEBUG
+            TalkBench.shared.finished(String(describing: name), since: start, detail: detail)
+            #endif
+        }
         return try await body()
     }
 

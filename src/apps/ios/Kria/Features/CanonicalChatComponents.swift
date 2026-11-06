@@ -13,7 +13,7 @@ struct CanonicalPrimaryButtonStyle: ButtonStyle {
             .frame(maxWidth: .infinity, minHeight: 48)
             .padding(.horizontal, 16)
             .background(fill)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .clipShape(Capsule())
             .opacity(isEnabled ? (configuration.isPressed ? 0.72 : 1) : 0.45)
     }
 }
@@ -26,13 +26,9 @@ struct CanonicalSecondaryButtonStyle: ButtonStyle {
             .foregroundStyle(KriaColor.ink)
             .frame(maxWidth: .infinity, minHeight: 48)
             .padding(.horizontal, 16)
-            .background(Color.white)
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(KriaColor.line, lineWidth: 1)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .opacity(isEnabled ? (configuration.isPressed ? 0.65 : 1) : 0.45)
+            .background(configuration.isPressed ? KriaColor.fillPressed : KriaColor.fill)
+            .clipShape(Capsule())
+            .opacity(isEnabled ? 1 : 0.45)
     }
 }
 
@@ -87,7 +83,6 @@ struct ProjectsDrawer: View {
     let close: () -> Void
     let openGallery: () -> Void
     var openAccount: () -> Void = {}
-    var openActivity: () -> Void = {}
     var openCollections: (() -> Void)? = nil
     @EnvironmentObject private var model: AppModel
     @AccessibilityFocusState private var menuFocused: Bool
@@ -106,15 +101,6 @@ struct ProjectsDrawer: View {
                     Text("\(model.libraryProjects.count)\(model.libraryNextCursor == nil ? "" : "+") \(model.libraryProjects.count == 1 && model.libraryNextCursor == nil ? "video" : "videos")").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                 }.frame(minHeight: 44).padding(.horizontal, 12)
             }
-            Button(action: openActivity) {
-                HStack(spacing: 12) {
-                    Image(systemName: "bell").frame(width: 22, height: 22)
-                    Text("Activity").font(KriaFont.body(15).weight(.medium))
-                    Spacer()
-                }.frame(minHeight: 44).padding(.horizontal, 12)
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("activity-open")
             if let openCollections {
                 Button(action: openCollections) {
                     HStack(spacing: 12) {
@@ -211,6 +197,8 @@ struct ChatMessageRow: View {
     var projectID: UUID? = nil
     /// KRI-282: how to present `message.choiceQuestion`. nil (old server, flag off, not a question) = text question only.
     var choiceQuestionMode: ChoiceQuestionCardMode? = nil
+    /// True for the user message whose text is the "You chose" capsule of the choice question it answered.
+    var hidesAnswerEcho = false
     /// KRI-802: set when this reply asks the choice card and the clip picker together; their answers wait here and
     /// go out on one turn. The cards then follow the reply's own order: the choice first, then the clips.
     var questionBatch: QuestionBatch? = nil
@@ -226,6 +214,12 @@ struct ChatMessageRow: View {
     /// KRI-815: how to present `message.voiceoverScript`. nil (old server, flag off, no script) = the reply text,
     /// which holds the script too.
     var voiceoverScriptMode: VoiceoverScriptCardMode? = nil
+    /// "Type my own" on a choice card: hands the creator the composer for this question; nil hides the row.
+    var answerOwn: (() -> Void)? = nil
+    /// The creator is typing their own answer, so every answer block is disabled.
+    var isAnsweringOwn = false
+    /// KRI-802: undoes the held choice of a reply that also asks for clips.
+    var changeHeldChoice: (() -> Void)? = nil
 
     /// With the script card shown, the reply text drops the script it ends with (the card holds it).
     private var shownContent: String {
@@ -242,7 +236,10 @@ struct ChatMessageRow: View {
     )
 
     var body: some View {
-        if message.role == .user {
+        if message.role == .user && hidesAnswerEcho {
+            // The question above already shows this exact text as its "You chose" capsule: one of them is enough.
+            EmptyView()
+        } else if message.role == .user {
             HStack {
                 Spacer(minLength: 54)
                 Text(message.content)
@@ -289,7 +286,7 @@ struct ChatMessageRow: View {
                     )
                 }
                 if !message.replyOptions.isEmpty, let replyOptionsMode {
-                    ReplyOptionChips(options: message.replyOptions, mode: replyOptionsMode)
+                    ReplyOptionRows(options: message.replyOptions, mode: replyOptionsMode)
                 }
                 if questionBatch != nil { choiceCard }
                 if let question = message.clipQuestion, let clipSelectionMode {
@@ -339,7 +336,9 @@ struct ChatMessageRow: View {
     @ViewBuilder private var choiceCard: some View {
         if let question = message.choiceQuestion, let choiceQuestionMode {
             ChoiceQuestionCard(question: question, mode: choiceQuestionMode,
-                               heldKey: questionBatch?.choice?.optionKey, note: questionBatch?.choiceNote)
+                               heldKey: questionBatch?.choice?.optionKey, note: questionBatch?.choiceNote,
+                               changeHeld: questionBatch?.choice != nil ? changeHeldChoice : nil,
+                               typeMyOwn: answerOwn, isTyping: isAnsweringOwn, allowsDecide: questionBatch == nil)
                 .id(question.questionID)
         }
     }
@@ -381,7 +380,7 @@ private struct AssistantHeading: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(title)
-                .font(isFormatHeading ? KriaFont.display(28) : KriaFont.body(20))
+                .font(isFormatHeading ? KriaFont.headline(28) : KriaFont.body(20))
                 .foregroundStyle(KriaColor.ink)
                 .fixedSize(horizontal: false, vertical: true)
             Text(bodyText)
@@ -502,7 +501,7 @@ private struct FormatVideoCard: View {
                     .accessibilityIdentifier("format-preview-playback-\(format.serverValue)")
                 }
             }
-            Text(format.title).font(KriaFont.display(18)).foregroundStyle(KriaColor.ink)
+            Text(format.title).font(KriaFont.headline(18)).foregroundStyle(KriaColor.ink)
         }
         .frame(width: FormatTileMetrics.image.width, alignment: .leading)
     }
@@ -548,7 +547,7 @@ private struct SlidePostFormatCard: View {
                 .accessibilityIdentifier("slide-format-cover-playback")
             }
             Text("Slider")
-                .font(KriaFont.display(18))
+                .font(KriaFont.headline(18))
                 .foregroundStyle(KriaColor.ink)
         }
         .frame(width: 156, alignment: .leading)
@@ -566,15 +565,16 @@ enum FootageStageCopy {
     /// while the creator talks when the server allows more than one.
     static func talkingBody(maximumClipCount: Int) -> String {
         maximumClipCount > 1
-            ? "Choose the video of you talking, plus any clips to show while you talk."
-            : "Choose one clear take. I’ll keep your voice at the center."
+            ? "Record yourself talking, or upload that video. Add clips to show while you talk."
+            : "Record one clear take, or upload one you already have. I’ll keep your voice at the center."
     }
 
     /// The Add media sheet's footage subtitle.
     static func attachmentSubtitle(talking: Bool, maximumClipCount: Int) -> String {
-        talking && maximumClipCount > 1
-            ? "The video of you talking, plus any clips to show while you talk."
-            : "Choose the clips you want Kria to work with."
+        guard talking else { return "Choose the clips you want Kria to work with." }
+        return maximumClipCount > 1
+            ? "Record yourself, or upload a video you already have. Add clips to show while you talk."
+            : "Record yourself, or upload a video you already have."
     }
 }
 
@@ -583,16 +583,6 @@ enum FootageStageCopy {
 /// a second for as long as anything uploaded. Observation re-runs only the bodies that read `values`.
 @Observable final class UploadProgressStore {
     var values: [UUID: Double] = [:]
-}
-
-/// One upload's progress bar. Reading the store here, not in the parent, keeps a tick local to the bar.
-struct UploadProgressBar: View {
-    let store: UploadProgressStore
-    let recordID: UUID
-
-    var body: some View {
-        ProgressView(value: store.values[recordID] ?? 0).frame(width: 60).tint(KriaColor.ink)
-    }
 }
 
 struct FootageStage: View {
@@ -606,11 +596,13 @@ struct FootageStage: View {
     /// `BackgroundUploadCoordinator.previewVersion`, so thumbnails re-read from disk as they appear.
     var previewVersion = 0
     let progress: UploadProgressStore
+    /// Upload: opens the "Upload from" list.
     let addFootage: () -> Void
-    let changeFormat: () -> Void
-    var attachedMedia: [CreationAttachedMedia] = []
+    /// Record: opens the camera. Nil on a surface that cannot film.
+    var recordFootage: (() -> Void)?
+    /// Opens Add media on its clip list, where clips can be removed. Offered once the edit holds its most clips.
+    var manageFootage: (() -> Void)?
     var isBusy = false
-    var removeMedia: (String) -> Void = { _ in }
     /// Clips that failed to add. They are otherwise only shown inside the picker sheet, so a clip that
     /// fails after the sheet was closed would silently leave Continue enabled with fewer clips than
     /// the user chose.
@@ -621,141 +613,117 @@ struct FootageStage: View {
     /// Ready photos and videos in the PlanItemAsset Visuals pool.
     var visualCount = 0
 
+    @Environment(\.dynamicTypeSize) private var typeSize
+
     private var readiness: FootageReadiness {
         FootageReadiness(attachedCount: mediaCount, pendingCount: uploads.count + preparingCount)
     }
 
-    /// One bar for every clip on its way. With uploads overlapping, showing only the first upload's
-    /// progress would misrepresent the rest; a clip still being prepared counts as 0.
-    private var overallProgress: Double {
-        FootageReadiness.overallProgress(uploads: uploads.map { progress.values[$0.id] ?? 0 }, preparingCount: preparingCount)
-    }
     private var visualsReadiness: FootageReadiness {
         FootageReadiness(attachedCount: format.usesVisualPool ? visualCount : 0, pendingCount: uploads.count + preparingCount)
     }
 
+    private var talkingLeads: Bool { format == .talkingToCamera && readiness.attachedCount == 0 && readiness.pendingCount == 0 }
+    private var hasMedia: Bool { readiness.attachedCount > 0 || readiness.pendingCount > 0 }
+    private var limitText: String {
+        format.usesVisualPool ? "Up to \(FootageStageCopy.count(maximumClipCount, "item"))" : "Up to \(FootageStageCopy.count(maximumClipCount, "clip"))"
+    }
+    private var reachedLimit: Bool { !format.usesVisualPool && mediaCount + readiness.pendingCount >= maximumClipCount }
+
+    private var sourceOptions: [KriaSourceOption] {
+        let canAdd = !reachedLimit && !isBusy
+        let noun = format.usesVisualPool ? "media" : "video"
+        return [
+            format.usesVisualPool ? nil : recordFootage.map { KriaSourceOption.record(caption: "Film now", identifier: "record-footage", isEnabled: canAdd, action: $0) },
+            KriaSourceOption.upload(caption: "Use existing \(noun)", identifier: format.usesVisualPool ? "choose-photos-videos" : "choose-videos", isEnabled: canAdd, action: addFootage)
+        ].compactMap { $0 }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            AssistantHeading(
-                title: format.usesVisualPool ? "Add photos & videos" : "Add your footage",
-                bodyText: format.usesVisualPool
-                    ? "Choose the photos and videos for your post. You can mix both."
-                    : format == .talkingToCamera
-                    ? FootageStageCopy.talkingBody(maximumClipCount: maximumClipCount)
-                    : "Choose the moments you want me to work with. You can add up to \(FootageStageCopy.count(maximumClipCount, "clip"))."
-            )
-
-            Button(action: addFootage) {
-                VStack(spacing: 9) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(KriaColor.ink)
-                        .frame(width: 34, height: 34)
-                        .background(KriaColor.sage)
-                        .clipShape(Circle())
-                    Text(format.usesVisualPool ? "Add photos & videos" : "Choose videos")
-                        .font(KriaFont.body(14).weight(.semibold))
-                        .foregroundStyle(KriaColor.ink)
-                    Text(format.usesVisualPool ? "Photos or videos · up to \(FootageStageCopy.count(maximumClipCount, "item"))" : "MP4, MOV · up to \(FootageStageCopy.count(maximumClipCount, "clip"))")
-                        .font(KriaFont.body(11))
-                        .foregroundStyle(KriaColor.zinc)
-                }
-                .frame(maxWidth: .infinity, minHeight: 142)
-                .background(Color.white)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(KriaColor.border, style: StrokeStyle(lineWidth: 1, dash: [6, 5]))
+            VStack(alignment: .leading, spacing: 8) {
+                Text(format.usesVisualPool ? "Add photos & videos" : "Add your footage").kriaType(.heading).foregroundStyle(KriaColor.ink)
+                    .accessibilityAddTraits(.isHeader)
+                if !hasMedia {
+                    Text(format.usesVisualPool
+                         ? "Choose the photos and videos for your post. You can mix both."
+                         : format == .talkingToCamera
+                         ? FootageStageCopy.talkingBody(maximumClipCount: maximumClipCount)
+                         : "Record new clips or upload the moments you want me to work with.")
+                        .kriaType(.body).foregroundStyle(KriaColor.mutedInk)
                 }
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier(format.usesVisualPool ? "choose-photos-videos" : "choose-videos")
+            .accessibilityElement(children: .combine)
 
-            if !failures.isEmpty {
-                // One line, not one per file (KRI-211): a file that couldn't be sent never holds up the
-                // rest. The wording follows the cause: a file that couldn't be read is simply left out,
-                // while an upload that failed on the way can still be retried.
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(UploadFailureBanner.message(for: failures))
-                            .font(KriaFont.body(12))
-                            .foregroundStyle(KriaColor.failureText)
-                            .accessibilityIdentifier("footage-upload-failures-message")
-                        Spacer(minLength: 4)
-                        Button("Dismiss") { failures.forEach { dismissFailure($0.id) } }
-                            .font(KriaFont.body(12).weight(.medium))
-                            .frame(minHeight: 44)
-                            .accessibilityIdentifier("footage-upload-failures-dismiss")
-                    }
-                    if UploadFailureBanner.canRetry(failures) {
-                        Button("Retry") {
-                            for failure in failures where failure.cause == .uploadFailed { retryFailure(failure.id) }
+            if hasMedia {
+                HStack(spacing: 8) {
+                    if readiness.attachedCount > 0, readiness.pendingCount == 0 { KriaCheckDisc(size: 16) }
+                    Text(readiness.pendingCount > 0
+                         ? "Uploading \(FootageStageCopy.count(readiness.pendingCount, "file"))…"
+                         : "\(readiness.attachedCount) \(readiness.attachedCount == 1 ? "clip" : "clips") ready")
+                        .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier(readiness.pendingCount > 0 ? "footage-upload-progress" : "footage-ready-count")
+                if !uploads.isEmpty {
+                    VStack(spacing: 8) {
+                        ForEach(uploads) { record in
+                            KriaMediaRow(name: BackgroundUploadCoordinator.displayFilename(record.filename),
+                                         status: .uploading(progress.values[record.id] ?? 0), onFill: true) {
+                                CreationRecordThumbnail(recordID: record.id, version: previewVersion)
+                            }
                         }
-                        .font(KriaFont.body(12).weight(.semibold))
-                        .frame(minHeight: 44)
-                        .accessibilityIdentifier("footage-upload-failures-retry")
+                    }
+                    .accessibilityIdentifier("footage-uploading-clips")
+                }
+            }
+
+            if hasMedia, reachedLimit {
+                // At the most clips there is nothing to add: say so, and offer the place where a clip can be removed.
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("You’ve added \(FootageStageCopy.count(maximumClipCount, "clip")), the most for this format. Remove one to add another.")
+                        .kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                    if let manageFootage {
+                        Button("Manage clips", action: manageFootage)
+                            .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium))
+                            .disabled(isBusy).accessibilityIdentifier("manage-footage")
                     }
                 }
+            } else if hasMedia {
+                let addMore = Text("Add more").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                if typeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 8) {
+                        addMore
+                        KriaSourceRow(options: sourceOptions, layout: .compact)
+                    }
+                } else {
+                    HStack(spacing: 12) {
+                        addMore
+                        KriaSourceRow(options: sourceOptions, layout: .compact)
+                    }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    // A failure notice never sits under the butter lead tile.
+                    KriaSourceRow(options: sourceOptions, leadsWithFirst: talkingLeads && recordFootage != nil && failures.isEmpty)
+                    Text(limitText).kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                }
+            }
+            if !failures.isEmpty {
+                // One notice, not one per file (KRI-211): a file that couldn't be sent never holds up the rest.
+                KriaNoticeCard(
+                    tone: .failure, title: UploadFailureBanner.message(for: failures),
+                    action: UploadFailureBanner.canRetry(failures)
+                        ? KriaNoticeAction(title: "Retry") { for failure in failures where failure.cause == .uploadFailed { retryFailure(failure.id) } } : nil,
+                    link: KriaNoticeAction(title: "Dismiss") { failures.forEach { dismissFailure($0.id) } })
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("footage-upload-failures")
             }
 
-            if readiness.attachedCount > 0 {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("\(readiness.attachedCount) \(readiness.attachedCount == 1 ? "clip" : "clips") ready")
-                        .font(KriaFont.body(12).weight(.medium))
-                        .foregroundStyle(KriaColor.zinc)
-
-                    ForEach(attachedMedia) { media in
-                        HStack(spacing: 10) {
-                            CreationAttachmentThumbnail(media: media)
-                            Text(media.displayName).font(KriaFont.body(12)).lineLimit(1)
-                            Spacer()
-                            Button { removeMedia(media.id) } label: { Image(systemName: "trash").frame(width: 44, height: 44) }
-                                .accessibilityLabel("Remove \(media.displayName)")
-                                .disabled(isBusy || !uploads.isEmpty)
-                        }
-                    }
-                }
-
-            }
-
-            // Each clip on its way, with its thumbnail, from the moment it is chosen.
-            if !uploads.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(uploads) { record in
-                        HStack(spacing: 10) {
-                            CreationRecordThumbnail(recordID: record.id, version: previewVersion)
-                            Text(BackgroundUploadCoordinator.displayFilename(record.filename)).font(KriaFont.body(12)).lineLimit(1)
-                            Spacer()
-                            ProgressView(value: progress.values[record.id] ?? 0).tint(KriaColor.ink).frame(width: 60)
-                        }
-                    }
-                }
-                .accessibilityIdentifier("footage-uploading-clips")
-            }
-
             if visualsReadiness.attachedCount > 0 {
                 Text("\(visualsReadiness.attachedCount) \(visualsReadiness.attachedCount == 1 ? "visual" : "visuals") ready")
-                    .font(KriaFont.body(12).weight(.medium))
-                    .foregroundStyle(KriaColor.zinc)
+                    .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
             }
-
-            if readiness.pendingCount > 0 {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Uploading \(readiness.pendingCount) \(readiness.pendingCount == 1 ? "file" : "files")…")
-                        .font(KriaFont.body(12).weight(.medium))
-                        .foregroundStyle(KriaColor.zinc)
-                    ProgressView(value: overallProgress)
-                        .tint(KriaColor.ink)
-                        .frame(maxWidth: 160)
-                }
-                .accessibilityIdentifier("footage-upload-progress")
-            }
-
-            Button("Change format", action: changeFormat)
-                .font(KriaFont.body(12).weight(.medium))
-                .foregroundStyle(KriaColor.zinc)
-                .frame(minHeight: 44)
         }
     }
 }
@@ -771,13 +739,6 @@ struct FootageReadiness: Equatable, Sendable {
 
     var canContinue: Bool { attachedCount > 0 && pendingCount == 0 }
 
-    /// Mean progress across every clip still on its way: each upload's own fraction, and 0 for a
-    /// clip that has not started uploading yet.
-    static func overallProgress(uploads: [Double], preparingCount: Int) -> Double {
-        let total = uploads.count + max(0, preparingCount)
-        guard total > 0 else { return 0 }
-        return min(1, max(0, uploads.reduce(0, +) / Double(total)))
-    }
 }
 
 private struct FootageThumbnail: View {
@@ -802,6 +763,9 @@ private struct FootageThumbnail: View {
 }
 
 struct DirectionStage: View {
+    /// Where a silent video sends the creator: back to the camera, or to a different file.
+    var recordAgain: (() -> Void)? = nil
+    var chooseAnother: (() -> Void)? = nil
     let approval: ApprovalSnapshot
     let format: CreationFormat?
     /// The v2 thread's `speech_cleanup` projection (`CreationThread.speechCleanup`).
@@ -846,10 +810,9 @@ struct DirectionStage: View {
             )
 
             VStack(alignment: .leading, spacing: 14) {
-                Text("CREATIVE DIRECTION")
-                    .font(KriaFont.body(10).weight(.bold))
-                    .tracking(1.3)
-                    .foregroundStyle(KriaColor.ink)
+                Text("Creative direction")
+                    .kriaType(.label)
+                    .foregroundStyle(KriaColor.mutedInk)
                 ChatResponseText(content: directionTitle.isEmpty ? "A considered first cut" : directionTitle, startedAt: responseStartedAt)
                     .font(KriaFont.body(22))
                     .foregroundStyle(KriaColor.ink)
@@ -864,10 +827,6 @@ struct DirectionStage: View {
             }
             .padding(16)
             .background(KriaColor.sage)
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(KriaColor.border, lineWidth: 1)
-            }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             if let researchPreview {
@@ -916,11 +875,7 @@ struct DirectionStage: View {
                 .buttonStyle(CanonicalSecondaryButtonStyle())
                 .disabled(isBusy)
         case .noSpeech:
-            Text("We couldn’t hear any speech in this video.")
-                .font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.zinc)
-                .accessibilityIdentifier("speech-cleanup-no-speech")
-            Text("Record it again or choose a different video, then try once more.")
-                .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+            NoSpeechRecoveryCard(recordAgain: recordAgain, chooseAnother: chooseAnother)
         case .failed:
             Text("The speech check couldn’t finish.")
                 .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
@@ -930,12 +885,20 @@ struct DirectionStage: View {
                 .buttonStyle(CanonicalPrimaryButtonStyle())
                 .disabled(isBusy)
         case let .choice(stats):
-            SpeechCleanupChoiceButtons(
-                stats: stats,
-                isDisabled: isBusy,
-                clean: { decide("approve", "clean", resolution.analysisID) },
-                keepOriginal: { decide("approve", "keep_original", resolution.analysisID) }
-            )
+            if stats.requestedInChat {
+                SpeechCleanupPreselectedChoice(
+                    stats: stats,
+                    isDisabled: isBusy,
+                    create: { clean in decide("approve", clean ? "clean" : "keep_original", resolution.analysisID) }
+                )
+            } else {
+                SpeechCleanupChoiceButtons(
+                    stats: stats,
+                    isDisabled: isBusy,
+                    clean: { decide("approve", "clean", resolution.analysisID) },
+                    keepOriginal: { decide("approve", "keep_original", resolution.analysisID) }
+                )
+            }
         }
     }
 }
@@ -979,11 +942,7 @@ struct RenderingStage: View {
                 )
             }
             .padding(16)
-            .background(KriaColor.paper)
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(KriaColor.border, lineWidth: 1)
-            }
+            .background(KriaColor.fill)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             HStack(alignment: .top, spacing: 10) {
@@ -1056,6 +1015,13 @@ struct ReadyStage: View {
     /// server owns this row: its chips are sent on tap, and the fixed ones are gone.
     var serverSuggestions: [SuggestionChip]? = nil
     var sendSuggestion: (SuggestionChip) -> Void = { _ in }
+    /// AI suggestion blocks. Non-nil = the server's set carries v2 suggestions: the cards own this row, whatever
+    /// the chips say, and stay quiet (no label, no chips) once the creator has handled them all.
+    var suggestionCards: SuggestionCardsPresentation? = nil
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    /// Re-record: drawn only when the server offers it (`.unavailable` draws nothing, so an old server changes nothing here).
+    var rerecord: RerecordPhase = .unavailable
+    var rerecordActions = RerecordActions()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1064,7 +1030,10 @@ struct ReadyStage: View {
                 bodyText: "Watch it through, then tell me what you want to refine or open the editor for hands-on changes."
             )
 
-            HStack(spacing: 13) {
+            let cardLayout = dynamicTypeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 13))
+                : AnyLayout(HStackLayout(spacing: 13))
+            cardLayout {
                 Group {
                     if let posterURL = project.posterURL {
                         AsyncImage(url: posterURL) { phase in
@@ -1085,17 +1054,16 @@ struct ReadyStage: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 7) {
-                    Text("READY")
-                        .font(KriaFont.body(9).weight(.bold))
-                        .tracking(1.1)
+                    Text("Ready")
+                        .kriaType(.label)
                         .foregroundStyle(KriaColor.ink)
-                        .padding(.horizontal, 7)
+                        .padding(.horizontal, 10)
                         .padding(.vertical, 4)
                         .background(KriaColor.sage)
                         .clipShape(Capsule())
                     Text(project.workspaceTitle)
                         .font(KriaFont.body(14).weight(.semibold))
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text("First cut")
                         .font(KriaFont.body(11))
                         .foregroundStyle(KriaColor.zinc)
@@ -1106,30 +1074,36 @@ struct ReadyStage: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(12)
-            .background(KriaColor.paper)
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(KriaColor.border, lineWidth: 1)
-            }
+            .background(KriaColor.fill)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-            // KRI-769: no chips to offer (capability on, set empty or still loading) = no dangling question either.
-            if serverSuggestions.map({ !$0.isEmpty }) ?? true {
-                Text("What would you like to change?")
-                    .font(KriaFont.body(13).weight(.medium))
-            }
+            RerecordCard(phase: rerecord, actions: rerecordActions)
 
-            if let serverSuggestions {
-                // Capability on: the server's chips or nothing. The fixed chips are generic and the server's own
-                // stoplist rejects them, so they must not flash while the set loads or fill in when it is empty.
-                if !serverSuggestions.isEmpty {
-                    SuggestionChipRow(chips: serverSuggestions, send: sendSuggestion)
-                        .accessibilityIdentifier("ready-suggestions")
+            if let suggestionCards {
+                if !suggestionCards.isEmpty {
+                    Text("Ways to improve it")
+                        .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                    SuggestionCardList(presentation: suggestionCards, idPrefix: "suggestion-card")
                 }
             } else {
-                HStack(spacing: 8) {
-                    PromptChip(text: "Try a stronger opening", action: suggest)
-                    PromptChip(text: "Make it warmer", action: suggest)
+                // KRI-769: no chips to offer (capability on, set empty or still loading) = no dangling question either.
+                if serverSuggestions.map({ !$0.isEmpty }) ?? true {
+                    Text("What would you like to change?")
+                        .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                }
+
+                if let serverSuggestions {
+                    // Capability on: the server's chips or nothing. The fixed chips are generic and the server's own
+                    // stoplist rejects them, so they must not flash while the set loads or fill in when it is empty.
+                    if !serverSuggestions.isEmpty {
+                        SuggestionChipRow(chips: serverSuggestions, send: sendSuggestion)
+                            .accessibilityIdentifier("ready-suggestions")
+                    }
+                } else {
+                    PlanChipFlow(spacing: 8) {
+                        PromptChip(text: "Try a stronger opening", action: suggest)
+                        PromptChip(text: "Make it warmer", action: suggest)
+                    }
                 }
             }
         }
@@ -1152,151 +1126,56 @@ private struct PromptChip: View {
     let text: String
     let action: (String) -> Void
     var body: some View {
-        Button { action(text) } label: {
-            Text(text)
-                .font(KriaFont.body(11).weight(.medium))
-                .foregroundStyle(KriaColor.ink)
-                .padding(.horizontal, 11)
-                .frame(minHeight: 44)
-                .overlay(Capsule().stroke(KriaColor.border, lineWidth: 1))
-                // Make the whole outlined chip the tap target explicitly instead of
-                // relying on the stroke overlay's hit area under a plain style.
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Use suggestion: \(text)")
+        KriaAnswerChip(title: text) { action(text) }
+            .accessibilityLabel("Use suggestion: \(text)")
     }
 }
 
-/// Tappable, exact-string reply choices for a clarifying question (e.g. the
-/// all-media capacity preflight). Unlike `PromptChip`, option text is a full
-/// sentence, so each choice wraps onto its own row instead of a fixed-width
-/// capsule.
+/// Tappable, exact-string reply choices for a clarifying question (e.g. the all-media capacity preflight).
+/// Each choice is a full-width answer block, one under the other, so a full sentence wraps and the block grows.
 struct QuestionOptionsRow: View {
     let options: [String]
     let recommendedOption: String?
     let select: (String) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(options, id: \.self) { option in
-                QuestionOptionButton(
-                    text: option,
-                    isRecommended: option == recommendedOption,
-                    action: { select(option) }
-                )
-            }
-        }
+        KriaAnswerStack(
+            options: options.map { KriaAnswerOption(id: $0, title: $0, isRecommended: $0 == recommendedOption) },
+            select: { select($0.id) }
+        )
         .padding(.top, 2)
     }
 }
 
-struct QuestionOptionButton: View {
-    let text: String
-    let isRecommended: Bool
-    var detail: String? = nil
-    var isDisabled = false
-    /// KRI-802: tapped and held (it goes out with the reply's other answer).
-    var isSelected = false
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading, spacing: 4) {
-                    if isRecommended {
-                        Text("RECOMMENDED")
-                            .font(KriaFont.body(10).weight(.semibold))
-                            .tracking(0.4)
-                            .foregroundStyle(KriaColor.success)
-                    }
-                    Text(text)
-                        .font(KriaFont.body(13).weight(.medium))
-                        .foregroundStyle(KriaColor.ink)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let detail {
-                        Text(detail)
-                            .font(KriaFont.body(12))
-                            .foregroundStyle(KriaColor.mutedInk)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(KriaColor.success)
-                        .accessibilityHidden(true)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .frame(minHeight: 44)
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(isSelected ? KriaColor.ink : KriaColor.border, lineWidth: isSelected ? 1.5 : 1))
-            // A plain-style button only takes taps on drawn pixels, which left
-            // the chip's blank interior dead; the whole outlined chip is the target.
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .disabled(isDisabled)
-        .opacity(isDisabled ? 0.55 : 1)
-        .accessibilityLabel(isRecommended ? "\(text) (recommended)" : text)
-        .accessibilityValue(isSelected ? "Selected" : "")
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-}
-
-/// Newest-unanswered-question state for `ReplyOptionChips`. History rows get no mode, so they draw no chips.
+/// Newest-unanswered-question state for `ReplyOptionRows`. History rows get no mode, so they draw no answers.
 struct ReplyOptionsMode {
     /// Sends the tapped label as a normal user message (plain text, no structured answer).
     let select: (String) -> Void
-    /// "Other…": puts the creator in the composer; nothing is sent.
+    /// "Type my own": puts the creator in the composer; nothing is sent.
     let other: () -> Void
+    /// The tapped answer is on its way (its message is pending); the card stays open until the send lands.
+    var isSending = false
+    /// The answer whose message is pending, when it is one of the offered labels.
+    var pendingOption: String?
+    /// The creator is typing their own answer, so the blocks are disabled.
+    var isTyping = false
 }
 
-/// A filled capsule: no stroke, Inter, 44pt tap height. Shared by the reply-option chips so the style
-/// lives in one place (the outlined `PromptChip` predates the no-borders rule and is left alone).
+/// A filled capsule for a SUGGESTION, never for a question's answer (those are `KriaAnswerStack` blocks).
+/// A thin wrapper over `KriaAnswerChip` that keeps the call shape the suggestion rows use.
 struct KriaFilledChip: View {
     let text: String
-    var systemImage: String? = nil
-    var foreground: Color = KriaColor.ink
     /// KRI-756: one muted line under the label (footage evidence). Hidden when nil.
     var caption: String? = nil
-    /// KRI-756: the lead chip of a set (the stock "let Kria cut it" move): butter fill, semibold.
+    /// KRI-756: the lead chip of a set (the stock "let Kria cut it" move) carries the quiet "Recommended" tag.
     var isPrimary = false
+    var state: KriaAnswerState = .idle
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(text)
-                        .font(KriaFont.body(13).weight(isPrimary ? .semibold : .medium))
-                        .multilineTextAlignment(.leading)
-                    if let caption {
-                        Text(caption)
-                            .font(KriaFont.body(11))
-                            .foregroundStyle(foreground.opacity(0.62))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                }
-                if let systemImage {
-                    Image(systemName: systemImage).font(.system(size: 11, weight: .semibold))
-                }
-            }
-            .foregroundStyle(foreground)
-            .padding(.horizontal, 14)
-            .padding(.vertical, caption == nil ? 0 : 6)
-            .frame(minHeight: 44)
-            .background(isPrimary ? KriaColor.butter : KriaColor.fill)
-            .clipShape(Capsule())
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(caption.map { "\(text), \($0)" } ?? text)
+        KriaAnswerChip(title: text, caption: caption, state: state, isRecommended: isPrimary, action: action)
+            .accessibilityLabel(caption.map { "\(text), \($0)" } ?? text)
+            .accessibilityValue(isPrimary ? "Recommended" : "")
     }
 }
 
@@ -1305,6 +1184,8 @@ struct KriaFilledChip: View {
 /// `default_edit` chip is the primary one.
 struct SuggestionChipRow: View {
     let chips: [SuggestionChip]
+    /// The chip whose message is on its way: it shows a spinner while the others dim.
+    var sendingID: String? = nil
     let send: (SuggestionChip) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -1312,7 +1193,10 @@ struct SuggestionChipRow: View {
         if !chips.isEmpty {
             PlanChipFlow(spacing: 8) {
                 ForEach(Array(chips.enumerated()), id: \.element.id) { index, chip in
-                    KriaFilledChip(text: chip.label, caption: chip.why, isPrimary: chip.isDefaultEdit) { send(chip) }
+                    KriaFilledChip(text: chip.label, caption: chip.why, isPrimary: chip.isDefaultEdit,
+                                   state: sendingID == chip.id ? .sending : .idle) { send(chip) }
+                        .opacity(sendingID != nil && sendingID != chip.id ? 0.4 : 1)
+                        .disabled(sendingID != nil)
                         .accessibilityIdentifier("suggestion-chip-\(index)")
                         .accessibilityHint("Sends this to Kria")
                 }
@@ -1325,20 +1209,18 @@ struct SuggestionChipRow: View {
     }
 }
 
-/// The offered answers of a clarifying question as tappable chips, plus "Other…" to type a different one.
-struct ReplyOptionChips: View {
+/// The offered answers of a clarifying question as stacked answer blocks, plus "Type my own".
+struct ReplyOptionRows: View {
     let options: [String]
     let mode: ReplyOptionsMode
 
     var body: some View {
-        PlanChipFlow(spacing: 8) {
-            ForEach(Array(options.enumerated()), id: \.offset) { index, option in
-                KriaFilledChip(text: option) { mode.select(option) }
-                    .accessibilityIdentifier("reply-option-\(index)")
-            }
-            KriaFilledChip(text: "Other…", systemImage: "pencil", foreground: KriaColor.mutedInk, action: mode.other)
-                .accessibilityIdentifier("reply-option-other")
-        }
+        KriaAnswerStack(
+            options: options.enumerated().map { KriaAnswerOption(id: $0.element, title: $0.element, identifier: "reply-option-\($0.offset)") },
+            isSending: mode.isSending, pendingID: mode.pendingOption, isLocked: mode.isTyping,
+            typeMyOwn: mode.other,
+            select: { mode.select($0.id) }
+        )
         .padding(.top, 2)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("reply-options")
@@ -1518,7 +1400,7 @@ enum UploadFailureBanner {
         case (true, false, false):
             return "\(files(unreadable)) couldn’t be read and won’t be sent"
         case (false, true, false):
-            return "\(files(failedUpload)) didn’t upload and won’t be sent unless you retry"
+            return "\(files(failedUpload)) couldn’t upload"
         case (false, false, true):
             return "\(files(cannotResume)) couldn’t be resumed and won’t be sent"
         default:
@@ -1540,12 +1422,18 @@ struct ChatComposer: View {
     var canSendWithoutText = false
     var blocksSubmission = false
     var placeholder = "Tell Kria what you want…"
+    /// The question the creator is answering in their own words. Shown as a capsule above the field.
+    var answering: String? = nil
+    var cancelAnswering: () -> Void = {}
     var isFocused: FocusState<Bool>.Binding
     /// KRI-742: pass a controller (only when the server advertises `voice_dictation`) to show the mic.
     var dictation: DictationController? = nil
     var dictationTerms: () -> [String] = { [] }
     let attach: () -> Void
     let send: () -> Void
+    /// When set, + opens the floating tray (Record, Upload, script, voiceover) instead of calling `attach`.
+    var attachMenu: ChatAttachMenu? = nil
+    @State private var showsTray = false
 
     private var dictationIsBusy: Bool {
         dictation.map { $0.phase == .finalizing || $0.phase == .requestingPermission } ?? false
@@ -1555,7 +1443,52 @@ struct ChatComposer: View {
             && !ChatSubmission.isBareCorrectionStub(text) && !dictationIsBusy
     }
 
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 30, style: .continuous) }
+
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let answering { answeringCapsule(answering) }
+            field
+        }
+        .padding(.horizontal, 14).padding(.vertical, 12)
+        .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: dictation?.phase)
+        .onDisappear { dictation?.cancel() }
+    }
+
+    /// Just the question, with no prefix. It grows with the whole question (never cut off) and stays at least 44pt.
+    private func answeringCapsule(_ question: String) -> some View {
+        HStack(alignment: .center, spacing: 0) {
+            Text(question)
+                .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, 16).padding(.vertical, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: cancelAnswering) {
+                Image(systemName: "xmark").font(.system(size: 13, weight: .semibold)).foregroundStyle(KriaColor.ink)
+                    .frame(width: 44, height: 44).contentShape(Rectangle())
+            }
+            .accessibilityLabel("Stop answering this question")
+            .accessibilityIdentifier("chat-answering-cancel")
+        }
+        .frame(minHeight: 44)
+        .background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("chat-answering")
+    }
+
+    private var field: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if showsTray, let attachMenu {
+                ChatAttachTray(menu: attachMenu) { showsTray = false }
+                    .padding(.top, 8)
+                    .transition(.opacity)
+            }
+            composer
+        }
+    }
+
+    private var composer: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let notice = dictation?.notice {
                 Text(notice)
@@ -1564,9 +1497,19 @@ struct ChatComposer: View {
                     .accessibilityIdentifier("chat-dictation-notice")
             }
             HStack(alignment: .bottom, spacing: 4) {
-                Button(action: attach) { KriaIcon(.plus).frame(width: 44, height: 44) }
-                    .disabled(!canAttach).accessibilityLabel("Attach footage")
-                    .accessibilityHint(canAttach ? "" : "Choose a video format first")
+                Button { if attachMenu != nil { showsTray.toggle() } else { attach() } } label: {
+                    if attachMenu != nil {
+                        Image(systemName: showsTray ? "xmark" : "plus").font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(showsTray ? KriaColor.ink : KriaColor.paper)
+                            .frame(width: 44, height: 44).background(showsTray ? KriaColor.fill : KriaColor.ink, in: Circle())
+                    } else {
+                        KriaIcon(.plus).frame(width: 44, height: 44)
+                    }
+                }
+                .disabled(attachMenu == nil && !canAttach)
+                .accessibilityLabel(showsTray ? "Close attach menu" : "Attach footage")
+                .accessibilityHint(canAttach ? "" : "Choose a video format first")
+                .accessibilityIdentifier("chat-attach")
                 TextField(dictation?.isListening == true && text.isEmpty ? "Listening…" : placeholder, text: $text, axis: .vertical)
                     .font(KriaFont.body(15)).lineLimit(1...4)
                     .frame(minHeight: 44).accessibilityLabel("Message Kria")
@@ -1596,10 +1539,10 @@ struct ChatComposer: View {
                     .accessibilityIdentifier("chat-send-message")
             }
         }
-        .padding(7).kriaFloatingSurface(RoundedRectangle(cornerRadius: 30, style: .continuous))
-        .padding(.horizontal, 14).padding(.vertical, 12)
-        .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: dictation?.phase)
-        .onDisappear { dictation?.cancel() }
+        .padding(7).kriaFloatingSurface(shape)
+        .background(answering != nil ? KriaColor.selectionSoft : Color.clear, in: shape)
+        .tint(answering != nil ? KriaColor.sky : nil)
+        .onChange(of: isSending) { _, sending in if sending { showsTray = false } }
     }
 
     private func toggleDictation(_ dictation: DictationController) {

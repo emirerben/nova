@@ -86,7 +86,7 @@ struct NativeVideoPreview: View {
     /// session has no device-render identity to relink against, in which case
     /// the missing-originals state explains itself without offering the action.
     private let onFindOriginals: (() -> Void)?
-    private let onAddClip: (() -> Void)?
+    private let onAddClip: ((AddClipLaunch) -> Void)?
     /// Last time a drag or pinch changed on the canvas. A drag that also
     /// resolves as a tap (its tap location is where the finger went down) must
     /// never count as an empty tap. Reference type: writing it must not re-render.
@@ -113,6 +113,15 @@ struct NativeVideoPreview: View {
     @State private var liveMediaScale: CGFloat = 1
     @State private var liveMediaRotation: Double = 0
     @State private var liveMediaTranslation = CGPoint.zero
+    /// The speaker's frame when the current gesture began: the live still moves relative to it (SF4).
+    @State private var speakerGestureBaseline: EditorSpeakerFrame?
+    /// The speaker's width when a corner drag began (any of the four corners resizes about the centre).
+    @State private var speakerCornerStartWidth: Double?
+    @State private var speakerSnapX = false
+    @State private var speakerSnapY = false
+    /// After a speaker gesture the moved still stays up until the preview has redrawn the speaker at its new place, so
+    /// the release never flashes the old position (SF5).
+    @State private var speakerStillHeld = false
     @GestureState private var directMoveGestureActive = false
     @GestureState private var directResizeGestureActive = false
     @Environment(\.scenePhase) private var previewScenePhase
@@ -122,7 +131,7 @@ struct NativeVideoPreview: View {
     @State private var textAlignmentFeedback = NativeTextAlignmentFeedback()
     @State private var textAlignmentHaptic = UISelectionFeedbackGenerator()
 
-    init(session: NativeEditorSession, onEmptyTap: (() -> Void)? = nil, onFindOriginals: (() -> Void)? = nil, onAddClip: (() -> Void)? = nil) {
+    init(session: NativeEditorSession, onEmptyTap: (() -> Void)? = nil, onFindOriginals: (() -> Void)? = nil, onAddClip: ((AddClipLaunch) -> Void)? = nil) {
         self.session = session
         self.onEmptyTap = onEmptyTap
         self.onFindOriginals = onFindOriginals
@@ -135,6 +144,20 @@ struct NativeVideoPreview: View {
     }
 
     private func makeObjects() -> [NativeEditorPreviewObject] {
+        (speakerObject().map { [$0] } ?? []) + makeLaneObjects()
+    }
+
+    /// The framed Talk-to-camera speaker: the LOWEST object, so every caption, title and card over it wins a tap
+    /// (SF1). Whole-edit; where no speaker clip is drawn its box is empty (`frame(for:)`, SF2).
+    private func speakerObject() -> NativeEditorPreviewObject? {
+        guard session.canMoveSpeakerOnPreview, let frame = session.speakerFrame else { return nil }
+        return NativeEditorPreviewObject(
+            item: NativeEditorTimelineItem(selection: .speaker, start: 0, end: SpeakerBackgroundLimits.maxTimeline, zIndex: -1_000),
+            text: nil, position: CGPoint(x: frame.xFraction, y: frame.yFraction), style: nil, title: "You",
+            render: .speaker, scale: CGFloat(frame.widthFraction))
+    }
+
+    private func makeLaneObjects() -> [NativeEditorPreviewObject] {
         let document = session.document
         let captionsEnabled = nativeBool(document.captionMeta["enabled"]) ?? !document.captionCues.isEmpty
         return nativePersistedTimelineItems(for: session).compactMap { item -> NativeEditorPreviewObject? in
@@ -273,6 +296,7 @@ struct NativeVideoPreview: View {
     }
 
     private func frame(for object: NativeEditorPreviewObject, in size: CGSize) -> CGRect {
+        if object.item.kind == .speaker { return speakerBox(in: size) }
         if object.item.id == liveTextBaseline?.id, let live = liveText.frame(in: size) {
             return live
         }
@@ -296,11 +320,111 @@ struct NativeVideoPreview: View {
         return CGRect(x: 12, y: size.height - 86, width: max(44, size.width - 24), height: 54)
     }
 
+    /// The framed speaker's box on the canvas: the document's frame (it follows every gesture sample), clipped to the
+    /// canvas so the handles stay reachable (SF10). Empty while the editable preview is not showing.
+    private func speakerBox(in size: CGSize) -> CGRect {
+        guard let frame = session.speakerFrame, session.hasSourcePreview else { return .zero }
+        let visible = frame.layerFrame.canvasRect.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard !visible.isNull else { return .zero }
+        return CGRect(x: visible.minX * size.width, y: visible.minY * size.height,
+                      width: visible.width * size.width, height: visible.height * size.height)
+    }
+
+    /// A tap or drag can land on the speaker only where the composition draws one now: not over the ending clip (SF2).
+    /// Asked at the moment of the touch (the composition is not observable, so a rendered box could be stale).
+    private func speakerIsDrawnNow() -> Bool {
+        session.previewSelectionBounds(for: .speaker, at: clock.currentTime) != nil
+    }
+
+    /// The four corners of the speaker's box: any of them resizes about the centre.
+    private func speakerCorners(in size: CGSize) -> [CGPoint] {
+        let box = speakerBox(in: size)
+        guard box.width > 0, speakerIsDrawnNow() else { return [] }
+        return [CGPoint(x: box.minX, y: box.minY), CGPoint(x: box.maxX, y: box.minY),
+                CGPoint(x: box.minX, y: box.maxY), CGPoint(x: box.maxX, y: box.maxY)]
+    }
+
+    /// The prepared stills, when they show the speaker exactly where the document has it now. A still prepared for
+    /// an older frame (a second gesture before the preview caught up) is not used: it would jump (SF4).
+    private func preparedSpeakerFrame() -> NativeEditorSession.MediaInteractionFrame? {
+        guard let prepared = session.mediaInteractionFrame, prepared.selection == .speaker,
+              abs(prepared.time - clock.currentTime) < 0.01,
+              let rect = session.speakerFrame?.layerFrame.canvasRect,
+              abs(prepared.rect.minX - rect.minX) < 0.0005, abs(prepared.rect.minY - rect.minY) < 0.0005,
+              abs(prepared.rect.width - rect.width) < 0.0005 else { return nil }
+        return prepared
+    }
+
+    /// Keeps the moved still on screen after release, until a still prepared at the new frame arrives (the preview has
+    /// redrawn), playback starts, the frame changes again, or two seconds pass.
+    private func holdSpeakerStill() {
+        speakerStillHeld = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            if speakerStillHeld, !session.isDirectManipulating { releaseSpeakerStill() }
+        }
+    }
+
+    private func releaseSpeakerStill() {
+        guard speakerStillHeld else { return }
+        speakerStillHeld = false
+        liveMediaFrame = nil
+        liveMediaScale = 1
+        liveMediaTranslation = .zero
+    }
+
+    /// Starts moving or resizing the speaker: pins the baseline frame and the live still (when prepared for it).
+    private func beginSpeakerGesture() {
+        guard speakerGestureBaseline == nil else { return }
+        releaseSpeakerStill()
+        speakerGestureBaseline = session.speakerFrame
+        if liveMediaFrame == nil { liveMediaFrame = preparedSpeakerFrame() }
+        textAlignmentHaptic.prepare()
+    }
+
+    /// The live still follows the STORED (clamped, snapped) frame, never the raw finger, so what is shown at release is
+    /// what Save sends (SF3, SF4).
+    private func followSpeakerFrame() {
+        guard let baseline = speakerGestureBaseline, let frame = session.speakerFrame else { return }
+        liveMediaScale = CGFloat(frame.widthFraction / max(0.0001, baseline.widthFraction))
+        liveMediaTranslation = CGPoint(x: frame.xFraction - baseline.xFraction, y: frame.yFraction - baseline.yFraction)
+    }
+
+    /// The centre the finger asks for, pulled onto the middle lines (a selection tick when it lands on one).
+    private func moveSpeaker(to point: CGPoint) {
+        let x = NativeSpeakerFrameGesture.snappedToCenter(point.x), y = NativeSpeakerFrameGesture.snappedToCenter(point.y)
+        if (x.snapped && !speakerSnapX) || (y.snapped && !speakerSnapY) { textAlignmentHaptic.selectionChanged() }
+        speakerSnapX = x.snapped; speakerSnapY = y.snapped
+        session.setSpeakerFrameCenter(x: x.value, y: y.value)
+        followSpeakerFrame()
+    }
+
+    private func resizeSpeaker(to width: Double) {
+        session.setSpeakerFrameWidth(width)
+        followSpeakerFrame()
+    }
+
+    /// SF9: the safe-zone guide tests the speaker's FACE (found on the prepared still) moved with the frame; without a
+    /// face, the visible speaker box.
+    private func speakerDangerFootprint(in canvas: CGSize) -> (footprint: NativePreviewFootprint, face: Bool)? {
+        guard let frame = session.speakerFrame else { return nil }
+        if let baseline = speakerGestureBaseline, let face = liveMediaFrame?.face {
+            let k = frame.widthFraction / max(0.0001, baseline.widthFraction)
+            let moved = CGRect(x: frame.xFraction + (face.minX - baseline.xFraction) * k,
+                               y: frame.yFraction + (face.minY - baseline.yFraction) * k,
+                               width: face.width * k, height: face.height * k)
+            return (NativePreviewFootprint(frame: CGRect(x: moved.minX * canvas.width, y: moved.minY * canvas.height,
+                width: moved.width * canvas.width, height: moved.height * canvas.height), rotation: 0, canvas: canvas), true)
+        }
+        return (NativePreviewFootprint(frame: speakerBox(in: canvas), rotation: 0, canvas: canvas), false)
+    }
+
     private func selectPreviewObject(at point: CGPoint, in size: CGSize) {
         let candidates = NativeEditorInteraction.previewOrder(
             NativeEditorInteraction.visible(objects.map(\.item), at: clock.currentTime)
         ).reversed().filter { item in
             guard let object = objects.first(where: { $0.item.selection == item.selection }) else { return false }
+            if object.item.kind == .speaker, !speakerIsDrawnNow() { return false }
             return NativeEditorInteraction.contains(point, in: frame(for: object, in: size), rotationDegrees: object.rotation)
         }
         guard !candidates.isEmpty else {
@@ -330,6 +454,9 @@ struct NativeVideoPreview: View {
     private func isNearSelectedCorner(_ point: CGPoint, in size: CGSize) -> Bool {
         guard let selection = session.selection,
               let selected = objects.first(where: { $0.item.selection == selection }) else { return false }
+        if selection.kind == .speaker {
+            return speakerCorners(in: size).contains { hypot(point.x - $0.x, point.y - $0.y) <= NativeTextTransformMath.cornerGrabRadius }
+        }
         let bounds = frame(for: selected, in: size)
         let corner = NativeTextTransformMath.cornerPoint(of: bounds, rotationDegrees: selected.rotation)
         return hypot(point.x - corner.x, point.y - corner.y) <= NativeTextTransformMath.cornerGrabRadius
@@ -343,6 +470,7 @@ struct NativeVideoPreview: View {
         .compactMap { item in objects.first(where: { $0.item.selection == item.selection }) }
         .first { object in
             canDirectlyPosition(object)
+                && (object.item.kind != .speaker || speakerIsDrawnNow())
                 && NativeEditorInteraction.contains(point, in: frame(for: object, in: size), rotationDegrees: object.rotation)
         }
     }
@@ -357,6 +485,7 @@ struct NativeVideoPreview: View {
         guard let baseline = dangerBaseline,
               directMoveObjectID != nil || directResizeObjectID != nil,
               !session.isPlaying, previewScenePhase == .active else { return nil }
+        if speakerGestureBaseline != nil { return speakerDangerFootprint(in: canvas)?.footprint }
         if let text = liveTextBaseline {
             if let frame = liveText.frame(in: canvas) {
                 return NativePreviewFootprint(frame: frame,
@@ -412,9 +541,23 @@ struct NativeVideoPreview: View {
                 }
             }
         }
+        // The framed speaker: any corner resizes about the centre (no rotation; the wire has none).
+        if directMoveObjectID == nil, session.selection == .speaker,
+           let speaker = objects.first(where: { $0.item.kind == .speaker }), canDirectlyPosition(speaker),
+           let frame = session.speakerFrame,
+           speakerCorners(in: size).contains(where: { hypot(value.startLocation.x - $0.x, value.startLocation.y - $0.y) <= NativeTextTransformMath.cornerGrabRadius }) {
+            beginDangerGuide(for: speaker, in: size)
+            directMoveObjectID = speaker.id
+            beginSpeakerGesture()
+            speakerCornerStartWidth = frame.widthFraction
+            let center = CGPoint(x: frame.xFraction * size.width, y: frame.yFraction * size.height)
+            transformCenter = center
+            transformStartVector = CGVector(dx: value.startLocation.x - center.x, dy: value.startLocation.y - center.y)
+            session.beginDirectManipulation()
+        }
         if directMoveObjectID == nil, let selection = session.selection,
            let selected = objects.first(where: { $0.item.selection == selection }),
-           selected.item.kind != .text, canDirectlyPosition(selected), session.canEdit("visual_editor_style") {
+           selected.item.kind != .text, selected.item.kind != .speaker, canDirectlyPosition(selected), session.canRotateVisual(selected.item.selection) {
             let bounds = frame(for: selected, in: size)
             let corner = NativeTextTransformMath.cornerPoint(of: bounds, rotationDegrees: selected.rotation)
             if NativeTextTransformMath.grabsCorner(at: value.startLocation, corner: corner, bounds: bounds) {
@@ -428,6 +571,12 @@ struct NativeVideoPreview: View {
                 transformStartVector = CGVector(dx: value.startLocation.x - bounds.midX, dy: value.startLocation.y - bounds.midY)
                 session.beginDirectManipulation()
             }
+        }
+        if let startWidth = speakerCornerStartWidth, let center = transformCenter, let start = transformStartVector {
+            let radius = hypot(start.dx, start.dy)
+            guard radius > 1 else { return }
+            resizeSpeaker(to: startWidth * hypot(value.location.x - center.x, value.location.y - center.y) / radius)
+            return
         }
         if let baseline = visualTransformBaseline, let center = transformCenter, let start = transformStartVector {
             let next = CGVector(dx: value.location.x - center.x, dy: value.location.y - center.y)
@@ -455,7 +604,8 @@ struct NativeVideoPreview: View {
             directMoveObjectID = object.id
             directMoveBaseline = position
             session.select(object.item, seekToStart: false)
-            if object.item.kind != .text, let prepared = session.mediaInteractionFrame,
+            if object.item.kind == .speaker { beginSpeakerGesture() }
+            else if object.item.kind != .text, let prepared = session.mediaInteractionFrame,
                prepared.selection == object.item.selection,
                abs(prepared.time - clock.currentTime) < 0.01 { liveMediaFrame = prepared }
             session.beginDirectManipulation()
@@ -471,6 +621,8 @@ struct NativeVideoPreview: View {
             resizeText(text, scale: 1, rotation: 0, canvas: size)
             liveText.move(to: position)
             updateTextAlignment(in: size)
+        } else if object.item.kind == .speaker {
+            onMove(position)
         } else {
             onMove(position)
             liveMediaTranslation = CGPoint(x: position.x - baseline.x, y: position.y - baseline.y)
@@ -491,10 +643,17 @@ struct NativeVideoPreview: View {
         visualTransformBaseline = nil
         transformCenter = nil
         transformStartVector = nil
-        liveMediaFrame = nil
-        liveMediaScale = 1
+        if speakerGestureBaseline != nil, liveMediaFrame != nil, session.speakerFrame != speakerGestureBaseline {
+            holdSpeakerStill()
+        } else {
+            liveMediaFrame = nil
+            liveMediaScale = 1
+            liveMediaTranslation = .zero
+        }
         liveMediaRotation = 0
-        liveMediaTranslation = .zero
+        speakerGestureBaseline = nil
+        speakerCornerStartWidth = nil
+        speakerSnapX = false; speakerSnapY = false
         liveTextBaseline = nil
         liveText.reset()
         liveTextFrame = nil
@@ -528,7 +687,9 @@ struct NativeVideoPreview: View {
                     if object.item.kind == .text {
                         directResizeTextBaseline = session.document.textElements.first { $0.id == object.item.id }
                     }
-                    if object.item.kind != .text, let prepared = session.mediaInteractionFrame,
+                    speakerCornerStartWidth = nil
+                    if object.item.kind == .speaker { beginSpeakerGesture() }
+                    else if object.item.kind != .text, let prepared = session.mediaInteractionFrame,
                        prepared.selection == object.item.selection,
                        abs(prepared.time - clock.currentTime) < 0.01 { liveMediaFrame = prepared }
                     session.beginDirectManipulation()
@@ -540,6 +701,8 @@ struct NativeVideoPreview: View {
                 if let text = directResizeTextBaseline {
                     resizeText(text, scale: value, rotation: 0, canvas: size)
                     updateTextAlignment(in: size)
+                } else if object.item.kind == .speaker {
+                    onResize(baseline * value)
                 } else {
                     onResize(baseline * value)
                     liveMediaScale = value
@@ -564,6 +727,8 @@ struct NativeVideoPreview: View {
                   session.canEdit(.visualBlocks),
                   let block = session.document.visualBlocks.first(where: { $0.id == object.item.id }) else { return false }
             return block.kind == "media" && block.raw["display_mode"]?.stringValue == "overlay"
+        case .speaker:
+            return session.canMoveSpeakerOnPreview && session.hasSourcePreview
         default:
             return false
         }
@@ -580,6 +745,8 @@ struct NativeVideoPreview: View {
             return { point in session.setMediaOverlayPosition(id: object.item.id, x: point.x, y: point.y) }
         case .visualBlock:
             return { point in session.setVisualBlockOverlayLayout(id: object.item.id, x: point.x, y: point.y) }
+        case .speaker:
+            return { point in moveSpeaker(to: point) }
         default:
             return nil
         }
@@ -596,6 +763,8 @@ struct NativeVideoPreview: View {
             return { scale in session.setMediaOverlayScale(id: object.item.id, scale: scale) }
         case .visualBlock:
             return { scale in session.setVisualBlockOverlayLayout(id: object.item.id, scale: scale) }
+        case .speaker:
+            return { scale in resizeSpeaker(to: Double(scale)) }
         default:
             return nil
         }
@@ -622,14 +791,27 @@ struct NativeVideoPreview: View {
         ZStack(alignment: .topLeading) {
             Color.black
             if session.document.editorState == "empty" {
-                VStack(spacing: 12) {
-                    Image(systemName: "film.stack").font(.system(size: 30)).accessibilityHidden(true)
-                    Text("Add a clip to start your edit").font(KriaFont.display(20))
+                VStack(spacing: 16) {
+                    Text("Add a clip to start your edit").kriaType(.heading)
                         .multilineTextAlignment(.center)
-                    Button("Add clip", action: { onAddClip?() })
-                        .buttonStyle(KriaPrimaryButtonStyle())
-                        .disabled(onAddClip == nil || !session.canAddTimelineMedia)
-                        .accessibilityIdentifier("native-editor-empty-add-clip")
+                    HStack(spacing: 12) {
+                        ForEach([AddClipLaunch.record, .upload], id: \.self) { launch in
+                            Button { onAddClip?(launch) } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: launch == .record ? KriaSourceOption.recordSymbol : KriaSourceOption.uploadSymbol)
+                                        .font(.system(size: 15))
+                                    Text(launch == .record ? "Record" : "Upload").kriaType(.button)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .background(Color.white.opacity(0.16), in: Capsule())
+                                .contentShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(onAddClip == nil || !session.canAddTimelineMedia)
+                            .accessibilityIdentifier(launch == .record ? "native-editor-empty-record" : "native-editor-empty-add-clip")
+                        }
+                    }
+                    .padding(.horizontal, 24)
                 }
                 .foregroundStyle(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityElement(children: .contain)
@@ -735,7 +917,13 @@ struct NativeVideoPreview: View {
                     if let footprint = dangerFootprint(in: proxy.size) {
                         NativePreviewDangerGuide(canvas: proxy.size,
                             edges: NativePreviewDangerZones.overlaps(frame: footprint.frame(in: proxy.size),
-                                rotation: footprint.rotation, canvas: proxy.size))
+                                rotation: footprint.rotation, canvas: proxy.size),
+                            followsFace: speakerGestureBaseline != nil && liveMediaFrame?.face != nil)
+                    }
+                    if speakerGestureBaseline != nil {
+                        // The middle lines the speaker's centre snapped to.
+                        if speakerSnapX { Rectangle().fill(KriaColor.sky).frame(width: 1, height: proxy.size.height).offset(x: proxy.size.width / 2) }
+                        if speakerSnapY { Rectangle().fill(KriaColor.sky).frame(width: proxy.size.width, height: 1).offset(y: proxy.size.height / 2) }
                     }
                     ForEach(visible.compactMap { item in objects.first(where: { $0.item == item }) }) { object in
                         NativePreviewObjectView(
@@ -864,6 +1052,11 @@ struct NativeVideoPreview: View {
             if phase != .active { settleDirectManipulation() }
         }
         .onChange(of: session.document) { _, _ in refreshObjects() }
+        .onChange(of: session.mediaInteractionFrame?.rect) { _, _ in
+            if speakerStillHeld, preparedSpeakerFrame() != nil { releaseSpeakerStill() }
+        }
+        .onChange(of: session.speakerFrame) { _, _ in if !session.isDirectManipulating { releaseSpeakerStill() } }
+        .onChange(of: session.isPlaying) { _, playing in if playing { releaseSpeakerStill() } }
         .onChange(of: session.scrubPreviewFrame) { _, _ in
             if !session.isDirectManipulating {
                 liveTextBaseline = nil; liveTextFrame = nil
@@ -1014,6 +1207,8 @@ private struct NativeEditorPreviewObject: Identifiable, Equatable {
 
 private enum NativePreviewRender: Equatable {
     case text, caption, mediaOverlay, visualBlock, carousel, runtimeOnly
+    /// The framed Talk-to-camera speaker: its pixels are the video's own, so the object only carries the hit box.
+    case speaker
 }
 
 private struct NativePreviewObjectView: View {
@@ -1047,7 +1242,7 @@ private struct NativePreviewObjectView: View {
                 .contentShape(Rectangle())
 
             Group {
-            if !showsContent {
+            if !showsContent || object.render == .speaker {
                 Color.clear
             } else if object.render == .caption {
                 Text(object.text ?? "Caption")
@@ -1352,6 +1547,7 @@ struct NativeMiniStrip: View {
     private var cameraEffectItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .cameraEffect } }
     private var carouselItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .carousel } }
     private var drawingItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .drawing } }
+    private var backgroundWindowItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .speakerBackgroundWindow } }
     private var musicItems: [NativeEditorTimelineItem] { timelineItems.filter { $0.kind == .music } }
     private var hasText: Bool { !textItems.isEmpty }
     private var hasCaptions: Bool { documentCaptionsEnabled || !captionItems.isEmpty }
@@ -1374,7 +1570,9 @@ struct NativeMiniStrip: View {
         let groups: [(String, [NativeEditorTimelineItem])] = [
             ("TEXT", textItems), ("CAPTIONS", captionItems), ("MUSIC", musicItems),
             ("SFX", soundEffectItems), ("OVERLAY", mediaOverlayItems),
-            ("VISUAL", visualBlockItems), ("MOTION", motionSceneItems),
+            ("VISUAL", visualBlockItems),
+            // KRI-1162: present only while the edit has timed backgrounds, so every other edit keeps its lane list.
+            ("BACKGROUND", backgroundWindowItems), ("MOTION", motionSceneItems),
             ("CAMERA", cameraEffectItems), ("DRAW", drawingItems), ("CAROUSEL", carouselItems)
         ]
         return groups.flatMap { title, items in
@@ -1730,24 +1928,28 @@ struct NativeMiniStrip: View {
         let hasAudioLane = !clips.isEmpty
         return VStack(spacing: rowGap) {
             Color.clear.frame(height: 18)
-            Text("VIDEO")
+            Text("Video")
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .frame(height: filmstripHeight)
                 .accessibilityIdentifier(rowsList.isEmpty && !hasAudioLane ? "native-editor-lane-label-last" : "native-editor-lane-label-video")
             ForEach(Array(rowsList.enumerated()), id: \.element.id) { index, row in
-                laneLabel(row.title)
+                laneLabel(Self.laneDisplayName(row.title))
                     .frame(height: CGFloat(rowCount(row)) * secondaryLaneHeight + CGFloat(rowCount(row) - 1) * rowGap, alignment: .top)
                     .accessibilityIdentifier(
                         index == rowsList.count - 1 && !hasAudioLane
                             ? "native-editor-lane-label-last" : "native-editor-lane-label-\(row.id)"
                     )
             }
-            if hasAudioLane { laneLabel("AUDIO").accessibilityIdentifier("native-editor-lane-label-last") }
+            if hasAudioLane { laneLabel("Audio").accessibilityIdentifier("native-editor-lane-label-last") }
         }
         .font(.system(size: laneLabelSize, weight: .bold, design: .rounded))
-        .tracking(0.8)
         .foregroundStyle(KriaColor.zinc)
+    }
+
+    /// Row ids stay upper-case keys; the label the creator reads is sentence case ("SFX" is an acronym and stays).
+    private static func laneDisplayName(_ key: String) -> String {
+        key == "SFX" ? key : key.prefix(1) + key.dropFirst().lowercased()
     }
 
     private func laneLabel(_ title: String) -> some View {
@@ -2160,6 +2362,9 @@ struct NativeMiniStrip: View {
         case .drawing:
             let count = session.document.drawings.first { $0.id == item.id }?.strokes.count ?? 0
             return count > 0 ? "Drawing · \(count) \(count == 1 ? "stroke" : "strokes")" : laneTitle
+        case .speakerBackgroundWindow:
+            guard let window = session.speakerBackgroundWindows.first(where: { $0.localID == item.id }) else { return laneTitle }
+            return session.visualLibrary.first { $0.id == window.mediaID }?.sourceFilename ?? (window.kind == .video ? "Video" : "Photo")
         case .carousel:
             return "Carousel: \(item.id)"
         default:
@@ -2193,6 +2398,8 @@ struct NativeMiniStrip: View {
                 : ["camera_effects.timing", "camera_effects", "lanes.camera_effects.timing", "lanes.camera_effects"]
         case .drawing:
             return ["drawings.trim", "drawings.edit"]
+        case .speakerBackgroundWindow:
+            return ["speaker_background_windows"]
         default:
             return nil
         }
@@ -2215,6 +2422,7 @@ struct NativeMiniStrip: View {
         case .motionScene: return session.canEdit(.motionScenes)
         case .cameraEffect: return session.canEdit(.cameraEffects)
         case .drawing: return session.canEditDrawings
+        case .speakerBackgroundWindow: return session.canEditSpeakerBackgroundWindows
         default: return false
         }
     }
@@ -2341,12 +2549,35 @@ struct NativeMiniStrip: View {
                     onDragXChange: { x in updateAutoScrollX(x) }
                 )
             }
+            if title == "BACKGROUND" { backgroundFillStrip(playheadX: playheadX) }
         }
         .frame(height: CGFloat(count) * secondaryLaneHeight + CGFloat(count - 1) * rowGap)
         .clipped()
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(title) lane")
         .accessibilityIdentifier("native-editor-lane-\(title.lowercased())")
+    }
+
+    /// KRI-1162: the whole-edit fill, drawn faintly along the top of the BACKGROUND lane. A tap opens the Background
+    /// tool; it has no edges to trim (the fill always spans the video).
+    private func backgroundFillStrip(playheadX: CGFloat) -> some View {
+        let origin = playheadX - CGFloat(clock.currentTime) * pixelsPerSecond
+        let left = max(origin, -12)
+        let right = min(origin + CGFloat(timelineDuration) * pixelsPerSecond, max(viewportWidth, 1) + 12)
+        let width = max(1, right - left)
+        return Button { session.requestBackgroundTool() } label: {
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(KriaColor.mutedInk.opacity(0.22))
+                .frame(width: width, height: 6)
+                .frame(width: width, height: 14, alignment: .top)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(width: width, height: 14)
+        .position(x: left + width / 2, y: 7)
+        .accessibilityLabel("Background fill")
+        .accessibilityHint("Opens the Background tool")
+        .accessibilityIdentifier("native-editor-timeline-background-fill")
     }
 
     private func captionDensityLane(width: CGFloat, playheadX: CGFloat) -> some View {

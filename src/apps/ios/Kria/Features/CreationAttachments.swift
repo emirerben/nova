@@ -1,7 +1,21 @@
 import SwiftUI
 import AVFoundation
 import UIKit
+import PhotosUI
 import KriaMediaEngine
+
+/// What the Add media sheet starts doing the moment it opens, so a Record or Upload tile elsewhere lands straight in
+/// the camera or the right picker instead of on a second screen of buttons.
+enum AttachmentLaunch: Equatable {
+    case record
+    case recordWithScript
+    case voiceover
+    /// Open a later step directly (song, overlays).
+    case step(AttachmentStep)
+    /// The "Upload from" list over the sheet.
+    case chooseSource
+    case source(FootageSourceKind)
+}
 
 struct AttachmentSheet: View {
     let projectID: UUID
@@ -15,6 +29,10 @@ struct AttachmentSheet: View {
     /// KRI-815: opened from a script card: the sheet starts on the voiceover step (any format) and shows this
     /// script to read while recording. Nil = the sheet as before.
     var voiceoverScript: VoiceoverScript? = nil
+    var launch: AttachmentLaunch? = nil
+    /// Re-record from the ready video: the sheet is only a host. It opens the teleprompter at once, swaps this clip for
+    /// the new take, and closes with it. Nil = the sheet as before.
+    var rerecordTarget: RerecordTarget? = nil
     let refresh: () async -> Void
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var auth: AuthStore
@@ -25,6 +43,8 @@ struct AttachmentSheet: View {
     @State private var step: AttachmentStep = .footage
     @State private var lastGeneratedDraft: GeneratedMediaDraft?
     @State private var generatedDraft: GeneratedMediaDraft?
+    @State private var overlaySet = GeneratedOverlaySet()
+    @State private var showsOverlaySet = false
     @State private var loadingNarration = false
     @State private var pool: CreationVisuals?
     @State private var error: String?
@@ -35,6 +55,7 @@ struct AttachmentSheet: View {
     @State private var uploadingRecording = false
     @State private var voiceoverUploadError: String?
     @State private var confirmsDiscardingTake = false
+    @State private var confirmsCancellingRecording = false
     @State private var pendingRecords: [UploadRecoveryRecord] = []
     @State private var inFlight: [UUID: BackgroundUploadCoordinator.InFlightUpload] = [:]
     /// Per-sheet budget for retrying transient analysis failures on the creator's behalf.
@@ -54,10 +75,19 @@ struct AttachmentSheet: View {
     @State private var uploadingSong = false
     @State private var songUploadError: String?
     @State private var showsTeleprompter = false
+    @State private var cameraStartsWithScript = false
+    @State private var showsScriptEntry = false
+    @State private var openCameraAfterScript = false
+    @State private var uploadAfterCamera = false
+    @State private var pickerLaunch: FootageSourceKind?
+    @State private var voiceoverPickerLaunch: FootageSourceKind?
+    @State private var launched = false
     /// KRI-580: the "Where in the song did you film?" sheet, and whether the server said the feature is off.
     @State private var showsSongRange = false
     @State private var songRangeUnavailable = false
     @State private var pendingSongRangeEvent: SongRangeEvent?
+    /// Item 24: a "Move to Overlays" is running; a second tap is ignored until it ends.
+    @State private var movingToOverlays = false
 
     init(
         projectID: UUID,
@@ -68,8 +98,12 @@ struct AttachmentSheet: View {
         capabilities: CreationCapabilities?,
         capabilitiesLoaded: Bool = true,
         voiceoverScript: VoiceoverScript? = nil,
+        launch: AttachmentLaunch? = nil,
+        rerecordTarget: RerecordTarget? = nil,
         refresh: @escaping () async -> Void
     ) {
+        self.launch = launch
+        self.rerecordTarget = rerecordTarget
         self.projectID = projectID
         self.maximumClipCount = maximumClipCount
         self.attachedClipCount = attachedClipCount
@@ -194,10 +228,13 @@ struct AttachmentSheet: View {
                 attachmentNavigation
                 if let lastGeneratedDraft, lastGeneratedDraft.recovery != nil,
                    capabilitiesLoaded, generatedMediaEnabled(lastGeneratedDraft.capability) {
-                    Button("Resume generated preview") { generatedDraft = lastGeneratedDraft }
-                        .frame(minHeight: 44).accessibilityIdentifier("generated-media-resume")
+                    KriaNoticeCard(tone: .info, title: "Your preview is still here",
+                                   action: KriaNoticeAction(title: "Open") { generatedDraft = lastGeneratedDraft }, style: .banner)
+                        .padding(.horizontal, 24).accessibilityIdentifier("generated-media-resume")
                 }
-                AttachmentStepProgress(steps: steps, current: step, overlaysTitle: usesVisualPoolOnly ? SlideMediaCopy.poolTitle : nil)
+                KriaStepRail(steps: steps.map { $0 == .overlays ? (usesVisualPoolOnly ? SlideMediaCopy.poolTitle : $0.title) : $0.title },
+                             current: stepIndex)
+                    .padding(.horizontal, 24).padding(.bottom, 8)
                 TabView(selection: $step) {
                     ForEach(steps) { aStep in
                         ScrollView {
@@ -235,20 +272,61 @@ struct AttachmentSheet: View {
                     }
                 }
             }
-            .fullScreenCover(isPresented: $showsTeleprompter, onDismiss: { Task { await refresh() } }) {
+            .sheet(isPresented: $showsOverlaySet) {
+                if let itemID {
+                    GeneratedOverlaysSheet(itemID: itemID, overlays: overlaySet, ideaTitle: thread?.title ?? "") {
+                        await loadVisuals()
+                        await refresh()
+                    }
+                }
+            }
+            // The camera is a full-screen cover, which also makes this content disappear. Only a real dismissal
+            // stops the overlay requests; coming back picks up any that a stop did cancel.
+            .onDisappear { if !showsTeleprompter { overlaySet.stopWork() } }
+            .onAppear { overlaySet.resumeWork() }
+            .sheet(isPresented: $showsScriptEntry, onDismiss: {
+                // The camera waits for the script sheet to finish closing.
+                if openCameraAfterScript { openCameraAfterScript = false; showsTeleprompter = true }
+            }) {
+                if let accountID = auth.localStorageIdentity {
+                    TeleprompterScriptEntrySheet(accountID: accountID, projectID: projectID) { useScript in
+                        cameraStartsWithScript = useScript
+                        openCameraAfterScript = true
+                        showsScriptEntry = false
+                    }
+                }
+            }
+            .fullScreenCover(isPresented: $showsTeleprompter, onDismiss: {
+                Task { await refresh() }
+                if uploadAfterCamera {
+                    uploadAfterCamera = false
+                    pickerLaunch = .sources
+                }
+                if rerecordTarget != nil { dismiss() }
+            }) {
                 if let accountID = auth.localStorageIdentity {
                     TeleprompterScreen(accountID: accountID, projectID: projectID,
                         admissionMessage: teleprompterAdmission,
+                        replacementNotice: replacementNotice,
                         intake: useCameraTake,
                         intakeState: cameraTakeState,
                         speakerBackgroundEnabled: speakerBackgroundAvailable,
                         backgroundIntake: useCameraBackground,
                         backgroundStatement: stateSpeakerBackground,
+                        startsWithScript: cameraStartsWithScript,
+                        onUpload: { uploadAfterCamera = true },
                         reportDiagnostic: { report in Task { try? await model.api.reportRecorderDiagnostic(report) } })
                         .environment(\.dynamicTypeSize, dynamicTypeSize)
                 }
             }
+            .opacity(rerecordTarget == nil ? 1 : 0)
+            .accessibilityHidden(rerecordTarget != nil)
+            .onAppear { if rerecordTarget != nil { showsTeleprompter = true } }
             .interactiveDismissDisabled(recorder.isRecording || recorder.hasRecording)
+            .confirmationDialog("Stop and discard this recording?", isPresented: $confirmsCancellingRecording, titleVisibility: .visible) {
+                Button("Discard recording", role: .destructive) { recorder.discard() }
+                Button("Keep recording", role: .cancel) { }
+            } message: { Text("What you have recorded so far will be deleted.") }
             .confirmationDialog("Discard this voiceover?", isPresented: $confirmsDiscardingTake, titleVisibility: .visible) {
                 Button("Discard recording", role: .destructive) { recorder.discard(); dismiss() }
                 Button("Keep recording", role: .cancel) { }
@@ -256,6 +334,19 @@ struct AttachmentSheet: View {
             .sheet(isPresented: $showsSongRange) {
                 let song = CreationAttachedMedia.song(thread?.state ?? [:])
                 SongRangeSheet(duration: song?.durationS, existing: song?.filmingRange, submit: submitSongRange)
+            }
+            .task {
+                guard !launched else { return }
+                launched = true
+                switch launch {
+                case .record: openCamera(withScript: false)
+                case .recordWithScript: showsScriptEntry = true
+                case .voiceover: step = .voiceover; role = .voiceover
+                case .step(let target): if steps.contains(target) { step = target; role = target.role }
+                case .chooseSource: pickerLaunch = .sources
+                case .source(let kind): pickerLaunch = kind
+                case nil: break
+                }
             }
             .task {
                 guard pollsVisuals else { return }
@@ -283,6 +374,7 @@ struct AttachmentSheet: View {
                     try? await Task.sleep(for: .seconds(3))
                 }
             }
+            .task(id: itemID) { configureOverlaySet() }
             #if DEBUG
             .task {
                 if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat"),
@@ -330,17 +422,15 @@ struct AttachmentSheet: View {
 
     private var attachmentNavigation: some View {
         HStack {
-            Button { goBack() } label: {
-                Image(systemName: "chevron.left").frame(width: 44, height: 44)
-            }.opacity(stepIndex == 0 ? 0 : 1).disabled(stepIndex == 0 || recorder.isRecording)
+            Button { goBack() } label: { Image(systemName: "chevron.left").font(.system(size: 17, weight: .semibold)) }
+                .buttonStyle(.kriaIcon).accessibilityLabel("Back")
+                .opacity(stepIndex == 0 ? 0 : 1).disabled(stepIndex == 0 || recorder.isRecording)
             Spacer()
-            Text("Add media").font(KriaFont.body(16).weight(.semibold))
-            Spacer()
-            Button { requestDismiss() } label: {
-                Image(systemName: "xmark").frame(width: 44, height: 44).background(KriaColor.softZinc, in: Circle())
-            }.disabled(recorder.isRecording).accessibilityIdentifier("attachment-close").accessibilityLabel("Close")
+            Button { requestDismiss() } label: { Image(systemName: "xmark").font(.system(size: 17, weight: .semibold)) }
+                .buttonStyle(.kriaIcon).disabled(recorder.isRecording)
+                .accessibilityIdentifier("attachment-close").accessibilityLabel("Close")
         }
-        .padding(.horizontal, 16).frame(height: 52)
+        .padding(.horizontal, 12).frame(height: 56)
     }
 
     @ViewBuilder private func stepContent(_ aStep: AttachmentStep) -> some View {
@@ -353,19 +443,192 @@ struct AttachmentSheet: View {
     }
 
     private var footageStep: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        let hint = footageHint
+        return VStack(alignment: .leading, spacing: 20) {
             AttachmentHeading(title: "Add footage", subtitle: FootageStageCopy.attachmentSubtitle(talking: isTalkingToCamera, maximumClipCount: maximumClipCount))
-            if isTalkingToCamera {
-                Button { showsTeleprompter = true } label: {
-                    Label("Record with script", systemImage: "video.badge.waveform")
-                        .frame(maxWidth: .infinity)
-                }.buttonStyle(KriaPrimaryButtonStyle()).accessibilityIdentifier("teleprompter-open")
-                    .disabled(auth.localStorageIdentity == nil)
-            }
-            FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximumClipCount, attachedClipCount: existing(for: .clip), attachedMediaIDs: attachedMediaIDs(for: .clip), role: .clip, itemID: itemID, limit: capabilities?.media?["clips"], destination: uploadDestination(for: .clip), onPickerFilled: nil, onSelectionCompleted: advanceAfterFootageSelection, showsHeading: false, libraryEnabled: capabilities?.mediaLibrary == true)
+            // First thing on the step: under the clip rows it sat below the fold, behind Next.
+            if let hint { placeHintNotice(hint) }
+            FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximumClipCount, attachedClipCount: existing(for: .clip), attachedMediaIDs: attachedMediaIDs(for: .clip), role: .clip, itemID: itemID, limit: capabilities?.media?["clips"], destination: uploadDestination(for: .clip), onPickerFilled: nil, onSelectionCompleted: advanceAfterFootageSelection, showsHeading: false, libraryEnabled: capabilities?.mediaLibrary == true,
+                              controls: .tiles(record: auth.localStorageIdentity == nil ? nil : { openCamera(withScript: false) }),
+                              launchSource: $pickerLaunch)
                 .id(AttachmentStep.footage)
-            attachedList(role: .clip)
+            if isTalkingToCamera, auth.localStorageIdentity != nil {
+                Button { showsScriptEntry = true } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "text.alignleft").font(.system(size: 18)).foregroundStyle(KriaColor.ink)
+                            .frame(width: 40, height: 40).background(KriaColor.paper, in: Circle())
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Script").kriaType(.button).foregroundStyle(KriaColor.ink)
+                            Text("Optional · shows while you record").kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right").font(.system(size: 14, weight: .semibold)).foregroundStyle(KriaColor.mutedInk)
+                    }
+                    .padding(.horizontal, 12).frame(minHeight: 64)
+                    .background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                }
+                .buttonStyle(.plain).accessibilityIdentifier("teleprompter-open")
+            }
+            attachedList(role: .clip, flaggedClips: Dictionary(uniqueKeysWithValues: (hint?.flagged ?? []).map { ($0.key, $0.isScreenRecording) }))
         }
+    }
+
+    // MARK: Item 24: screen recordings in Footage
+
+    /// The clips the hint is about, or nil when it should not show. Everything is gated on the server switch first,
+    /// so with it off no preview file is read and the step is unchanged.
+    private var footageHint: FootageHint? {
+        guard capabilities?.uploadPlaceHintEnabled == true, isTalkingToCamera, hasOverlaysStep, !usesVisualPoolOnly else { return nil }
+        let ledger = model.uploads.photoSelections[projectID.uuidString]?.entries.values.filter { $0.role == .clip } ?? []
+        let version = model.uploads.previewVersion
+        func screenRecording(name: String, photosID: String?) -> Bool {
+            FootagePlacement.looksLikeScreenRecording(filename: name)
+                || (photosID.map { PhotosScreenRecording.isScreenRecording(assetIdentifier: $0) } ?? false)
+        }
+        var clips: [FootageHintClip] = []
+        let attached = attachedMedia(for: .clip)
+        for attachment in attached {
+            let photosID = ledger.first { $0.mediaID == attachment.id }?.assetIdentifier
+            clips.append(FootageHintClip(mediaID: attachment.id, recordID: nil, name: attachment.displayName, attachment: attachment,
+                                         shape: FootageShapeReader.shape(of: CreationMediaPreview.url(mediaID: attachment.id), version: version),
+                                         isScreenRecording: screenRecording(name: attachment.displayName, photosID: photosID),
+                                         photosID: photosID, projectID: projectID, originalMediaID: attachment.id, uploadFilePath: nil))
+        }
+        let attachedIDs = Set(attached.map(\.id))
+        for record in pendingRecords where record.projectID == projectID && record.role == .clip && !attachedIDs.contains(record.mediaID ?? "") {
+            let name = BackgroundUploadCoordinator.displayFilename(record.filename)
+            let photosID = ledger.first { $0.recordID == record.id }?.assetIdentifier
+            clips.append(FootageHintClip(mediaID: nil, recordID: record.id, name: name, attachment: nil,
+                                         shape: FootageShapeReader.shape(of: CreationMediaPreview.url(recordID: record.id), version: version),
+                                         isScreenRecording: screenRecording(name: name, photosID: photosID),
+                                         photosID: photosID, projectID: projectID, originalMediaID: record.mediaID,
+                                         uploadFilePath: record.localFilePath))
+        }
+        let ids = Set(FootagePlacement.belongsInOverlays(clips.map(\.placementItem)))
+        let flagged = clips.filter { ids.contains($0.key) }
+        return flagged.isEmpty ? nil : FootageHint(flagged: flagged)
+    }
+
+    /// Whether the Move button may show: Overlays takes video, has room, and every flagged clip can be re-sent.
+    private func canMoveToOverlays(_ hint: FootageHint) -> Bool {
+        let destination = uploadDestination(for: .visual)
+        guard destination.canUpload, destination.visualKinds?.contains(.video) ?? true, pool != nil else { return false }
+        let free = maximum(for: .visual) - existing(for: .visual) - model.uploads.reservedCount(projectID: projectID, role: .visual)
+        return free >= hint.flagged.count && hint.flagged.allSatisfy(\.canMove)
+    }
+
+    @ViewBuilder private func placeHintNotice(_ hint: FootageHint) -> some View {
+        let title = AttachmentStep.overlays.title
+        let action: KriaNoticeAction? = movingToOverlays || !canMoveToOverlays(hint) ? nil
+            : KriaNoticeAction(title: hint.flagged.count == 1 ? "Move to \(title)" : hint.flagged.count == 2 ? "Move both to \(title)" : "Move all \(hint.flagged.count) to \(title)") {
+                Task { await moveToOverlays(hint.flagged) }
+            }
+        KriaNoticeCard(tone: .info, title: "Screen recordings go in \(title), so you stay on screen.", action: action)
+            .accessibilityIdentifier("footage-place-hint")
+    }
+
+    /// Starts each clip as an overlay first and drops it from Footage only once that was accepted, so the file is
+    /// never lost and never uploaded twice. Every clip takes the same path: a source file, then `enqueue`.
+    private func moveToOverlays(_ clips: [FootageHintClip]) async {
+        guard !movingToOverlays else { return }
+        movingToOverlays = true
+        mediaRemovalError = nil
+        defer { movingToOverlays = false }
+        let purpose: UploadPurpose = uploadDestination(for: .visual) == .phone ? .analysisProxy : .cloudRenderSource
+        let limit = capabilities?.media?["visuals"]
+        for clip in clips {
+            let failureText = "Couldn’t move \(clip.name). It stays in Footage."
+            var file: URL?
+            var source: UploadSource = .files
+            // The temp folder made here, the only one a failed move may delete (a Photos export's folder is shared).
+            var madeFolder: URL?
+            if let original = clip.localSource {
+                let name = clip.name.isEmpty ? original.lastPathComponent : clip.name
+                // Its own folder, so the overlay keeps the clip's name: the server shows the uploaded file name as is.
+                let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+                let copy = folder.appending(path: name)
+                do {
+                    try await Task.detached {
+                        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                        try FileManager.default.copyItem(at: original, to: copy)
+                    }.value
+                    file = copy
+                    madeFolder = folder
+                } catch { try? FileManager.default.removeItem(at: folder) }
+            }
+            if file == nil, let photosID = clip.photosID {
+                // The loader hands back a private temp file, which the coordinator then owns.
+                file = try? await PhotoItemFileLoader().load(item: PhotosPickerItem(itemIdentifier: photosID), identifier: photosID)
+                source = .photos
+            }
+            guard let file else { mediaRemovalError = failureText; continue }
+            let accepted = await model.uploads.enqueue(fileURL: file, projectID: projectID, source: source, consentGiven: true,
+                                                       purpose: purpose, role: .visual, itemID: itemID, limit: limit)
+            guard accepted else {
+                try? FileManager.default.removeItem(at: file)
+                if let madeFolder { try? FileManager.default.removeItem(at: madeFolder) }
+                mediaRemovalError = model.uploads.failures.last(where: { $0.role == .visual })?.message ?? failureText
+                continue
+            }
+            if !(await removeFromFootage(clip)) {
+                mediaRemovalError = "\(clip.name) is in Overlays now. Remove it from Footage."
+            }
+        }
+        await loadVisuals()
+        await refresh()
+    }
+
+    /// Drops the clip from Footage after its overlay was accepted. False when it could not be removed.
+    private func removeFromFootage(_ clip: FootageHintClip) async -> Bool {
+        if let photosID = clip.photosID {
+            // Keeps the picker's ledger in step with the project.
+            switch await model.uploads.deselect(assetIdentifier: photosID, projectID: projectID, role: .clip, itemID: nil) {
+            case .discarded, .cancelledUpload, .detached, .alreadyInProgress: return true
+            case .refused: return false
+            case .notTracked: break
+            }
+        }
+        if let attachment = clip.attachment {
+            mediaRemovalError = nil
+            await removeAttached(attachment)
+            return mediaRemovalError == nil
+        }
+        if let recordID = clip.recordID {
+            // Still uploading when the hint showed: it may have finished and attached while the overlay was started,
+            // so cancel or detach it, whichever it needs. A plain cancel then found no record and left it in Footage.
+            switch await model.uploads.withdraw(recordID: recordID, mediaID: clip.originalMediaID, projectID: projectID) {
+            case .discarded, .cancelledUpload, .detached, .alreadyInProgress, .notTracked: return true
+            case .refused: return false
+            }
+        }
+        return true
+    }
+
+    private func openCamera(withScript: Bool) {
+        guard auth.localStorageIdentity != nil else { return }
+        cameraStartsWithScript = withScript
+        // The cover reads `cameraStartsWithScript` when it is built, so let that change land first.
+        Task { @MainActor in showsTeleprompter = true }
+    }
+
+    /// The clip a take recorded here replaces: the one the creator chose from the ready video, or, when the edit is
+    /// full and the server offers replace, the only clip it has. Nil = the take is added as a clip.
+    private var replaceTarget: RerecordTarget? {
+        if let rerecordTarget { return rerecordTarget }
+        guard isTalkingToCamera, case let .one(target) = RerecordOffer.resolve(thread: thread),
+              existing(for: .clip) + model.uploads.reservedCount(projectID: projectID, role: .clip) >= maximumClipCount else { return nil }
+        return target
+    }
+
+    /// Said before the creator commits. The take, script, background and other clips are kept; what is not carried
+    /// over is named, because it is the one thing a re-record loses.
+    private var replacementNotice: String? {
+        guard let target = replaceTarget else { return nil }
+        let video = thread?.job != nil
+            ? " Kria makes the video again from the new take. Text and caption changes you made to the current video won’t carry over. Your current video stays until the new one is ready."
+            : ""
+        return "This replaces \(target.displayName). Your script, background and other clips stay.\(video)"
     }
 
     private func teleprompterAdmission(_ take: TeleprompterTakeManifest?) -> String? {
@@ -374,15 +637,20 @@ struct AttachmentSheet: View {
         }
         let ownID = take?.intakeID
         if let ownID, model.uploads.containsIntake(recordID: ownID) { return nil }
+        if replaceTarget != nil {
+            return replacementUnderway ? "Your new take is still being swapped in. Wait for it to finish before recording another." : nil
+        }
         // KRI-719: a Talking edit can hold several clips, so a take is only
         // refused once the edit is full, not whenever any clip is attached.
         let occupied = existing(for: .clip) + model.uploads.reservedCount(projectID: projectID, role: .clip)
         guard occupied < maximumClipCount else {
-            return maximumClipCount > 1
-                ? "This Talking edit already has \(FootageStageCopy.count(maximumClipCount, "clip")), the most it can take. Close this screen and remove a clip in Add media, then reopen your saved take to use it."
-                : "This Talking edit already has footage. Close this screen and remove the current clip in Add media, then reopen your saved take to use it."
+            return "This video already has \(FootageStageCopy.count(maximumClipCount, "clip")). Your take is saved: remove a clip in Add media, then reopen it."
         }
         return nil
+    }
+
+    private var replacementUnderway: Bool {
+        BackgroundUploadCoordinator.replacementUnderway(projectID: projectID, inFlight: inFlight, records: pendingRecords)
     }
 
     private var isTalkingToCamera: Bool {
@@ -406,7 +674,7 @@ struct AttachmentSheet: View {
         model.uploads.dismissFailure(id: take.intakeID)
         let accepted = await model.uploads.enqueue(fileURL: url, projectID: projectID, source: .files,
             consentGiven: true, purpose: .analysisProxy, role: .clip, itemID: itemID,
-            limit: capabilities?.media?["clips"], recordID: take.intakeID)
+            limit: capabilities?.media?["clips"], recordID: take.intakeID, replacesMediaID: replaceTarget?.mediaID)
         return accepted ? .queued : .failed(model.uploads.failures.first(where: { $0.id == take.intakeID })?.message ?? "Couldn’t add this take. Your recording is saved; try again.")
     }
 
@@ -467,34 +735,13 @@ struct AttachmentSheet: View {
 
     private var voiceoverStep: some View {
         VStack(alignment: .leading, spacing: 20) {
-            AttachmentHeading(title: recorder.hasRecording ? (recorder.isImported ? "Review voiceover" : "Review recording") : (recorder.isRecording ? "Recording voiceover" : "Add voiceover"), subtitle: recorder.hasRecording ? "Listen before adding this recording to your video." : "Record here or upload a voiceover you’ve already made.")
+            AttachmentHeading(title: recorder.hasRecording ? (recorder.isImported ? "Review voiceover" : "Review recording") : "Add voiceover",
+                              subtitle: recorder.hasRecording ? "Listen before adding this recording to your video."
+                                  : recorder.isRecording ? (voiceoverScript == nil ? "Say your voiceover. I’ll keep recording until you stop." : "Read your script out loud. I’ll keep recording until you stop.")
+                                  : "Record it here, upload one you’ve made, or use an AI voice.")
             if let voiceoverScript, !recorder.hasRecording {
                 VoiceoverScriptReadAlong(script: voiceoverScript)
                     .id("\(voiceoverScript.scriptID)-\(voiceoverScript.revision)")
-                if capabilitiesLoaded, capabilities?.generatedNarration == true, canRecord, itemID != nil {
-                    Button("Generate AI voice from this script") {
-                        guard let itemID, !loadingNarration else { return }
-                        loadingNarration = true
-                        Task {
-                            defer { loadingNarration = false }
-                            do {
-                                let approved = try await model.api.generatedNarrationScript(itemID: itemID)
-                                guard approved.matches(voiceoverScript) else {
-                                    voiceoverUploadError = "The script changed. Open its latest card before generating narration."
-                                    return
-                                }
-                                openGeneratedMedia(GeneratedMediaDraft(capability: .narration, script: approved))
-                            } catch { voiceoverUploadError = "Couldn’t load the current script. Try again when connected." }
-                        }
-                    }
-                    .buttonStyle(KriaSecondaryButtonStyle())
-                    .disabled(loadingNarration || recorder.isRecording)
-                    .accessibilityIdentifier("generate-narration")
-                }
-            }
-            if !recorder.hasRecording {
-                FootageDurationCard(summary: footageDurationSummary)
-                    .accessibilityIdentifier("footage-duration")
             }
             if recorder.isRecording {
                 RecordingVoiceoverView(recorder: recorder) { recorder.stop() }
@@ -502,20 +749,42 @@ struct AttachmentSheet: View {
                 VoiceoverReviewView(recorder: recorder)
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Voiceover").font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                        Text(DurationFormatter.clock(recorder.duration)).font(KriaFont.body(24).weight(.semibold))
+                        Text("Voiceover").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                        Text(DurationFormatter.clock(recorder.duration)).kriaType(.heading)
                     }
                     Spacer()
                     VStack(alignment: .trailing, spacing: 6) {
-                        Text("Total footage").font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                        Text(footageDurationSummary.value).font(KriaFont.body(24).weight(.semibold))
+                        Text("Total footage").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                        Text(footageDurationSummary.value).kriaType(.heading)
                             .accessibilityIdentifier("footage-duration")
                     }
                 }
+            } else if recorder.isImporting {
+                HStack(spacing: 8) { KriaSpinner(size: 16); Text("Opening audio…").kriaType(.label).foregroundStyle(KriaColor.mutedInk) }
             } else {
-                VoiceoverStartView(canRecord: canRecord && uploadDestination(for: .voiceover).canUpload, start: { Task { await recorder.start() } })
+                let canUploadAudio = uploadDestination(for: .voiceover).canUpload
+                let aiVoice: KriaSourceOption? = {
+                    guard capabilitiesLoaded, capabilities?.generatedNarration == true, canRecord, itemID != nil, let voiceoverScript else { return nil }
+                    return KriaSourceOption(id: "ai-voice", symbol: "waveform", title: "AI voice", caption: "Read by AI",
+                                            identifier: "generate-narration", isEnabled: !loadingNarration) { generateNarration(for: voiceoverScript) }
+                }()
+                KriaSourceRow(options: [
+                    .record(symbol: "mic.fill", caption: "Use your mic", identifier: "voiceover-record", isEnabled: canRecord && canUploadAudio) { Task { await recorder.start() } },
+                    .upload(caption: "Use an audio file", identifier: "voiceover-upload", isEnabled: canRecord && canUploadAudio) { voiceoverPickerLaunch = capabilities?.mediaLibrary == true ? .sources : .files },
+                    aiVoice
+                ].compactMap { $0 })
+                if footageDurationSummary.count > 0 {
+                    HStack(spacing: 8) {
+                        KriaCheckDisc(size: 20)
+                        Text("\(footageDurationSummary.label) · \(footageDurationSummary.value)").kriaType(.label).foregroundStyle(KriaColor.ink)
+                    }
+                    .accessibilityElement(children: .combine).accessibilityIdentifier("footage-duration")
+                }
             }
-            if let recorderError = recorder.error { Text(recorderError).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText) }
+            // The audio importer behind the Upload tile. It draws no controls, but it does show what went wrong
+            // (an unsupported or oversized file, a failed attach) right here.
+            FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .voiceover), attachedClipCount: existing(for: .voiceover), attachedMediaIDs: attachedMediaIDs(for: .voiceover), role: .voiceover, itemID: itemID, limit: capabilities?.media?["voiceover"], destination: uploadDestination(for: .voiceover), onAudioFileSelected: recorder.importFile, showsHeading: false, libraryEnabled: capabilities?.mediaLibrary == true, controls: .hidden, launchSource: $voiceoverPickerLaunch)
+            if let recorderError = recorder.error { Text(recorderError).kriaType(.label).foregroundStyle(KriaColor.failureText) }
             if (recorder.hasRecording || recorder.isRecording), let warning = voiceoverWarning {
                 VoiceoverDurationWarning(message: warning, addFootage: { step = .footage })
                     .accessibilityIdentifier("voiceover-duration-warning")
@@ -524,7 +793,23 @@ struct AttachmentSheet: View {
                 VoiceoverReviewActions(recorder: recorder, onUse: { Task { await useRecording() } }, onRecordAgain: discardVoiceover, onChooseAnother: discardVoiceover, canUse: canRecord && uploadDestination(for: .voiceover).canUpload, isUsing: uploadingRecording)
             }
             attachedList(role: .voiceover)
-            if let voiceoverUploadError { Text(voiceoverUploadError).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText).accessibilityIdentifier("voiceover-upload-error") }
+            if let voiceoverUploadError { Text(voiceoverUploadError).kriaType(.label).foregroundStyle(KriaColor.failureText).accessibilityIdentifier("voiceover-upload-error") }
+        }
+    }
+
+    private func generateNarration(for voiceoverScript: VoiceoverScript) {
+        guard let itemID, !loadingNarration else { return }
+        loadingNarration = true
+        Task {
+            defer { loadingNarration = false }
+            do {
+                let approved = try await model.api.generatedNarrationScript(itemID: itemID)
+                guard approved.matches(voiceoverScript) else {
+                    voiceoverUploadError = "The script changed. Open its latest card before generating narration."
+                    return
+                }
+                openGeneratedMedia(GeneratedMediaDraft(capability: .narration, script: approved))
+            } catch { voiceoverUploadError = "Couldn’t load the current script. Try again when connected." }
         }
     }
 
@@ -571,17 +856,32 @@ struct AttachmentSheet: View {
         }
     }
 
+    private func configureOverlaySet() {
+        guard let accountID = auth.localStorageIdentity, let itemID else { return }
+        overlaySet.configure(api: model.api, itemID: itemID, accountID: accountID)
+    }
+
+    private func openOverlaySet() {
+        configureOverlaySet()
+        overlaySet.resumeScreen()
+        showsOverlaySet = true
+    }
+
     private var overlaysStep: some View {
         VStack(alignment: .leading, spacing: 20) {
             AttachmentHeading(title: usesVisualPoolOnly ? SlideMediaCopy.addHeading : "Add overlays", subtitle: usesVisualPoolOnly ? SlideMediaCopy.subtitle : "Optional photos and supporting clips can add context to your video.")
             if uploadDestination(for: .visual).canUpload, !usesVisualPoolOnly { Text(visualsCaption).font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc) }
             if capabilitiesLoaded, capabilities?.generatedImages == true, itemID != nil {
-                Button("Generate an image") { openGeneratedMedia(GeneratedMediaDraft(capability: .image)) }
-                    .buttonStyle(KriaSecondaryButtonStyle()).accessibilityIdentifier("generate-image")
+                OverlaySetNotice(overlays: overlaySet) { openOverlaySet() }
             }
-            if pool == nil, error == nil { ProgressView(usesVisualPoolOnly ? SlideMediaCopy.loading : "Loading overlays…") }
+            if pool == nil, error == nil { HStack(spacing: 8) { KriaSpinner(size: 16); Text(usesVisualPoolOnly ? SlideMediaCopy.loading : "Loading overlays…").kriaType(.label).foregroundStyle(KriaColor.mutedInk) } }
             if pool != nil {
-                FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .visual), attachedClipCount: existing(for: .visual), attachedMediaIDs: attachedMediaIDs(for: .visual), role: .visual, itemID: itemID, limit: capabilities?.media?["visuals"], destination: uploadDestination(for: .visual), onPickerFilled: nil, onSelectionCompleted: nil, showsHeading: false, titleOverride: usesVisualPoolOnly ? SlideMediaCopy.poolTitle : nil, libraryEnabled: capabilities?.mediaLibrary == true)
+                FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .visual), attachedClipCount: existing(for: .visual), attachedMediaIDs: attachedMediaIDs(for: .visual), role: .visual, itemID: itemID, limit: capabilities?.media?["visuals"], destination: uploadDestination(for: .visual), onPickerFilled: nil, onSelectionCompleted: nil, showsHeading: false, titleOverride: usesVisualPoolOnly ? SlideMediaCopy.poolTitle : nil, libraryEnabled: capabilities?.mediaLibrary == true,
+                                  controls: .tiles(record: nil, third: capabilitiesLoaded && capabilities?.generatedImages == true && itemID != nil
+                                    ? KriaSourceOption(id: "generate", symbol: "sparkles", title: "Generate", caption: "Make with AI", identifier: "generate-image") {
+                                        openOverlaySet()
+                                    } : nil),
+                                  launchSource: $pickerLaunch)
                     .id(AttachmentStep.overlays)
                 if let summary = VisualPreparationSummary(assets: pool?.assets ?? [], uploading: uploadingVisualCount, online: network.isOnline, slowIDs: preparation.slowIDs, surface: .addMediaSheet, nounOverride: usesVisualPoolOnly ? SlideMediaCopy.preparingNoun : nil) {
                     VisualPreparationSummaryView(summary: summary)
@@ -589,29 +889,28 @@ struct AttachmentSheet: View {
                 visualList
             }
             if let error {
-                Text(error).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText)
+                Text(error).kriaType(.label).foregroundStyle(KriaColor.failureText)
                 Button(usesVisualPoolOnly ? SlideMediaCopy.retryLoading : "Retry loading overlays") { Task { await loadVisuals() } }
+                    .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium))
             }
         }
     }
 
     @ViewBuilder private var attachmentFooter: some View {
-        if recorder.isRecording { EmptyView() }
+        if recorder.isRecording {
+            Button("Cancel recording") { confirmsCancellingRecording = true }
+                .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium)).accessibilityIdentifier("voiceover-cancel")
+                .padding(.horizontal, 24).padding(.vertical, 12)
+        }
         else if step == .voiceover {
-            if !recorder.hasRecording {
+            if !recorder.hasRecording, !recorder.isImporting {
                 VStack(spacing: 8) {
-                    if recorder.isImporting {
-                        ProgressView("Opening audio…")
-                    } else {
-                        FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .voiceover), attachedClipCount: existing(for: .voiceover), attachedMediaIDs: attachedMediaIDs(for: .voiceover), role: .voiceover, itemID: itemID, limit: capabilities?.media?["voiceover"], destination: uploadDestination(for: .voiceover), onAudioFileSelected: recorder.importFile, showsHeading: false, libraryEnabled: capabilities?.mediaLibrary == true)
-                    }
                     if existing(for: .voiceover) > 0 || pendingRecords.contains(where: { $0.projectID == projectID && $0.role == .voiceover }) || inFlight.values.contains(where: { $0.projectID == projectID && $0.role == .voiceover }) {
-                        Button("Continue with voiceover") { advance() }.frame(minHeight: 44)
+                        Button("Continue with voiceover") { advance() }
+                            .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true)).accessibilityIdentifier("voiceover-continue")
                     } else {
                         Button("Use footage audio instead") { advance() }
-                            .font(KriaFont.body(14).weight(.medium)).foregroundStyle(KriaColor.zinc)
-                            .frame(minHeight: 44).accessibilityIdentifier("voiceover-skip")
-                            .disabled(recorder.isImporting)
+                            .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium)).accessibilityIdentifier("voiceover-skip")
                     }
                 }.padding(.horizontal, 24).padding(.vertical, 12)
             }
@@ -625,8 +924,8 @@ struct AttachmentSheet: View {
                         FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .song), attachedClipCount: existing(for: .song), attachedMediaIDs: attachedMediaIDs(for: .song), role: .song, itemID: itemID, limit: capabilities?.songLimit, destination: uploadDestination(for: .song), onAudioFileSelected: songPreview.importFile, showsHeading: false, libraryEnabled: capabilities?.mediaLibrary == true)
                     }
                     Button(hasSongOrPendingSong ? "Continue" : "Skip, no song") { advance() }
-                        .font(KriaFont.body(14).weight(.medium)).foregroundStyle(hasSongOrPendingSong ? KriaColor.ink : KriaColor.zinc)
-                        .frame(minHeight: 44).accessibilityIdentifier(hasSongOrPendingSong ? "song-continue" : "song-skip")
+                        .buttonStyle(KriaButtonStyle(role: hasSongOrPendingSong ? .primary : .tertiary, size: hasSongOrPendingSong ? .large : .medium, fullWidth: hasSongOrPendingSong))
+                        .accessibilityIdentifier(hasSongOrPendingSong ? "song-continue" : "song-skip")
                         .disabled(songPreview.isImporting)
                 }.padding(.horizontal, 24).padding(.vertical, 12)
             }
@@ -634,7 +933,7 @@ struct AttachmentSheet: View {
         else {
             VStack(spacing: 8) {
                 Button(stepIndex == steps.count - 1 ? "Done" : "Next") { advance() }
-                    .buttonStyle(AttachmentPrimaryButtonStyle())
+                    .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true))
                     .accessibilityIdentifier(stepIndex == steps.count - 1 ? "attachment-done" : "attachment-next")
             }.padding(.horizontal, 24).padding(.vertical, 12)
         }
@@ -668,25 +967,34 @@ struct AttachmentSheet: View {
         }
         return result
     }
-    private func attachedList(role: CreationMediaRole) -> some View {
-        VStack(spacing: 10) {
+    /// Shape alone never earns the "Screen recording" label.
+    private func footageCaption(_ flaggedScreenRecording: Bool?) -> String {
+        guard let flaggedScreenRecording else { return "Video · Ready" }
+        return flaggedScreenRecording ? "Screen recording · Ready" : "Wide video · Ready"
+    }
+    /// `flaggedClips`: Footage clips the Overlays hint points at (key -> is a screen recording by name or Photos).
+    private func attachedList(role: CreationMediaRole, flaggedClips: [String: Bool] = [:]) -> some View {
+        let locked = removingMedia || !pendingRecords.filter { $0.projectID == projectID }.isEmpty || replacementUnderway
+        return VStack(spacing: 8) {
             ForEach(attachedMedia(for: role)) { attachment in
                 VStack(spacing: 8) {
-                    HStack(spacing: 12) {
+                    KriaMediaRow(name: attachment.displayName,
+                                 status: .ready(role == .voiceover ? "Voiceover · Ready" : role == .song ? "Song · Ready"
+                                    : footageCaption(flaggedClips[FootageHintClip.key(mediaID: attachment.id)])),
+                                 trailing: .remove(label: "Remove \(attachment.displayName)") { Task { await removeAttached(attachment) } },
+                                 onFill: !offersSongRange(for: attachment)) {
                         CreationAttachmentThumbnail(media: attachment)
-                        Text(attachment.displayName).font(KriaFont.body(14)).lineLimit(1)
-                        Spacer()
-                        Button { Task { await removeAttached(attachment) } } label: { Image(systemName: "trash").frame(width: 44, height: 44) }
-                            .accessibilityLabel("Remove \(attachment.displayName)")
-                            .disabled(removingMedia || !pendingRecords.filter { $0.projectID == projectID }.isEmpty)
                     }
+                    .disabled(locked)
                     if offersSongRange(for: attachment) {
-                        SongRangeRow(range: attachment.filmingRange, isEnabled: !removingMedia && pendingRecords.filter { $0.projectID == projectID }.isEmpty) { showsSongRange = true }
+                        SongRangeRow(range: attachment.filmingRange, isEnabled: !locked) { showsSongRange = true }
                     }
                 }
+                .padding(offersSongRange(for: attachment) ? 4 : 0)
+                .background(offersSongRange(for: attachment) ? KriaColor.fill : Color.clear, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             }
             if let mediaRemovalError {
-                Text(mediaRemovalError).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText)
+                Text(mediaRemovalError).kriaType(.label).foregroundStyle(KriaColor.failureText)
                     .accessibilityIdentifier("attachment-removal-error")
             }
         }
@@ -695,26 +1003,46 @@ struct AttachmentSheet: View {
     private var visualList: some View {
         VStack(spacing: 12) {
             ForEach(pool?.assets ?? []) { asset in
-                HStack(spacing: 12) {
-                    AsyncImage(url: asset.previewURL ?? (asset.kind == "image" ? asset.displayURL : nil)) { image in image.resizable().scaledToFill() } placeholder: { Image(systemName: asset.kind == "image" ? "photo" : "video") }
-                        .frame(width: 52, height: 64).clipped().clipShape(RoundedRectangle(cornerRadius: 8))
-                    VStack(alignment: .leading) {
-                        Text(asset.sourceFilename ?? (usesVisualPoolOnly ? (asset.kind == "video" ? "Video" : "Photo") : "Visual")).font(KriaFont.body(14)).lineLimit(1)
-                        VisualStatusLine(text: asset.statusCaption(retryingAutomatically: autoRetry.isRetryPending(asset.id)), preparing: asset.preparationStage != nil, color: asset.status == "failed" ? KriaColor.failureText : KriaColor.zinc)
-                            .font(KriaFont.body(11))
-                    }
-                    Spacer()
-                    if capabilitiesLoaded, capabilities?.generatedImageEditing == true,
-                       asset.kind == "image", asset.status == "ready", asset.sourceGeneration != nil {
-                        Button("Edit image") { openGeneratedMedia(GeneratedMediaDraft(capability: .imageEdit, source: asset)) }
-                            .accessibilityIdentifier("generate-image-edit-\(asset.id)")
-                    }
-                    if asset.status == "failed", asset.retryable != false { Button("Retry") { Task { await retry(asset) } }.disabled(mutatingVisual || !autoRetry.canRetryManually(asset.id)) }
-                    Button { Task { await remove(asset) } } label: { Image(systemName: "trash").frame(width: 44, height: 44) }
-                        .accessibilityLabel("Remove \(asset.sourceFilename ?? (usesVisualPoolOnly ? SlideMediaCopy.removeFallback : "visual"))").disabled(mutatingVisual)
-                }
+                visualRow(asset)
+                    .padding(4).background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             }
         }
+    }
+
+    /// One attached overlay or photo (Paper S1.01): a `KriaMediaRow` with its status, one trailing control and,
+    /// when it failed, a visible Retry. Edit image lives in the menu; a row with nothing to edit shows a trash disc.
+    private func visualRow(_ asset: CreationVisual) -> some View {
+        let name = asset.sourceFilename ?? (usesVisualPoolOnly ? (asset.kind == "video" ? "Video" : "Photo") : "Visual")
+        let kindLabel = asset.kind == "video" ? "Video" : "Photo"
+        let status: KriaMediaRow<AnyView>.Status
+        if asset.status == "failed" {
+            status = .failed(asset.statusCaption(retryingAutomatically: autoRetry.isRetryPending(asset.id)))
+        } else if asset.preparationStage != nil {
+            status = .preparing
+        } else if asset.status == "ready" {
+            status = .ready("\(kindLabel) · Ready")
+        } else {
+            status = .ready(asset.statusCaption(retryingAutomatically: false))
+        }
+        let canEditImage = capabilitiesLoaded && capabilities?.generatedImageEditing == true
+            && asset.kind == "image" && asset.status == "ready" && asset.sourceGeneration != nil
+        let removeAction = KriaMenuAction(title: "Remove", systemImage: "trash", isDestructive: true) { Task { await remove(asset) } }
+        let trailing: KriaMediaRow<AnyView>.Trailing = canEditImage
+            ? .menu(label: "Actions for \(name)", [
+                KriaMenuAction(title: "Edit image", systemImage: "wand.and.stars") { openGeneratedMedia(GeneratedMediaDraft(capability: .imageEdit, source: asset)) },
+                removeAction,
+            ])
+            : .remove(label: "Remove \(asset.sourceFilename ?? (usesVisualPoolOnly ? SlideMediaCopy.removeFallback : "visual"))") { Task { await remove(asset) } }
+        let canRetry = asset.status == "failed" && asset.retryable != false && !mutatingVisual && autoRetry.canRetryManually(asset.id)
+        return KriaMediaRow(name: name, status: status, trailing: trailing,
+                            onRetry: canRetry ? { Task { await retry(asset) } } : nil) {
+            AnyView(AsyncImage(url: asset.previewURL ?? (asset.kind == "image" ? asset.displayURL : nil)) { image in
+                image.resizable().scaledToFill()
+            } placeholder: {
+                KriaThumbnailPlaceholder(systemImage: asset.kind == "image" ? "photo" : "video")
+            })
+        }
+        .accessibilityIdentifier("visual-row-\(asset.id)")
     }
 
     private var footageDurationSummary: FootageDurationSummary {
@@ -836,6 +1164,38 @@ struct AttachmentSheet: View {
             self.error = "Couldn’t retry this visual. \(error.localizedDescription)"
         }
     }
+}
+
+/// One Footage clip the item 24 hint looks at: attached (`mediaID`) or still uploading (`recordID`).
+private struct FootageHintClip {
+    let mediaID: String?
+    let recordID: UUID?
+    let name: String
+    let attachment: CreationAttachedMedia?
+    let shape: FootageShape
+    let isScreenRecording: Bool
+    /// The Photos asset it came from, when the picker ledger knows it.
+    let photosID: String?
+    let projectID: UUID
+    /// The server media id the device original is bound to: the attachment's, or an upload's once it is reserved.
+    let originalMediaID: String?
+    /// The file an upload still holds. On a phone project that is the smaller analysis copy, so it is only the fallback.
+    let uploadFilePath: String?
+
+    static func key(mediaID: String) -> String { "m:\(mediaID)" }
+    var key: String { mediaID.map(Self.key(mediaID:)) ?? "r:\(recordID?.uuidString ?? "")" }
+    var placementItem: FootagePlacementItem { FootagePlacementItem(id: key, shape: shape, isScreenRecording: isScreenRecording) }
+    /// A device copy to send again as an overlay, full quality first. Looked up only when the hint shows, never per row.
+    @MainActor var localSource: URL? {
+        if let originalMediaID, let original = CreationMediaPreview.localOriginal(mediaID: originalMediaID, projectID: projectID) { return original }
+        guard let uploadFilePath, FileManager.default.fileExists(atPath: uploadFilePath) else { return nil }
+        return URL(fileURLWithPath: uploadFilePath)
+    }
+    @MainActor var canMove: Bool { photosID != nil || localSource != nil }
+}
+
+private struct FootageHint {
+    let flagged: [FootageHintClip]
 }
 
 /// Thumbnail of a clip that is still being prepared or uploaded, keyed by its upload id, so it is

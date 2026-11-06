@@ -37,6 +37,7 @@ from app.pipeline.phone_recipe_shared import (
     display_dims,
     face_fill_transform,
     fit_transform,
+    register_backdrop_visuals,
     snap_text_overshoot,
     timeline_end_s,
 )
@@ -165,6 +166,8 @@ def _still_tilt_fields(moment: Any) -> dict[str, Any]:
     """``transform`` / ``backdrop`` for a photo moment. A supporting card turns about its
     centre over its own blurred cover, so it takes the rotation only."""
     patch, backdrop = clip_tilt_fields(moment)
+    if moment.layout == "supporting_card":
+        patch.pop("scale", None)
     fields: dict[str, Any] = {}
     if patch:
         fields["transform"] = MediaTransform(**patch)
@@ -669,7 +672,7 @@ def compile_phone_guided_plan(
                 transform = face_fill_transform(
                     display_w, display_h, canvas, moment.fill_position_x
                 )
-        tilt_patch, backdrop = clip_tilt_fields(moment)
+        tilt_patch, backdrop = clip_tilt_fields(moment, fit_scale=transform.scale)
         if backdrop is not None or tilt_patch:
             if moment.look_preset == "golden_hour":
                 raise UnsupportedPhonePlan(
@@ -712,6 +715,7 @@ def compile_phone_guided_plan(
         raise ValueError("phone timeline duration differs from approved plan")
     if len({clip.id for clip in clips}) != len(clips):
         raise ValueError("phone moments must have unique identities")
+    register_backdrop_visuals(clips, visuals=visuals, assets=assets, manifest=manifest)
     # Composition.swift throws invalidTimeline unless the outgoing clip still
     # plays through each incoming fade. The per-moment refit above routinely
     # saturates a clip to the device file's own measured length minus

@@ -16,7 +16,7 @@ import unicodedata
 from collections.abc import Iterable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, ClassVar, Literal, NamedTuple
+from typing import Any, ClassVar, Literal, NamedTuple, get_args
 
 import structlog
 from pydantic import BaseModel, Field
@@ -29,6 +29,7 @@ from app.agents._schemas.text_animation_phases import (
     phases_patch,
 )
 from app.agents._schemas.text_element import _ALLOWED_EFFECTS, _ALLOWED_FONTS, _HEX_COLOR_RE
+from app.agents.editor_ops_v2 import overlays as _v2_overlays
 from app.agents.editor_ops_v2 import text as _v2_text
 from app.agents.length_options import length_options
 from app.agents.music_matcher import _sanitize_text
@@ -74,7 +75,40 @@ log = structlog.get_logger()
 # snapshot's timeline_patch_capabilities opens `tilt`; every other prompt is byte-identical.
 # v99 (KRI-1138): set_slide_tilt in the slides fragment, taught only on the slide-post surface and
 # only where `post.tilt_enabled`; video and gate-closed slide prompts are otherwise unchanged.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-01-v99"
+# v101 (KRI-1141): PICTURE CARD TILT: patch_overlay "rotation_deg" / "rotation_delta_deg" (clockwise
+# positive), taught only where the snapshot's overlays open `tilt`; a gate-closed edit still refuses
+# the angle in a sentence, and every other prompt is byte-identical. (v100 is the media-backdrop
+# tilt in another branch.)
+# v102 (KRI-1139): a media backdrop ({"kind":"media","asset_id"}) in the tilt, taught in
+# clip_tilt_media.txt and the BACKDROP POOL section only where `tilt_backdrop_media` is open;
+# every other prompt, including a tilt-open one without it, is byte-identical.
+# v104 (KRI-1097 wave 2): set_edit_direction carries the creator's direction (fast_montage,
+# text_explainer, guided_story) and a stated pace (edit_copilot_ops/direction.txt); the server
+# names what this editor cannot restage. Taught only where a guided revision offers the direction
+# family and COPILOT_DIRECTION_FOLLOWS_REQUEST_ENABLED is on; every other prompt is byte-identical.
+# (v103 is reserved by the commentary green-screen branch, PR #2045.)
+# v103 (KRI-1162): set_background_sequence / set_speaker_frame / clear_speaker_frame and the
+# windows lines of BACKGROUND, taught only where the snapshot offers the `background_windows`
+# family; every other prompt is byte-identical.
+# v105: v103 (KRI-1162) and v104 (KRI-1097 wave 2) merged; the prompt carries both.
+# v107 (KRI-1170): SLIDE ZOOM: set_slide_tilt "zoom" / "zoom_delta" (0.5..3, the server adds the
+# delta and says when it stopped at a limit) in prompts/edit_copilot_ops/slide_tilt_zoom.txt, and
+# `zoom=` on a zoomed slide's `slide N tilt` line, taught only where a slide post shows
+# `tilt_zoom_enabled: true`; every other prompt is byte-identical. (v108 is the clip lane's.)
+# v108 (KRI-1169): CLIP TILT ZOOM: patch_slots tilt "zoom" (absolute, 0.5..3, 1 as framed) and
+# "zoom_delta" (added), the zoom that fills the corners a tilt leaves empty, taught in
+# clip_tilt_zoom.txt only where `tilt_zoom` is open; a clip row lists its zoom only then. Every
+# other prompt, including a tilt-open one without zoom, is byte-identical.
+# v109 (KRI-1173): set_background_color {color} (a hex or a named preset, EN + TR) puts a plain
+# colour behind the speaker; the BACKGROUND block lists a colour "current" and `color: available`
+# / `not available`. Taught inside speaker_background.txt, so only an edit that already offers the
+# `background` family sees it; every other prompt is byte-identical.
+# v116 (Qendresa item 18): set_background_focus {position?, zoom?, zoom_delta?, asset_id?} aims and
+# zooms the photo / video behind the speaker (the recordings are already aimed at their text when
+# the server measured it); the BACKGROUND block prints each aimed window as `aim=left zoom=0.8x`.
+# Taught in speaker_background_focus.txt only where the snapshot offers the `background_focus`
+# family (flag + verified token + protocol 42), so every other prompt is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-05-v116"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1291,8 +1325,14 @@ def _format_slot_tilt(raw: object) -> str:
     if tilt.row() is None:
         return ""
     backdrop = tilt.backdrop
-    behind = "" if backdrop is None else f", backdrop={backdrop.color or backdrop.kind}"
-    return f" tilt=(rotation_deg={_fmt_num(tilt.rotation_deg)}{behind})"
+    if backdrop is None:
+        behind = ""
+    elif backdrop.kind == "media":
+        behind = f", backdrop=media({backdrop.asset_id})"
+    else:
+        behind = f", backdrop={backdrop.color or backdrop.kind}"
+    zoom = f", zoom={_fmt_num(tilt.zoom)}" if tilt.zoom != 1 else ""
+    return f" tilt=(rotation_deg={_fmt_num(tilt.rotation_deg)}{zoom}{behind})"
 
 
 def _format_snapshot(snapshot: dict) -> str:
@@ -1913,6 +1953,10 @@ def _format_snapshot(snapshot: dict) -> str:
             else []
         )
         lines.append("\nOVERLAY CARDS (overlay_index values are authoritative for this turn):")
+        if overlays.get("tilt") is True:
+            lines.append(
+                "tilt: available (a card's tilt= is its current angle; no tilt= is upright)"
+            )
         counts = overlays.get("counts")
         if isinstance(counts, dict):
             lines.append(
@@ -1934,6 +1978,7 @@ def _format_snapshot(snapshot: dict) -> str:
                     f"y={_fmt_round3(_first_number(card, ('y_frac',)))} "
                     f"scale={_fmt_round3(_first_number(card, ('scale',)))} "
                     f"display={_field(card.get('display_mode'), max_chars=40)!r}"
+                    f"{_card_tilt_suffix(card)}"
                     f"{_context_row_suffix(card, component_context_enabled)}"
                 )
         else:
@@ -1976,14 +2021,27 @@ def _format_snapshot(snapshot: dict) -> str:
             )
         else:
             current = background.get("current")
-            if isinstance(current, dict):
+            if isinstance(current, dict) and current.get("kind") == "color":
+                # KRI-1173: a plain colour, no pool media.
+                lines.append(
+                    "current: a plain colour "
+                    f"{_field(current.get('color'), max_chars=16)!r} (no photo or video)"
+                )
+            elif isinstance(current, dict):
                 lines.append(
                     f"current: kind={_field(current.get('kind'), max_chars=20)!r} "
                     f"id={_field(current.get('media_id'), max_chars=80)!r} "
                     f"start={_fmt_round3(_first_number(current, ('source_start_s',)))}s"
+                    f"{_focus_text(current.get('focus'))}"
                 )
             else:
                 lines.append("current: (none)")
+            if background.get("color_available") is True:
+                lines.append("color: available (a plain colour can go behind the speaker)")
+            elif background.get("color_available") is False:
+                lines.append(
+                    f"color: not available: {_field(background.get('color_reason'), max_chars=160)}"
+                )
             pool = background.get("pool") if isinstance(background.get("pool"), list) else []
             lines.append("POOL:")
             if pool:
@@ -1999,6 +2057,46 @@ def _format_snapshot(snapshot: dict) -> str:
                     )
             else:
                 lines.append("(none)")
+            if background.get("windows_available") is True:
+                # KRI-1162: only while the windows gate is open.
+                windows = (
+                    background.get("windows") if isinstance(background.get("windows"), list) else []
+                )
+                lines.append(
+                    f"windows_available: yes; video duration="
+                    f"{_fmt_round3(_first_number(background, ('duration_s',)))}s; "
+                    f"speaker_frame={_field(background.get('speaker_frame'), max_chars=24)!r}"
+                )
+                lines.append("WINDOWS:")
+                if windows:
+                    for window in windows[:40]:
+                        if not isinstance(window, dict):
+                            continue
+                        lines.append(
+                            f"- id={_field(window.get('media_id'), max_chars=80)!r} "
+                            f"{_fmt_round3(_first_number(window, ('start_s',)))}-"
+                            f"{_fmt_round3(_first_number(window, ('end_s',)))}s"
+                            f"{_focus_text(window.get('focus'))}"
+                        )
+                else:
+                    lines.append("(none)")
+
+    if isinstance(snapshot.get("tilt_backdrop_pool"), list):
+        lines.append(
+            "\nBACKDROP POOL (photos and videos a tilted clip may show behind it; "
+            "use asset_id exactly as shown):"
+        )
+        pool_rows = [row for row in snapshot["tilt_backdrop_pool"] if isinstance(row, dict)]
+        for asset in _component_rows(pool_rows, 12, component_context_enabled):
+            lines.append(
+                f"- id={_field(asset.get('id'), max_chars=80)!r} "
+                f"kind={_field(asset.get('kind'), max_chars=20)!r} "
+                f"label={_field(asset.get('label'), max_chars=60)!r} "
+                f"duration={_fmt_round3(_first_number(asset, ('duration_s',)))}s "
+                f"context={_field(asset.get('context'), max_chars=80)!r}"
+            )
+        if not pool_rows:
+            lines.append("(none)")
 
     if isinstance(snapshot.get("captions"), dict):
         captions = snapshot["captions"]
@@ -2196,6 +2294,9 @@ def _format_slide_post_block(snapshot: dict, field: Any) -> list[str]:
     if post.get("tilt_enabled") is True:
         # KRI-1138: the gate and each tilted slide's current angle, so "a bit more" resolves.
         lines.append("tilt_enabled: true")
+        zoom_open = post.get("tilt_zoom_enabled") is True
+        if zoom_open:
+            lines.append("tilt_zoom_enabled: true")
         for number, slot in enumerate(_snapshot_list(snapshot, _SLOT_INDEX_KEYS), start=1):
             tilt = slot.get("tilt") if isinstance(slot, dict) else None
             if not isinstance(tilt, dict):
@@ -2204,7 +2305,14 @@ def _format_slide_post_block(snapshot: dict, field: Any) -> list[str]:
             kind = field(backdrop.get("kind") or "blank", max_chars=12)
             colour = f" {field(backdrop['color'], max_chars=9)}" if backdrop.get("color") else ""
             degrees = field(tilt.get("rotation_deg"), max_chars=12)
-            lines.append(f"slide {number} tilt: rotation_deg={degrees} backdrop={kind}{colour}")
+            zoom = (
+                f" zoom={field(tilt.get('zoom'), max_chars=8)}"
+                if zoom_open and tilt.get("zoom") is not None
+                else ""
+            )
+            lines.append(
+                f"slide {number} tilt: rotation_deg={degrees} backdrop={kind}{colour}{zoom}"
+            )
     return lines
 
 
@@ -2220,6 +2328,12 @@ def _fmt_range(start: float | None, end: float | None) -> str:
 
 def _round_snapshot_float(value: float) -> float:
     return round(float(value), 3)
+
+
+def _card_tilt_suffix(card: dict) -> str:
+    """` tilt=(rotation_deg=10)` for a tilted picture card, else nothing (KRI-1141)."""
+    angle = _first_number(card, ("rotation_deg",))
+    return f" tilt=(rotation_deg={_fmt_num(angle)})" if angle else ""
 
 
 def _fmt_round3(value: float | None) -> str:
@@ -3404,6 +3518,51 @@ def _guided_revision_identity(snapshot: dict) -> tuple[int, str] | None:
     return number, generation.strip()
 
 
+def _op_fields(name: str) -> frozenset[str]:
+    """The fields the parser and the typed wire keep for an op. ``pace`` on set_edit_direction
+    (the pace the creator stated) exists only while ``COPILOT_DIRECTION_FOLLOWS_REQUEST_ENABLED``
+    is on, so with it off the parser and `_creator_wire.copilot_schema` match the foundation."""
+    fields = _OP_FIELDS[name]
+    if name == "set_edit_direction" and settings.copilot_direction_follows_request_enabled:
+        return fields | {"pace"}
+    return fields
+
+
+def _story_direction_not_staged(direction: str) -> str:
+    """The registry's direction line (`route_capabilities._lines.direction_line`) for a story
+    direction: the editor drawer stages fast-montage cuts only (no client stages story beats),
+    so nothing changes, and the creator reads why."""
+    from app.kria.route_capabilities import _lines as lines  # noqa: PLC0415
+
+    line = lines.direction_line(
+        "fast_montage",
+        "this editor can only restage it as a fast montage, so nothing changed. "
+        "A different direction needs a fresh edit",
+        "bu editör onu yalnızca hızlı bir montaj olarak yeniden kurabiliyor, o yüzden hiçbir şey "
+        "değişmedi. Başka bir yön için yeni bir düzenleme gerekiyor",
+    )(direction, {})
+    return f"{line}." if line else CAPABILITY_UNAVAILABLE_DETAIL
+
+
+def _with_direction_fragment(prompt: str, snapshot: object) -> str:
+    """Teach the direction op the creator's direction and stated pace, only where a guided
+    revision offers it and ``COPILOT_DIRECTION_FOLLOWS_REQUEST_ENABLED`` is on. Every other
+    prompt stays byte-identical."""
+    if (
+        not settings.copilot_direction_follows_request_enabled
+        or not isinstance(snapshot, dict)
+        or _guided_revision_identity(snapshot) is None
+        or not _family_allowed("set_edit_direction", snapshot)
+    ):
+        return prompt
+    path = Path(__file__).resolve().parents[2] / "prompts" / "edit_copilot_ops" / "direction.txt"
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return prompt
+    return f"{prompt}\n\n{text}"
+
+
 class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.edit.copilot",
@@ -3447,6 +3606,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         )
         prompt = _with_v2_fragments(prompt, input.variant_snapshot)
         prompt = _with_scope_fragment(prompt, input.variant_snapshot)
+        prompt = _with_direction_fragment(prompt, input.variant_snapshot)
         turn = load_prompt(
             "edit_copilot_turn",
             utterance=(
@@ -4083,7 +4243,7 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
         payload = dict(raw_payload)
     else:
         payload = {k: v for k, v in raw_op.items() if k not in {"op", "type"}}
-    payload = {k: v for k, v in payload.items() if k in _OP_FIELDS[name]}
+    payload = {k: v for k, v in payload.items() if k in _op_fields(name)}
     if name in _BULK_OPS and "selector" not in payload:
         selector = {
             key: payload[key] for key in ("scope", "media_kind", "quantifier") if key in payload
@@ -4190,6 +4350,18 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
         if title_index is not None:
             return {"op": "edit_text", "bar_index": title_index, "text": parsed["title"]}
     return {"op": name, **parsed}
+
+
+def _focus_text(focus: object) -> str:
+    """Qendresa item 18: ` aim=left zoom=0.8x` for a background that is aimed ('' otherwise, so a
+    snapshot without focus prints exactly what it always did)."""
+    if not isinstance(focus, dict):
+        return ""
+    x, zoom = focus.get("x"), focus.get("zoom")
+    if not isinstance(x, (int, float)) or not isinstance(zoom, (int, float)):
+        return ""
+    named = {0.0: "left", 0.5: "center", 1.0: "right"}.get(float(x))
+    return f" aim={named or f'x{float(x):g}'} zoom={float(zoom):g}x"
 
 
 def _family_allowed(name: str, snapshot: dict) -> bool:
@@ -5127,7 +5299,22 @@ def _coerce_payload(
         return _coerce_label_each_clip(name, out, snapshot, state)
 
     if name == "set_edit_direction":
-        if out.get("direction") != "fast_montage":
+        direction = out.get("direction")
+        if settings.copilot_direction_follows_request_enabled:
+            from app.schemas.edit_proposal import ProposalPace  # noqa: PLC0415
+            from app.services.length_policy import STORY_DIRECTIONS  # noqa: PLC0415
+
+            if direction in STORY_DIRECTIONS:
+                state.reject(
+                    op=name,
+                    reason="capability_unavailable",
+                    detail=_story_direction_not_staged(direction),
+                )
+                return None
+            if out.get("pace") not in (None, *get_args(ProposalPace)):
+                state.invalid_value()
+                return None
+        if direction != "fast_montage":
             state.invalid_value()
             return None
         identity = _guided_revision_identity(snapshot)
@@ -5234,18 +5421,27 @@ def _coerce_payload(
         patch = out.get("patch")
         if not isinstance(patch, dict):
             return None
-        if "rotation_deg" in patch and _v2.is_v2_snapshot(snapshot):
-            # KRI-1137: a card's rotation is not part of what the phone Talking compile keeps
-            # (`SubtitledOverlayCard` has no angle and Save drops `editor_style`), so the angle
-            # would be silently lost. Refuse the whole patch instead of applying the rest.
-            unavailable = say(
-                en="I can't rotate a picture on this edit yet.",
-                tr="Bu videoda bir görseli henüz döndüremiyorum.",
-            )
-            state.reject(op=name, reason="capability_unavailable", detail=unavailable)
-            state.reply_notes.append(unavailable)
-            return None
+        tilt_keys = {key for key in _v2_overlays.TILT_KEYS if key in patch}
+        tilt: dict[str, Any] = {}
+        if tilt_keys and _v2.is_v2_snapshot(snapshot):
+            if not _v2_overlays.tilt_open(snapshot):
+                # The card cannot be tilted on this edit (the snapshot does not offer it), so the
+                # angle would be silently lost. Refuse the whole patch instead of applying the rest.
+                unavailable = say(
+                    en="I can't tilt a picture on this edit yet.",
+                    tr="Bu videoda bir görseli henüz eğemiyorum.",
+                )
+                state.reject(op=name, reason="capability_unavailable", detail=unavailable)
+                state.reply_notes.append(unavailable)
+                return None
+            cleaned_tilt = _v2_overlays.coerce_tilt_keys(patch, state)
+            if cleaned_tilt is None:
+                return None
+            tilt = cleaned_tilt
         clean_patch = _coerce_overlay_patch(patch, state)
+        if not clean_patch and any(key in _OVERLAY_PATCH_FIELDS for key in patch):
+            return None
+        clean_patch.update(tilt)
         if not clean_patch:
             return None
         out["patch"] = clean_patch

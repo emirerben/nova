@@ -19,6 +19,7 @@ import UserNotifications
         // Every phone render coordinator keeps encoding briefly in the background.
         UIKitDeviceRenderBackgroundExecution.install()
         #if DEBUG
+        TalkBench.startIfRequested()
         // First, before anything can touch `URLSession.shared`: AsyncImage loads gallery posters through it.
         PerfPosterURLProtocol.registerIfNeeded()
         // Opt-in hardware journey: real HTTP/API + scratch database, separate QA bundle.
@@ -80,9 +81,9 @@ import UserNotifications
             PerfFixture.installHashObserver()
             let api = ChatUITestTransport.api()
             // With an expired fixture session the account is "signed in", so its profile read must hit the fixture too.
-            let auth = AuthStore(tokenStore: ChatUITestTokenStore(), api: PerfFixture.expiredToken || ProcessInfo.processInfo.environment["KRIA_NATIVE_ACTIVITY_FIXTURE"] != nil ? api : nil)
+            let auth = AuthStore(tokenStore: ChatUITestTokenStore(), api: PerfFixture.expiredToken ? api : nil)
             _auth = StateObject(wrappedValue: auth)
-            let model = AppModel(api: api, cache: CacheRepository(context: container.mainContext), renderOwner: { [weak auth] in auth?.localStorageIdentity })
+            let model = AppModel(api: api, cache: CacheRepository(context: container.mainContext), renderOwner: { [weak auth] in auth?.localStorageIdentity }, uploadSessionConfiguration: ChatUITestTransport.uploadSessionConfiguration())
             if PerfFixture.uploadTicks { model.uploads.startProgressTicksForTesting() }
             _model = StateObject(wrappedValue: model)
             return
@@ -263,7 +264,7 @@ private struct NativeUpdateRequiredView: View {
                         .frame(width: 76, height: 76)
                         .background(KriaColor.sky, in: Circle())
                     Text("Update Kria to continue")
-                        .font(KriaFont.display(30))
+                        .font(KriaFont.headline(30))
                         .multilineTextAlignment(.center)
                     Text("This version of Kria is no longer supported. Get the update in TestFlight, then reopen Kria.")
                         .font(KriaFont.body(16))

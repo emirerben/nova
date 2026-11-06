@@ -2,6 +2,561 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.34.0] - 2026-11-06
+
+### Added
+- feat(ios): re-record a Talking take from the ready video (KRI-1187) (#2123) <!-- release-pr: 2123 -->
+
+## [0.88.33.0] - 2026-11-06
+
+### Changed
+- chore(research): weekly TikTok artifact refresh 2026-11-01 (#2043) <!-- release-pr: 2043 -->
+
+## [0.88.32.0] - 2026-11-06
+
+### Changed
+- fix(ios): a late AVPlayer .playing report no longer undoes an explicit pause (KRI-1087) (#2024) <!-- release-pr: 2024 -->
+
+## [0.88.31.0] - 2026-11-06
+
+### Changed
+- fix(ios): fence stale device-render reset cleanup and admission (#2134) <!-- release-pr: 2134 -->
+
+## [0.88.30.0] - 2026-11-06
+
+### Changed
+- ci: warm Xcode cache for PRs and queue the iPhone job right after selection (KRI-1232) (#2136) <!-- release-pr: 2136 -->
+
+## [0.88.29.0] - 2026-11-06
+
+### Changed
+- fix(kria): brief writer records her caption count, grey box, all-pauses and title/ending holds as typed facts (Qendresa says-done 6, 7, 8, 10) (#2131) <!-- release-pr: 2131 -->
+
+## [0.88.28.0] - 2026-11-06
+
+### Changed
+- fix(kria): every served suggestion card executes (follow-up to #2109) (#2135) <!-- release-pr: 2135 -->
+
+## [0.88.27.0] - 2026-11-06
+
+### Changed
+- fix(kria): an ending's words are never the opening title or a whole-video pin (says-done B follow-up to #2130) (#2138) <!-- release-pr: 2138 -->
+
+## [0.88.26.0] - 2026-11-06
+
+### Changed
+- perf(ios): live green-screen preview lag, four independent levers (KRI-1183) (#2121) <!-- release-pr: 2121 -->
+
+## [0.88.25.0] - 2026-11-06
+
+### Changed
+- Prompt versions for Main Creator and brief extractor are computed from their source files (no more version-line conflicts) (#2133) <!-- release-pr: 2133 -->
+
+## [0.88.24.0] - 2026-11-06
+
+### Changed
+- fix(ios): make New Chat immediate and reduce save/share waits (#2125) <!-- release-pr: 2125 -->
+
+## [0.88.23.0] - 2026-11-06
+
+### Changed
+- fix(receipts): Kria's review matches the video for unheard recordings, whole-video text and kept clips (Qendresa says-done C) (#2129) <!-- release-pr: 2129 -->
+
+## [0.88.22.0] - 2026-11-06
+
+### Changed
+- fix(kria): the video does what the brief asked for keep-whole, mute, whole-video text and title holds (Qendresa says-done group B) (#2130) <!-- release-pr: 2130 -->
+
+## [0.88.21.0] - 2026-11-06
+
+### Changed
+- fix(text-style): "no captions" no longer takes her text's place and colour (Qendresa case 3) (#2128) <!-- release-pr: 2128 -->
+
+## [0.88.20.0] - 2026-11-06
+
+### Changed
+- fix(captions): keep captions off the speaker's face when she is small in a corner (Qendresa case 1) (#2127) <!-- release-pr: 2127 -->
+
+## [0.88.19.0] - 2026-11-06
+
+### Changed
+- feat(ios): Talk to Camera instrumentation and device bench (KRI-1181) (#2120) <!-- release-pr: 2120 -->
+
+## [0.88.18.0] - 2026-11-06
+
+### Changed
+- Keep saved video edits reachable and safe to retry after render failure (#2126) <!-- release-pr: 2126 -->
+
+## [0.88.17.0] - 2026-11-06
+
+### Changed
+- feat(kria): AI suggestion cards that apply the checked edit on tap (dark) (#2109) <!-- release-pr: 2109 -->
+
+## [0.88.16.0] - 2026-11-06
+
+### Changed
+- fix(captions): phone Talking captions spell the names the creator typed and drop whisper's unsupported title case (Green 4/5) (#2097) <!-- release-pr: 2097 -->
+
+## [0.88.15.0] - 2026-11-06
+
+### Changed
+- feat(kria): replace a Talking take in an existing chat, dark behind MEDIA_REPLACE_ENABLED (KRI-1186) (#2124) <!-- release-pr: 2124 -->
+
+## [0.88.14.0] - 2026-11-06
+
+### Changed
+- Qendresa item 18: zoom background recordings onto their readable text (builds on item 16 #2111 — merge that first) (#2108) <!-- release-pr: 2108 -->
+
+## [0.88.13.0] - 2026-11-06
+
+### Changed
+- fix(creation-text): Kria's text writer adds only the text the creator asked for (Qendresa item 22) (#2113) <!-- release-pr: 2113 -->
+
+## [0.88.12.0] - 2026-11-06
+
+### Changed
+- feat(ios): point screen recordings in Footage to Overlays at upload (item 24) (#2112) <!-- release-pr: 2112 -->
+
+## [0.88.11.0] - 2026-11-06
+
+### Changed
+- feat(title-look): Qendresa item 20, her stacked hook title + logo above it (phone Talking, flag off) (#2115) <!-- release-pr: 2115 -->
+
+## [0.88.10.0] - 2026-11-06
+
+### Changed
+- Qendresa item 16: she starts full screen, then drops into the corner (#2111) <!-- release-pr: 2111 -->
+
+## [0.88.9.0] - 2026-11-06
+
+### Changed
+- feat(kria): plan a long creation prompt (~17 asks) in one go (Qendresa 23) (#2106) <!-- release-pr: 2106 -->
+
+## [0.88.8.0] - 2026-11-06
+
+### Changed
+- feat(list-labels): numbered labels appear when each item starts (Qendresa item 19) (#2116) <!-- release-pr: 2116 -->
+
+## [0.88.7.0] - 2026-11-06
+
+### Changed
+- feat(text): her short-clip text look — one line in the middle, TikTok's own look (Qendresa item 21) (#2114) <!-- release-pr: 2114 -->
+
+## [0.88.6.0] - 2026-11-06
+
+### Changed
+- fix(captions): captions over a speaker background are chosen against it, with an outline when no colour is readable (Green 5) (#2099) <!-- release-pr: 2099 -->
+
+## [0.88.5.0] - 2026-11-06
+
+### Changed
+- Qendresa item 15: phone Talking cards her size and place (builds on #2104: merge that first) (#2107) <!-- release-pr: 2107 -->
+
+## [0.88.4.0] - 2026-11-06
+
+### Changed
+- feat(speaker-background): hear background names said another way (Qendresa item 17) (#2110) <!-- release-pr: 2110 -->
+
+## [0.88.3.0] - 2026-11-05
+
+### Changed
+- feat(speech-cleanup): tight pauses on phone Talking when the creator asks (Qendresa 13) (#2102) <!-- release-pr: 2102 -->
+
+## [0.88.2.0] - 2026-11-05
+
+### Changed
+- fix(kria): a chat with no language yet answers in the language the creator types, not the phone's (Green 5) (#2098) <!-- release-pr: 2098 -->
+
+## [0.88.1.0] - 2026-11-05
+
+### Changed
+- fix(ios): preserve valid source windows through saved render preparation (#2122) <!-- release-pr: 2122 -->
+
+## [0.88.0.0] - 2026-11-05
+
+### Added
+- feat(ios): tap, drag and pinch the corner green-screen speaker in the editor (#2117) <!-- release-pr: 2117 -->
+
+## [0.87.0.0] - 2026-11-05
+
+### Added
+- feat(phone-talking): her comment-keyword ending with a drawn arrow (Qendresa item 14) (#2103) <!-- release-pr: 2103 -->
+
+## [0.86.8.0] - 2026-11-05
+
+### Changed
+- fix(kria): green-screen backgrounds never show the same photo twice (#2118) <!-- release-pr: 2118 -->
+
+## [0.86.7.0] - 2026-11-05
+
+### Changed
+- feat(kria): Steer now — Codex-style waiting-message bar (iOS, flag off) (#2105) <!-- release-pr: 2105 -->
+
+## [0.86.6.0] - 2026-11-05
+
+### Changed
+- test(api): isolate the intent-review Postgres suites from other xdist workers (#2119) <!-- release-pr: 2119 -->
+
+## [0.86.5.0] - 2026-11-05
+
+### Changed
+- feat(captions): Qendresa's caption shape on phone Talking edits (item 12) (#2104) <!-- release-pr: 2104 -->
+
+## [0.86.4.0] - 2026-11-05
+
+### Changed
+- fix(kria): the card's heads-up names only what the creator asked for (Green 4/5) (#2096) <!-- release-pr: 2096 -->
+
+## [0.86.3.0] - 2026-11-05
+
+### Changed
+- test(api): isolate the AI-budget ledger tests from other xdist workers (KRI-1190) (#2101) <!-- release-pr: 2101 -->
+
+## [0.86.2.0] - 2026-11-05
+
+### Fixed
+- fix(kria): planner hears the whole talking take (shared speech budget) (#2100) <!-- release-pr: 2100 -->
+
+## [0.86.1.0] - 2026-11-05
+
+### Changed
+- feat(ios): redesign generate image, AI questions and Record + Upload (KRI-1193) (#2095) <!-- release-pr: 2095 -->
+
+## [0.86.0.0] - 2026-11-04
+
+### Added
+- feat(captions): spoken captions in 10 more languages — pt, es, el, de, ko, it, fr, ar, da, sr (KRI-1192) (#2094) <!-- release-pr: 2094 -->
+
+## [0.85.2.0] - 2026-11-04
+
+### Changed
+- fix(kria): "Cut the sentence I restarted" reads "Done" after a real retake cut (KRI-1189) (#2092) <!-- release-pr: 2092 -->
+
+## [0.85.1.0] - 2026-11-04
+
+### Changed
+- fix(kria): freeze the review's recipe in one order so the worker's recheck matches (KRI-1191) (#2093) <!-- release-pr: 2093 -->
+
+## [0.85.0.0] - 2026-11-04
+
+### Added
+- feat(kria): solid-colour backgrounds behind the Talk-to-camera speaker (KRI-1173) (#2088) <!-- release-pr: 2088 -->
+
+## [0.84.22.0] - 2026-11-03
+
+### Changed
+- feat(kria): tell the creator what the review found, and the qualification harness (KRI-1171) (#2080) <!-- release-pr: 2080 -->
+
+## [0.84.21.0] - 2026-11-03
+
+### Fixed
+- fix(kria): Green 3 caption look, no music, cleanup at approval and background count (KRI-1177, KRI-1164, KRI-1178) (#2089) <!-- release-pr: 2089 -->
+
+## [0.84.20.0] - 2026-11-03
+
+### Changed
+- feat(kria): stage a reversible, Approve-gated repair for safe review findings (KRI-1171) (#2079) <!-- release-pr: 2079 -->
+
+## [0.84.19.0] - 2026-11-03
+
+### Changed
+- feat(kria): judge a finished edit against the creator's request with typed findings (KRI-1171) (#2078) <!-- release-pr: 2078 -->
+
+## [0.84.18.0] - 2026-11-03
+
+### Fixed
+- fix(kria): green-screen backgrounds land on the words that name them (KRI-1175) (#2091) <!-- release-pr: 2091 -->
+
+## [0.84.17.0] - 2026-11-03
+
+### Changed
+- test(ios): pin the editor preview of a corner speaker with timed backgrounds (KRI-1179) (#2087) <!-- release-pr: 2087 -->
+
+## [0.84.16.0] - 2026-11-03
+
+### Changed
+- fix(kria): honest restart-cut promise + one retake predicate, ready to enable consented retakes (KRI-1176) (#2090) <!-- release-pr: 2090 -->
+
+## [0.84.15.0] - 2026-11-03
+
+### Changed
+- feat(kria): send review frames to OpenAI under a reserved, capped budget (KRI-1171) (#2077) <!-- release-pr: 2077 -->
+
+## [0.84.14.0] - 2026-11-03
+
+### Changed
+- feat(kria): admit one review per published generation and extract bounded frame evidence (KRI-1171) (#2076) <!-- release-pr: 2076 -->
+
+## [0.84.13.0] - 2026-11-03
+
+### Changed
+- feat(kria): freeze exactly what a finished render was approved against (KRI-1171) (#2075) <!-- release-pr: 2075 -->
+
+## [0.84.12.0] - 2026-11-03
+
+### Changed
+- feat(kria): repair a timing-only draft through bounded independent review, without rewriting words (KRI-1171) (#2081) <!-- release-pr: 2081 -->
+
+## [0.84.11.0] - 2026-11-03
+
+### Changed
+- fix(kria): a generated image places automatically on a related spoken word in another language (#2083) <!-- release-pr: 2083 -->
+
+## [0.84.10.0] - 2026-11-03
+
+### Changed
+- feat(kria): in-between-my-speech pauses the take at the sentence about each clip; an explicit position always wins (parent KRI-1151) (#2086) <!-- release-pr: 2086 -->
+
+## [0.84.9.0] - 2026-11-03
+
+### Fixed
+- fix(kria): the editor preview draws a Talk-to-camera background again (#2084) <!-- release-pr: 2084 -->
+
+## [0.84.8.0] - 2026-11-03
+
+### Fixed
+- chore(media): drop the weekly price-verified expiry (KRI-1142) (#2085) <!-- release-pr: 2085 -->
+
+## [0.84.7.0] - 2026-11-03
+
+### Fixed
+- feat(ios): Generate picture on slide posts, placed as a sticker (KRI-1142) (#2082) <!-- release-pr: 2082 -->
+
+## [0.84.6.0] - 2026-11-03
+
+### Fixed
+- feat(editor): phone Talking edits can add pictures, dark (KRI-1142) (#2074) <!-- release-pr: 2074 -->
+
+## [0.84.5.0] - 2026-11-03
+
+### Changed
+- feat(kria): continued turns reuse earlier planner answers and record why they continued (KRI-709) (#2073) <!-- release-pr: 2073 -->
+
+## [0.84.4.0] - 2026-11-02
+
+### Changed
+- feat(ios): a zoom slider in the clip Tilt sheet, render, Save and chat, protocol 32 (KRI-1169) (#2066) <!-- release-pr: 2066 -->
+
+## [0.84.3.0] - 2026-11-02
+
+### Changed
+- feat(slides): a zoom slider in the slide Tilt panel, device + cloud + chat, protocol 32 (KRI-1170) (#2065) <!-- release-pr: 2065 -->
+
+## [0.84.2.0] - 2026-11-02
+
+### Changed
+- fix(kria): continued turns re-pay their planner calls; generated images no longer force a continuation (KRI-709) (#2072) <!-- release-pr: 2072 -->
+
+## [0.84.1.0] - 2026-11-02
+
+### Fixed
+- feat(editor): authored and empty phone edits can add pictures (KRI-1142) (#2071) <!-- release-pr: 2071 -->
+
+## [0.84.0.0] - 2026-11-02
+
+### Added
+- feat(kria): commentary-style green screen: timed background windows, speaker small in a corner, BACKGROUND editor lane, honest chat receipts (KRI-1162, KRI-1161) (#2045) <!-- release-pr: 2045 -->
+
+## [0.83.118.0] - 2026-11-02
+
+### Fixed
+- feat(overlays): plan from saved transcripts and pinned narration (KRI-1142) (#2070) <!-- release-pr: 2070 -->
+
+## [0.83.117.0] - 2026-11-02
+
+### Fixed
+- fix(media): a logo keeps its own lettering (KRI-1142) (#2069) <!-- release-pr: 2069 -->
+
+## [0.83.116.0] - 2026-11-02
+
+### Changed
+- feat(notifications): empty allowed-accounts list means every account (KRI-1172) (#2068) <!-- release-pr: 2068 -->
+
+## [0.83.115.0] - 2026-11-02
+
+### Fixed
+- fix(overlays): read placed pictures from visual blocks; readable hold (KRI-1142) (#2067) <!-- release-pr: 2067 -->
+
+## [0.83.114.0] - 2026-11-02
+
+### Changed
+- feat(kria): pause the Talking take for a clip the creator asked to insert (parent KRI-1151) (#2058) <!-- release-pr: 2058 -->
+
+## [0.83.113.0] - 2026-11-02
+
+### Fixed
+- feat(overlays): two pictures can share a moment when apart (KRI-1142) (#2064) <!-- release-pr: 2064 -->
+
+## [0.83.112.0] - 2026-11-02
+
+### Fixed
+- feat(overlays): keep brand and logo requests for review (KRI-1142) (#2063) <!-- release-pr: 2063 -->
+
+## [0.83.111.0] - 2026-11-02
+
+### Fixed
+- fix(overlays): start just after a title an overlay only clips by a hair (KRI-1142) (#2061) <!-- release-pr: 2061 -->
+
+## [0.83.110.0] - 2026-11-02
+
+### Fixed
+- chore(media): log why an image generation was rejected (KRI-1142) (#2062) <!-- release-pr: 2062 -->
+
+## [0.83.109.0] - 2026-11-02
+
+### Changed
+- chore(fly): reduce topology to api/worker/light, shared-cpu worker (KRI-1167) (#2055) <!-- release-pr: 2055 -->
+
+## [0.83.108.0] - 2026-11-02
+
+### Fixed
+- fix(overlays): ignore a stray asset_id on generated rows (KRI-1142) (#2059) <!-- release-pr: 2059 -->
+
+## [0.83.107.0] - 2026-11-02
+
+### Fixed
+- fix(kria): the chat planner offers the Talking cutaway lane instead of refusing it (#2057) <!-- release-pr: 2057 -->
+
+## [0.83.106.0] - 2026-11-02
+
+### Fixed
+- fix(overlays): accept a model answer without a message; refusals ask to retry (KRI-1142) (#2056) <!-- release-pr: 2056 -->
+
+## [0.83.105.0] - 2026-11-02
+
+### Fixed
+- fix(overlays): skip only overlapping rows, keep the rest of the plan (KRI-1142) (#2054) <!-- release-pr: 2054 -->
+
+## [0.83.104.0] - 2026-11-02
+
+### Changed
+- feat(ios): the editor's tool rail scrolls and hints at more tools (#2052) <!-- release-pr: 2052 -->
+
+## [0.83.103.0] - 2026-11-02
+
+### Changed
+- feat(kria): Range chooses which part of a Talking take plays (dark behind PHONE_TALKING_RANGE_EDITS_ENABLED) (#2053) <!-- release-pr: 2053 -->
+
+## [0.83.102.0] - 2026-11-02
+
+### Changed
+- Show the talks full screen where the creator mentions them (parent KRI-1151, flag off) (#2051) <!-- release-pr: 2051 -->
+
+## [0.83.101.0] - 2026-11-02
+
+### Changed
+- fix(api): return analysed clips in upload order so the creator's take leads a Talking edit (#2050) <!-- release-pr: 2050 -->
+
+## [0.83.100.0] - 2026-11-02
+
+### Changed
+- feat(kria): the plan's pace sets the cut between spoken lines (KRI-1097 wave 2, speech) (#2039) <!-- release-pr: 2039 -->
+
+## [0.83.99.0] - 2026-11-02
+
+### Changed
+- fix(kria): the Copilot direction op takes direction and pace from the request, or names what it can't follow (KRI-1097 wave 2, copilot) (#2041) <!-- release-pr: 2041 -->
+
+## [0.83.98.0] - 2026-11-02
+
+### Changed
+- feat(kria): lip-sync titles enter the way the creator asked, where they play (KRI-1097 wave 2, lipsync, partial) (#2037) <!-- release-pr: 2037 -->
+
+## [0.83.97.0] - 2026-11-02
+
+### Changed
+- feat(kria): the narrated title enters as the plan and the asks say (KRI-1097 wave 2, narrated) (#2036) <!-- release-pr: 2036 -->
+
+## [0.83.96.0] - 2026-11-02
+
+### Changed
+- feat(kria): Talking title rows enter with the asked animation (KRI-1097 wave 2, talking) (#2035) <!-- release-pr: 2035 -->
+
+## [0.83.95.0] - 2026-11-02
+
+### Changed
+- fix(kria): the planner never freezes a catalog song for a creator draft (KRI-1097 wave 2, catalog) (#2042) <!-- release-pr: 2042 -->
+
+## [0.83.94.0] - 2026-11-02
+
+### Changed
+- docs(kria): slide lane ships disclosure only; no planner draft can target slides (KRI-1097 wave 2, slide) (#2040) <!-- release-pr: 2040 -->
+
+## [0.83.93.0] - 2026-11-01
+
+### Changed
+- feat(kria): every edit route names what it will not do, and replays are graded on recipe values (KRI-1097) (#2034) <!-- release-pr: 2034 -->
+
+## [0.83.92.0] - 2026-11-01
+
+### Changed
+- feat(ios): native Cinematic recording in the teleprompter (KRI-1160) (#2048) <!-- release-pr: 2048 -->
+
+## [0.83.91.0] - 2026-11-01
+
+### Fixed
+- fix(ios): fit the Kria outro card instead of zooming it on wide videos (KRI-1154) (#2047) <!-- release-pr: 2047 -->
+
+## [0.83.90.0] - 2026-11-01
+
+### Fixed
+- fix(editor): chat-opened editor keeps the Talk-to-camera background (KRI-1165) (#2046) <!-- release-pr: 2046 -->
+
+## [0.83.89.0] - 2026-11-01
+
+### Changed
+- feat(ios): What's New guide in Settings (KRI-1166) (#2044) <!-- release-pr: 2044 -->
+
+## [0.83.88.0] - 2026-11-01
+
+### Changed
+- feat(ios): a photo or video from the pool behind a tilted clip, protocol 31 (KRI-1139) (#2038) <!-- release-pr: 2038 -->
+
+## [0.83.87.0] - 2026-11-01
+
+### Changed
+- feat(overlays): rotate Talking overlay cards from the editor and chat, protocol 30 (KRI-1141) (#2033) <!-- release-pr: 2033 -->
+
+## [0.83.86.0] - 2026-11-01
+
+### Changed
+- feat(kria): a Talking edit plays a chosen footage cutaway's own sound under a muted speaker (KRI-1151) (#2032) <!-- release-pr: 2032 -->
+
+## [0.83.85.0] - 2026-11-01
+
+### Changed
+- fix(ios): a teleprompter take ends only when the creator stops it (KRI-1149) (#2028) <!-- release-pr: 2028 -->
+
+## [0.83.84.0] - 2026-11-01
+
+### Changed
+- feat(ios): notifications only, no Activity inbox; opt-in moves to Account (KRI-1087) (#2023) <!-- release-pr: 2023 -->
+
+## [0.83.83.0] - 2026-11-01
+
+### Changed
+- fix(kria): a Talking edit counts a muted cutaway as keeping the creator's audio (KRI-1150) (#2031) <!-- release-pr: 2031 -->
+
+## [0.83.82.0] - 2026-11-01
+
+### Changed
+- fix(kria): text placement never fails a render (KRI-1152) (#2029) <!-- release-pr: 2029 -->
+
+## [0.83.81.0] - 2026-11-01
+
+### Fixed
+- fix(overlays): narrated edit length excludes the brand tail (KRI-1142) (#2030) <!-- release-pr: 2030 -->
+
+## [0.83.80.0] - 2026-11-01
+
+### Changed
+- fix(notifications): push alert copy depends on the activity kind (KRI-1087) (#2022) <!-- release-pr: 2022 -->
+
+## [0.83.79.0] - 2026-11-01
+
+### Changed
+- fix(ci): native journeys with no offline fixtures get a valid fixture bundle (KRI-1087) (#2025) <!-- release-pr: 2025 -->
+
 ## [0.83.78.0] - 2026-11-01
 
 ### Changed

@@ -1536,6 +1536,28 @@ def _draws_clip_labels(snapshot: EditProposalSnapshot) -> bool:
     )
 
 
+def _lipsync_title_motion(snapshot: EditProposalSnapshot) -> dict[str, Any]:
+    """The text-row patch that plays a lip-sync montage's title entrance (KRI-1097 wave 2).
+
+    `lipsync_montage` stamps the creator's entrance on the snapshot; the opening and closing
+    titles play it in the form the phone has verified (`animation_ask.text_entrance_form`),
+    else stay static. Empty for every other snapshot and with
+    ``LIPSYNC_ROUTE_FOLLOWS_PROMPT_ENABLED`` off, so those projections are unchanged.
+    """
+    song = snapshot.user_song
+    if (
+        snapshot.title_animation is None
+        or song is None
+        or song.mode != "lipsync"
+        or not settings.lipsync_route_follows_prompt_enabled
+    ):
+        return {}
+    from app.kria.animation_ask import entrance_patch, text_entrance_form  # noqa: PLC0415
+
+    form = text_entrance_form()
+    return entrance_patch(snapshot.title_animation, form) if form is not None else {}
+
+
 def clip_label_media_ids(snapshot: EditProposalSnapshot) -> frozenset[str]:
     """Clips whose label the `clip-label-*` lane draws; the context lane skips them.
 
@@ -1716,7 +1738,9 @@ def _base_text_elements(
             return round(clear_start, 3), round(clear_end, 3)
         return start_s, end_s
 
-    def closing_elements(*, fast: bool, effect: str) -> list[dict]:
+    def closing_elements(
+        *, fast: bool, effect: str, motion: Mapping[str, Any] | None = None
+    ) -> list[dict]:
         if not snapshot.closing_title or closing_start is None or compiler_version < 3:
             return []
         return [
@@ -1736,11 +1760,11 @@ def _base_text_elements(
                 stroke_width=0,
                 shadow_enabled=True,
                 shadow_style="standard",
-                effect=effect,
                 alignment="center",
                 letter_spacing=-0.025,
                 line_spacing=1.0,
                 max_width_frac=0.8,
+                **{"effect": effect, **(motion or {})},
             ).model_dump(mode="json", exclude_none=True)
         ]
 
@@ -1950,6 +1974,7 @@ def _base_text_elements(
     # back into an information card edit. Legacy fast snapshots have no
     # ``fast_cuts`` and retain the old text projection below.
     if snapshot.direction == "fast_montage" and snapshot.fast_cuts:
+        title_motion = _lipsync_title_motion(snapshot)
         return [
             *(
                 []
@@ -1975,13 +2000,13 @@ def _base_text_elements(
                         stroke_width=0 if compiler_version >= 3 else 5,
                         shadow_enabled=True,
                         shadow_style="standard" if compiler_version >= 3 else None,
-                        effect="static",
                         alignment="center",
                         max_width_frac=0.8 if compiler_version >= 3 else 0.86,
+                        **{"effect": "static", **title_motion},
                     ).model_dump(mode="json", exclude_none=True)
                 ]
             ),
-            *closing_elements(fast=True, effect="static"),
+            *closing_elements(fast=True, effect="static", motion=title_motion),
             *_caption_lane_elements(snapshot, pin_windows),
         ]
     if compiler_version < 3:

@@ -5,10 +5,15 @@ import UIKit
 /// KRI-1136: turns the selected clip or photo to any angle in `-180...180` and picks what shows in the
 /// corners it uncovers. Every change goes through `NativeEditorSession.setClipTilt`, so the preview updates
 /// live, Reset removes the row's `tilt` key, and Save sends the same row the compiler reads.
+/// KRI-1169: where the server lists `clips.tilt_zoom`, a Zoom slider (0.5x to 3x, a detent at 1x) scales the clip
+/// about the canvas centre before the turn, on a clip that is not turned at all too.
 struct NativeTiltSheet: View {
     @ObservedObject var session: NativeEditorSession
+    @ObservedObject var uploads: BackgroundUploadCoordinator
+    let projectID: UUID
     let selection: EditorSelection
     @State private var applyAllNote: String?
+    @State private var showsMediaPicker = false
 
     private var tilt: ClipTilt { session.clipTilt(for: selection) ?? .upright }
     private var blockedReason: String? { session.tiltBlockedReason(for: selection) }
@@ -41,6 +46,7 @@ struct NativeTiltSheet: View {
                     )
                     .disabled(isBlocked)
                 }
+                if session.canTiltZoom { zoomSection }
                 HStack(spacing: 8) {
                     pill("Nudge left", systemImage: "arrow.counterclockwise", id: "native-editor-tilt-nudge-left", iconOnly: true) {
                         setRotation(tilt.rotationDeg - 1)
@@ -64,29 +70,64 @@ struct NativeTiltSheet: View {
         .background(KriaColor.paper)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("native-editor-tilt-sheet")
+        .sheet(isPresented: $showsMediaPicker) { mediaPicker }
+    }
+
+    // MARK: Zoom
+
+    private var zoomSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                KriaSectionLabel(title: "Zoom")
+                Spacer(minLength: 0)
+                Text(Self.zoomReadout(tilt.zoom))
+                    .font(KriaFont.headline(20))
+                    .foregroundStyle(KriaColor.ink)
+                    .accessibilityHidden(true)
+                    .accessibilityIdentifier("native-editor-tilt-zoom-value")
+            }
+            TiltZoomSlider(zoom: tilt.zoom, onEditingChanged: { editing in editing ? session.beginTransaction() : session.endTransaction() }) {
+                setZoom($0)
+            }
+            .disabled(isBlocked)
+        }
     }
 
     // MARK: Background
 
     private var backdropKind: String {
-        switch tilt.backdrop { case .blank: "blank"; case .color: "color"; case .blur: "blur" }
+        switch tilt.backdrop { case .blank: "blank"; case .color: "color"; case .blur: "blur"; case .media: "media" }
+    }
+
+    private var backdropOptions: [(kind: String, title: String)] {
+        let options = [("blank", "Blank"), ("color", "Colour"), ("blur", "Blur")]
+        return session.canTiltBackdropMedia ? options + [("media", "Photo or video")] : options
+    }
+
+    private var mediaBackdropID: String? {
+        if case .media(let id) = tilt.backdrop { return id }
+        return nil
     }
 
     private var backgroundSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             KriaSectionLabel(title: "Background")
             HStack(spacing: 4) {
-                ForEach([("blank", "Blank"), ("color", "Colour"), ("blur", "Blur")], id: \.0) { kind, title in
+                ForEach(backdropOptions, id: \.kind) { option in
+                    let kind = option.kind, title = option.title
                     let selected = backdropKind == kind
                     Button {
                         switch kind {
                         case "blank": setBackdrop(.blank)
                         case "color": if backdropKind != "color" { setBackdrop(.color(Self.swatches[0].hex)) }
+                        case "media": showsMediaPicker = true
                         default: setBackdrop(.blur)
                         }
                     } label: {
                         Text(title)
-                            .font(KriaFont.body(15).weight(selected ? .bold : .regular))
+                            .font(KriaFont.body(backdropOptions.count > 3 ? 14 : 15).weight(selected ? .bold : .regular))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                             .foregroundStyle(selected ? KriaColor.ink : KriaColor.zinc)
                             .frame(maxWidth: .infinity, minHeight: 44)
                             .background(selected ? KriaColor.paper : .clear, in: Capsule())
@@ -121,6 +162,7 @@ struct NativeTiltSheet: View {
                     }
                 }
             }
+            if let poolID = mediaBackdropID { mediaBackdropRow(poolID) }
             if session.timelineClips.count > 1 {
                 pill("Use this background on every clip", systemImage: nil, id: "native-editor-tilt-apply-all", enabled: !isBlocked) {
                     let result = session.applyTiltBackdropToAllClips(tilt.backdrop)
@@ -136,11 +178,68 @@ struct NativeTiltSheet: View {
         }
     }
 
+    private func mediaBackdropRow(_ poolID: String) -> some View {
+        let asset = session.tiltBackdropChoices.first { $0.id == poolID }
+        let missing = session.tiltBackdropIsMissing(tilt.backdrop)
+        return HStack(spacing: 12) {
+            Group {
+                if let asset { NativeVisualThumbnail(asset: asset) } else { Image(systemName: "photo").foregroundStyle(KriaColor.mutedInk) }
+            }
+            .frame(width: 56, height: 56)
+            .background(KriaColor.softZinc)
+            .clipShape(RoundedRectangle(cornerRadius: 9))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(asset == nil ? "Missing photo or video" : "Chosen photo or video")
+            .accessibilityIdentifier("native-editor-tilt-media-thumbnail")
+            VStack(alignment: .leading, spacing: 2) {
+                Text(asset?.sourceFilename ?? (asset?.kind == "video" ? "Video" : "Photo"))
+                    .font(KriaFont.body(14).weight(.semibold)).foregroundStyle(KriaColor.ink).lineLimit(1)
+                if missing {
+                    Text("That photo or video isn’t available anymore. Choose another or Reset.")
+                        .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("native-editor-tilt-media-missing")
+                }
+            }
+            Spacer(minLength: 0)
+            pill("Change", systemImage: nil, id: "native-editor-tilt-media-change") { showsMediaPicker = true }
+        }
+    }
+
+    private var mediaPicker: some View {
+        NavigationStack {
+            ScrollView {
+                NativeVisualPoolPicker(
+                    session: session, uploads: uploads, projectID: projectID, idPrefix: "native-editor-tilt-media",
+                    choices: session.tiltBackdropChoices, selectedID: mediaBackdropID, noneTitle: "None",
+                    onNone: { setBackdrop(.blank); showsMediaPicker = false },
+                    onSelect: { asset in setBackdrop(.media(asset.id)); showsMediaPicker = false }
+                )
+                .padding(16)
+            }
+            .navigationTitle("Photo or video")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { showsMediaPicker = false }.accessibilityIdentifier("native-editor-tilt-media-done")
+                }
+            }
+        }
+        .tint(KriaColor.ink)
+        .presentationDetents([.medium, .large])
+    }
+
     // MARK: Edits
 
     private func setRotation(_ degrees: Double) {
         var next = tilt
         next.rotationDeg = (degrees * 10).rounded() / 10
+        commit(next)
+    }
+
+    private func setZoom(_ zoom: Double) {
+        var next = tilt
+        next.zoom = zoom
         commit(next)
     }
 
@@ -183,6 +282,9 @@ struct NativeTiltSheet: View {
         let text = rounded == rounded.rounded() ? String(Int(rounded)) : String(format: "%.1f", rounded)
         return text + "°"
     }
+
+    /// "1.3x", "1x", "0.5x": the zoom without trailing zeros.
+    static func zoomReadout(_ zoom: Double) -> String { String(format: "%gx", ClipTilt.clampZoom(zoom)) }
 
     static func applyAllNote(_ result: (applied: Int, skipped: Int)) -> String {
         let applied = result.applied == 1 ? "1 clip" : "\(result.applied) clips"
@@ -269,5 +371,52 @@ struct TiltDial: View {
             }
         }
         .accessibilityIdentifier("native-editor-tilt-dial")
+    }
+}
+
+/// A 0.5x to 3x track with a detent at 1x: a drag within `holdBand` of 1x lands on exactly 1x, with a light haptic
+/// on entering it. The value is the clip's own `tilt.zoom`, so the slider reads 1x for a clip that was never zoomed.
+struct TiltZoomSlider: View {
+    let zoom: Double
+    var onEditingChanged: (Bool) -> Void = { _ in }
+    let onChange: (Double) -> Void
+    @State private var held = false
+    private let haptic = UISelectionFeedbackGenerator()
+
+    static let holdBand = 0.05
+    static let step = 0.01
+
+    /// `raw` snapped to the detent at 1x, else clamped and rounded to hundredths like the stored row.
+    static func snapped(_ raw: Double) -> Double {
+        guard abs(raw - 1) < holdBand else { return ClipTilt.clampZoom(raw) }
+        return 1
+    }
+
+    var body: some View {
+        let binding = Binding<Double>(
+            get: { zoom },
+            set: { raw in
+                let next = Self.snapped(raw)
+                if next == 1, !held { haptic.selectionChanged() }
+                held = next == 1
+                onChange(next)
+            }
+        )
+        Slider(value: binding, in: ClipTilt.zoomRange, step: Self.step) { editing in
+            if editing { haptic.prepare() }
+            onEditingChanged(editing)
+        }
+        .tint(KriaColor.ink)
+        .frame(minHeight: 44)
+        .accessibilityLabel("Zoom")
+        .accessibilityValue(NativeTiltSheet.zoomReadout(zoom))
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: onChange(Self.snapped(zoom + 0.1))
+            case .decrement: onChange(Self.snapped(zoom - 0.1))
+            @unknown default: break
+            }
+        }
+        .accessibilityIdentifier("native-editor-tilt-zoom")
     }
 }

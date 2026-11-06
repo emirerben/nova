@@ -170,6 +170,26 @@ def title_animation(value: Any, _s: Mapping[str, Any]) -> str | None:
     )
 
 
+def title_animation_from_ask(value: Any) -> str:
+    """The planned title animation when the creator's own animation ask sets the entrance."""
+    return say(
+        en=f"I'm not using the planned title animation ({_words(value)}): the title follows "
+        "your own animation ask",
+        tr=f"Planlanan başlık animasyonunu ({_words(value)}) kullanmıyorum: başlık senin "
+        "animasyon isteğini izliyor",
+    )
+
+
+def title_animation_as_fade(value: Any) -> str:
+    """The planned title animation on a phone that plays only the legacy text effects."""
+    return say(
+        en=f"This phone can't play the title animation ({_words(value)}) yet, so the title "
+        "fades in instead",
+        tr=f"Bu telefon başlık animasyonunu ({_words(value)}) henüz oynatamıyor, o yüzden başlık "
+        "onun yerine yavaşça beliriyor",
+    )
+
+
 def label_position(value: Any, _s: Mapping[str, Any]) -> str | None:
     if not value:
         return None
@@ -216,9 +236,28 @@ def text_look(value: Any, _s: Mapping[str, Any]) -> str | None:
     )
 
 
+def accepted_natural_length(strategy: Mapping[str, Any]) -> bool:
+    """The creator answered the length question with the natural length (the take, the voice,
+    the song): the length they now ask for is the one the route renders."""
+    from app.services.choice_questions import (  # noqa: PLC0415
+        CONFLICT_LENGTH_VS_NATURAL,
+        OPT_ACCEPT_NATURAL,
+    )
+
+    return any(
+        isinstance(answer, Mapping)
+        and answer.get("kind") == CONFLICT_LENGTH_VS_NATURAL
+        and answer.get("option") == OPT_ACCEPT_NATURAL
+        for answer in strategy.get("choice_answers") or ()
+    )
+
+
 def length_stated(strategy: Mapping[str, Any], requirements: Sequence[BriefRequirement]) -> bool:
     """The creator stated a length: the server's provenance on the strategy, or a typed length
-    ask in the brief (`length_policy.creator_duration`, which leaves out a moment's seconds)."""
+    ask in the brief (`length_policy.creator_duration`, which leaves out a moment's seconds),
+    and did not then choose the natural length instead."""
+    if accepted_natural_length(strategy):
+        return False
     if strategy.get("creator_duration_s") is not None or strategy.get("target_duration_requested"):
         return True
     from app.kria.brief import CreativeBrief  # noqa: PLC0415
@@ -312,7 +351,8 @@ def asks_captions_on(req: BriefRequirement) -> bool:
 
 
 # Positions the creation text pass can give a title from the creator's own words
-# (`schemas.phone_text_style.explicit_text_rule` reads corner phrases only).
+# (`schemas.phone_text_style.explicit_text_rule` reads corner and "in the middle" phrases about the
+# text; this check still counts only the corners as placed).
 _CORNER_POSITIONS = frozenset({"top_left", "top_right", "bottom_left", "bottom_right"})
 
 
@@ -359,6 +399,34 @@ def title_position_decline() -> str:
     return say(en=TITLE_POSITION_DECLINE_EN, tr=TITLE_POSITION_DECLINE_TR)
 
 
+# A route whose one animated text is the title, for an animation ask the title does not play:
+# another of the creator's asks set its one entrance, or the phone plays the asked edge as the
+# fade (it plays only the legacy text effects).
+TITLE_ENTRANCE_TAKEN_DECLINE_EN = (
+    "I can give the title only one entrance on this video, so it follows another of your asks, "
+    "not this one"
+)
+TITLE_ENTRANCE_TAKEN_DECLINE_TR = (
+    "Bu videoda başlığa yalnızca tek bir giriş verebiliyorum, o yüzden bu isteğini değil, başka "
+    "bir isteğini izliyor"
+)
+TITLE_ENTRANCE_FADE_DECLINE_EN = (
+    "I can't play that title entrance on this phone yet, so the title fades in instead"
+)
+TITLE_ENTRANCE_FADE_DECLINE_TR = (
+    "Bu başlık girişini bu telefonda henüz oynatamıyorum, o yüzden başlık onun yerine yavaşça "
+    "beliriyor"
+)
+
+
+def title_entrance_taken_decline() -> str:
+    return say(en=TITLE_ENTRANCE_TAKEN_DECLINE_EN, tr=TITLE_ENTRANCE_TAKEN_DECLINE_TR)
+
+
+def title_entrance_fade_decline() -> str:
+    return say(en=TITLE_ENTRANCE_FADE_DECLINE_EN, tr=TITLE_ENTRANCE_FADE_DECLINE_TR)
+
+
 # Every route-decline reason, both languages: `route_disclosure.is_route_decline_reason`.
 DECLINE_PREFIXES: tuple[str, ...] = (
     ANIMATION_DECLINE_EN,
@@ -367,6 +435,10 @@ DECLINE_PREFIXES: tuple[str, ...] = (
     CAPTIONS_DECLINE_TR,
     TITLE_POSITION_DECLINE_EN,
     TITLE_POSITION_DECLINE_TR,
+    TITLE_ENTRANCE_TAKEN_DECLINE_EN,
+    TITLE_ENTRANCE_TAKEN_DECLINE_TR,
+    TITLE_ENTRANCE_FADE_DECLINE_EN,
+    TITLE_ENTRANCE_FADE_DECLINE_TR,
 )
 
 

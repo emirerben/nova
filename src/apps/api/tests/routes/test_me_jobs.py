@@ -1516,6 +1516,59 @@ def test_playback_diagnostics_rejects_bad_id_and_invalid_body() -> None:
     db.execute.assert_not_awaited()
 
 
+def test_playback_diagnostics_carries_the_speaker_background_trace() -> None:
+    """A vanished Talk-to-camera background is explained by the trace the app attaches."""
+    user = _user()
+    job_id = uuid.uuid4()
+    db = _db([_scalar(job_id)])
+    _override(user, db)
+    trace = "clips=1 hidden_run=60 cutout=412 original.error=60 @8.0s:original.error"
+    domain = "preview.speaker_background.hidden_run"
+    body = {**_PLAYBACK_DIAGNOSTIC, "error_domain": domain, "trace": trace}
+
+    with structlog.testing.capture_logs() as logs:
+        response = client.post(_diagnostics_url(job_id), json=body)
+
+    assert response.status_code == 204
+    events = [entry for entry in logs if entry["event"] == "editor_playback_failed"]
+    assert events[0]["trace"] == trace
+
+
+def test_playback_diagnostics_without_a_trace_is_unchanged_and_the_trace_is_bounded() -> None:
+    user = _user()
+    db = _db([_scalar(uuid.uuid4())])
+    _override(user, db)
+    url = _diagnostics_url(uuid.uuid4())
+
+    with structlog.testing.capture_logs() as logs:
+        assert client.post(url, json=_PLAYBACK_DIAGNOSTIC).status_code == 204
+    events = [entry for entry in logs if entry["event"] == "editor_playback_failed"]
+    assert events[0]["trace"] is None
+    too_long = {**_PLAYBACK_DIAGNOSTIC, "trace": "x" * 601}
+    assert client.post(url, json=too_long).status_code == 422
+
+
+def test_playback_diagnostics_drops_a_trace_that_is_not_fixed_labels_and_counts() -> None:
+    """The trace is fixed labels and counts only. Anything else (a URL, a name, a line break,
+    upper case) is dropped, not stored in a log line, and the rest of the report is still kept."""
+    user = _user()
+    url = _diagnostics_url(uuid.uuid4())
+    for stray in (
+        "see https://storage.example/clip.mp4?token=Abc",
+        "clips=1 hidden_run=0\nevent=forged",
+        "clips=1 Emir's kitchen.mov",
+        "clips=1 \u00e7ay hidden_run=0",
+    ):
+        db = _db([_scalar(uuid.uuid4())])
+        _override(user, db)
+        with structlog.testing.capture_logs() as logs:
+            response = client.post(url, json={**_PLAYBACK_DIAGNOSTIC, "trace": stray})
+        assert response.status_code == 204, stray
+        events = [entry for entry in logs if entry["event"] == "editor_playback_failed"]
+        assert len(events) == 1 and events[0]["trace"] is None, (stray, events)
+        assert events[0]["error_code"] == -11800, "the rest of the report is kept"
+
+
 _RECORDER_DIAGNOSTIC = {
     "kind": "take_silent",
     "audio_category": "playAndRecord",
@@ -1550,12 +1603,67 @@ def test_recorder_diagnostics_logs_a_silent_take_for_the_caller() -> None:
     db.execute.assert_not_awaited()
 
 
+def test_recorder_diagnostics_logs_every_finished_take_with_its_stop_reason() -> None:
+    """KRI-1149: a take that stopped on its own names its trigger in the logs."""
+    user = _user()
+    db = _db([])
+    _override(user, db)
+    finished = {
+        **_RECORDER_DIAGNOSTIC,
+        "kind": "take_finished",
+        "stop_reason": "audio_interruption_began",
+        "take_duration_s": 57.94,
+    }
+
+    with structlog.testing.capture_logs() as logs:
+        response = client.post("/me/recorder-diagnostics", json=finished)
+
+    assert response.status_code == 204
+    events = [entry for entry in logs if entry["event"] == "recorder_take_finished"]
+    assert len(events) == 1
+    assert events[0]["user_id"] == str(user.id)
+    assert events[0]["stop_reason"] == "audio_interruption_began"
+    assert events[0]["take_duration_s"] == 57.94
+    assert [entry for entry in logs if entry["event"] == "recorder_audio_silent"] == []
+    db.execute.assert_not_awaited()
+
+
+def test_recorder_diagnostics_a_take_the_creator_stopped_is_not_a_warning() -> None:
+    """KRI-1149: only takes that ended against the creator's intent are warning-level triage."""
+    _override(_user(), _db([]))
+
+    def level_for(stop_reason: str) -> str:
+        body = {**_RECORDER_DIAGNOSTIC, "kind": "take_finished", "stop_reason": stop_reason}
+        with structlog.testing.capture_logs() as logs:
+            assert client.post("/me/recorder-diagnostics", json=body).status_code == 204
+        return next(e for e in logs if e["event"] == "recorder_take_finished")["log_level"]
+
+    assert level_for("user") == "info"
+    assert level_for("backgrounded") == "warning"
+
+
+def test_recorder_diagnostics_silent_take_keeps_its_event_name_and_accepts_a_stop_reason() -> None:
+    user = _user()
+    _override(user, _db([]))
+    silent = {**_RECORDER_DIAGNOSTIC, "stop_reason": "user"}
+
+    with structlog.testing.capture_logs() as logs:
+        response = client.post("/me/recorder-diagnostics", json=silent)
+
+    assert response.status_code == 204
+    events = [entry for entry in logs if entry["event"] == "recorder_audio_silent"]
+    assert len(events) == 1
+    assert events[0]["stop_reason"] == "user"
+
+
 def test_recorder_diagnostics_rejects_unbounded_or_unknown_input() -> None:
     user = _user()
     _override(user, _db([]))
 
     unknown_event = {**_RECORDER_DIAGNOSTIC, "kind": "other"}
     assert client.post("/me/recorder-diagnostics", json=unknown_event).status_code == 422
+    long_reason = {**_RECORDER_DIAGNOSTIC, "stop_reason": "x" * 500}
+    assert client.post("/me/recorder-diagnostics", json=long_reason).status_code == 422
     long_label = {**_RECORDER_DIAGNOSTIC, "phase_history": ["x" * 500]}
     assert client.post("/me/recorder-diagnostics", json=long_label).status_code == 422
     too_many = {**_RECORDER_DIAGNOSTIC, "phase_history": ["a"] * 40}

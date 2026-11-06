@@ -19,20 +19,26 @@ from app.kria.recipes import (
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import RenderAssetManifest
 from app.pipeline.authored_timeline import render_presentation
-from app.pipeline.editor_render_window import effective_source_start
+from app.pipeline.editor_render_window import phone_source_window
 from app.pipeline.phone_captions import (
     caption_font_assets,
     caption_look_from_variant,
     compile_caption_layers,
 )
 from app.pipeline.phone_editor_visuals import compile_editor_media_track
-from app.pipeline.phone_recipe_shared import clip_tilt_fields, snap_text_overshoot, timeline_end_s
+from app.pipeline.phone_recipe_shared import (
+    clip_tilt_fields,
+    register_backdrop_visuals,
+    snap_text_overshoot,
+    timeline_end_s,
+)
 from app.pipeline.phone_subtitled_plan import _compile_overlay_track, _compile_sfx_track
 from app.pipeline.phone_voiceover_montage_plan import voiceover_music_gain
 from app.services.authored_editor import explicit_authored_slots
 from app.services.phone_editor_sources import (
     editor_source_bindings,
     editor_visual_bindings,
+    immutable_video_source_duration,
     phone_editor_source_revision,
 )
 from app.services.phone_sources import (
@@ -134,15 +140,21 @@ def compile_phone_authored_timeline(
             hold = max(0.0, duration - source_span / rate)
             hold_duration = hold if hold > 1e-6 else None
         elif not still:
-            start = effective_source_start(
+            start, source_span, hold_duration = phone_source_window(
                 start,
                 duration,
                 rate,
                 source_duration,
                 start_locked=bool(row.get("source_start_locked")),
             )
-            source_span = duration * rate
-            hold_duration = None
+            if hold_duration is not None:
+                # Existing strict windows keep their behavior, but inferred
+                # padding must never choose between ambiguous originals.
+                if (
+                    immutable_video_source_duration(job, variant, row["clip_index"])
+                    != source_duration
+                ):
+                    raise ValueError("authored original source duration is inconsistent")
         else:
             source_span = duration * rate
             hold_duration = None
@@ -184,6 +196,8 @@ def compile_phone_authored_timeline(
                 cursor -= overlap
         tilt_patch, backdrop = clip_tilt_fields(row)
         card = still and row.get("layout") == "supporting_card"
+        if card:
+            tilt_patch.pop("scale", None)
         clips.append(
             TimelineClip(
                 id=row["slot_id"],
@@ -202,6 +216,7 @@ def compile_phone_authored_timeline(
             )
         )
         cursor += duration
+    register_backdrop_visuals(clips, visuals=visuals, assets=assets, manifest=manifest)
     presentation = render_presentation(variant, cursor)
     for key in ("carousel_moment", "motion_scenes", "camera_effects", "custom_effects"):
         if presentation.get(key):

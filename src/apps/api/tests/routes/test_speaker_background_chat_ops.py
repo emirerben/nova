@@ -24,9 +24,17 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
-from app.agents.edit_copilot import _family_allowed, _parse_op, _ParseState, _with_v2_fragments
+from app.agents.edit_copilot import (
+    CAPABILITY_UNAVAILABLE_DETAIL,
+    _family_allowed,
+    _format_snapshot,
+    _parse_op,
+    _ParseState,
+    _with_v2_fragments,
+)
 from app.config import settings
 from app.routes import generative_jobs as gj
+from app.services.client_protocol import clear_request_context, set_client_protocol
 from app.services.kria_editor_ops import (
     KriaEditorOpError,
     build_editor_snapshot,
@@ -35,7 +43,8 @@ from app.services.kria_editor_ops import (
     merge_editor_draft,
     project_editor_draft,
 )
-from tests.routes.test_phone_subtitled_editor_commit import device_status
+from app.services.phone_speaker_background import background_pin_requests
+from tests.routes.test_phone_subtitled_editor_commit import device_status, save
 from tests.routes.test_speaker_background_editor import (
     PHOTO,
     VIDEO,
@@ -49,6 +58,11 @@ POOL = [
     {"id": VIDEO.media_id, "kind": "video", "label": "waves.mp4", "duration_s": 9.0},
 ]
 FOREIGN = "00000000-0000-4000-8000-0000000000ff"
+# KRI-1173: the colour gate is closed in these harnesses unless a test opens the token.
+COLOR_CLOSED = {
+    "color_available": False,
+    "color_reason": "a plain colour behind you isn't ready on this iPhone app yet",
+}
 
 # sha256 of the snapshot JSON of `background_job` with the kill switch OFF, computed on
 # codex/sb-server before the background lane existed (sort_keys, default=str).
@@ -97,7 +111,12 @@ def test_chat_puts_a_pool_photo_behind_the_speaker_and_saves(monkeypatch):
     base = _base(job)
     snapshot = _snapshot(job, base)
     assert "background" in snapshot["allowed_op_families"]
-    assert snapshot["background"] == {"available": True, "current": None, "pool": POOL}
+    assert snapshot["background"] == {
+        "available": True,
+        "current": None,
+        "pool": POOL,
+        **COLOR_CLOSED,
+    }
 
     (op,), _state = _parse(snapshot, {"op": "set_background", "asset_id": PHOTO.media_id})
     assert op == {
@@ -418,3 +437,477 @@ def test_only_a_save_that_sets_a_background_on_a_variant_that_can_carry_one_is_p
     monkeypatch.setattr(settings, "speaker_background_enabled", True)
     job.assembly_plan["variants"][0]["render_destination"] = "cloud"
     assert background_pin_request(job, "subtitled", sets) is None
+
+
+# ------------------------------------------------------- KRI-1162: several backgrounds in chat
+#
+# Failure modes pinned here (each through the real snapshot -> parser -> compile -> Save chain):
+#  7. a closed windows gate changes the snapshot or the prompt the model sees (S33);
+#  8. the model emits a corner or an id it was never offered (S35, S37);
+#  9. a sequence is laid out past the video or leaves it dark (S39);
+# 10. "one photo instead" leaves the old windows behind, or loses the corner;
+# 11. "remove the background" leaves the small speaker on an empty backdrop.
+
+
+def _open_windows(monkeypatch, *, token: bool = True) -> None:
+    features = [
+        f for f in settings.phone_render_verified_features if f != "speakerBackgroundWindows"
+    ]
+    if token:
+        features.append("speakerBackgroundWindows")
+    monkeypatch.setattr(settings, "phone_render_verified_features", features)
+
+
+def _windows_job(monkeypatch, *, background=None):
+    job = _job(monkeypatch, background=background)
+    _open_windows(monkeypatch)
+    return job
+
+
+def _document_windows(compiled):
+    return compiled.payload.speaker_background.model_dump(exclude_none=True)
+
+
+def test_a_closed_windows_gate_changes_neither_the_snapshot_nor_the_prompt(monkeypatch):
+    job = _job(monkeypatch)
+    _open_windows(monkeypatch, token=False)
+    snapshot = _snapshot(job)
+    assert snapshot["background"] == {
+        "available": True,
+        "current": None,
+        "pool": POOL,
+        **COLOR_CLOSED,
+    }
+    assert "background_windows" not in snapshot["allowed_op_families"]
+    assert "SEVERAL BACKGROUNDS" not in _with_v2_fragments("PROMPT", snapshot)
+
+    # The model cannot reach the new ops through the base family either.
+    for raw in (
+        {"op": "set_background_sequence", "asset_ids": [PHOTO.media_id]},
+        {"op": "set_speaker_frame", "preset": "small_bottom_right"},
+        {"op": "clear_speaker_frame"},
+    ):
+        (op,), state = _parse(snapshot, raw)
+        assert op is None
+        assert state.rejection_reasons[-1]["reason"] == "capability_unavailable"
+
+
+def test_an_open_windows_gate_tells_the_model_what_is_behind_the_speaker_and_when(monkeypatch):
+    job = _windows_job(monkeypatch)
+    snapshot = _snapshot(job)
+    section = snapshot["background"]
+    assert section["windows_available"] is True
+    assert section["duration_s"] > 0
+    assert section["windows"] == [] and section["speaker_frame"] is None
+    assert "background_windows" in snapshot["allowed_op_families"]
+    prompt = _with_v2_fragments("PROMPT", snapshot)
+    assert "SEVERAL BACKGROUNDS AND A SMALL SPEAKER" in prompt
+    assert '"op":"set_speaker_frame"' in prompt
+
+
+def test_chat_sets_a_sequence_and_the_save_draws_every_window(monkeypatch):
+    job = _windows_job(monkeypatch)
+    base = _base(job)
+    snapshot = _snapshot(job, base)
+    (op,), _ = _parse(
+        snapshot,
+        {"op": "set_background_sequence", "asset_ids": [PHOTO.media_id, VIDEO.media_id]},
+    )
+    assert op == {
+        "op": "set_background_sequence",
+        "asset_ids": [PHOTO.media_id, VIDEO.media_id],
+        "kinds": ["image", "video"],
+        "cadence_s": 4.0,
+    }
+    compiled = compile_editor_ops(job, base, [op])
+    document = _document_windows(compiled)
+    # The first id fills where no window shows; windows run from 0 to the end of the video (S39).
+    assert document["media_id"] == PHOTO.media_id
+    duration = snapshot["background"]["duration_s"]
+    windows = document["windows"]
+    # S57 (2026-11-05): each one once, stretched to cover the video (it used to take turns at 4 s).
+    assert [w["media_id"] for w in windows] == [PHOTO.media_id, VIDEO.media_id]
+    assert windows[0]["start_s"] == 0.0
+    assert windows[0]["end_s"] == pytest.approx(duration / 2, abs=1e-3)
+    assert windows[-1]["end_s"] == pytest.approx(duration, abs=1e-3)
+    assert all(later["start_s"] == earlier["end_s"] for earlier, later in zip(windows, windows[1:]))
+
+    _commit(job, compiled)
+    layer = _recipe(job).speaker_background
+    assert layer.asset_id == f"visual-{PHOTO.media_id}"
+    assert len(layer.windows) == len(windows)
+
+
+def test_a_sequence_may_name_only_what_the_pool_listed(monkeypatch):
+    job = _windows_job(monkeypatch)
+    snapshot = _snapshot(job)
+    for bad in (
+        {"asset_ids": [PHOTO.media_id, FOREIGN]},
+        {"asset_ids": []},
+        {"asset_ids": [PHOTO.media_id] * 41},
+        {"asset_ids": [PHOTO.media_id], "cadence_s": 1.0},
+        {"asset_ids": [PHOTO.media_id], "cadence_s": 11},
+    ):
+        (op,), state = _parse(snapshot, {"op": "set_background_sequence", **bad})
+        assert op is None, bad
+        assert state.invalid_value_seen, bad
+
+
+def test_chat_makes_the_speaker_small_then_full_screen_again(monkeypatch):
+    job = _windows_job(monkeypatch, background=_background(PHOTO))
+    base = _base(job)
+    (op,), _ = _parse(
+        _snapshot(job, base), {"op": "set_speaker_frame", "preset": "small_bottom_right"}
+    )
+    compiled = compile_editor_ops(job, base, [op])
+    assert compiled.changes == ["Made you small in the corner"]
+    assert _document_windows(compiled)["speaker_frame"] == {
+        "width_fraction": 0.42,
+        "x_fraction": 0.76,
+        "y_fraction": 0.8,
+    }
+    _commit(job, compiled)
+    frame = _recipe(job).speaker_background.speaker_frame
+    assert (frame.width_fraction, frame.x_fraction, frame.y_fraction) == (0.42, 0.76, 0.8)
+
+    # Turn two: the snapshot names the corner, and "full screen again" removes only the frame.
+    second_base = _base(job)
+    snapshot = _snapshot(job, second_base)
+    assert snapshot["background"]["speaker_frame"] == "small_bottom_right"
+    (clear,), _ = _parse(snapshot, {"op": "clear_speaker_frame"})
+    cleared = compile_editor_ops(job, second_base, [clear])
+    assert "speaker_frame" not in _document_windows(cleared)
+    assert _document_windows(cleared)["media_id"] == PHOTO.media_id
+
+
+def test_a_corner_name_the_phone_cannot_draw_never_reaches_the_save(monkeypatch):
+    job = _windows_job(monkeypatch, background=_background(PHOTO))
+    snapshot = _snapshot(job)
+    for preset in ("middle", "full", "small_bottom_right ", 3, None):
+        (op,), state = _parse(snapshot, {"op": "set_speaker_frame", "preset": preset})
+        assert op is None, preset
+        assert state.invalid_value_seen or state.rejection_reasons, preset
+
+
+def test_the_corner_needs_a_background_and_clearing_needs_a_corner(monkeypatch):
+    job = _windows_job(monkeypatch)
+    base = _base(job)
+    snapshot = _snapshot(job, base)
+    (op,), _ = _parse(snapshot, {"op": "set_speaker_frame", "preset": "small_top_left"})
+    with pytest.raises(KriaEditorOpError, match="photo or video behind you first"):
+        compile_editor_ops(job, base, [op])
+    (clear,), _ = _parse(snapshot, {"op": "clear_speaker_frame"})
+    with pytest.raises(KriaEditorOpError, match="already full screen"):
+        compile_editor_ops(job, base, [clear])
+
+
+def test_a_sequence_and_a_corner_in_one_turn_compose(monkeypatch):
+    job = _windows_job(monkeypatch)
+    base = _base(job)
+    snapshot = _snapshot(job, base)
+    ops = [
+        _parse(snapshot, raw)[0][0]
+        for raw in (
+            {"op": "set_background_sequence", "asset_ids": [VIDEO.media_id, PHOTO.media_id]},
+            {"op": "set_speaker_frame", "preset": "small_bottom_left"},
+        )
+    ]
+    document = _document_windows(compile_editor_ops(job, base, ops))
+    assert document["media_id"] == VIDEO.media_id
+    assert document["windows"] and document["speaker_frame"]["x_fraction"] == 0.24
+
+
+def test_one_photo_instead_clears_the_windows_and_keeps_the_corner(monkeypatch):
+    job = _windows_job(monkeypatch)
+    base = _base(job)
+    snapshot = _snapshot(job, base)
+    ops = [
+        _parse(snapshot, raw)[0][0]
+        for raw in (
+            {"op": "set_background_sequence", "asset_ids": [PHOTO.media_id, VIDEO.media_id]},
+            {"op": "set_speaker_frame", "preset": "small_bottom_right"},
+        )
+    ]
+    first = editor_payload_dump(compile_editor_ops(job, base, ops).payload)
+    second_base = _base(job, first)
+    (single,), _ = _parse(
+        _snapshot(job, second_base), {"op": "set_background", "asset_id": VIDEO.media_id}
+    )
+    document = _document_windows(compile_editor_ops(job, second_base, [single]))
+    assert document["media_id"] == VIDEO.media_id
+    assert "windows" not in document
+    assert document["speaker_frame"]["x_fraction"] == 0.76
+
+
+def test_removing_the_background_removes_the_corner_with_it(monkeypatch):
+    job = _windows_job(monkeypatch)
+    base = _base(job)
+    snapshot = _snapshot(job, base)
+    ops = [
+        _parse(snapshot, raw)[0][0]
+        for raw in (
+            {"op": "set_background_sequence", "asset_ids": [PHOTO.media_id]},
+            {"op": "set_speaker_frame", "preset": "small_bottom_right"},
+        )
+    ]
+    first = editor_payload_dump(compile_editor_ops(job, base, ops).payload)
+    second_base = _base(job, first)
+    (remove,), _ = _parse(_snapshot(job, second_base), {"op": "remove_background"})
+    cleared = compile_editor_ops(job, second_base, [remove])
+    assert cleared.payload.speaker_background is None
+    assert "speaker_background" in cleared.payload.model_fields_set
+
+
+def test_the_new_ops_read_as_plain_phrases_in_a_not_done_line():
+    from app.services import creation_editor_actions as actions
+
+    lines = actions._not_done_lines(
+        [{"op": "set_speaker_frame", "reason": "capability_unavailable"}], []
+    )
+    assert lines == [
+        "Not done: make you small in a corner (that isn't something I can change in this edit yet)."
+    ]
+
+
+# ------------------------------------------------- KRI-1173: a plain colour behind the speaker
+#
+# Failure modes pinned here (each through the real snapshot -> parser -> compile -> Save chain):
+# 12. the model's colour ("white", "Beyaz", "#ff00aa") reaches the Save unnormalised, or a colour
+#     the phone cannot draw ("turquoise", "#FFF", alpha) is guessed instead of refused (S57);
+# 13. a closed colour gate answers with the generic "can't change that" sentence, or lets the op
+#     through to a Save that refuses it (S59);
+# 14. a colour replaces the timed backgrounds or the corner it should sit under (contract);
+# 15. the snapshot cannot show a colour fill, so turn two re-sets it or "removes nothing";
+# 16. the colour op is taught outside the background family, or the web drawer can reach it.
+
+
+def _open_colour(monkeypatch, *, token: bool = True) -> None:
+    features = [f for f in settings.phone_render_verified_features if f != "speakerBackgroundColor"]
+    if token:
+        features.append("speakerBackgroundColor")
+    monkeypatch.setattr(settings, "phone_render_verified_features", features)
+
+
+def _colour_job(monkeypatch, *, fill: dict | None = None):
+    """A phone Talking edit whose colour gate is open; ``fill`` is Saved through the real editor
+    Save first (as protocol 34), so the variant holds a colour fill the way a creator's does."""
+    job = _job(monkeypatch)  # `background_job` resets the verified list: open the token after it
+    _open_colour(monkeypatch)
+    if fill is not None:
+        set_client_protocol(34)
+        try:
+            save(job, speaker_background=fill)
+        finally:
+            clear_request_context()
+    return job
+
+
+def _colour_document(compiled):
+    return compiled.payload.speaker_background.model_dump(exclude_none=True)
+
+
+def test_chat_puts_a_plain_colour_behind_the_speaker_and_the_save_draws_it(monkeypatch):
+    job = _colour_job(monkeypatch)
+    base = _base(job)
+    snapshot = _snapshot(job, base)
+    assert snapshot["background"]["color_available"] is True
+    assert "color_reason" not in snapshot["background"]
+
+    (op,), _ = _parse(snapshot, {"op": "set_background_color", "color": "white"})
+    assert op == {"op": "set_background_color", "color": "#FFFFFF"}
+    compiled = compile_editor_ops(job, base, [op])
+    assert compiled.changes == ["Put a plain #FFFFFF background behind you"]
+    assert _colour_document(compiled) == {"kind": "color", "color": "#FFFFFF"}
+
+    prep = _commit(job, compiled)
+    assert prep["sections"]["speaker_background"] is True
+    layer = _recipe(job).speaker_background
+    assert layer.uses_color and layer.color == "#FFFFFF"
+    # S54: a colour names no pool media, so there is nothing to pin or download for it.
+    assert background_pin_requests(job, "subtitled", compiled.payload) == []
+
+
+@pytest.mark.parametrize(
+    ("said", "expected"),
+    [
+        ("white", "#FFFFFF"),
+        ("Black", "#000000"),
+        ("GREEN", "#00FF00"),
+        ("blue", "#0000FF"),
+        ("red", "#FF0000"),
+        ("yellow", "#FFFF00"),
+        ("grey", "#808080"),
+        ("gray", "#808080"),
+        ("beyaz", "#FFFFFF"),
+        ("SİYAH", "#000000"),
+        ("yeşil", "#00FF00"),
+        ("mavi", "#0000FF"),
+        ("KIRMIZI", "#FF0000"),
+        ("sarı", "#FFFF00"),
+        ("gri", "#808080"),
+        ("kirmizi", "#FF0000"),  # typed without Turkish letters
+        ("YESIL", "#00FF00"),
+        ("#ff00aa", "#FF00AA"),
+        ("#Ff00Aa", "#FF00AA"),
+        ("  #123abc ", "#123ABC"),
+    ],
+)
+def test_the_colour_is_normalised_to_uppercase_hex_in_the_parser(monkeypatch, said, expected):
+    snapshot = _snapshot(_colour_job(monkeypatch))
+    (op,), _ = _parse(snapshot, {"op": "set_background_color", "color": said})
+    assert op == {"op": "set_background_color", "color": expected}
+
+
+@pytest.mark.parametrize(
+    "bad", ["turquoise", "#FFF", "#12345678", "#GGGGGG", "", "  ", 5, None, ["white"], True]
+)
+def test_a_colour_the_phone_cannot_draw_is_refused_in_words_never_guessed(monkeypatch, bad):
+    snapshot = _snapshot(_colour_job(monkeypatch))
+    (op,), state = _parse(snapshot, {"op": "set_background_color", "color": bad})
+    assert op is None
+    assert state.rejection_reasons[-1]["reason"] in {"invalid_value", "missing_required"}
+    if state.rejection_reasons[-1]["reason"] == "invalid_value":
+        assert "isn't a colour I can use" in state.rejection_reasons[-1]["detail"]
+        assert state.invalid_value_seen
+
+
+def test_a_closed_colour_gate_is_an_unmet_request_with_the_snapshots_reason(monkeypatch):
+    # S59: the photo / video lane is open, the colour token is not verified.
+    job = _job(monkeypatch)
+    _open_colour(monkeypatch, token=False)
+    snapshot = _snapshot(job)
+    assert "background" in snapshot["allowed_op_families"]
+    assert snapshot["background"]["color_available"] is False
+    reason = snapshot["background"]["color_reason"]
+    assert "isn't ready on this iPhone app" in reason
+
+    (op,), state = _parse(snapshot, {"op": "set_background_color", "color": "white"})
+    assert op is None
+    rejection = state.rejection_reasons[-1]
+    assert rejection["reason"] == "capability_unavailable"
+    # Not the generic sentence: it carries the colour reason, and the creator reads it.
+    assert rejection["detail"] != CAPABILITY_UNAVAILABLE_DETAIL
+    assert reason in rejection["detail"]
+    assert rejection["detail"] in state.reply_notes
+
+    # A media background is unaffected by the closed colour gate.
+    (photo,), _ = _parse(snapshot, {"op": "set_background", "asset_id": PHOTO.media_id})
+    assert photo is not None
+
+
+def test_a_closed_photo_lane_leaves_the_colour_op_unreachable(monkeypatch):
+    job = _colour_job(monkeypatch)
+    job.assembly_plan["variants"][0]["render_destination"] = "cloud"
+    snapshot = _snapshot(job)
+    assert "background" not in snapshot["allowed_op_families"]
+    assert "color_available" not in snapshot["background"]
+    (op,), state = _parse(snapshot, {"op": "set_background_color", "color": "white"})
+    assert op is None
+    assert state.rejection_reasons[-1]["reason"] == "capability_unavailable"
+
+
+def test_the_snapshot_shows_a_colour_fill_and_a_second_ask_for_it_is_a_plain_refusal(monkeypatch):
+    job = _colour_job(monkeypatch, fill={"kind": "color", "color": "#FFFFFF"})
+    base = _base(job)
+    snapshot = _snapshot(job, base)
+    assert snapshot["background"]["current"] == {"kind": "color", "color": "#FFFFFF"}
+
+    (same,), _ = _parse(snapshot, {"op": "set_background_color", "color": "white"})
+    with pytest.raises(KriaEditorOpError, match="already behind you"):
+        compile_editor_ops(job, base, [same])
+    (other,), _ = _parse(snapshot, {"op": "set_background_color", "color": "black"})
+    assert _colour_document(compile_editor_ops(job, base, [other])) == {
+        "kind": "color",
+        "color": "#000000",
+    }
+
+
+def test_a_photo_replaces_a_colour_and_remove_clears_it(monkeypatch):
+    job = _colour_job(monkeypatch, fill={"kind": "color", "color": "#FFFFFF"})
+    base = _base(job)
+    snapshot = _snapshot(job, base)
+    (photo,), _ = _parse(snapshot, {"op": "set_background", "asset_id": PHOTO.media_id})
+    document = _colour_document(compile_editor_ops(job, base, [photo]))
+    assert document == {"media_id": PHOTO.media_id, "kind": "image", "source_start_s": 0.0}
+
+    (remove,), _ = _parse(snapshot, {"op": "remove_background"})
+    cleared = compile_editor_ops(job, base, [remove])
+    assert cleared.payload.speaker_background is None
+    assert "speaker_background" in cleared.payload.model_fields_set
+
+
+def test_a_colour_keeps_the_timed_backgrounds_and_the_corner(monkeypatch):
+    job = _windows_job(monkeypatch)
+    _open_colour(monkeypatch)
+    base = _base(job)
+    snapshot = _snapshot(job, base)
+    ops = [
+        _parse(snapshot, raw)[0][0]
+        for raw in (
+            {"op": "set_background_sequence", "asset_ids": [PHOTO.media_id, VIDEO.media_id]},
+            {"op": "set_speaker_frame", "preset": "small_bottom_right"},
+            {"op": "set_background_color", "color": "green"},
+        )
+    ]
+    document = _colour_document(compile_editor_ops(job, base, ops))
+    assert document["kind"] == "color" and document["color"] == "#00FF00"
+    assert "media_id" not in document and "source_start_s" not in document
+    assert [w["media_id"] for w in document["windows"][:2]] == [PHOTO.media_id, VIDEO.media_id]
+    assert document["speaker_frame"]["x_fraction"] == 0.76
+
+
+def test_a_sequence_and_a_corner_go_over_a_colour_fill(monkeypatch):
+    job = _windows_job(monkeypatch)
+    _open_colour(monkeypatch)
+    base = _base(job)
+    snapshot = _snapshot(job, base)
+    ops = [
+        _parse(snapshot, raw)[0][0]
+        for raw in (
+            {"op": "set_background_color", "color": "#0000ff"},
+            {"op": "set_background_sequence", "asset_ids": [PHOTO.media_id]},
+            {"op": "set_speaker_frame", "preset": "small_top_left"},
+        )
+    ]
+    document = _colour_document(compile_editor_ops(job, base, ops))
+    assert document["kind"] == "color" and document["color"] == "#0000FF"
+    assert document["windows"] and document["speaker_frame"]
+    _commit(job, compile_editor_ops(job, base, ops))
+    layer = _recipe(job).speaker_background
+    assert layer.uses_color and layer.windows and layer.speaker_frame is not None
+
+
+def test_the_prompt_and_the_block_teach_the_colour_only_inside_the_background_family(monkeypatch):
+    job = _colour_job(monkeypatch)
+    snapshot = _snapshot(job)
+    prompt = _with_v2_fragments("PROMPT", snapshot)
+    assert '"op":"set_background_color"' in prompt and "kırmızı" in prompt
+    block = _format_snapshot(snapshot)
+    assert "color: available" in block
+
+    _open_colour(monkeypatch, token=False)
+    closed = _snapshot(job)
+    assert "color: not available: a plain colour behind you isn't ready" in _format_snapshot(closed)
+
+    # A colour fill reads as a colour in the block, never as an empty pool photo.
+    filled = _colour_job(monkeypatch, fill={"kind": "color", "color": "#FFFFFF"})
+    assert "current: a plain colour '#FFFFFF'" in _format_snapshot(_snapshot(filled))
+
+    # Kill switch off: no family, no colour op, no mention.
+    monkeypatch.setattr(settings, "speaker_background_enabled", False)
+    off = _with_v2_fragments("PROMPT", _snapshot(job))
+    assert "set_background_color" not in off
+
+
+def test_the_web_drawer_can_never_see_the_colour_op():
+    drawer = {"allowed_op_families": ["background"], "background": {"pool": POOL}}
+    assert not _family_allowed("set_background_color", drawer)
+
+
+def test_the_colour_op_reads_as_a_plain_phrase_in_a_not_done_line():
+    from app.services import creation_editor_actions as actions
+
+    lines = actions._not_done_lines(
+        [{"op": "set_background_color", "reason": "capability_unavailable"}], []
+    )
+    assert "put that colour behind you" in " ".join(lines)

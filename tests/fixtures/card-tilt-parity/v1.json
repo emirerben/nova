@@ -1,0 +1,157 @@
+{
+  "comment": "KRI-1141: the card clip a Talking compile writes for a card tilted by rotation_deg (clockwise). tests/routes/test_overlay_card_tilt.py pins the Python side, PlacedCardTiltTests the Swift side.",
+  "cases": [
+    {
+      "name": "upright",
+      "rotation_deg": 0,
+      "clip": {
+        "id": "subtitled-overlay-card-1",
+        "source_asset_id": "visual-photo-1",
+        "source_start": 0.0,
+        "source_duration": 2.0,
+        "timeline_start": 1.0,
+        "rate": 1.0,
+        "transform": {
+          "scale": 1.0,
+          "rotation_degrees": 0.0,
+          "position_x": 0.0,
+          "position_y": 0.0
+        },
+        "transition": null,
+        "text": null,
+        "visual_placement": {
+          "order": 1,
+          "contain": false,
+          "focal_x": 0.5,
+          "focal_y": 0.5,
+          "zoom": 1.0,
+          "pre_crop": false,
+          "motion": "none",
+          "width_fraction": 0.35,
+          "x_fraction": 0.5,
+          "y_fraction": 0.4,
+          "window_start": 1.0,
+          "window_end": 3.0,
+          "fade_in": false,
+          "fade_out": false
+        },
+        "volume": 0.0
+      },
+      "clip_tilt": false
+    },
+    {
+      "name": "clockwise_30",
+      "rotation_deg": 30,
+      "clip": {
+        "id": "subtitled-overlay-card-1",
+        "source_asset_id": "visual-photo-1",
+        "source_start": 0.0,
+        "source_duration": 2.0,
+        "timeline_start": 1.0,
+        "rate": 1.0,
+        "transform": {
+          "scale": 1.0,
+          "rotation_degrees": 30.0,
+          "position_x": 0.0,
+          "position_y": 0.0
+        },
+        "transition": null,
+        "text": null,
+        "visual_placement": {
+          "order": 1,
+          "contain": false,
+          "focal_x": 0.5,
+          "focal_y": 0.5,
+          "zoom": 1.0,
+          "pre_crop": false,
+          "motion": "none",
+          "width_fraction": 0.35,
+          "x_fraction": 0.5,
+          "y_fraction": 0.4,
+          "window_start": 1.0,
+          "window_end": 3.0,
+          "fade_in": false,
+          "fade_out": false
+        },
+        "volume": 0.0
+      },
+      "clip_tilt": true
+    },
+    {
+      "name": "counter_clockwise_30",
+      "rotation_deg": -30,
+      "clip": {
+        "id": "subtitled-overlay-card-1",
+        "source_asset_id": "visual-photo-1",
+        "source_start": 0.0,
+        "source_duration": 2.0,
+        "timeline_start": 1.0,
+        "rate": 1.0,
+        "transform": {
+          "scale": 1.0,
+          "rotation_degrees": -30.0,
+          "position_x": 0.0,
+          "position_y": 0.0
+        },
+        "transition": null,
+        "text": null,
+        "visual_placement": {
+          "order": 1,
+          "contain": false,
+          "focal_x": 0.5,
+          "focal_y": 0.5,
+          "zoom": 1.0,
+          "pre_crop": false,
+          "motion": "none",
+          "width_fraction": 0.35,
+          "x_fraction": 0.5,
+          "y_fraction": 0.4,
+          "window_start": 1.0,
+          "window_end": 3.0,
+          "fade_in": false,
+          "fade_out": false
+        },
+        "volume": 0.0
+      },
+      "clip_tilt": true
+    },
+    {
+      "name": "half_turn",
+      "rotation_deg": 180,
+      "clip": {
+        "id": "subtitled-overlay-card-1",
+        "source_asset_id": "visual-photo-1",
+        "source_start": 0.0,
+        "source_duration": 2.0,
+        "timeline_start": 1.0,
+        "rate": 1.0,
+        "transform": {
+          "scale": 1.0,
+          "rotation_degrees": 180.0,
+          "position_x": 0.0,
+          "position_y": 0.0
+        },
+        "transition": null,
+        "text": null,
+        "visual_placement": {
+          "order": 1,
+          "contain": false,
+          "focal_x": 0.5,
+          "focal_y": 0.5,
+          "zoom": 1.0,
+          "pre_crop": false,
+          "motion": "none",
+          "width_fraction": 0.35,
+          "x_fraction": 0.5,
+          "y_fraction": 0.4,
+          "window_start": 1.0,
+          "window_end": 3.0,
+          "fade_in": false,
+          "fade_out": false
+        },
+        "volume": 0.0
+      },
+      "clip_tilt": true
+    }
+  ]
+}

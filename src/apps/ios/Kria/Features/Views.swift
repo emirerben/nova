@@ -20,7 +20,7 @@ struct ProjectsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                HStack(alignment: .firstTextBaseline) { Text("Projects").font(KriaFont.display(34)); Spacer(); Button(action: { Task { await model.createProject() } }) { Image(systemName: "plus").font(.headline).frame(width: 44, height: 44).background(KriaColor.sky).clipShape(Circle()) }.accessibilityLabel("New project") }
+                HStack(alignment: .firstTextBaseline) { Text("Projects").font(KriaFont.headline(34)); Spacer(); Button(action: { Task { await model.createProject() } }) { Image(systemName: "plus").font(.headline).frame(width: 44, height: 44).background(KriaColor.sky).clipShape(Circle()) }.accessibilityLabel("New project") }
                 Text("A home for the stories you’re shaping.").foregroundStyle(KriaColor.zinc)
                 if model.projects.isEmpty {
                     switch model.projectsState {
@@ -33,7 +33,7 @@ struct ProjectsView: View {
                         .accessibilityElement(children: .combine)
                     case .failed(let message):
                         VStack(alignment: .leading, spacing: 14) {
-                            Text("Projects couldn’t load.").font(KriaFont.display(24))
+                            Text("Projects couldn’t load.").font(KriaFont.headline(24))
                             Text(message).font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
                             Button("Try again") { Task { await model.loadProjects() } }
                                 .buttonStyle(KriaSecondaryButtonStyle())
@@ -63,7 +63,7 @@ struct ProjectRow: View {
             ProjectPosterView(project: project)
                 .frame(width: 88, height: 112)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            VStack(alignment: .leading, spacing: 8) { Text(project.title).font(KriaFont.display(21)); KriaStatusPill(status: project.status); Text(project.updatedAt, style: .relative).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc) }
+            VStack(alignment: .leading, spacing: 8) { Text(project.title).font(KriaFont.headline(21)); KriaStatusPill(status: project.status); Text(project.updatedAt, style: .relative).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc) }
             Spacer(); Image(systemName: "chevron.right").foregroundStyle(KriaColor.zinc)
         }.padding(12).background(Color.white.opacity(0.7)).clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous)).accessibilityElement(children: .combine).accessibilityHint("Open project")
     }
@@ -76,7 +76,7 @@ struct ProjectDetailView: View {
     private var currentProject: ProjectSummary { model.projects.first(where: { $0.id == project.id }) ?? project }
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 22) {
-            Text(currentProject.title).font(KriaFont.display(34)); KriaStatusPill(status: currentProject.status)
+            Text(currentProject.title).font(KriaFont.headline(34)); KriaStatusPill(status: currentProject.status)
             if currentProject.status == .ready {
                 NavigationLink(destination: ResultsView(project: currentProject)) {
                     ProjectPosterView(project: currentProject)
@@ -220,12 +220,12 @@ struct GalleryView: View {
                         ForEach(GalleryFilter.allCases) { option in
                             Button(option.title) { filter = option }
                                 .font(KriaFont.body(12).weight(.medium))
-                                .foregroundStyle(KriaColor.ink)
-                                .padding(.horizontal, 12)
+                                .foregroundStyle(filter == option ? KriaColor.paper : KriaColor.ink)
+                                .padding(.horizontal, 14)
                                 .frame(minHeight: 44)
-                                .background(filter == option ? KriaColor.selectionSoft : Color.white)
-                                .overlay(Capsule().stroke(KriaColor.border, lineWidth: filter == option ? 0 : 1))
+                                .background(filter == option ? KriaColor.ink : KriaColor.fill)
                                 .clipShape(Capsule())
+                                .accessibilityAddTraits(filter == option ? .isSelected : [])
                         }
                     }
 
@@ -243,7 +243,7 @@ struct GalleryView: View {
                         case .failed(let message):
                             VStack(alignment: .leading, spacing: 10) {
                                 Text("Your gallery couldn’t load.")
-                                    .font(KriaFont.display(22))
+                                    .font(KriaFont.headline(22))
                                 Text(message)
                                     .font(KriaFont.body(13))
                                     .foregroundStyle(KriaColor.zinc)
@@ -255,7 +255,7 @@ struct GalleryView: View {
                         case .empty, .loaded:
                             VStack(alignment: .leading, spacing: 10) {
                                 Text("Your next cut will live here.")
-                                    .font(KriaFont.display(22))
+                                    .font(KriaFont.headline(22))
                                 Button("Refresh") { Task { await model.loadLibrary() } }
                                     .font(KriaFont.body(13).weight(.semibold))
                                     .frame(minHeight: 44)
@@ -349,12 +349,11 @@ private struct GalleryProjectCard: View {
                 }
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(alignment: .topTrailing) {
-                Text(project.workspaceStatusLabel.uppercased())
-                    .font(KriaFont.body(8).weight(.bold))
-                    .tracking(0.8)
+                Text(project.workspaceStatusLabel)
+                    .kriaType(.caption)
                     .foregroundStyle(KriaColor.ink)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
                     .background(project.status == .ready ? KriaColor.sage : Color.white.opacity(0.9))
                     .clipShape(Capsule())
                     .padding(7)
@@ -384,11 +383,9 @@ struct AccountView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                KriaWordmark()
-                Text("Account")
-                    .font(KriaFont.display(30))
-                    .padding(.top, 14)
-                    .accessibilityAddTraits(.isHeader)
+                NavigationLink(destination: WhatsNewView(api: model.api)) { WhatsNewEntryLabel() }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("account-whats-new")
                 identityBlock
                     .padding(.top, 24)
                     .padding(.bottom, 20)
@@ -401,6 +398,7 @@ struct AccountView: View {
                         AccountRowLabel(title: "Text preferences", trailingSymbol: "chevron.right")
                     }.accessibilityIdentifier("account-text-preferences")
                 }
+                AccountNotificationsSection()
                 AccountSection(title: "Privacy") {
                     AccountCaptureContextRow()
                 }
@@ -463,6 +461,7 @@ struct AccountView: View {
             .frame(maxWidth: .infinity)
         }
         .background(KriaColor.paper)
+        .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         .task { await auth.refreshProfile() }
@@ -531,20 +530,57 @@ private struct AccountSection<Content: View>: View {
 private struct AccountCaptureContextRow: View {
     @AppStorage(ClipCaptureSetting.defaultsKey) private var shareCaptureContext = true
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Toggle(isOn: $shareCaptureContext) {
-                Text("Use when and where clips and photos were taken")
-                    .font(KriaFont.body(15)).foregroundStyle(KriaColor.ink)
-            }
-            .tint(KriaColor.sky)
-            .accessibilityIdentifier("account-capture-context-toggle")
-            .onChange(of: shareCaptureContext) { _, enabled in ClipCaptureSetting.settingChanged(to: enabled) }
-            Text("Kria reads each chosen clip's or photo's date and rough location (about 1 km) from Photos, and looks up the place name on your phone. It uses them to put your clips in the order you filmed them and to name places. Turn this off to send neither.")
-                .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
-                .fixedSize(horizontal: false, vertical: true)
+        Toggle(isOn: $shareCaptureContext) {
+            Text("Use when and where clips and photos were taken")
+                .font(KriaFont.body(15)).foregroundStyle(KriaColor.ink)
         }
+        .tint(KriaColor.sky)
+        .accessibilityHint("Reads each clip or photo’s date and rough location, about 1 kilometer, from Photos to order clips and name places. Turn off to send neither.")
+        .accessibilityIdentifier("account-capture-context-toggle")
+        .onChange(of: shareCaptureContext) { _, enabled in ClipCaptureSetting.settingChanged(to: enabled) }
         .frame(minHeight: 44)
         .padding(.vertical, 6)
+    }
+}
+
+/// The only place Kria asks for notifications, and only when the user flips it. Hidden while the server
+/// has push turned off.
+private struct AccountNotificationsSection: View {
+    @EnvironmentObject private var notifications: NativeNotificationCoordinator
+
+    var body: some View {
+        if notifications.control != .hidden {
+            AccountSection(title: "Notifications") {
+                VStack(alignment: .leading, spacing: 2) {
+                    if notifications.control == .retryCleanup {
+                        Button {
+                            Task { await notifications.disable() }
+                        } label: {
+                            AccountRowLabel(title: "Retry notification cleanup", trailingSymbol: "arrow.clockwise")
+                        }
+                        .disabled(notifications.isRequestingPermission)
+                        .accessibilityIdentifier("account-notifications-retry")
+                    } else {
+                        Toggle(isOn: Binding(
+                            get: { notifications.control == .on },
+                            set: { enabled in Task { if enabled { await notifications.enable() } else { await notifications.disable() } } }
+                        )) {
+                            Text("Notify me when a video is ready")
+                                .font(KriaFont.body(15)).foregroundStyle(KriaColor.ink)
+                        }
+                        .tint(KriaColor.sky)
+                        .disabled(notifications.isRequestingPermission)
+                        .accessibilityIdentifier("account-notifications-toggle")
+                    }
+                    if let status = notifications.message {
+                        Text(status).font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(minHeight: 44)
+                .padding(.vertical, 6)
+            }
+        }
     }
 }
 
@@ -606,7 +642,7 @@ struct CreationThreadView: View {
             VStack(alignment: .leading, spacing: 16) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
-                        if events.isEmpty { Text("What should this cut make someone feel?").font(KriaFont.display(24)) }
+                        if events.isEmpty { Text("What should this cut make someone feel?").font(KriaFont.headline(24)) }
                         ForEach(events.compactMap(ChatTranscriptMessage.from(event:))) { message in
                             ChatMessageRow(message: message)
                         }

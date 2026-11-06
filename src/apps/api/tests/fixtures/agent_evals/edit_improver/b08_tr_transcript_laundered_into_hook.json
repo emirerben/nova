@@ -1,0 +1,50 @@
+{
+  "id": "b08_tr_transcript_laundered_into_hook",
+  "why_bad": "hook copy is the spoken line verbatim",
+  "expect": "fail",
+  "expect_failures": [
+    "copy_reuses_footage_text"
+  ],
+  "input": {
+    "state": "first_prompt",
+    "language": "tr",
+    "creator_request": "",
+    "issued": [
+      {
+        "kind": "hook",
+        "targets": [
+          {
+            "id": "all",
+            "evidence": [
+              "e1"
+            ]
+          }
+        ]
+      }
+    ],
+    "evidence": {
+      "e1": {
+        "signal": "visual",
+        "fact": "elde börek hamuru açılıyor"
+      }
+    },
+    "already_in_edit": [],
+    "dismissed": [],
+    "untrusted_texts": [
+      "bugün size börek yapacağım"
+    ]
+  },
+  "output": {
+    "ranked": [
+      {
+        "kind": "hook",
+        "target_ids": [
+          "all"
+        ],
+        "why": "Açılışta börek hamuru var",
+        "copy": "bugün size börek yapacağım",
+        "rank": 1
+      }
+    ]
+  }
+}

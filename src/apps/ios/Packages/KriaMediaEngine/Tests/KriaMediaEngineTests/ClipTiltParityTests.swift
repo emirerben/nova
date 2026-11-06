@@ -39,13 +39,23 @@ final class ClipTiltParityTests: XCTestCase {
         for item in try fixture("capability") {
             let name = item["name"] as? String ?? ""
             let backdrop = item["backdrop"] is NSNull ? nil : try decode(item["backdrop"])
-            let recipe = EditRecipe(assets: [MediaAsset(id: "a", relativePath: "a")], tracks: [
+            var assets = [MediaAsset(id: "a", relativePath: "a")]
+            var manifest: RenderAssetManifest?
+            if case .media(let poolID)? = backdrop {
+                let kind = VisualMediaKind(rawValue: try XCTUnwrap(item["pool_media_kind"] as? String)) ?? .image
+                let fingerprint = RenderFingerprint(sha256: String(repeating: "b", count: 64), byteCount: 50)
+                assets.append(MediaAsset(id: "visual-" + poolID, relativePath: "visual-" + poolID))
+                manifest = RenderAssetManifest(assets: [RenderAssetReference(
+                    id: "visual-" + poolID, fingerprint: fingerprint, source: .visual(visualID: poolID, generation: "888", mediaKind: kind))])
+            }
+            let recipe = EditRecipe(assets: assets, tracks: [
                 TimelineTrack(id: "video", kind: .video, clips: [
                     TimelineClip(id: "c", sourceAssetID: "a", sourceDuration: 1,
                                  transform: MediaTransform(rotationDegrees: try XCTUnwrap(item["rotation_degrees"] as? Double)), backdrop: backdrop)
                 ])
-            ])
+            ], assetManifest: manifest)
             XCTAssertEqual(recipe.effectiveCapabilities.contains(.clipTilt), item["clip_tilt"] as? Bool, name)
+            XCTAssertEqual(recipe.effectiveCapabilities.contains(.clipBackdropMedia), item["clip_backdrop_media"] as? Bool ?? false, name)
         }
     }
 }

@@ -1,0 +1,115 @@
+{
+ "about": "Synthetic Turkish take (whisper-style tokens with timings, no pauses) for the filler_words kind. Fillers the engine must count: ııı, eee, Iıı, ııııı. Words it must never count: Ee (real exclamation), şey and o (real words).",
+ "language": "tr",
+ "duration_s": 11.42,
+ "words": [
+  {
+   "text": "Ee,",
+   "start_s": 0.0,
+   "end_s": 0.3
+  },
+  {
+   "text": "merhaba",
+   "start_s": 0.42,
+   "end_s": 0.92
+  },
+  {
+   "text": "arkadaşlar,",
+   "start_s": 1.04,
+   "end_s": 1.74
+  },
+  {
+   "text": "ııı",
+   "start_s": 1.86,
+   "end_s": 2.31
+  },
+  {
+   "text": "bugün",
+   "start_s": 2.43,
+   "end_s": 2.83
+  },
+  {
+   "text": "size",
+   "start_s": 2.95,
+   "end_s": 3.25
+  },
+  {
+   "text": "eee",
+   "start_s": 3.37,
+   "end_s": 3.87
+  },
+  {
+   "text": "bir",
+   "start_s": 3.99,
+   "end_s": 4.24
+  },
+  {
+   "text": "şey",
+   "start_s": 4.36,
+   "end_s": 4.66
+  },
+  {
+   "text": "göstereceğim.",
+   "start_s": 4.78,
+   "end_s": 5.58
+  },
+  {
+   "text": "Iıı,",
+   "start_s": 5.7,
+   "end_s": 6.1
+  },
+  {
+   "text": "bu",
+   "start_s": 6.22,
+   "end_s": 6.42
+  },
+  {
+   "text": "sabah",
+   "start_s": 6.54,
+   "end_s": 6.94
+  },
+  {
+   "text": "o",
+   "start_s": 7.06,
+   "end_s": 7.26
+  },
+  {
+   "text": "kahveyi",
+   "start_s": 7.38,
+   "end_s": 7.88
+  },
+  {
+   "text": "yaptım,",
+   "start_s": 8.0,
+   "end_s": 8.45
+  },
+  {
+   "text": "ııııı",
+   "start_s": 8.57,
+   "end_s": 9.12
+  },
+  {
+   "text": "ve",
+   "start_s": 9.24,
+   "end_s": 9.44
+  },
+  {
+   "text": "çok",
+   "start_s": 9.56,
+   "end_s": 9.86
+  },
+  {
+   "text": "güzel",
+   "start_s": 9.98,
+   "end_s": 10.38
+  },
+  {
+   "text": "oldu.",
+   "start_s": 10.5,
+   "end_s": 10.9
+  }
+ ],
+ "expect": {
+  "filler_sounds": 4
+ }
+}

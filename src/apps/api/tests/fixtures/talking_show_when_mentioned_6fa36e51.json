@@ -1,0 +1,1072 @@
+{
+"thread_id": "6fa36e51-80a1-4a78-8373-65a9fba04dbf",
+"job_id": "8cb3fc21-e982-4650-9d6d-f8926ca92a27",
+"note": "Prod job 8cb3fc21 (2026-11-01): clips in upload order; words are each clip's own Whisper words re-based to the clip's start (the prod render played the three talks first, so the creator's words were shifted by 44.04 s there); meta is the clip analysis Gemini returned. The talks' speaks_to_camera is false, the creator's true. Durations are the phone-measured originals from the job's media snapshot.",
+"clips": [
+{
+"role": "creator",
+"media_id": "analysis-proxy-ios-8F66E4F4-87E5-4B4D-B608-E37E79D9C07B.mp4",
+"clip_id": "files/hy0d7xtovqvw",
+"duration_s": 57.97,
+"words": [
+[
+"Devlet",
+0.0,
+0.82
+],
+[
+"Fenerbahçe'ye",
+0.82,
+1.68
+],
+[
+"bir",
+1.68,
+1.8
+],
+[
+"stat",
+1.8,
+1.8
+],
+[
+"teklif",
+1.8,
+2.16
+],
+[
+"etti",
+2.16,
+2.42
+],
+[
+"ve",
+2.42,
+2.86
+],
+[
+"karşılığında",
+2.86,
+3.36
+],
+[
+"Kadıköy'ü",
+3.36,
+4.18
+],
+[
+"yani",
+4.18,
+4.6
+],
+[
+"kimliğini",
+4.6,
+5.0
+],
+[
+"istedi.",
+5.0,
+5.38
+],
+[
+"24",
+6.66,
+6.7
+],
+[
+"Ekim'de",
+6.7,
+7.46
+],
+[
+"Aziz",
+7.46,
+7.86
+],
+[
+"Yıldırım,",
+7.86,
+8.16
+],
+[
+"Maltepe'de",
+8.96,
+9.5
+],
+[
+"yapılması",
+9.5,
+9.92
+],
+[
+"planlanan",
+9.92,
+10.56
+],
+[
+"statın",
+10.56,
+11.78
+],
+[
+"kulübe",
+11.78,
+12.1
+],
+[
+"tahsis",
+12.1,
+12.48
+],
+[
+"edilmesinin",
+12.48,
+13.06
+],
+[
+"teklif",
+13.06,
+13.46
+],
+[
+"edildiğini",
+13.46,
+13.96
+],
+[
+"söyledi.",
+13.96,
+14.28
+],
+[
+"Bu",
+14.94,
+15.0
+],
+[
+"75.000",
+15.0,
+15.56
+],
+[
+"kişilik",
+15.56,
+16.0
+],
+[
+"stat",
+16.0,
+16.4
+],
+[
+"Euro2032",
+16.4,
+17.36
+],
+[
+"finali",
+17.36,
+17.78
+],
+[
+"için",
+17.78,
+17.9
+],
+[
+"yapılmak",
+17.9,
+18.4
+],
+[
+"isteniyor.",
+18.4,
+18.78
+],
+[
+"Ama",
+19.34,
+19.5
+],
+[
+"belli",
+19.5,
+19.72
+],
+[
+"ki",
+19.72,
+19.92
+],
+[
+"amaç",
+19.92,
+20.3
+],
+[
+"Fener'i",
+20.3,
+20.68
+],
+[
+"Kadıköy'den",
+20.68,
+21.24
+],
+[
+"çıkarmak.",
+21.24,
+21.8
+],
+[
+"Ortada",
+21.8,
+22.96
+],
+[
+"henüz",
+22.96,
+23.24
+],
+[
+"bir",
+23.24,
+23.56
+],
+[
+"karar",
+23.56,
+24.2
+],
+[
+"olmasa",
+24.2,
+24.74
+],
+[
+"da",
+24.74,
+25.8
+],
+[
+"kulüp",
+25.8,
+27.04
+],
+[
+"Eylül'de",
+27.04,
+28.44
+],
+[
+"Kadıköy'de",
+28.44,
+29.24
+],
+[
+"statı",
+29.24,
+29.56
+],
+[
+"64.000'e",
+29.56,
+30.5
+],
+[
+"çıkaracağı",
+30.5,
+30.98
+],
+[
+"projeyi",
+30.98,
+31.64
+],
+[
+"tamamlamıştı.",
+31.64,
+32.34
+],
+[
+"Bu",
+34.04,
+34.18
+],
+[
+"durumda",
+34.18,
+34.74
+],
+[
+"bizim",
+34.74,
+35.04
+],
+[
+"de",
+35.04,
+35.26
+],
+[
+"sormamız",
+35.26,
+35.52
+],
+[
+"gereken",
+35.52,
+35.86
+],
+[
+"bazı",
+35.86,
+36.22
+],
+[
+"sorular",
+36.22,
+36.54
+],
+[
+"var.",
+36.54,
+36.78
+],
+[
+"Kim",
+37.72,
+37.94
+],
+[
+"neden",
+37.94,
+38.42
+],
+[
+"bu",
+38.42,
+38.86
+],
+[
+"kadar",
+38.86,
+38.86
+],
+[
+"acele",
+38.86,
+39.22
+],
+[
+"ediyor?",
+39.22,
+39.44
+],
+[
+"Neden",
+40.26,
+40.38
+],
+[
+"statın",
+40.38,
+40.8
+],
+[
+"yanındaki",
+40.8,
+41.28
+],
+[
+"binalara",
+41.28,
+42.26
+],
+[
+"aniden",
+42.26,
+42.8
+],
+[
+"tahliye",
+42.8,
+43.3
+],
+[
+"kararı",
+43.3,
+43.68
+],
+[
+"çıkıyor?",
+43.68,
+44.02
+],
+[
+"Neden",
+44.98,
+45.26
+],
+[
+"aniden",
+45.26,
+46.22
+],
+[
+"Kadıköy'deki",
+46.22,
+46.88
+],
+[
+"tekellere",
+46.88,
+48.0
+],
+[
+"maç",
+48.0,
+48.3
+],
+[
+"önü",
+48.3,
+48.52
+],
+[
+"ve",
+48.52,
+48.68
+],
+[
+"sonrası",
+48.68,
+49.14
+],
+[
+"için",
+49.14,
+49.4
+],
+[
+"alkol",
+49.4,
+49.78
+],
+[
+"satışı",
+49.78,
+50.16
+],
+[
+"yasağı",
+50.16,
+50.5
+],
+[
+"geliyor?",
+50.5,
+50.74
+],
+[
+"Neden",
+50.74,
+51.66
+],
+[
+"bot",
+51.66,
+51.98
+],
+[
+"hesaplığı",
+51.98,
+52.44
+],
+[
+"üzerinden",
+52.44,
+53.1
+],
+[
+"Fenerbahçe'nin",
+53.1,
+54.12
+],
+[
+"tribünleri",
+54.12,
+54.7
+],
+[
+"ve",
+54.7,
+54.96
+],
+[
+"kötü",
+54.96,
+55.12
+],
+[
+"sonuçlar",
+55.12,
+56.06
+],
+[
+"alkol",
+56.06,
+56.52
+],
+[
+"alanı?",
+56.52,
+56.88
+]
+],
+"meta": {
+"speaks_to_camera": true,
+"failed": false,
+"analysis_degraded": false,
+"transcript": "Devlet Fenerbahçe'ye bir stat teklif etti ve karşılığında Kadıköy'ü yani kimliğini istedi. 24 Ekim'de Aziz Yıldırım, Maltepe'de yapılması planlanan stadın kulübe tahsis edilmesini teklif edildiğini söyledi. Bu 75.000 kişilik stat Euro 2032 finali için yapılmak isteniyor. Ama belli ki amaç Fener'i Kadıköy'den çıkarmak. Ortada henüz bir karar olmasa da kulüp Eylül'de Kadıköy'de stadı 64.000'e çıkaracağı projeyi tamamlamıştı. Bu durumda bizim de sormamız gereken bazı sorular var. Kim, neden bu kadar acele ediyor? Neden stadın yanındaki binalara aniden tahliye kararı çıkıyor? Neden aniden Kadıköy'deki tekellere maç önü ve sonrası için alkol satış yasağı geliyor? Neden BOTAŞ hattı üzerinden Fenerbahçe'nin tribünleri ve kötü sonuçlar alkol alan",
+"hook_text": "Devlet Fenerbahçe'ye bir stat teklif etti ve karşılığında Kadıköy'ü yani kimliğini istedi.",
+"hook_score": 7.5,
+"clip_summary": "A man discusses how the state offered Fenerbahçe a stadium in Maltepe, implying they want Fenerbahçe to leave their current stadium in Kadıköy. He questions the sudden decisions regarding stadium allocation, building evacuations, and alcohol sales bans around Kadıköy.",
+"clip_brands": [
+"Fenerbahçe"
+],
+"clip_props": [],
+"detected_subject": "man speaking",
+"clip_content_type": "talking_head",
+"clip_audio_type": "dialogue",
+"activity": "speaking to camera"
+}
+},
+{
+"role": "talk",
+"media_id": "analysis-proxy-ios-93211221-EEFC-4475-BF34-7D23F63894F6.mp4",
+"clip_id": "files/smba6yqy3adx",
+"duration_s": 15.0,
+"words": [
+[
+"O",
+0.0,
+0.74
+],
+[
+"bu",
+0.74,
+1.14
+],
+[
+"konuyu",
+1.14,
+1.92
+],
+[
+"tekrar",
+1.92,
+2.36
+],
+[
+"açtı.",
+2.36,
+2.82
+],
+[
+"Dedi",
+3.82,
+3.82
+],
+[
+"ki",
+3.82,
+3.96
+],
+[
+"ya",
+3.96,
+4.16
+],
+[
+"böyle",
+4.16,
+4.34
+],
+[
+"böyle",
+4.34,
+4.66
+],
+[
+"bir",
+4.66,
+4.98
+],
+[
+"düşüncemiz",
+4.98,
+5.64
+],
+[
+"var.",
+5.64,
+6.02
+],
+[
+"Eğer",
+6.52,
+6.68
+],
+[
+"arzu",
+6.68,
+7.06
+],
+[
+"ederseniz",
+7.06,
+7.76
+],
+[
+"bu",
+7.76,
+8.54
+],
+[
+"statı",
+8.54,
+9.64
+],
+[
+"size",
+9.64,
+10.02
+],
+[
+"tahsis",
+10.02,
+10.6
+],
+[
+"ederim.",
+10.6,
+11.3
+],
+[
+"Size",
+12.14,
+12.44
+],
+[
+"tavsiye",
+12.44,
+13.16
+],
+[
+"ederim.",
+13.16,
+13.3
+],
+[
+"Siz",
+13.68,
+14.16
+],
+[
+"Saracoğlu'ndan",
+14.16,
+14.98
+]
+],
+"meta": {
+"speaks_to_camera": false,
+"failed": false,
+"analysis_degraded": false,
+"transcript": "O bu konuyu tekrar açtı. Dedi ki ya böyle böyle bir düşüncemiz var. Eğer arzu ederseniz bu statı size tahsis edelim. Size tahsis edelim. Siz Saraçoğlu'nun",
+"hook_text": "Eğer arzu ederseniz bu statı size tahsis edelim.",
+"hook_score": 7.5,
+"clip_summary": "A man in a suit speaks at a podium, proposing to allocate a stadium if desired.",
+"clip_brands": [
+"NEFES",
+"AA",
+"FBTv"
+],
+"clip_props": [
+"yellow lanyard",
+"black microphone with FBTv logo",
+"black microphone with AA logo",
+"clear water bottle"
+],
+"detected_subject": "man speaking at podium",
+"clip_content_type": "talking_head",
+"clip_audio_type": "dialogue",
+"activity": "giving a speech or presentation"
+}
+},
+{
+"role": "talk",
+"media_id": "analysis-proxy-ios-05866D5C-5C1D-4E1F-B1EF-3C341AE14577.mp4",
+"clip_id": "files/3d0mpvir0ez8",
+"duration_s": 15.0,
+"words": [
+[
+"Menfaatleri",
+0.0,
+0.62
+],
+[
+"görürsen",
+0.62,
+1.24
+],
+[
+"kağıt",
+1.24,
+1.68
+],
+[
+"üzerinde",
+1.68,
+2.1
+],
+[
+"getirirsiniz,",
+2.1,
+2.78
+],
+[
+"dersin",
+3.08,
+3.16
+],
+[
+"bak",
+3.16,
+3.4
+],
+[
+"böyle",
+3.4,
+3.64
+],
+[
+"böyle",
+3.64,
+3.88
+],
+[
+"yapacağız,",
+3.88,
+4.28
+],
+[
+"böyle",
+4.56,
+4.56
+],
+[
+"olacak.",
+4.56,
+5.06
+],
+[
+"Bizim",
+5.58,
+5.76
+],
+[
+"de",
+5.76,
+6.1
+],
+[
+"isteklerimiz",
+6.1,
+6.58
+],
+[
+"varsa",
+6.58,
+6.84
+],
+[
+"oraya",
+6.84,
+7.14
+],
+[
+"koyarız.",
+7.14,
+7.64
+],
+[
+"Siz",
+7.64,
+7.8
+],
+[
+"de",
+7.8,
+7.98
+],
+[
+"onları",
+7.98,
+8.2
+],
+[
+"kabul",
+8.2,
+8.48
+],
+[
+"ederseniz",
+8.56,
+9.18
+],
+[
+"o",
+9.18,
+9.76
+],
+[
+"zaman",
+9.76,
+9.92
+],
+[
+"bunu",
+9.92,
+10.44
+],
+[
+"Kongre'yi",
+10.44,
+10.98
+],
+[
+"toplar,",
+10.98,
+11.26
+],
+[
+"Kongre'ye",
+11.32,
+11.84
+],
+[
+"götürür.",
+11.84,
+12.16
+]
+],
+"meta": {
+"speaks_to_camera": false,
+"failed": false,
+"analysis_degraded": false,
+"transcript": "Menfaatleri görürsem kağıt üzerine getirirsiniz, dersiniz ki bak böyle böyle yapacağız, böyle olacak. Bizim de isteklerimiz varsa oraya koyarız. Siz de onları kabul ederseniz, o zaman bunu kongreyi toplar, kongreye götürürüz. Kongreye...",
+"hook_text": "",
+"hook_score": 2.0,
+"clip_summary": "An older man in a suit and tie speaks at a podium with a microphone, gesturing with his hands as he talks about presenting interests on paper and taking them to a congress.",
+"clip_brands": [
+"FBTv",
+"NEFES"
+],
+"clip_props": [
+"black podium with microphones",
+"white water bottle"
+],
+"detected_subject": "man speaking at a podium",
+"clip_content_type": "talking_head",
+"clip_audio_type": "dialogue",
+"activity": "giving a speech or presentation"
+}
+},
+{
+"role": "talk",
+"media_id": "analysis-proxy-ios-AF8BF2A5-B06D-4089-A8CA-C55BF924F243.mp4",
+"clip_id": "files/5y0pv0icb952",
+"duration_s": 13.0,
+"words": [
+[
+"Şimdi",
+0.0,
+0.64
+],
+[
+"iki",
+0.64,
+1.0
+],
+[
+"bin",
+1.0,
+1.3
+],
+[
+"otuz",
+1.3,
+1.52
+],
+[
+"ikideki",
+1.52,
+2.62
+],
+[
+"finali",
+2.62,
+4.08
+],
+[
+"Türkiye",
+4.08,
+4.52
+],
+[
+"burada",
+4.52,
+5.48
+],
+[
+"oynanmasını",
+5.48,
+6.14
+],
+[
+"istiyor.",
+6.14,
+6.54
+],
+[
+"Türkiye'de",
+7.28,
+7.54
+],
+[
+"oynamak",
+7.54,
+7.88
+],
+[
+"istiyor.",
+7.88,
+8.08
+],
+[
+"Fakat",
+8.26,
+8.36
+],
+[
+"bunun",
+8.36,
+8.66
+],
+[
+"için",
+8.66,
+8.9
+],
+[
+"de",
+8.9,
+9.26
+],
+[
+"bir",
+9.9,
+10.16
+],
+[
+"yetmiş",
+10.16,
+10.58
+],
+[
+"beş",
+10.58,
+10.88
+],
+[
+"bin",
+10.88,
+11.12
+],
+[
+"kişilik",
+11.12,
+11.54
+],
+[
+"bir",
+11.54,
+12.02
+],
+[
+"stat",
+12.02,
+12.38
+]
+],
+"meta": {
+"speaks_to_camera": false,
+"failed": false,
+"analysis_degraded": false,
+"transcript": "Şimdi 2032'deki finali Türkiye burada oynanmasını istiyor. Türkiye'de oynamak istiyor. Fakat bunun için de 75.000 kişilik bir stat istiyor.",
+"hook_text": "Şimdi 2032'deki finali Türkiye burada oynanmasını istiyor.",
+"hook_score": 6.0,
+"clip_summary": "A man is speaking about Turkey's aspiration to host the 2032 final match, which would require a stadium with a capacity of 75,000 people.",
+"clip_brands": [
+"FBTV",
+"NEFES",
+"AA"
+],
+"clip_props": [
+"black suit",
+"yellow patterned tie",
+"yellow lanyard",
+"black microphone",
+"clear plastic water bottle",
+"microphone with FBTV logo"
+],
+"detected_subject": "man speaking",
+"clip_content_type": "talking_head",
+"clip_audio_type": "dialogue",
+"activity": "giving a speech or presentation"
+}
+},
+{
+"role": "stadium",
+"media_id": "analysis-proxy-ios-134CDBD9-2781-4407-921B-57D663D2B33B.mp4",
+"clip_id": "files/bcz62gqk2uy7",
+"duration_s": 10.0,
+"words": [],
+"meta": {
+"speaks_to_camera": false,
+"failed": false,
+"analysis_degraded": false,
+"transcript": "",
+"hook_text": "",
+"hook_score": 0.0,
+"clip_summary": "An aerial drone shot slowly orbits around a large, modern football stadium, revealing its pitch and seating, set within a dense urban landscape.",
+"clip_brands": [
+"ÜLKER",
+"FENERBAHÇE"
+],
+"clip_props": [
+"Ülker Stadyumu",
+"white stadium roof",
+"green football pitch",
+"yellow and blue stadium seats"
+],
+"detected_subject": "football stadium",
+"clip_content_type": "broll",
+"clip_audio_type": "ambient",
+"activity": "aerial photography of a stadium"
+}
+}
+]
+}

@@ -39,6 +39,16 @@ Check both EN/TR and subsequent edits. Negative controls must detect missing
 subtitles and an unexpected decorative label. Recipe checks establish layer
 separation, not live-model interpretation or a verified TestFlight export.
 
+## Only the text she asked for (`TEXT_COMPOSER_ASKED_ONLY_ENABLED`)
+
+With the switch on, the creation text pass keeps a composer `add_text` only when it spells one of the creator's literal asks exactly, alone or with the lines right after it on screen (`_exact_covers`): same words in the same order, nothing skipped, added or repeated, and the literal finished ("this is good" is not "this is not good", "go go go go" is not "go go", and "The prompt I run" alone is an unfinished line). Each literal is on screen at most as many times as she asked for it, counting a planned bar that still shows it (a per-clip ask is not capped); a piece of her line beyond that is a repeat. Words compare with the shared Turkish-aware fold, so case, accents, punctuation and emoji do not matter. Her emoji and punctuation (`_ask_marks`: one mark per grapheme cluster, so a skin-toned or ZWJ emoji is one mark and a piece of it is another; "❤" and "❤️" are one heart) share one budget: each mark is on screen at most as often as her literals have it in total (a per-clip ask's marks are not capped). A planned bar that shows her line and every kept line of her words use up the marks they show; emoji inside a line of her words never drop that line, they only use her marks. A line of only marks then stays, first on screen first, when its marks sit together in her order inside one of her literals ("👀🔥" is not "🔥👀") and each is still left ("🔥🔥" and "🔥" together are three fires). A literal of only marks ("🔥") is checked like any other: it allows its marks, never a word. An invented line or a second copy of her line is dropped, not raised (raising would fail her whole video), and logged as `creation_text_unasked_dropped`. The drop is verified: if the program would no longer replay without the dropped line, the drop is skipped (`creation_text_unasked_kept`) and the composer's ops stand, exactly as with the switch off.
+
+Exempt, unchanged: no brief bound, described asks without a literal, story/editorial builds (they keep the old unrequested-text check), research ops (always kept: her own research ask), pinned programs replayed from a stored snapshot, and chat/editor edits.
+
+With the switch on, a title-only or style-only brief's extra line is also dropped instead of failing the render, so `test_approved_hook_journey.py::test_bound_styling_composition_adds_text_only_when_live_brief_requests_it[False]` (the old raise) holds only with the switch off. Known limit: a copy the composer adds next to her planned bar is dropped even when the planned bar is shorter (a 2.2 s title); the composer must retime or move that bar, and a whole-video line belongs in the planner's pin. Known limit: an emoji the composer adds inside a line of her words is kept with that line ("best day ever 😍" for "Best day ever"); dropping it would drop her words too, and the pass drops whole lines, it never rewrites one.
+
+Default off and byte-identical off (guard: `tests/services/test_creation_text_asked_only.py::test_switch_off_keeps_the_composer_line_exactly_as_written`). Apply: fly secret `TEXT_COMPOSER_ASKED_ONLY_ENABLED=true` on api + worker, then restart. Related: KRI-767 (copy guard).
+
 ## State ownership
 
 | Concern | Authority |
@@ -157,7 +167,8 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   all stay live and restating a shot replaces only that shot. A label-every-clip
   rule (no such pair) still replaces the whole per-clip lane, shot texts
   included. The Main Creator (prompt v43) only proposes `brief_updates`, at most
-  16 per turn; unparseable entries are dropped, never fatal. Versions are written by the turn-completion
+  16 per turn (32 with `BRIEF_LONG_REQUEST_ENABLED` when the batch's JSON is within
+  9,000 chars); a larger batch is refused whole, never truncated. Versions are written by the turn-completion
   transaction under the thread lock, after the revision fence, so a requeued
   turn never persists one.
 - **Context is not a command.** The brief records requested output changes, not
@@ -1002,6 +1013,10 @@ Proof: scorecard check 7 (no model) and check 8 (every recorded live composer an
 `tests/kria/test_29ekim_post_approval.py`. To capture new answers (paid, development ledger, $1 cap,
 needs a throwaway migrated database), run `scripts/kria/capture_29_ekim_post_approval.py`.
 
+## Intent review of the finished video (KRI-1171)
+
+After a render is published, one paid look at a few frames of it (flag-gated, off by default) can add chat events to the thread: an `assistant_response` receipt (rows are ordinary `requirement_receipts` with `turn_value: "intent_review"`, skipped by `GET brief`), at most one `assistant_question`, and a repair staged through `_complete_draft_turn` under a system source event the planner never reads. Pipeline: [`intent-review`](intent-review.md). The runtime contract it relies on: a background event bumps the thread revision, so it is written only into a quiet thread (no creator message since the render, no turn in flight), under the thread lock, once per status.
+
 ## Local proof
 
 From a prepared worktree:
@@ -1058,3 +1073,62 @@ block of `make kria-replay FIXTURE=29-ekim`.
 
 `EditCopilotAgent` has `max_output_tokens=16_384` with a 130 s timeout: a runaway call needs 124.3 s to
 reach the cap, so it must stay under the timeout (`test_edit_copilot_budget_runs_out_before_its_provider_timeout`).
+
+## Re-recording a take (`MEDIA_REPLACE_ENABLED`)
+
+`POST /creation-threads/{id}/media/replace` swaps ONE attached speaker clip for a new upload in
+one transaction. A client-side remove-then-attach can commit with zero speakers, and on a
+multi-clip Talking item an attach adds a second one; the swap keeps the clip count and its slot, so
+neither state is ever committed. It is additive: old builds never call it, and they drop the
+`media_replaced` event and ignore `state.source_replacement`.
+
+Flag: `MEDIA_REPLACE_ENABLED`, default `false`. Off: the route and `upload-urls`
+`replaces_media_id` answer 404 `media_replace_unavailable`, and `media_capabilities.clips.replace`
+is absent (not `false`). Apply: `fly secrets set MEDIA_REPLACE_ENABLED=true --app nova-video`, restart
+api + worker, then ship the app that calls it. New app against an old server gets that 404, so the app
+must read `media_capabilities.clips.replace` first. Rollback: unset the secret and restart.
+
+Request body (`StrictBody`, unknown fields are 422): `replaced_media_id`, `media` (a `MediaInput`,
+kind `video`, the proxy reservation id on a device-only thread), `reason` (only `"retake"`),
+`client_event_id`, `expected_revision`. Response 200 is the same `CreationThreadOut` as attach. Errors are
+`{"problem": {"code", "message", "retryable", "recovery", "current_revision"}}`:
+
+| Status | `problem.code` |
+| --- | --- |
+| 404 | `media_replace_unavailable`, or a thread code from `_load` (`thread_not_found`, `thread_deleted`, `thread_id_invalid`) |
+| 409 | `thread_archived`, `idempotency_key_reused`, `revision_mismatch` (carries `current_revision`), `render_in_progress`, `draft_missing`, `retake_target_missing`, `retake_target_not_speaker`, `retake_speaker_unknown`, `retake_same_source`, `source_already_attached`, `retake_source_unresolved`, `upload_not_finished` (retryable), `upload_target_unavailable` (upload a new source), `registration_changed` (retryable) |
+| 422 | `retake_unsupported_format`, `retake_target_not_clip`, `retake_kind_mismatch`, `retake_library_unsupported`, `retake_has_no_audio`, `invalid_media_id`, `path_mismatch`, `device_render_unsupported`, `video_could_not_be_read`, `proxy_geometry_mismatch`, `proxy_verification_failed`, `proxy_kind_mismatch`, `kind_mismatch`, plus the other verifier codes it shares with attach |
+| 503 | `identity_unavailable`, `upload_verification_error`, `media_verification_error` (retryable) |
+
+Data changes: the clip row at the same index is rebuilt by the attach row builder (only `shot_id`
+carries over; trims, speech coverage and sound toggles describe the old take and are dropped), written
+only through `mutate_plan_item_media`, so the speech-cleanup analysis for the old take is superseded,
+consent cleared and the edit proposal marked stale. `thread.state.media` swaps the entry in place and gains
+`source_replacement = {replaced_media_id, media_id, superseded_job_id, revision, speaker_media_ids}`
+(`speaker_media_ids` is who speaks after the swap: until a new Job renders, the old Job's receipt still names the original take, so a second re-record reads this instead). Voiceover, song,
+script, and the speaker background are untouched. The old Job is never written: its variants keep
+the take they were cut from, and the old take stays in storage (retention and thread deletion own it,
+because the old Job and its editor still name it).
+
+Fresh plan: while `item.current_job_id` is the superseded Job, `planner._load_editor_target` misses
+with `source_replaced` (deliberately not a guarded miss), so a follow-up routes to `replan` and the next
+strategy claim mints a new Job from the new take. The marker goes inert on its own once that Job is current.
+The server never starts the planning turn; the client sends the follow-up message. Pending approvals
+prepared against the old take are closed with code `source_replaced` after the commit
+(`retire_pending_approvals_for_source_change`, canonical lock order, idempotent, re-run by every replay).
+
+`upload-urls` accepts `replaces_media_id`: a video that replaces an attached clip does not count
+against the clip cap (one exemption per replaced clip). Guard: `tests/kria/test_replace_media_e2e.py`
+(real route, real Postgres, real ffprobe; `.replace-media-e2e/report.json`).
+
+Not closed server-side (known residuals):
+- A crash-resume of a replacement upload that calls attach instead of replace: a safe 409
+  `clip_cap_exceeded` for one-clip Talking, but with `TALKING_MULTI_CLIP_ENABLED` on it adds a second
+  speaker. Closing it needs a column on `creation_thread_upload_reservations` marking a replacement.
+- A new take with an audio track that is silent or inaudible passes registration; the on-device
+  audio check and the existing render failure path are the guards.
+- Brief requirements scoped to the old take (`clip:<old id>`, protected text naming the old speaker,
+  timed background windows) are not retargeted. The next plan reads the brief as it stands and the planner
+  reports what it cannot place as unresolved.
+- A phone export record stuck in `awaiting_device` or `syncing` keeps answering 409
+  `render_in_progress` until the stale-record reaper (24 h) settles it.

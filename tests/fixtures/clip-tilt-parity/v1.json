@@ -1,14 +1,25 @@
 {
- "description": "Clip tilt wire contract (KRI-1134). Every `valid` backdrop must decode (Python ClipBackdrop, Swift ClipBackdrop) and equal its `normalized` form; every `invalid` entry must be rejected by both. Every `capability` case is a one-clip main-track recipe whose `clipTilt` requirement both sides must derive identically. `rotation_degrees` is clockwise on screen.",
+ "description": "Clip tilt wire contract (KRI-1134). Every `valid` backdrop must decode (Python ClipBackdrop, Swift ClipBackdrop) and equal its `normalized` form; every `invalid` entry must be rejected by both. Every `capability` case is a one-clip main-track recipe whose `clipTilt` (and, for a `media` backdrop, `clipBackdropMedia`) requirement both sides must derive identically; a `media` case also carries the Visuals-pool asset its `asset_id` names (KRI-1139). `rotation_degrees` is clockwise on screen.",
  "valid": [
   {"name": "blank", "backdrop": {"kind": "blank"}, "normalized": {"kind": "blank"}},
   {"name": "blur", "backdrop": {"kind": "blur"}, "normalized": {"kind": "blur"}},
   {"name": "color-upper", "backdrop": {"kind": "color", "color": "#E91E8C"}, "normalized": {"kind": "color", "color": "#E91E8C"}},
-  {"name": "color-lower", "backdrop": {"kind": "color", "color": "#0a0b0c"}, "normalized": {"kind": "color", "color": "#0a0b0c"}}
+  {"name": "color-lower", "backdrop": {"kind": "color", "color": "#0a0b0c"}, "normalized": {"kind": "color", "color": "#0a0b0c"}},
+  {"name": "media", "backdrop": {"kind": "media", "asset_id": "5b2f9d1e-8c3a-4f6b-9e21-7a0d4c3b2a10"}, "normalized": {"kind": "media", "asset_id": "5b2f9d1e-8c3a-4f6b-9e21-7a0d4c3b2a10"}}
  ],
  "invalid": [
   {"name": "kind-missing", "backdrop": {"color": "#000000"}},
-  {"name": "kind-media", "backdrop": {"kind": "media", "asset_id": "visual-1"}},
+  {"name": "media-without-an-asset", "backdrop": {"kind": "media"}},
+  {"name": "media-with-a-colour", "backdrop": {"kind": "media", "asset_id": "pool-1", "color": "#000000"}},
+  {"name": "media-with-empty-asset", "backdrop": {"kind": "media", "asset_id": ""}},
+  {"name": "media-with-spaced-asset", "backdrop": {"kind": "media", "asset_id": "pool 1"}},
+  {"name": "media-with-null-asset", "backdrop": {"kind": "media", "asset_id": null}},
+  {"name": "media-with-numeric-asset", "backdrop": {"kind": "media", "asset_id": 7}},
+  {"name": "media-with-too-long-asset", "backdrop": {"kind": "media", "asset_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+  {"name": "blur-with-an-asset", "backdrop": {"kind": "blur", "asset_id": "pool-1"}},
+  {"name": "colour-with-an-asset", "backdrop": {"kind": "color", "color": "#000000", "asset_id": "pool-1"}},
+  {"name": "blank-with-an-asset", "backdrop": {"kind": "blank", "asset_id": "pool-1"}},
+  {"name": "media-with-unknown-key", "backdrop": {"kind": "media", "asset_id": "pool-1", "loop": false}},
   {"name": "color-without-a-colour", "backdrop": {"kind": "color"}},
   {"name": "blur-with-a-colour", "backdrop": {"kind": "blur", "color": "#000000"}},
   {"name": "blank-with-a-colour", "backdrop": {"kind": "blank", "color": "#000000"}},
@@ -26,6 +37,8 @@
   {"name": "tilted-counter-clockwise", "rotation_degrees": -12.5, "backdrop": null, "clip_tilt": true},
   {"name": "upright-with-blank-backdrop", "rotation_degrees": 0, "backdrop": {"kind": "blank"}, "clip_tilt": true},
   {"name": "upright-with-colour-backdrop", "rotation_degrees": 0, "backdrop": {"kind": "color", "color": "#112233"}, "clip_tilt": true},
-  {"name": "tilted-with-blur", "rotation_degrees": 90, "backdrop": {"kind": "blur"}, "clip_tilt": true}
+  {"name": "tilted-with-blur", "rotation_degrees": 90, "backdrop": {"kind": "blur"}, "clip_tilt": true},
+  {"name": "upright-with-media-photo", "rotation_degrees": 0, "backdrop": {"kind": "media", "asset_id": "5b2f9d1e-8c3a-4f6b-9e21-7a0d4c3b2a10"}, "pool_media_kind": "image", "clip_tilt": true, "clip_backdrop_media": true},
+  {"name": "tilted-with-media-video", "rotation_degrees": 30, "backdrop": {"kind": "media", "asset_id": "5b2f9d1e-8c3a-4f6b-9e21-7a0d4c3b2a10"}, "pool_media_kind": "video", "clip_tilt": true, "clip_backdrop_media": true}
  ]
 }

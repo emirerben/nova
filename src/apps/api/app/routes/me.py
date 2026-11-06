@@ -20,6 +20,7 @@ cross-user references on add-to-plan return 404 (not 403) so we don't leak which
 from __future__ import annotations
 
 import copy
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -31,7 +32,7 @@ import structlog
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
@@ -913,6 +914,9 @@ class LibraryPlaybackResponse(BaseModel):
     video_url: str
 
 
+_TRACE_ALPHABET = re.compile(r"[a-z0-9_.=@: -]*")
+
+
 class LibraryPlaybackDiagnostic(BaseModel):
     """An editor player item that failed on the phone (KRI-200).
 
@@ -928,20 +932,30 @@ class LibraryPlaybackDiagnostic(BaseModel):
     underlying_code: int | None = None
     source_state: str = Field(max_length=32)
     app_build: str | None = Field(default=None, max_length=32)
+    # A Talk-to-camera edit's account of how its background was drawn: fixed labels and counts
+    # only (``clips=1 hidden_run=0 cutout=412 ...``), so a vanished background can be explained.
+    # Anything outside that alphabet is dropped (the rest of the report is kept), never logged.
+    trace: str | None = Field(default=None, max_length=600)
+
+    @field_validator("trace")
+    @classmethod
+    def _trace_is_fixed_labels_and_counts(cls, value: str | None) -> str | None:
+        return value if value is not None and _TRACE_ALPHABET.fullmatch(value) else None
 
 
 class RecorderDiagnostic(BaseModel):
-    """The in-app teleprompter recorder heard nothing (KRI-653).
+    """The in-app teleprompter recorder's account of a take (KRI-653, KRI-1149).
 
     A talk-to-camera take recorded in-app came back with a digitally silent audio
-    track and nothing on the phone said why. The app reports its audio-session state
-    and the last few camera/scene transitions so the trigger can be named from logs.
-    Short bounded labels (each capped at 40 characters, lists capped) and numbers only: no
-    file names, script text, or anything the creator typed or said.
+    track, or stopped without the creator pressing stop, and nothing on the phone
+    said why. The app reports its audio-session state, the last few camera/scene
+    transitions and the typed reason the take stopped, so the trigger can be named
+    from logs. Short bounded labels (each capped at 40 characters, lists capped) and
+    numbers only: no file names, script text, or anything the creator typed or said.
     """
 
     # Not named ``event``: structlog reserves that keyword for the log message itself.
-    kind: Literal["take_silent", "live_mic_silent"]
+    kind: Literal["take_silent", "live_mic_silent", "take_finished"]
     audio_category: str | None = Field(default=None, max_length=40)
     audio_mode: str | None = Field(default=None, max_length=40)
     route_inputs: list[Annotated[str, Field(max_length=40)]] = Field(
@@ -959,6 +973,19 @@ class RecorderDiagnostic(BaseModel):
     max_power_db: float | None = Field(default=None, ge=-200, le=20)
     take_duration_s: float | None = Field(default=None, ge=0, le=7200)
     app_build: str | None = Field(default=None, max_length=32)
+    # TakeStopReason raw value on the app: "user", "backgrounded", "audio_interruption_began", ...
+    stop_reason: str | None = Field(default=None, max_length=40)
+    # take_finished only, all optional so builds that predate them still validate.
+    # finalize_ms: Stop to the movie output closing the file. finish_ms: everything after
+    # that (validation, Cinematic bake, level measurement) before the take reached Review.
+    finalize_ms: int | None = Field(default=None, ge=0, le=3_600_000)
+    finish_ms: int | None = Field(default=None, ge=0, le=3_600_000)
+    # What separates the "constant odd sound" hypotheses: the audio session sample rate,
+    # the active microphone mode (standard / wide_spectrum / voice_isolation) and the
+    # audio track count of the finished file.
+    audio_sample_rate_hz: float | None = Field(default=None, ge=0, le=384_000)
+    microphone_mode: str | None = Field(default=None, max_length=40)
+    audio_track_count: int | None = Field(default=None, ge=0, le=16)
 
 
 class LibraryPosterRefreshRequest(BaseModel):
@@ -2030,12 +2057,17 @@ async def report_library_playback_failure(
 
 @router.post("/recorder-diagnostics", status_code=status.HTTP_204_NO_CONTENT)
 async def report_recorder_audio_silent(body: RecorderDiagnostic, user: CurrentUser) -> None:
-    """Log that the in-app recorder produced (or is producing) a silent take (KRI-653).
+    """Log what the in-app recorder produced (KRI-653, KRI-1149).
 
     Log-only (no DB write) and best-effort for the client: the app fires it once per
-    silent take so the next occurrence names its own trigger in the Fly logs
-    (`recorder_audio_silent`).
+    silent take (`recorder_audio_silent`) and once per finished take with the reason it
+    stopped (`recorder_take_finished`), so the next occurrence names its own trigger in
+    the Fly logs.
     """
+    if body.kind == "take_finished":
+        emit = log.info if body.stop_reason == "user" else log.warning
+        emit("recorder_take_finished", user_id=str(user.id), **body.model_dump())
+        return
     log.warning("recorder_audio_silent", user_id=str(user.id), **body.model_dump())
 
 

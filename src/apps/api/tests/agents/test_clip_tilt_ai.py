@@ -382,7 +382,7 @@ def test_the_tilt_patch_key_is_part_of_the_timeline_patch_contract():
     assert "tilt" in timeline._PATCH_KEYS
 
 
-# ── Picture cards: the phone cannot render a rotation, so the op says so ──────
+# ── Picture cards: a gate-closed edit says so instead of dropping the angle ───
 
 
 def _talking_card_snapshot() -> dict:
@@ -429,7 +429,7 @@ def test_rotating_a_picture_card_is_refused_not_silently_dropped():
     assert parsed.ops == []
     assert parsed.outcome == "unsupported"
     assert "Tilted" not in parsed.reply
-    assert "rotate" in parsed.reply.lower()
+    assert "tilt a picture" in parsed.reply.lower()
 
 
 def test_moving_a_picture_card_still_works():

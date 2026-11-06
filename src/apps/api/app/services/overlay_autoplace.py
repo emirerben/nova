@@ -349,6 +349,8 @@ def build_suggestions(
     intro_windows: list[tuple[float, float]] | None = None,
     caption_cues: list[dict] | None = None,
     stats: dict | None = None,
+    ceiling: int = _CEILING,
+    hook_any_tier: bool = False,
 ) -> list[dict]:
     """Validate + resolve raw matcher output into OverlaySuggestion dumps.
 
@@ -363,6 +365,9 @@ def build_suggestions(
     byte-identical to pre-009 output (kill-switch contract).
     `stats` (mutated in place when passed): fullscreen_emitted / fullscreen_demoted
     counters + demote reasons — the zero-click receipt's data source.
+
+    `ceiling` / `hook_any_tier` (Qendresa item 15, defaults = today): the density cap, and
+    whether a non-"confident" card may start inside the hook window.
     """
     from app.agents._schemas.overlay_suggestion import OverlaySuggestion  # noqa: PLC0415
 
@@ -374,7 +379,7 @@ def build_suggestions(
                 pass
 
     # Density budget (decision 11A).
-    budget = min(_CEILING, max(1, int(duration_s / _DENSITY_WINDOW_S)))
+    budget = min(ceiling, max(1, int(duration_s / _DENSITY_WINDOW_S)))
 
     # Highest-confidence first so cap-overflow keeps the best (11A).
     candidates = sorted(
@@ -453,7 +458,7 @@ def build_suggestions(
                 _trace("autoplace_item_dropped", reason="too_short", asset_id=asset_id)
                 continue
         tier = getattr(p, "confidence_tier", "likely")
-        if not is_fs and start < _HOOK_WINDOW_S and tier != "confident":
+        if not is_fs and not hook_any_tier and start < _HOOK_WINDOW_S and tier != "confident":
             _trace("autoplace_item_dropped", reason="hook_window", asset_id=asset_id)
             continue
         if not is_fs and kind == "image" and tier == "confident" and start < _HOOK_BURST_WINDOW_S:

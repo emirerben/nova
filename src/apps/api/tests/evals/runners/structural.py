@@ -44,6 +44,7 @@ from app.agents.edit_copilot import _MAX_OPS as _EDIT_COPILOT_MAX_OPS
 from app.agents.edit_copilot import EditCopilotOutput
 from app.agents.edit_director import EditDirectorInput, EditDirectorOutput
 from app.agents.idea_expander import IdeaExpanderInput, IdeaExpanderOutput
+from app.agents.intent_review import IntentReviewInput
 from app.agents.intro_writer import (
     _MAX_WORDS as INTRO_MAX_WORDS,
 )
@@ -998,6 +999,22 @@ def check_transition_picker(
 
 
 # ── Dispatch ─────────────────────────────────────────────────────────────────
+
+
+def check_intent_review(output: Any, input: IntentReviewInput) -> list[str]:  # noqa: A002
+    """Structural floor for nova.kria.intent_review: the same contract the server enforces.
+
+    Anything the production validator would void is a failure here, so a fixture can never
+    pass replay with an output the live path would throw away.
+    """
+    from app.agents._schemas.intent_review import InvalidReviewOutput
+    from app.kria.intent_review_disposition import validate_review_output
+
+    try:
+        validate_review_output(output, input.catalog)
+    except InvalidReviewOutput as exc:
+        return [f"intent review output is void: {exc.reason}"]
+    return []
 
 
 def check_song_classifier(output: SongClassifierOutput) -> list[str]:
@@ -2302,12 +2319,13 @@ def _permissive_editor_settings(mp: Any) -> None:
     mp.setattr(gj, "signed_get_url", lambda p, ttl=None: f"https://eval.invalid/{p}", raising=False)
 
 
-def _open_clip_tilt(mp: Any) -> None:
+def _open_clip_tilt(mp: Any, *, zoom: bool = False) -> None:
     """Open ``clips.tilt`` on the synthetic variant, as the recorded snapshot says it was.
 
     The capability is a device-render gate (flag, client protocol, verified token) that a
     path-free snapshot cannot rebuild, so a golden whose snapshot carries
-    ``timeline_patch_capabilities.tilt`` compiles with it open (KRI-1137).
+    ``timeline_patch_capabilities.tilt`` compiles with it open (KRI-1137), and one that also
+    carries ``tilt_zoom`` compiles with the zoom open (KRI-1169).
     """
     from app.services import kria_editor_ops
 
@@ -2317,6 +2335,8 @@ def _open_clip_tilt(mp: Any) -> None:
         capabilities = real(job, variant)
         clips = dict(capabilities.get("clips") or {})
         clips["tilt"] = {"editable": True, "reason": None}
+        if zoom:
+            clips["tilt_zoom"] = {"editable": True, "reason": None}
         return {**capabilities, "clips": clips}
 
     mp.setattr(kria_editor_ops, "_editor_capabilities", opened)
@@ -2380,8 +2400,9 @@ def check_edit_copilot_compiles(
         # -> `settings.visual_blocks_enabled`), so the permissive patch has to be
         # in place before compiling too, not just before `prepare_editor_commit`.
         _permissive_editor_settings(mp)
-        if (snapshot.get("timeline_patch_capabilities") or {}).get("tilt") is True:
-            _open_clip_tilt(mp)
+        patch_capabilities = snapshot.get("timeline_patch_capabilities") or {}
+        if patch_capabilities.get("tilt") is True:
+            _open_clip_tilt(mp, zoom=patch_capabilities.get("tilt_zoom") is True)
 
         try:
             compiled = compile_editor_ops(job, variant, output.ops)
@@ -3204,6 +3225,8 @@ def run_structural(
         return check_audio_template(output)
     if agent_name == "nova.audio.song_classifier":
         return check_song_classifier(output)
+    if agent_name == "nova.kria.intent_review":
+        return check_intent_review(output, input)
     if agent_name == "nova.audio.song_sections":
         return check_song_sections(output, input)
     if agent_name == "nova.audio.music_matcher":
@@ -3354,4 +3377,7 @@ def run_structural(
         return check_voiceover_interviewer(output, input)
     if agent_name == "nova.plan.slide_post_composer":
         return check_slide_post_composer(output, input)
+    if agent_name == "nova.creator.brief_extractor":
+        # KRI-1189: the output schema is the check; fixtures add `meta.restart_brief`.
+        return []
     raise ValueError(f"no structural checks registered for agent {agent_name!r}")

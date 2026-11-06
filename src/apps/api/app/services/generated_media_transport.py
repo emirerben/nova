@@ -24,15 +24,31 @@ GENERATED_PRICE_VERSION = "openai-generated-2026-10-29.v1"
 
 
 class ProviderRejected(Exception):
-    def __init__(self, *, retryable: bool):
+    def __init__(
+        self,
+        *,
+        retryable: bool,
+        status_code: int | None = None,
+        error_code: str | None = None,
+        error_type: str | None = None,
+    ):
         super().__init__("Provider rejected the generation request")
         self.retryable = retryable
+        self.status_code = status_code
+        self.error_code = error_code
+        self.error_type = error_type
 
 
 def _provider_error(exc):
     status = getattr(exc, "status_code", None)
     if isinstance(status, int) and 400 <= status < 500 and status != 408:
-        raise ProviderRejected(retryable=status == 429) from None
+        code, kind = getattr(exc, "code", None), getattr(exc, "type", None)
+        raise ProviderRejected(
+            retryable=status == 429,
+            status_code=status,
+            error_code=code if isinstance(code, str) else None,
+            error_type=kind if isinstance(kind, str) else None,
+        ) from None
     raise exc
 
 

@@ -302,19 +302,33 @@ class SlideTiltBackdrop(BaseModel):
         return data
 
 
+MIN_SLIDE_TILT_ZOOM = 0.5
+MAX_SLIDE_TILT_ZOOM = 3.0
+
+
 class SlideTilt(BaseModel):
     """A slide's media turned to any angle about the canvas centre (KRI-1138).
 
     ``rotation_deg`` is clockwise-positive in -180..180 (the clip tilt, sticker and text
     convention). Only the PHOTO or VIDEO turns: text, ink, stickers and the watermark stay
-    upright on top. What the turn uncovers shows ``backdrop`` (default blank = black). Frozen
-    by ``tests/fixtures/slide-tilt-parity/v1.json``.
+    upright on top. What the turn uncovers shows ``backdrop`` (default blank = black).
+    ``zoom`` (1 = as framed) scales the media about the canvas centre before it turns; it is
+    left out of the serialized form at 1 so a tilt stored before zoom existed keeps its shape
+    and cache digest. Frozen by ``tests/fixtures/slide-tilt-parity/v1.json`` and ``v2.json``.
     """
 
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     rotation_deg: float = Field(ge=-180.0, le=180.0)
     backdrop: SlideTiltBackdrop = Field(default_factory=SlideTiltBackdrop)
+    zoom: float = Field(default=1.0, ge=MIN_SLIDE_TILT_ZOOM, le=MAX_SLIDE_TILT_ZOOM)
+
+    @model_serializer(mode="wrap")
+    def _omit_unit_zoom(self, handler: Any) -> dict[str, Any]:
+        data = handler(self)
+        if isinstance(data, dict) and data.get("zoom") == 1.0:
+            data.pop("zoom", None)
+        return data
 
 
 MAX_SLIDE_STICKERS = 4
@@ -395,9 +409,9 @@ class SlideEdits(BaseModel):
 
     @model_validator(mode="after")
     def _upright_is_not_a_tilt(self) -> SlideEdits:
-        # 0 degrees draws nothing, so storing it would only fork the cache key of an
+        # 0 degrees at zoom 1 draws nothing, so storing it would only fork the cache key of an
         # unchanged slide and leave a backdrop that never shows.
-        if self.tilt is not None and self.tilt.rotation_deg == 0:
+        if self.tilt is not None and self.tilt.rotation_deg == 0 and self.tilt.zoom == 1.0:
             self.tilt = None
         return self
 

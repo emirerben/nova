@@ -26,7 +26,7 @@ from app.services.apns import (
 from app.services.notification_delivery import notification_policy
 from app.tasks.notification_delivery import notification_sender
 
-NOTICE = ActivityNotification(UUID(int=1), UUID(int=2))
+NOTICE = ActivityNotification(UUID(int=1), UUID(int=2), "video_ready")
 
 
 @pytest.fixture
@@ -117,11 +117,28 @@ def test_disabled_flag_does_not_read_key_or_schedule(configured, monkeypatch):
     assert runtime.notification_beat_schedule() == {}
 
 
+def test_empty_allowed_list_means_every_account(configured, monkeypatch):
+    runtime._parse_configuration.cache_clear()
+    monkeypatch.setattr(settings, "native_notifications_allowed_owner_ids", [])
+    assert runtime.notification_configuration() is not None
+    policy = notification_policy()
+    assert policy.available and policy.allowed_owner_ids is None
+    assert policy.allows(UUID(int=9)) and policy.allows(UUID(int=10))
+    assert notification_sender() is not None
+    assert runtime.notification_beat_schedule()
+
+
+def test_empty_allowed_list_still_fails_closed_when_disabled(configured, monkeypatch):
+    monkeypatch.setattr(settings, "native_notifications_allowed_owner_ids", [])
+    monkeypatch.setattr(settings, "native_notifications_enabled", False)
+    assert not notification_policy().available
+    assert not notification_policy().allows(UUID(int=10))
+
+
 @pytest.mark.parametrize(
     "name,value",
     [
         ("native_notifications_apns_environment", "invalid"),
-        ("native_notifications_allowed_owner_ids", []),
         ("token_encryption_key", ""),
         ("token_encryption_key", "synthetic invalid encryption key"),
         ("native_notifications_apns_topic", None),

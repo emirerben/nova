@@ -99,14 +99,22 @@ from app.services.guided_speech_cleanup import (
 from app.services.job_storage_paths import project_media_reference_lock_key
 from app.services.native_activity import record_native_activity
 from app.services.phone_rollout import (
+    background_focus_client_supported,
+    card_tilt_client_supported,
+    clip_backdrop_media_client_supported,
     clip_tilt_client_supported,
     freehand_drawing_client_supported,
     freeze_frame_client_supported,
+    recipe_has_clip_backdrop_media,
     recipe_has_clip_tilt,
     recipe_has_freeze_frame,
     recipe_has_single_word_text,
+    recipe_has_tilted_card,
     single_word_text_client_supported,
     speaker_background_client_supported,
+    speaker_background_color_client_supported,
+    speaker_background_windows_client_supported,
+    speaker_full_opening_client_supported,
     text_behind_subject_phone_client_supported,
     text_bend_client_supported,
 )
@@ -589,6 +597,12 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "feature": "drawing",
             "minimum_client_protocol": settings.freehand_drawing_min_client_protocol,
         }
+    from app.services.phone_rollout import script_fonts_update_detail  # noqa: PLC0415
+
+    script_fonts = script_fonts_update_detail(recipe)
+    if script_fonts is not None:
+        # KRI-1192: a build below protocol 35 has no Noto Sans KR / Arabic file to draw it.
+        return script_fonts
     if not text_bend_client_supported() and any(
         layer.bend for layer in getattr(recipe, "text_layers", None) or []
     ):
@@ -621,6 +635,67 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "feature": "speaker_background",
             "minimum_client_protocol": settings.speaker_background_min_client_protocol,
         }
+    if (
+        getattr(recipe, "speaker_background", None) is not None
+        and recipe.speaker_background.uses_windows
+        and not speaker_background_windows_client_supported()
+    ):
+        # KRI-1162 (S32): an older build rejects `windows` / `speaker_frame` as unknown keys (and
+        # the `speakerBackgroundWindows` token) and would FAIL the job. Compile strips both for
+        # such a build; this covers a recipe a newer build or the worker pinned before.
+        return {
+            "code": "client_update_required",
+            "feature": "speaker_background_windows",
+            "minimum_client_protocol": settings.speaker_background_windows_min_client_protocol,
+        }
+    if (
+        getattr(recipe, "speaker_background", None) is not None
+        and recipe.speaker_background.uses_full_screen
+        and not speaker_full_opening_client_supported()
+    ):
+        # Qendresa item 16 (S77): an older build rejects `full_screen_windows` (and the
+        # `speakerFrameWindows` token) and would FAIL the job. Compile strips the opening for
+        # such a build; this covers a recipe a newer build or the worker pinned before.
+        return {
+            "code": "client_update_required",
+            "feature": "speaker_full_opening",
+            "minimum_client_protocol": settings.speaker_full_opening_min_client_protocol,
+        }
+    if (
+        getattr(recipe, "speaker_background", None) is not None
+        and getattr(recipe.speaker_background, "uses_focus", False)
+        and not background_focus_client_supported()
+    ):
+        # Qendresa item 18: an older build rejects `focus` (and the `backgroundFocus` token) and
+        # would FAIL the job. Compile strips every focus for such a build; this covers a recipe a
+        # newer build or the worker pinned before.
+        return {
+            "code": "client_update_required",
+            "feature": "background_focus",
+            "minimum_client_protocol": settings.background_focus_min_client_protocol,
+        }
+    if (
+        getattr(recipe, "speaker_background", None) is not None
+        and recipe.speaker_background.uses_color
+        and not speaker_background_color_client_supported()
+    ):
+        # KRI-1173 (S49): an older build rejects `media_kind: "color"` / `color` (and the
+        # `speakerBackgroundColor` token) and would FAIL the job. Compile strips a colour for
+        # such a build; this covers a recipe a newer build or the worker pinned before.
+        return {
+            "code": "client_update_required",
+            "feature": "speaker_background_color",
+            "minimum_client_protocol": settings.speaker_background_color_min_client_protocol,
+        }
+    if not card_tilt_client_supported() and recipe_has_tilted_card(recipe):
+        # KRI-1141: a build below protocol 30 decodes the `clipTilt` token a tilted card carries
+        # but draws the card upright. Checked before the clip gate so the answer names the newer
+        # of the two minimums.
+        return {
+            "code": "client_update_required",
+            "feature": "card_tilt",
+            "minimum_client_protocol": settings.media_card_tilt_min_client_protocol,
+        }
     if not clip_tilt_client_supported() and recipe_has_clip_tilt(recipe):
         # KRI-1134: an older build cannot decode the `clipTilt` capability token, so the whole
         # recipe would fail instead of rendering untilted. Tell it to update.
@@ -628,6 +703,15 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "code": "client_update_required",
             "feature": "clip_tilt",
             "minimum_client_protocol": settings.media_tilt_min_client_protocol,
+        }
+    if not clip_backdrop_media_client_supported() and recipe_has_clip_backdrop_media(recipe):
+        # KRI-1139: a build below protocol 31 cannot decode a media backdrop (the
+        # `clipBackdropMedia` token and the backdrop's `asset_id`), so the whole recipe would
+        # fail instead of rendering the clip without its photo or video.
+        return {
+            "code": "client_update_required",
+            "feature": "clip_backdrop_media",
+            "minimum_client_protocol": settings.media_backdrop_min_client_protocol,
         }
     if not freeze_frame_client_supported() and recipe_has_freeze_frame(recipe):
         # KRI-828: the worker planned a creator's freeze (a main-track hold, capability

@@ -107,9 +107,17 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         }
         if let background = speakerBackground {
             try background.validate()
-            guard assetManifest?.assets.contains(where: {
-                if case .visual(_, _, let kind) = $0.source { $0.id == background.assetID && kind == background.mediaKind } else { false }
-            }) == true else { throw RecipeError.missingAssetReference }
+            // KRI-1173: a solid-colour fill has no manifest asset; its windows (media only) are still checked below.
+            if let fillKind = background.visualMediaKind {
+                guard assetManifest?.assets.contains(where: {
+                    if case .visual(_, _, let kind) = $0.source { $0.id == background.assetID && kind == fillKind } else { false }
+                }) == true else { throw RecipeError.missingAssetReference }
+            }
+            for window in background.windows ?? [] {
+                guard assetManifest?.assets.contains(where: {
+                    if case .visual(_, _, let kind) = $0.source { $0.id == window.assetID && kind == window.mediaKind } else { false }
+                }) == true else { throw RecipeError.missingAssetReference }
+            }
         }
         guard textLayers.count <= Self.maxTextLayers, Set(textLayers.map(\.id)).count == textLayers.count else { throw RecipeError.invalidTimeline }
         for layer in textLayers { try layer.validate(duration: TimelineMath.totalDuration(of: self), manifest: assetManifest) }
@@ -150,6 +158,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
             if let placement = clip.visualPlacement {
                 guard schemaVersion == 2, tracks.contains(where: { $0.kind == .overlay && $0.clips.contains(where: { $0.id == clip.id }) }), clip.volume == 0 else { throw RecipeError.invalidTimeline }
                 try placement.validate()
+                guard abs(clip.transform.rotationDegrees) <= 360 else { throw RecipeError.invalidTimeline }
                 guard clip.timelineStart >= placement.windowStart, clip.timelineStart + clip.duration <= placement.windowEnd + 0.000_001 else { throw RecipeError.invalidTimeline }
             }
             let values = [clip.timelineStart, clip.sourceStart, clip.sourceDuration, clip.rate, clip.volume,
@@ -166,6 +175,9 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                 try backdrop.validate()
                 guard tracks.contains(where: { $0.kind == .video && $0.clips.contains(where: { $0.id == clip.id }) }),
                       clip.visualPlacement == nil else { throw RecipeError.invalidTimeline }
+                if case .media = backdrop {
+                    guard schemaVersion == 2, backdrop.mediaAsset(in: assetManifest) != nil else { throw RecipeError.missingAssetReference }
+                }
             }
             for fade in [clip.audioFadeIn, clip.audioFadeOut].compactMap({ $0 }) {
                 guard fade.isFinite, (0...60).contains(fade) else { throw RecipeError.invalidTimeline }
@@ -204,6 +216,11 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if let target = audio.targetLUFS { guard target.isFinite, (-40 ... -5).contains(target) else { throw RecipeError.invalidTimeline } }
     }
 
+    /// The bundled script-fallback font files (`font-registry.json` entries with `script_fallback: true`).
+    public static let scriptFontFiles: Set<String> = [
+        "NotoSansKR-Regular.ttf", "NotoSansKR-Bold.ttf", "NotoSansArabic-Regular.ttf", "NotoSansArabic-Bold.ttf",
+    ]
+
     /// Derive requirements from content too: an omitted server capability must not drop an effect.
     public var effectiveCapabilities: Set<MediaCapability> {
         var result = requiredCapabilities
@@ -215,9 +232,24 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if !cameraPulses.isEmpty { result.insert(.cameraEffects) }
         if !drawingLayers.isEmpty { result.insert(.freehandDrawing) }
         if speakerBackground != nil { result.insert(.speakerBackground) }
+        if speakerBackground?.mediaKind == .color { result.insert(.speakerBackgroundColor) }
+        if speakerBackground?.windows != nil || speakerBackground?.speakerFrame != nil { result.insert(.speakerBackgroundWindows) }
+        // Qendresa item 16 (protocol 41): a full-screen opening/ending is a layer property an older build would silently ignore.
+        if speakerBackground?.fullScreenWindows != nil { result.insert(.speakerFrameWindows) }
+        // Qendresa item 18 (protocol 42): an aimed background (fill or any window) is a layer property an older build would silently ignore.
+        if speakerBackground?.focus != nil || speakerBackground?.windows?.contains(where: { $0.focus != nil }) == true { result.insert(.backgroundFocus) }
         if textLayers.contains(where: { ($0.bend ?? 0) != 0 }) { result.insert(.textBend) }
         if textLayers.contains(where: { $0.karaoke?.singleWord == true }) { result.insert(.singleWordText) }
         if textLayers.contains(where: { $0.behindSubject == true }) { result.insert(.behindSubject) }
+        // KRI-1192: a run drawn in a script-fallback face (Noto Sans KR / Arabic) needs a build that bundles it.
+        // Mirrors `EditRecipeV2`, which reads the run's font asset file from the manifest.
+        let scriptFontAssets = Set((assetManifest?.assets ?? []).compactMap { asset -> String? in
+            if case .library(.font, let file, _) = asset.source, Self.scriptFontFiles.contains(file) { return asset.id }
+            return nil
+        })
+        if !scriptFontAssets.isEmpty, textLayers.contains(where: { $0.runs.contains { scriptFontAssets.contains($0.fontAssetID) } }) {
+            result.insert(.scriptFonts)
+        }
         for asset in assetManifest?.assets ?? [] {
             if case .visual(_, _, let mediaKind) = asset.source { result.insert(mediaKind == .video ? .visualVideos : .stillImages) }
         }
@@ -245,6 +277,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if clips.contains(where: { $0.look != nil }) { result.insert(.goldenHourLook) }
         if clips.contains(where: { $0.sourceCrop != nil }) { result.insert(.sourceCrop) }
         if clips.contains(where: { $0.transform.rotationDegrees != 0 || $0.backdrop != nil }) { result.insert(.clipTilt) }
+        if clips.contains(where: { if case .media? = $0.backdrop { true } else { false } }) { result.insert(.clipBackdropMedia) }
         if tracks.contains(where: { $0.kind == .overlay && !$0.clips.isEmpty }) { result.insert(.alphaOverlay) }
         if audio != .default || tracks.contains(where: { $0.kind == .audio && !$0.clips.isEmpty }) || clips.contains(where: { $0.volume != 1 }) {
             result.insert(.audioMix)
@@ -384,6 +417,9 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
         guard stillLayout != nil else { return transform }
         var value = transform; value.rotationDegrees = 0; return value
     }
+    /// A placed card (`visualPlacement`) positions itself, so only its `transform.rotationDegrees` is read: the card
+    /// turns about its centre, clockwise on screen (a phone Talking picture card's tilt, needs `clipTilt`).
+    var placementTiltDegrees: Double { visualPlacement == nil ? 0 : transform.rotationDegrees }
     /// Opacity from `overlayFadeIn`/`overlayFadeOut` alone across this clip's
     /// own timeline window; exactly 1 when neither is set, or when the clip is
     /// placed (it then fades through its placement, like the renderer's
@@ -519,7 +555,8 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export,
          captions, customEffects, mediaCards, carouselEffects, motionPresets, narrationAudio,
          soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, processedAudio, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, singleWordText, freezeFrame,
-         behindSubject, speakerBackground, clipTilt
+         behindSubject, speakerBackground, clipTilt, clipBackdropMedia,
+         speakerBackgroundWindows, speakerBackgroundColor, scriptFonts, speakerFrameWindows, backgroundFocus
 }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }

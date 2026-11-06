@@ -71,7 +71,7 @@ class OverlayGenerationAgent(Agent[OverlayPlanInput, OverlayPlanOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.editor.overlay_generation",
         prompt_id="overlay_generation",
-        prompt_version="2026-10-30.4",
+        prompt_version="2026-11-02.4",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -82,7 +82,7 @@ class OverlayGenerationAgent(Agent[OverlayPlanInput, OverlayPlanOutput]):
     Output = OverlayPlanOutput
 
     def required_fields(self):
-        return ["overlays", "message"]
+        return ["overlays"]
 
     def render_prompt(self, input: OverlayPlanInput) -> str:  # noqa: A002
         return (
@@ -110,16 +110,20 @@ class OverlayGenerationAgent(Agent[OverlayPlanInput, OverlayPlanOutput]):
             "Never copy a raw output timestamp from the prompt into a base-time field. "
             "Keep each overlay within the cited source window for visual evidence, and "
             "within video bounds. "
-            "Image means a generated illustration/photo without lettering. Use text for "
-            "numbers, prices, "
-            "rank badges and any readable words. Never generate or reconstruct logos; select "
-            "a matching "
-            "owned library asset or ask the creator to upload it. Every image row must set "
-            "depicts: generic_subject only for a generic object, scene or icon that names no "
+            "Image means a generated illustration/photo with no added captions or titles. Use "
+            "text for numbers, prices, "
+            "rank badges and any readable words. The one exception is a named brand, team or "
+            "organisation mark: its own lettering (wordmark, crest text) is part of the mark, so "
+            "describe the full official mark including that lettering and never write 'without "
+            "text' for it. For a named brand, team or organisation "
+            "mark, prefer a matching owned library asset; otherwise propose an image row that "
+            "names the entity exactly as the creator said it, never a different entity, and the "
+            "creator reviews the result before it is used. Every image row must set "
+            "depicts: generic_subject for a generic object, scene or icon that names no "
             "brand, company, product line, team or organisation; brand_or_logo for any official "
-            "mark, logo, emblem, wordmark or imitation of one, in any language, and whenever it "
-            "is unclear whether a named entity's official mark is wanted. Negation such as 'no "
-            "logo' in a description does not make the picture brand_or_logo. Prefer transparent "
+            "mark, logo, emblem, wordmark or imitation of one, in any language. Negation such as "
+            "'no logo' in a description does not make the picture brand_or_logo. Prefer "
+            "transparent "
             "supporting "
             "icons or objects, not replacement scenes. "
             "library_asset must name an ID in assets. All rows are proposals for review, not "
@@ -127,7 +131,13 @@ class OverlayGenerationAgent(Agent[OverlayPlanInput, OverlayPlanOutput]):
             "Avoid covering faces, captions, and visible_text from actual OCR. A text_safe_zone "
             "is an analyzed source recommendation, not a guarantee for the current crop. "
             "Keep the overlay inside that zone where available; review placement is required. "
-            "Never overlap existing_overlays or another proposed overlay in time. "
+            "Never overlap existing_overlays in time, except that an existing picture whose "
+            "entry carries a rect (x0, y0, x1, y1 in canvas fractions) may share its moment "
+            "with a new picture placed clear of that rect. Two proposed pictures may likewise "
+            "share a moment only when they sit clearly apart on the canvas (for example x_frac "
+            "0.25 and 0.75), as for a versus moment; otherwise never overlap another proposed "
+            "overlay in time. Give each picture a hold of at least two seconds, not just the "
+            "length of the spoken word. "
             "Prompt is only the image provider description, text only the actual native text. "
             "If safe fulfillment is impossible, return overlays=[] with the reason.\nINPUT\n"
             + input.model_dump_json()

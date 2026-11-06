@@ -1,0 +1,70 @@
+{
+  "description": "Preference order of the suggestion agent for this footage; the call's response_schema decides which of these are possible answers.",
+  "prefs": [
+    {
+      "kind": "mute_clip",
+      "targets": [
+        "c3"
+      ],
+      "why": "Wind drowns out clip 3",
+      "copy": null
+    },
+    {
+      "kind": "filler_words",
+      "targets": [
+        "all"
+      ],
+      "why": "Four filler sounds in the take",
+      "copy": null
+    },
+    {
+      "kind": "duplicates",
+      "targets": [
+        "c1",
+        "c2"
+      ],
+      "why": "Clip 2 is the sharper take",
+      "copy": null
+    },
+    {
+      "kind": "hook",
+      "targets": [
+        "all"
+      ],
+      "why": "The opening has no title yet",
+      "copy": "One trip in three quiet stops"
+    },
+    {
+      "kind": "captions",
+      "targets": [
+        "all"
+      ],
+      "why": "One clip speaks and has no captions",
+      "copy": null
+    },
+    {
+      "kind": "music",
+      "targets": [
+        "all"
+      ],
+      "why": "A voice is competing with the song",
+      "copy": null
+    },
+    {
+      "kind": "transition",
+      "targets": [
+        "all"
+      ],
+      "why": "Every cut is a hard cut",
+      "copy": null
+    },
+    {
+      "kind": "sfx",
+      "targets": [
+        "all"
+      ],
+      "why": "Quiet clips could use a little lift",
+      "copy": null
+    }
+  ]
+}

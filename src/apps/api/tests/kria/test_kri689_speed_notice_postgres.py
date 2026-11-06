@@ -34,6 +34,18 @@ from tests.kria.test_runtime_postgres_integration import _seed_runtime_project, 
 _SUMMARY = "A fast montage of the night boat ride."
 _EN = "I can't change clip speed on your iPhone yet, so the clips play at normal speed."
 _TR = "iPhone'unda klip hızını henüz değiştiremiyorum, o yüzden klipler normal hızda oynuyor."
+# The phone montage keeps its fast cut for this plan's guided story (a speed ask, or no story
+# lines to build it from). The guided story is the planner's own direction, not an ask, so since
+# Green 4/5 (`kria_headsup_asked_only_enabled`) the card no longer names it; with the switch off
+# it says so for every account (KRI-1097 route registry).
+_HEADS_UP = (
+    "Heads-up for this video:\n"
+    "- The guided story direction isn't applied on this video yet: it is cut as a fast montage"
+)
+_HEADS_UP_TR = (
+    "Bu video için not:\n"
+    "- guided story yönü bu videoda henüz uygulanmıyor: hızlı bir montaj olarak kesiliyor"
+)
 _PROXY = "users/u/creation-threads/t/analysis-proxy-ios-88F0B87C.mp4"
 _CLOUD = "users/u/creation-threads/t/original-clip.mp4"
 
@@ -149,18 +161,19 @@ async def test_a_turkish_chat_gets_the_turkish_sentence(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("description", "clip"),
+    ("description", "clip", "heads_up"),
     [
-        ("Fast pacing", _PROXY),  # pacing, not clip speed
-        ("Speed the river shots up 2x", _CLOUD),  # a cloud render is not the iPhone
+        ("Fast pacing", _PROXY, None),  # pacing, not clip speed
+        ("Speed the river shots up 2x", _CLOUD, None),  # a cloud render is not the iPhone
     ],
 )
-async def test_no_notice_where_it_would_be_false(monkeypatch, description, clip):
+async def test_no_notice_where_it_would_be_false(monkeypatch, description, clip, heads_up):
     status, reply, card = await _draft(monkeypatch, description, clip=clip)
 
     assert status == "awaiting_approval"
-    assert reply == _SUMMARY
-    assert card == f"Render this draft: {_SUMMARY}"
+    assert _EN not in reply and _EN not in card
+    assert reply == "\n".join(part for part in (_SUMMARY, heads_up) if part)
+    assert card == " ".join(part for part in ("Render this draft:", _SUMMARY, heads_up) if part)
 
 
 @pytest.mark.asyncio
@@ -175,3 +188,14 @@ async def test_with_a_verified_speed_renderer_the_draft_promises_nothing_it_cann
     assert _EN not in reply and _EN not in card
     assert reply == _SUMMARY
     assert card == f"Render this draft: {_SUMMARY}"
+
+
+@pytest.mark.asyncio
+async def test_switch_off_names_the_planners_direction_as_before(monkeypatch):
+    """`kria_headsup_asked_only_enabled` off: the card is byte-identical to before Green 4/5."""
+    monkeypatch.setattr(settings, "kria_headsup_asked_only_enabled", False)
+    status, reply, card = await _draft(monkeypatch, "Speed the river shots up 2x")
+
+    assert status == "awaiting_approval"
+    assert reply == f"{_SUMMARY}\n{_EN}\n{_HEADS_UP}"
+    assert card == f"Render this draft: {_SUMMARY} {_EN} {_HEADS_UP}"

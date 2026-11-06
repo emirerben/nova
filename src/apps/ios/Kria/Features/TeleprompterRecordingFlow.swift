@@ -40,7 +40,13 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
     let store: TeleprompterStore
     let script: TeleprompterScript
     let camera = TeleprompterCamera()
-    @Published var stage: Stage = .script
+    private let viewRemovalGrace: Duration
+    private var pendingViewRemoval: Task<Void, Never>?
+    /// Opens on the camera: a script is optional now, and a saved take reopens on its review instead.
+    @Published var stage: Stage = .camera
+    /// The script is shown and scrolled only when the creator chose it (Paper S3.08, off by default).
+    @Published var useScript = false
+    @Published var showsScriptSheet = false
     @Published var error: String?
     @Published var countdown = 3
     @Published var selectedTake: TeleprompterTakeManifest?
@@ -68,6 +74,10 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
 
     /// Set when the background reached the visual upload. The seam for the server to learn which visual it is.
     @Published private(set) var queuedBackground: CameraBackgroundSelection?
+    /// KRI-1160: whether this iPhone can record Cinematic with the front camera, and the creator's choice (per device).
+    let cinematicAvailability: TeleprompterCinematic.Availability
+    @Published private(set) var cinematicEnabled: Bool
+    private let defaults: UserDefaults
     private var backgroundLoad: Task<Void, Never>?
     private var countdownTask: Task<Void, Never>?
     private var activeTake: TeleprompterTakeManifest?
@@ -79,12 +89,16 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
     private var photoSaves: [UUID: Task<Bool, Never>] = [:]
 
     init(accountID: String, projectID: UUID, root: URL? = nil,
+         script: TeleprompterScript = TeleprompterScript(),
+         viewRemovalGrace: Duration = .seconds(1),
          photoSaver: PhotoLibrarySaving = PhotoLibrarySaver(),
          speakerBackgroundEnabled: Bool = false,
          makeLivePreview: @escaping () -> LiveBackgroundPreview = { LiveBackgroundPreview() },
          backgroundIntake: BackgroundIntake? = nil,
          backgroundStatement: BackgroundStatement? = nil,
          makeBackgroundProvider: @escaping BackgroundProviderFactory = TeleprompterRecordingFlow.liveBackgroundProvider,
+         cinematicAvailability: TeleprompterCinematic.Availability? = nil,
+         defaults: UserDefaults = .standard,
          reportDiagnostic: @escaping (RecorderDiagnosticReport) -> Void = { _ in }) {
         self.speakerBackgroundEnabled = speakerBackgroundEnabled
         self.makeLivePreview = makeLivePreview
@@ -92,8 +106,18 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         self.backgroundStatement = backgroundStatement
         self.makeBackgroundProvider = makeBackgroundProvider
         store = TeleprompterStore(accountID: accountID, projectID: projectID, root: root)
-        script = TeleprompterScript()
+        self.script = script
+        self.viewRemovalGrace = viewRemovalGrace
         self.photoSaver = photoSaver
+        var availability = cinematicAvailability ?? TeleprompterCinematic.availability()
+        #if DEBUG
+        if cinematicAvailability == nil, TeleprompterCamera.cinematicUITestFixture != nil { availability = .available }
+        #endif
+        self.cinematicAvailability = availability
+        self.defaults = defaults
+        // A saved "on" only counts where Cinematic can actually record.
+        cinematicEnabled = availability == .available && defaults.bool(forKey: TeleprompterCinematic.preferenceKey)
+        camera.setCinematicRequested(cinematicEnabled)
         camera.reportDiagnostic = reportDiagnostic
         camera.onFinalized = { [weak self] url, message in self?.finalized(url: url, message: message) }
     }
@@ -113,6 +137,9 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
             do { if let draft = try store.loadDraft() { script.draft = draft } }
             catch { self.error = "Couldn’t restore the script. Your saved takes are still available." }
             restoreBackground()
+            #if DEBUG
+            await installBenchBackground()
+            #endif
             let recovery = try store.loadManifestsRecoveringCorruption()
             if let warning = recovery.recoveryWarning { self.error = warning }
             var takes = recovery.manifests.filter { $0.status != .accepted }
@@ -120,6 +147,11 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
                 let valid = await Self.playable(store.fileURL(for: takes[index]))
                 takes[index].status = valid ? .review : .invalid
                 takes[index].interrupted = true
+                // KRI-1160: a take cut off before its Cinematic look was baked is baked now, so no raw Cinematic movie
+                // (depth tracks, no blur outside Apple's apps) ever reaches playback or upload.
+                if valid, let cinematic = await CinematicTakeFinisher.finish(movieAt: store.fileURL(for: takes[index])) {
+                    takes[index].cinematic = cinematic
+                }
                 if valid { takes[index].audioCheck = await TakeAudioMeasurement.measure(url: store.fileURL(for: takes[index])) }
                 do { try store.save(manifest: takes[index]) }
                 catch {
@@ -132,7 +164,7 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
             pendingTake = takes.last { $0.slot == .pending }
             selectedTake = takes.last { $0.slot == .candidate } ?? pendingTake
             queueAccepted = selectedTake?.status == .attaching
-            if selectedTake != nil { stage = .review }
+            if selectedTake != nil { stage = .review } else { stage = .camera }
         } catch { self.error = "Couldn’t restore the saved script or take. Your local files are still kept. \(error.localizedDescription)" }
     }
 
@@ -141,15 +173,30 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         catch { self.error = "Couldn’t save your script. Free some storage and try again. \(error.localizedDescription)"; return false }
     }
 
+    /// Opens the camera on first appearance when no saved take is waiting for review.
+    func prepareCameraIfNeeded() async {
+        guard stage == .camera, camera.phase == .idle else { return }
+        await camera.prepare()
+    }
+
     func openCamera() async {
-        guard !script.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, persistDraft() else { return }
+        guard persistDraft() else { return }
         error = nil; stage = .camera
         await camera.prepare()
     }
 
+    /// Opens the optional script sheet over the camera. The camera keeps running behind it.
     func editScript() {
         guard !captureBusy, !usingTake else { return }
-        script.pause(); camera.stopSession(); persistDraft(); stage = .script
+        script.pause(); persistDraft(); showsScriptSheet = true
+    }
+
+    var hasScriptText: Bool { !script.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    func flipCamera() {
+        guard stage == .camera, !captureBusy else { return }
+        camera.flip()
+        Task { await camera.prepare() }
     }
 
     func record(manual: Bool) {
@@ -166,7 +213,7 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
             guard let self, self.generation == token, !Task.isCancelled, self.stage == .countdown else { return }
             guard self.camera.phase == .ready else { self.stage = .camera; return }
             do {
-                var take = TeleprompterTakeManifest(script: self.script.draft,
+                var take = TeleprompterTakeManifest(script: self.useScript ? self.script.draft : TeleprompterScriptDraft(),
                                                   slot: self.pendingTake == nil ? .pending : .candidate)
                 take.speakerBackground = self.speakerBackgroundEnabled ? self.background?.reference : nil
                 try self.store.save(manifest: take)
@@ -182,6 +229,17 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
     }
     private var autoScrollAfterStart = true
 
+    /// KRI-1160: refused where Cinematic cannot record, and never while a take is in flight. The open camera is
+    /// rebuilt for the new choice.
+    func setCinematic(_ on: Bool) {
+        guard !captureBusy else { return }
+        let value = on && cinematicAvailability == .available
+        cinematicEnabled = value
+        defaults.set(value, forKey: TeleprompterCinematic.preferenceKey)
+        camera.setCinematicRequested(value)
+        if stage == .camera, camera.phase != .preparing { Task { await camera.prepare() } }
+    }
+
     func cancelCountdown() {
         generation = UUID(); countdownTask?.cancel(); countdownTask = nil
         if stage == .countdown { stage = .camera }
@@ -195,22 +253,63 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
             stage = .recording
             // The movie output has really started: a video background plays from its first frame, as the edit will.
             livePreview?.restartBackground()
-            if autoScrollAfterStart { script.resume() }
+            if autoScrollAfterStart, useScript { script.resume() }
         } else if phase == .finalizing {
             script.pause(); stage = .finalizing; persistDraft()
         }
     }
 
-    func stop(interrupted: Bool = false) {
+    func stop(reason: TakeStopReason = .user) {
         if stage == .countdown { cancelCountdown(); return }
         guard stage == .starting || stage == .recording else { return }
         script.pause(); persistDraft(); stage = .finalizing
-        camera.stopRecording(interrupted: interrupted)
+        camera.stopRecording(reason: reason)
     }
 
-    func leaveCapture() {
+    func scenePhaseChanged(_ phase: ScenePhase) {
+        switch phase {
+        case .inactive:
+            // KRI-653: whatever happened to the audio session while we were away (Control Center, an
+            // alert, the app switcher), the next prepare() must rebuild the capture graph. Inactive
+            // never takes the camera away, so a running take keeps going (KRI-1149). A countdown is not a take: it
+            // is cancelled so the take never starts on a graph this call just marked stale.
+            camera.sceneBecameInactive()
+            if stage == .countdown { cancelCountdown() }
+            if !captureBusy { script.pause(); persistDraft() }
+        case .background:
+            leaveCapture(reason: .backgrounded)
+        case .active:
+            camera.sceneBecameActive()
+            // Privacy prompts briefly make the scene inactive. They must not
+            // cancel the prepare operation whose grant they are requesting.
+            if stage == .camera, camera.phase != .preparing { Task { await camera.prepare() } }
+        @unknown default:
+            break
+        }
+    }
+
+    /// The screen can disappear and come straight back (transitions, overlays). A running take only ends when
+    /// it stays gone past the grace; anything not yet recording is released at once.
+    func viewDisappeared() {
+        guard stage == .starting || stage == .recording else { leaveCapture(reason: .viewRemoved); return }
+        pendingViewRemoval?.cancel()
+        let grace = viewRemovalGrace
+        pendingViewRemoval = Task {
+            try? await Task.sleep(for: grace)
+            guard !Task.isCancelled else { return }
+            pendingViewRemoval = nil
+            leaveCapture(reason: TakeStopPolicy.reason(for: .viewDisappeared(reappeared: false)) ?? .viewRemoved)
+        }
+    }
+
+    func viewAppeared() {
+        pendingViewRemoval?.cancel()
+        pendingViewRemoval = nil
+    }
+
+    func leaveCapture(reason: TakeStopReason) {
         cancelCountdown(); script.pause(); persistDraft()
-        if stage == .starting || stage == .recording { stop(interrupted: true) }
+        if stage == .starting || stage == .recording { stop(reason: reason) }
         camera.stopSession()
     }
 
@@ -225,10 +324,15 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         activeTake = nil
         take.status = url == nil ? .invalid : .review
         take.interrupted = camera.interrupted
+        take.stopReason = camera.stopReason
         take.audioCheck = url == nil ? nil : camera.finalizedAudioCheck
+        take.cinematic = url == nil ? nil : camera.finalizedCinematic
         // The choice at the end of filming wins: the picker may change while recording.
         take.speakerBackground = speakerBackgroundEnabled ? background?.reference : nil
         finalizedTake = take
+        #if DEBUG
+        if let url { TalkBench.shared.keepTake(url) }
+        #endif
         script.pause(); stage = .review
         error = message
         // KRI-653: a silent take is never attached. Say why before the creator reaches for "Use take".
@@ -315,6 +419,7 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
                 preview.setBackground(provider)
                 self.livePreview = preview
                 self.camera.setLiveFrameConsumer(preview)
+                Perf.count("talk.live.backgroundAttached")
             } catch is CancellationError {
             } catch {
                 guard let self, self.background?.reference == choice.reference else { return }
@@ -482,15 +587,18 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         do {
             try removeTake(take)
             if pendingTake?.id == take.id { pendingTake = nil }
-            selectedTake = pendingTake; stage = selectedTake == nil ? .script : .review
+            selectedTake = pendingTake
             error = nil
+            if selectedTake == nil { Task { await openCamera() } } else { stage = .review }
         } catch { self.error = "Couldn’t discard this recording. It is still kept on this iPhone." }
     }
 
     func useTake(_ intake: (TeleprompterTakeManifest, URL) async -> TeleprompterIntakeResult) async {
         guard !usingTake, !queueAccepted, var take = selectedTake, take.status == .review,
               take.audioCheck?.verdict != .silent else { return }
-        usingTake = true; defer { usingTake = false }
+        usingTake = true
+        Perf.begin("talk.use.spinner", id: take.id.uuidString)
+        defer { usingTake = false; Perf.end("talk.use.spinner", id: take.id.uuidString) }
         do {
             let request = take
             let previous = pendingTake
@@ -500,19 +608,23 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
             if let previous, previous.id != take.id, previous.status != .accepted {
                 try removeTake(previous)
             }
-            let result = await intake(request, store.fileURL(for: take))
+            let result = await Perf.measureAsync("talk.use.intake") { await intake(request, store.fileURL(for: take)) }
             apply(result)
             // The take is handed over first and never waits on, or fails because of, its background.
             if case .failed = result { return }
-            await uploadBackgroundIfNeeded()
+            await Perf.measureAsync("talk.use.backgroundUpload") { await uploadBackgroundIfNeeded() }
         } catch { self.error = "Your video is kept, but its details couldn’t be saved. Try again." }
     }
 
     func apply(_ result: TeleprompterIntakeResult) {
         guard var take = selectedTake else { return }
         switch result {
-        case .queued: queueAccepted = true; error = nil
+        case .queued:
+            queueAccepted = true; error = nil
+            // The take is with the upload queue; this runs until the server lists it on the edit.
+            Perf.begin("talk.use.pollToDone", id: take.id.uuidString)
         case .attached:
+            Perf.end("talk.use.pollToDone", id: take.id.uuidString)
             take.status = .accepted
             do {
                 try store.save(manifest: take)

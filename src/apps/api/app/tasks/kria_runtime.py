@@ -38,7 +38,7 @@ from app.kria.brief import (
     removed_target_ids,
     render_brief_request,
 )
-from app.kria.brief_binding import BriefBindingRequestTooLongError
+from app.kria.brief_binding import MAX_REQUEST_CHARS, BriefBindingRequestTooLongError
 from app.kria.brief_binding import snapshot_media as _draft_media
 from app.kria.brief_checks import (
     NARRATED_ALIGNMENT_FIELD,
@@ -68,22 +68,31 @@ from app.kria.brief_checks import (
 )
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
-from app.kria.duplicate_send import is_duplicate_answer
 from app.kria.editor_receipts import (
     bind_editor_receipts,
     receipt_lead,
     reply_from_diff,
     reply_from_editor_receipts,
 )
+from app.kria.intent_review_repair import (
+    INTENT_REPAIR_EVENT,
+    IntentRepairRefused,
+    applied_intent_repair_receipt,
+    guard_intent_repair_head,
+    verify_intent_repair,
+)
 from app.kria.language import is_paraphrase_only
 from app.kria.order_replacement_receipts import compiled_order_preflight_sync
+from app.kria.paid_call_scope import turn_run_epoch
 from app.kria.planner import (
     PlannedKriaTurn,
     answering_through_sequence,
     continuation_superseded_reply,
     extract_deferred_brief,
     localized_editor_state_reply,
+    no_longer_fits_reply,
     plan_live_turn,
+    plan_pinned_suggestion_turn,
     start_degraded_retry,
     turn_deadline,
 )
@@ -97,10 +106,13 @@ from app.kria.reply_language import (
     say,
     thread_reply_language,
 )
+from app.kria.request_budget import creator_request_text_sync
 from app.kria.route_disclosure import (
     UNIFIED_MONTAGE,
+    Disclosure,
     card_disclosures,
     card_text,
+    card_text_within,
     decoupled_from_readiness,
     draft_route,
     planned_card_length,
@@ -192,6 +204,13 @@ from app.services.thought_summaries import (
     bind_thought_publisher,
     publisher_for_creation,
 )
+from app.services.turn_checkpoint import (
+    TurnRunRecorder,
+    discard,
+    timed_step,
+    turn_run_id,
+    turn_run_recorder,
+)
 from app.text_fold import loose_words
 from app.worker import celery_app
 
@@ -218,6 +237,8 @@ class _Completion:
     successor_turn_id: str | None = None
     requeue_turn_id: str | None = None
     response_only: bool = False
+    # A speech-cleanup analysis a pinned filler tap queued: published once its commit has landed.
+    publish_analysis_id: uuid.UUID | None = None
 
 
 class ApprovedCreatorRequestTooLongError(ValueError):
@@ -295,23 +316,8 @@ def _text_timing_conflict_plan(exc: TextTimingConflict) -> KriaTurnPlan:
 
 def _full_creator_request_sync(db, *, thread_id: uuid.UUID, through_sequence: int) -> str | None:  # noqa: ANN001
     """Pin every creator instruction visible to the approved source turn."""
-    messages = [
-        str(content).strip()
-        for content, payload in db.execute(
-            select(CreationThreadEvent.content, CreationThreadEvent.payload)
-            .where(
-                CreationThreadEvent.thread_id == thread_id,
-                CreationThreadEvent.role == "user",
-                CreationThreadEvent.sequence <= through_sequence,
-                CreationThreadEvent.content.is_not(None),
-            )
-            .order_by(CreationThreadEvent.sequence)
-        ).all()
-        # KRI-552: a re-sent copy of a message adds no instruction to the pinned request.
-        if str(content).strip() and not is_duplicate_answer(payload)
-    ]
-    request = "\n".join(messages)
-    return request if len(request) <= 12_000 else None
+    request = creator_request_text_sync(db, thread_id=thread_id, through_sequence=through_sequence)
+    return request if len(request) <= MAX_REQUEST_CHARS else None
 
 
 def _marks_route_sync(  # noqa: ANN001
@@ -427,6 +433,12 @@ class _ClaimsExhausted:
     successor_turn_id: str | None = None
 
 
+def _refuse_repair_reply(planned: PlannedKriaTurn) -> None:
+    """A system-staged repair is never answered in chat: it is refused and the reviewer decides."""
+    if planned.intent_repair is not None:
+        raise IntentRepairRefused("protected")
+
+
 @dataclass(frozen=True)
 class _ApprovalDispatchClaim:
     approval_id: uuid.UUID
@@ -489,6 +501,209 @@ def _snapshot(thread: CreationThread) -> dict[str, Any]:
     }
 
 
+def _pin_refusal_signal(pin: dict[str, Any] | None, reason: str) -> dict[str, Any]:
+    """The typed record of a refused pin: the assistant event's ``suggestion_pin`` payload."""
+    pin = pin or {}
+    return {
+        "set_id": pin.get("set_id"),
+        "id": pin.get("id"),
+        "outcome": "refused",
+        "reason": reason,
+    }
+
+
+# Reason codes of the draft commit's own stops, the shared gates every draft passes (the codes of
+# the seam's planner-side refusals live in ``services/suggestions/pinned``). Plain strings, so a
+# turn that is not a pinned tap never imports the suggestion engine to build one.
+_PIN_CONSENT_REQUIRED = "consent_required"
+_PIN_MARK_NEEDED = "mark_needed"
+_PIN_REQUIREMENTS_NOT_READY = "requirements_not_ready"
+_PIN_CHOICE_NEEDED = "choice_needed"
+_PIN_REQUEST_TOO_LONG = "request_too_long"
+
+
+def _refusal_brief_updates(
+    planned: PlannedKriaTurn, updates: tuple[BriefUpdate, ...]
+) -> tuple[BriefUpdate, ...]:
+    """What a reply that ends a turn writes to the brief (KRI-188: it records what the creator
+    stated). A refused tap stated nothing: its typed requirement describes a change that did not
+    happen, and a live one is read as the creator's own ask (KRI-129)."""
+    return () if planned.suggestion_pin is not None else updates
+
+
+def _refusal_receipts(
+    planned: PlannedKriaTurn, receipts: list[dict[str, Any]] | None
+) -> list[dict[str, Any]] | None:
+    """The receipts judged the speculative brief, which a refused tap rolls back, so they name a
+    version that is never written. Dropped for a tap; every other reply keeps them."""
+    return None if planned.suggestion_pin is not None else receipts
+
+
+def _pin_refusal_for(planned: PlannedKriaTurn, reason: str) -> dict[str, Any] | None:
+    """The typed refusal for a tap that ends in a reply instead of a draft; None for any turn
+    that is not a pinned tap (so every other reply is exactly what it was)."""
+    if planned.suggestion_pin is None:
+        return None
+    return _pin_refusal_signal(planned.suggestion_pin, reason)
+
+
+def _pin_refusal_for_error(planned: PlannedKriaTurn, exc: Exception) -> dict[str, Any] | None:
+    """``_pin_refusal_for`` for the errors the draft commit answers with a reply."""
+    if planned.suggestion_pin is None:
+        return None
+    from app.services.suggestions import pinned as _pinned  # noqa: PLC0415
+
+    if isinstance(exc, EditorStateSpeechCutError):
+        reason = _pinned.UNSAVED_EDITS
+    elif isinstance(exc, EditorStateReplyError):
+        reason = _pinned.TARGET_UNAVAILABLE
+    elif isinstance(exc, (ApprovedCreatorRequestTooLongError, BriefBindingRequestTooLongError)):
+        reason = _PIN_REQUEST_TOO_LONG
+    else:  # an op the recipe cannot hold, a text timing conflict
+        reason = _pinned.OP_REFUSED
+    return _pin_refusal_signal(planned.suggestion_pin, reason)
+
+
+def planned_pin_refusal(plan: KriaTurnPlan) -> dict[str, Any] | None:
+    """The refusal a pinned plan recorded on its diagnostics (planner side), else None."""
+    record = (plan.diagnostics or {}).get("suggestion_pin")
+    if not isinstance(record, dict) or record.get("outcome") != "refused":
+        return None
+    return _pin_refusal_signal(record, str(record.get("reason") or ""))
+
+
+def _pinned_tap_no_longer_fits(
+    turn_id: uuid.UUID,
+    *,
+    lease_owner: str,
+    lease_epoch: int,
+    claimed_thread_revision: int,
+    planned: PlannedKriaTurn,
+    reason: str,
+) -> _Completion:
+    """A tapped card the draft commit cannot honour: say so and write nothing else.
+
+    The caller has rolled back its speculative work (the same rollback-then-respond pattern as the
+    creative-copy and choice gates), so no draft or brief version exists for the tap.
+    """
+    pin = planned.suggestion_pin or {}
+    log.info(
+        "suggestion_pin.refused_at_commit",
+        turn_id=str(turn_id),
+        set_id=pin.get("set_id"),
+        suggestion_id=pin.get("id"),
+        reason=reason,
+    )
+    signal = _pin_refusal_signal(pin, reason)
+    completed = _complete_response_turn(
+        turn_id,
+        lease_owner=lease_owner,
+        lease_epoch=lease_epoch,
+        claimed_thread_revision=claimed_thread_revision,
+        plan=KriaTurnPlan(
+            mode="respond",
+            turn_value="recovery",
+            response=no_longer_fits_reply(),
+        ),
+        pinned_refusal=signal,
+    )
+    return replace(completed, response_only=True)
+
+
+def _pinned_undo_entry(
+    planned: PlannedKriaTurn,
+    turn_id: uuid.UUID,
+    brief: CreativeBrief | None,
+    setting_undo: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """The tap's own footprint, kept on the draft's execution so Undo can take it all back
+    (``kria/drafts.undo_draft``): the requirements this turn wrote, the setting it flipped, and
+    the card's identity, so its applied mark can be cleared even when the tap wrote neither (no
+    creative brief). Empty for any turn that is not a pinned tap, so every other execution is
+    what it was."""
+    if planned.suggestion_pin is None:
+        return {}
+    written = [
+        req.id
+        for req in (brief.live() if brief is not None else [])
+        if req.source_turn_id == str(turn_id)
+    ]
+    return {
+        "pinned_undo": {
+            "turn_id": str(turn_id),
+            "set_id": planned.suggestion_pin.get("set_id"),
+            "id": planned.suggestion_pin.get("id"),
+            "requirement_ids": written,
+            **({"setting": setting_undo} if setting_undo is not None else {}),
+        }
+    }
+
+
+def _restate_video_moved(
+    job: Job | None,
+    variant_key: str,
+    session: CreatorAgentSession,
+    pin: Mapping[str, Any],
+) -> bool:
+    """A native-editor Save (or any other writer) changed the saved video since this restate
+    stood on it. A Save writes no draft, so the head hash cannot tell, and a restated plan holds
+    none of the creator's saved edits: approving it renders from the plan and drops them.
+
+    Two witnesses, both read under the row locks. The generation the tap was planned against
+    (``pin["generation_id"]``) catches a Save that landed after planning. The session's pointer is
+    the generation the agent last saw: when it is set and differs, a Save landed before the tap
+    and the session never read it (an editor-op tap re-syncs it; a restate must not).
+
+    The serve asks the second witness too (``pinned.save_unread``) and offers no restating card
+    while a Save is unread, so no served card meets it at the tap except one served before the Save.
+    """
+    variant = next(
+        (
+            row
+            for row in ((job.assembly_plan or {}).get("variants") or [] if job is not None else [])
+            if isinstance(row, dict) and str(row.get("variant_id") or "") == variant_key
+        ),
+        None,
+    )
+    current = variant_render_baseline(variant) if variant is not None else ""
+    planned_against = pin.get("generation_id")
+    if planned_against is not None and current != planned_against:
+        return True
+    from app.services.suggestions import pinned as _pinned  # noqa: PLC0415
+
+    return _pinned.save_unread(current, session.target_generation_id)
+
+
+def _publish_cleanup_analysis(analysis_id: uuid.UUID | None) -> None:
+    """Best effort, after the commit that keeps the row (Beat owns durable recovery)."""
+    from app.services.plan_item_media import publish_preflight_after_commit  # noqa: PLC0415
+
+    publish_preflight_after_commit(analysis_id)
+
+
+def _mark_pinned_card_applied(
+    db,  # noqa: ANN001 - SQLAlchemy sync Session
+    thread: CreationThread,
+    pin: dict[str, Any],
+    turn_id: uuid.UUID,
+) -> dict[str, Any]:
+    """Record that the tapped card ran, in the transaction that commits its draft.
+
+    ``thread.state`` was loaded before the thread row lock and can predate a newer set the
+    suggester wrote since, so the ring is read again here, under the lock, and only the marked
+    copy of it is written back.
+    """
+    from app.services.suggestions import pinned as _pinned  # noqa: PLC0415
+
+    current = db.execute(
+        select(CreationThread.state).where(CreationThread.id == thread.id)
+    ).scalar_one()
+    marked = _pinned.mark_consumed(current, str(pin["set_id"]), str(pin["id"]), turn_id)
+    if marked is not None:
+        thread.state = marked
+    return _pinned.applied_footprint(current, str(pin["set_id"]), str(pin["id"]))
+
+
 def _complete_response_turn(
     turn_id: uuid.UUID,
     *,
@@ -503,7 +718,14 @@ def _complete_response_turn(
     creative_copy_resolution: dict | None = None,
     brief_delegated: bool = False,
     brief_delegation_read_ids: tuple[str, ...] = (),
+    pinned_refusal: dict[str, Any] | None = None,
 ) -> _Completion:
+    if pinned_refusal is not None:
+        # The one place every refusal of a tap is recorded, whichever gate or error ended it: on
+        # the assistant event (below) and on the plan, which a replayed submit reads back.
+        plan = plan.model_copy(
+            update={"diagnostics": {**(plan.diagnostics or {}), "suggestion_pin": pinned_refusal}}
+        )
     with sync_session() as db:
         turn = db.execute(
             select(CreatorAgentTurn).where(CreatorAgentTurn.id == turn_id).with_for_update()
@@ -533,6 +755,22 @@ def _complete_response_turn(
                 turn.lease_expires_at = None
                 db.commit()
                 return _Completion(committed=False, requeue_turn_id=str(turn.id))
+        if pinned_refusal is not None:
+            # In this transaction, after both fences: a turn that is requeued has no outcome yet,
+            # and its commit would otherwise carry the mark. The card is marked refused on its ring
+            # entry, so the next read hides it and mints a new set (`pinned.mark_refused`). A
+            # refusal that says nothing about the card (a render in flight) leaves it tappable.
+            from app.services.suggestions import pinned as _pinned  # noqa: PLC0415
+
+            if pinned_refusal.get("reason") not in _pinned.TRANSIENT_REASONS and (
+                marked := _pinned.mark_refused(
+                    thread.state,
+                    str(pinned_refusal.get("set_id") or ""),
+                    str(pinned_refusal.get("id") or ""),
+                    turn.id,
+                )
+            ):
+                thread.state = marked
         persisted_brief = None
         if brief_updates or brief_delegated:
             # KRI-188: a question/recovery turn still records what the creator
@@ -606,6 +844,8 @@ def _complete_response_turn(
                     if creative_copy_resolution
                     else {}
                 ),
+                # A refused tap, typed: the phone reads this instead of matching the reply text.
+                **({"suggestion_pin": pinned_refusal} if pinned_refusal is not None else {}),
             },
         )
         turn.plan_json = plan.model_dump(mode="json")
@@ -621,7 +861,83 @@ def _complete_response_turn(
     )
 
 
-def _continue_turn(turn_id: uuid.UUID, *, lease_owner: str, lease_epoch: int) -> str:
+# Bound on the per-turn continuation record (the run cap is lower; this is a safety net).
+_MAX_PLANNING_RUNS = 8
+
+
+def _planning_run_record(
+    *,
+    epoch: int,
+    outcome: str,
+    reason: str,
+    at: datetime,
+    calls: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    """One run of a continued turn: reason codes and milliseconds only, never creator text."""
+    return {
+        "epoch": epoch,
+        "outcome": outcome,
+        "reason": reason or ("" if outcome in ("completed", "failed") else "unspecified"),
+        "at": at.isoformat(),
+        "calls": [dict(call) for call in calls],
+    }
+
+
+def _append_planning_run(
+    turn_id: uuid.UUID,
+    *,
+    epoch: int,
+    outcome: str,
+    reason: str = "",
+    calls: Sequence[dict[str, Any]] = (),
+) -> None:
+    """Best-effort: a trace write never changes what the creator sees or how the turn ends."""
+    try:
+        with sync_session() as db:
+            turn = db.execute(
+                select(CreatorAgentTurn).where(CreatorAgentTurn.id == turn_id).with_for_update()
+            ).scalar_one_or_none()
+            if turn is None:
+                return
+            record = _planning_run_record(
+                epoch=epoch,
+                outcome=outcome,
+                reason=reason,
+                at=db.execute(select(func.now())).scalar_one(),
+                calls=calls,
+            )
+            turn.planning_runs = [*(turn.planning_runs or []), record][-_MAX_PLANNING_RUNS:]
+            db.commit()
+    except Exception:  # noqa: BLE001 - observability only
+        log.warning("kria_planning_run_record_failed", turn_id=str(turn_id), exc_info=True)
+
+
+def _close_turn_run(
+    turn_id: uuid.UUID,
+    *,
+    lease_epoch: int,
+    outcome: str | None,
+    reason: str = "",
+    calls: Sequence[dict[str, Any]] = (),
+) -> None:
+    """The turn reached a terminal state: drop its stored planner answers, and when it had been
+    continued record this last run, so the trace ends with how the creator's turn really ended.
+    ``outcome=None`` means the run is already recorded."""
+    discard(turn_id)
+    if outcome is not None and lease_epoch > 1:
+        _append_planning_run(
+            turn_id, epoch=lease_epoch, outcome=outcome, reason=reason, calls=calls
+        )
+
+
+def _continue_turn(
+    turn_id: uuid.UUID,
+    *,
+    lease_owner: str,
+    lease_epoch: int,
+    reason: str = "",
+    calls: Sequence[dict[str, Any]] = (),
+) -> str:
     """KRI-709: release a turn whose planner stopped on a time budget so it runs again.
 
     Returns ``"continued"`` (turn is ``pending`` again, caller publishes it),
@@ -636,9 +952,16 @@ def _continue_turn(turn_id: uuid.UUID, *, lease_owner: str, lease_epoch: int) ->
 
     Same lock discipline as `_complete_response_turn`: the turn row under FOR UPDATE and
     the lease re-checked, so a cancel during planning stays cancelled. No event is
-    written and no brief version persisted: the next run does both.
+    written and no brief version persisted: the next run does both. The decision itself is
+    recorded on the turn (`planning_runs`: run, reason code, per-call and per-wait
+    milliseconds), so a later "ran out of time" is diagnosable from `kria/trace`.
     """
     if lease_epoch >= int(settings.kria_turn_auto_continue_max_runs):
+        if int(settings.kria_turn_auto_continue_max_runs) > 1:
+            # The run the creator saw fail: with the switch off nothing was ever continued.
+            _append_planning_run(
+                turn_id, epoch=lease_epoch, outcome="exhausted", reason=reason, calls=calls
+            )
         return "exhausted"
     with sync_session() as db:
         turn = db.execute(
@@ -661,8 +984,22 @@ def _continue_turn(turn_id: uuid.UUID, *, lease_owner: str, lease_epoch: int) ->
         turn.lease_expires_at = database_now + timedelta(
             seconds=_CONTINUE_COUNTDOWN_S + _CONTINUE_LEASE_SLACK_S
         )
+        record = _planning_run_record(
+            epoch=lease_epoch,
+            outcome="continued",
+            reason=reason,
+            at=database_now,
+            calls=calls,
+        )
+        turn.planning_runs = [*(turn.planning_runs or []), record][-_MAX_PLANNING_RUNS:]
         db.commit()
-    log.info("kria_turn_auto_continued", turn_id=str(turn_id), lease_epoch=lease_epoch)
+    log.info(
+        "kria_turn_auto_continued",
+        turn_id=str(turn_id),
+        lease_epoch=lease_epoch,
+        reason=record["reason"],
+        calls=record["calls"],
+    )
     return "continued"
 
 
@@ -690,13 +1027,20 @@ _EDIT_FORMAT_TR = {
 }
 
 
-def _strategy_changes(arguments: Any) -> list[str]:
+def _strategy_changes(arguments: Any, *, route: str | None = None) -> list[str]:
+    """The card's chips. With ``route`` (the draft's render route) a pace the route does not
+    follow is left off: nobody asked for it and nothing would play it (Green 4/5)."""
+    from app.kria.route_disclosure import asked_only, route_ignores  # noqa: PLC0415
+
     strategy = arguments.strategy
     pacing = strategy.pacing.replace("_", " ").title()
     edit_format = strategy.edit_format.replace("_", " ").title()
+    pace_shown = route is None or not asked_only() or not route_ignores(route, "pacing")
     values = [
         arguments.summary,
-        say(en=f"{pacing} pacing", tr=f"Tempo: {_PACING_TR.get(strategy.pacing, pacing)}"),
+        say(en=f"{pacing} pacing", tr=f"Tempo: {_PACING_TR.get(strategy.pacing, pacing)}")
+        if pace_shown
+        else None,
         say(
             en=f"{edit_format} format",
             tr=f"Format: {_EDIT_FORMAT_TR.get(strategy.edit_format, edit_format)}",
@@ -1026,7 +1370,15 @@ def _label_text_unresolved(unresolved: str, brief: Any) -> LabelTextReply | None
     return None
 
 
-def _creative_copy_problem_sync(db, thread_id, media, *, strategy=None, resolution=None):  # noqa: ANN001, ANN202
+def _creative_copy_problem_sync(
+    db,  # noqa: ANN001
+    thread_id,  # noqa: ANN001
+    media,  # noqa: ANN001
+    *,
+    strategy=None,  # noqa: ANN001
+    resolution=None,  # noqa: ANN001
+    pinned_ops=None,  # noqa: ANN001
+):  # noqa: ANN202
     rows = db.execute(
         select(
             CreationThreadEvent.role,
@@ -1045,6 +1397,7 @@ def _creative_copy_problem_sync(db, thread_id, media, *, strategy=None, resoluti
         + [("assistant", {"creative_copy_resolution": resolution})],
         media,
         strategy=strategy,
+        pinned_ops=pinned_ops,
     )
 
 
@@ -1091,11 +1444,22 @@ def _simpler_version_offer(
     return sentence, question
 
 
-def _fit_reply(body: str, tail: str) -> str:
+def _fit_reply(
+    body: str,
+    tail: str,
+    *,
+    notice: str | None = None,
+    disclosures: Sequence[Disclosure] = (),
+) -> str:
     """``body``, then ``tail`` on its own line, within the turn plan's response limit. The
     tail (what is held back, what the simpler version leaves out, the question) stays whole;
-    the receipt lines above it are shortened first."""
+    the receipt lines above it are shortened first. The route heads-up (``notice``, the end of
+    ``body``) keeps whole sentences and names the ones that do not fit on its compact line."""
     room = _MAX_TURN_RESPONSE_CHARS - len(tail) - 1
+    if notice and len(body) > room and body.endswith(notice):
+        head = body[: -len(notice)].rstrip("\n")
+        fitted = card_text_within(disclosures, room - len(head) - 1)
+        body = f"{head}\n{fitted}" if head else fitted
     if len(body) > room:
         body = body[: max(0, room - 1)].rstrip() + "…"
     return f"{body}\n{tail}"
@@ -1502,6 +1866,7 @@ def _complete_draft_turn(
     your_edits_snapshot: dict[str, Any] | None = None
     your_edits_hash = ""
     restore_record: dict[str, Any] | None = None  # KRI-442: pre-update lanes for Undo
+    pointer_sync: dict[str, Any] | None = None  # where an editor draft moved the session pointer
     scope_note = ""  # KRI-441: "I left X alone." for what layer 3 took back
     if apply_intent.tool_name == "draft.apply_strategy":
         changes = _strategy_changes(arguments)
@@ -1581,7 +1946,21 @@ def _complete_draft_turn(
             from app.kria.brief_binding import media_identity, snapshot_media  # noqa: PLC0415
 
             if media_identity(planned.media_snapshot) != media_identity(snapshot_media(item)):
-                raise RuntimeError("Your clips changed after planning; please plan again")
+                if planned.suggestion_pin is None:
+                    raise RuntimeError("Your clips changed after planning; please plan again")
+                # A tapped restate answers like every other refusal; failing the turn would
+                # leave the card tappable and the phone with no typed reply.
+                from app.services.suggestions import pinned as _pinned  # noqa: PLC0415
+
+                db.rollback()
+                return _pinned_tap_no_longer_fits(
+                    turn_id,
+                    lease_owner=lease_owner,
+                    lease_epoch=lease_epoch,
+                    claimed_thread_revision=claimed_thread_revision,
+                    planned=planned,
+                    reason=_pinned.BASE_MOVED,
+                )
         # KRI-506: consent is checked under the revision fence for BOTH draft kinds.
         # A planner/editor shortcut or an exhausted question budget cannot bypass it.
         from app.kria.brief_binding import snapshot_media as _copy_media  # noqa: PLC0415
@@ -1592,8 +1971,16 @@ def _complete_draft_turn(
             _copy_media(item),
             strategy=document.strategy if document is not None else None,
             resolution=planned.creative_copy_resolution,
+            # A tapped card's editor ops: the gate reads whether they touch the title lane.
+            pinned_ops=(
+                [str(op.get("op") or "") for op in arguments.operations]
+                if planned.suggestion_pin is not None
+                and apply_intent.tool_name == "draft.apply_editor_ops"
+                else None
+            ),
         )
         if copy_problem:
+            _refuse_repair_reply(planned)
             log.info("kria_creative_copy_blocked", phase="draft", thread_id=str(thread.id))
             db.rollback()
             completed = _complete_response_turn(
@@ -1606,6 +1993,7 @@ def _complete_draft_turn(
                 brief_delegation_read_ids=planned.brief_delegation_read_ids,
                 brief_coverage={"stage": "draft", "reason": KEEP_OPEN_REASON},
                 brief_expected_version=planned.brief_expected_version,
+                pinned_refusal=_pin_refusal_for(planned, _PIN_CONSENT_REQUIRED),
             )
             return replace(completed, response_only=True)
 
@@ -1621,6 +2009,72 @@ def _complete_draft_turn(
             )
             .with_for_update()
         ).scalar_one_or_none()
+        pin = planned.suggestion_pin
+        publish_analysis_id: uuid.UUID | None = None
+        setting_undo: dict[str, Any] | None = None
+        if pin is not None:
+            # Every pinned tap: the brief it was typed against must still be the brief now. A
+            # moved brief is a card that no longer fits, not a "please retry" failure.
+            from app.services.suggestions import pinned as _pinned  # noqa: PLC0415
+
+            current_for_pin = load_latest_brief_sync(db, thread.id)
+            if planned.brief_expected_version is not None and planned.brief_expected_version != (
+                current_for_pin.version if current_for_pin else 0
+            ):
+                db.rollback()
+                return _pinned_tap_no_longer_fits(
+                    turn_id,
+                    lease_owner=lease_owner,
+                    lease_epoch=lease_epoch,
+                    claimed_thread_revision=claimed_thread_revision,
+                    planned=planned,
+                    reason=_pinned.BASE_MOVED,
+                )
+        if pin is not None and apply_intent.tool_name == "draft.apply_strategy":
+            # A restate (a typed brief update, an item setting): the plan it restates and the
+            # head draft it replaces must still be the ones the tap was planned against.
+            if (head.snapshot_hash if head is not None else None) != pin.get(
+                "head_hash"
+            ) or _restate_video_moved(job, variant_key, session, pin):
+                db.rollback()
+                return _pinned_tap_no_longer_fits(
+                    turn_id,
+                    lease_owner=lease_owner,
+                    lease_epoch=lease_epoch,
+                    claimed_thread_revision=claimed_thread_revision,
+                    planned=planned,
+                    reason=_pinned.BASE_MOVED,
+                )
+            setting = pin.get("setting")
+            if setting:
+                from app.services.suggestions.kinds.filler_words import (  # noqa: PLC0415
+                    apply_item_setting,
+                    setting_undo_record,
+                )
+                from app.services.suggestions.models import ItemSettingAction  # noqa: PLC0415
+
+                setting_action = ItemSettingAction(**setting)
+                outcome = apply_item_setting(db, item, setting_action)
+                if not outcome.applied:
+                    if outcome.publish_analysis_id is not None:
+                        # The scheduler re-queued the analysis (and put the setting back). Rolling
+                        # back would orphan that row, so keep it and hand it to the publisher.
+                        db.commit()
+                        _publish_cleanup_analysis(outcome.publish_analysis_id)
+                    else:
+                        db.rollback()
+                    return _pinned_tap_no_longer_fits(
+                        turn_id,
+                        lease_owner=lease_owner,
+                        lease_epoch=lease_epoch,
+                        claimed_thread_revision=claimed_thread_revision,
+                        planned=planned,
+                        reason=outcome.reason or _pinned.SETTING_REFUSED,
+                    )
+                publish_analysis_id = outcome.publish_analysis_id
+                setting_undo = setting_undo_record(
+                    setting_action, outcome, at=db.execute(select(func.now())).scalar_one()
+                )
         if apply_intent.tool_name == "draft.apply_editor_ops":
             variant = (
                 next(
@@ -1686,6 +2140,53 @@ def _complete_draft_turn(
                 head if head is not None and head.base_job_id == job.id else None,
                 client_state,
             )
+            from app.kria.editor_repair import verify_editor_repair, verify_editor_repair_ownership
+
+            verify_editor_repair_ownership(planned, plan_row=plan_row, job=job, session=session)
+            verify_editor_repair(
+                planned,
+                job=job,
+                variant=variant,
+                head=head,
+                client_state=client_state,
+                projected=editor_base.projected,
+                brief=load_latest_brief_sync(db, thread.id),
+            )
+            if planned.suggestion_pin is not None:
+                from app.services.suggestions import pinned as _pinned  # noqa: PLC0415
+
+                if (
+                    _pinned.projected_digest(editor_base.projected)
+                    != planned.suggestion_pin["projected_digest"]
+                ):
+                    # The editor moved between planning and this lock (a Save, another turn):
+                    # an index-addressed op would land on whichever clip now sits there.
+                    db.rollback()
+                    return _pinned_tap_no_longer_fits(
+                        turn_id,
+                        lease_owner=lease_owner,
+                        lease_epoch=lease_epoch,
+                        claimed_thread_revision=claimed_thread_revision,
+                        planned=planned,
+                        reason=_pinned.BASE_MOVED,
+                    )
+            if planned.intent_repair is not None:
+                guard_intent_repair_head(
+                    planned.intent_repair,
+                    head=head,
+                    variant=variant,
+                    pending_approvals=int(
+                        db.scalar(
+                            select(func.count())
+                            .select_from(CreatorAgentApproval)
+                            .where(
+                                CreatorAgentApproval.thread_id == thread.id,
+                                CreatorAgentApproval.status == "pending",
+                            )
+                        )
+                        or 0
+                    ),
+                )
             prior_payload = editor_base.prior_payload
             # The session pointer goes stale after an editor Save; stamp the draft
             # with the variant's real generation so it never self-perpetuates.
@@ -1696,6 +2197,10 @@ def _complete_draft_turn(
             # session target aligned with the locked variant before minting a
             # later approval, while the existing Job -> Session lock order is
             # held. A failed transaction rolls this pointer back with the Job.
+            if settings.kria_suggestion_pinned_taps_enabled:
+                from app.kria.drafts import pointer_sync_record  # noqa: PLC0415
+
+                pointer_sync = pointer_sync_record(session, canonical_generation_id)
             session.target_generation_id = canonical_generation_id
             wants_speech_cut = any(
                 op.get("op") == "apply_speech_cut_candidate" for op in arguments.operations
@@ -1722,6 +2227,22 @@ def _complete_draft_turn(
             compiled = compile_editor_ops(
                 job, editor_base.projected, arguments.operations, preserve_text=preserve_text
             )
+            verify_intent_repair(
+                planned.intent_repair, before=compiled.before, payload=compiled.payload
+            )
+            if planned.suggestion_pin is not None and (
+                compiled.diff.unavailable or not compiled.diff.real()
+            ):
+                # A tap that changes nothing must never read as done, nor invite free words.
+                db.rollback()
+                return _pinned_tap_no_longer_fits(
+                    turn_id,
+                    lease_owner=lease_owner,
+                    lease_epoch=lease_epoch,
+                    claimed_thread_revision=claimed_thread_revision,
+                    planned=planned,
+                    reason="no_change",
+                )
             if timing_only_operations(arguments.operations) or any(
                 update.facts.get("editor_timing_only") is True for update in planned.brief_updates
             ):
@@ -1787,6 +2308,9 @@ def _complete_draft_turn(
                         changes=[],
                     )
                     your_edits_snapshot, your_edits_hash = canonical_snapshot(baseline)
+            from app.kria.editor_repair import verify_compiled_repair
+
+            verify_compiled_repair(planned, compiled.payload)
             changes = compiled.changes
             editor_diff_trace = compiled.diff.to_json()
             state_id = (
@@ -1936,6 +2460,9 @@ def _complete_draft_turn(
                         facts,
                         phone_talking=phone_talking,
                         caption_words_at_render=talking_writer,
+                        # Qendresa item 12: a caption shape is promised only to a build that
+                        # draws it.
+                        client_protocol=client_protocol,
                         # KRI-1024: any phone writer draws text with the phone's fonts, so a
                         # literal none of them draws is a "Couldn't" before approval.
                         phone_text=defers_text_to_phone(
@@ -2050,6 +2577,14 @@ def _complete_draft_turn(
                         clip_paths=item.clip_gcs_paths or (),
                         phone_montage=facts.phone_montage,
                     )
+                    # Green 4/5: the chips follow the route too ("Balanced pacing" on a route
+                    # that ignores pacing claimed a pace nobody asked for and nothing played).
+                    if apply_intent.tool_name == "draft.apply_strategy" and route_name:
+                        routed_changes = _strategy_changes(arguments, route=route_name)
+                        if routed_changes != changes:
+                            changes = routed_changes
+                            document = document.model_copy(update={"changes": changes})
+                            snapshot, snapshot_hash = canonical_snapshot(document)
                     checked = brief.live()
                     # KRI-190: the unified montage planner writes the per-clip text,
                     # order and title at render time and reports on them then. Judging
@@ -2650,6 +3185,7 @@ def _complete_draft_turn(
             render_requested=render_intent is not None,
         )
         if mark_gate is not None:
+            _refuse_repair_reply(planned)
             # KRI-901: "No text on the plate" with no mark on the plate: the render could only
             # report `no_selection` afterwards, so ask for the mark before approval. Same
             # rollback-then-respond pattern as the choice gate below (the old draft stays the
@@ -2662,12 +3198,13 @@ def _complete_draft_turn(
                 lease_epoch=lease_epoch,
                 claimed_thread_revision=claimed_thread_revision,
                 plan=mark_plan,
-                brief_updates=planned.brief_updates
-                if automatic_omission
-                else effective_brief_updates,
+                brief_updates=_refusal_brief_updates(
+                    planned,
+                    planned.brief_updates if automatic_omission else effective_brief_updates,
+                ),
                 brief_delegated=planned.brief_delegated,
                 brief_delegation_read_ids=planned.brief_delegation_read_ids,
-                requirement_receipts=requirement_receipts,
+                requirement_receipts=_refusal_receipts(planned, requirement_receipts),
                 brief_coverage={
                     **(planned.brief_coverage or {}),
                     "stage": "draft",
@@ -2675,6 +3212,7 @@ def _complete_draft_turn(
                     "protected_region_requirement_ids": mark_question["requirement_ids"],
                 },
                 brief_expected_version=planned.brief_expected_version,
+                pinned_refusal=_pin_refusal_for(planned, _PIN_MARK_NEEDED),
             )
             return replace(completed, response_only=True)
         if (
@@ -2697,6 +3235,7 @@ def _complete_draft_turn(
             # and the specific choice in the normal response transaction. A limit
             # of the chosen format (a Talking edit's length, speech cleanup chosen
             # at approval) is reported in the receipt instead and never asks.
+            _refuse_repair_reply(planned)
             db.rollback()
             draft_state = (
                 say(en="Your current draft is unchanged.", tr="Mevcut taslağın değişmedi.")
@@ -2708,8 +3247,12 @@ def _complete_draft_turn(
                 )
             )
             policy_problem = (readiness_report or {}).get("policy_problem")
-            can_offer_simpler = simpler_keeps_an_ask and (
-                not readiness_required or bool(unmet_ids) and not policy_problem
+            can_offer_simpler = (
+                simpler_keeps_an_ask
+                and (not readiness_required or bool(unmet_ids) and not policy_problem)
+                # "Make it without these" would consent to omissions at a brief version this
+                # refusal never writes, and answering it would not apply the tapped card.
+                and planned.suggestion_pin is None
             )
             # KRI-968: name what the simpler version leaves out before the creator picks it,
             # and record those ids on the question so a tap consents to exactly them.
@@ -2737,7 +3280,10 @@ def _complete_draft_turn(
                 turn_value="question",
                 choice_question=simpler_question,
                 response=_fit_reply(
-                    reply_text, " ".join(part for part in (draft_state, leaves_out, ask) if part)
+                    reply_text,
+                    " ".join(part for part in (draft_state, leaves_out, ask) if part),
+                    notice=route_notice,
+                    disclosures=route_disclosures,
                 ),
             )
             completed = _complete_response_turn(
@@ -2746,10 +3292,10 @@ def _complete_draft_turn(
                 lease_epoch=lease_epoch,
                 claimed_thread_revision=claimed_thread_revision,
                 plan=recovery,
-                brief_updates=planned.brief_updates,
+                brief_updates=_refusal_brief_updates(planned, planned.brief_updates),
                 brief_delegated=planned.brief_delegated,
                 brief_delegation_read_ids=planned.brief_delegation_read_ids,
-                requirement_receipts=requirement_receipts,
+                requirement_receipts=_refusal_receipts(planned, requirement_receipts),
                 brief_coverage={
                     **(planned.brief_coverage or {}),
                     "stage": "draft",
@@ -2764,6 +3310,7 @@ def _complete_draft_turn(
                     ),
                 },
                 brief_expected_version=planned.brief_expected_version,
+                pinned_refusal=_pin_refusal_for(planned, _PIN_REQUIREMENTS_NOT_READY),
             )
             return replace(completed, response_only=True)
         approval_summary = arguments.summary
@@ -2851,6 +3398,7 @@ def _complete_draft_turn(
                 allow_choices=settings.kria_choice_questions_enabled,
             )
             if blocked is not None:
+                _refuse_repair_reply(planned)
                 blocked_plan, blocked_reason = blocked
                 # KRI-1068: record the clip a reply is stuck on, so "skip that" next turn
                 # drops it; never send the same stuck reply twice in a row.
@@ -2870,12 +3418,13 @@ def _complete_draft_turn(
                     plan=blocked_plan,
                     # Auto omissions were speculative and rolled back too. Preserve
                     # the original request; recompute omissions after the real choice.
-                    brief_updates=planned.brief_updates
-                    if automatic_omission
-                    else effective_brief_updates,
+                    brief_updates=_refusal_brief_updates(
+                        planned,
+                        planned.brief_updates if automatic_omission else effective_brief_updates,
+                    ),
                     brief_delegated=planned.brief_delegated,
                     brief_delegation_read_ids=planned.brief_delegation_read_ids,
-                    requirement_receipts=requirement_receipts,
+                    requirement_receipts=_refusal_receipts(planned, requirement_receipts),
                     brief_coverage={
                         **(planned.brief_coverage or {}),
                         "stage": "draft",
@@ -2891,6 +3440,7 @@ def _complete_draft_turn(
                         ),
                     },
                     brief_expected_version=planned.brief_expected_version,
+                    pinned_refusal=_pin_refusal_for(planned, _PIN_CHOICE_NEEDED),
                 )
                 return replace(completed, response_only=True)
         if settings.brief_binding_for(thread.creator_id):
@@ -3024,6 +3574,8 @@ def _complete_draft_turn(
                 **({"editor_diff": editor_diff_trace} if editor_diff_trace else {}),
                 **state_trace,
                 **({"plan_review_before": restore_record} if restore_record else {}),
+                **({"pointer_sync": pointer_sync} if pointer_sync else {}),
+                **_pinned_undo_entry(planned, turn.id, brief, setting_undo),
             },
             started_at=datetime.now(UTC),
             completed_at=datetime.now(UTC),
@@ -3071,13 +3623,40 @@ def _complete_draft_turn(
         )
         db.add(draft)
         db.flush()
+        applied_marks: dict[str, Any] = {}
+        if planned.suggestion_pin is not None:
+            applied_marks = _mark_pinned_card_applied(db, thread, planned.suggestion_pin, turn.id)
         draft_execution.target_draft_id = draft.id
         draft_execution.target_draft_revision = draft.draft_revision
         draft_execution.result = {
             **(draft_execution.result or {}),
             "draft_id": str(draft.id),
             "draft_revision": draft.draft_revision,
+            **applied_intent_repair_receipt(planned.intent_repair),
         }
+        if applied_marks and "pinned_undo" in draft_execution.result:
+            draft_execution.result["pinned_undo"] = {
+                **draft_execution.result["pinned_undo"],
+                **applied_marks,
+            }
+
+        from app.kria.editor_repair import applied_repair_receipt
+
+        repair_receipt = applied_repair_receipt(planned)
+        if repair_receipt:
+            repair_note = say(
+                en="Prepared the timing-only draft with the original wording unchanged. "
+                "I removed unrequested copy changes from the proposed edit.",
+                tr="Özgün kelimeleri değiştirmeden yalnızca zamanlama taslağını hazırladım. "
+                "İstenmeyen metin değişikliklerini önerilen düzenlemeden çıkardım.",
+            )
+            if parent_draft is not None:
+                repair_note += " " + say(
+                    en="You can preview the draft or undo it.",
+                    tr="Taslağı önizleyebilir veya geri alabilirsin.",
+                )
+            reply_text = f"{reply_text}\n{repair_note}"
+            draft_execution.result = {**(draft_execution.result or {}), **repair_receipt}
 
         if render_intent is None:
             event = _append_sync_event(
@@ -3095,6 +3674,7 @@ def _complete_draft_turn(
                     "can_undo": parent_draft is not None,
                     "receipt_ids": [str(draft_execution.id)],
                     "render_requested": False,
+                    **repair_receipt,
                     **(
                         {"creative_copy_resolution": planned.creative_copy_resolution}
                         if planned.creative_copy_resolution
@@ -3118,7 +3698,9 @@ def _complete_draft_turn(
             thread_id = thread.id
             db.commit()
             return _Completion(
-                committed=True, successor_turn_id=_promote_queued_successor_sync(thread_id)
+                committed=True,
+                successor_turn_id=_promote_queued_successor_sync(thread_id),
+                publish_analysis_id=publish_analysis_id,
             )
 
         render_execution = CreatorAgentExecution(
@@ -3209,6 +3791,7 @@ def _complete_draft_turn(
             content=reply_text,
             payload={
                 "turn_id": str(turn.id),
+                **repair_receipt,
                 "draft_id": str(draft.id),
                 **(
                     {"creative_copy_resolution": planned.creative_copy_resolution}
@@ -3258,7 +3841,7 @@ def _complete_draft_turn(
         turn.lease_owner = None
         turn.lease_expires_at = None
         db.commit()
-        return _Completion(committed=True)
+        return _Completion(committed=True, publish_analysis_id=publish_analysis_id)
 
 
 def _research_preview_payload(draft_research: Any) -> dict[str, Any]:
@@ -3368,6 +3951,9 @@ async def _plan_with_live_agent(
     # KRI-1037: "Try again" after a provider deadline starts the Main Creator on its lighter
     # rung (the claim stamped the snapshot from the thread's last finished turn).
     degraded_token = start_degraded_retry.set(bool(snapshot.get("start_degraded")))
+    # A continued or reclaimed run re-sends unchanged prompts: its paid calls are new calls.
+    epoch_token = turn_run_epoch.set(lease_epoch)
+    run_id_token = turn_run_id.set(turn_id)
     sender = bind_sending_build(stamped_client_protocol(snapshot.get("client_protocol")))
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
@@ -3423,93 +4009,147 @@ async def _plan_with_live_agent(
                     ),
                     **scoped,
                 )
-                if (
-                    settings.approval_readiness_for(snapshot["creator_id"])
-                    and planned.plan.mode == "act"
-                ):
-                    strategy_intent = next(
-                        (
-                            intent
-                            for intent in planned.plan.intents
-                            if intent.tool_name == "draft.apply_strategy"
-                        ),
-                        None,
-                    )
-                    if any(intent.tool_name == "render.request" for intent in planned.plan.intents):
-                        from app.kria.approval_readiness import (
-                            resolve_readiness_manifest,  # noqa: PLC0415
-                        )
-
-                        item = await db.get(
-                            PlanItem, uuid.UUID(str(snapshot["item_id"])), populate_existing=True
-                        )
-                        manifest = await resolve_readiness_manifest(
-                            db,
-                            item,
-                            strategy_intent.arguments["strategy"] if strategy_intent else None,
-                        )
-                        if strategy_intent is not None:
-                            from app.agents._schemas.creator_agent import (
-                                CreativeStrategy,  # noqa: PLC0415
-                            )
-                            from app.kria.strategy_policy import (  # noqa: PLC0415
-                                RefusedStrategy,
-                                check_strategy_for_runtime_v2,
-                            )
-
-                            # Resolve defaults against the PROPOSED renderer before
-                            # offering approval, then save that exact canonical strategy.
-                            # The assessor and approval reader still reject later repairs.
-                            checked = check_strategy_for_runtime_v2(
-                                manifest,
-                                CreativeStrategy.model_validate(
-                                    strategy_intent.arguments["strategy"]
-                                ),
-                                ask_before_simplifying=True,
-                                ask_about_stated_settings=True,
-                            )
-                            if not isinstance(checked, RefusedStrategy):
-                                canonical = strategy_intent.model_copy(
-                                    update={
-                                        "arguments": {
-                                            **strategy_intent.arguments,
-                                            "strategy": checked.strategy.model_dump(
-                                                mode="json", exclude_none=True
-                                            ),
-                                            "summary": " ".join(
-                                                [
-                                                    str(
-                                                        strategy_intent.arguments.get("summary")
-                                                        or ""
-                                                    ),
-                                                    *checked.notices,
-                                                ]
-                                            ).strip()[:1000],
-                                        },
-                                    }
-                                )
-                                planned = replace(
-                                    planned,
-                                    plan=planned.plan.model_copy(
-                                        update={
-                                            "intents": [
-                                                canonical if i is strategy_intent else i
-                                                for i in planned.plan.intents
-                                            ],
-                                        }
-                                    ),
-                                )
-                        planned = replace(planned, readiness_manifest=manifest)
+                planned = await _with_approval_readiness(
+                    db,
+                    planned,
+                    creator_id=snapshot["creator_id"],
+                    item_id=snapshot["item_id"],
+                )
                 return planned
     finally:
         turn_deadline.reset(deadline)
         start_degraded_retry.reset(degraded_token)
+        turn_run_epoch.reset(epoch_token)
+        turn_run_id.reset(run_id_token)
         unbind_sending_build(sender)
         stop.set()
         try:
             await heartbeat
         finally:
             await engine.dispose()
+
+
+async def _with_approval_readiness(
+    db,  # noqa: ANN001 - SQLAlchemy AsyncSession
+    planned: PlannedKriaTurn,
+    *,
+    creator_id: Any,  # noqa: ANN401
+    item_id: Any,  # noqa: ANN401
+) -> PlannedKriaTurn:
+    """Resolve the renderer an approval-readiness account's draft is judged against (KRI-721).
+
+    Shared by the live planner and the pinned suggestion planner: a plan that asks for a render
+    carries ``readiness_manifest`` (and its strategy resolved against that renderer), or
+    ``assess_readiness`` can establish nothing and refuses every requirement. A plan with no
+    render request, and an account not on readiness, come back untouched.
+    """
+    if settings.approval_readiness_for(creator_id) and planned.plan.mode == "act":
+        strategy_intent = next(
+            (
+                intent
+                for intent in planned.plan.intents
+                if intent.tool_name == "draft.apply_strategy"
+            ),
+            None,
+        )
+        if any(intent.tool_name == "render.request" for intent in planned.plan.intents):
+            from app.kria.approval_readiness import (
+                resolve_readiness_manifest,  # noqa: PLC0415
+            )
+
+            item = await db.get(PlanItem, uuid.UUID(str(item_id)), populate_existing=True)
+            manifest = await resolve_readiness_manifest(
+                db,
+                item,
+                strategy_intent.arguments["strategy"] if strategy_intent else None,
+            )
+            if strategy_intent is not None:
+                from app.agents._schemas.creator_agent import (
+                    CreativeStrategy,  # noqa: PLC0415
+                )
+                from app.kria.strategy_policy import (  # noqa: PLC0415
+                    RefusedStrategy,
+                    check_strategy_for_runtime_v2,
+                )
+
+                # Resolve defaults against the PROPOSED renderer before
+                # offering approval, then save that exact canonical strategy.
+                # The assessor and approval reader still reject later repairs.
+                checked = check_strategy_for_runtime_v2(
+                    manifest,
+                    CreativeStrategy.model_validate(strategy_intent.arguments["strategy"]),
+                    ask_before_simplifying=True,
+                    ask_about_stated_settings=True,
+                )
+                if not isinstance(checked, RefusedStrategy):
+                    canonical = strategy_intent.model_copy(
+                        update={
+                            "arguments": {
+                                **strategy_intent.arguments,
+                                "strategy": checked.strategy.model_dump(
+                                    mode="json", exclude_none=True
+                                ),
+                                "summary": " ".join(
+                                    [
+                                        str(strategy_intent.arguments.get("summary") or ""),
+                                        *checked.notices,
+                                    ]
+                                ).strip()[:1000],
+                            },
+                        }
+                    )
+                    planned = replace(
+                        planned,
+                        plan=planned.plan.model_copy(
+                            update={
+                                "intents": [
+                                    canonical if i is strategy_intent else i
+                                    for i in planned.plan.intents
+                                ],
+                            }
+                        ),
+                    )
+            planned = replace(planned, readiness_manifest=manifest)
+    return planned
+
+
+async def _plan_pinned_turn(
+    snapshot: dict[str, Any],
+    user_message: str,
+    *,
+    editor_state: dict[str, Any] | None = None,
+) -> PlannedKriaTurn:
+    """A tapped suggestion card, planned from its stored action. No model, no planner.
+
+    Same unpooled engine and sending-build binding as `_plan_with_live_agent` (the editor
+    snapshot's families depend on the sender's protocol); the caller renews the lease.
+    """
+    protocol = stamped_client_protocol(snapshot.get("client_protocol"))
+    engine = create_async_engine(settings.asyncpg_database_url, poolclass=NullPool)
+    sender = bind_sending_build(protocol)
+    try:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+            planned = await plan_pinned_suggestion_turn(
+                db,
+                thread_id=uuid.UUID(str(snapshot["thread_id"])),
+                item_id=uuid.UUID(str(snapshot["item_id"])),
+                creator_id=uuid.UUID(str(snapshot["creator_id"])),
+                user_message=user_message,
+                pin=snapshot["pinned_suggestion"],
+                editor_state=parse_editor_state(editor_state),
+                client_protocol=protocol,
+            )
+            # A restate asks for the render approval, so it is judged like any other draft that
+            # does: against the renderer the live planner would have resolved.
+            return await _with_approval_readiness(
+                db,
+                planned,
+                creator_id=snapshot["creator_id"],
+                item_id=snapshot["item_id"],
+            )
+    finally:
+        unbind_sending_build(sender)
+        await engine.dispose()
 
 
 def _append_sync_event(
@@ -3520,6 +4160,7 @@ def _append_sync_event(
     event_type: str,
     content: str | None,
     payload: dict[str, Any],
+    client_event_id: str | None = None,
 ) -> CreationThreadEvent:
     sequence = (
         int(
@@ -3540,6 +4181,7 @@ def _append_sync_event(
         event_type=event_type,
         content=content,
         payload=payload,
+        client_event_id=client_event_id,
     )
     db.add(event)
     db.flush()
@@ -3744,6 +4386,22 @@ def _claim(
             turn.completed_at = datetime.now(UTC)
             db.commit()
             return None
+        if (
+            db.scalar(
+                select(CreationThreadEvent.event_type).where(
+                    CreationThreadEvent.id == turn.source_event_id
+                )
+            )
+            == INTENT_REPAIR_EVENT
+        ):
+            # The reviewer stages and completes its own turn; the planner never reads it.
+            turn.status = "cancelled"
+            turn.completed_at = datetime.now(UTC)
+            successor = _lock_queued_successor(db, turn.thread_id)
+            if successor is not None:
+                successor.status = "pending"
+            db.commit()
+            return _ClaimsExhausted(str(successor.id) if successor is not None else None)
         if expired_read_lease:
             # A redelivered task reached the lapsed lease before the reconciler
             # reset it; the run that held it ended without a result.
@@ -3780,6 +4438,12 @@ def _claim(
         if sent_from is not None:
             # KRI-898: the app build that sent the message; only when stamped.
             claimed_snapshot["client_protocol"] = sent_from
+        pin = source_payload.get("pinned_suggestion") if isinstance(source_payload, dict) else None
+        if isinstance(pin, dict) and pin and settings.kria_suggestion_pinned_taps_enabled:
+            # A tapped suggestion card: only with the flag on, so every other snapshot is unchanged.
+            # Read again here on purpose: switching the flag off must stop pinned plans even for
+            # a tap stamped before it (the card's words then take the legacy path).
+            claimed_snapshot["pinned_suggestion"] = pin
         if _previous_turn_hit_provider_deadline(db, turn, _model_message(source)):
             # KRI-1037: only when true, so every other snapshot is unchanged.
             claimed_snapshot["start_degraded"] = True
@@ -4338,44 +5002,77 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
     )
     # A follow-up sent while this turn plans is queued behind it: plan without it.
     history_token = answering_through_sequence.set(snapshot.get("source_sequence"))
+    # This run's calls and waits, for the continuation record (see `_continue_turn`).
+    recorder = TurnRunRecorder()
+    recorder_token = turn_run_recorder.set(recorder)
+    # A tapped suggestion card (pinned taps flag) is planned from its stored action, never by the
+    # planner.
+    pinned_tap = snapshot.get("pinned_suggestion") if snapshot.get("item_id") else None
     try:
-        if (
-            settings.main_creator_agent_enabled or snapshot.get("camera_roll_story")
-        ) and snapshot.get("item_id"):
-            planned = asyncio.run(
-                _plan_with_live_agent(
-                    snapshot,
-                    user_message,
-                    turn_id=identifier,
-                    lease_owner=lease_owner,
-                    lease_epoch=lease_epoch,
-                    thought_publisher=thought_publisher,
-                    **({"editor_state": editor_state} if editor_state else {}),
-                    **({"answers_clip_question": True} if answers_clip_question else {}),
+        if pinned_tap is not None or (
+            (settings.main_creator_agent_enabled or snapshot.get("camera_roll_story"))
+            and snapshot.get("item_id")
+        ):
+            if pinned_tap is not None:
+                with _lease_heartbeat_thread(
+                    identifier, lease_owner=lease_owner, lease_epoch=lease_epoch
+                ):
+                    planned = asyncio.run(
+                        _plan_pinned_turn(
+                            snapshot,
+                            user_message,
+                            editor_state=editor_state,
+                        )
+                    )
+            else:
+                planned = asyncio.run(
+                    _plan_with_live_agent(
+                        snapshot,
+                        user_message,
+                        turn_id=identifier,
+                        lease_owner=lease_owner,
+                        lease_epoch=lease_epoch,
+                        thought_publisher=thought_publisher,
+                        **({"editor_state": editor_state} if editor_state else {}),
+                        **({"answers_clip_question": True} if answers_clip_question else {}),
+                    )
                 )
-            )
-            planned = _useful_plan(planned, user_message=user_message)
-            # KRI-881: research a typed research ask before the approval card, outside
-            # every lock; "checking sources" continues the turn when it needs more time.
-            from app.kria import research_preview  # noqa: PLC0415
+                planned = _useful_plan(planned, user_message=user_message)
+                # KRI-881: research a typed research ask before the approval card, outside
+                # every lock; "checking sources" continues the turn when it needs more time.
+                from app.kria import research_preview  # noqa: PLC0415
 
-            # Planning's own heartbeat stopped with it; research takes 20-90 s and the
-            # lease is 15 s, so keep renewing it or the draft commit finds the turn lost.
-            with _lease_heartbeat_thread(
-                identifier, lease_owner=lease_owner, lease_epoch=lease_epoch
-            ):
-                planned = research_preview.with_research(
-                    planned,
-                    snapshot,
-                    turn_id=identifier,
-                    deadline=turn_started + float(run_kria_turn.soft_time_limit or 200),
-                )
+                # Planning's own heartbeat stopped with it; research takes 20-90 s and the
+                # lease is 15 s, so keep renewing it or the draft commit finds the turn lost.
+                with _lease_heartbeat_thread(
+                    identifier, lease_owner=lease_owner, lease_epoch=lease_epoch
+                ):
+                    with timed_step("research"):
+                        planned = research_preview.with_research(
+                            planned,
+                            snapshot,
+                            turn_id=identifier,
+                            deadline=turn_started + float(run_kria_turn.soft_time_limit or 200),
+                        )
+                    from app.kria.editor_repair import with_editor_review  # noqa: PLC0415
+
+                    planned = with_editor_review(
+                        planned,
+                        turn_id=identifier,
+                        deadline=turn_started + float(run_kria_turn.soft_time_limit or 200),
+                    )
+            # What this run's record says, unless `_continue_turn` already wrote it ("exhausted").
+            run_outcome: str | None = "completed"
             if planned.plan.mode == "respond" and planned.continuable:
                 # KRI-709: the planner stopped on a time budget with its answers saved.
                 # Run the same turn again instead of asking the creator to say "go
                 # ahead"; the chat keeps showing "Thinking" (no assistant event yet).
                 outcome = _continue_turn(
-                    identifier, lease_owner=lease_owner, lease_epoch=lease_epoch
+                    identifier,
+                    lease_owner=lease_owner,
+                    lease_epoch=lease_epoch,
+                    reason=planned.continue_reason,
+                    calls=recorder.calls,
                 )
                 if outcome == "lost":
                     return {"turn_id": turn_id, "status": "ignored"}
@@ -4391,7 +5088,10 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     except Exception:  # noqa: BLE001 - the reconciler republishes the pending row
                         log.warning("kria_turn_continue_publish_failed", turn_id=turn_id)
                     return {"turn_id": turn_id, "status": "continued"}
+                if outcome == "exhausted":
+                    run_outcome = None
                 if outcome == "successor":
+                    run_outcome = "superseded"
                     planned = replace(
                         planned,
                         plan=planned.plan.model_copy(
@@ -4411,6 +5111,9 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     brief_delegation_read_ids=planned.brief_delegation_read_ids,
                     brief_coverage=planned.brief_coverage,
                     brief_expected_version=planned.brief_expected_version,
+                    pinned_refusal=(
+                        planned_pin_refusal(planned.plan) if pinned_tap is not None else None
+                    ),
                 )
             else:
                 try:
@@ -4430,6 +5133,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         lease_epoch=lease_epoch,
                         claimed_thread_revision=claimed_thread_revision,
                         plan=planned.plan,
+                        pinned_refusal=_pin_refusal_for_error(planned, exc),
                     )
                 except EditorStateReplyError as exc:
                     # The creator's unsaved state is stale (video changed) or the op
@@ -4450,6 +5154,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         lease_epoch=lease_epoch,
                         claimed_thread_revision=claimed_thread_revision,
                         plan=planned.plan,
+                        pinned_refusal=_pin_refusal_for_error(planned, exc),
                     )
                 except KriaEditorOpError as exc:
                     # KRI-219: an op the recipe cannot represent (e.g. speed on a
@@ -4479,8 +5184,9 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         lease_epoch=lease_epoch,
                         claimed_thread_revision=claimed_thread_revision,
                         plan=planned.plan,
+                        pinned_refusal=_pin_refusal_for_error(planned, exc),
                     )
-                except (ApprovedCreatorRequestTooLongError, BriefBindingRequestTooLongError):
+                except (ApprovedCreatorRequestTooLongError, BriefBindingRequestTooLongError) as exc:
                     planned = replace(
                         planned,
                         plan=KriaTurnPlan(
@@ -4506,6 +5212,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         lease_epoch=lease_epoch,
                         claimed_thread_revision=claimed_thread_revision,
                         plan=planned.plan,
+                        pinned_refusal=_pin_refusal_for_error(planned, exc),
                     )
             if not completion.committed:
                 if completion.requeue_turn_id is not None:
@@ -4516,8 +5223,37 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     )
                     return {"turn_id": turn_id, "status": "requeued"}
                 return {"turn_id": turn_id, "status": "ignored"}
+            _close_turn_run(
+                identifier,
+                lease_epoch=lease_epoch,
+                outcome=run_outcome,
+                reason=planned.continue_reason,
+                calls=recorder.calls,
+            )
             if thought_publisher is not None:
                 thought_publisher.complete()
+            if completion.publish_analysis_id is not None:
+                # A filler tap queued a cleanup analysis in the commit that just landed.
+                _publish_cleanup_analysis(completion.publish_analysis_id)
+            if pinned_tap is not None and (
+                planned.plan.mode == "respond" or completion.response_only
+            ):
+                # The tapped card no longer fits: ask for fresh ones (flag-checked, enqueue-only).
+                from app.services.suggestion_serve import enqueue_for_thread  # noqa: PLC0415
+
+                enqueue_for_thread(
+                    snapshot["thread_id"], trigger="pinned_stale", creator_id=snapshot["creator_id"]
+                )
+            if (planned.plan.mode != "respond" and not completion.response_only) or (
+                planned.brief_updates
+            ):
+                # A draft revision or a brief version just committed: warm the next set
+                # (flag-checked, debounced, enqueue-only; the turn's row lock is long released).
+                from app.services.suggestion_serve import refresh_for_thread  # noqa: PLC0415
+
+                refresh_for_thread(
+                    snapshot["thread_id"], trigger="draft_commit", creator_id=snapshot["creator_id"]
+                )
             if planned.defer_brief:
                 try:
                     extract_kria_brief.apply_async(
@@ -4624,6 +5360,13 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
             turn_id=turn_id,
             error_class=type(exc).__name__,
         )
+        _close_turn_run(
+            identifier,
+            lease_epoch=lease_epoch,
+            outcome="failed",
+            reason=_turn_failure_code(exc),
+            calls=recorder.calls,
+        )
         successor_turn_id = _fail_turn(
             identifier,
             code=_turn_failure_code(exc),
@@ -4647,6 +5390,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
             thought_publisher.fail()
         release_reply_language(language_token)
         answering_through_sequence.reset(history_token)
+        turn_run_recorder.reset(recorder_token)
 
 
 async def _extract_brief_async(snapshot: dict[str, Any], user_message: str):
@@ -4836,6 +5580,25 @@ def _verify_prepared_execution(
         ),
         None,
     )
+
+
+def _withdraw_tap_of_cancelled_claim(
+    db,  # noqa: ANN001 - SQLAlchemy sync Session
+    approval: CreatorAgentApproval,
+    item: PlanItem,
+    thread: CreationThread,
+) -> None:
+    """The claim cancelled an approval a suggestion card staged, so no render will ever start:
+    take the tap back, as a denial or an expiry does. The claim already holds the plan item and the
+    thread locked, in canonical order. A no-op for an approval no card staged."""
+    from app.kria.drafts import (  # noqa: PLC0415
+        staged_tap_footprint_sync,
+        withdraw_staged_tap_sync,
+    )
+
+    footprint = staged_tap_footprint_sync(db, approval)
+    if footprint is not None:
+        withdraw_staged_tap_sync(db, record=footprint, item=item, thread=thread)
 
 
 def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim | None:
@@ -5144,6 +5907,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                 else "approval_target_stale"
             )
             approval.status = "cancelled"
+            _withdraw_tap_of_cancelled_claim(db, approval, item, thread)
             execution.status = "stale"
             execution.error = {
                 "code": stale_code,
@@ -5232,6 +5996,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             next_audio_mode = resolve_next_audio_mode(strategy, item)
             if next_audio_mode is None:
                 approval.status = "cancelled"
+                _withdraw_tap_of_cancelled_claim(db, approval, item, thread)
                 execution.status = "failed"
                 execution.error = {
                     "code": "voiceover_required",
@@ -5425,6 +6190,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                         # Nothing was pinned: the Job keeps the attempt it had.
                         current_job.all_candidates, current_job.assembly_plan = prepared_job_before
                     approval.status = "cancelled"
+                    _withdraw_tap_of_cancelled_claim(db, approval, item, thread)
                     execution.status = "failed"
                     execution.error = {"code": code, "retryable": False, "recovery": "revise"}
                     execution.completed_at = now
@@ -7194,6 +7960,19 @@ def _source_fingerprints(job: Job) -> dict[str, str]:
     return {media_id: sha for media_id, sha in found.items() if media_id not in conflicted}
 
 
+def _cleanup_note_retake_cut_possible(contract: object) -> bool:
+    """Could this render's speech cleanup have cut a restarted sentence (KRI-1176)?
+
+    Consented cleanup (``required_v1``) detects retakes only when both levers are on; the older
+    auto path needs just ``RETAKE_CUT_ENABLED``. The review note denies a restart cut otherwise.
+    """
+    from app.services.plan_item_media import speech_cleanup_retakes_enabled  # noqa: PLC0415
+
+    if contract == "required_v1":
+        return speech_cleanup_retakes_enabled()
+    return bool(settings.retake_cut_enabled)
+
+
 def _approved_generation_review(
     db: Any,
     thread: CreationThread,
@@ -7214,9 +7993,7 @@ def _approved_generation_review(
     note = speech_cleanup_review_note(
         variant,
         text=text,
-        # Consented cleanup never runs the retake detector; the older auto path does when
-        # its lever is on, so only then must the reply not deny a restart cut.
-        retake_cut_possible=contract != "required_v1" and bool(settings.retake_cut_enabled),
+        retake_cut_possible=_cleanup_note_retake_cut_possible(contract),
     )
     if not note:
         return text, receipts
@@ -7341,6 +8118,14 @@ def _approved_generation_requirements_review(
         )
     # KRI-942: clip sound on/off asks are judged on the recipe the phone renders now.
     facts = _with_clip_sound_toggles(job, variant, facts, brief_binding=raw)
+    # KRI-1189: a restart ask with no retake cut says "didn't find" only where this render's
+    # cleanup could have cut one, read the same way as the finished-render note below.
+    facts = dataclasses.replace(
+        facts,
+        speech_cleanup_retake_possible=_cleanup_note_retake_cut_possible(
+            (job.assembly_plan or {}).get("speech_cleanup_contract")
+        ),
+    )
     if any(req.order_replacement is not None for req in live.values()):
         from app.kria.order_replacement_receipts import with_verified_order_execution
 
@@ -7834,7 +8619,20 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                     },
                 )
                 turn.observed_event_id = review.id
+                review_outbox_id = None
+                if settings.kria_intent_review_enabled:
+                    from app.services.render_review_admission import (
+                        admit_generation_review,
+                        mark_admission_demand,
+                    )
+
+                    mark_admission_demand(execution, job, session)
+                    review_outbox_id = admit_generation_review(db, execution)
                 db.commit()
+                if review_outbox_id is not None:
+                    from app.services.render_review_admission import publish_generation_review
+
+                    publish_generation_review(review_outbox_id)
                 # KRI-756: the render settled ready: word the follow-up suggestion chips for it
                 # (flag-checked, enqueue-only, never raises).
                 from app.services.suggestion_serve import enqueue_for_thread  # noqa: PLC0415
@@ -8266,6 +9064,43 @@ def _expire_pending_approvals() -> list[str]:
     return successors
 
 
+def _lock_plan_item_for_session_sync(  # noqa: ANN202
+    db,  # noqa: ANN001
+    session_id: uuid.UUID,
+    creator_id: uuid.UUID,
+) -> PlanItem | None:
+    """Lock ContentPlan -> PlanItem for ``session_id`` ahead of the session (the order the async
+    ``runtime._lock_strategy_plan_item`` takes). Two unlocked reads discover the immutable
+    identities to lock; None when a row is gone or is not this creator's."""
+    # Column reads, not entities: the session and the item are locked fresh below, and a row the
+    # identity map already holds would not be refreshed by that lock.
+    item_id = db.execute(
+        select(CreatorAgentSession.plan_item_id).where(CreatorAgentSession.id == session_id)
+    ).scalar_one_or_none()
+    plan_id = (
+        db.execute(
+            select(PlanItem.content_plan_id).where(PlanItem.id == item_id)
+        ).scalar_one_or_none()
+        if item_id is not None
+        else None
+    )
+    if plan_id is None:
+        return None
+    plan_row = db.execute(
+        select(ContentPlan)
+        .where(ContentPlan.id == plan_id, ContentPlan.user_id == creator_id)
+        .with_for_update(**CONTENT_PLAN_LOCK)
+    ).scalar_one_or_none()
+    if plan_row is None:
+        return None
+    return db.execute(
+        select(PlanItem)
+        .where(PlanItem.id == item_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+
+
 def _expire_overdue_approval(approval_id: uuid.UUID) -> str | None:
     """Expire one approval the sweep found overdue; return the successor turn to publish.
 
@@ -8276,6 +9111,15 @@ def _expire_overdue_approval(approval_id: uuid.UUID) -> str | None:
         ref = db.get(CreatorAgentApproval, approval_id)
         if ref is None:
             return None
+        from app.kria.drafts import staged_tap_footprint_sync  # noqa: PLC0415
+
+        # A card's tap that flipped an item setting is taken back with its expired approval, so
+        # the plan item is locked first (Plan -> PlanItem -> Session ...); read unlocked, the
+        # record never changes after the draft is minted.
+        footprint = staged_tap_footprint_sync(db, ref)
+        item = None
+        if footprint is not None and footprint.get("setting"):
+            item = _lock_plan_item_for_session_sync(db, ref.session_id, ref.creator_id)
         # Canonical order (subset): Session -> Turn -> Approval -> Execution -> Thread.
         session = db.execute(
             select(CreatorAgentSession)
@@ -8343,6 +9187,10 @@ def _expire_overdue_approval(approval_id: uuid.UUID) -> str | None:
             turn.error = error
         if session.status != "rendering":
             session.status = "awaiting_feedback"
+        if footprint is not None:
+            from app.kria.drafts import withdraw_staged_tap_sync  # noqa: PLC0415
+
+            withdraw_staged_tap_sync(db, record=footprint, item=item, thread=thread)
         _append_sync_event(
             db,
             thread,

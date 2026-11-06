@@ -72,11 +72,13 @@ final class SpeakerMatte: @unchecked Sendable {
     nonisolated(unsafe) static var defaultConfig = SpeakerMatteConfig.shipping
 
     let config: SpeakerMatteConfig
+    /// Per-frame outcomes of this composition's matte; see `SpeakerBackgroundTrace`.
+    let trace = SpeakerBackgroundTrace()
     private let lock = NSLock()
     private let segmenter: NativePersonSegmenting?
     private var clipKey: String?
     private var lastTime: Double?
-    private var tick: (index: Int, answer: Answer)?
+    private var tick: (index: Int, answer: Answer, outcome: SpeakerBackgroundTrace.Outcome)?
     private var lastGood: (answer: Answer, time: Double)?
 
     init(segmenter: NativePersonSegmenting? = SpeakerMatte.segmenterFactory(), config: SpeakerMatteConfig = SpeakerMatte.defaultConfig) {
@@ -85,35 +87,65 @@ final class SpeakerMatte: @unchecked Sendable {
     }
 
     /// `speaker` is the speaker layer alone, after its transform, over a transparent canvas.
-    func answer(for speaker: CIImage, at time: Double, canvas: CGRect, clipKey: String) -> Answer {
+    /// `backgroundStaysDrawn`: the caller draws the background under an `.original` answer too (a corner speaker),
+    /// which the trace must not count as a hidden background.
+    func answer(for speaker: CIImage, at time: Double, canvas: CGRect, clipKey: String, backgroundStaysDrawn: Bool = false) -> Answer {
         lock.lock(); defer { lock.unlock() }
         // A cut to another speaker clip or a seek must never inherit the previous silhouette (S7).
-        if clipKey != self.clipKey || (lastTime.map { abs(time - $0) > config.continuityWindow } ?? false) {
+        let cutToAnotherClip = clipKey != self.clipKey
+        let jumped = lastTime.map { abs(time - $0) > config.continuityWindow } ?? false
+        if cutToAnotherClip || jumped {
+            if lastGood != nil { trace.record(cutToAnotherClip ? .clearedClip : .clearedGap, at: time) }
             self.clipKey = clipKey; lastGood = nil; tick = nil
         }
         lastTime = time
         let index = config.maskRate.map { Int((time * $0 + 0.001).rounded(.down)) }
-        if let index, let tick, tick.index == index { return tick.answer }
-        let answer = segment(speaker, at: time, canvas: canvas)
-        if let index { tick = (index, answer) }
+        if let index, let tick, tick.index == index {
+            trace.record(tick.outcome, at: time, backgroundDrawn: backgroundStaysDrawn)
+            return tick.answer
+        }
+        let (answer, outcome) = EngineSignpost.measure("talk.matte.segment") { segment(speaker, at: time, canvas: canvas) }
+        trace.record(outcome, at: time, backgroundDrawn: backgroundStaysDrawn)
+        if let index { tick = (index, answer, outcome) }
         return answer
     }
 
-    private func segment(_ speaker: CIImage, at time: Double, canvas: CGRect) -> Answer {
-        if let buffer = try? segmenter?.personMask(for: speaker, canvas: canvas, config: config),
-           let reading = SpeakerMaskReading(buffer, config: config) {
-            if reading.coverage < config.minCoverage {
-                lastGood = (.backgroundOnly, time)
-                return .backgroundOnly
-            }
-            if reading.coverage <= config.maxCoverage {
-                let answer = Answer.cutout(reading.mask(canvas: canvas))
-                lastGood = (answer, time)
-                return answer
+    private func segment(_ speaker: CIImage, at time: Double, canvas: CGRect) -> (Answer, SpeakerBackgroundTrace.Outcome) {
+        var failure = SpeakerBackgroundTrace.Outcome.originalNoSegmenter
+        if let segmenter {
+            do {
+                if let buffer = try segmenter.personMask(for: speaker, canvas: canvas, config: config) {
+                    if let reading = SpeakerMaskReading(buffer, config: config) {
+                        if reading.coverage < config.minCoverage {
+                            lastGood = (.backgroundOnly, time)
+                            return (.backgroundOnly, .backgroundOnly)
+                        }
+                        if reading.coverage <= config.maxCoverage {
+                            let answer = Answer.cutout(reading.mask(canvas: canvas))
+                            lastGood = (answer, time)
+                            return (answer, .cutout)
+                        }
+                        failure = .originalCoverage
+                    } else {
+                        failure = .originalUnreadable
+                    }
+                } else {
+                    failure = .originalUnreadable
+                }
+            } catch {
+                failure = .originalError
             }
         }
-        if let lastGood, abs(time - lastGood.time) <= config.holdGrace { return lastGood.answer }
-        return .original
+        if let lastGood, abs(time - lastGood.time) <= config.holdGrace {
+            EngineSignpost.count("talk.matte.held")
+            switch failure {
+            case .originalCoverage: return (lastGood.answer, .heldCoverage)
+            case .originalUnreadable: return (lastGood.answer, .heldUnreadable)
+            default: return (lastGood.answer, .heldError)
+            }
+        }
+        EngineSignpost.count("talk.matte.original")
+        return (.original, failure)
     }
 
     private static let kernel: CIColorKernel? = try? CIKernel.kernels(withMetalString: """

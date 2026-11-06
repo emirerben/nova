@@ -55,6 +55,41 @@ import XCTest
         XCTAssertNil(model.selectedProject)
     }
 
+    private func serve(activity id: UUID, project: UUID, title: String) {
+        NativeEditorURLProtocol.handler = { request in
+            let path = request.url!.path
+            if request.httpMethod == "DELETE" { return (204, Data()) }
+            if path.contains("creation-threads") {
+                return (200, Data("{\"id\":\"\(project)\",\"title\":\"\(title)\",\"status\":\"draft\",\"revision\":2,\"runtime_version\":2,\"updated_at\":\"2026-09-10T10:00:00Z\"}".utf8))
+            }
+            return (200, Data("{\"id\":\"\(id)\",\"thread_id\":\"\(project)\",\"kind\":\"video_ready\",\"created_at\":\"2026-09-10T10:00:00Z\",\"read_at\":null}".utf8))
+        }
+    }
+
+    func testTapOpensTheNotifiedProjectWhileAnotherIsSelected() async throws {
+        let id = UUID(); let current = PreviewFixtures.projects[0]; let target = PreviewFixtures.projects[1]
+        serve(activity: id, project: target.id, title: "Notified project")
+        let model = AppModel(api: api())
+        model.projects = [current, target]
+        model.selectedProject = current
+        let opened = try await model.openNativeActivity(id: id, expectedOwner: model.api.mediaLibraryOwner)
+        XCTAssertTrue(opened)
+        XCTAssertEqual(model.selectedProject?.id, target.id)
+        XCTAssertEqual(model.destination, .chat(target.id))
+    }
+
+    func testDeletedProjectIsNeverReopenedByATap() async throws {
+        let id = UUID(); let current = PreviewFixtures.projects[0]; let gone = PreviewFixtures.projects[1]
+        serve(activity: id, project: gone.id, title: "Deleted on this phone")
+        let model = AppModel(api: api())
+        model.projects = [current, gone]
+        try await model.deleteProject(gone)
+        model.selectedProject = current
+        let opened = try await model.openNativeActivity(id: id, expectedOwner: model.api.mediaLibraryOwner)
+        XCTAssertFalse(opened)
+        XCTAssertEqual(model.selectedProject?.id, current.id)
+    }
+
     func testFailedFreshFetchOrAcknowledgementNeverUsesCachedProject() async throws {
         for failure in ["activity", "project", "read"] {
             let id = UUID(); let project = PreviewFixtures.projects[0]
