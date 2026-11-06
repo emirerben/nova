@@ -92,7 +92,7 @@ struct ChatWorkspaceView: View {
     /// The camera roll sits outside the chat's NavigationStack. It has its own, and a nested stack pushes its pages
     /// onto the outer one, where they outlive the switch to a chat.
     @ViewBuilder private var workspace: some View {
-        if model.showsCameraRoll, let cameraRoll {
+        if model.showsCameraRoll, model.pendingNewChat == nil, let cameraRoll {
             WorkspaceCrossfade(dismiss: {}) { _ in
                 CameraRollSurfaceView(model: cameraRoll, openProjects: { setDrawerOpen(!showsProjects) }, onSelected: { thread in
                     await model.loadProjects()
@@ -107,7 +107,7 @@ struct ChatWorkspaceView: View {
     private var chatWorkspace: some View {
         NavigationStack {
             Group {
-                if let project = model.selectedProject {
+                if let project = model.selectedProject, model.pendingNewChat == nil {
                     CreationWorkspaceView(
                         project: project,
                         openProjects: { setDrawerOpen(!showsProjects) },
@@ -117,7 +117,9 @@ struct ChatWorkspaceView: View {
                     .id(project.id)
                 } else {
                     Group {
-                        if model.isLoading || model.projectsState == .loading || model.projectsState == .idle {
+                        if let pending = model.pendingNewChat {
+                            PendingNewChatView(pending: pending)
+                        } else if model.isLoading || model.projectsState == .loading || model.projectsState == .idle {
                             WorkspaceLoadingView()
                         } else if model.projectsState == .empty {
                             WorkspaceEmptyView { Task { await model.createProject() } }
@@ -401,6 +403,46 @@ private struct WorkspaceEmptyView: View {
         }
         .padding(24)
         .frame(maxWidth: 480, maxHeight: .infinity, alignment: .leading)
+        .background(WorkspaceSurface())
+    }
+}
+
+/// The new conversation, shown the moment New chat is tapped while the server makes the real one. It has
+/// no thread id yet: the creator can type, but sending and attaching wait for the real one.
+private struct PendingNewChatView: View {
+    let pending: AppModel.PendingNewChat
+    @EnvironmentObject private var model: AppModel
+    @FocusState private var focus: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 14) {
+                if let failure = pending.failure {
+                    Text("Your chat couldn’t be created.").font(KriaFont.headline(22))
+                    Text(failure).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc).multilineTextAlignment(.center)
+                    Button("Try again") { model.startNewChat() }
+                        .buttonStyle(CanonicalPrimaryButtonStyle())
+                        .accessibilityIdentifier("pending-new-chat-retry")
+                    Button("Back to my chats") { model.cancelPendingNewChat() }
+                        .font(KriaFont.body(14))
+                        .accessibilityIdentifier("pending-new-chat-cancel")
+                } else {
+                    ProgressView().tint(KriaColor.ink)
+                    Text("Starting your chat…").font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("pending-new-chat")
+            // Typing works at once; sending and attaching wait for the real thread, so nothing typed can
+            // reach any other conversation.
+            ChatComposer(
+                text: Binding(get: { pending.draft }, set: { model.setPendingNewChatDraft($0) }),
+                isSending: false, canAttach: false, blocksSubmission: true,
+                isFocused: $focus, attach: {}, send: {}
+            )
+        }
         .background(WorkspaceSurface())
     }
 }

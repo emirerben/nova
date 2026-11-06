@@ -1,8 +1,7 @@
 {
   "evidence": "SOURCE SELECTION ONLY; no discovery, compilation or execution",
   "parent_backend_commit": "083ededa04b59285c05783d4c8f646ad44a8bc59",
-  "main_integration_commit": "789789214046faf15c5e944c2d85cc5badc35666",
-  "main": "dbb260e47ef640b8c0908808df640723e0f8c1a2",
+  "main": "4bfa30f34fe450d4b5ea8dd15a1fe1796b021d13",
   "app_unit_target": "KriaTests",
   "app_classes": [
     {
@@ -124,7 +123,7 @@
     {
       "class": "NativeEditorSessionTests",
       "path": "src/apps/ios/Tests/KriaTests/NativeEditorSessionTests.swift",
-      "sha256": "901af1dd9006deaff94566c536d7af1dd1d6be91f11522fa2f80b4e9e81ac226",
+      "sha256": "da17fb779e1fd517120e7dd375100247c7b7359ee3963d15f7e9241d62a6a3fe",
       "source_method_candidates": [
         "testReadyJobReceivedDuringSaveIsRecheckedAfterSaveAndTransientReadFailure",
         "testLegacyDirtyLatestJobDoesNotRequireUnavailableDraftEndpoint",
@@ -349,6 +348,29 @@
         "testActiveTrimBaselineRebasesAuthoritativeTextDuringSave",
         "testDurableAcknowledgementInvalidatesPreviousPollDuringReplacementFetch",
         "testPhoneSaveReconcilesAppOwnedRendererWithCreationProjectIdentity",
+        "testSyntheticSaveSerializationUnderInjectedCallDelay",
+        "testSaveStartsThePhoneRenderWhileTheCommittedVariantReadIsStillOut",
+        "testExportHandsOverThePhonesOwnRenderOfTheSavedEditBeforeAndAfterPublish",
+        "testFocusOnlySaveReusesOnlyItsAcknowledgedLocalRender",
+        "testNewerFocusSurvivesSuccessfulAndFailedSuspendedSaveReads",
+        "testFocusSaveReadCannotMutateReplacementEditorOnSuccessOrFailure",
+        "testCachedRenderCapabilitiesCannotResumeIntoSameTargetReopen",
+        "testFocusCapabilityCacheIsBypassedByExplicitRenderRetry",
+        "testOwnRenderIsNotOfferedOnceTheCreatorChangesTheEdit",
+        "testOwnRenderIsNotOfferedWhenItsFileIsGone",
+        "testOwnRenderIsNotOfferedAfterANewerRemoteGenerationIsAdopted",
+        "testOwnRenderIsNotOfferedWhenTheRequestChanges",
+        "testOwnRenderIsNotOfferedWhileASecondSaveIsInFlight",
+        "testOwnRenderIsNotOfferedWhileTheServerStillVerifiesIt",
+        "testOwnRenderIsOfferedWhileItIsStillUploading",
+        "testOwnRenderIsNotOfferedOnceTheServerNeedsAttention",
+        "testFileDeletedAfterASuccessfulSaveToPhotosIsNotOfferedAgain",
+        "testDownloadAndSaveRunTogetherWithoutDuplicatingOrSwappingTheFile",
+        "testCoalescedSaveCannotExportDuringRequestReplacement",
+        "testFailedStatusReadAfterANewSaveDoesNotLinkThePreviousRenderToIt",
+        "testStatusReadThatNamesTheSavedGenerationLinksTheNewRender",
+        "testRenderNotStartedSaveCannotWriteRetryStateIntoAnEditorLoadedMeanwhile",
+        "testCancelledSaveLeavesNoFailureStateBehind",
         "testEditorResumeReleasesADurableStopThroughTheTypedPath",
         "testEditorResumeMintsTheRetryForAServerRecordedStop",
         "testEditorResumeWithPersistedAndServerStopTakesTwoTapsAndSurvivesRestoration",
@@ -494,7 +516,7 @@
     {
       "class": "SavedEditorRecoveryTests",
       "path": "src/apps/ios/Tests/KriaTests/SavedEditorRecoveryTests.swift",
-      "sha256": "996b2248bc8402f425459b7e29b4a92e64d1f80e105a3187720cad5b678f2fdf",
+      "sha256": "ab2c07133ed81283c181e485609264c4ed9810b7d11f6805740502249a01053d",
       "source_method_candidates": [
         "testFailedProjectionRetainsFullSavedDraftAcrossColdOpenAndNoOp",
         "testFullSavedEditRemainsReachableAfterNoOpWithoutChangingFailureStatus",
@@ -846,6 +868,48 @@
         "testFailedChatEditExplainsClearlyAndKeepsTheMessageForRetry",
         "testOfflineFailureBlamesTheConnection"
       ]
+    },
+    {
+      "class": "ProjectActionsTests",
+      "path": "src/apps/ios/Tests/KriaTests/ProjectActionsTests.swift",
+      "sha256": "31af7e69dad863bb537d096fb918222b300f483a4eb8e1b987b6cf67dcb82908",
+      "source_method_candidates": [
+        "testRenameUsesRevisionAndIdempotencyAndUpdatesSelectionAndCache",
+        "testRenameConflictRefreshesAuthoritativeProjectWithoutApplyingRequestedName",
+        "testOpenCreationThreadSelectsAKnownProjectAndAsksForTheChat",
+        "testOpenCreationThreadFetchesAProjectThisPhoneHasNotListed",
+        "testOpenCreationThreadWithoutAKnownThreadOpensTheProjectsList",
+        "testRenameFailurePreservesProject",
+        "testDeleteAcceptsEmpty204RemovesCacheAndSelectsRemainingProject",
+        "testDeleteRenderingProjectDoesNotSendRequest",
+        "testDeleteFailureKeepsSelection",
+        "testDelayedRenameResponseCannotRegressNewerProjectRevision",
+        "testLateProjectionAndListCannotResurrectDeletedProject",
+        "testDeleteConflictRefreshesSelectionAndKeepsCache",
+        "testDeleteRemovesOnlyOwnedDependentCacheRows",
+        "testDeleteWithRecoveredUploadDoesNotSendRequest",
+        "testInFlightProjectListCannotReplaceCollectionAfterDeletion",
+        "testInFlightLibraryCannotRestoreDeletedRender",
+        "testLibraryUsesSavedTitleAndKeepsSelectedPreviewMediaTogether",
+        "testLibraryMissingNullAndBlankTitlesStayTruthfulForLegacyResponses",
+        "testLibraryLoadsAllCursorPagesAndDeduplicatesJobs",
+        "testLibraryRejectsRepeatedCursorRatherThanReturningPartialResults",
+        "testLibraryTransientFailurePreservesExistingLibraryWithoutPreviewFixtures",
+        "testInitialLibraryFailureDoesNotInventPreviewProjects",
+        "testCreateDeduplicatesWhileRequestIsOutstandingAndRecoversAfterFailure",
+        "testOutstandingListCannotEraseSuccessfullyCreatedProject",
+        "testNewChatDuringWorkspaceOpenStaysSelectedAndIsNotSwept",
+        "testNewChatShowsTheConversationBeforeTheServerReplies",
+        "testFailedNewChatStaysVisibleAndRetries",
+        "testNewChatDoesNotPullTheCreatorBackAfterTheyOpenAnotherChat",
+        "testSyntheticNewChatSurfaceDoesNotWaitForTheInjectedCreateDelay",
+        "testTextTypedWhileTheChatIsBeingMadeMovesToTheNewChatOnly",
+        "testTextSurvivesAFailedCreateAndItsRetry",
+        "testTextTypedBeforeOpeningAnotherChatIsKeptOnTheChatThatGetsMade",
+        "testNewChatFromTheCameraRollLeavesItAndFailureReturnsToIt",
+        "testTextTypedBeforeLeavingIsRecoverableWhenTheCreateFailsLater",
+        "testProjectListCannotReplaceNewerRenamedRevision"
+      ]
     }
   ],
   "package": {
@@ -898,12 +962,12 @@
     {
       "selector": "KriaUITests/CreationUITests/testReviewPlanFlagsUpdatesAndUndoesASectionFromTheFeedCTA",
       "path": "src/apps/ios/Tests/KriaUITests/CreationUITests.swift",
-      "sha256": "f13e5fd285b3ad7cce67c66b82c04f8e8129d625e548000dd549fe2b844800fa"
+      "sha256": "44e9fd7e58a3c6ff31ce45fc940f5d4623b1d7d2a130413febe4a046d6b1adb6"
     },
     {
       "selector": "KriaUITests/CreationUITests/testReviewPlanUndoAllPutsEverythingBack",
       "path": "src/apps/ios/Tests/KriaUITests/CreationUITests.swift",
-      "sha256": "f13e5fd285b3ad7cce67c66b82c04f8e8129d625e548000dd549fe2b844800fa"
+      "sha256": "44e9fd7e58a3c6ff31ce45fc940f5d4623b1d7d2a130413febe4a046d6b1adb6"
     },
     {
       "selector": "KriaUITests/SlidePostUITests/testSlidePostCreationIsTheRichLayoutThenCreateThenKriaPropose",
@@ -924,28 +988,43 @@
       "selector": "KriaUITests/SlidePostUITests/testAIRecoveryRefusesACompletedReceiptForAnotherRequest",
       "path": "src/apps/ios/Tests/KriaUITests/SlidePostUITests.swift",
       "sha256": "ae09de91909538b754ca78396a8d42f2b59e712c8eacff8d81a7df2701cf376c"
+    },
+    {
+      "selector": "KriaUITests/CreationUITests/testDelayedNewChatAcceptsTypingBeforeItsServerIdentityExists",
+      "path": "src/apps/ios/Tests/KriaUITests/CreationUITests.swift",
+      "sha256": "44e9fd7e58a3c6ff31ce45fc940f5d4623b1d7d2a130413febe4a046d6b1adb6"
+    },
+    {
+      "selector": "KriaUITests/CreationUITests/testNewChatShowsUsableFormatsWithoutWaitingForMoreReads",
+      "path": "src/apps/ios/Tests/KriaUITests/CreationUITests.swift",
+      "sha256": "44e9fd7e58a3c6ff31ce45fc940f5d4623b1d7d2a130413febe4a046d6b1adb6"
     }
   ],
   "source_candidate_counts": {
-    "app": 723,
+    "app": 781,
     "package": 39,
-    "ui": 6
+    "ui": 8
   },
   "production_source_hashes": {
     "src/apps/ios/Kria/Core/Services.swift": "bd078f3de4a11ac2187fd4b185239c0cf62888f0addcd810ad9aed5de0b1787f",
     "src/apps/ios/Kria/Core/ReviewPlanModel.swift": "b023701367930e7fa69406cb910e6d0093e0c5d680de4608f15245c2f1437506",
-    "src/apps/ios/Kria/Core/DeviceRenderSessions.swift": "268cb0b1c2508667c6af9952bb9905133c33250ebf2e107b098b7c0619a3a678",
+    "src/apps/ios/Kria/Core/DeviceRenderSessions.swift": "b88f3c7158d67a1623728d5fd9a4abe3fcce5f88c1043c7c82412a992da10eec",
     "src/apps/ios/Kria/Core/SlidePost.swift": "6247fb92f224933707346ccb4031f5ea01011852fa8545cbaacba98f11c7ed04",
     "src/apps/ios/Kria/Core/SlidePostAIJournal.swift": "2ce60a214a27dc910b5eb2f22161582193d37b09b4ba5054bab5a8dddf698728",
     "src/apps/ios/Kria/Core/SlidePostSubmissionJournal.swift": "f10b19e23760c4a2af09d1ad609db5bbce641775719314aaedc0d39b2d32336c",
-    "src/apps/ios/Kria/Features/NativeEditorSession.swift": "b6bdae27649cf2f45bafe8091b4953850d799c7993e98e20d64b3ce4076128c3",
+    "src/apps/ios/Kria/Features/NativeEditorSession.swift": "69505b872be6542182479999224bb7a2856b1df21a3d786a36e1706432d92a3d",
     "src/apps/ios/Kria/Features/NativeEditorView.swift": "b2a299ca7edb21ad29f360908af1ff4c9b207b1d6eea074a7bb2fe5f4b024f74",
-    "src/apps/ios/Kria/Features/ChatWorkspaceView.swift": "d674c0aef0999b5d48eb340645767e65dd1be2c9047d7514662b5de5053fa439",
+    "src/apps/ios/Kria/Features/ChatWorkspaceView.swift": "7d66636be9a7dedf9c57387375de933824ad3c2d1f0f0c070efb46067335fa89",
     "src/apps/ios/Kria/Features/ReviewPlanView.swift": "c5d3b5b9960d46b2245f25fa4abf380d542a29e78befc2c5b6c5af928c91d1c2",
     "src/apps/ios/Kria/Features/SlidePostWorkspaceView.swift": "7e667f4aed16fd4b90b72b34894745d217eda10ebb796e310e67f2c7005bf1b3",
     "src/apps/ios/Kria/Features/SlidePostExport.swift": "0a11e2778b924567d32099ae25a7b34d57bffac5fef1b2f2dbfd4ccdbcfe4a04",
-    "src/apps/ios/Kria/Features/ChatUITestTransport.swift": "d10d0cb2931269eb182ad97c883b1a7490422c427db275a22a0ffd7e9d1f1b7a",
-    "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift": "be2f1f133727bc843867e311a8030b2abcdb0a95bdfcd0cdaabc742173676df8"
+    "src/apps/ios/Kria/Features/ChatUITestTransport.swift": "249bd1f68eac20b77eb32bdd16ea4ba8f9ec1cea9eae445f5c17e23cb206ffd0",
+    "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift": "be2f1f133727bc843867e311a8030b2abcdb0a95bdfcd0cdaabc742173676df8",
+    "src/apps/ios/Kria/Core/AppState.swift": "1e1a06261f8ae29aa6ad9b27d26f0c09e5ecdd39683ca2c4f2db9311ef68a151",
+    "src/apps/ios/Kria/DesignSystem/BrandComponents.swift": "504502b5b7b89655a720d46766af1a357a1b7b950c192cfadc2f8e237a2ec462"
   },
-  "selection_revision_note": "Supersedes 51249 source selection: include XCTest classes and extensions, including SlidePostAISessionRecoveryTests. Static candidates only, no compiler discovery/execution."
+  "selection_revision_note": "Source-only current-main integration selection. Incoming speed tests and extension classes included; no compilation/discovery/execution.",
+  "integration_main_target": "4bfa30f34fe450d4b5ea8dd15a1fe1796b021d13",
+  "historical_main_integration_commit": "789789214046faf15c5e944c2d85cc5badc35666",
+  "backend_correction_commit": "72c248d5ccd8600f93f8f6fa6abe1666dba688a8"
 }

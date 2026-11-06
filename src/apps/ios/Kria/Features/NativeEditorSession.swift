@@ -950,6 +950,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     @Published private(set) var sourcePreviewFailureIsPermanent = false
     private var deviceRenders: DeviceRenderSessions?
     private var pendingDeviceRenderIdentity: DeviceRenderIdentity?
+    /// The document generation the save that pinned `pendingDeviceRenderIdentity` produced.
+    private var pendingDeviceRenderGeneration: String?
     private var guidedRevisionNumber: Int?
     var deviceRenderKey: DeviceRenderKey? {
         guard rendersOnDevice, let jobID, let variantKey else { return nil }
@@ -1041,12 +1043,19 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// A reconcile was skipped because capabilities were never readable; the preview poll retries it.
     private var deviceReconcilePending = false
 
+    private static let deviceCapabilitiesReuse: TimeInterval = 60
+
     func refreshDeviceRender(retry: Bool = false) async {
         guard let key = deviceRenderKey, let api, let deviceRenders else { return }
         let identity = editorOperationIdentity
         let capabilities: PhoneRenderingCapabilities
         do {
-            let response = try await api.creationCapabilities()
+            // Rollouts change these rarely, and the status read below already reports a pause. A read from
+            // the last minute spares every Save one more round trip before its render can start. A creator's
+            // Retry always reads fresh.
+            let recent = retry ? nil : await api.recentCreationCapabilities(maxAge: Self.deviceCapabilitiesReuse)
+            guard editorOperationIdentity == identity else { return }
+            let response = if let recent { recent } else { try await api.creationCapabilities() }
             guard editorOperationIdentity == identity else { return }
             capabilities = response.phoneRendering ?? .disabled
             lastPhoneRenderingCapabilities = capabilities
@@ -1305,6 +1314,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         editAppliedTask?.cancel(); showsEditApplied = false
         promptRefreshSequence &+= 1; sourcePreviewSequence &+= 1
         pendingDeviceRenderIdentity = nil
+        pendingDeviceRenderGeneration = nil
         activeSaveAttemptID = nil
         saveHitNewerVersion = false
         songRemovalAlreadyApplied = false
@@ -1391,6 +1401,7 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     var canDownloadCurrentVideo: Bool {
         guard document.editorState != "empty" else { return false }
+        if savedEditDeviceRenderFile() != nil { return true }
         let displayedVideoIsCurrent: Bool
         switch sourcePreviewState {
         case .ready:
@@ -1429,7 +1440,10 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func videoDownloadRoute(deviceLocalFile: URL?) throws -> NativeEditorVideoDownloadRoute {
-        if let rendered = finishedRenderRoute(deviceLocalFile: deviceLocalFile) { return rendered }
+        let rendered = finishedRenderRoute(deviceLocalFile: deviceLocalFile)
+        if let rendered, case .localFile = rendered { return rendered }
+        if let own = savedEditDeviceRenderFile() { return .localFile(own) }
+        if let rendered { return rendered }
         switch sourcePreviewState {
         case .ready:
             guard sourcePreviewSettled, let sourcePreview,
@@ -1451,6 +1465,27 @@ struct NativeEditorTemporaryVideo: Sendable {
             return .server(target)
         }
         throw NativeEditorVideoDownloadError.unavailable
+    }
+
+    /// The video this phone rendered for the edit the creator just saved, once that render is finished.
+    ///
+    /// Saving, sharing and Save to Photos used to wait for the render to upload and the server to publish
+    /// it, then download that same video again from the server (`applyPreviewVariant` swaps the phone's
+    /// own file for the published URL). The phone already holds exactly that video, so it is the copy to
+    /// hand over, as soon as it exists.
+    ///
+    /// Only the render of THIS session's latest save counts: its request identity is the one the save
+    /// pinned, which any newer save, chat edit or other-device save replaces. An unsaved edit, a staged
+    /// chat edit or a save in flight means the file is not what is on screen, so those never match.
+    /// `DeviceRenderSessions` hides the file while the server still has to check it.
+    private func savedEditDeviceRenderFile() -> URL? {
+        guard !hasUnsavedChanges, !isSaving, chatStagedDocument == nil, document.editorState != "empty",
+              let key = deviceRenderKey, let renders = deviceRenders,
+              let savedGeneration = pendingDeviceRenderGeneration,
+              let receipt = renders.savedRenderReceipt(for: key),
+              receipt.baseGeneration == savedGeneration,
+              [savedGeneration, receipt.publishedGeneration].contains(document.revision.baseGeneration) else { return nil }
+        return receipt.file
     }
 
     /// KRI-1032: with no edit on top of the finished render, the creator's saved or shared copy IS
@@ -2983,7 +3018,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         liveSongVolumeActive = false; previewBuiltDocument = nil
         sourcePreviewState = .idle; sourcePreviewGeneration = nil
         previewVariant = [:]
-        pendingDeviceRenderIdentity = nil
+        pendingDeviceRenderIdentity = nil; pendingDeviceRenderGeneration = nil
         // The old job's recovery must not touch the new job's player.
         finishedRenderRecoveryTask?.cancel(); finishedRenderRecoveryInFlight = false
         sourcePreviewQuietRetryTask?.cancel()
@@ -7760,7 +7795,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             // response saves an empty draft and does not start a new poll.
             previewRefreshTask?.cancel()
             pendingPreviewGeneration = nil
-            pendingDeviceRenderIdentity = nil
+            pendingDeviceRenderIdentity = nil; pendingDeviceRenderGeneration = nil
             chatStagedDocument = nil; chatStagedSections = []
             // An empty authored-phone document has its first editable revision
             // immediately, even before the next variant-status refresh exposes
@@ -7860,40 +7895,57 @@ struct NativeEditorTemporaryVideo: Sendable {
             // renderer may project text differently (for example after a
             // timeline-only save). Reconcile the committed variant as soon as
             // it is durable; polling remains the fallback when this read is
-            // unavailable or still stale.
-            if response.draft == nil, let saveJobID,
+            // unavailable or still stale. The read runs beside the device
+            // render's own start-up reads: neither needs the other, and both
+            // were queued one behind the other before.
+            let committedSaveAttemptID = activeSaveAttemptID
+            let committedRead: Task<Void, Never>? = if response.draft == nil, let saveJobID,
                response.generation == document.revision.baseGeneration {
-                do {
-                    let committedVariant = try await api.editorVariant(jobID: saveJobID, variantID: saveVariantKey)
-                    guard saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
-                    _ = reconcileAuthoritativeText(
-                        from: committedVariant,
-                        generation: response.generation,
-                        expectedItemID: saveItemID,
-                        expectedJobID: saveJobID,
-                        expectedVariantKey: saveVariantKey,
-                        expectedThreadID: saveThreadID,
-                        expectedDocumentGeneration: response.generation,
-                        songWindowStartS: submittedSongStartS
-                    )
-                } catch {
-                    // A durable save must remain successful even when the
-                    // read-after-write reconciliation is temporarily down.
+                Task { @MainActor [weak self] in
+                    do {
+                        let committedVariant = try await api.editorVariant(jobID: saveJobID, variantID: saveVariantKey)
+                        guard !Task.isCancelled, let self, self.activeSaveAttemptID == committedSaveAttemptID,
+                              self.saveHistory?.id == saveHistoryID, self.saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
+                        _ = self.reconcileAuthoritativeText(
+                            from: committedVariant,
+                            generation: response.generation,
+                            expectedItemID: saveItemID,
+                            expectedJobID: saveJobID,
+                            expectedVariantKey: saveVariantKey,
+                            expectedThreadID: saveThreadID,
+                            expectedDocumentGeneration: response.generation,
+                            songWindowStartS: submittedSongStartS
+                        )
+                    } catch {
+                        // A durable save must remain successful even when the
+                        // read-after-write reconciliation is temporarily down.
+                    }
                 }
+            } else { nil }
+            defer { committedRead?.cancel() }
+            guard !Task.isCancelled, activeSaveAttemptID == committedSaveAttemptID, saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else {
+                committedRead?.cancel()
+                return
             }
-            guard saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
+
             if response.renderStarted ?? response.ok {
                 // The commit is durable even while its render is pending. Keep
                 // the acknowledged sections retryable until a matching ready
                 // generation is observed.
                 pendingRenderRetrySections = acknowledged
                 saveState = .previewPending
+                pendingDeviceRenderGeneration = response.generation
                 await refreshDeviceRender()
-                guard saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
+                guard !Task.isCancelled, activeSaveAttemptID == committedSaveAttemptID, saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
+                await withTaskCancellationHandler { await committedRead?.value } onCancel: { committedRead?.cancel() }
+                guard !Task.isCancelled, activeSaveAttemptID == committedSaveAttemptID, saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
                 pendingDeviceRenderIdentity = deviceRenderKey.flatMap { deviceRenders?.request(for: $0)?.identity }
+                pendingDeviceRenderGeneration = response.generation
                 previewSupersededGeneration = saveDocumentGeneration
                 startPreviewRefresh(generation: response.generation)
             } else {
+                await withTaskCancellationHandler { await committedRead?.value } onCancel: { committedRead?.cancel() }
+                guard !Task.isCancelled, activeSaveAttemptID == committedSaveAttemptID, saveHistory?.id == saveHistoryID, saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
                 pendingRenderRetrySections = acknowledged
                 saveState = .renderRetryNeeded(response.renderRecovery ?? "Your edit is saved. Its preview render did not start, so you can retry it safely.")
             }
@@ -10004,6 +10056,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             guard retried else { return }
         }
         guard editorOperationIdentity == identity, !Task.isCancelled, pendingPreviewGeneration == generation, deviceRenderKey == key else { return }
+        pendingDeviceRenderGeneration = generation
         await refreshDeviceRender(retry: true)
         guard editorOperationIdentity == identity, !Task.isCancelled, pendingPreviewGeneration == generation, deviceRenderKey == key else { return }
         pendingDeviceRenderIdentity = deviceRenders.request(for: key)?.identity

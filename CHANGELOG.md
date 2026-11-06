@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.24.0] - 2026-11-06
+
+### Changed
+- fix(ios): make New Chat immediate and reduce save/share waits (#2125) <!-- release-pr: 2125 -->
+
+## [0.88.23.0] - 2026-11-06
+
+### Changed
+- fix(receipts): Kria's review matches the video for unheard recordings, whole-video text and kept clips (Qendresa says-done C) (#2129) <!-- release-pr: 2129 -->
+
+## [0.88.22.0] - 2026-11-06
+
+### Changed
+- fix(kria): the video does what the brief asked for keep-whole, mute, whole-video text and title holds (Qendresa says-done group B) (#2130) <!-- release-pr: 2130 -->
+
+## [0.88.21.0] - 2026-11-06
+
+### Changed
+- fix(text-style): "no captions" no longer takes her text's place and colour (Qendresa case 3) (#2128) <!-- release-pr: 2128 -->
+
+## [0.88.20.0] - 2026-11-06
+
+### Changed
+- fix(captions): keep captions off the speaker's face when she is small in a corner (Qendresa case 1) (#2127) <!-- release-pr: 2127 -->
+
 ## [0.88.19.0] - 2026-11-06
 
 ### Changed

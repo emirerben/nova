@@ -3376,7 +3376,10 @@
       "xctests": [
         "KriaTests/NativeEditorSessionTests/testFreshLoadRestoresSavedSongRemovalFromBoundServerIntentWithoutResending",
         "KriaTests/NativeEditorSessionTests/testSavedSongRemovalSurvivesExactGenerationRenderRecoveryProjectionWithoutResending",
-        "KriaTests/NativeEditorSessionTests/testFreshLoadIgnoresSavedSongMarkerForAnotherTargetGenerationOrRevision"
+        "KriaTests/NativeEditorSessionTests/testFreshLoadIgnoresSavedSongMarkerForAnotherTargetGenerationOrRevision",
+        "KriaTests/NativeEditorSessionTests/testCoalescedSaveCannotExportDuringRequestReplacement",
+        "KriaTests/NativeEditorSessionTests/testFailedStatusReadAfterANewSaveDoesNotLinkThePreviousRenderToIt",
+        "KriaTests/NativeEditorSessionTests/testSaveStartsThePhoneRenderWhileTheCommittedVariantReadIsStillOut"
       ],
       "paths": [
         "src/apps/api/app/schemas/saved_user_song.py",
@@ -3384,7 +3387,8 @@
         "src/apps/api/tests/routes/test_saved_user_song_state.py",
         "src/apps/api/app/routes/generative_jobs.py",
         "src/apps/ios/Kria/Core/Services.swift",
-        "src/apps/ios/Kria/Features/NativeEditorSession.swift"
+        "src/apps/ios/Kria/Features/NativeEditorSession.swift",
+        "src/apps/ios/Kria/Core/DeviceRenderSessions.swift"
       ]
     },
     {

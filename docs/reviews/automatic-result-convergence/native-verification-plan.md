@@ -4,7 +4,7 @@ No native, package, simulator, device or model launch is authorized by this plan
 
 Selection artifact: [native-selection.json](native-selection.json). It records source hashes and method candidates; it is **not test discovery or execution evidence**. The final checkpoint SHA/tree must be recorded with the run and checked against those hashes.
 
-The source inherits main `dbb260e47ef640b8c0908808df640723e0f8c1a2` through integration `789789214046faf15c5e944c2d85cc5badc35666`, including landed Cunda. Backend delivery checkpoint is `083ededa04b59285c05783d4c8f646ad44a8bc59`. Earlier `4cbe7d2a`/190-method selections and old successful builds are superseded.
+The historical source inherited main `dbb260e47ef640b8c0908808df640723e0f8c1a2` through integration `789789214046faf15c5e944c2d85cc5badc35666`, including landed Cunda. Backend delivery checkpoint is `083ededa04b59285c05783d4c8f646ad44a8bc59`. Earlier `4cbe7d2a`/190-method selections and old successful builds are superseded.
 
 ## App unit selection
 
@@ -18,7 +18,7 @@ Run each whole class from target `KriaTests` on a fresh final-source build. This
 | SlidePostMergeTests | 9 |
 | ReviewApprovalIdentityTests | 3 |
 | ReviewPlanTests | 20 |
-| NativeEditorSessionTests | 271 |
+| NativeEditorSessionTests | 294 |
 | ChatDraftStagingTests | 85 |
 | SavedEditorRecoveryTests | 31 |
 | DeviceRenderTransientTests | 56 |
@@ -29,8 +29,9 @@ Run each whole class from target `KriaTests` on a fresh final-source build. This
 | SlidePostExportTests | 57 |
 | SlidePostTests | 39 |
 | SlidePostChatEditTests | 23 |
+| ProjectActionsTests | 35 |
 
-Total: **723 source candidates in 17 classes**. Confirm the actual discovered and executed methods from xcresult. A selector, manifest entry or aggregate pass count cannot prove that a named critical case ran.
+Total: **781 source candidates in 18 classes**. Confirm the actual discovered and executed methods from xcresult. A selector, manifest entry or aggregate pass count cannot prove that a named critical case ran.
 
 ## Separate package selection
 
@@ -38,7 +39,7 @@ Run the entire `KriaMediaEngineTests/DeviceRenderCoordinatorTests` class from th
 
 ## Offline UI selection
 
-Run these six exact fixture methods after the same-source build. No private project, real provider, physical Photos library or hardware bench is involved.
+Run these eight exact fixture methods after the same-source build. No private project, real provider, physical Photos library or hardware bench is involved.
 
 - `KriaUITests/CreationUITests/testReviewPlanFlagsUpdatesAndUndoesASectionFromTheFeedCTA`
 
@@ -51,6 +52,10 @@ Run these six exact fixture methods after the same-source build. No private proj
 - `KriaUITests/SlidePostUITests/testFailedAIRequestShowsAClearMessageAndRetryKeepsTheMessage`
 
 - `KriaUITests/SlidePostUITests/testAIRecoveryRefusesACompletedReceiptForAnotherRequest`
+
+- `KriaUITests/CreationUITests/testDelayedNewChatAcceptsTypingBeforeItsServerIdentityExists`
+
+- `KriaUITests/CreationUITests/testNewChatShowsUsableFormatsWithoutWaitingForMoreReads`
 
 The historically named AI failure/retry case now verifies automatic original-result GET recovery after a lost POST response without tapping Retry. Its fixture permits one original UUID and one fake execution; the negative case returns a different receipt UUID. Each test launch gets an isolated synthetic account namespace, while relaunching the same app preserves its namespace for persistence checks.
 
@@ -69,3 +74,5 @@ Planning estimate only: fresh serial app compilation may require 30–60 minutes
 Native/package/UI compilation and execution remain held. Preserve exact incoming speed/split semantics only after coordinated ready heads; do not stack unpublished candidates. API/worker/beat and migration 0138 must be ready before enabling durable AI admission and exposing the new client. Unknown paid outcomes never replay; legacy pending rows missing execution evidence remain unresolved and undispatched; only exact existing-token late completion may publish. No publication/admin merge readiness follows from source review or this selection alone.
 
 Selection correction after frozen 51249: the earlier 677-method selection omitted 41 existing AI tests in extensions/the separate SlidePostAISessionRecoveryTests class. The corrected selection includes those plus five new legacy controls: 723 app source candidates in 17 classes, 39 package and six UI. All remain uncompiled/undiscovered/unexecuted. Run both SlidePostAIRecoveryTests and SlidePostAISessionRecoveryTests whole classes; a file path or one class does not execute its sibling class.
+
+Current-main integration selection supersedes the preceding source counts:781 app candidates in18classes,39 package and8 UI. Added incoming35 ProjectActions cases and23 NativeEditorSession cases; UI includes the delayed pending-composer and usable-formats controls. All counts are source-only; incoming speed evidence does not execute this combined source. Main target4bfa30f34fe450d4b5ea8dd15a1fe1796b021d13 contains def205781. SavedRenderReceipt companion, shared model drift/correspondence and coherent receipt/read/Save cases remain required with no local native/package/Java/TLC launch.

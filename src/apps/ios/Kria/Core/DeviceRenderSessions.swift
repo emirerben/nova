@@ -271,6 +271,8 @@ enum DeviceRenderGate: Equatable {
     @ObservationIgnored private let intentStore: DeviceRenderIntentStore
     @ObservationIgnored private let ownerIdentity: @MainActor () -> String?
     @ObservationIgnored private var activeOwner: String?
+    private var unresolvedRereads: Set<DeviceRenderKey> = []
+    private var acceptedRenderBindings: [DeviceRenderKey: (identity: DeviceRenderIdentity, generation: String)] = [:]
     @ObservationIgnored private var baseGenerations: [DeviceRenderKey: String] = [:]
     @ObservationIgnored private let initiation: DeviceRenderUserInitiation
     @ObservationIgnored private let fetch: Fetch
@@ -562,6 +564,7 @@ enum DeviceRenderGate: Equatable {
             // the chat poll's read was out): read again once it finishes.
             let previous = rereads[key]
             let action: IntentAction = previous?.action == .creatorResume || intentAction == .creatorResume ? .creatorResume : .automatic
+            unresolvedRereads.insert(key)
             rereads[key] = PendingRead(retry: (previous?.retry ?? false) || retry, action: action)
             return
         }
@@ -570,6 +573,7 @@ enum DeviceRenderGate: Equatable {
         retryTasks.removeValue(forKey: key)?.cancel()
         retryTokens[key] = nil
         delayedReads[key] = nil
+        unresolvedRereads.remove(key)
         defer {
             if tickets[key] == ticket {
                 tickets[key] = nil
@@ -765,6 +769,9 @@ enum DeviceRenderGate: Equatable {
             message: message, reasonCode: reason, requiresServerRetry: true,
             outputVerificationPending: unchecked)
     }
+    #if DEBUG
+    var reconciliationCheckpoint: (@MainActor (String) async -> Void)?
+    #endif
 
     private func apply(_ status: DeviceRenderStatusResponse, for key: DeviceRenderKey, ticket: UUID,
                        capabilities: PhoneRenderingCapabilities, retry: Bool, origin: DeviceRenderExecutionOrigin, intentAction: IntentAction) async throws {
@@ -798,19 +805,30 @@ enum DeviceRenderGate: Equatable {
         else { retryApprovalKeys.remove(key) }
         if requests[key] != request {
             settle(key)
+            acceptedRenderBindings[key] = nil
+            presentations[key] = DeviceRenderPresentation(phase: .preparing)
             if let previousIdentity = requests[key]?.identity {
                 keyOperations[key] = UUID()
                 initiation.invalidate(identity: previousIdentity)
             }
             observations.removeValue(forKey: key)?.cancel()
+            #if DEBUG
+            await reconciliationCheckpoint?("cancel")
+            #endif
             if let previous = entries[key] { try await previous.cancel() }
             guard ownerIsCurrent, tickets[key] == ticket else { return }
             entries[key] = try factory(key, request)
             requests[key] = request
         }
         guard let coordinator = entries[key] else { return }
+        #if DEBUG
+        await reconciliationCheckpoint?("snapshot")
+        #endif
         let saved = await coordinator.snapshot()
         guard ownerIsCurrent, tickets[key] == ticket else { return }
+        if let generation = status.baseGeneration, !generation.isEmpty {
+            acceptedRenderBindings[key] = (request.identity, generation)
+        } else { acceptedRenderBindings[key] = nil }
         let unchecked = status.outputVerificationRequired && saved?.phase != .synced
         if status.phase == "published" {
             settle(key)
@@ -1138,6 +1156,29 @@ enum DeviceRenderGate: Equatable {
     /// The request identity last accepted by reconciliation. The editor uses
     /// it to fence a ready response against another device attempt.
     func request(for key: DeviceRenderKey) -> DeviceRenderRequest? { heldRequests[key] ?? requests[key] }
+
+    struct SavedRenderReceipt {
+        let identity: DeviceRenderIdentity
+        let baseGeneration: String
+        let publishedGeneration: String?
+        let file: URL
+    }
+
+    /// Read the accepted server binding and its eligible presentation in one actor turn.
+    /// A coalesced read or replacement can still hold the previous request's file.
+    func savedRenderReceipt(for key: DeviceRenderKey) -> SavedRenderReceipt? {
+        guard ownerIsCurrent, tickets[key] == nil, transportReads[key] == nil,
+              rereads[key] == nil, !unresolvedRereads.contains(key),
+              let binding = acceptedRenderBindings[key],
+              request(for: key)?.identity == binding.identity,
+              let presentation = presentations[key],
+              [.localReady, .syncing, .synced].contains(presentation.phase),
+              !presentation.requiresServerRetry,
+              let file = presentation.localFile, file.isFileURL,
+              FileManager.default.fileExists(atPath: file.path) else { return nil }
+        return SavedRenderReceipt(identity: binding.identity, baseGeneration: binding.generation,
+                                  publishedGeneration: presentation.publishedGeneration, file: file)
+    }
 
     /// Calls the server's `/device-render/retry` endpoint for a `needsAttention`
     /// identity, which mints a fresh identity (incremented recipe revision) and
@@ -1492,6 +1533,8 @@ enum DeviceRenderGate: Equatable {
         defer { if resetOperation == operation { resetOperation = nil } }
         keyOperations.removeAll()
         pendingRetries.removeAll()
+        unresolvedRereads.removeAll()
+        acceptedRenderBindings.removeAll()
         baseGenerations.removeAll()
         heldRequests.removeAll()
         parkedFollowTargets.removeAll()
