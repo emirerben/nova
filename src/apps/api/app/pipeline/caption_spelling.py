@@ -126,26 +126,31 @@ def _dont_clauses(line: str) -> list[tuple[int, int]]:
 def creator_request_names(text: str | None) -> tuple[str, ...]:
     """Names the creator typed (Green 4/5): capitalised words that do not start a sentence, at
     least ``_MIN_TARGET_LEN`` letters ("Kervan", "Pamukkale"; never "Make" at a sentence start,
-    never "Lumo": too short for a safe match). A name the creator types in any "don't" clause
-    ("Do not use Kervan in the captions.") is never one, wherever else they type it: the same
-    clause rule drops a quoted ask (KRI-631). The request header line is skipped. In order,
-    unique, at most ``MAX_ASKS``."""
+    never "Lumo": too short for a safe match). A name the creator types in any "don't" clause,
+    in any case and with any case ending ("Do not use kervan in the captions.", "KERVAN",
+    "kervan'ı"), is never one, wherever else they type it: the same clause rule drops a quoted
+    ask (KRI-631). The request header line is skipped. In order, unique, at most ``MAX_ASKS``."""
     names: list[str] = []
     seen: set[str] = set()
-    excluded: set[str] = set()
+    excluded: list[str] = []
     for line in _request_lines(text):
         dont = _dont_clauses(line)
+        for a, b in dont:
+            excluded.extend(found.group(0) for found in _TOKEN.finditer(line, a, b))
         for found in _NAME_TOKEN.finditer(line):
             name = found.group(1)
             if any(a <= found.start() < b for a, b in dont):
-                excluded.add(_fold(name))
                 continue
             if len(name) < _MIN_TARGET_LEN or _SENTENCE_END.search(line[: found.start()]):
                 continue
             if _fold(name) not in seen:
                 seen.add(_fold(name))
                 names.append(name)
-    return tuple(name for name in names if _fold(name) not in excluded)[:MAX_ASKS]
+    return tuple(
+        name
+        for name in names
+        if not any(_reads_as_one_of(word, frozenset({_fold(name)})) for word in excluded)
+    )[:MAX_ASKS]
 
 
 def creator_typed_words(text: str | None) -> tuple[str, ...]:
