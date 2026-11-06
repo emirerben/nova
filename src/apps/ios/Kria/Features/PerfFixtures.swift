@@ -399,20 +399,26 @@ extension PerfFixture {
 
     /// SwiftData container for `-ui-testing-chat`. In memory by default; `KRIA_PERF_DISK_STORE=1` keeps it on disk so
     /// a second launch finds the chats the first one cached.
-    static func container() -> ModelContainer {
+    @MainActor static func container() -> ModelContainer {
         let models: [any PersistentModel.Type] = [CachedProject.self, CachedAsset.self, CachedUploadJob.self, CachedReceipt.self]
         let schema = Schema(models)
-        guard diskStore else {
-            return try! ModelContainer(for: schema, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
-        }
         let directory = URL.applicationSupportDirectory.appending(path: "perf", directoryHint: .isDirectory)
         if resetRequested {
             try? FileManager.default.removeItem(at: directory)
-            // The editor's downloaded sources, so a cold open really has to download and hash them.
+            // Synchronous before AppModel creation, including in-memory fixture launches.
+            let transcripts = URL.applicationSupportDirectory
+                .appending(path: "Transcripts", directoryHint: .isDirectory)
+                .appending(path: "teleprompter-ui-fixture", directoryHint: .isDirectory)
+            try? FileManager.default.removeItem(at: transcripts)
+            let threadIDs = (0..<max(seedThreadCount, 0)).compactMap { UUID(uuidString: seededThreadID($0)) }
+            ChatDraftStore.resetFixtureThreads(threadIDs)
+        }
+        guard diskStore else {
+            return try! ModelContainer(for: schema, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        }
+        if resetRequested {
+            // Preserve the disk benchmark's existing cold media/poster cache reset.
             try? FileManager.default.removeItem(at: URL.cachesDirectory.appending(path: "native-editor-preview", directoryHint: .isDirectory))
-            // Synchronous on purpose: the transcript cache must be empty before the first chat opens.
-            try? FileManager.default.removeItem(at: URL.applicationSupportDirectory.appending(path: "Transcripts", directoryHint: .isDirectory))
-            // And the gallery's poster pictures, so a "first open" really has to fetch them.
             try? FileManager.default.removeItem(at: URL.cachesDirectory.appending(path: "LibraryPosters", directoryHint: .isDirectory))
         }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

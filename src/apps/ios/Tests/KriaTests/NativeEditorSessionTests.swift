@@ -3003,7 +3003,7 @@ final class NativeEditorSessionTests: XCTestCase {
     }
 
     private func exerciseLegacyRefreshAfterSave(overlappingTrim: Bool, retainsPreview: Bool = false) async throws {
-        let jobID = UUID()
+        let jobID = UUID(), projectID = UUID()
         var initialVariant = Self.variant(duration: 2, generation: "g1")
         if retainsPreview { initialVariant["resolved_archetype"] = .string("montage") }
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
@@ -3014,11 +3014,48 @@ final class NativeEditorSessionTests: XCTestCase {
             commitResponse: EditorCommitResponse(ok: false, generation: "g2",
                 sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false),
                 revisionNumber: nil, revisionHash: nil, expectedDuration: nil))
-        let project = ProjectSummary(id: UUID(), title: "Legacy", status: .ready, updatedAt: .now,
+        var previewSource: NativeTimelineSource?
+        if retainsPreview {
+            let sourceProject = BackgroundUploadCoordinator.projectDirectory(projectID)
+            addTeardownBlock { try? FileManager.default.removeItem(at: sourceProject.root) }
+            let footage = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+            let asset = try await AssetImportCoordinator(project: sourceProject).importAsset(from: footage)
+            try SourceAssetStore(project: sourceProject).bind(mediaID: "source", original: asset)
+            let fingerprint = try XCTUnwrap(asset.fingerprint)
+            let descriptor = OriginalMediaDescriptor(sha256: fingerprint.hex, byteCount: fingerprint.byteCount,
+                durationS: 4, width: 1080, height: 1920, orientationDegrees: 0, hasAudio: true)
+            previewSource = NativeTimelineSource(mediaID: "source", sourceURL: nil,
+                original: descriptor, localRequired: true)
+        }
+        func pinPreviewSources(_ generation: String) {
+            guard let previewSource else { return }
+            fake.sourcePoolResult = NativeEditorSourcePool(
+                clips: [.init(clipIndex: 0, nativeSource: previewSource)], baseGeneration: generation)
+        }
+        pinPreviewSources("g1")
+        let project = ProjectSummary(id: projectID, title: "Legacy", status: .ready, updatedAt: .now,
             posterURL: nil, outputVariantID: "initial", runtimeVersion: 1,
             activeJobID: jobID, activePlanItemID: "item")
         let session = NativeEditorSession(project: project)
+        defer {
+            if retainsPreview {
+                session.setObserversVisible(false)
+                session.endPreviewPresentation()
+                session.pausePlayback()
+            }
+        }
+        func awaitPreparedPreview() async throws {
+            let ready = await waitUntil {
+                session.sourcePreviewState == .ready
+                    && session.admissiblePreviewDisplayTicket != nil
+                    && session.player?.currentItem?.status == .readyToPlay
+            }
+            XCTAssertTrue(ready, "The real local-source preview must settle before admission")
+            XCTAssertEqual(session.sourcePreviewState, .ready)
+            guard ready else { throw APIError.invalidResponse }
+        }
         await session.load(project: project, api: fake)
+        if retainsPreview { try await awaitPreparedPreview() }
         session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.5)
         await session.save()
         XCTAssertEqual(fake.commitCount, 1)
@@ -3034,8 +3071,10 @@ final class NativeEditorSessionTests: XCTestCase {
         }
         let saved = renderedVariant(duration: 1.5, generation: "g2")
         fake.authoritativeVariant = saved
+        pinPreviewSources("g2")
         XCTAssertTrue(session.rebaseCleanDraft(from: saved))
         session.saveState = .saved
+        if retainsPreview { try await awaitPreparedPreview() }
         if overlappingTrim {
             session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.2)
         } else {
@@ -3056,20 +3095,17 @@ final class NativeEditorSessionTests: XCTestCase {
             XCTAssertTrue(session.canUndo)
             XCTAssertEqual(fake.commitCount, 1, "a background conflict does not save")
             if retainsPreview {
-                let footage = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
-                await session.prepareFixtureSourcePreview(url: footage)
+                try await awaitPreparedPreview()
                 XCTAssertEqual(session.sourcePreviewState, .ready)
                 session.beginPreviewPresentation()
                 let player = try XCTUnwrap(session.player)
-                for _ in 0..<100 where player.currentItem?.status != .readyToPlay {
-                    try await Task.sleep(for: .milliseconds(20))
-                }
                 XCTAssertEqual(player.currentItem?.status, .readyToPlay)
                 let ticket = try XCTUnwrap(session.admissiblePreviewDisplayTicket)
                 session.previewFrameWasShown(player: player, ticket: ticket)
                 XCTAssertFalse(session.isPreparingCurrentPreview)
                 XCTAssertNil(session.previousPreviewPresentation, "The conflict choice itself is not preview work")
             }
+            pinPreviewSources("g3")
             session.resolveMergeConflicts(keepingLocal: true)
             if retainsPreview {
                 XCTAssertEqual(session.previousPreviewPresentation?.status, .updating,
@@ -3089,6 +3125,7 @@ final class NativeEditorSessionTests: XCTestCase {
         await session.synchronizePromptRevision()
         XCTAssertEqual(session.document, rebased)
         XCTAssertEqual(fake.draftCallCount, 0)
+        if retainsPreview { try await awaitPreparedPreview() }
     }
 
     /// S2-b: a 503 during the refresh is a server hiccup. It never reaches the save banner, a quiet

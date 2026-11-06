@@ -57,28 +57,32 @@ final class CreationUITests: XCTestCase {
     }
 
     func testEditorAIActivityUsesTheLiveRequestAcrossRepeatedPromptsAndBackgrounding() {
-        let app = launchEditorAIActivityFixture(reduceMotion: true)
+        let app = launchEditorAIActivityFixture(reduceMotion: true, completingFollowup: true)
+        defer { app.terminate() }
         let control = app.buttons["native-editor-conversation"]
-        guard waitForEditorIdle(control: control) else { app.terminate(); return }
+        guard waitForEditorIdle(control: control) else { return }
         for index in 1...2 {
-            sendFromEditorConversation("Make the title clearer \(index)", app: app)
-            waitForEditorActivity("Sending your message…", control: control)
+            guard sendFromEditorConversation("Make the title clearer \(index)", app: app) else { return }
+            guard waitForEditorActivity("Sending your message…", control: control) else { return }
             XCTAssertTrue(app.buttons["native-editor-play-pause"].isEnabled)
             if index == 1 {
                 attach(app, "Editor AI activity - reduced motion")
                 XCUIDevice.shared.press(.home)
                 app.activate()
-                XCTAssertTrue(control.waitForExistence(timeout: 5))
+                let returned = control.waitForExistence(timeout: 5)
+                XCTAssertTrue(returned)
+                guard returned else { return }
             }
             let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", ""), object: control)
-            XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 40), .completed)
+            let result = XCTWaiter.wait(for: [settled], timeout: 40)
+            XCTAssertEqual(result, .completed)
+            guard result == .completed else { return }
             XCTAssertTrue(control.isHittable)
             XCTAssertTrue(app.buttons["native-editor-play-pause"].isEnabled)
         }
         // The active control keeps the same action after the work ends.
         control.tap()
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-project-conversation"].firstMatch.waitForExistence(timeout: 5))
-        app.terminate()
     }
 
     func testEditorAIActivityStopsOnRejectedPromptAndKeepsTheDraft() {
@@ -135,27 +139,35 @@ final class CreationUITests: XCTestCase {
         return app
     }
 
-    private func sendFromEditorConversation(_ text: String, app: XCUIApplication) {
+    @discardableResult private func sendFromEditorConversation(_ text: String, app: XCUIApplication) -> Bool {
         app.buttons["native-editor-conversation"].tap()
         let sheet = app.descendants(matching: .any)["native-editor-project-conversation"].firstMatch
-        XCTAssertTrue(sheet.waitForExistence(timeout: 5))
-        guard let composer = editorConversationComposer(in: app) else { return }
+        let appeared = sheet.waitForExistence(timeout: 5)
+        XCTAssertTrue(appeared)
+        guard appeared else { return false }
+        guard let composer = editorConversationComposer(in: app) else { return false }
         composer.tap()
         composer.typeText(text)
         let sends = app.buttons.matching(NSPredicate(format: "label == %@", "Send message"))
         guard let send = sends.allElementsBoundByIndex.first(where: { $0.isHittable }) else {
             XCTFail("The editor conversation must show a reachable Send message button")
-            return
+            return false
         }
         let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: send)
-        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed)
+        let enabledResult = XCTWaiter.wait(for: [enabled], timeout: 5)
+        XCTAssertEqual(enabledResult, .completed)
+        guard enabledResult == .completed else { return false }
         send.tap()
         // The creator dismisses the sheet themselves while the POST is still in flight.
         let grabber = app.buttons["Sheet Grabber"]
-        XCTAssertTrue(grabber.waitForExistence(timeout: 5))
+        let hasGrabber = grabber.waitForExistence(timeout: 5)
+        XCTAssertTrue(hasGrabber)
+        guard hasGrabber else { return false }
         let handle = grabber.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         handle.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)))
-        XCTAssertTrue(sheet.waitForNonExistence(timeout: 5))
+        let dismissed = sheet.waitForNonExistence(timeout: 5)
+        XCTAssertTrue(dismissed)
+        return dismissed
     }
 
     private func editorConversationComposer(in app: XCUIApplication) -> XCUIElement? {
@@ -177,9 +189,11 @@ final class CreationUITests: XCTestCase {
         return result == .completed
     }
 
-    private func waitForEditorActivity(_ title: String, control: XCUIElement) {
+    @discardableResult private func waitForEditorActivity(_ title: String, control: XCUIElement) -> Bool {
         let active = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", title), object: control)
-        XCTAssertEqual(XCTWaiter.wait(for: [active], timeout: 30), .completed)
+        let result = XCTWaiter.wait(for: [active], timeout: 30)
+        XCTAssertEqual(result, .completed)
+        return result == .completed
     }
 
     func testFinishedEditLearningChatAcceptAndDismiss() {
