@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.10.0] - 2026-11-06
+
+### Changed
+- Qendresa item 16: she starts full screen, then drops into the corner (#2111) <!-- release-pr: 2111 -->
+
 ## [0.88.9.0] - 2026-11-06
 
 ### Changed
