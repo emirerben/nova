@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.21.0] - 2026-11-06
+
+### Changed
+- fix(text-style): "no captions" no longer takes her text's place and colour (Qendresa case 3) (#2128) <!-- release-pr: 2128 -->
+
 ## [0.88.20.0] - 2026-11-06
 
 ### Changed
