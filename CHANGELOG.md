@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.5.0] - 2026-11-06
+
+### Changed
+- Qendresa item 15: phone Talking cards her size and place (builds on #2104: merge that first) (#2107) <!-- release-pr: 2107 -->
+
+## [0.88.4.0] - 2026-11-06
+
+### Changed
+- feat(speaker-background): hear background names said another way (Qendresa item 17) (#2110) <!-- release-pr: 2110 -->
+
 ## [0.88.3.0] - 2026-11-05
 
 ### Changed

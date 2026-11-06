@@ -878,6 +878,16 @@ class Settings(BaseSettings):
     # otherwise captions are byte-identical to before and the receipt says what was not drawn.
     # Apply: `fly secrets set PHONE_CAPTION_SHAPE_ENABLED=true` (api + worker) + restart.
     phone_caption_shape_enabled: bool = False
+    # Qendresa item 15: the card layout on phone Talking edits. Screenshot / recording cards
+    # take her size and place (up to full width, in the band above her face or below her
+    # caption row, never on her face or captions), up to 14 cards, a named screenshot may open
+    # the video, recordings start at their best moment. Default FALSE. Applied only when
+    # `cardLayout` is in PHONE_RENDER_VERIFIED_FEATURES AND the approving app build declares >=
+    # `client_protocol.CARD_LAYOUT_PROTOCOL` (its editor keeps a `caption_clear` card below
+    # y 0.62); portrait pip layout without a speaker background only. Otherwise cards are
+    # byte-identical to before.
+    # Apply: `fly secrets set TALKING_CARD_LAYOUT_ENABLED=true` (api + worker) + restart.
+    talking_card_layout_enabled: bool = False
     # KRI-1007: caption entrance/exit/loop/speed (`animation_phases` on a caption row, or
     # the all-captions default `caption_meta.animation_phases`). Drawn on device from the
     # recipe's existing `animationPhases`. Default TRUE; the editor capability
@@ -955,6 +965,15 @@ class Settings(BaseSettings):
     # `speaker_background_color_phone_fallback`) and the creator keeps their own room.
     # Design: docs/reviews/speaker-background-color-failure-modes.md.
     speaker_background_color_min_client_protocol: int = 34
+    # Qendresa item 17 (follow-up of KRI-1175): a background sequence entry's spoken phrase is
+    # also heard when it is said another way -- joined / split words ("TradingAgents" / "trading
+    # agents"), a final plural "s" ("studio" / "studios", also with a KRI-961 sound-alike) -- and
+    # not inside another entry's longer phrase ("agents" in "trading agents"). Server only, no
+    # protocol. Default FALSE: off, windows and the Main Creator prompt are byte-identical.
+    # Apply: `fly secrets set BACKGROUND_FOLLOWS_TALK_ENABLED=true --app nova-video` + restart
+    # (api + worker); rollback = `...=false` + restart. Design:
+    # docs/reviews/speaker-background-windows-failure-modes.md (S64-S69).
+    background_follows_talk_enabled: bool = False
     # KRI-1192: the app bundles Noto Sans KR / Noto Sans Arabic (the script-fallback faces that
     # draw Hangul and Arabic captions) from protocol 35. A phone recipe naming one requires
     # `scriptFonts` (verified in PHONE_RENDER_VERIFIED_FEATURES after the device check) and an

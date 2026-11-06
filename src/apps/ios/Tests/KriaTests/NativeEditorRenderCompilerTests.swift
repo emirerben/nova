@@ -332,6 +332,44 @@ import KriaMediaEngine
         XCTAssertEqual(low.transform.positionY, (0.4 * 1920).rounded(.toNearestOrEven) - 960, "a card already above the band is untouched")
     }
 
+    /// Qendresa item 15. Ways this could fail: the exemption leaks to cards without the key; `false` or a non-bool
+    /// (string "true") exempts; the exemption moves a card that should still clamp; the y changes when exempt.
+    private func talkingCardCentreY(yFrac: Double, captionClear: JSONValue?) throws -> Double {
+        let (source, clip) = talkingSource(duration: 4)
+        var raw: [String: JSONValue] = ["kind": .string("image"), "display_mode": .string("pip"), "x_frac": .number(0.5),
+                                        "y_frac": .number(yFrac), "scale": .number(0.35), "z": .number(1)]
+        if let captionClear { raw["caption_clear"] = captionClear }
+        let card = EditorTimedEffect(id: "card", startS: 1, endS: 2.5, kind: "image", raw: raw)
+        let document = EditorDocument(editFormat: "subtitled", clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: 4)],
+            captionCues: [.init(id: "cue", startS: 0.5, endS: 3.5, text: "One more game")], mediaOverlays: [card])
+        let items = [NativeEditorTimelineItem(selection: .init(kind: .mediaOverlay, id: "card"), start: 1, end: 2.5),
+                     NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue"), start: 0.5, end: 3.5)]
+        let media = ResolvedEditorSource(preserveAlpha: false, clipIndex: -1, mediaID: "card-media",
+            asset: MediaAsset(id: "card-asset", relativePath: "card.png", fingerprint: AssetFingerprint(hex: String(repeating: "b", count: 64), byteCount: 50),
+                naturalSize: MediaSize(width: 400, height: 200)), url: URL(fileURLWithPath: "/fixture/card.png"))
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let program = try compiler.compile(document: document, clips: [clip], items: items, sources: [0: source],
+                                           mediaSources: ["overlay:card": media], deviceCaptions: true)
+        let cards = try XCTUnwrap(program.recipe.tracks.first(where: { $0.id == "overlays" })).clips
+        return try XCTUnwrap(cards.first { $0.id == "overlay:card" }).transform.positionY
+    }
+
+    func testCaptionClearCardKeepsItsBottomBandPosition() throws {
+        let y = try talkingCardCentreY(yFrac: 0.82, captionClear: .bool(true))
+        XCTAssertEqual(y, (0.82 * 1920).rounded(.toNearestOrEven) - 960)
+    }
+
+    func testCardWithoutCaptionClearIsStillClampedToTheCaptionBandTop() throws {
+        let y = try talkingCardCentreY(yFrac: 0.82, captionClear: nil)
+        XCTAssertEqual(y, (0.62 * 1920).rounded(.toNearestOrEven) - 960)
+    }
+
+    func testCaptionClearFalseOrNonBoolIsStillClamped() throws {
+        let clamped = (0.62 * 1920).rounded(.toNearestOrEven) - 960
+        XCTAssertEqual(try talkingCardCentreY(yFrac: 0.82, captionClear: .bool(false)), clamped)
+        XCTAssertEqual(try talkingCardCentreY(yFrac: 0.82, captionClear: .string("true")), clamped)
+    }
+
     /// KRI-719: a Talking edit with several videos shows its footage full frame and muted over the speakers,
     /// right above them and under every card, exactly in the receipt's windows. Same clamps as the server's
     /// `_compile_cutaway_track`: never past the speakers or the footage, and a window under 0.5 s is dropped.

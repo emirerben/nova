@@ -46,6 +46,18 @@ On the word (every entry has a ``spoken_phrase`` and one is heard, KRI-1175, S46
 * the first window opens the video (from 0 s); only a held first entry over a fill outside the
   sequence keeps that fill before it (a lead-in under ``MIN_WINDOW_S`` is absorbed either way);
 * after the last mention the last visual holds to the take end (S51 reversed: no turns again).
+
+With ``BACKGROUND_FOLLOWS_TALK_ENABLED`` (Qendresa item 17, S65-S68) a phrase is also heard when it
+is said another way, for every phrased entry:
+
+* a phrase neither the exact nor the KRI-961 matcher hears is aligned loosely to whole spoken
+  words: a word may be split or joined across 2-3 words of 3+ letters ("TradingAgents" / "trading
+  agents"), a final plural "s" is ignored, one word against one word is never loose, names under
+  four letters never; a multi-word name also retries with its last word's plural toggled ("Claude
+  code game studio" / "cloud code game studios");
+* a hearing inside ANOTHER entry's longer, different phrase ("agents" in "trading agents") is that
+  entry's word, so the next free hearing anchors (a name only ever said inside another keeps its
+  first hearing).
 """
 
 from __future__ import annotations
@@ -153,6 +165,139 @@ def _anchor_time(
         if placed is not None:
             return placed
     return None
+
+
+def _strip_plural(text: str) -> str:
+    """A final plural "s" dropped from a long word or run ("studios" -> "studio")."""
+    if len(text) >= 5 and text.endswith("s") and not text.endswith(("ss", "us", "is")):
+        return text[:-1]
+    return text
+
+
+_JOIN_MAX = 3  # a name split or joined across at most three words
+_JOIN_MIN_LEN = 3  # every word of a joined run is a real word, not a stray letter or two
+
+
+def _align_loose(phrase: list[str], spoken: list[str], a: int, b: int) -> int | None:
+    """End (exclusive) in ``spoken`` of an alignment of ``phrase[a:]`` from ``spoken[b]``.
+
+    Each step pairs one phrase word with one spoken word (equal modulo a final plural "s"), one
+    phrase word with 2-3 spoken words joined, or 2-3 phrase words joined with one spoken word.
+    """
+    if a == len(phrase):
+        return b
+    if b >= len(spoken):
+        return None
+    steps = [(1, 1)]
+    steps += [(1, k) for k in range(2, _JOIN_MAX + 1)] + [(k, 1) for k in range(2, _JOIN_MAX + 1)]
+    for pn, sn in steps:
+        p_run, s_run = phrase[a : a + pn], spoken[b : b + sn]
+        if len(p_run) < pn or len(s_run) < sn:
+            continue
+        if pn > 1 and min(map(len, p_run)) < _JOIN_MIN_LEN:
+            continue
+        if sn > 1 and min(map(len, s_run)) < _JOIN_MIN_LEN:
+            continue
+        if _strip_plural("".join(p_run)) != _strip_plural("".join(s_run)):
+            continue
+        end = _align_loose(phrase, spoken, a + pn, b + sn)
+        if end is not None:
+            return end
+    return None
+
+
+def _loose_hearings(stream: Sequence, phrase: str) -> list[tuple[float, float]]:
+    """Where whole spoken words say ``phrase`` split or joined differently, or with a final
+    plural "s" ("TradingAgents" / "trading agents", "game studio" / "game studios")."""
+    from app.services import phone_reaction_grounding as grounding  # noqa: PLC0415
+
+    words = grounding.fold_tokens(phrase)
+    if len("".join(_strip_plural(w) for w in words)) < 4:
+        return []
+    texts = [token.text for token in stream]
+    hits: list[tuple[float, float]] = []
+    for i in range(len(texts)):
+        end = _align_loose(words, texts, 0, i)
+        # One word against one word is the exact / KRI-961 matchers' job.
+        if end is not None and (len(words) > 1 or end - i > 1):
+            hits.append((stream[i].start_s, stream[end - 1].end_s))
+    return hits
+
+
+def _plural_toggled_hearings(
+    stream: Sequence, timed: list[dict], phrase: str
+) -> list[tuple[float, float]]:
+    """A sound-alike AND a plural together ("Claude code game studio" heard as "cloud code game
+    studios"): the exact / KRI-961 matchers again with the last word's plural toggled. Phrases of
+    two or more words only, so a single name ("Notion") never hears its plural."""
+    from app.services import phone_reaction_grounding as grounding  # noqa: PLC0415
+
+    words = grounding.fold_tokens(phrase)
+    if len(words) < 2:
+        return []
+    last = words[-1]
+    toggled = _strip_plural(last)
+    if toggled == last:
+        toggled = last + "s"
+    return [
+        (float(a), float(b))
+        for a, b, _heard in grounding._phrase_windows(  # noqa: SLF001
+            stream, timed, " ".join([*words[:-1], toggled])
+        )
+    ]
+
+
+def _anchor_times_following_talk(
+    entries: Sequence[SequenceEntry],
+    words: Sequence[dict] | None,
+    keep_segments: Sequence[tuple[float, float]] | None,
+) -> dict[int, float | None]:
+    """Output time of each phrased entry's word, flag on (S65-S68); ``None`` = not heard."""
+    from app.services import phone_reaction_grounding as grounding  # noqa: PLC0415
+
+    timed = [word for word in (words or []) if isinstance(word, dict)]
+    stream = grounding._token_stream(timed)  # noqa: SLF001 - the tokenizer beats ground with
+    hearings: dict[int, list[tuple[float, float]]] = {}
+    folded: dict[int, tuple[str, ...]] = {}
+    for entry in entries:
+        if not entry.spoken_phrase or not timed:
+            continue
+        folded[entry.index] = tuple(grounding.fold_tokens(entry.spoken_phrase))
+        found = [
+            (float(a), float(b))
+            for a, b, _heard in grounding._phrase_windows(  # noqa: SLF001
+                stream, timed, entry.spoken_phrase
+            )
+        ]
+        hearings[entry.index] = (
+            found
+            or _loose_hearings(stream, entry.spoken_phrase)
+            or _plural_toggled_hearings(stream, timed, entry.spoken_phrase)
+        )
+    anchors: dict[int, float | None] = {}
+    for entry in entries:
+        if not entry.spoken_phrase:
+            continue
+        kept = [
+            (start, end, to_output_time(start, keep_segments))
+            for start, end in hearings.get(entry.index, [])
+        ]
+        kept = [(start, end, at) for start, end, at in kept if at is not None]
+        free = [
+            (at, start, end)
+            for start, end, at in kept
+            if not any(
+                folded[other] != folded[entry.index]
+                and o_start <= start + _EPS
+                and end <= o_end + _EPS
+                and o_end - o_start > end - start + _EPS
+                for other, spans in hearings.items()
+                for o_start, o_end in spans
+            )
+        ]
+        # A name only ever said inside another name keeps its first hearing (as without the flag).
+        anchors[entry.index] = free[0][0] if free else (kept[0][2] if kept else None)
+    return anchors
 
 
 def _fill_once(
@@ -334,11 +479,17 @@ def lay_out(
     if not entries or take_s < MIN_WINDOW_S - _EPS:
         return SequenceLayout(windows=(), cadence_s=cadence_s)
 
+    from app.config import settings  # noqa: PLC0415
+
+    follows_talk = settings.background_follows_talk_enabled
+    heard_at = _anchor_times_following_talk(entries, words, keep_segments) if follows_talk else {}
     anchors: dict[int, float] = {}
     for entry in entries:
         if not entry.spoken_phrase:
             continue
-        at = _anchor_time(entry, words, keep_segments)
+        at = (
+            heard_at.get(entry.index) if follows_talk else _anchor_time(entry, words, keep_segments)
+        )
         if at is None or at >= take_s - MIN_WINDOW_S + _EPS:
             notes.append(
                 {"lane": "background", "window": entry.index, "reason": "phrase_not_heard"}
