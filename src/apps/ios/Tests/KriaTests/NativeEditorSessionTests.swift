@@ -5972,6 +5972,26 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(fake.sourcePoolCallCount, calls, "no reload loop")
     }
 
+    func testPreviewConflictReloadCancellationDoesNotLeavePreparationRunning() async throws {
+        let threadID = UUID(), jobID = UUID()
+        let variant = Self.variant(duration: 2, generation: "g1")
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
+                snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "g1",
+                snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: variant)
+        fake.editorVariantScript = [.success(variant)]
+        fake.editorVariantThrow = CancellationError()
+        fake.sourcePoolError = .conflict
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: threadID)
+        let stopped = await waitUntil(timeout: .seconds(5)) {
+            if case .failed = session.sourcePreviewState { true } else { false }
+        }
+        XCTAssertTrue(stopped, "same-editor reconciliation cancellation is a preview failure, not navigation")
+        XCTAssertFalse(session.isSaving)
+        XCTAssertEqual(fake.commitCount, 0)
+    }
+
     func testSaveRequestFailurePreservesLocalEdits() async {
         let threadID = UUID()
         let textID = "text-1"
@@ -6880,6 +6900,7 @@ final class EditorCommitSpy: KriaAPIClient {
     let openReceipt: OpenInEditorResponse?
     var authoritativeVariant: [String: JSONValue]?
     var editorVariantError: APIError?
+    var editorVariantThrow: Error?
     var commitResponse: EditorCommitResponse?
     let commitError: APIError?
     /// Any other error `editorCommit` should throw (e.g. a typed 422 `EditorSaveError`).
@@ -7001,6 +7022,7 @@ final class EditorCommitSpy: KriaAPIClient {
         }
         if !editorVariantScript.isEmpty { return try editorVariantScript.removeFirst().get() }
         if let editorVariantError { throw editorVariantError }
+        if let editorVariantThrow { throw editorVariantThrow }
         return authoritativeVariant ?? ["editor_revision_number": phoneDestination ? .number(7) : .null, "render_destination": .string(phoneDestination ? "device" : "cloud"), "variant_id": .string(variantID), "render_generation_id": .string("generation-1"), "resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"), "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(false)]), "user_timeline": .object(["slots": .array([.object(["slot_id": .string("slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2), "source_duration_s": .number(2), "removed": .bool(false)])])])]
     }
     func resumeEditorVariant() {

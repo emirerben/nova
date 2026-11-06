@@ -378,6 +378,107 @@ final class SavedEditorRecoveryTests: XCTestCase {
         XCTAssertFalse(NativeEditorSaveBanner(session: session).showsRenderRetryAction)
     }
 
+    func testConflictReloadCancellationInSameEditorEndsWithVisibleRetry() async throws {
+        for dirty in [false, true] {
+            let (session, fake, _) = try await conflictingRetryFixture()
+            if dirty { session.updateTextContent(id: "saved-title", content: "Keep this local edit") }
+            let before = session.document
+            fake.editorVariantThrow = CancellationError()
+            await session.retryRender()
+            XCTAssertEqual(fake.commitCount, 1)
+            XCTAssertEqual(session.document, before)
+            XCTAssertEqual(session.hasUnsavedChanges, dirty)
+            XCTAssertFalse(session.isSaving)
+            guard case .failed = session.saveState else { XCTFail("same-editor cancellation needs a terminal failure"); continue }
+            XCTAssertTrue(NativeEditorSaveBanner(session: session).showsRenderRetryAction)
+            fake.editorVariantThrow = nil; fake.commitErrorQueue = [.conflict]
+            await session.retryRender()
+            XCTAssertEqual(fake.commitCount, 2)
+            XCTAssertEqual(session.document.revision.baseGeneration, "newer-generation")
+            XCTAssertEqual(session.document.clips.map(\.id), ["second-clip", "saved-clip"])
+            XCTAssertEqual(session.hasUnsavedChanges, dirty)
+        }
+    }
+
+    func testOldConflictReloadCannotChangeReplacementEditorOrClearItsLoadingState() async throws {
+        for target in ["new-job", "new-variant", "same-target-reset"] {
+            for cancelled in [false, true] {
+                for replacementStillLoading in [false, true] {
+                    let (session, old, _) = try await conflictingRetryFixture()
+                    old.suspendNextEditorVariant = true
+                    let retry = Task { await session.retryRender() }
+                    for _ in 0..<200 {
+                        if old.editorVariantIsSuspended { break }
+                        try await Task.sleep(for: .milliseconds(5))
+                    }
+                    XCTAssertTrue(old.editorVariantIsSuspended)
+                    let nextVariant = target == "new-variant" ? "replacement-variant" : "guided_story"
+                    var replacementVariant = variant()
+                    replacementVariant["variant_id"] = .string(nextVariant)
+                    replacementVariant["text_elements"] = .array([.object([
+                        "id": .string("replacement-title"), "text": .string("Replacement editor"),
+                        "start_s": .number(0), "end_s": .number(2)
+                    ])])
+                    let nextDraft = DraftSnapshot(draftID: UUID().uuidString, itemID: itemID,
+                        variantKey: nextVariant, draftRevision: 7, snapshotHash: "replacement", etag: "replacement",
+                        baseJobID: target == "new-job" ? UUID().uuidString : jobID.uuidString,
+                        baseGenerationID: "saved-generation", snapshot: [:], canUndo: false, createdAt: .now)
+                    let replacement = EditorCommitSpy(draftSnapshot: nextDraft, authoritativeVariant: replacementVariant)
+                    replacement.suspendNextEditorVariant = replacementStillLoading
+                    let load = Task { await session.load(api: replacement, threadID: threadID, variantID: nextVariant) }
+                    if replacementStillLoading {
+                        for _ in 0..<200 {
+                            if replacement.editorVariantIsSuspended { break }
+                            try await Task.sleep(for: .milliseconds(5))
+                        }
+                        XCTAssertTrue(replacement.editorVariantIsSuspended)
+                    } else { await load.value }
+                    let replacementDocument = session.document
+                    let replacementState = session.saveState
+                    let replacementDirty = session.hasUnsavedChanges
+                    if cancelled { old.editorVariantThrow = CancellationError() }
+                    old.resumeEditorVariant(); await retry.value
+                    let context = "\(target), cancelled=\(cancelled), loading=\(replacementStillLoading)"
+                    XCTAssertEqual(old.commitCount, 1, context)
+                    XCTAssertEqual(replacement.commitCount, 0, context)
+                    XCTAssertEqual(session.document, replacementDocument, context)
+                    XCTAssertEqual(session.saveState, replacementState, context)
+                    XCTAssertEqual(session.hasUnsavedChanges, replacementDirty, context)
+                    XCTAssertEqual(session.isSaving, replacementStillLoading, context)
+                    if replacementStillLoading { replacement.resumeEditorVariant(); await load.value }
+                    XCTAssertEqual(session.document.textElements.first?.text, "Replacement editor", context)
+                    XCTAssertFalse(session.isSaving, context)
+                }
+            }
+        }
+    }
+
+    func testOldCommitCannotFinishInsideSameTargetReplacementEditor() async throws {
+        for cancelled in [false, true] {
+            let (session, old, _) = try await conflictingRetryFixture(suspend: true)
+            old.commitErrorQueue = []
+            let retry = Task { await session.retryRender() }
+            for _ in 0..<200 {
+                if old.commitIsSuspended { break }
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            XCTAssertTrue(old.commitIsSuspended)
+            let replacement = EditorCommitSpy(draftSnapshot: snapshot(), authoritativeVariant: variant())
+            await session.load(api: replacement, threadID: threadID, variantID: "guided_story")
+            session.updateTextContent(id: "saved-title", content: "Replacement local work")
+            let before = session.document
+            let state = session.saveState
+            if cancelled { old.commitThrow = CancellationError() }
+            old.resumeCommit(); await retry.value
+            XCTAssertEqual(session.document, before)
+            XCTAssertEqual(session.saveState, state)
+            XCTAssertTrue(session.hasUnsavedChanges)
+            XCTAssertFalse(session.isSaving)
+            XCTAssertEqual(old.commitCount, 1)
+            XCTAssertEqual(replacement.commitCount, 0)
+        }
+    }
+
     func testGenuineTimelineSaveRetainsExistingConflictRebaseContract() async throws {
         let (session, fake, _) = try await conflictingRetryFixture()
         session.transactDocument(section: .timeline) { $0.clips[0].durationS = 1.5 }

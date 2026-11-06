@@ -206,3 +206,49 @@ backend/preship results are recorded in the local PR body and logs.
 `392d47eec278eefaba3fe4ec1ae6dd62028d1a36`, packages tree
 `a8ae4da503f219d9e6d1573556d68dcd7eb64af5`. Only this evidence document changed
 after the test run; the committed native trees contain the exact tested bytes.
+
+### Conflict-reload cancellation terminal invariant (before correction)
+
+Cancellation from generation reconciliation is an operation outcome, not proof of
+navigation. Every completed retry that still owns the active editor must leave
+`isSaving == false` and a non-saving terminal state; pending retry intent must be
+visible after failure. A superseded attempt must not change the replacement editor's
+document, dirty state, banner, pending intent or loading flag. Identity includes a
+fresh load/reset of the same job and variant, not just different identifiers.
+Tests cover same-editor cancellation with/without dirty text, and old success or
+cancellation completing after a new job, new variant, or same-target reset, both
+while the replacement is loading and after it has loaded. The prior failure-state
+matrix and its offline/503/uncertain-response controls remain in force.
+
+Cancellation/navigation red control: `/tmp/cunda-cancel-red.{log,xcresult}` executed
+22 tests with 19 failed assertions. It reproduced same-editor `.saving` after
+cancellation, a preview left preparing, old commit changes after a same-target
+reset, and old reload responses changing replacement content/banner/loading state.
+
+The correction assigns a load epoch to editor operations, so a reset to identical
+job/item/variant/thread IDs is still a new editor. Save attempts retain one active
+attempt identity through conflict reconciliation; duplicate calls cannot enter
+between stages. Commit and reload results, cleanup, and outer continuations verify
+ownership before changing state. Reload returns a distinct superseded result;
+CancellationError while still owned is an ordinary failure, including preview
+reconciliation. A shared owning-attempt exit guard converts any remaining `.saving`
+state to truthful failure after `isSaving` clears. New loads invalidate old attempts
+and their transient conflict flags, so old cleanup cannot clear a new load's flag.
+
+Exit review: early duplicate/no-intent calls own no attempt; missing save context
+fails visibly; acknowledged/pending render responses retain their existing terminal
+states; commit errors preserve the failed state; 409 success stops for explicit
+review; 409 failure/cancellation fails visibly; invalidated identities return without
+changing the new editor. Every still-owned attempt has a terminal-state fallback.
+No generation fence was removed and no automatic retry was added.
+
+The complete bounded native selection passed **504 tests, zero failures** in
+`/tmp/cunda-cancel-green.{log,xcresult}`. It includes all 253 session tests and 21
+saved-recovery tests, plus the prior preview/compiler/source/chat/routing classes.
+The complete original failure matrix remains covered. Backend production code is
+unchanged. Physical-device/private-project and rollout limits still apply.
+
+504-test source binding: app `b1a6e45a01c6f29ffc82b344390d10676b19358d`,
+tests/fixtures `3913a19389542c30c3d541bcc8f6fdd87ed7682b`, packages
+`a8ae4da503f219d9e6d1573556d68dcd7eb64af5`. Native bytes were unchanged after
+execution; only this evidence document was updated before the local commit.

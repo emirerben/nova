@@ -1163,6 +1163,28 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
         return true
     }
+    private struct EditorOperationIdentity: Equatable {
+        let loadEpoch: UInt64
+        let itemID: String?
+        let jobID: UUID?
+        let variantKey: String?
+        let threadID: UUID?
+    }
+    private var editorLoadEpoch: UInt64 = 0
+    private var activeSaveAttemptID: UUID?
+    private var editorOperationIdentity: EditorOperationIdentity {
+        EditorOperationIdentity(loadEpoch: editorLoadEpoch, itemID: itemID, jobID: jobID,
+                                variantKey: variantKey, threadID: threadID)
+    }
+    private func beginEditorLoad() {
+        editorLoadEpoch &+= 1
+        activeSaveAttemptID = nil
+        saveHitNewerVersion = false
+        songRemovalAlreadyApplied = false
+        userSongRetry = nil
+        isSaving = true
+    }
+
     private var pendingRenderRetrySections: Set<EditorSection> = []
     /// Pending render intent survives a failed commit without becoming an authored edit.
     var hasPendingRenderRetry: Bool { !pendingRenderRetrySections.isEmpty }
@@ -1906,6 +1928,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func load(api: any KriaAPIClient, threadID: UUID, variantID: String? = nil, allowPlaybackFallback: Bool = true) async {
+        beginEditorLoad()
         conversationRuntimeVersion = 2
         resetBackgroundRefresh()
         self.api = api; self.threadID = threadID; isSaving = true; saveState = .saving; loadState = .loading
@@ -2381,6 +2404,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func load(project: ProjectSummary, api: any KriaAPIClient) async {
+        beginEditorLoad()
         loadState = .loading
         var resolvedProject = project
         if project.activeJobID != nil,
@@ -2564,6 +2588,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         threadID: UUID?,
         api: any KriaAPIClient
     ) async {
+        beginEditorLoad()
         self.api = api
         self.threadID = threadID
         resetBackgroundRefresh()
@@ -7040,12 +7065,28 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func save(retrying retrySections: Set<EditorSection>) async {
+        guard !isSaving, activeSaveAttemptID == nil else { return }
+        let attemptID = UUID()
+        let identity = editorOperationIdentity
+        activeSaveAttemptID = attemptID
+        defer {
+            if activeSaveAttemptID == attemptID {
+                activeSaveAttemptID = nil
+                // Every exit still owned by this editor must be terminal. A
+                // load/reset owns its own state, even for identical target IDs.
+                if editorOperationIdentity == identity, !isSaving, saveState == .saving {
+                    saveState = .failed("Saving was interrupted. Your edits are still here. Try again when you’re ready.")
+                }
+            }
+        }
         await saveOnce(retrying: retrySections)
+        guard activeSaveAttemptID == attemptID, editorOperationIdentity == identity else { return }
         if saveHitNewerVersion {
             // KRI-935: a newer version was saved elsewhere. Load it with the creator's
             // edits on top and send them once more, without asking them to reload.
             saveHitNewerVersion = false
-            let reload = await reloadLatestKeepingLocalEdits()
+            let reload = await reloadLatestKeepingLocalEdits(saveAttemptID: attemptID)
+            guard activeSaveAttemptID == attemptID, editorOperationIdentity == identity else { return }
             switch reload {
             case .reloaded:
                 if !retrySections.isEmpty {
@@ -7058,13 +7099,13 @@ struct NativeEditorTemporaryVideo: Sendable {
                 // The newest version may already contain everything the creator changed.
                 guard hasUnsavedChanges else { saveState = .saved; return }
                 await saveOnce()
+                guard activeSaveAttemptID == attemptID, editorOperationIdentity == identity else { return }
                 if saveHitNewerVersion {
                     saveHitNewerVersion = false
                     saveState = .failed("This edit changed again while saving. Your edits are still here on the newest version. Save again to send them.")
                     return
                 }
-            case .failed(let error) where error is CancellationError:
-                // The editor moved to another job or variant meanwhile; that load owns the state.
+            case .superseded:
                 return
             case .alreadyTried, .failed:
                 let detail = if case .failed(let error) = reload { " \(error.localizedDescription)" } else { "" }
@@ -7079,11 +7120,12 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func saveOnce(retrying retrySections: Set<EditorSection> = []) async {
-        defer { userSongRetry = nil }
         guard !isSaving, hasUnsavedChanges || !retrySections.isEmpty else { return }
+        let saveEditorEpoch = editorLoadEpoch
+        defer { if editorLoadEpoch == saveEditorEpoch { userSongRetry = nil } }
         guard let api, let itemID, let variantKey else { saveState = .failed("Load the project before saving edits."); return }
         isSaving = true; saveState = .saving
-        defer { isSaving = false }
+        defer { if editorLoadEpoch == saveEditorEpoch { isSaving = false } }
         let submittedDocument = document
         // KRI-576: the song window this save asks the server to project the lyric rows against.
         let submittedSongStartS = trueSongWindowStartS
@@ -7103,7 +7145,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             // retry stays scheduled so the catch-up read still runs.
             refreshFailureStreak = 0
             if refreshSync == .reconnecting { refreshSync = .idle }
-            guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
+            guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             let acknowledged = acknowledgedSections(response.sections, submittedSections: submittedSections)
             let postSubmitUndo = Array(undoStack.dropFirst(submittedUndoCount))
             let hasPostSubmitEdits = document != submittedDocument
@@ -7224,7 +7266,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                     // read-after-write reconciliation is temporarily down.
                 }
             }
-            guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
+            guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
             if response.renderStarted ?? response.ok {
                 // The commit is durable even while its render is pending. Keep
                 // the acknowledged sections retryable until a matching ready
@@ -7232,7 +7274,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 pendingRenderRetrySections = acknowledged
                 saveState = .previewPending
                 await refreshDeviceRender()
-                guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
+                guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
                 pendingDeviceRenderIdentity = deviceRenderKey.flatMap { deviceRenders?.request(for: $0)?.identity }
                 previewSupersededGeneration = saveDocumentGeneration
                 startPreviewRefresh(generation: response.generation)
@@ -7241,13 +7283,13 @@ struct NativeEditorTemporaryVideo: Sendable {
                 saveState = .renderRetryNeeded(response.renderRecovery ?? "Your edit is saved. Its preview render did not start, so you can retry it safely.")
             }
         } catch APIError.conflict {
-            guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
+            guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             // `save()` loads the newer version and sends this edit again.
             saveHitNewerVersion = true
         } catch EditorSaveError.userSongUnavailable where submittedDocument.userSong?.removed == true {
             // The song is already gone on the server (an earlier removal reached it): that is what the
             // creator asked for. Fold the removal in locally and carry on with whatever else is pending.
-            guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
+            guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             foldAcknowledgedUserSong(submittedDocument.userSong)
             let rebaseSong = userSongRebase
             undoStack = undoStack.map { var value = $0; value.userSong = rebaseSong(value.userSong); return value }
@@ -7258,7 +7300,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             songRemovalAlreadyApplied = true
             saveState = hasUnsavedChanges ? .idle : .saved
         } catch {
-            guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
+            guard saveIdentityMatches(editorEpoch: saveEditorEpoch, itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             saveState = .failed(error.localizedDescription)
         }
     }
@@ -7289,21 +7331,23 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// reloading forever; Retry clears it.
     private var previewConflictReloadGeneration: String?
 
-    private enum LatestReload { case reloaded, alreadyTried, failed(Error) }
+    private enum LatestReload { case reloaded, alreadyTried, superseded, failed(Error) }
 
     /// KRI-935: load the newest renderer-owned version of this edit without asking the
     /// creator. It becomes the clean base and their unsaved lanes are replayed on top
     /// (`rebaseLocalEdits`). `fencingPreviewConflict` allows one reload per server
     /// generation and always rebuilds the preview, even when the generation is unchanged.
-    private func reloadLatestKeepingLocalEdits(fencingPreviewConflict: Bool = false) async -> LatestReload {
-        guard !isSaving, let api, let jobID, let variantKey, let itemID else {
+    private func reloadLatestKeepingLocalEdits(fencingPreviewConflict: Bool = false, saveAttemptID: UUID? = nil) async -> LatestReload {
+        guard !isSaving, activeSaveAttemptID == saveAttemptID,
+              let api, let jobID, let variantKey, let itemID else {
             return .failed(APIError.invalidResponse)
         }
+        let identity = editorOperationIdentity
         isSaving = true
-        defer { isSaving = false }
+        defer { if editorOperationIdentity == identity { isSaving = false } }
         do {
             let variant = try await api.editorVariant(jobID: jobID, variantID: variantKey)
-            guard self.jobID == jobID, self.variantKey == variantKey else { return .failed(CancellationError()) }
+            guard editorOperationIdentity == identity else { return .superseded }
             let generation = variant["render_generation_id"]?.stringValue
                 ?? variant["render_finished_at"]?.stringValue
                 ?? document.revision.baseGeneration
@@ -7336,6 +7380,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             rebaseLocalEdits(onto: latestClean, variant: variant, forcePreviewRebuild: fencingPreviewConflict)
             return .reloaded
         } catch {
+            guard editorOperationIdentity == identity else { return .superseded }
             return .failed(error)
         }
     }
@@ -8422,7 +8467,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     private func reloadLatestAfterPreviewConflict(_ error: Error) -> Bool {
         // A save whose render is still pending owns the next generation; its preview refresh follows it.
         guard (error as? APIError) == .conflict, api != nil, let jobID, variantKey != nil,
-              pendingPreviewGeneration == nil else { return false }
+              activeSaveAttemptID == nil, pendingPreviewGeneration == nil else { return false }
         sourcePreviewState = .preparing
         NativePreviewDiagnostics.record("source-preview-conflict-reload")
         let sequence = sourcePreviewSequence
@@ -8438,7 +8483,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             switch await self.reloadLatestKeepingLocalEdits(fencingPreviewConflict: true) {
             case .reloaded:
                 return
-            case .failed(let failure) where failure is CancellationError:
+            case .superseded:
                 return
             case .alreadyTried:
                 self.failSourcePreview(error, reloadsLatestOnConflict: false)
@@ -9207,8 +9252,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         return EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(draft)).textElements
     }
 
-    private func saveIdentityMatches(itemID: String?, jobID: UUID?, variantKey: String?, threadID: UUID?, documentGeneration: String) -> Bool {
-        self.itemID == itemID && self.jobID == jobID && self.variantKey == variantKey && self.threadID == threadID && document.revision.baseGeneration == documentGeneration
+    private func saveIdentityMatches(editorEpoch: UInt64, itemID: String?, jobID: UUID?, variantKey: String?, threadID: UUID?, documentGeneration: String) -> Bool {
+        editorLoadEpoch == editorEpoch && self.itemID == itemID && self.jobID == jobID && self.variantKey == variantKey && self.threadID == threadID && document.revision.baseGeneration == documentGeneration
     }
 
     func retryDeviceRender() async {
@@ -9247,7 +9292,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func retryRender() async {
-        guard !isSaving, !pendingRenderRetrySections.isEmpty else { return }
+        guard !isSaving, activeSaveAttemptID == nil, !pendingRenderRetrySections.isEmpty else { return }
         // Re-send an acknowledged volume / start so the render restarts; never a removal.
         if pendingRenderRetrySections.contains(.userSong), let saved = acknowledgedUserSong, !saved.removed { userSongRetry = saved }
         await save(retrying: pendingRenderRetrySections)
