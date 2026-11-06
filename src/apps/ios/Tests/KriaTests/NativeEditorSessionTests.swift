@@ -8,6 +8,38 @@ import XCTest
 
 @MainActor
 final class NativeEditorSessionTests: XCTestCase {
+    func testRepeatedOpaqueSlotHydrationPreservesProjectScopedClipAndSourceIdentity() throws {
+        let project = UUID()
+        func hydrate(project: UUID, slotID: String?, assetID: String? = nil) throws -> EditorClip {
+            var slot: [String: JSONValue] = ["clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2)]
+            slot["slot_id"] = slotID.map(JSONValue.string)
+            slot["asset_id"] = assetID.map(JSONValue.string)
+            let snapshot = DraftSnapshot(draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 1,
+                snapshotHash: "h", etag: "e", baseJobID: nil, baseGenerationID: "g1",
+                snapshot: ["editor_payload": .object(["sections": .object(["timeline_slots": .array([.object(slot)])])])],
+                canUndo: false, createdAt: .now)
+            return try XCTUnwrap(snapshot.editorDraft(projectID: project).clips.first)
+        }
+        let first = try hydrate(project: project, slotID: "speaker-slot")
+        XCTAssertEqual(try hydrate(project: project, slotID: "speaker-slot"), first)
+        XCTAssertEqual(first.slotID, "speaker-slot")
+        let otherProject = try hydrate(project: UUID(), slotID: "speaker-slot")
+        XCTAssertNotEqual(otherProject.id, first.id)
+        XCTAssertNotEqual(otherProject.assetID, first.assetID)
+        XCTAssertNotEqual(try hydrate(project: project, slotID: "other-slot").id, first.id)
+        let explicitSource = try hydrate(project: project, slotID: "speaker-slot", assetID: "speaker-source")
+        XCTAssertEqual(try hydrate(project: project, slotID: "speaker-slot", assetID: "speaker-source"), explicitSource)
+        XCTAssertEqual(explicitSource.id, first.id)
+        XCTAssertNotEqual(try hydrate(project: project, slotID: "speaker-slot", assetID: "replacement-source").assetID, explicitSource.assetID)
+        XCTAssertEqual(try hydrate(project: project, slotID: "other-slot", assetID: "speaker-source").assetID, explicitSource.assetID)
+        XCTAssertNotEqual(try hydrate(project: UUID(), slotID: "speaker-slot", assetID: "speaker-source").assetID, explicitSource.assetID)
+        let slotUUID = UUID(), assetUUID = UUID()
+        let preserved = try hydrate(project: project, slotID: slotUUID.uuidString, assetID: assetUUID.uuidString)
+        XCTAssertEqual(preserved.id, slotUUID)
+        XCTAssertEqual(preserved.assetID, assetUUID)
+        XCTAssertEqual(try hydrate(project: project, slotID: nil), try hydrate(project: project, slotID: nil))
+    }
+
     func testReadyJobReceivedDuringSaveIsRecheckedAfterSaveAndTransientReadFailure() async throws {
         try await exerciseLatestJobDuringSave(runtimeVersion: 2)
     }
@@ -3058,7 +3090,10 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertNil(session.mergeConflictMessage)
         XCTAssertEqual(rebased.revision.baseGeneration, "g3")
-        XCTAssertEqual(rebased.clips, afterSave.clips, "the unsaved trim survives merging or the explicit local choice")
+        // Compare the persisted authored lane: encoding overlays effective values onto cached
+        // wire rows while retaining source identity, tombstones and opaque fields.
+        XCTAssertEqual(rebased.snapshot(for: .timeline), afterSave.snapshot(for: .timeline),
+                       "the complete authored timeline survives merging or the explicit local choice")
         await session.synchronizePromptRevision()
         XCTAssertEqual(session.document, rebased)
         XCTAssertEqual(fake.draftCallCount, 0)
@@ -5095,33 +5130,61 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.saveState, .idle)
     }
 
-    func testDraftLoadFailureIsNotReportedAsSaveFailure() async {
-        let threadID = UUID()
-        let fake = EditorCommitSpy(
-            draftSnapshot: DraftSnapshot(
-                draftID: "unused", itemID: "unused", variantKey: "initial",
-                draftRevision: 0, snapshotHash: "", etag: "", baseJobID: nil,
-                baseGenerationID: nil, snapshot: [:], canUndo: false, createdAt: .now
-            ),
-            draftError: .requestFailed(status: 500)
-        )
-        let project = ProjectSummary(
-            id: threadID, title: "Draft", status: .draft, updatedAt: .now, posterURL: nil
-        )
-        let session = NativeEditorSession(project: project)
-        session.loadRetryDelays = [.milliseconds(1)]
-
-        await session.load(project: project, api: fake)
-        // A 5xx first waits quietly behind the opening screen (L-c); only a lasting one shows.
-        XCTAssertEqual(session.loadState, .loading)
-        let deadline = ContinuousClock.now + .seconds(5)
-        while session.loadState == .loading, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }
-
-        XCTAssertEqual(
-            session.saveState,
-            .loadFailed("Kria hit a problem on its side. Your chat and footage are safe. Try again in a moment.")
-        )
-        XCTAssertEqual(fake.draftCallCount, 1 + NativeEditorSession.loadTransientRetryLimit)
+    func testDraftLoadFailureKeepsObservingUntilRecoveryAndFencesHiddenOrChangedOwner() async {
+        for outcome in ["recover", "hidden", "owner"] {
+            let threadID = UUID()
+            let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+                draftID: "draft", itemID: "item", variantKey: "initial", draftRevision: 1,
+                snapshotHash: "h", etag: "e", baseJobID: nil, baseGenerationID: nil,
+                snapshot: [:], canUndo: false, createdAt: .now), draftError: .requestFailed(status: 500))
+            fake.mediaLibraryOwner = "original"
+            let project = ProjectSummary(id: threadID, title: "Draft", status: .draft, updatedAt: .now, posterURL: nil)
+            let session = NativeEditorSession(project: project)
+            session.loadRetryDelays = [.zero]
+            var now = ContinuousClock.now
+            var reachedSlow = false
+            var readsAtSlow = 0
+            session.loadReadNow = { now }
+            session.loadReadSleep = { delay in
+                now = now.advanced(by: delay)
+                if delay >= .seconds(300), !reachedSlow {
+                    reachedSlow = true
+                    readsAtSlow = fake.draftCallCount
+                    XCTAssertEqual(session.saveState, .idle)
+                    XCTAssertEqual(session.loadState, .loading)
+                    XCTAssertTrue(session.loadWaitingMessage?.contains("automatically") == true)
+                    fake.draftError = nil
+                    if outcome == "hidden" { session.setObserversVisible(false) }
+                    if outcome == "owner" { fake.mediaLibraryOwner = "replacement" }
+                }
+                await Task.yield()
+            }
+            await session.load(project: project, api: fake)
+            let observedSlowOutcome = await waitUntil(timeout: .seconds(3)) {
+                reachedSlow && (outcome != "recover" || session.loadState == .loaded)
+            }
+            XCTAssertTrue(observedSlowOutcome, outcome)
+            XCTAssertTrue(reachedSlow, outcome)
+            XCTAssertEqual(readsAtSlow, 1 + NativeEditorSession.loadTransientRetryLimit)
+            if outcome == "recover" {
+                XCTAssertEqual(session.loadState, .loaded)
+                XCTAssertEqual(fake.draftCallCount, readsAtSlow + 1)
+            } else {
+                for _ in 0..<20 { await Task.yield() }
+                XCTAssertEqual(fake.draftCallCount, readsAtSlow, "the stale wake must not read after hiding or changing owner")
+                if outcome == "hidden" {
+                    session.setObserversVisible(true)
+                    let reopened = await waitUntil(timeout: .seconds(3)) { session.loadState == .loaded }
+                    XCTAssertTrue(reopened)
+                    XCTAssertEqual(session.loadState, .loaded)
+                    XCTAssertEqual(fake.draftCallCount, readsAtSlow + 1)
+                }
+            }
+            XCTAssertEqual(session.saveState, .idle)
+            XCTAssertEqual(fake.commitCount, 0)
+            session.setObserversVisible(false)
+            session.loadReadSleep = { _ in }
+        }
     }
 
     func testDraftLoadFailsWhenAuthoritativeVariantCannotBeFetched() async {
@@ -6820,7 +6883,10 @@ final class NativeEditorSessionTests: XCTestCase {
         let snapshot: [String: JSONValue] = ["editor_payload": .object(["base_generation": .string("g1"), "sections": .object(["timeline_slots": .array([.object(["slot_id": .string(clipID.uuidString), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2)])])])])]
         let fake = EditorCommitSpy(
             draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
-            authoritativeVariant: ["resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"), "editor_capabilities": .object(["timeline": .bool(true)])],
+            authoritativeVariant: ["resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"),
+                "render_generation_id": .string("g1"), "editor_capabilities": .object(["timeline": .bool(true)]),
+                "user_timeline": .object(["slots": .array([.object(["slot_id": .string(clipID.uuidString),
+                    "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2)])])])],
             commitError: .conflict
         )
         let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
