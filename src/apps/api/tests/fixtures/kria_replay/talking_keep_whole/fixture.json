@@ -22,7 +22,9 @@
   "Use the whole clip as it is, don't trim anything."
  ],
  "client_protocol": 22,
- "replay_inputs": {},
+ "replay_inputs": {
+  "text_elements": []
+ },
  "planner_summary": "I'll use your whole clip as it is, with captions.",
  "brief": {
   "version": 1,
@@ -160,7 +162,7 @@
      "transcript": "So I ordered the provoleta and honestly, uh, I was not ready for how good it is. Have you ever had it?"
     },
     "display_height": 320,
-    "on_screen_text": "building. Okay, I'll translate it to Turkish. Yeah. So, what was your name again, sorry? Maximo. Maximo. Uh, Argentina'n\u0131n ba\u011f\u0131ms\u0131zl\u0131\u011f\u0131n\u0131 bu binada eee kazan\u0131ld\u0131\u011f\u0131n\u0131 ilan ediyor. Neden peki? Why, why Maximo? Why and when? Why and when what? Uh, you gained independence. 1810. 1810. The year 1810. means Yes. 215 years ago. 250 sene \u00f6nce 1810, 1810. Um, and why specifically at this building? Because ",
+    "on_screen_text": "building. Okay, I'll translate it to Turkish. Yeah. So, what was your name again, sorry? Maximo. Maximo. Uh, Argentina'nın bağımsızlığını bu binada eee kazanıldığını ilan ediyor. Neden peki? Why, why Maximo? Why and when? Why and when what? Uh, you gained independence. 1810. 1810. The year 1810. means Yes. 215 years ago. 250 sene önce 1810, 1810. Um, and why specifically at this building? Because ",
     "analysis_version": 8,
     "rotation_degrees": 0
    }

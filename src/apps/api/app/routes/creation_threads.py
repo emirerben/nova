@@ -3463,14 +3463,32 @@ async def _pending_approval_brief(
     return render_shape.readable_brief(snapshot.get("brief_binding")), snapshot
 
 
-async def _keeps_original_speech_ask(db: AsyncSession, thread: CreationThread) -> bool:
+async def _pending_approval_brief_or_none(
+    db: AsyncSession, thread: CreationThread
+) -> tuple[CreativeBrief | None, dict[str, Any] | None]:
+    """``_pending_approval_brief`` for a hot read path: unreadable is ``(None, None)``."""
+    try:
+        return await _pending_approval_brief(db, thread)
+    except Exception:  # noqa: BLE001 - an optional projection never breaks a read
+        log.warning("creation_thread.pending_approval_brief_failed", exc_info=True)
+        return None, None
+
+
+async def _keeps_original_speech_ask(
+    db: AsyncSession,
+    thread: CreationThread,
+    pending: tuple[CreativeBrief | None, dict[str, Any] | None] | None = None,
+) -> bool:
     """KRI-971: the pending brief asks to keep the clip whole / the speech as filmed, so the
     cleanup card should lead with "Keep original speech". Best-effort like the projection
-    above: anything unreadable is False and never breaks the thread read."""
+    above: anything unreadable is False and never breaks the thread read. ``pending`` is the
+    brief the caller already loaded, so a thread read runs the approval query once."""
     from app.kria.tight_pause_ask import brief_wants_original_speech  # noqa: PLC0415
 
     try:
-        brief, _snapshot = await _pending_approval_brief(db, thread)
+        brief, _snapshot = (
+            pending if pending is not None else await _pending_approval_brief(db, thread)
+        )
         return brief_wants_original_speech(brief)
     except Exception:  # noqa: BLE001 - an optional projection never breaks a read
         log.warning("creation_thread.keeps_original_speech_projection_failed", exc_info=True)
@@ -3478,7 +3496,10 @@ async def _keeps_original_speech_ask(db: AsyncSession, thread: CreationThread) -
 
 
 async def _cleanup_ask_projection(
-    db: AsyncSession, thread: CreationThread, item: PlanItem
+    db: AsyncSession,
+    thread: CreationThread,
+    item: PlanItem,
+    pending: tuple[CreativeBrief | None, dict[str, Any] | None] | None = None,
 ) -> tuple[bool, bool]:
     """Qendresa 13: ``(requested_in_chat, tight)`` for the speech-cleanup card.
 
@@ -3494,8 +3515,10 @@ async def _cleanup_ask_projection(
     )
 
     try:
-        brief, snapshot = await _pending_approval_brief(db, thread)
-        if brief is None or not brief_wants_speech_cleanup(brief):
+        brief, snapshot = (
+            pending if pending is not None else await _pending_approval_brief(db, thread)
+        )
+        if brief is None or snapshot is None or not brief_wants_speech_cleanup(brief):
             return False, False
         if not brief_tight_pauses(brief):
             return True, False
@@ -3683,15 +3706,18 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
                 # every legacy required_v1 Job. An item genuinely in the cohort
                 # still gets its card through in_cohort.
                 speech_cleanup = None
-            if settings.tight_pause_cut_enabled and isinstance(speech_cleanup, dict):
-                requested, tight = await _cleanup_ask_projection(db, thread, item)
-                if requested:
-                    speech_cleanup["requested_in_chat"] = True
-                if tight:
-                    speech_cleanup["pause_style"] = "tight"
-            if isinstance(speech_cleanup, dict) and await _keeps_original_speech_ask(db, thread):
-                # KRI-971: older apps ignore this and keep today's buttons.
-                speech_cleanup["recommended_choice"] = "keep_original"
+            if isinstance(speech_cleanup, dict):
+                # One approval query serves both projections on this polled read.
+                pending = await _pending_approval_brief_or_none(db, thread)
+                if settings.tight_pause_cut_enabled:
+                    requested, tight = await _cleanup_ask_projection(db, thread, item, pending)
+                    if requested:
+                        speech_cleanup["requested_in_chat"] = True
+                    if tight:
+                        speech_cleanup["pause_style"] = "tight"
+                if await _keeps_original_speech_ask(db, thread, pending):
+                    # KRI-971: older apps ignore this and keep today's buttons.
+                    speech_cleanup["recommended_choice"] = "keep_original"
     render_shape_projection = None
     if isinstance(db, AsyncSession) and item is not None:
         render_shape_projection = await _render_shape_projection(db, thread, item, session)

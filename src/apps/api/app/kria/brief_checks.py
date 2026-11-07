@@ -4464,8 +4464,9 @@ def _wants_whole_take(req: BriefRequirement) -> bool:
     if req.kind != "timing":
         # KRI-971: the model files "use the whole clip as it is" under any kind (it chose
         # `style`); only the recorded fact counts there, never the words. A photo or sound
-        # timed to spoken words that also says "keep the take" is still a pop-in ask.
-        return stated is True and not _fact_triggers(req)
+        # timed to spoken words that also says "keep the take" is still a pop-in ask. A clip
+        # scope is not a whole-video ask.
+        return stated is True and req.scope == "global" and not _fact_triggers(req)
     if stated is not None:
         return stated
     return bool(_WHOLE_TAKE_RE.search(_req_text(req)))

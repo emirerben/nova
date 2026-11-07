@@ -43,12 +43,14 @@ def brief_tight_pauses(brief: CreativeBrief | None) -> bool:
 
 
 def wants_original_speech(req: BriefRequirement) -> bool:
-    """A live requirement the model recorded as ``keep_whole_take`` (any kind, no length of its
-    own) or ``speech_cleanup: false``: the creator wants the speech left as filmed (KRI-971)."""
+    """A live whole-video requirement the model recorded as ``keep_whole_take`` (any kind, no
+    length of its own) or ``speech_cleanup: false``: the creator wants the speech left as filmed
+    (KRI-971). A clip-scoped row says nothing about the other clips the one card covers."""
     from app.kria import brief_checks  # noqa: PLC0415 (brief_checks imports this package)
 
     return bool(
         req.live
+        and req.scope == "global"
         and (
             brief_checks._wants_whole_take(req)
             or brief_checks._fact_flag(req, "speech_cleanup") is False

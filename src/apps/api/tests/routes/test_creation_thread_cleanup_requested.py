@@ -17,9 +17,11 @@ modes written down first:
 
 7. The recommendation shows although the creator ALSO asked for cleanup.
 8. "Keep it whole" with a length of its own (a length ask) recommends keeping the pauses.
-9. A superseded requirement, or a title-scoped one, still triggers it.
+9. A superseded requirement, or a title- or clip-scoped one, still triggers it (one card covers
+   every clip).
 10. `keep_whole_take` filed under `style` (what the model did in prod) is not recognised.
 11. The key leaks onto an ordinary brief, changing the card for everyone.
+12. The extra projection adds a second pending-approval query to the polled thread read.
 """
 
 from __future__ import annotations
@@ -300,6 +302,9 @@ def _req(**kw) -> BriefRequirement:
         ([_req(facts={"keep_whole_take": "false"})], False),
         ([_req(facts={"keep_whole_take": True, "duration_s": 20})], False),
         ([_req(scope="title", facts={"keep_whole_take": True})], False),
+        ([_req(scope="per_clip", facts={"keep_whole_take": True})], False),
+        ([_req(scope="clip:2", facts={"keep_whole_take": True})], False),
+        ([_req(kind="audio", scope="clip:2", facts={"speech_cleanup": False})], False),
         ([_req(facts={"keep_whole_take": True}, status="superseded")], False),
         (
             [
@@ -338,3 +343,20 @@ async def test_response_leaves_an_ordinary_brief_unchanged(monkeypatch):
         monkeypatch, flag=False, snapshot=_keep_snapshot(_req(kind="text", facts={}))
     )
     assert "recommended_choice" not in out.speech_cleanup
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flag", [True, False])
+async def test_thread_read_loads_the_pending_approval_once(monkeypatch, flag):
+    loads = []
+    real = routes._pending_approval_brief
+
+    async def counting(db, thread):
+        loads.append(thread.id)
+        return await real(db, thread)
+
+    monkeypatch.setattr(routes, "_pending_approval_brief", counting)
+    snapshot = _keep_snapshot(_req(facts={"keep_whole_take": True}))
+    out = await _response_with(monkeypatch, flag=flag, snapshot=snapshot)
+    assert out.speech_cleanup["recommended_choice"] == "keep_original"
+    assert len(loads) == 1
