@@ -6667,8 +6667,7 @@ _TALKING_SPOKEN_TEXT_PLAN = (
 # KRI-1237: "show the matching screenshot when I talk about it" on a phone Talking draft. The
 # render grounds the Visuals pool as cards on the words they match (`talking_cards_at_render`);
 # the finished video's own receipt then names each card and when it shows (`grounded_cards`).
-# TODO(KRI-1235): add to the exported render-promise tuple approval readiness reads, so this
-# promise is approvable rather than `needs_choice`.
+# A render promise (`RENDER_PROMISE_REASONS`), so it never holds the first draft.
 _TALKING_CARDS_PLAN = (
     "I'll show your Visuals as cards when you talk about them; one you never talk about "
     "won't appear"
@@ -6701,6 +6700,8 @@ RENDER_PROMISE_REASONS: tuple[str, ...] = (
     # KRI-707: a text shown at the word it is said; Qendresa 19: a list label at its part.
     _TALKING_SPOKEN_TEXT_PLAN,
     _TALKING_LIST_LABEL_PLAN,
+    # KRI-1237: the phone Talking card matcher shows the creator's Visuals on their words.
+    _TALKING_CARDS_PLAN,
 )
 # KRI-793: what a phone Talking draft says about a captions ask naming a language or words
 # to spell: the writer captions everything said in the take (an off-camera voice too), and

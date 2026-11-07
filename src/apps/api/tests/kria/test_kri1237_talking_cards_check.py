@@ -55,6 +55,11 @@ from app.kria.brief_checks import (
 )
 from app.kria.reply_language import reply_language_for
 from app.services import creator_capabilities as capabilities
+from tests.kria.test_kri1235_render_promises_approvable import (
+    Q1_BRIEF,
+    Q1_STRATEGY,
+    q1_prod,  # noqa: F401 - the prod switches of the Q1 run (KRI-1235's replay)
+)
 
 FIXTURE: dict[str, Any] = json.loads(
     (Path(__file__).resolve().parents[1] / "fixtures" / "kri1237_qendresa_q1_cards.json").read_text(
@@ -159,8 +164,10 @@ def test_q1_replay_reproduces_prod_for_the_asks_this_fix_does_not_touch() -> Non
     """
     rows = _readiness()
     for rid in ("r3", "r5", "r6", "r7", "r8", "r9", "r11"):
-        assert rows[rid]["disposition"] == PROD_ROWS[rid]["disposition"], rid
         assert rows[rid]["reason"] == PROD_ROWS[rid]["reason"], rid
+    # The title and "no music" were never held; the list labels were, until KRI-1235 (#2142).
+    for rid in ("r3", "r11"):
+        assert rows[rid]["disposition"] == PROD_ROWS[rid]["disposition"], rid
     assert PROD_ROWS["r4"]["disposition"] == "unsupported"
     assert PROD_RECEIPTS["r4"]["reason"] == "This draft has no pop-ins timed to your words."
 
@@ -175,15 +182,32 @@ def test_q1_cards_ask_is_a_render_promise_not_a_refusal() -> None:
     assert receipt.verification == "checked"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KRI-1235 owns approval_readiness: the promise turns approvable once its render-promise "
-        "tuple holds _TALKING_CARDS_PLAN. Whichever PR lands second drops this marker."
-    ),
-)
 def test_q1_cards_promise_is_approvable() -> None:
-    assert _readiness()["r4"]["disposition"] in APPROVABLE
+    """The promise is one of KRI-1235's render promises: it never holds her first draft."""
+    row = _readiness()["r4"]
+    assert row["disposition"] in APPROVABLE, row
+    assert row["reason"] == PROMISE_EN
+
+
+def test_q1_first_draft_is_not_held_with_prod_switches(q1_prod) -> None:  # noqa: ANN001, F811
+    """KRI-1234's hold: with KRI-1235's promises (#2142) and this one, nothing holds turn 1.
+
+    KRI-1235's replay (its prod switches, its turn-1 strategy with the ending) on her real
+    uploads: its own manifest holds the take alone, where no card can be promised."""
+    report = assess_readiness(
+        Q1_BRIEF,
+        {**Q1_STRATEGY, "selected_media_ids": [TAKE]},
+        media={"clip_paths": [TAKE]},
+        manifest=_manifest(),
+        creator_id=CREATOR,
+        protected_regions=[],
+        protected_marks=True,
+    )
+    rows = {row["requirement_id"]: row for row in report["requirements"]}
+    assert rows["r4"]["disposition"] in APPROVABLE, rows["r4"]
+    held = {rid for rid, row in rows.items() if row["disposition"] not in APPROVABLE}
+    assert not held, held
+    assert report["ready"] is True
 
 
 @pytest.mark.parametrize("language", ["en", "tr"])
