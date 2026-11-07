@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.67.0] - 2026-11-07
+
+### Changed
+- feat(ios): glass AI suggestion chips with a slow turning edge light (KRI-1273) (#2181) <!-- release-pr: 2181 -->
+
 ## [0.88.66.0] - 2026-11-07
 
 ### Changed
