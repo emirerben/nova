@@ -34,6 +34,10 @@ from app.services.active_narration_source import ActiveNarrationResolution
 SpeechCleanupChoice = Literal["clean", "keep_original"]
 SpeechCleanupFullChoice = Literal["clean", "keep_original", "create_without_cleanup"]
 
+# The approval stash's ``origin`` when ``brief_keep_original_decision`` answered for the creator:
+# their typed request, not a tap on the card (KRI-1291).
+BRIEF_ORIGIN = "brief"
+
 SpeechCleanupConflictCode = Literal[
     "speech_cleanup_analysis_changed",
     "speech_cleanup_pending",
@@ -346,6 +350,51 @@ def reuse_recorded_cleanup_decision(
             current_cleanup.id, submitted_choice or current_cleanup.decision
         )
     return None
+
+
+def brief_keep_original_decision(
+    current_cleanup: SpeechCleanupAnalysis | None,
+    *,
+    source_policy_fingerprint: str | None,
+    submitted_analysis_id: uuid.UUID | None,
+) -> SpeechCleanupDecisionOk | None:
+    """KRI-1291: keep_original for an approval whose own brief keeps the take whole, when the
+    client sent no choice.
+
+    A build whose card cannot lead with "Keep original speech" is offered no choice
+    (``card_asks_cleanup``), so the creator's typed request is the answer. keep_original removes
+    nothing, and it outranks a recorded clean so a later "keep the whole clip" is never cut. The
+    caller runs this only when no choice was submitted, so a tap always wins. Freshness and id
+    rules match ``reuse_recorded_cleanup_decision``.
+    """
+
+    if (
+        current_cleanup is None
+        or source_policy_fingerprint is None
+        or current_cleanup.source_policy_fingerprint != source_policy_fingerprint
+        or submitted_analysis_id not in (None, current_cleanup.id)
+        or current_cleanup.status != "ready"
+        or int(current_cleanup.candidate_count or 0) <= 0
+    ):
+        return None
+    return SpeechCleanupDecisionOk(current_cleanup.id, "keep_original")
+
+
+def card_asks_cleanup(
+    *, decision: str | None, stated: SpeechCleanupChoice, card_leads_with_keep: bool
+) -> bool:
+    """Whether a card with findings asks the cleanup question when the pending brief states a
+    choice (KRI-1291).
+
+    A recorded decision answers only while the brief agrees with it, so "clean up my pauses"
+    after a kept take, or "keep the whole clip" after a clean, asks again. A stated keep_original
+    is not asked on a build whose card would lead with "Clean up speech"; the approval answers it
+    (``brief_keep_original_decision``).
+    """
+
+    if stated == "keep_original" and not card_leads_with_keep:
+        return False
+    return decision != stated
 
 
 def resolve_next_audio_mode(strategy: Any, item: PlanItem) -> str | None:

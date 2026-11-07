@@ -3449,6 +3449,47 @@ async def _keeps_original_speech_ask(
         return False
 
 
+def _asks_cleanup_on_this_build(
+    speech_cleanup: dict[str, Any],
+    pending: tuple[CreativeBrief | None, dict[str, Any] | None],
+) -> bool | None:
+    """KRI-1291: ``requires_choice`` for the app build reading the thread when the pending
+    strategy's brief already states a cleanup choice (``card_asks_cleanup``), else None and the
+    stored projection stands. Only a native read changes; the web declares no protocol. Reads
+    only: the approval records what the creator gets (``brief_keep_original_decision``)."""
+    from app.kria.tight_pause_ask import brief_cleanup_choice  # noqa: PLC0415
+    from app.services.client_protocol import (  # noqa: PLC0415
+        KEEP_ORIGINAL_CARD_PROTOCOL,
+        current_client_protocol,
+    )
+    from app.services.speech_cleanup_decision import card_asks_cleanup  # noqa: PLC0415
+
+    protocol = current_client_protocol()
+    brief, snapshot = pending
+    analysis = speech_cleanup.get("analysis")
+    if (
+        protocol is None
+        or not isinstance(snapshot, dict)
+        or snapshot.get("kind") != "strategy"
+        or not isinstance(analysis, dict)
+        or not analysis.get("has_findings")
+        or speech_cleanup.get("render_blocker") is not None
+    ):
+        return None
+    try:
+        stated = brief_cleanup_choice(brief)
+    except Exception:  # noqa: BLE001 - an optional projection never breaks a read
+        log.warning("creation_thread.cleanup_choice_projection_failed", exc_info=True)
+        return None
+    if stated is None:
+        return None
+    return card_asks_cleanup(
+        decision=speech_cleanup.get("decision"),
+        stated=stated,
+        card_leads_with_keep=protocol >= KEEP_ORIGINAL_CARD_PROTOCOL,
+    )
+
+
 async def _cleanup_ask_projection(
     db: AsyncSession,
     thread: CreationThread,
@@ -3670,8 +3711,11 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
                     if tight:
                         speech_cleanup["pause_style"] = "tight"
                 if await _keeps_original_speech_ask(db, thread, pending):
-                    # KRI-971: older apps ignore this and keep today's buttons.
+                    # KRI-971: apps below KEEP_ORIGINAL_CARD_PROTOCOL ignore this.
                     speech_cleanup["recommended_choice"] = "keep_original"
+                asks = _asks_cleanup_on_this_build(speech_cleanup, pending)
+                if asks is not None:
+                    speech_cleanup["requires_choice"] = asks
     render_shape_projection = None
     if isinstance(db, AsyncSession) and item is not None:
         render_shape_projection = await _render_shape_projection(db, thread, item, session)
