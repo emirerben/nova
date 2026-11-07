@@ -11,6 +11,17 @@ Failure modes written down before the code:
    cloud render) says `pause_style: tight`.
 5. A broken/missing pending approval or brief breaks the thread read instead of adding nothing.
 6. The keys leak through `_response` with the flag off.
+
+KRI-971 (card leads with "Keep original speech" when the brief keeps the take whole), failure
+modes written down first:
+
+7. The recommendation shows although the creator ALSO asked for cleanup.
+8. "Keep it whole" with a length of its own (a length ask) recommends keeping the pauses.
+9. A superseded requirement, or a title- or clip-scoped one, still triggers it (one card covers
+   every clip).
+10. `keep_whole_take` filed under `style` (what the model did in prod) is not recognised.
+11. The key leaks onto an ordinary brief, changing the card for everyone.
+12. The extra projection adds a second pending-approval query to the polled thread read.
 """
 
 from __future__ import annotations
@@ -158,7 +169,7 @@ async def test_runtime_v1_thread_reads_nothing():
 # -- through `_response` -------------------------------------------------------------------------
 
 
-async def _response_with(monkeypatch, *, flag: bool):
+async def _response_with(monkeypatch, *, flag: bool, snapshot: dict | None = None):
     owner_id = uuid.uuid4()
     plan_id, item_id = uuid.uuid4(), uuid.uuid4()
     item = SimpleNamespace(
@@ -195,7 +206,7 @@ async def _response_with(monkeypatch, *, flag: bool):
     events_result = Mock()
     events_result.scalars.return_value.all.return_value = []
     snapshot_result = Mock()
-    snapshot_result.scalar_one_or_none.return_value = _snapshot(TIGHT)
+    snapshot_result.scalar_one_or_none.return_value = snapshot or _snapshot(TIGHT)
     db = Mock(spec=AsyncSession)
     db.get = AsyncMock(side_effect=get)
 
@@ -261,3 +272,91 @@ async def test_response_carries_the_two_keys_only_with_the_flag_on(monkeypatch):
     assert off.speech_cleanup is not None
     assert "requested_in_chat" not in off.speech_cleanup
     assert "pause_style" not in off.speech_cleanup
+
+
+# -- KRI-971: keep-whole recommendation -----------------------------------------------------------
+
+
+def _keep_snapshot(*reqs: BriefRequirement) -> dict:
+    binding = BriefBinding.create(uuid.uuid4(), CreativeBrief(version=1, requirements=list(reqs)))
+    return {
+        "kind": "strategy",
+        "strategy": {"edit_format": "subtitled", "audio_strategy": "original_audio"},
+        "brief_binding": binding.model_dump(mode="json"),
+    }
+
+
+def _req(**kw) -> BriefRequirement:
+    base = {"id": "r1", "kind": "style", "scope": "global", "description": "whole clip"}
+    return BriefRequirement(**{**base, **kw})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reqs", "expected"),
+    [
+        # the prod brief of thread 867D2F93: kind style, keep_whole_take only
+        ([_req(facts={"keep_whole_take": True})], True),
+        ([_req(kind="timing", facts={"keep_whole_take": True})], True),
+        ([_req(kind="audio", facts={"speech_cleanup": False})], True),
+        ([_req(facts={"keep_whole_take": "false"})], False),
+        ([_req(facts={"keep_whole_take": True, "duration_s": 20})], False),
+        ([_req(scope="title", facts={"keep_whole_take": True})], False),
+        ([_req(scope="per_clip", facts={"keep_whole_take": True})], False),
+        ([_req(scope="clip:2", facts={"keep_whole_take": True})], False),
+        ([_req(kind="audio", scope="clip:2", facts={"speech_cleanup": False})], False),
+        ([_req(facts={"keep_whole_take": True}, status="superseded")], False),
+        (
+            [
+                _req(facts={"keep_whole_take": True}),
+                _req(id="r2", kind="audio", facts={"speech_cleanup": True}),
+            ],
+            False,
+        ),
+        ([_req(facts={})], False),
+    ],
+)
+async def test_keep_whole_ask_recommends_keeping_original_speech(reqs, expected):
+    db = _db(_keep_snapshot(*reqs))
+    assert await routes._keeps_original_speech_ask(db, _thread()) is expected
+
+
+@pytest.mark.asyncio
+async def test_keep_whole_projection_never_breaks_the_read():
+    db = Mock(spec=AsyncSession)
+    db.execute = AsyncMock(side_effect=RuntimeError("db down"))
+    assert await routes._keeps_original_speech_ask(db, _thread()) is False
+
+
+@pytest.mark.asyncio
+async def test_response_recommends_keep_original_even_with_the_tight_flag_off(monkeypatch):
+    snapshot = _keep_snapshot(_req(facts={"keep_whole_take": True}))
+    for flag in (True, False):
+        out = await _response_with(monkeypatch, flag=flag, snapshot=snapshot)
+        assert out.speech_cleanup["recommended_choice"] == "keep_original"
+        assert "requested_in_chat" not in out.speech_cleanup
+
+
+@pytest.mark.asyncio
+async def test_response_leaves_an_ordinary_brief_unchanged(monkeypatch):
+    out = await _response_with(
+        monkeypatch, flag=False, snapshot=_keep_snapshot(_req(kind="text", facts={}))
+    )
+    assert "recommended_choice" not in out.speech_cleanup
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flag", [True, False])
+async def test_thread_read_loads_the_pending_approval_once(monkeypatch, flag):
+    loads = []
+    real = routes._pending_approval_brief
+
+    async def counting(db, thread):
+        loads.append(thread.id)
+        return await real(db, thread)
+
+    monkeypatch.setattr(routes, "_pending_approval_brief", counting)
+    snapshot = _keep_snapshot(_req(facts={"keep_whole_take": True}))
+    out = await _response_with(monkeypatch, flag=flag, snapshot=snapshot)
+    assert out.speech_cleanup["recommended_choice"] == "keep_original"
+    assert len(loads) == 1

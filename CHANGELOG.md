@@ -2,6 +2,86 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.53.0] - 2026-11-07
+
+### Changed
+- fix(api): get main's API suite green (Turkish fold guard exemption, brief digest re-freeze) (#2178) <!-- release-pr: 2178 -->
+
+## [0.88.52.0] - 2026-11-07
+
+### Changed
+- fix(ios): restore editor reconciliation and account-safe recovery (#2146) <!-- release-pr: 2146 -->
+
+## [0.88.51.0] - 2026-11-07
+
+### Changed
+- fix(captions): a caption asked at the bottom ends at 0.84, not 0.70 (KRI-1266) (#2151) <!-- release-pr: 2151 -->
+
+## [0.88.50.0] - 2026-11-07
+
+### Changed
+- fix(kria): Talking cards ask is a render promise, then judged on the card receipt (KRI-1237) (#2153) <!-- release-pr: 2153 -->
+
+## [0.88.49.0] - 2026-11-07
+
+### Changed
+- fix(api): creator labels anchor to their own quote and stack instead of failing (KRI-884, KRI-888) (#2166) <!-- release-pr: 2166 -->
+
+## [0.88.48.0] - 2026-11-07
+
+### Changed
+- fix(kria): approval card leads with Keep original speech when the brief keeps the take whole (KRI-971) (#2164) <!-- release-pr: 2164 -->
+
+## [0.88.47.0] - 2026-11-07
+
+### Changed
+- fix(kria): Talking draft receipts count only the talking clip, mute footage clips, say nothing-to-cut once (KRI-980, KRI-981, KRI-748) (#2162) <!-- release-pr: 2162 -->
+
+## [0.88.46.0] - 2026-11-07
+
+### Changed
+- fix(captions): preserve numeric tokens before proofreading alignment (KRI-1263) (#2174) <!-- release-pr: 2174 -->
+
+## [0.88.45.0] - 2026-11-07
+
+### Changed
+- feat(ios): quiet the chat chrome (KRI-1260) (#2156) <!-- release-pr: 2156 -->
+
+## [0.88.44.0] - 2026-11-07
+
+### Changed
+- fix(kria): "Make it without these" leaves out only what its card named, and says so (KRI-1236) (#2149) <!-- release-pr: 2149 -->
+
+## [0.88.43.0] - 2026-11-07
+
+### Changed
+- fix(captions): judge each proofread word on its own so good spelling fixes land (KRI-1263) (#2157) <!-- release-pr: 2157 -->
+
+## [0.88.42.0] - 2026-11-07
+
+### Changed
+- test(kria): isolate approval fixture from neighboring Undo (KRI-577) (#2144) <!-- release-pr: 2144 -->
+
+## [0.88.41.0] - 2026-11-07
+
+### Changed
+- fix(ios): preserve video-range white in H.264 exports (#2143) <!-- release-pr: 2143 -->
+
+## [0.88.40.0] - 2026-11-07
+
+### Changed
+- fix(kria): preserve exact approval promises through receipt caps (KRI-1235) (#2142) <!-- release-pr: 2142 -->
+
+## [0.88.39.0] - 2026-11-06
+
+### Changed
+- fix(kria): item 15 card layout opens for a portrait take stamped "fit" (KRI-1238) (#2140) <!-- release-pr: 2140 -->
+
+## [0.88.38.0] - 2026-11-06
+
+### Changed
+- fix(render): pin qualified Unicode graphemes for native timing parity (#2141) <!-- release-pr: 2141 -->
+
 ## [0.88.37.0] - 2026-11-06
 
 ### Changed

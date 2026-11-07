@@ -34,11 +34,11 @@ OBSTACLE_SETS = {
     "watermark_only": [],
     "face_band": [{"start_s": 0, "end_s": 60, "box": (0.28, 0.35, 0.72, 0.58), "kind": "face"}],
     "caption_lane": [
-        {"start_s": 0, "end_s": 60, "box": (0.05, 0.52, 0.74, 0.72), "kind": "caption"}
+        {"start_s": 0, "end_s": 60, "box": (0.05, 0.64, 0.74, 0.86), "kind": "caption"}
     ],
     "face_and_caption": [
         {"start_s": 0, "end_s": 60, "box": (0.28, 0.35, 0.72, 0.58), "kind": "face"},
-        {"start_s": 0, "end_s": 60, "box": (0.05, 0.52, 0.74, 0.72), "kind": "caption"},
+        {"start_s": 0, "end_s": 60, "box": (0.05, 0.64, 0.74, 0.86), "kind": "caption"},
     ],
     "whole_frame": [
         {"start_s": 0, "end_s": 60, "box": _FRAME, "kind": "face"},
