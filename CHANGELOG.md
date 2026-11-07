@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.64.0] - 2026-11-07
+
+### Changed
+- feat(ios): live plan feed enters block by block, Making your video, lighter ready stage (KRI-1261) (#2159) <!-- release-pr: 2159 -->
+
 ## [0.88.63.0] - 2026-11-07
 
 ### Changed
