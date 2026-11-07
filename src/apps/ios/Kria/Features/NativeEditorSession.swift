@@ -243,6 +243,11 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// Waits between background refresh retries; the last one repeats. Internal so tests can shorten it.
     var refreshRetryDelays: [Duration] = [.seconds(1), .seconds(3), .seconds(9), .seconds(27), .seconds(60)]
     private(set) var refreshRetryTask: Task<Void, Never>?
+    private struct RefreshRetryScope {
+        let identity: EditorOperationIdentity
+        let owner: String?
+    }
+    private var refreshRetryScope: RefreshRetryScope?
     private var refreshFailureStreak = 0
     /// The project lost this edit target, or the chat runtime is off: further draft reads cannot succeed.
     private var promptSyncStopped = false
@@ -2266,13 +2271,13 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var syncNeedsRetry = false
 
     func synchronizePromptRevision() async {
-        guard !isReviewingPreviousMerge else { return }
+        await synchronizePromptRevision(identity: editorOperationIdentity, owner: api?.mediaLibraryOwner)
+    }
+
+    private func synchronizePromptRevision(identity: EditorOperationIdentity, owner: String?) async {
+        guard !isReviewingPreviousMerge, editorOperationIdentity == identity, api?.mediaLibraryOwner == owner else { return }
         // A concurrent save/hydration can change the clean baseline while this
-        // suspends; a dropped sync would otherwise leave a chat edit invisible
-        // until the editor is reloaded (nothing else re-polls without new events).
-        let identity = editorOperationIdentity
-        // Keep the initiating account across all reads and baseline retries.
-        let owner = api?.mediaLibraryOwner
+        // suspends; retain the initiating account through every baseline retry.
         for attempt in 0..<3 {
             syncNeedsRetry = false
             await runPromptRevisionSync(identity: identity, owner: owner)
@@ -2490,6 +2495,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     private func noteRefreshReadSucceeded() {
         refreshFailureStreak = 0
         refreshRetryTask?.cancel(); refreshRetryTask = nil
+        refreshRetryScope = nil
         if refreshSync == .reconnecting { refreshSync = .idle }
     }
 
@@ -2500,6 +2506,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             return
         case .appGate:
             refreshRetryTask?.cancel(); refreshRetryTask = nil
+            refreshRetryScope = nil
             refreshFailureStreak = 0
             if refreshSync == .reconnecting { refreshSync = .idle }
         case let .transient(retryAfter):
@@ -2523,41 +2530,47 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     private func scheduleRefreshRetry(retryAfter: TimeInterval?) {
         refreshRetryTask?.cancel()
+        let scope = RefreshRetryScope(identity: editorOperationIdentity, owner: api?.mediaLibraryOwner)
+        refreshRetryScope = scope
         guard !refreshRetryDelays.isEmpty else { refreshRetryTask = nil; return }
         var delay = refreshRetryDelays[min(max(refreshFailureStreak - 1, 0), refreshRetryDelays.count - 1)]
         // Honour the server's Retry-After, capped so a bad header cannot park the editor.
         if let retryAfter { delay = max(delay, .seconds(min(retryAfter, 120))) }
-        let identity = editorOperationIdentity
         refreshRetryTask = Task { [weak self] in
             try? await Task.sleep(for: delay)
-            guard !Task.isCancelled, let self, self.editorOperationIdentity == identity else { return }
+            guard !Task.isCancelled, let self, self.editorOperationIdentity == scope.identity,
+                  self.api?.mediaLibraryOwner == scope.owner else { return }
             self.refreshRetryTask = nil
-            await self.runRefreshRetry()
+            await self.runRefreshRetry(scope: scope)
         }
     }
 
     /// True while a scheduled or resumed retry runs, so a save in progress defers it instead of dropping it.
     private var isRunningRefreshRetry = false
 
-    private func runRefreshRetry() async {
+    private func runRefreshRetry(scope: RefreshRetryScope) async {
+        guard editorOperationIdentity == scope.identity, api?.mediaLibraryOwner == scope.owner else { return }
         let epoch = editorLoadEpoch
         isRunningRefreshRetry = true
         defer { if editorLoadEpoch == epoch { isRunningRefreshRetry = false } }
-        await synchronizePromptRevision()
+        await synchronizePromptRevision(identity: scope.identity, owner: scope.owner)
     }
 
     private func stopPromptSync() {
         promptSyncStopped = true
         refreshRetryTask?.cancel(); refreshRetryTask = nil
+        refreshRetryScope = nil
         refreshFailureStreak = 0
     }
 
     /// The connection came back or the app returned to the foreground: run a pending retry now
     /// instead of waiting out its backoff.
     func resumeRefreshSync() async {
-        guard refreshRetryTask != nil || refreshSync == .reconnecting else { return }
+        guard refreshRetryTask != nil || refreshSync == .reconnecting,
+              let scope = refreshRetryScope, editorOperationIdentity == scope.identity,
+              api?.mediaLibraryOwner == scope.owner else { return }
         refreshRetryTask?.cancel(); refreshRetryTask = nil
-        await runRefreshRetry()
+        await runRefreshRetry(scope: scope)
     }
 
     /// A shared session (`ChatWorkspaceView`'s editor tab) can be reused
@@ -3041,6 +3054,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// A load starts from the server's current answer, so earlier refresh trouble no longer applies.
     private func resetBackgroundRefresh() {
         refreshRetryTask?.cancel(); refreshRetryTask = nil
+        refreshRetryScope = nil
         newVersionWatchTask?.cancel(); newVersionWatchTask = nil; newVersionWatchTarget = nil
         loadRetryTask?.cancel(); loadRetryTask = nil
         refreshFailureStreak = 0
