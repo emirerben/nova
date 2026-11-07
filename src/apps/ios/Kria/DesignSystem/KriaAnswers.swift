@@ -7,41 +7,29 @@ enum KriaAnswerState: Equatable { case idle, selected, sending }
 /// A short suggestion (Paper S2.01): fill, 44pt minimum, `KriaType.button`. It is for suggestions only; a
 /// question's answers are `KriaChoiceRow`s. A long label wraps and the chip grows, so nothing is cut off.
 ///
-/// `typeMyOwn` is the pencil chip that moves the creator to the composer. `isRecommended` adds a quiet
-/// "Recommended" tag beside the label: the butter treatment belongs to the answer block, not the chip.
+/// `typeMyOwn` is the pencil chip that moves the creator to the composer. A chip carries no "Recommended" tag, so
+/// it stays one line at every text size; the tag belongs to `KriaChoiceRow`.
 struct KriaAnswerChip: View {
     let title: String
     var caption: String?
     var state: KriaAnswerState = .idle
-    var isRecommended = false
     var typeMyOwn = false
+    /// KRI-1273: an AI suggestion (glass with a turning light) instead of the gray answer chip.
+    var isSuggestion = false
+    var isLead = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) { content }
-            .buttonStyle(KriaAnswerChipStyle(state: state))
+            .buttonStyle(KriaAnswerChipStyle(state: state, isSuggestion: isSuggestion, isLead: isLead))
             .disabled(state == .sending)
             .accessibilityLabel(accessibilityTitle)
             .accessibilityAddTraits(state == .selected ? .isSelected : [])
     }
 
-    /// The tag follows the label on the same line when both fit and drops under it when they do not, so a long
-    /// label is never squeezed by the tag (Paper wraps the tag the same way).
-    @ViewBuilder private var content: some View {
-        if isRecommended {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .center, spacing: 8) { lead; label; recommendedTag }
-                    .foregroundStyle(foreground)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(alignment: .center, spacing: 8) { lead; label }
-                    recommendedTag
-                }
-                .foregroundStyle(foreground)
-            }
-        } else {
-            HStack(alignment: .center, spacing: 8) { lead; label }
-                .foregroundStyle(foreground)
-        }
+    private var content: some View {
+        HStack(alignment: .center, spacing: 8) { lead; label }
+            .foregroundStyle(foreground)
     }
 
     @ViewBuilder private var lead: some View {
@@ -65,35 +53,37 @@ struct KriaAnswerChip: View {
         .multilineTextAlignment(.leading)
     }
 
-    private var recommendedTag: some View {
-        Text("Recommended").kriaType(.caption)
-            .foregroundStyle(state == .selected ? KriaColor.paper.opacity(0.8) : KriaColor.mutedInk)
-    }
-
     private var foreground: Color {
         typeMyOwn && state == .idle ? KriaColor.mutedInk : (state == .selected ? KriaColor.paper : KriaColor.ink)
     }
 
     private var accessibilityTitle: String {
-        [title, caption, isRecommended ? "recommended" : nil].compactMap { $0 }.joined(separator: ", ")
+        [title, caption].compactMap { $0 }.joined(separator: ", ")
     }
 }
 
 private struct KriaAnswerChipStyle: ButtonStyle {
     let state: KriaAnswerState
+    let isSuggestion: Bool
+    let isLead: Bool
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .padding(.horizontal, 18).padding(.vertical, 8)
             .frame(minHeight: 44)
-            .background(fill(pressed: configuration.isPressed), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .background { background(pressed: configuration.isPressed) }
             .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             .opacity(isEnabled || state == .sending ? 1 : 0.4)
     }
 
-    private func fill(pressed: Bool) -> Color {
-        state == .selected ? KriaColor.ink : (pressed ? KriaColor.fillPressed : KriaColor.fill)
+    @ViewBuilder private func background(pressed: Bool) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        if isSuggestion, state != .selected {
+            KriaAIChipBackground(isLead: isLead, pressed: pressed)
+        } else {
+            shape.fill(state == .selected ? KriaColor.ink : (pressed ? KriaColor.fillPressed : KriaColor.fill))
+        }
     }
 }
 

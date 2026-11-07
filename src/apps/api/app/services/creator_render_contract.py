@@ -1692,6 +1692,16 @@ def build_render_contract(
         if position and status == "resolved" and clip_ids.intersection(members)
     }
     talking_edit = str(raw.get("edit_format") or "") in {"subtitled", "talking_head"}
+    # KRI-747: the Talking worker places a text on a spoken word only while its rollout is on
+    # (`PHONE_SUBTITLED_SPOKEN_TEXT_ENABLED` and a phone that draws the text lane). Off, nothing
+    # answers the ask, so the literal is pinned like any other text, as before KRI-707.
+    spoken_text_lane = False
+    if talking_edit:
+        from app.services.phone_rollout import (
+            phone_subtitled_spoken_text_supported,  # noqa: PLC0415
+        )
+
+        spoken_text_lane = phone_subtitled_spoken_text_supported()
     # A word-timed text ask is omitted from the ordinary exact-copy pin only
     # when this approval can actually use the native narrated word-text lane.
     # Other typed voiceover strategies still need their literal pinned, so a
@@ -1731,7 +1741,7 @@ def build_render_contract(
             # 29 Ekim: a `text_sequence` pins the same words as a `text` ask; the draft shows
             # them whole.
             if requirement.kind in {"text", "text_sequence"} and requirement.literal:
-                if (talking_edit or voiceover_spoken_text) and (
+                if (spoken_text_lane or voiceover_spoken_text) and (
                     requirement_spoken_text(requirement) is not None
                     or is_spoken_text_cue(requirement)
                 ):

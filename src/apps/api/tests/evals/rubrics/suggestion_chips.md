@@ -55,7 +55,7 @@ Score each dimension as an **integer 1-5**.
      (see `grounded_why`), so score this dimension on the set, not on one label.
 
 4. **honest_label** (does the label promise only what the engine can prove?)
-   - 5: states an action and nothing about content or outcome ("Let Kria cut the first version").
+   - 5: states an action and nothing about content or outcome ("Let Kria decide").
    - 3: implies a small outcome the dry run does support ("Add a hook to the opening").
    - 1: claims quality or content the engine cannot know: "the strongest opening", "your best moment",
      "make it go viral", "perfect cut".
@@ -92,7 +92,7 @@ at 2 or below flags the chip regardless of the average.
 ## Calibration
 
 PASS (avg 4.8, no flags), first prompt, a clip of the creator talking plus two B-roll clips:
-> chips: "Let Kria cut the first version", "Add captions", "Add a hook to the opening", "Add sound effects"
+> chips: "Let Kria decide", "Add captions", "Add a hook to the opening", "Add sound effects"
 
 PASS (avg 4.4), ready state, silent B-roll montage with a track at 0.8:
 > chips: "Add a hook to the opening", "Add sound effects", "Add transitions", "Turn the music down"
