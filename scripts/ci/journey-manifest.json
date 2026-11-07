@@ -3384,6 +3384,15 @@
       ]
     },
     {
+      "id": "kri-1237-talking-cards",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri1237_talking_cards_check.py tests/kria/test_brief_reaction_beats.py tests/kria/test_kri667_no_new_intent_regexes.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kri1237_qendresa_q1_cards.json",
+        "src/apps/api/tests/kria/test_kri1237_talking_cards_check.py"
+      ]
+    },
+    {
       "id": "saved-song-render-recovery",
       "needs_native": true,
       "api_tests": "tests/routes/test_saved_user_song_state.py::test_status_and_timeline_expose_saved_intent_despite_old_song_plan tests/routes/test_saved_user_song_state.py::test_marker_requires_current_generation_and_valid_persisted_approval tests/routes/test_saved_user_song_state.py::test_missing_revision_cannot_echo_a_stored_or_client_marker",

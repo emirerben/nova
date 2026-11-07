@@ -20,7 +20,7 @@ import dataclasses
 import math
 import re
 import unicodedata
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, get_args
 
@@ -185,6 +185,20 @@ class TimedCardFact:
     # The worker's stable reason when unplaced (`past_end`, `face_collision`, ...).
     reason: str | None = None
     timeline_end_s: float | None = None
+
+
+@dataclass(frozen=True)
+class GroundedCardFact:
+    """KRI-1237: one Visual the phone Talking render's card matcher considered, off the
+    variant's ``phone_overlay_receipt`` ("placed" / "unplaced")."""
+
+    label: str | None
+    status: str
+    # Seconds into the FINISHED video where a placed card shows. The receipt keeps the original
+    # take's clock; None when the variant's cut record cannot move it there (never guessed).
+    at_s: float | None = None
+    # The worker's stable reason when unplaced (`no_spoken_match`, `speech_cleanup_cut`, ...).
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -873,6 +887,14 @@ class PlanFacts:
     # against the manifest) or as the phone render placed them (`phone_timed_card_receipt`).
     timed_cards_available: bool | None = None
     timed_cards: tuple[TimedCardFact, ...] | None = None
+    # KRI-1237: "show my screenshot when I talk about it" on a phone Talking edit. The render
+    # grounds the Visuals pool as cards on the words they match (`ground_phone_subtitled_overlays`),
+    # which no draft field models. ``talking_cards_at_render``: a draft read against its manifest
+    # whose render will run that matcher on at least one Visual that can be a card.
+    # ``grounded_cards``: what a finished phone Talking render's matcher placed and left out
+    # (`phone_overlay_receipt`, word-matched layouts only); None = no such receipt.
+    talking_cards_at_render: bool = False
+    grounded_cards: tuple[GroundedCardFact, ...] | None = None
     # KRI-1161: the background behind a Talking speaker. None = these facts cannot speak to it
     # (an editor turn, or a render that recorded nothing): a background ask stays unchecked.
     speaker_background: SpeakerBackgroundFact | None = None
@@ -1400,6 +1422,42 @@ def _draft_fullscreen_sequence(
     )
 
 
+def _draft_talking_cards(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) -> bool:
+    """KRI-1237: whether approving this draft runs the phone Talking card matcher on a Visual.
+
+    Mirrors the worker's gate (`_run_phone_subtitled_job`): the manifest advertises
+    `media_overlays` only while `phone_subtitled_overlays_supported()` holds on a phone `subtitled`
+    edit; the even-slot full-screen layout replaces the cards (KRI-840 owns that ask); several
+    speaking clips skip the lanes, so only one take of the creator's own is promised. A screen
+    recording counts only while video cards are open. The caller still requires the phone Talking
+    writer (`PlanFacts.phone_talking`): a cloud manifest's `media_overlays` is another lane.
+    """
+    from app.services.creator_capabilities import (  # noqa: PLC0415
+        CAPABILITY_MEDIA_OVERLAY_VIDEO_CARDS,
+    )
+
+    overlays = manifest.capabilities.get("media_overlays")
+    if overlays is None or not overlays.available or _draft_fullscreen_sequence(strategy, manifest):
+        return False
+    selected = {str(x) for x in strategy.get("selected_media_ids") or []}
+    scoped = bool(selected) and strategy.get("media_scope") != "all"
+    takes = [
+        m
+        for m in manifest.media
+        if m.kind == "video"
+        and not m.media_id.startswith("asset-")
+        and not (scoped and m.media_id not in selected)
+    ]
+    if len(takes) != 1:
+        return False
+    video_cards = manifest.capabilities.get(CAPABILITY_MEDIA_OVERLAY_VIDEO_CARDS)
+    videos = bool(video_cards is not None and video_cards.available)
+    return any(
+        m.media_id.startswith("asset-") and (m.kind == "image" or (m.kind == "video" and videos))
+        for m in manifest.media
+    )
+
+
 def _video_clip_count(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) -> int:
     videos = [m.media_id for m in manifest.media if m.kind == "video"]
     selected = {str(x) for x in strategy.get("selected_media_ids") or []}
@@ -1589,6 +1647,7 @@ def plan_facts_from_strategy(
         extra.update(_timed_card_facts(strategy, manifest))
         extra.update(_speaker_background_facts(strategy, manifest, client_protocol))
         extra["fullscreen_sequence"] = _draft_fullscreen_sequence(strategy, manifest)
+        extra["talking_cards_at_render"] = _draft_talking_cards(strategy, manifest)
         extra["video_clip_count"] = _video_clip_count(strategy, manifest)
         extra["take_duration_s"] = _selected_video_seconds(strategy, manifest)
         spoken_cap = manifest.capabilities.get("phone_voiceover_spoken_text")
@@ -2946,6 +3005,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     changes.update(_beat_room_facts(variant.get("phone_beat_receipt")))
     changes.update(_timed_card_receipt_facts(variant.get("phone_timed_card_receipt")))
     changes.update(_overlay_sequence_facts(variant.get("phone_overlay_receipt")))
+    changes.update(_grounded_card_facts(variant))
     changes.update(_rendered_caption_facts(variant))
     if _rendered_music(variant):
         changes["music_in_render"] = True  # KRI-1164: "No music" is judged against it
@@ -3207,6 +3267,190 @@ def _overlay_sequence_facts(receipt: object) -> dict[str, Any]:
     ):
         return {"fullscreen_sequence": True}
     return {}
+
+
+# KRI-1237: receipts that do not record the word-matched card layout: a hand-authored lane
+# (nothing was matched), a matcher that never ran, and the even-slot full-screen sequence.
+_NOT_WORD_MATCHED_CARDS = frozenset({"manual", "failed", "sequence", "disabled"})
+
+
+# The lane state a phone-editor Save persists on the variant
+# (`phone_subtitled_editor.PHONE_SUBTITLED_EDITOR_LANES_FIELD`; a test pins the two together).
+# A render writes a fresh variant without it, so its presence means "edited after the render".
+_EDITOR_LANES_FIELD = "_phone_subtitled_editor_lanes_v1"
+
+
+def _grounded_card_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
+    """KRI-1237: ``grounded_cards`` off a phone Talking variant's ``phone_overlay_receipt``.
+
+    The worker keeps the receipt on the original take's clock (`remap_lanes_for_cut` moves only
+    the lanes) and demotes a card the cut dropped to ``unplaced`` (`speech_cleanup_cut`), so
+    "placed" is what is on screen and its second is moved to the finished video here.
+
+    An editor Save does not touch the receipt (review of #2153), so once the variant carries saved
+    lanes the cards on screen are the saved ones: a receipt card is shown only while a saved card
+    still shows its Visual, at that card's time (the lanes are on the finished video's clock, Range
+    included); one the creator took out is "removed in the editor". Saved lanes that cannot be read
+    give no card verdict at all (fail closed), never the render's; so does an authored timeline
+    (after a deletion) that still holds cards. A second past the end of the video is never quoted.
+    """
+    receipt = variant.get("phone_overlay_receipt")
+    if (
+        not isinstance(receipt, Mapping)
+        or not receipt.get("matcher")
+        or receipt.get("matcher") in _NOT_WORD_MATCHED_CARDS
+    ):
+        return {}
+    if variant.get("editor_timeline_mode") == "authored":
+        # After a deletion the authored timeline compiles `variant["media_overlays"]` and writes no
+        # saved-lanes marker. Its cards are kept by file path only, so they cannot be matched to
+        # the receipt's Visuals here: none left is exact (every card was taken out), any left
+        # gives no card verdict (fail closed), never the render's cards or times.
+        if variant.get("media_overlays"):
+            return {}
+        saved: dict[str, float] | bool | None = {}
+    else:
+        saved = _saved_card_starts(variant)
+    if saved is False:
+        return {}
+    to_finished = _take_to_finished_clock(variant) if saved is None else None
+    cards: list[GroundedCardFact] = []
+    seen: set[str] = set()
+    for status in ("placed", "unplaced"):
+        rows = receipt.get(status)
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, Mapping):
+                continue
+            label = _card_label(row.get("label"))
+            reason = row.get("reason") if status == "unplaced" else None
+            reason = reason if isinstance(reason, str) and reason else None
+            if saved is None:
+                start = _finite_number(row.get("start_s")) if status == "placed" else None
+                at_s = to_finished(start) if start is not None and to_finished else None
+                cards.append(GroundedCardFact(label=label, status=status, at_s=at_s, reason=reason))
+                continue
+            key = _visual_key(row.get("media_id"))
+            if key is None:
+                return {}  # a receipt row the saved cards cannot be matched to: fail closed
+            if key in seen:
+                continue
+            seen.add(key)
+            if key in saved:
+                cards.append(GroundedCardFact(label=label, status="placed", at_s=saved[key]))
+            elif status == "placed":
+                cards.append(
+                    GroundedCardFact(label=label, status="unplaced", reason="removed_in_editor")
+                )
+            else:
+                cards.append(GroundedCardFact(label=label, status="unplaced", reason=reason))
+    if saved:
+        # A Visual the creator put on screen in the editor herself (the receipt never named it).
+        cards.extend(
+            GroundedCardFact(label=None, status="placed", at_s=start)
+            for key, start in saved.items()
+            if key not in seen
+        )
+    end = _finite_number(variant.get("duration_s"))
+    if end is not None:
+        cards = [
+            dataclasses.replace(card, at_s=None)
+            if card.at_s is not None and card.at_s > end
+            else card
+            for card in cards
+        ]
+    return {"grounded_cards": tuple(cards)}
+
+
+def _visual_key(raw: object) -> str | None:
+    """A Visual's id as the receipt and the lanes both spell it (pool id, `asset-` or not)."""
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    return raw.strip().removeprefix("asset-").casefold()
+
+
+def _saved_card_starts(variant: Mapping[str, Any]) -> dict[str, float] | bool | None:
+    """The cards an editor Save left on screen, as {Visual key: first start on the finished
+    video}. None = no Save since the render; False = saved lanes that cannot be read."""
+    if _EDITOR_LANES_FIELD not in variant:
+        return None
+    saved = variant.get(_EDITOR_LANES_FIELD)
+    lanes = saved.get("lanes") if isinstance(saved, Mapping) else None
+    overlays = lanes.get("overlays") if isinstance(lanes, Mapping) else None
+    if not isinstance(overlays, list):
+        return False
+    starts: dict[str, float] = {}
+    for card in overlays:
+        key = _visual_key(card.get("media_id")) if isinstance(card, Mapping) else None
+        start = _finite_number(card.get("start_s")) if isinstance(card, Mapping) else None
+        if key is None or start is None:
+            return False
+        starts[key] = min(start, starts.get(key, start))
+    return starts
+
+
+def _take_to_finished_clock(variant: Mapping[str, Any]) -> Callable[[float], float] | None:
+    """KRI-1237: original-take seconds -> finished-video seconds for a phone Talking variant, or
+    None when its record cannot say. ``silence_cut.removed`` holds every span the render took out
+    (pauses, retakes, a quoted start / end trim); a clip played while the take pauses
+    (`phone_insert_clips`) moves every later second, so then nothing is quoted."""
+    inserts = variant.get("phone_insert_clips")
+    if isinstance(inserts, Mapping) and inserts.get("placed"):
+        return None
+    record = variant.get("silence_cut")
+    if record is None:
+        trimmed = any(
+            isinstance(variant.get(key), Mapping) and variant[key].get("status") == "applied"
+            for key in ("opening_cut", "end_cut")
+        )
+        if trimmed or variant.get("silence_cut_outcome") == "applied":
+            return None  # time was taken out, but the record of where is gone
+        return lambda seconds: seconds
+    rows = record.get("removed") if isinstance(record, Mapping) else None
+    if not isinstance(rows, list):
+        return None
+    spans: list[tuple[float, float]] = []
+    for row in rows:
+        start = _finite_number(row.get("start_s")) if isinstance(row, Mapping) else None
+        end = _finite_number(row.get("end_s")) if isinstance(row, Mapping) else None
+        if start is None or end is None or end < start:
+            return None
+        spans.append((start, end))
+    merged: list[list[float]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+
+    def to_finished(seconds: float) -> float:
+        removed = sum(max(0.0, min(end, seconds) - start) for start, end in merged)
+        return max(0.0, seconds - removed)
+
+    return to_finished
+
+
+def _card_label(raw: object) -> str | None:
+    """The name the creator knows a Visual by: the receipt's label without the iOS upload id
+    prefix and without its file extension, even one the receipt's length cap cut short ("spec-kit.p"
+    of "spec-kit.png"; only then, so a title such as "Q3.m" keeps its dot)."""
+    from app.services.clip_file_names import _MEDIA_SUFFIXES, clip_display_name  # noqa: PLC0415
+    from app.services.phone_overlay_grounding import _MAX_LABEL_LEN  # noqa: PLC0415
+
+    name = clip_display_name(raw) if isinstance(raw, str) else None
+    if not name:
+        return None
+    stem, dot, suffix = name.rpartition(".")
+    if (
+        isinstance(raw, str)
+        and len(raw) >= _MAX_LABEL_LEN
+        and dot
+        and stem.strip()
+        and 0 < len(suffix) < 4
+        and suffix.isalnum()
+        and any(full.startswith(suffix.casefold()) for full in _MEDIA_SUFFIXES)
+    ):
+        name = stem.strip()
+    return name
 
 
 def _rendered_caption_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
@@ -6515,6 +6759,14 @@ _TALKING_SPOKEN_TEXT_PLAN = (
     "I'll show it the moment you say that word in your take; if I don't hear the word, it "
     "won't appear"
 )
+# KRI-1237: "show the matching screenshot when I talk about it" on a phone Talking draft. The
+# render grounds the Visuals pool as cards on the words they match (`talking_cards_at_render`);
+# the finished video's own receipt then names each card and when it shows (`grounded_cards`).
+# A render promise (`RENDER_PROMISE_REASONS`), so it never holds the first draft.
+_TALKING_CARDS_PLAN = (
+    "I'll show your Visuals as cards when you talk about them; one you never talk about "
+    "won't appear"
+)
 # Item 19: a numbered list label ("1. Spec-kit") waits for the part of the talk it names.
 _TALKING_LIST_LABEL_PLAN = (
     "I'll show it when that part of your talk starts; if I don't hear where it starts, it "
@@ -6543,6 +6795,8 @@ RENDER_PROMISE_REASONS: tuple[str, ...] = (
     # KRI-707: a text shown at the word it is said; Qendresa 19: a list label at its part.
     _TALKING_SPOKEN_TEXT_PLAN,
     _TALKING_LIST_LABEL_PLAN,
+    # KRI-1237: the phone Talking card matcher shows the creator's Visuals on their words.
+    _TALKING_CARDS_PLAN,
     # KRI-980: the renderer mutes every footage clip and its roles receipt names which clips
     # those were, so "if it plays as a cutaway, it plays silent" is what the render then says.
     _TALKING_MUTE_IF_CUTAWAY,
@@ -6615,6 +6869,7 @@ _TALKING_HONEST_EN: tuple[str, ...] = (
     _TALKING_OPENING_CUT_PLAN,
     _TALKING_WINDOW_PLAN,
     _TALKING_SPOKEN_TEXT_PLAN,
+    _TALKING_CARDS_PLAN,
     _TALKING_LIST_LABEL_PLAN,
     _CLOSING_ARROW_PLAN,
     _CLOSING_ARROW_MISSING,
@@ -6857,6 +7112,10 @@ _REASON_TR: dict[str, str] = {
     _CLOSING_ARROW_MISSING: "Ok henüz videoda yok; editörde kalemle bir ok çizebilirsin",
     _TALKING_SPOKEN_TEXT_PLAN: (
         "Çekiminde o kelimeyi söylediğin anda yazıyı gösteririm; kelimeyi duymazsam yazı çıkmaz"
+    ),
+    _TALKING_CARDS_PLAN: (
+        "Görsellerini onlardan bahsettiğin anda kart olarak gösteririm; hiç bahsetmediğin "
+        "görsel çıkmaz"
     ),
     _TALKING_LIST_LABEL_PLAN: (
         "Konuşmanda o bölüm başladığında gösteririm; nerede başladığını duymazsam çıkmaz"
@@ -7570,8 +7829,183 @@ def _names_join(items: Sequence[str]) -> str:
     return ", ".join(items[:-1]) + say(en=" and ", tr=" ve ") + items[-1]
 
 
+# Why a Visual stayed off screen, from `phone_overlay_receipt.unplaced[].reason` (EN, TR). An
+# unknown reason claims no cause (`_CARD_MISS_OTHER`).
+_CARD_MISS_WHY: dict[str, tuple[str, str]] = {
+    "no_spoken_match": ("no spoken moment", "konuşmanda uygun an yoktu"),
+    "hook_window": (
+        "it only fit the opening seconds, which stay clear",
+        "yalnızca boş kalan açılışa uyuyordu",
+    ),
+    "speech_cleanup_cut": ("its moment was cut out", "anı kesildi"),
+    "removed_in_editor": ("removed in the editor", "editörde kaldırıldı"),
+    "video_not_supported": (
+        "a video can't be a card on your iPhone yet",
+        "video henüz iPhone'da kart olamıyor",
+    ),
+    "no_safe_spot": (
+        "no room without covering a face or the captions",
+        "yüzü ya da altyazıyı kapatmadan yer yoktu",
+    ),
+}
+_CARD_MISS_OTHER = ("couldn't be placed", "yerleştirilemedi")
+
+
+def _asks_spoken_cards(req: BriefRequirement) -> bool:
+    """KRI-1237: "when I talk about something, show the matching screenshot": a pop-in ask that
+    names no word, which on a phone Talking edit is the card matcher's job (it finds the moment for
+    each Visual). A word the creator named ("when I say Spec Kit") stays a reaction beat the planner
+    authors, and a sound has no card, so both keep the pop-in check. No new word reading (KRI-667):
+    which kind of picture is asked for is not judged here; the facts decide whether cards exist."""
+    return _wants_beats(req) and not _named_triggers(req) and not _SOUND_RE.search(_req_text(req))
+
+
+def _spoken_cards_receipt(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """KRI-1237: the spoken-cards ask on a phone Talking edit, else None (the pop-in check).
+
+    A draft says what the render's card matcher will do (`talking_cards_at_render`); a finished
+    render is judged on its own receipt (`grounded_cards`). Where the planner authored
+    word-triggered pop-ins (or the render placed some), those answer it as before."""
+    if not _asks_spoken_cards(req) or _closing_photo_ask(req, facts):
+        return None
+    if facts.reaction_beats:
+        return None  # the planner's word-triggered pop-ins answer it, as before
+    if facts.grounded_cards is not None:
+        return _check_grounded_cards(req, facts.grounded_cards)
+    if (
+        facts.talking_cards_at_render
+        and facts.phone_talking
+        and not facts.editor
+        and not facts.reaction_beats
+    ):
+        return _receipt(req, "partial", _TALKING_CARDS_PLAN)
+    return None
+
+
+def _check_grounded_cards(
+    req: BriefRequirement, cards: Sequence[GroundedCardFact]
+) -> RequirementReceipt:
+    """KRI-1237: which Visuals the finished video shows as cards and when, and which it left out
+    (each named, with the worker's reason)."""
+    shown = [card for card in cards if card.status == "placed"]
+    missed = [card for card in cards if card.status == "unplaced"]
+    if shown:
+        reason = _fit_card_reason(
+            say(en="Shown: ", tr="Gösterildi: "),
+            [_card_shown(card) for card in shown],
+            missed,
+            prefix=say(en="; not shown: ", tr="; çıkmadı: "),
+        )
+        return _receipt(req, "met", reason, verification="checked")
+    if missed:
+        lead = say(
+            en="None of your Visuals showed as a card",
+            tr="Görsellerinin hiçbiri kart olarak çıkmadı",
+        )
+        reason = _fit_card_reason(lead, [], missed, prefix=": ")
+        return _receipt(req, "not_possible", reason, verification="checked")
+    return _receipt(
+        req,
+        "not_possible",
+        say(
+            en="There were no Visuals to show as cards.",
+            tr="Kart olarak gösterilecek görsel yoktu.",
+        ),
+        verification="checked",
+    )
+
+
+def _card_name(card: GroundedCardFact) -> str:
+    return card.label or say(en="a Visual", tr="bir görsel")
+
+
+def _card_shown(card: GroundedCardFact) -> str:
+    """The finished video's second first ("0:05 Screenshot 1"), like a timeline, and short."""
+    name = _card_name(card)
+    return name if card.at_s is None else f"{_clock(card.at_s)} {name}"
+
+
+def _capped_join(items: Sequence[str], keep: int) -> str:
+    """The first ``keep`` items, the rest as "and N more"."""
+    if len(items) <= keep:
+        return _names_join(items)
+    extra = len(items) - keep
+    return ", ".join(items[:keep]) + say(en=f" and {extra} more", tr=f" ve {extra} tane daha")
+
+
+# RequirementReceipt.reason holds 300 characters; the card sentence is built to fit, never cut.
+_CARD_REASON_MAX = 300
+
+
+def _fit_card_reason(
+    lead: str, shown: Sequence[str], missed: Sequence[GroundedCardFact], *, prefix: str
+) -> str:
+    """``lead``, the shown cards and the left-out Visuals inside the receipt's 300 characters.
+
+    The left-out part is never dropped (review of #2153: a long shown list used to fill the
+    sentence while it said "met"): at the least it counts them ("5 Visuals"). Among the versions
+    that fit, the one naming the most Visuals wins, then the one naming more shown cards, then the
+    one that also says why each was left out. Names fold into "and N more", never cut mid-name;
+    a group with its own reason (cut out, no room) is the last to fold. The full per-card record
+    stays in `PlanFacts.grounded_cards` (and the variant's `phone_overlay_receipt`)."""
+    groups: dict[str, list[str]] = {}
+    for card in sorted(missed, key=lambda card: card.reason == "no_spoken_match"):
+        groups.setdefault(card.reason or "", []).append(_card_name(card))
+    count = len(shown)
+    shown_texts = [(keep, _capped_join(shown, keep)) for keep in range(min(count, 6), 0, -1)]
+    if shown:
+        shown_texts.append((0, say(en=f"{count} Visuals", tr=f"{count} görsel")))
+    else:
+        shown_texts = [(0, "")]
+    total = len(missed)
+    miss_texts = [(total, True), *((keep, False) for keep in range(total, -1, -1))]
+    if not missed:
+        miss_texts = [(0, False)]
+    best: tuple[tuple[int, int, bool], str] | None = None
+    for named_shown, shown_text in shown_texts:
+        for named_missed, why in miss_texts:
+            tail = prefix + _card_miss_text(groups, named_missed, default_why=why) if missed else ""
+            text = f"{lead}{shown_text}{tail}."
+            score = (named_shown + named_missed, named_shown, why)
+            if len(text) <= _CARD_REASON_MAX and (best is None or score > best[0]):
+                best = (score, text)
+    if best is None:  # only a lead longer than the receipt; never in practice
+        return (lead.rstrip(": ") + ".")[:_CARD_REASON_MAX]
+    return best[1]
+
+
+def _card_miss_text(groups: Mapping[str, list[str]], keep: int, *, default_why: bool) -> str:
+    parts: list[str] = []
+    left = keep
+    hidden = 0
+    for code, names in groups.items():
+        named = names[:left]
+        left -= len(named)
+        hidden += len(names) - len(named)
+        if not named:
+            continue
+        why = None
+        if default_why or code != "no_spoken_match":
+            en, tr = _CARD_MISS_WHY.get(code, _CARD_MISS_OTHER)
+            why = say(en=en, tr=tr)
+        listed = _names_join(named) if keep >= sum(map(len, groups.values())) else ", ".join(named)
+        parts.append(listed + (f" ({why})" if why else ""))
+    text = "; ".join(parts)
+    if hidden:
+        more = (
+            say(en=f" and {hidden} more", tr=f" ve {hidden} tane daha")
+            if parts
+            else say(en=f"{hidden} Visuals", tr=f"{hidden} görsel")
+        )
+        text += more
+    return text
+
+
 def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Word-triggered pop-ins and the closing shot, from the repaired strategy."""
+    cards = _spoken_cards_receipt(req, facts)
+    if cards is not None:
+        return cards  # KRI-1237: the phone Talking card matcher's Visuals
     wants_beats = _wants_beats(req)
     wants_closing = _closing_photo_ask(req, facts)
     asked_display = _display_ask(req) if wants_beats else None
@@ -13961,6 +14395,8 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
             (facts.reaction_beats is not None or _sequence_problem(req, facts) is not None)
             and (_wants_beats(req) or _closing_photo_ask(req, facts))
         )
+        # KRI-1237: and its card matcher's receipt, for "show my screenshot when I talk about it".
+        and not (facts.grounded_cards is not None and _asks_spoken_cards(req))
         and not (_wants_bed_under_voice(req) or _wants_bed_muted(req))
         # KRI-541: "clean captions" on a rendered variant is judged against its captions.
         and not (facts.rendered_variant and _wants_captions(req))
