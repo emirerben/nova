@@ -49,8 +49,10 @@ preview. The in-app sequence checks advancing playback and revision admission
 without invoking readiness callbacks manually. It is mapped to both editor and
 smoke CI groups. This replaces the unit-host version, which passed locally but
 failed in hosted CI before playback because no foreground `UIWindowScene` existed.
-The replacement has source/parse review only; its foreground diagnostics and
-playback assertions still require an allocated native run and hosted verification.
+The replacement passed its allocated cold-app UI run at `8cc5851d2` on Xcode 26.6 /
+iOS Simulator 26.5, with all foreground, frame-admission, identity and playback
+assertions. Its actual screenshot visibly contains the updated title. Hosted
+Xcode 26.3 and integration onto the approved baseline repair remain pending.
 `NativeEditorSessionTests/testRetainedPreviewStopsOnSourceFailureAndRetriesWithoutLosingTheUnsavedTrim`
 checks failure/retry status and authored-state preservation; the deferred-conflict
 case checks export refusal after the candidate composition is ready but its
