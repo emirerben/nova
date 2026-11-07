@@ -148,7 +148,7 @@ def stamp_authority(
     prior_authority = getattr(prior, "authority", None)
     if prior_authority not in {"explicit", "accepted"} or prior_value is None:
         return None
-    if getattr(prior, "scope", None) != getattr(req, "scope", None):
+    if not same_clip_scope(getattr(prior, "scope", None), getattr(req, "scope", None)):
         return None
     if abs(prior_value - value) <= 1e-6:
         return prior_authority
@@ -189,6 +189,28 @@ def resolve_clip_scope(token: str, media_ids: Iterable[str]) -> str | None:
         return None
     tails = [media_id for media_id in ids if media_id.endswith(token)]
     return tails[0] if len(tails) == 1 else None
+
+
+def same_clip_scope(left: Any, right: Any, known: Iterable[Any] = ()) -> bool:
+    """Whether two ``clip:<token>`` scopes name the same medium, however each is written.
+
+    ``resolve_clip_scope`` reads a token as the whole id or a unique 6+ char tail, so
+    ``clip:asset-<uuid>`` and ``clip:<uuid>`` are one photo. ``known`` is every other scope
+    in play: a tail that more than one distinct longer token ends with is ambiguous and
+    names none of them.
+    """
+    if not isinstance(left, str) or not isinstance(right, str):
+        return False
+    if left == right:
+        return left.startswith("clip:")
+    if not (left.startswith("clip:") and right.startswith("clip:")):
+        return False
+    a, b = left[5:], right[5:]
+    short, long_ = (a, b) if len(a) <= len(b) else (b, a)
+    if len(short) < 6 or not long_.endswith(short):
+        return False
+    tokens = {str(scope)[5:] for scope in (*known, left, right) if str(scope).startswith("clip:")}
+    return sum(1 for token in tokens if token != short and token.endswith(short)) == 1
 
 
 @dataclass(frozen=True)
@@ -355,6 +377,7 @@ __all__ = [
     "hold_requirements",
     "hold_seconds",
     "relative_length",
+    "same_clip_scope",
     "holds_from_requirements",
     "resolve_clip_scope",
     "stamp_authority",
