@@ -11,7 +11,7 @@ final class SuggestionChipsTests: XCTestCase {
      "anchor":{"media_digest":"065dfcfb4045d98ddfd115cb","manifest_hash":"x","render_generation_id":null,"variant_id":null},
      "brand_new_key":{"a":1},
      "chips":[
-      {"id":"sc_e80c892d02e3","kind":"default_edit","label":"Let Kria cut the first version","message":"Suggest an edit.","rank":1,"default_edit":true,
+      {"id":"sc_e80c892d02e3","kind":"default_edit","label":"Let Kria decide","message":"Suggest an edit.","rank":1,"default_edit":true,
        "anchor":{"media_id":null,"clip_ordinal":null,"moment":null,"text_bar_index":null},"capability":"dispatch_render",
        "why":null,"label_source":"template","requires_protocol":null},
       {"id":"sc_2","kind":"hook","label":"Add a hook to the opening","message":"Add a hook that matches the video","rank":2,
@@ -30,7 +30,7 @@ final class SuggestionChipsTests: XCTestCase {
         XCTAssertEqual(set.state, "first_prompt")
         XCTAssertEqual(set.status, "ok")
         XCTAssertEqual(set.wording, "agent")
-        XCTAssertEqual(set.chips.map(\.label), ["Let Kria cut the first version", "Add a hook to the opening", "Try the new thing", "Add sound effects"])
+        XCTAssertEqual(set.chips.map(\.label), ["Let Kria decide", "Add a hook to the opening", "Try the new thing", "Add sound effects"])
         XCTAssertEqual(set.chips[0].message, ChatSubmission.mediaOnlyMessage, "Chip #1 must send the stock media-only message")
         XCTAssertTrue(set.chips[0].isDefaultEdit)
         XCTAssertNil(set.chips[0].why)
@@ -154,7 +154,7 @@ final class SuggestionChipsTests: XCTestCase {
     }
 
     func testADeliveredSetIsNeverReRankedOrRelabelledUnderTheSameSetID() throws {
-        let lead = SuggestionChip(id: "d", kind: "default_edit", label: "Let Kria cut the first version", message: "Suggest an edit.", rank: 1, isDefaultEdit: true)
+        let lead = SuggestionChip(id: "d", kind: "default_edit", label: "Let Kria decide", message: "Suggest an edit.", rank: 1, isDefaultEdit: true)
         let pending = SuggestionSet(setID: "sg_1", state: "first_prompt", status: "pending", understanding: "pending", retryAfterSeconds: 2, wording: "pending", chips: [lead])
         let delivered = SuggestionSet(setID: "sg_1", state: "first_prompt", status: "ok", wording: "agent",
                                       chips: [lead, SuggestionChip(id: "h", kind: "hook", label: "Add a hook", message: "Add a hook that matches the video", rank: 2)])
@@ -172,7 +172,7 @@ final class SuggestionChipsTests: XCTestCase {
     }
 
     @MainActor func testPendingIsPolledUntilItSettlesAndNoLongerThanTheCeiling() async {
-        let lead = SuggestionChip(id: "d", kind: "default_edit", label: "Let Kria cut the first version", message: "Suggest an edit.", rank: 1, isDefaultEdit: true)
+        let lead = SuggestionChip(id: "d", kind: "default_edit", label: "Let Kria decide", message: "Suggest an edit.", rank: 1, isDefaultEdit: true)
         let pending = SuggestionSet(setID: "a", state: "first_prompt", status: "pending", understanding: "pending", retryAfterSeconds: 3, wording: "pending", chips: [lead])
         let done = SuggestionSet(setID: "a", state: "first_prompt", status: "ok", chips: [lead])
         XCTAssertEqual(pending.chips(forState: "first_prompt").map(\.id), ["d"], "Pending shows chip #1 alone")
