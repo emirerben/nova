@@ -196,7 +196,6 @@ struct SpendConsentSheet: View {
                 .font(KriaFont.body(14))
                 .foregroundStyle(KriaColor.mutedInk)
                 .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("suggestion-spend-terms")
             Spacer(minLength: 0)
             HStack(spacing: 12) {
                 Button("Not now", action: cancel)
@@ -212,7 +211,6 @@ struct SpendConsentSheet: View {
         .padding(.bottom, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(KriaColor.paper)
-        .accessibilityIdentifier("suggestion-spend-sheet")
     }
 }
 

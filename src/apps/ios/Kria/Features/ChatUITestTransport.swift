@@ -1158,9 +1158,7 @@ final class CreationChatFixture: @unchecked Sendable {
                 }
                 spentGeneratedThreads.insert(id)
                 append("assistant_response", text: SuggestionCardsMocks.generatedReadyReply,
-                       payload: ["turn_id": turnID, "turn_value": "review",
-                                 "suggestion_pin": ["set_id": tap["set_id"] as? String ?? "", "id": SuggestionCardsMocks.generatedCardID,
-                                                    "outcome": "generated", "operation_id": eventID, "state": "ready", "event_id": eventID]])
+                       payload: ["turn_id": turnID, "turn_value": "response"])
             } else if ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CARDS"] == "stale",
                       (body["suggestion"] as? [String: Any])?["chip_id"] as? String == SuggestionCardsMocks.staleCardID {
                 // The real pinned-tap refusal (`plan_pinned_suggestion_turn`): an ordinary accepted turn whose reply says the

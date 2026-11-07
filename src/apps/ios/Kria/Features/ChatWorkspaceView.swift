@@ -2586,11 +2586,13 @@ private struct CreationWorkspaceView: View {
     /// The v2 cards for the finished video, or nil when the chat is not on the ready surface or the server's set has
     /// none (then the chips stay in charge). The same value feeds the ready stage and the editor's Improve sheet.
     private var readyCardsPresentation: SuggestionCardsPresentation? {
-        guard SuggestionChipsPolicy.isEnabled(capabilities), suggestionSurface == .ready,
-              suggestionSetKey == suggestionScopeKey else { return nil }
-        // A spent paid card leaves the set at once, but its image does not: the row outlives the set it came from.
+        guard SuggestionChipsPolicy.isEnabled(capabilities) else { return nil }
+        // A spent paid card leaves the set at once, but its image does not: the row outlives the set it came from, and
+        // it shows while the tap's own turn is still running (that is when the image is being made), which hides cards.
+        let onSurface = suggestionSurface == .ready && suggestionSetKey == suggestionScopeKey
+        guard onSurface || generatedCards.result != nil else { return nil }
         var served: [SuggestionCard] = []
-        if case .cards(let found) = SuggestionReadyContent.resolve(set: suggestionSet) {
+        if onSurface, case .cards(let found) = SuggestionReadyContent.resolve(set: suggestionSet) {
             served = found
         } else if generatedCards.result == nil {
             return nil
@@ -2609,12 +2611,17 @@ private struct CreationWorkspaceView: View {
     /// Hands the finished image to the overlay review, the same screen "Add media" uses for an image made there, so the
     /// creator sees it before it goes anywhere and accepts it in the one place that does that.
     private func reviewGeneratedCard() {
-        guard let accountID = auth.localStorageIdentity, let itemID = fullThread?.activePlanItemID,
-              let title = generatedCards.result?.title else { return }
+        guard selectedFormat != nil, selectedFormat != .slides, let accountID = auth.localStorageIdentity,
+              let itemID = fullThread?.activePlanItemID, let title = generatedCards.result?.title else { return }
         let subject = (fullThread?.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard generatedCards.stageForReview(prompt: subject.isEmpty ? title : subject, accountID: accountID, itemID: itemID) else { return }
         generatedCards.dismiss()
-        openAttachments(launch: .generatedOverlays)
+        // Not `openAttachments`: the image is ready while the tap's own turn may still be closing, and the creator who
+        // pays for an image must not find Review dead for those seconds.
+        attachmentLaunch = .generatedOverlays
+        attachmentScript = nil
+        scrollRequest += 1
+        showsAttachments = true
     }
 
     /// The chips to draw for one surface; empty unless the chat is on that surface right now.

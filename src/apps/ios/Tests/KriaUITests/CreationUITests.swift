@@ -2192,17 +2192,18 @@ final class CreationUITests: XCTestCase {
     /// same overlay review "Add media" uses, where it waits for the creator's Use.
     func testGeneratedImageCardAsksFirstThenMakesOneImageAndHandsItToReview() {
         let nonce = "g" + UUID().uuidString.prefix(6)
-        let app = launchSuggestionCards("generated", nonce: nonce, extra: ["KRIA_GENERATED_MEDIA": "1"])
+        let app = launchSuggestionCards("generated", nonce: nonce, extra: ["KRIA_GENERATED_MEDIA": "1"], arguments: ["-reset-chat-drafts"])
         let card = app.buttons["suggestion-card-0"]
         XCTAssertTrue(card.waitForExistence(timeout: 30), "the finished video offers the paid card")
         XCTAssertTrue(card.label.contains("Costs $0.04"), "the price is on the card before any tap")
 
         // Consent declined: nothing leaves the phone and the card stays.
         card.tap()
-        let sheet = app.descendants(matching: .any)["suggestion-spend-sheet"].firstMatch
+        let sheet = app.buttons["suggestion-spend-confirm"]
         XCTAssertTrue(sheet.waitForExistence(timeout: 5), "a paid card asks before it sends")
-        XCTAssertTrue(app.staticTexts["suggestion-spend-terms"].label.contains("$0.04"))
-        XCTAssertTrue(app.staticTexts["suggestion-spend-terms"].label.contains("Nothing goes in your video until you say so"))
+        let terms = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Nothing goes in your video until you say so")).firstMatch
+        XCTAssertTrue(terms.exists, "the sheet says what is not done until the creator agrees")
+        XCTAssertTrue(terms.label.contains("$0.04"), "the sheet repeats the price")
         keepScreenshot(app, "Cost consent sheet")
         app.buttons["suggestion-spend-cancel"].tap()
         XCTAssertTrue(eventually(timeout: 5) { !sheet.exists }, "Not now closes the sheet")
