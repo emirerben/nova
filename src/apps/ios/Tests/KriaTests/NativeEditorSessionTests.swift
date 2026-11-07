@@ -2937,6 +2937,93 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(fake.sourcePoolCallCount, 2, "Repeated authority keeps the same generation inputs")
     }
 
+    func testPromptRefreshDropsSuccessfulReadsAfterOwnerChange() async throws {
+        for stage in ["legacy-project", "legacy-project-fallback", "legacy-variant", "draft", "variant"] {
+            for owner: String? in ["replacement", nil] {
+                try await exercisePromptRefreshOwner(stage: stage, nextOwner: owner)
+            }
+        }
+    }
+
+    func testPromptRefreshDropsFailuresAfterOwnerChange() async throws {
+        for stage in ["legacy-variant", "draft", "variant"] {
+            for owner: String? in ["replacement", nil] {
+                try await exercisePromptRefreshOwner(stage: stage, nextOwner: owner, fails: true)
+            }
+        }
+    }
+
+    func testPromptRefreshStillAdoptsSameOwnerResponses() async throws {
+        for stage in ["legacy-project", "legacy-project-fallback", "legacy-variant", "draft", "variant"] {
+            try await exercisePromptRefreshOwner(stage: stage, nextOwner: "original")
+        }
+    }
+
+    private func exercisePromptRefreshOwner(stage: String, nextOwner: String?, fails: Bool = false) async throws {
+        let legacy = stage.hasPrefix("legacy")
+        let thread = UUID(), job = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 1,
+            snapshotHash: "h", etag: "e", baseJobID: job.uuidString,
+            baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
+        fake.mediaLibraryOwner = "original"
+        let project = ProjectSummary(id: thread, title: "Owner fence", status: .ready, updatedAt: .now,
+            posterURL: nil, outputVariantID: "initial", runtimeVersion: legacy ? 1 : 2,
+            activeJobID: job, activePlanItemID: "item")
+        let session = NativeEditorSession(project: project)
+        await session.load(project: project, api: fake)
+        XCTAssertEqual(session.loadState, .loaded)
+        let before = session.document
+        let beforeRefresh = session.refreshSync
+        fake.authoritativeVariant = Self.variant(duration: 3, generation: "g2")
+        if stage == "legacy-project" {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            fake.refreshedThread = try decoder.decode(CreationThread.self, from: Data(#"""
+            {"id":"\#(thread.uuidString)","title":"Owner fence","status":"active","revision":2,"runtime_version":1,
+             "active_job_id":"\#(job.uuidString)","active_plan_item_id":"item",
+             "state":{"selected_variant_id":"initial"},
+             "job":{"id":"\#(job.uuidString)","status":"variants_ready","variants":[{"variant_id":"initial","render_status":"ready"}]},
+             "updated_at":"2026-09-09T08:00:00Z"}
+            """#.utf8))
+        }
+        if stage.hasPrefix("legacy-project") { fake.suspendNextProject = true }
+        else if stage == "draft" { fake.suspendNextDraft = true }
+        else { fake.suspendNextEditorVariant = true }
+        let sync = Task { await session.synchronizePromptRevision() }
+        let suspended = await waitUntil(timeout: .seconds(3)) {
+            if stage.hasPrefix("legacy-project") { return fake.projectIsSuspended }
+            if stage == "draft" { return fake.draftIsSuspended }
+            return fake.editorVariantIsSuspended
+        }
+        XCTAssertTrue(suspended, stage)
+        fake.mediaLibraryOwner = nextOwner
+        if fails {
+            if stage == "draft" { fake.draftError = .requestFailed(status: 500) }
+            else { fake.editorVariantError = .requestFailed(status: 500) }
+        }
+        let variantsBeforeResume = fake.editorVariantCalls
+        if stage.hasPrefix("legacy-project") { fake.resumeProject() }
+        else if stage == "draft" { fake.resumeDraft() }
+        else { fake.resumeEditorVariant() }
+        await sync.value
+        if nextOwner == "original" {
+            XCTAssertEqual(session.document.revision.baseGeneration, "g2", stage)
+            XCTAssertNotEqual(session.document, before, "same-owner refresh remains live: \(stage)")
+        } else {
+            XCTAssertEqual(session.document, before, "old-owner response cannot replace the document: \(stage)")
+            XCTAssertEqual(session.refreshSync, beforeRefresh, "old-owner failure cannot schedule current-owner recovery: \(stage)")
+            XCTAssertNil(session.mergeConflictMessage, stage)
+            if stage.hasPrefix("legacy-project") || stage == "draft" {
+                XCTAssertEqual(fake.editorVariantCalls, variantsBeforeResume,
+                    "reject the old-owner response before another account's follow-up read: \(stage)")
+            }
+        }
+        XCTAssertEqual(fake.commitCount, 0)
+        session.setObserversVisible(false)
+    }
+
     func testLegacyConversationRefreshDoesNotUseRuntimeTwoDraftOrEraseLocalEdits() async throws {
         let jobID = UUID()
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
@@ -8295,6 +8382,10 @@ final class EditorCommitSpy: KriaAPIClient {
     var editorVariantJobIDs: [UUID] = []
     var supersededJobIDs: Set<UUID> = []
     var projectCallCount = 0
+    var suspendNextDraft = false
+    private(set) var draftIsSuspended = false
+    private var draftContinuation: CheckedContinuation<Void, Never>?
+    func resumeDraft() { draftContinuation?.resume(); draftContinuation = nil }
     var suspendNextProject = false
     var projectIsSuspended = false
     private var projectContinuation: CheckedContinuation<Void, Never>?
@@ -8382,6 +8473,14 @@ final class EditorCommitSpy: KriaAPIClient {
     func threadDelta(threadID: UUID, afterSequence: Int) async throws -> ThreadDelta { throw APIError.unsupported }
     func draft(threadID: UUID) async throws -> DraftSnapshot {
         draftCallCount += 1
+        if suspendNextDraft {
+            suspendNextDraft = false
+            await withCheckedContinuation { continuation in
+                draftContinuation = continuation
+                draftIsSuspended = true
+            }
+            draftIsSuspended = false
+        }
         if let draftError { throw draftError }
         return draftSnapshot
     }
