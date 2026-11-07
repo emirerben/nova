@@ -30,8 +30,6 @@ kill_timeout = 300
   # a Fly secret. Initial routing deliberately remains the code default: celery.
   # Same for VISUALS_ANALYSIS_QUEUE: deploy the worker that consumes
   # visuals-analysis first, then set the secret (unset it to roll back).
-  # KRI-1240: the dedicated `visuals` process below only helps while that secret
-  # is set to `visuals-analysis`; unset, Visuals go back to the worker's one slot.
 
 [build]
   dockerfile = "Dockerfile"
@@ -62,12 +60,10 @@ kill_timeout = 300
   # they can never run simultaneously and OOM the worker (sized in [[vm]]
   # below; plan T3). creator-guided-jobs fences expanded mixed-media cuts and
   # creator-render-v2 fences chat Creator jobs from rolling legacy workers.
-  # Since Release 2 (2026-11-02) the worker is the only consumer of
-  # autoplace-jobs and speech-analysis. It also keeps consuming
-  # visuals-analysis as the fallback for the dedicated `visuals` process below
-  # (KRI-1240): with prefetch=1 + acks_late the busy worker never holds a
-  # Visuals message it isn't running, so the fallback costs renders nothing.
-  # One worker slot still means one task at a time.
+  # During the device-only admission release, the worker also subscribes to
+  # the analysis queues (visuals-analysis included) while their dedicated
+  # groups remain defined for a safe drain/canary window. One worker slot still
+  # means one task at a time.
   # This -Q list is CI-pinned against app/services/queue_state.py's
   # RENDER_WORKER_QUEUES by tests/test_worker_prewarm_gate.py.
   worker = "celery -A app.worker worker --loglevel=info --concurrency=1 -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs,creator-render-v2,creator-fidelity-v1,autoplace-jobs,speech-analysis,visuals-analysis"
@@ -87,28 +83,6 @@ kill_timeout = 300
   # backstop. Beat does NOT de-duplicate across replicas, so `light` MUST
   # stay at exactly one machine (`fly scale count light=1`).
   light = "celery -A app.worker worker --loglevel=info --concurrency=2 -Q maintenance,agent-control -B"
-  # KRI-1240 (2026-11-07): creator-facing Visuals analysis (analyze_pool_asset
-  # on visuals-analysis) gets its own small always-on process again. Release 2
-  # left it on the worker's single slot, so 10 Visuals added together were
-  # analysed one after another (~27 s each, ~4.5 min in the 2026-11-06 Q1 run)
-  # and also queued behind footage/speech analysis and the worker's cold start.
-  # The work waits on Gemini (upload + generateContent), not on the CPU
-  # (decode/probe measured 0.03-0.10 s per file), so 6 at a time on 2 shared
-  # CPUs is enough: in the local benchmark 14 Visuals were ready in 83 s at 6
-  # vs 120 s at 4 (docs/reviews/kri-1240-visuals-burst.md). visuals-analysis
-  # ONLY: poster repair and intent-review evidence (autoplace-jobs) download
-  # full MP4s and run ffmpeg and stay on the worker. --max-memory-per-child
-  # recycles a child between tasks once its peak RSS passes 512MB (the
-  # app-wide 3GB default is above this VM and could never fire here).
-  # app/worker.py skips the CLIP prewarm for a process that consumes only
-  # VISUALS_WORKER_QUEUES. The -Q list is CI-pinned against
-  # app/services/queue_state.py's VISUALS_WORKER_QUEUES by
-  # tests/test_worker_prewarm_gate.py. Exactly ONE machine: on the first deploy
-  # flyctl --ha creates a second started machine for a new group with
-  # [[services]] (a group without services would instead get a stopped standby,
-  # which the Fly Deploy topology guard rejects), so run
-  # `fly scale count visuals=1` once after that deploy.
-  visuals = "celery -A app.worker worker --loglevel=info --concurrency=6 --max-memory-per-child=524288 -Q visuals-analysis"
 
 # ---------------------------------------------------------------------------
 # HTTP service (api process only)
@@ -181,18 +155,6 @@ kill_timeout = 300
   auto_start_machines = true
 
 # ---------------------------------------------------------------------------
-# Visuals — always running, no HTTP exposure (KRI-1240). Always-on so a
-# creator's Visuals start analysing the moment they are added, with no cold
-# start; the worker stays the fallback consumer while this machine deploys or
-# restarts. One machine (see the `visuals` process comment above).
-# ---------------------------------------------------------------------------
-
-[[services]]
-  processes = ["visuals"]
-  auto_stop_machines = false
-  auto_start_machines = true
-
-# ---------------------------------------------------------------------------
 # VM sizing per process group
 # ---------------------------------------------------------------------------
 
@@ -234,22 +196,6 @@ kill_timeout = 300
   cpu_kind = "shared"
   cpus = 1
   memory_mb = 1024
-
-# Visuals (KRI-1240) — same size as the `autoplace` group Release 2 removed
-# (shared-cpu-2x / 2048MB, then concurrency=2). Six children share the parent's
-# app import (~300MB) and each add ~120MB of task work plus one downloaded file
-# (images <= 25MB, videos <= 512MB): <= ~0.95GB peak for the tree in the local
-# benchmark (macOS RSS; Linux counts shared pages per child, so expect more).
-# --max-memory-per-child on the process line recycles a ballooned child between
-# tasks. If it OOMs: `fly scale memory 4096 --process-group visuals`. Full
-# rollback: `fly scale count visuals=0` (the worker drains visuals-analysis
-# alone), then revert this group — the next deploy recreates a machine for any
-# group still in this file.
-[[vm]]
-  processes = ["visuals"]
-  cpu_kind = "shared"
-  cpus = 2
-  memory_mb = 2048
 
 [[vm]]
   processes = ["worker"]
