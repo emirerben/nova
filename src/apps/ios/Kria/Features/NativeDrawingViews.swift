@@ -496,6 +496,16 @@ struct NativeDrawingTransformLayer: View {
     @State private var base: EditorDrawing?
     @State private var live: EditorDrawing?
     @State private var activeGestures = Set<String>()
+    /// Whether the current drag began on a corner handle (then it resizes about the centre instead of moving).
+    @State private var cornerDrag: Bool?
+    /// When a drag last moved or ended: a touch that dragged is never also a tap that cycles the selection
+    /// (a fast drag still reported a tap on lift, which switched the selection mid-gesture).
+    @State private var lastDragActivity = Date.distantPast
+    @State private var snapX = false
+    @State private var snapY = false
+    @State private var haptic = UISelectionFeedbackGenerator()
+    /// Extra hit margin around the box so every corner handle has a 44pt zone (22pt radius), like the other kinds.
+    private static let grab = NativeTextTransformMath.cornerGrabRadius
 
     init(session: NativeEditorSession, id: String) {
         self.session = session
@@ -514,10 +524,15 @@ struct NativeDrawingTransformLayer: View {
                     .overlay(alignment: .bottomLeading) { knob }
                     .overlay(alignment: .bottomTrailing) { knob }
                     .frame(width: box.width, height: box.height)
+                    .padding(Self.grab)
+                    .contentShape(Rectangle())
                     .rotationEffect(.degrees(drawing.rotationDeg))
                     .position(x: drawing.centerX * proxy.size.width, y: drawing.centerY * proxy.size.height)
-                    .contentShape(Rectangle())
-                    .gesture(moveGesture(proxy.size))
+                    .gesture(moveGesture(proxy.size, box: box))
+                    .simultaneousGesture(SpatialTapGesture(coordinateSpace: .named("native-drawing-layer")).onEnded { tap in
+                        guard activeGestures.isEmpty, Date().timeIntervalSince(lastDragActivity) > 0.5 else { return }
+                        session.previewTapForwarder?(CGPoint(x: tap.location.x / max(proxy.size.width, 1), y: tap.location.y / max(proxy.size.height, 1)))
+                    })
                     .simultaneousGesture(scaleGesture)
                     .simultaneousGesture(rotateGesture)
                     .accessibilityElement()
@@ -526,6 +541,7 @@ struct NativeDrawingTransformLayer: View {
                     .accessibilityIdentifier("native-editor-drawing-transform")
             }
         }
+        .coordinateSpace(name: "native-drawing-layer")
     }
 
     private var knob: some View {
@@ -533,7 +549,9 @@ struct NativeDrawingTransformLayer: View {
     }
 
     /// The unrotated frame, padded so a thin stroke still has something to grab.
-    private func frame(of drawing: EditorDrawing, in size: CGSize) -> CGSize {
+    private func frame(of drawing: EditorDrawing, in size: CGSize) -> CGSize { Self.boxSize(of: drawing, in: size) }
+
+    static func boxSize(of drawing: EditorDrawing, in size: CGSize) -> CGSize {
         let points = drawing.strokes.flatMap(\.points)
         let xs = points.map { $0[0] }, ys = points.map { $0[1] }
         let width = ((xs.max() ?? 0.5) - (xs.min() ?? 0.5)) * drawing.scale * size.width
@@ -542,17 +560,40 @@ struct NativeDrawingTransformLayer: View {
         return CGSize(width: max(44, width + widest + 16), height: max(44, height + widest + 16))
     }
 
-    private func moveGesture(_ size: CGSize) -> some Gesture {
+    private func moveGesture(_ size: CGSize, box: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 3, coordinateSpace: .local)
             .onChanged { value in
+                lastDragActivity = Date()
                 guard begin("move"), let base else { return }
-                // Clamped to the frame: a centre outside 0...1 is an invalid drawing the preview compile would drop.
-                update(base) {
-                    $0.centerX = min(1, max(0, base.centerX + value.translation.width / max(size.width, 1)))
-                    $0.centerY = min(1, max(0, base.centerY + value.translation.height / max(size.height, 1)))
+                // The gesture's local space is the whole canvas, unrotated: bring points into the box's own space
+                // (origin at its centre, turned back by the drawing's rotation).
+                let radians = -base.rotationDeg * .pi / 180
+                func inBox(_ point: CGPoint) -> CGPoint {
+                    let dx = point.x - base.centerX * size.width, dy = point.y - base.centerY * size.height
+                    return CGPoint(x: dx * cos(radians) - dy * sin(radians), y: dx * sin(radians) + dy * cos(radians))
                 }
+                if cornerDrag == nil {
+                    let start = inBox(value.startLocation)
+                    let bounds = CGRect(x: -box.width / 2, y: -box.height / 2, width: box.width, height: box.height)
+                    cornerDrag = NativeTextTransformMath.corners(of: bounds, rotationDegrees: 0).contains {
+                        NativeTextTransformMath.grabsCorner(at: start, corner: $0, bounds: bounds)
+                    }
+                }
+                if cornerDrag == true {
+                    let start = inBox(value.startLocation), now = inBox(value.location)
+                    let startRadius = hypot(start.x, start.y)
+                    guard startRadius > 1 else { return }
+                    update(base) { $0.scale = min(3, max(0.2, base.scale * Double(hypot(now.x, now.y) / startRadius))) }
+                    return
+                }
+                // Clamped to the frame: a centre outside 0...1 is an invalid drawing the preview compile would drop.
+                let x = NativeSpeakerFrameGesture.snappedToCenter(min(1, max(0, base.centerX + value.translation.width / max(size.width, 1))))
+                let y = NativeSpeakerFrameGesture.snappedToCenter(min(1, max(0, base.centerY + value.translation.height / max(size.height, 1))))
+                if (x.snapped && !snapX) || (y.snapped && !snapY) { haptic.selectionChanged() }
+                snapX = x.snapped; snapY = y.snapped
+                update(base) { $0.centerX = x.value; $0.centerY = y.value }
             }
-            .onEnded { _ in end("move") }
+            .onEnded { _ in lastDragActivity = Date(); cornerDrag = nil; snapX = false; snapY = false; end("move") }
     }
 
     private var scaleGesture: some Gesture {

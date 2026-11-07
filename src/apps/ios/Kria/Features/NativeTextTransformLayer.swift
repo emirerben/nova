@@ -55,6 +55,16 @@ enum NativeTextTransformMath {
                        y: bounds.midY + dx * sin(radians) + dy * cos(radians))
     }
 
+    /// All four corners of `bounds` after rotating it about its own centre.
+    static func corners(of bounds: CGRect, rotationDegrees: Double) -> [CGPoint] {
+        let radians = CGFloat(rotationDegrees) * .pi / 180
+        return [(-1, -1), (1, -1), (-1, 1), (1, 1)].map { sx, sy in
+            let dx = sx * bounds.width / 2, dy = sy * bounds.height / 2
+            return CGPoint(x: bounds.midX + dx * cos(radians) - dy * sin(radians),
+                           y: bounds.midY + dx * sin(radians) + dy * cos(radians))
+        }
+    }
+
     /// The corner handle, optionally pulled inside `canvas` so a text near an
     /// edge never leaves its handle clipped or unreachable.
     static func handleCenter(of bounds: CGRect, rotationDegrees: Double, canvas: CGSize, inset: CGFloat?) -> CGPoint {
@@ -64,11 +74,16 @@ enum NativeTextTransformMath {
                        y: min(max(inset, corner.y), canvas.height - inset))
     }
 
+    /// The thumb zone around a handle: a 44x44pt square centred on it (twice `cornerGrabRadius` a side).
+    static func inGrabZone(_ point: CGPoint, corner: CGPoint) -> Bool {
+        abs(point.x - corner.x) <= cornerGrabRadius && abs(point.y - corner.y) <= cornerGrabRadius
+    }
+
     /// Whether a drag that began at `point` grabs the corner rather than the body.
     static func grabsCorner(at point: CGPoint, corner: CGPoint, bounds: CGRect) -> Bool {
         let cornerDistance = hypot(point.x - corner.x, point.y - corner.y)
         let centerDistance = hypot(point.x - bounds.midX, point.y - bounds.midY)
-        return cornerDistance <= cornerGrabRadius && cornerDistance < centerDistance
+        return inGrabZone(point, corner: corner) && cornerDistance < centerDistance
     }
 
     /// Scale and rotation implied by dragging the corner from `start` to

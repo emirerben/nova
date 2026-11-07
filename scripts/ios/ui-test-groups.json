@@ -414,7 +414,15 @@
       "KriaUITests/SpeakerFrameDirectManipulationUITests/testTapDragAndPinchMoveAndResizeTheSpeaker",
       "KriaUITests/SpeakerFrameDirectManipulationUITests/testOneDragIsOneUndoStep",
       "KriaUITests/SpeakerFrameDirectManipulationUITests/testDragAndPinchPastTheLimitsSaveAFrameInRange",
-      "KriaUITests/SpeakerFrameDirectManipulationUITests/testFullFrameSpeakerIsNotSelectable"
+      "KriaUITests/SpeakerFrameDirectManipulationUITests/testFullFrameSpeakerIsNotSelectable",
+      "KriaUITests/OverlayEditVerifyUITests/testText",
+      "KriaUITests/OverlayEditVerifyUITests/testCaption",
+      "KriaUITests/OverlayEditVerifyUITests/testPipCard",
+      "KriaUITests/OverlayEditVerifyUITests/testPipCardOnDeviceVariantClampsAt62",
+      "KriaUITests/OverlayEditVerifyUITests/testVisualBlock",
+      "KriaUITests/OverlayEditVerifyUITests/testDrawing",
+      "KriaUITests/OverlayEditVerifyUITests/testHandleGrabbedTwentyPointsOutsideTheCorner",
+      "KriaUITests/OverlayEditVerifySpeakerUITests/testSpeakerFrame"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
@@ -583,6 +591,8 @@
     "src/apps/ios/Tests/KriaUITests/SpeakerBackgroundUITests.swift": "editor",
     "src/apps/ios/Tests/KriaUITests/BackgroundLaneUITests.swift": "editor",
     "src/apps/ios/Tests/KriaUITests/SpeakerFrameDirectManipulationUITests.swift": "editor",
+    "src/apps/ios/Tests/KriaUITests/OverlayEditVerifyUITests.swift": "editor",
+    "src/apps/ios/Tests/KriaUITests/OverlayEditVerifySpeakerUITests.swift": "editor",
     "src/apps/ios/Kria/Features/NativeSpeakerPanel.swift": "editor",
     "src/apps/ios/Kria/Core/WhatsNew.swift": "projects",
     "src/apps/ios/Kria/Core/WhatsNewReleases.swift": "projects",
