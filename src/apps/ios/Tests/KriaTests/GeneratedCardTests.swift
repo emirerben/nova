@@ -18,4 +18,14 @@ final class GeneratedCardTests: XCTestCase {
         XCTAssertFalse(free.needsSpendConsent)
         XCTAssertEqual(paid.costLabel, "$0.04")
     }
+
+    func testARowWaitingOnATapTheServerTurnedAwayCanBeDismissedButAPaidImageCannot() {
+        func row(_ phase: GeneratedCardResult.Phase, operationID: String?) -> GeneratedCardResult {
+            GeneratedCardResult(id: "ss_a", title: "Add a generated image", eventID: "e", operationID: operationID, phase: phase)
+        }
+        XCTAssertTrue(row(.making, operationID: nil).canDismiss)
+        XCTAssertFalse(row(.making, operationID: "op_1").canDismiss)
+        XCTAssertTrue(row(.ready, operationID: "op_1").canDismiss)
+        XCTAssertTrue(row(.failed, operationID: "op_1").canDismiss)
+    }
 }

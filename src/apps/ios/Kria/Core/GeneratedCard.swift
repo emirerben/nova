@@ -48,6 +48,10 @@ struct GeneratedCardResult: Equatable, Identifiable, Sendable {
     let eventID: String
     var operationID: String?
     var phase: Phase
+
+    /// A row still waiting for an operation to appear has nothing to protect: a tap the server turned away never makes
+    /// one, and the chat reply is the only notice. Once an operation exists the image is paid for, so it stays.
+    var canDismiss: Bool { phase != .making || operationID == nil }
 }
 
 /// Follows the one image a tapped card is making: finds the operation by its derived event id, polls until it settles,

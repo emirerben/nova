@@ -255,7 +255,7 @@ struct GeneratedCardRow: View {
                     .buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
                     .accessibilityIdentifier("\(identifier)-review")
             }
-            if result.phase != .making {
+            if result.canDismiss {
                 Button(action: dismiss) {
                     Image(systemName: "xmark")
                         .font(.system(size: 12, weight: .semibold))
