@@ -480,13 +480,23 @@ async def _stamp_protected_region(
             current_revision=int(thread.revision),
         )
     generation = match.get("storage_generation") or match.get("generation")
+    if not generation:
+        # Stamped without one, the mark reads as invalidated at render once the upload ends.
+        raise RuntimeFailure(
+            409,
+            "protected_region_clip_uploading",
+            "That clip is still uploading. Mark the object again in a moment.",
+            recovery="retry",
+            retryable=True,
+            current_revision=int(thread.revision),
+        )
     try:
         mark = ProtectedRegionSelection(
             label=region.label,
             media_id=region.media_id,
             source_t_s=region.source_t_s,
             box=region.box,
-            generation=str(generation) if generation is not None else None,
+            generation=str(generation),
         )
     except ValueError as exc:
         raise RuntimeFailure(

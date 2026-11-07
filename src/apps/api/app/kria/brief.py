@@ -1769,6 +1769,25 @@ def load_latest_brief_sync(db: Any, thread_id: uuid.UUID) -> CreativeBrief | Non
     return _brief_from_row(row)
 
 
+def load_brief_history_sync(db: Any, thread_id: uuid.UUID) -> list[CreativeBrief]:
+    """Every stored brief version of a thread, oldest first. A row that no longer parses is
+    left out (the newest is still read strictly by `load_latest_brief_sync`)."""
+    rows = db.execute(
+        select(CreativeBriefVersion)
+        .where(CreativeBriefVersion.thread_id == thread_id)
+        .order_by(CreativeBriefVersion.version)
+    ).scalars()
+    history: list[CreativeBrief] = []
+    for row in rows:
+        try:
+            brief = _brief_from_row(row)
+        except ValueError:
+            continue
+        if brief is not None:
+            history.append(brief)
+    return history
+
+
 def _creator_turn_text_sync(db: Any, thread_id: uuid.UUID, turn_id: uuid.UUID) -> str | None:
     """The creator's own message a turn answers (KRI-824), read from the transcript.
 
