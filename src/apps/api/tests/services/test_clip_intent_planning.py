@@ -52,7 +52,8 @@ async def test_missing_creative_intents_still_extracts_every_travel_operation(mo
     assert resolver.await_args.kwargs["intents"] == result.requested_intents
     assert resolver.await_args.kwargs["run_context"] is ctx
     assert agent.run.call_args.args[0].latest_user_message == "Make it 60 seconds"
-    assert all("source_quote" not in intent.model_dump() for intent in result.requested_intents)
+    # KRI-884: the creator's quote rides on the intent so printed words anchor to it.
+    assert all(intent.source_quote == request for intent in result.requested_intents)
 
 
 @pytest.mark.asyncio
@@ -216,7 +217,7 @@ async def test_mixed_sources_preserve_transcript_intents_but_resolve_only_clip_i
     )
 
     assert [intent.model_dump(mode="json") for intent in result.requested_intents] == [
-        intent.model_dump(mode="json", exclude={"source_quote"}) for intent in intents
+        intent.model_dump(mode="json") for intent in intents
     ]
     assert resolver.await_args.kwargs["intents"] == [result.requested_intents[0]]
 

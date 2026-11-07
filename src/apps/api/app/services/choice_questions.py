@@ -708,6 +708,49 @@ def simpler_version_accepted(events: Events, dropped_fields: Iterable[str]) -> b
     return bool(dropping) and dropping <= offered
 
 
+def simpler_version_answer(events: Events) -> dict[str, Any] | None:
+    """The simpler-version question THIS turn answers with "Make it without these", else
+    ``None`` (KRI-1236).
+
+    A tap on that option of the question open just before the message, or a typed message that
+    is exactly its label or one of its aliases (the text fallback ``_simpler_version_consent``
+    accepts). Such a turn states nothing but the tap: what it leaves out is what the question
+    named, never what a model reads into "these".
+    """
+    rows = [(role, payload) for role, payload in events if isinstance(payload, dict)]
+    question = _simpler_question_answered(rows, {"simpler_version"})
+    if question is not None:
+        return question
+    last_user = next((i for i in range(len(rows) - 1, -1, -1) if rows[i][0] == "user"), None)
+    if last_user is None:
+        return None
+    payload = rows[last_user][1]
+    if any(isinstance(payload.get(key), dict) for key in _ANSWER_PAYLOAD_KEYS):
+        return None  # a tap that answers something else
+    question = latest_open_choice_question(rows[:last_user])
+    if question is None or question.get("conflict") != SIMPLER_VERSION_REASON:
+        return None
+    named_option = {
+        "options": [o for o in question.get("options", []) if o.get("key") == "simpler_version"]
+    }
+    return (
+        question
+        if match_open_choice(named_option, payload.get(CONTENT_KEY)) == "simpler_version"
+        else None
+    )
+
+
+# Payload keys that make a creator event a tap or card answer (`simpler_version_answer`).
+_ANSWER_PAYLOAD_KEYS = (
+    "choice_selection",
+    "clip_selection",
+    "protected_region",
+    "moment_order",
+    "song_order",
+    "song_range",
+)
+
+
 def change_request_selected(events: Events) -> dict[str, Any] | None:
     """The simpler-version question THIS turn answered with "Change my request" (KRI-983).
 
@@ -5630,6 +5673,7 @@ __all__ = [
     "TAKE_LINE_KINDS",
     "change_request_selected",
     "simpler_version_accepted",
+    "simpler_version_answer",
     "simpler_version_ask",
     "simpler_version_question",
     "without_length_answer_echo",

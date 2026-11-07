@@ -222,6 +222,9 @@ _CLIP_INTENT_LEAVES = (
     "op",
     "attribute",
     "source_kind",
+    # KRI-884: the creator's own sentence the intent quoted; picks which repeated wording
+    # the resolver and the render-time re-grounding print.
+    "source_quote",
     "label_source",
     "transcript_kind",
     "creator_text",
@@ -349,6 +352,7 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "selection_reconciliation.rejected_selections[].intent.position",
         "selection_reconciliation.rejected_selections[].intent.requirement_id",
         "selection_reconciliation.rejected_selections[].intent.source_kind",
+        "selection_reconciliation.rejected_selections[].intent.source_quote",
         "selection_reconciliation.rejected_selections[].intent.transcript_kind",
         "selection_reconciliation.rejected_selections[].intent.under_s",
         "selection_reconciliation.rejected_selections[].question_id",
@@ -796,6 +800,35 @@ FIELD_MATRIX: dict[str, FieldRule] = {
 }
 
 
+def _carries_source_quote(strategy: Mapping[str, Any]) -> bool:
+    """Whether any intent in the strategy holds a KRI-884 quote; legacy digests stay put."""
+
+    def quoted(intent: Any) -> bool:
+        value = (
+            intent.get("source_quote")
+            if isinstance(intent, Mapping)
+            else getattr(intent, "source_quote", None)
+        )
+        return value is not None
+
+    if any(
+        quoted(i)
+        for key in ("clip_intents", "resolved_clip_intents")
+        for i in strategy.get(key) or ()
+    ):
+        return True
+    reconciliation = strategy.get("selection_reconciliation")
+    rejected = (
+        reconciliation.get("rejected_selections")
+        if isinstance(reconciliation, Mapping)
+        else getattr(reconciliation, "rejected_selections", None)
+    )
+    return any(
+        quoted(r.get("intent") if isinstance(r, Mapping) else getattr(r, "intent", None))
+        for r in rejected or ()
+    )
+
+
 def field_matrix_for_strategy(strategy: Mapping[str, Any]) -> dict[str, FieldRule]:
     unused = set()
     if not strategy.get("confirmed_order_replacement"):
@@ -810,6 +843,14 @@ def field_matrix_for_strategy(strategy: Mapping[str, Any]) -> dict[str, FieldRul
         for intent in strategy.get(key) or ()
     ):
         unused.update({"clip_intents[].source_kind", "resolved_clip_intents[].source_kind"})
+    if not _carries_source_quote(strategy):
+        unused.update(
+            {
+                "clip_intents[].source_quote",
+                "resolved_clip_intents[].source_quote",
+                "selection_reconciliation.rejected_selections[].intent.source_quote",
+            }
+        )
     return {
         path: rule
         for path, rule in FIELD_MATRIX.items()
