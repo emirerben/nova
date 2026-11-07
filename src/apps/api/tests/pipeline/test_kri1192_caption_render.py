@@ -548,24 +548,27 @@ def test_phone_karaoke_caption_sends_arabic_as_shaped_words_right_to_left():
     layers = compile_caption_layers(
         [_arabic_cue(text)], canvas_width=1080, canvas_height=1920, style="word"
     )
-    assert len(layers) == 1 and layers[0].effect == "karaoke-line"
+    # A long sentence may come back as consecutive pieces (KRI-632 row budget); every piece is
+    # one shaped karaoke line and together they carry the words in order.
+    assert layers and all(layer.effect == "karaoke-line" for layer in layers)
     # Shaped karaoke runs are only valid in active-word mode (the cloud word-pop look).
-    assert layers[0].karaoke.active_only is True
-    runs = layers[0].runs
+    assert all(layer.karaoke.active_only is True for layer in layers)
+    runs = [run for layer in layers for run in layer.runs]
     assert [run.text for run in runs] == text.split()
     assert all(run.shaped and run.glyphs is None for run in runs)
     assert runs[0].font_asset_id.startswith("font-NotoSansArabic")
     typeface = cloud._resolve_typeface_for_overlay({"font_family": "Noto Sans Arabic"}).typeface
-    rows: dict[float, list] = {}
-    for run in runs:
-        rows.setdefault(run.baseline_y, []).append(run)
-    for row in rows.values():
-        xs = [run.x for run in row]
-        assert xs == sorted(xs, reverse=True), "logical order must run right to left"
-        font = cloud.skia.Font(typeface, row[0].font_size)
-        right = row[0].x + cloud._measure_line(font, row[0].text, 0.0, shape_text=True)
-        left = row[-1].x
-        assert abs((left + right) / 2 - 540) <= 2, "a centred row stays centred"
+    for layer in layers:
+        rows: dict[float, list] = {}
+        for run in layer.runs:
+            rows.setdefault(run.baseline_y, []).append(run)
+        for row in rows.values():
+            xs = [run.x for run in row]
+            assert xs == sorted(xs, reverse=True), "logical order must run right to left"
+            font = cloud.skia.Font(typeface, row[0].font_size)
+            right = row[0].x + cloud._measure_line(font, row[0].text, 0.0, shape_text=True)
+            left = row[-1].x
+            assert abs((left + right) / 2 - 540) <= 2, "a centred row stays centred"
 
 
 def test_phone_sentence_caption_sends_arabic_as_shaped_lines():
