@@ -272,7 +272,8 @@
       "KriaUITests/CreationUITests/testEditorAIActivityCompletingLifecycleCapture",
       "KriaUITests/CreationUITests/testEditorAIActivityCompletingReducedMotionCapture",
       "KriaUITests/CreationUITests/testEditorAIActivityCompletingOpaqueCapture",
-      "KriaUITests/CreationUITests/testImproveAndAIActivityStaySeparateWhileARequestIsWorking"
+      "KriaUITests/CreationUITests/testImproveAndAIActivityStaySeparateDuringPreviewPreparation",
+      "KriaUITests/CreationUITests/testChangedEditorPreviewRetainsOldPictureAndBlocksExportThenSupportsManualUndo"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",

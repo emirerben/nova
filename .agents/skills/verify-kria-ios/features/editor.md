@@ -22,3 +22,32 @@ when investigating imported clips or source-pool mismatches.
 
 The selected UI check stops at Save availability. It does not prove Save,
 reopen or final export. Those require their original recipe and actual media.
+
+## Editor activity and preview handoff
+
+The editor UI catalog also selects the `CreationUITests` completing-activity
+captures, rejection recovery, repeated requests/background return, and
+`testImproveAndAIActivityStaySeparateDuringPreviewPreparation`. Improve is
+available for ready suggestions; it intentionally disappears during a pending
+message. The coexistence check delays actual source-pool transport while the
+ready suggestions and expanded preparation control are both visible.
+
+`testChangedEditorPreviewRetainsOldPictureAndBlocksExportThenSupportsManualUndo`
+uses an opt-in same-target generation change. The next generation is still
+rendering; a current native source preview does not claim encoded-render
+completion. Inspect the captured old, retained, current and manual/Undo pictures.
+Accessible text and a ready layer alone do not prove their displayed pixels.
+This case and the latest source corrections await native execution.
+
+`NativeEditorPreviewWorkSessionTests/testPlayingInPlaceTitleUpdateSettlesThroughTheRealPlayerSurfaceAndCompositor`
+mounts the production preview in a real test-host window. It checks advancing
+playback and revision admission without invoking readiness callbacks manually.
+`NativeEditorSessionTests/testRetainedPreviewStopsOnSourceFailureAndRetriesWithoutLosingTheUnsavedTrim`
+checks failure/retry status and authored-state preservation; the deferred-conflict
+case checks export refusal after the candidate composition is ready but its
+previous picture is still presented. These new controls are not yet executed.
+
+Run these through the editor CI selection or a separately allocated bounded
+native batch after launch/doctor, retaining results and captures. The default
+`drive editor` still runs only the caption journey named above. Playing generation
+handoff, device interruption and encoded-export fidelity require separate proof.

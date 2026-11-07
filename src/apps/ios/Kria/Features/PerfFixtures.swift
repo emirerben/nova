@@ -19,6 +19,8 @@ import SwiftUI
 /// | `KRIA_PERF_DISK_STORE`           | `1` = SwiftData/transcript cache live on disk so a second launch starts warm    |
 /// | `KRIA_PERF_COUNTERS`             | `1` = show the invisible `perf-counters` element (request/rebuild/fetch counts)  |
 /// | `KRIA_EDITOR_FIXTURE`            | `1` = seeded chats have a finished render the editor can open: job status, timeline, three source clips |
+/// | `KRIA_EDITOR_TIMELINE_DELAY_MS`  | delay only editor source-pool responses while real preparation is pending |
+/// | `KRIA_EDITOR_CHANGED_HANDOFF`    | `1` = a completing followup changes the same target's title/generation; encoded render stays pending |
 ///
 /// `-perf-reset` wipes the disk store on launch.
 enum PerfFixture {
@@ -26,6 +28,7 @@ enum PerfFixture {
 
     static var latencyMS: Int { Int(env["KRIA_FIXTURE_LATENCY_MS"] ?? "") ?? 0 }
     static var fullProjectionMS: Int { Int(env["KRIA_FIXTURE_FULL_PROJECTION_MS"] ?? "") ?? 0 }
+    static var editorTimelineMS: Int { Int(env["KRIA_EDITOR_TIMELINE_DELAY_MS"] ?? "") ?? 0 }
     static var seedThreadCount: Int { Int(env["KRIA_CHAT_SEED_THREADS"] ?? "") ?? 0 }
     static var galleryItemCount: Int { Int(env["KRIA_GALLERY_ITEMS"] ?? "") ?? 0 }
     static var expiredToken: Bool { env["KRIA_FIXTURE_EXPIRED_TOKEN"] == "1" }
@@ -49,6 +52,20 @@ enum PerfFixture {
     static func delay(for request: URLRequest) -> TimeInterval {
         var milliseconds = latencyMS
         if fullProjectionMS > 0, isFullProjectionRead(request) { milliseconds += fullProjectionMS }
+        if editorFixture, editorTimelineMS > 0, (request.httpMethod ?? "GET") == "GET", let url = request.url {
+            let parts = url.path.split(separator: "/")
+            if parts.count == 5, parts[0] == "generative-jobs", parts[2] == "variants", parts[4] == "timeline" {
+                milliseconds += editorTimelineMS
+            }
+        }
+        if editorChangedHandoff, request.httpMethod == "GET", let url = request.url {
+            let parts = url.path.split(separator: "/").map(String.init)
+            if parts.count == 5, parts[0] == "generative-jobs", parts[4] == "timeline",
+               PerfEditorHandoffState.shared.hasChanged(parts[1]) {
+                // Delay the actual updated source-pool response, never session readiness.
+                milliseconds += 12_000
+            }
+        }
         return TimeInterval(milliseconds) / 1000
     }
 
@@ -108,11 +125,50 @@ enum PerfFixture {
     }
     /// Three source clips per project: the bundled montage, the bundled Istanbul clip, and the montage again.
     static let editorSourceFiles = ["montage", "istanbul", "montage"]
+    static var editorChangedHandoff: Bool { editorFixture && env["KRIA_EDITOR_CHANGED_HANDOFF"] == "1" }
+
+    /// One opt-in, same-target authoritative edit. No encoded output is fabricated for the new title.
+    static func completeEditorHandoff(threadID: String) {
+        guard editorChangedHandoff, seededIndex(of: threadID) != nil else { return }
+        PerfEditorHandoffState.shared.complete(threadID)
+    }
+
+    static func handoffVariant(threadID: String) -> [String: Any] {
+        let changed = PerfEditorHandoffState.shared.hasChanged(threadID)
+        var variant: [String: Any] = [
+            "variant_id": "montage", "render_generation_id": changed ? "gen-2" : "gen-1",
+            "render_status": changed ? "rendering" : "ready", "duration_s": 6.0, "resolved_archetype": "montage",
+            "editor_capabilities": ["timeline": true, "text_elements": true, "mix": false],
+            "user_timeline": ["slots": editorSourceFiles.indices.map { index in
+                ["slot_id": "s\(index)", "clip_index": index, "in_s": 0, "duration_s": 2,
+                 "source_duration_s": index == 1 ? 6.0 : 4.6, "removed": false] as [String: Any]
+            }],
+            "text_elements": [["id": "00000000-0000-4000-8000-000000000100",
+                "text": changed ? "NEW LISBON TITLE" : "OLD LISBON TITLE",
+                "start_s": 0, "end_s": 6, "x_frac": 0.5, "y_frac": 0.4,
+                "font_family": "Inter", "size_px": 72, "z": 1] as [String: Any]],
+        ]
+        if !changed { variant["output_url"] = editorRenderURL }
+        return variant
+    }
 
     /// The routes the editor's load path calls beyond the chat's own: job status (the variant and its timeline),
     /// the source pool, and no saved draft.
     private static func editorResponse(path: String) -> Response? {
         let parts = path.split(separator: "/").map(String.init)
+        if editorChangedHandoff, parts.count >= 2, seededIndex(of: parts[1]) != nil {
+            let changed = PerfEditorHandoffState.shared.hasChanged(parts[1])
+            if parts.count == 3, parts[0] == "generative-jobs", parts[2] == "status" {
+                return json(["variants": [handoffVariant(threadID: parts[1])]])
+            }
+            if parts.count == 3, parts[0] == "creation-threads", parts[2] == "draft" {
+                return json(["draft_id": "handoff-\(parts[1])", "item_id": parts[1], "variant_key": "montage",
+                    "draft_revision": changed ? 1 : 0, "snapshot_hash": changed ? "handoff-2" : "handoff-1",
+                    "etag": changed ? "handoff-2" : "handoff-1", "base_job_id": parts[1],
+                    "base_generation_id": changed ? "gen-2" : "gen-1", "snapshot": [:] as [String: Any],
+                    "can_undo": false, "created_at": "2026-09-10T10:00:00Z"])
+            }
+        }
         if parts.count == 3, parts[0] == "generative-jobs", parts[2] == "status" {
             let slots: [[String: Any]] = [(4.6, 0), (6.0, 1), (4.6, 2)].map { duration, index in
                 ["slot_id": "s\(index)", "clip_index": index, "in_s": 0, "duration_s": 2, "source_duration_s": duration, "removed": false]
@@ -131,7 +187,8 @@ enum PerfFixture {
                     "original": NSNull(), "local_required": false,
                 ] as [String: Any]]
             }
-            return json(["base_generation": "gen-1", "clips": clips, "slots": [], "native_assets": []])
+            let changed = editorChangedHandoff && PerfEditorHandoffState.shared.hasChanged(parts[1])
+            return json(["base_generation": changed ? "gen-2" : "gen-1", "clips": clips, "slots": [], "native_assets": []])
         }
         if parts.count == 3, parts[0] == "creation-threads", parts[2] == "draft" {
             return json(["detail": "No draft"], status: 404)
@@ -423,6 +480,22 @@ extension PerfFixture {
         }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return try! ModelContainer(for: schema, configurations: ModelConfiguration(schema: schema, url: directory.appending(path: "Kria.store")))
+    }
+}
+
+private final class PerfEditorHandoffState: @unchecked Sendable {
+    static let shared = PerfEditorHandoffState()
+    private let lock = NSLock()
+    private var changedThreads: Set<String> = []
+
+    func complete(_ threadID: String) {
+        lock.lock(); defer { lock.unlock() }
+        changedThreads.insert(threadID.lowercased())
+    }
+
+    func hasChanged(_ threadID: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return changedThreads.contains(threadID.lowercased())
     }
 }
 

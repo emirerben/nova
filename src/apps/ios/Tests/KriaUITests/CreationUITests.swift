@@ -14,25 +14,39 @@ final class CreationUITests: XCTestCase {
         captureEditorAIActivity(variant: "opaque", reduceMotion: false, opaque: true)
     }
 
-    func testImproveAndAIActivityStaySeparateWhileARequestIsWorking() {
-        let app = launchSuggestionCards("ready", extra: ["KRIA_CHAT_SEND_DELAY": "15"])
-        XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30))
-        app.buttons["Open editor"].tap()
-        XCTAssertTrue(app.buttons["native-editor-conversation"].waitForExistence(timeout: 15))
-        guard waitForEditorIdle(control: app.buttons["native-editor-conversation"]) else { app.terminate(); return }
-        sendFromEditorConversation("Review the title while I keep editing", app: app)
+    func testImproveAndAIActivityStaySeparateDuringPreviewPreparation() {
+        let app = launchSuggestionCards("ready", extra: ["KRIA_EDITOR_TIMELINE_DELAY_MS": "12000"])
+        defer { app.terminate() }
+        let cardsReady = app.buttons["suggestion-card-0"].waitForExistence(timeout: 30)
+        XCTAssertTrue(cardsReady, "Improve must have a real ready suggestion set before the editor opens")
+        guard cardsReady else { return }
+        let open = app.buttons["Open editor"]
+        let canOpen = open.waitForExistence(timeout: 30)
+        XCTAssertTrue(canOpen)
+        guard canOpen else { return }
+        open.tap()
         let activity = app.buttons["native-editor-conversation"]
-        waitForEditorActivity("Sending your message…", control: activity)
+        guard waitForEditorActivity("Preparing preview…", control: activity) else { return }
         let improve = app.buttons["native-editor-improve"]
         XCTAssertTrue(improve.exists)
+        guard improve.exists else { return }
         XCTAssertFalse(activity.frame.intersects(improve.frame), "The expanded activity control must not cover Improve")
         XCTAssertTrue(app.windows.firstMatch.frame.contains(activity.frame))
         XCTAssertTrue(app.windows.firstMatch.frame.contains(improve.frame))
         XCTAssertTrue(activity.isHittable)
         XCTAssertTrue(improve.isHittable)
         improve.tap()
-        XCTAssertTrue(app.descendants(matching: .any)["improve-sheet"].firstMatch.waitForExistence(timeout: 5))
-        app.terminate()
+        let sheet = app.descendants(matching: .any)["improve-sheet"].firstMatch
+        let opened = sheet.waitForExistence(timeout: 5)
+        XCTAssertTrue(opened)
+        guard opened else { return }
+        app.buttons["improve-sheet-done"].tap()
+        let dismissed = sheet.waitForNonExistence(timeout: 5)
+        XCTAssertTrue(dismissed)
+        guard dismissed, waitForEditorIdle(control: activity) else { return }
+        XCTAssertTrue(improve.isHittable, "Improve remains available after actual preview preparation finishes")
+        improve.tap()
+        XCTAssertTrue(sheet.waitForExistence(timeout: 5))
     }
 
     private func captureEditorAIActivity(variant: String, reduceMotion: Bool, opaque: Bool = false) {
@@ -85,6 +99,89 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-project-conversation"].firstMatch.waitForExistence(timeout: 5))
     }
 
+    func testChangedEditorPreviewRetainsOldPictureAndBlocksExportThenSupportsManualUndo() {
+        let app = launchEditorAIActivityFixture(reduceMotion: true, completingFollowup: true, changedHandoff: true)
+        defer { app.terminate() }
+        let control = app.buttons["native-editor-conversation"]
+        guard waitForEditorIdle(control: control) else { return }
+        let playback = app.buttons["native-editor-play-pause"]
+        if playback.label == "Pause preview" { playback.tap() }
+        XCTAssertEqual(playback.label, "Play preview")
+        let oldTitle = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Text: OLD LISBON TITLE")).firstMatch
+        XCTAssertTrue(oldTitle.waitForExistence(timeout: 5))
+        attach(app, "Handoff paused - old native title")
+        guard sendFromEditorConversation("Change the title to NEW LISBON TITLE", app: app) else { return }
+        let notice = app.staticTexts["native-editor-previous-preview-status"]
+        let retained = notice.waitForExistence(timeout: 45)
+        XCTAssertTrue(retained)
+        guard retained else { return }
+        XCTAssertEqual(notice.label, "Updating preview — showing the previous version.")
+        XCTAssertFalse(oldTitle.exists, "Previous-picture canvas objects must not remain accessible")
+        let newTitle = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Text: NEW LISBON TITLE")).firstMatch
+        XCTAssertFalse(newTitle.exists, "The new document must not expose hit targets over the previous picture")
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        preview.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
+        XCTAssertFalse(app.scrollViews["native-editor-text-inspector-scroll"].exists,
+                       "Tapping the retained title must not open an inspector for the new document")
+        attach(app, "Handoff paused - retained OLD title inspect pixels")
+        app.buttons["native-editor-export"].tap()
+        let reason = app.buttons["The preview shows the previous version. Check the preview update before exporting."]
+        XCTAssertTrue(reason.waitForExistence(timeout: 2))
+        XCTAssertFalse(reason.isEnabled)
+        XCTAssertFalse(app.buttons["Save to Photos"].exists)
+        XCTAssertFalse(app.buttons["Share"].exists)
+        // Dismiss the menu without selecting an export destination.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap()
+        let finished = notice.waitForNonExistence(timeout: 30)
+        XCTAssertTrue(finished)
+        guard finished else { return }
+        XCTAssertTrue(newTitle.waitForExistence(timeout: 5))
+        XCTAssertTrue(newTitle.isHittable, "The admitted current title exposes its canvas interaction again")
+        XCTAssertFalse(oldTitle.exists)
+        XCTAssertEqual(playback.label, "Play preview", "Paused intent survives authoritative replacement")
+        XCTAssertTrue(app.descendants(matching: .any)["Video preview"].firstMatch.exists)
+        func waitForCurrentNativePreview() -> Bool {
+            // Source admission is independent of the still-pending encoded render.
+            let current = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                !notice.exists && newTitle.exists
+                    && app.descendants(matching: .any)["Video preview"].firstMatch.exists
+                    && (control.value as? String) != "Preparing preview…"
+            }, object: control)
+            let result = XCTWaiter.wait(for: [current], timeout: 30)
+            XCTAssertEqual(result, .completed)
+            return result == .completed
+        }
+        guard waitForCurrentNativePreview() else { return }
+        attach(app, "Handoff paused - current NEW title inspect pixels")
+
+        // Use the normal manual authoring and Undo path after admission.
+        app.buttons["native-editor-tool-text"].tap()
+        let input = app.descendants(matching: .any)["native-editor-new-text-input"].firstMatch
+        let hasInput = input.waitForExistence(timeout: 3)
+        XCTAssertTrue(hasInput)
+        guard hasInput else { return }
+        input.tap(); input.typeText("MANUAL NOTE")
+        let typed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "MANUAL NOTE"), object: input)
+        let typedResult = XCTWaiter.wait(for: [typed], timeout: 10)
+        XCTAssertEqual(typedResult, .completed)
+        guard typedResult == .completed else { return }
+        app.buttons["native-editor-text-done"].tap()
+        let done = app.buttons["native-editor-text-inspector-done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 3))
+        done.tap()
+        let manual = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Text: MANUAL NOTE")).firstMatch
+        XCTAssertTrue(manual.waitForExistence(timeout: 5))
+        guard waitForCurrentNativePreview() else { return }
+        attach(app, "Handoff - manual note inspect pixels")
+        let undo = app.buttons["native-editor-undo"]
+        XCTAssertTrue(undo.isEnabled)
+        undo.tap()
+        XCTAssertTrue(manual.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(newTitle.exists)
+        guard waitForCurrentNativePreview() else { return }
+        attach(app, "Handoff - Undo restores NEW title inspect pixels")
+    }
+
     func testEditorAIActivityStopsOnRejectedPromptAndKeepsTheDraft() {
         let app = launchEditorAIActivityFixture(reduceMotion: true, rejects: true)
         let message = "Keep this rejected editor instruction"
@@ -117,7 +214,7 @@ final class CreationUITests: XCTestCase {
 
     private func launchEditorAIActivityFixture(reduceMotion: Bool, opaque: Bool = false,
                                                rejects: Bool = false, holdsTurn: Bool = false,
-                                               completingFollowup: Bool = false) -> XCUIApplication {
+                                               completingFollowup: Bool = false, changedHandoff: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
         app.launchEnvironment = [
@@ -126,6 +223,7 @@ final class CreationUITests: XCTestCase {
             "UI_TEST_REDUCE_MOTION": reduceMotion ? "1" : "0",
             "UI_TEST_REDUCE_TRANSPARENCY": opaque ? "1" : "0",
         ]
+        if changedHandoff { app.launchEnvironment["KRIA_EDITOR_CHANGED_HANDOFF"] = "1" }
         if rejects { app.launchEnvironment["KRIA_CHAT_SEND_FAILURE"] = "reject" }
         if holdsTurn || completingFollowup {
             app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS_FOLLOWUP"] = "1"
