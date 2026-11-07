@@ -145,7 +145,9 @@ def test_my_pick_sits_on_the_toast_photo_from_its_entrance_to_the_end(monkeypatc
     assert _PHOTO["y_frac"] < row["y_frac"] < _PHOTO["y_frac"] + photo_height / 2
     assert row["y_frac"] < CAPTION_BAND_TOP_FRAC
     assert variant["closing_title_placement"]["status"] == "on_closing_photo"
-    assert calls == []
+    # The only sample is the captions' face band over the whole take (KRI-632), none over
+    # the closing window.
+    assert [anchors[0] < 7.0 for _path, anchors in calls] == [True]
     [layer] = _closing_layers(job)
     assert layer.background is not None
     assert (layer.start, layer.end) == (7.0, 10.0)
@@ -185,8 +187,10 @@ def test_without_a_closing_photo_it_holds_the_last_three_seconds_off_the_face(mo
     assert (row["text"], row["start_s"], row["end_s"]) == (_PICK, 7.0, 10.0)
     assert row["y_frac"] > 0.42
     assert job.assembly_plan["variants"][0]["closing_title_placement"]["status"] == "moved"
-    # Sampled over the closing window on the speaker's own proxy.
-    [(path, anchors)] = calls
+    # The captions' face band over the whole take first (KRI-632), then the closing window,
+    # both on the speaker's own proxy.
+    [(_path, caption_anchors), (path, anchors)] = calls
+    assert caption_anchors[0] < 7.0
     assert path == "/tmp/c0.mp4"
     assert 7.0 < anchors[0] < anchors[-1] < 10.0
     assert _closes_with_pick(job)

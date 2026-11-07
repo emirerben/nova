@@ -766,58 +766,54 @@ async def _mark_needed(db: Any, thread: Any, ctx: SuggestionContext, item: Any) 
     A restating tap requests render approval, so ``_protected_region_gate_sync`` runs on it: when
     the app shows the mark card, the draft renders on the phone Talking writer and a live
     ``keep_text_off`` object has no current mark, the tap writes nothing, asks for the mark and
-    the refusal hides the card for good. The same ``protected_targets`` functions answer here, over
-    the same brief, the same marks (the creator's own events), the same clips and the same plan. The
-    app build is the GET's own (``ctx.client_protocol``): the phone that reads the card taps it.
+    the refusal hides the card for good. ``commit_readiness`` answers here as it does there, over
+    the same brief, the same marks (the creator's own events), the same clips and the same plan.
+    The app build is the GET's own (``ctx.client_protocol``): the phone that reads the card taps it.
     """
-    from app.kria.brief import load_brief_history, load_latest_brief  # noqa: PLC0415
-    from app.kria.protected_targets import (  # noqa: PLC0415
-        clip_generations,
-        marks_route,
-        missing_object_marks,
-        rendered_speaker_media_id,
-        speaker_candidates,
-        standing_protected_regions,
-        standing_user_events,
-    )
-    from app.models import Job  # noqa: PLC0415
+    from app.kria.brief import load_latest_brief  # noqa: PLC0415
     from app.services.suggestions import pinned  # noqa: PLC0415
+    from app.services.suggestions.commit_readiness import (  # noqa: PLC0415
+        MARK_NEEDED,
+        CommitReadinessInputs,
+        client_marks,
+        commit_readiness,
+        gate_settings,
+        load_missing_marks_sync,
+        mark_gate_open,
+        on_marks_route,
+    )
 
     creator_id = getattr(thread, "creator_id", None)
-    if not settings.brief_binding_for(creator_id):
+    readiness, binding_on, choice_questions_on = gate_settings(creator_id)
+    if not binding_on:
         return False
-    protocol = ctx.client_protocol
-    client_marks = (
-        protocol is not None and protocol >= settings.protected_region_mark_min_client_protocol
-    )
     base = await pinned.restate_base(db, thread_id=thread.id, ctx=ctx)
     strategy = base.strategy
-    if strategy is None or not marks_route(
-        client_marks=client_marks,
+    if strategy is None:
+        return False
+    on_route = on_marks_route(
+        client_marks=client_marks(ctx.client_protocol),
         creator_id=creator_id,
         strategy=strategy,
-        edit_format=getattr(item, "edit_format", None) or strategy.get("edit_format"),
-        clip_paths=getattr(item, "clip_gcs_paths", None) or (),
-        voiceover_path=getattr(item, "voiceover_gcs_path", None),
-    ):
+        item=item,
+    )
+    if not mark_gate_open(binding_on=binding_on, render_requested=True, marks_route=on_route):
         return False
     brief = await load_latest_brief(db, thread.id)
-    rows = (await db.execute(standing_user_events(thread.id))).all()
-    marks = standing_protected_regions(rows, await load_brief_history(db, thread.id))
-    assignments = getattr(item, "clip_assignments", None) or []
-    job_id = getattr(item, "current_job_id", None)
-    job = await db.get(Job, job_id) if job_id else None
-    variants = ((getattr(job, "assembly_plan", None) or {}).get("variants")) or []
-    return bool(
-        missing_object_marks(
-            brief,
-            marks,
-            clip_generations(assignments),
-            render_clips=speaker_candidates(
-                assignments, rendered_speaker=rendered_speaker_media_id(variants)
-            ),
+    missing = await db.run_sync(
+        lambda session: load_missing_marks_sync(
+            session, thread_id=thread.id, item=item, brief=brief
         )
     )
+    verdict = commit_readiness(
+        CommitReadinessInputs(
+            render_requested=True, marks_route=on_route, missing_marks=bool(missing)
+        ),
+        readiness=readiness,
+        binding_on=binding_on,
+        choice_questions_on=choice_questions_on,
+    )
+    return verdict == MARK_NEEDED
 
 
 async def _restate_refused(

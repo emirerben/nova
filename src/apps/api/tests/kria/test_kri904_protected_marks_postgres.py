@@ -1,15 +1,15 @@
 """KRI-904: a creator's mark of what to keep text off can be withdrawn, and only a turn
 that stands binds one.
 
-Ways the marks the approval pins (`_protected_regions_sync`) can be wrong:
+Ways the marks the approval pins (`load_protected_regions_sync`) can be wrong:
 F1 the creator says "text on the plate is fine" (the brief requirement is removed, or
    changed to drop the plate) and the old mark still keeps text off the plate;
 F2 the same withdrawal wrongly clears a mark nobody ever tied to a keep-off ask (drawing
    the box was the ask), or one a later turn asked for again;
 F3 a mark sent on a turn the creator then cancelled still binds the approval;
-F5 the serve's `_mark_needed` and the restate readiness (`_readiness_problem`) mirror the
-   gate, yet folded every user event: a cancelled turn's mark, or a withdrawn one, counted
-   there and not at the commit, so the GET served a card whose tap asked for the mark;
+F5 the serve, the restate readiness and the commit each folded marks their own way; they
+   now share `load_protected_regions_sync`, so one cancelled or withdrawn mark cannot count
+   in one and not another;
 F4 a mark is accepted on a clip with no storage generation yet, the clip gets one when the
    upload finishes, and the gate calls the mark current while the render reads it as
    invalidated.
@@ -19,7 +19,6 @@ Needs the ``nova_test`` Postgres (CI's test-api job).
 from __future__ import annotations
 
 import uuid
-from types import SimpleNamespace
 
 import pytest
 
@@ -36,7 +35,7 @@ from app.models import (
     CreatorAgentTurn,
     PlanItem,
 )
-from app.tasks.kria_runtime import _protected_regions_sync
+from app.services.suggestions.commit_readiness import load_protected_regions_sync
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project
 
 BOX = (0.3, 0.42, 0.7, 0.64)
@@ -104,7 +103,7 @@ def _marks(thread_id: uuid.UUID, through: int = 50) -> list[str]:
     with sync_session() as db:
         return [
             m["label"]
-            for m in _protected_regions_sync(db, thread_id=thread_id, through_sequence=through)
+            for m in load_protected_regions_sync(db, thread_id=thread_id, through_sequence=through)
         ]
 
 
@@ -229,61 +228,3 @@ async def test_a_mark_on_a_clip_still_uploading_is_refused_with_a_retry() -> Non
         assert caught.value.code == "protected_region_clip_uploading"
     finally:
         await async_engine.dispose()
-
-
-def _restate_readiness_marks(monkeypatch, thread_id: uuid.UUID) -> list[str]:
-    """The marks the restate readiness hands ``assess_readiness`` (the serve's twin of the
-    commit's readiness, `_protected_regions_sync`)."""
-    from app.kria import approval_readiness, order_replacement_receipts, order_replacement_sources
-    from app.services import phone_montage_preflight
-    from app.services.suggestions import restate_judgment
-
-    seen: list[list[str]] = []
-
-    def assess(*_args, protected_regions, **_kwargs):  # noqa: ANN202
-        seen.append([m["label"] for m in protected_regions])
-        return {"requirements": [], "ready": True}
-
-    monkeypatch.setattr(approval_readiness, "assess_readiness", assess)
-    monkeypatch.setattr(
-        order_replacement_receipts, "compiled_order_preflight_sync", lambda *a, **k: None
-    )
-    monkeypatch.setattr(
-        order_replacement_sources, "load_brief_order_source_context_sync", lambda *a, **k: None
-    )
-    monkeypatch.setattr(phone_montage_preflight, "readiness_plan_blockers", lambda *a, **k: ())
-    with sync_session() as db:
-        restate_judgment._readiness_problem(
-            db,
-            thread=SimpleNamespace(id=thread_id, creator_id=1),
-            item=SimpleNamespace(
-                id=uuid.uuid4(), edit_format=None, clip_gcs_paths=(), voiceover_gcs_path=None
-            ),
-            brief=None,
-            strategy={},
-            media={},
-            manifest=None,
-            client_protocol=None,
-        )
-    return seen[0]
-
-
-def test_the_restate_readiness_ignores_a_mark_from_a_cancelled_turn(monkeypatch) -> None:
-    _, thread_id, _ = _seed_runtime_project()
-    _add_event(thread_id, 10, {"protected_region": _mark("plate")}, turn="cancelled")
-    _add_event(thread_id, 11, {"protected_region": _mark("cup")}, turn="completed")
-    assert _restate_readiness_marks(monkeypatch, thread_id) == ["cup"]
-
-
-def test_the_restate_readiness_ignores_a_withdrawn_mark(monkeypatch) -> None:
-    _, thread_id, _ = _seed_runtime_project()
-    v1 = _keep_off(KEEP_PLATE)
-    _store_brief(thread_id, 1, v1)
-    _add_event(thread_id, 10, {"protected_region": _mark("plate")}, turn="completed")
-    v2 = apply_updates(
-        v1,
-        [BriefUpdate(operation="remove", target_requirement_id="r1", expected_version=1)],
-        source_turn_id=None,
-    ).model_copy(update={"version": 2})
-    _store_brief(thread_id, 2, v2)
-    assert _restate_readiness_marks(monkeypatch, thread_id) == []
