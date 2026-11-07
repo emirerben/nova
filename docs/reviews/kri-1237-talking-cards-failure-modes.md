@@ -52,6 +52,12 @@ Read from the prod records in `src/apps/api/tests/fixtures/kri1237_qendresa_q1_c
    (hand-authored lane, failed matcher, full-screen sequence).
 8. After render, raw upload names (iOS id prefix, a cut-off ".p").
 9. With no overlay receipt, a card verdict is invented.
+10. (Review of #2153) After an editor Save the worker's receipt is unchanged, so a card the creator
+    removed or moved, or a Range edit, is still reported as the render placed it. Fixed: saved lanes
+    are the cards on screen (removed = "removed in the editor", moved = its new time); saved lanes
+    that cannot be read give no card verdict.
+11. (Review of #2153) Long shown names fill the 300-character receipt and the left-out Visuals vanish
+    while it says met. Fixed: the left-out part is always named or counted.
 
 ## Remaining gaps (not this change)
 
