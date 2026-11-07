@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.63.0] - 2026-11-07
+
+### Changed
+- fix(kria): zoom and animation on a phone Talking picture card, protocol 44 (KRI-1264) (#2163) <!-- release-pr: 2163 -->
+
 ## [0.88.62.0] - 2026-11-07
 
 ### Changed
