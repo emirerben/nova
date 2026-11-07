@@ -1919,6 +1919,20 @@ class Settings(BaseSettings):
         "and worker restart.",
     )
 
+    speech_cleanup_long_pauses_enabled: bool = Field(
+        default=False,
+        description="Long pauses on the phone Talking render. Whisper-1 word stamps are "
+        "contiguous and stretch over pauses, so Speech cleanup cannot see a pause between two "
+        "stamped words and leaves it in. When the creator consented to Speech cleanup on a "
+        "single iPhone-rendered clip (and did not ask for tight pauses), the render also cuts "
+        "silence spans of 0.6 s or more from their audio edges, with the tight-pause protections "
+        "(quiet-floor rule, noisy takes untouched, voice guard, keep-segment caps), and writes a "
+        "`long_pauses` report on the variant. Shorter natural pauses stay. "
+        "Default off: no extra cuts and every receipt is byte-identical to before. "
+        "Kill switch: `fly secrets set SPEECH_CLEANUP_LONG_PAUSES_ENABLED=false --app "
+        "nova-video` + api and worker restart.",
+    )
+
     # Qendresa "says done but isn't", group B: four bug-fix kill switches, default ON. Each
     # keys on a typed brief fact (KRI-667). `false` = the previous behaviour, byte-identical.
     # Apply: `fly secrets set <NAME>=false --app nova-video` + api and worker restart.
