@@ -39,7 +39,9 @@ completion. Inspect the captured old, retained, current and manual/Undo pictures
 Accessible text and a ready layer alone do not prove their displayed pixels.
 This case passed at `017f2a5e`, but its actual pictures exposed a retained-picture
 layout defect: the notice shrank the picture and sat behind the activity control.
-The corrected full-picture/top-notice overlay and overlap checks await rerun.
+At `9a2b7203`, the corrected full-picture/top-notice overlay and overlap checks
+passed. Actual OLD, retained, NEW, deselected manual-note and Undo screenshots were
+inspected: the picture keeps its scale and the notice remains readable.
 
 `NativeEditorPreviewWorkSessionTests/testPlayingInPlaceTitleUpdateSettlesThroughTheRealPlayerSurfaceAndCompositor`
 mounts the production preview in a real test-host window. It checks advancing
@@ -49,7 +51,9 @@ checks failure/retry status and authored-state preservation; the deferred-confli
 case checks export refusal after the candidate composition is ready but its
 previous picture is still presented. Playing admission and the deferred-conflict
 export control passed at `017f2a5e`. The failure/retry fixture timed out; stable
-source identities and request/adoption prerequisites now await rerun. Improve's
+source identities and request/adoption prerequisites passed at `9a2b7203`, along
+with the real failure/retry path. All 36 selected state/session and nine UI cases
+passed with zero skips at that revision. Improve's
 Done action must be selected by its actual visible label because the sheet's
 container identifier masks the child identifier in the exported hierarchy.
 
