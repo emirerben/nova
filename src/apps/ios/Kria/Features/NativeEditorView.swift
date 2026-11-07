@@ -358,7 +358,7 @@ struct NativeEditorView: View {
                         Text(session.gamedayFixtureSummary).font(.system(size: 1)).frame(height: 1)
                             .accessibilityIdentifier("gameday-fixture-state")
                         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-import") {
-                            TimelineView(.periodic(from: .now, by: 0.2)) { _ in
+                            SwiftUI.TimelineView(.periodic(from: .now, by: 0.2)) { _ in
                                 Button("Release registered import") { NativeEditorUITestCommitTransport.releaseSplitImport() }
                                     .disabled(!NativeEditorUITestCommitTransport.splitImportWaiting)
                                     .accessibilityIdentifier("split-import-release")
