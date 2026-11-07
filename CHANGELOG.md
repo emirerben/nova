@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.41.0] - 2026-11-07
+
+### Changed
+- fix(ios): preserve video-range white in H.264 exports (#2143) <!-- release-pr: 2143 -->
+
 ## [0.88.40.0] - 2026-11-07
 
 ### Changed
