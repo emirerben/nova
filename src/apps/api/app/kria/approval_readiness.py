@@ -550,6 +550,11 @@ def assess_readiness(
             ),
             phone_talking=talking_writer and talking_edit_format in {"subtitled", "talking_head"},
             caption_words_at_render=talking_writer,
+            # KRI-980/981: the draft turn judges a Talking edit's length and clip sound against
+            # which clips can speak; readiness reads the same clips or it disagrees with it.
+            media_snapshot=media
+            if talking_writer and talking_edit_format in {"subtitled", "talking_head"}
+            else None,
         )
     )
     if editor_payload is None and facts.ordering_basis is None:
