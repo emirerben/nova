@@ -55,9 +55,8 @@ Read from the prod records in `src/apps/api/tests/fixtures/kri1237_qendresa_q1_c
 
 ## Remaining gaps (not this change)
 
-- Approvable: readiness now gives `needs_choice` (was `unsupported`); KRI-1235's render-promise
-  tuple makes the promise approvable. `test_q1_cards_promise_is_approvable` is a strict xfail
-  until then.
+- (Closed here) Approvable: the promise is in KRI-1235's `RENDER_PROMISE_REASONS` (#2142), so with
+  the prod switches of the run her turn-1 draft holds nothing (`test_q1_first_draft_is_not_held_with_prod_switches`).
 - Position ("top or bottom, not over my face") is not judged here: the card layout belongs to
   KRI-1238 (item 15 layout); faces are avoided by the matcher's own face sampling.
 - Which kind of picture an unnamed pop-in ask wants (a flag, an emoji) is not judged: KRI-667 bars
