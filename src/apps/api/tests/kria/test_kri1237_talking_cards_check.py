@@ -509,3 +509,222 @@ def test_nothing_shown_and_many_long_misses_still_count_them(language: str) -> N
     assert len(reason) <= 300 and receipt.full_reason == reason, reason
     _lead, missed_part = reason.split(": ", 1)
     assert _accounted(missed_part, [row["label"] for row in unplaced]) == 14, reason
+
+
+# ------------------------- 6. review #2153: an editor Save after the render (failure mode 10)
+# The worker's `phone_overlay_receipt` is not rewritten by a Save, so a card the creator removed
+# or moved must never be reported as the render placed it. These run the real Save
+# (`prepare_editor_commit` -> `_persist_lane_state`), then the finished-video receipt.
+
+
+def _two_card_talking_job(monkeypatch: pytest.MonkeyPatch):
+    """A 10 s Talking take cleaned at 4-5 s with two Visual cards, as the render placed them:
+    A at output 1.0-3.0 s (take 1.0 s), B at output 6.0-8.0 s (take 7.0 s), and the worker's
+    receipt on the take's clock."""
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from app.kria.device_render import make_device_request  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan  # noqa: PLC0415
+    from app.pipeline.silence_cut import CutPlan, Removal  # noqa: PLC0415
+    from app.services.device_render import pin_device_request  # noqa: PLC0415
+    from app.services.phone_sources import PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD  # noqa: PLC0415
+    from tests.pipeline.test_phone_subtitled_plan import (  # noqa: PLC0415
+        _binding,
+        _overlay_card,
+        _photo_visual,
+    )
+    from tests.routes.test_phone_talking_range_commit import _CUES, _enable_range  # noqa: PLC0415
+
+    _enable_range(monkeypatch)
+    monkeypatch.setattr(settings, "phone_sfx_speech_duck_enabled", False)
+    binding = _binding(duration_s=10.0)
+    visual_a = _photo_visual(media_id="shot-a", gcs_path="users/owner/plan/item/pool/shot-a.png")
+    visual_b = _photo_visual(
+        media_id="shot-b", gcs_path="users/owner/plan/item/pool/shot-b.png", generation="78"
+    )
+    cards = [
+        _overlay_card(
+            id="pip-0", media_id="shot-a", gcs_path=visual_a.gcs_path, start_s=1.0, end_s=3.0
+        ),
+        _overlay_card(
+            id="pip-1",
+            media_id="shot-b",
+            gcs_path=visual_b.gcs_path,
+            generation="78",
+            start_s=6.0,
+            end_s=8.0,
+        ),
+    ]
+    cut = CutPlan(
+        keep_segments=[(0.0, 4.0), (5.0, 10.0)],
+        removed=[Removal(start_s=4.0, end_s=5.0, reason="pause")],
+        time_saved_s=1.0,
+    )
+    recipe = compile_phone_subtitled_plan(
+        (binding,),
+        caption_cues=_CUES,
+        cut_plan=cut,
+        lanes=PhoneSubtitledLanes(overlays=cards),
+        visuals=(visual_a, visual_b),
+    )
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        status="awaiting_device",
+        current_phase=None,
+        all_candidates={"clip_paths": [binding.proxy_path]},
+        assembly_plan={
+            PHONE_SOURCES_FIELD: [binding.model_dump(mode="json")],
+            PHONE_VISUALS_FIELD: [v.model_dump(mode="json") for v in (visual_a, visual_b)],
+            "variants": [
+                {
+                    "variant_id": "subtitled",
+                    "resolved_archetype": "subtitled",
+                    "render_destination": "device",
+                    "render_status": "awaiting_device",
+                    "render_generation_id": "first",
+                    "duration_s": recipe.duration,
+                    "caption_cues": _CUES,
+                    "voiceover_caption_style": "sentence",
+                    "silence_cut_outcome": "applied",
+                    "silence_cut": {"removed": [{"start_s": 4.0, "end_s": 5.0}]},
+                    "phone_overlay_receipt": {
+                        "version": 1,
+                        "matcher": "agent",
+                        "face_sampling": "ok",
+                        "placed": [
+                            {
+                                "media_id": "shot-a",
+                                "label": "Screenshot A.png",
+                                "kind": "image",
+                                "start_s": 1.0,
+                                "end_s": 3.0,
+                            },
+                            {
+                                "media_id": "shot-b",
+                                "label": "Screenshot B.png",
+                                "kind": "image",
+                                "start_s": 7.0,
+                                "end_s": 9.0,
+                            },
+                        ],
+                        "unplaced": [],
+                        "wishlist": [],
+                    },
+                }
+            ],
+        },
+    )
+    pin_device_request(
+        job,
+        make_device_request(job_id=job.id, variant_id="subtitled", revision=1, recipe=recipe),
+        base_generation="first",
+    )
+    return job
+
+
+def _save_cards(job, **request) -> None:  # noqa: ANN001, ANN003
+    from app.routes import generative_jobs as gj  # noqa: PLC0415
+
+    gj.prepare_editor_commit(
+        job,
+        "subtitled",
+        gj.EditorCommitRequest(base_generation="first", **request),
+        user_id="owner",
+        plan_item_id="item",
+    )
+
+
+def _card_payload(card_id: str, path: str, start_s: float, end_s: float) -> dict:
+    return {
+        "id": card_id,
+        "kind": "image",
+        "src_gcs_path": path,
+        "display_mode": "pip",
+        "x_frac": 0.5,
+        "y_frac": 0.4,
+        "scale": 0.35,
+        "start_s": start_s,
+        "end_s": end_s,
+    }
+
+
+def _final(job, language: str = "en"):  # noqa: ANN001, ANN202
+    with reply_language_for(language):
+        return _receipt(CARDS, plan_facts_from_phone_variant(job.assembly_plan["variants"][0]))
+
+
+def test_before_any_save_the_render_receipt_speaks(monkeypatch: pytest.MonkeyPatch) -> None:
+    receipt = _final(_two_card_talking_job(monkeypatch))
+    assert receipt.status == "met"
+    assert "0:01 Screenshot A" in receipt.reason and "0:06 Screenshot B" in receipt.reason
+
+
+def test_removing_every_card_is_never_met(monkeypatch: pytest.MonkeyPatch) -> None:
+    job = _two_card_talking_job(monkeypatch)
+    _save_cards(job, media_overlays=[])
+    variant = job.assembly_plan["variants"][0]
+    assert variant["phone_overlay_receipt"]["placed"]  # the worker's record is untouched
+    for language in ("en", "tr"):
+        receipt = _final(job, language)
+        assert receipt.status == "not_possible", receipt
+        assert "Screenshot A" in receipt.reason and "Screenshot B" in receipt.reason
+        assert "0:01" not in receipt.reason and "0:06" not in receipt.reason
+
+
+def test_removing_one_card_names_it_as_removed(monkeypatch: pytest.MonkeyPatch) -> None:
+    job = _two_card_talking_job(monkeypatch)
+    _save_cards(
+        job,
+        media_overlays=[_card_payload("pip-0", "users/owner/plan/item/pool/shot-a.png", 1.0, 3.0)],
+    )
+    receipt = _final(job)
+    assert receipt.status == "met"
+    assert "0:01 Screenshot A" in receipt.reason
+    shown, missed = receipt.reason.split("; not shown: ")
+    assert "Screenshot B" in missed and "removed" in missed and "Screenshot B" not in shown
+
+
+def test_a_moved_card_is_told_at_its_new_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    job = _two_card_talking_job(monkeypatch)
+    _save_cards(
+        job,
+        media_overlays=[
+            _card_payload("pip-0", "users/owner/plan/item/pool/shot-a.png", 2.0, 3.5),
+            _card_payload("pip-1", "users/owner/plan/item/pool/shot-b.png", 8.2, 9.0),
+        ],
+    )
+    reason = _final(job).reason
+    assert "0:02 Screenshot A" in reason and "0:08 Screenshot B" in reason, reason
+    assert "0:01" not in reason and "0:06" not in reason
+
+
+def test_a_range_edit_moves_the_times_with_the_take(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Range drops the take's first second: A (take 1.0 s) now opens the video, B plays at 5 s."""
+    from tests.routes.test_phone_talking_range_commit import _SLOT0, _SLOT1, _row  # noqa: PLC0415
+
+    job = _two_card_talking_job(monkeypatch)
+    _save_cards(job, timeline_slots=[_row(_SLOT0, 1.0, 3.0), _row(_SLOT1, 5.0, 5.0)])
+    reason = _final(job).reason
+    assert "0:00 Screenshot A" in reason and "0:05 Screenshot B" in reason, reason
+
+
+def test_an_unreadable_saved_edit_gives_no_card_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail closed: a Save whose card lanes cannot be read never certifies the old receipt."""
+    job = _two_card_talking_job(monkeypatch)
+    _save_cards(job, media_overlays=[])
+    variant = job.assembly_plan["variants"][0]
+    field = next(key for key in variant if key.startswith("_phone_subtitled_editor_lanes"))
+    variant[field] = {"version": 1, "lanes": "garbled"}
+    receipt = _final(job)
+    assert receipt.status != "met" and "Screenshot" not in (receipt.reason or ""), receipt
+
+
+def test_the_saved_lanes_field_name_matches_the_editor() -> None:
+    from app.kria.brief_checks import _EDITOR_LANES_FIELD  # noqa: PLC0415
+    from app.services.phone_subtitled_editor import (
+        PHONE_SUBTITLED_EDITOR_LANES_FIELD,  # noqa: PLC0415
+    )
+
+    assert _EDITOR_LANES_FIELD == PHONE_SUBTITLED_EDITOR_LANES_FIELD
