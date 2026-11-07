@@ -1959,7 +1959,7 @@ final class CreationUITests: XCTestCase {
         app.launch()
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
-        XCTAssertTrue(app.buttons["Let Kria cut the first version"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Let Kria decide"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["Add captions"].exists)
         XCTAssertFalse(app.buttons["Add sound effects"].exists)
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Add a hook to the opening")).firstMatch.exists)
@@ -1980,7 +1980,7 @@ final class CreationUITests: XCTestCase {
 
         // Pending rendering is checked separately with a held server response. Polling may
         // finish before XCUITest observes it; this journey starts with the delivered set.
-        let defaultEdit = app.buttons["Let Kria cut the first version"]
+        let defaultEdit = app.buttons["Let Kria decide"]
         XCTAssertTrue(defaultEdit.waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["Use suggestion: Try a stronger opening"].exists)
         let hook = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Add a hook to the opening")).firstMatch
@@ -1988,7 +1988,7 @@ final class CreationUITests: XCTestCase {
         XCTAssertEqual(hook.label, "Add a hook to the opening, the first shot is a quiet one")
         XCTAssertTrue(app.buttons["Add captions"].exists)
         XCTAssertTrue(app.buttons["Add sound effects"].exists)
-        XCTAssertEqual(app.descendants(matching: .any)["suggestion-chip-0"].label, "Let Kria cut the first version")
+        XCTAssertEqual(app.descendants(matching: .any)["suggestion-chip-0"].label, "Let Kria decide")
         XCTAssertLessThan(defaultEdit.frame.minX, hook.frame.minX + 1, "Chip #1 stays first")
         for chip in [defaultEdit, hook, app.buttons["Add captions"], app.buttons["Add sound effects"]] {
             // The chips scroll with the transcript, so a fractional y can round a 44 pt chip to 43.99999.
@@ -2034,7 +2034,7 @@ final class CreationUITests: XCTestCase {
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
 
-        let chip = app.buttons["Let Kria cut the first version"]
+        let chip = app.buttons["Let Kria decide"]
         XCTAssertTrue(chip.waitForExistence(timeout: 10))
         let composer = app.textFields["Message Kria"]
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
@@ -2062,7 +2062,7 @@ final class CreationUITests: XCTestCase {
             app.launch()
             createFreshChat(in: app)
             app.buttons["format-montage"].tap()
-            let chip = app.buttons["Let Kria cut the first version"]
+            let chip = app.buttons["Let Kria decide"]
             XCTAssertTrue(chip.waitForExistence(timeout: 10), name)
             XCTAssertFalse(app.staticTexts["Recommended"].exists, "no Recommended tag on a chip (\(name))")
             if name == "default" { XCTAssertLessThan(chip.frame.height, 60, "the lead chip is one line at the default size") }

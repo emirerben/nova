@@ -369,7 +369,7 @@ final class CreationChatFixture: @unchecked Sendable {
                                  chip(4, "transition", "Add transitions", "Add transitions between the clips")])
         }
         if events.contains(where: { $0["event_type"] as? String == "user_message" }) || media.isEmpty { return set("none", []) }
-        let lead = chip(1, "default_edit", "Let Kria cut the first version", ChatSubmission.mediaOnlyMessage)
+        let lead = chip(1, "default_edit", "Let Kria decide", ChatSubmission.mediaOnlyMessage)
         suggestionAsks[id, default: 0] += 1
         let pendingMode = ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS_PENDING"]
         if pendingMode == "hold" || (suggestionAsks[id] == 1 && pendingMode != "0") {
