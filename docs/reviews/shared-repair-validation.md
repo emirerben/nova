@@ -126,3 +126,35 @@ keep their original order. All test bodies/assertions, product code and formal
 model remain unchanged. Swift parsing and independent isolation review pass;
 the actual Xcode 26.3 compilation and runtime result must come from the new PR CI
 head. This follow-up does not relabel the earlier local runs as its own execution.
+
+### Hosted retry-fixture deadlock correction
+
+CI at `49de0ec345eaa6a0f4de07b4c68549dee5088d76` reached and passed
+`testPreparedBeforePostResumesSameUUIDAndRecoversOnce`; a partial live log had
+stopped there before its buffered output became available. The completed native
+job log instead ends with `testSupersedingASleepingRefreshCannotBypassRetryAfter`
+started at 09:31:57 UTC and no completion before cancellation at 09:46 UTC.
+Diagnostics are retained in Actions run 42357409566, artifact 13570245793.
+
+The fixture waits for a second refresh before releasing the first retry sleep.
+`readState` holds the documented cancellation-aware read lease across that sleep,
+so the second refresh waits for a lease that the fixture never lets go. The
+adjacent late-shorter-hint fixture has the same circular dependency around its
+first suspended GET. Both fixtures predate the shared repair; serialization came
+from the earlier automatic-result recovery integration. Production serialization
+and retry guards remain unchanged.
+
+The correction starts the superseding refresh concurrently, observes its scope
+entry before releasing the first reader, and then awaits both tasks. The sleep
+case retains its original t9/t10 request-count and cleared-error assertions. The
+renamed late-superseded-hint case checks the reachable serialized contract: a
+superseded response's 10-second deadline survives; the next admitted response at
+t10 establishes a further 60-second deadline, so requests remain blocked through
+t69 and resume at t70. It also explicitly checks no overlapping GET is issued.
+
+This replacement does not directly exercise the defensive maximum-deadline
+comparison for overlapping 60-before-10 responses: the serialized public API
+cannot produce that ordering. That comparison remains unchanged in production;
+its direct reducer coverage is a stated gap, not a claimed passing control.
+Swift parsing and static review support this correction. Current-head native
+execution remains required before readiness; previous counts are historical.

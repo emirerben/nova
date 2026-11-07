@@ -31,10 +31,11 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
     override func setUp() { super.setUp(); suite = "SlidePostExportTests.\(UUID())"; defaults = UserDefaults(suiteName: suite) }
     override func tearDown() { SlidePostRetryAfterURLProtocol.handler = nil; NativeEditorURLProtocol.handler = nil; defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: journalRoot); super.tearDown() }
 
-    private func makeSession(readRetrySleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }, readNow: @escaping () -> ContinuousClock.Instant = { .now }, submissionNow: @escaping () -> Date = Date.init) -> SlidePostSession {
+    private func makeSession(readRetrySleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }, readNow: @escaping () -> ContinuousClock.Instant = { .now }, submissionNow: @escaping () -> Date = Date.init, onScopeRead: @escaping () -> Void = {}) -> SlidePostSession {
         SlidePostSession(defaults: defaults, readRetrySleep: readRetrySleep, readNow: readNow,
             submissionJournal: .init(root: journalRoot), submissionScope: { _, id in
-                .init(owner: "test-owner", environment: "https://native-editor.test", itemID: id)
+                onScopeRead()
+                return .init(owner: "test-owner", environment: "https://native-editor.test", itemID: id)
             }, submissionNow: submissionNow, transportOwner: { _ in nil })
     }
 
@@ -914,10 +915,12 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
         let origin = ContinuousClock.now
         var now = origin
         let sleeping = expectation(description: "First refresh reached retry wait")
+        let superseding = expectation(description: "Superseding refresh entered the session")
+        var onScopeRead: (() -> Void)?
         var resume: CheckedContinuation<Void, Never>?
         let session = makeSession(readRetrySleep: { _ in
             await withCheckedContinuation { resume = $0; sleeping.fulfill() }
-        }, readNow: { now })
+        }, readNow: { now }, onScopeRead: { onScopeRead?() })
         let api = retryAfterAPI()
         let ready = try JSONEncoder().encode(state())
         var reads = 0
@@ -931,10 +934,13 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
         let first = Task { await session.refresh(api: api, itemID: itemID) }
         await fulfillment(of: [sleeping], timeout: 2)
         now = origin.advanced(by: .seconds(3))
-        await session.refresh(api: api, itemID: itemID)
+        onScopeRead = { onScopeRead = nil; superseding.fulfill() }
+        let second = Task { await session.refresh(api: api, itemID: itemID) }
+        await fulfillment(of: [superseding], timeout: 2)
         XCTAssertEqual(reads, 1)
         resume?.resume()
         await first.value
+        await second.value
         now = origin.advanced(by: .seconds(9))
         await session.refresh(api: api, itemID: itemID)
         XCTAssertEqual(reads, 1)
@@ -944,12 +950,14 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
         XCTAssertNil(session.error)
     }
 
-    func testLateShorterHintCannotShortenAnotherRefreshDeadline() async throws {
+    func testLateSupersededHintAndRenewedDeadlinePaceSerializedRefreshes() async throws {
         let origin = ContinuousClock.now
         var now = origin
         let firstStarted = expectation(description: "First GET in flight")
+        let superseding = expectation(description: "Superseding refresh entered the session")
+        var onScopeRead: (() -> Void)?
         var firstTransport: SlidePostRetryAfterURLProtocol?
-        let session = makeSession(readRetrySleep: { _ in XCTFail("No bounded retry is eligible") }, readNow: { now })
+        let session = makeSession(readRetrySleep: { _ in XCTFail("No bounded retry is eligible") }, readNow: { now }, onScopeRead: { onScopeRead?() })
         let api = retryAfterAPI()
         let ready = try JSONEncoder().encode(state())
         var reads = 0
@@ -963,13 +971,23 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
         }
         let first = Task { await session.refresh(api: api, itemID: itemID) }
         await fulfillment(of: [firstStarted], timeout: 2)
-        await session.refresh(api: api, itemID: itemID)
+        onScopeRead = { onScopeRead = nil; superseding.fulfill() }
+        let second = Task { await session.refresh(api: api, itemID: itemID) }
+        await fulfillment(of: [superseding], timeout: 2)
+        XCTAssertEqual(reads, 1, "A queued refresh cannot overlap the suspended GET")
         firstTransport?.respond(status: 429, retryAfter: 10)
         await first.value
-        now = origin.advanced(by: .seconds(11))
+        await second.value
+        now = origin.advanced(by: .seconds(9))
+        await session.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(reads, 1, "Even a superseded response retains its Retry-After deadline")
+        now = origin.advanced(by: .seconds(10))
         await session.refresh(api: api, itemID: itemID)
         XCTAssertEqual(reads, 2)
-        now = origin.advanced(by: .seconds(60))
+        now = origin.advanced(by: .seconds(69))
+        await session.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(reads, 2, "The next response establishes its full renewed deadline")
+        now = origin.advanced(by: .seconds(70))
         await session.refresh(api: api, itemID: itemID)
         XCTAssertEqual(reads, 3)
         XCTAssertNil(session.error)
