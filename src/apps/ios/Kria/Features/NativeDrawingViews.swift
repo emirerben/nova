@@ -567,10 +567,13 @@ struct NativeDrawingTransformLayer: View {
                 guard begin("move"), let base else { return }
                 // The gesture's local space is the whole canvas, unrotated: bring points into the box's own space
                 // (origin at its centre, turned back by the drawing's rotation).
-                let radians = -base.rotationDeg * .pi / 180
+                let radians: CGFloat = CGFloat(-base.rotationDeg) * .pi / 180
+                let cosR: CGFloat = cos(radians)
+                let sinR: CGFloat = sin(radians)
                 func inBox(_ point: CGPoint) -> CGPoint {
-                    let dx = point.x - base.centerX * size.width, dy = point.y - base.centerY * size.height
-                    return CGPoint(x: dx * cos(radians) - dy * sin(radians), y: dx * sin(radians) + dy * cos(radians))
+                    let dx: CGFloat = point.x - CGFloat(base.centerX) * size.width
+                    let dy: CGFloat = point.y - CGFloat(base.centerY) * size.height
+                    return CGPoint(x: dx * cosR - dy * sinR, y: dx * sinR + dy * cosR)
                 }
                 if cornerDrag == nil {
                     let start = inBox(value.startLocation)
