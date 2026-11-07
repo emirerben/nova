@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.51.0] - 2026-11-07
+
+### Changed
+- fix(captions): a caption asked at the bottom ends at 0.84, not 0.70 (KRI-1266) (#2151) <!-- release-pr: 2151 -->
+
 ## [0.88.50.0] - 2026-11-07
 
 ### Changed
