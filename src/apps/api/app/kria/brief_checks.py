@@ -208,10 +208,11 @@ class SpokenTextFact:
     # KRI-747: set when the text was drawn cut to the row's character limit.
     cut_to: str | None = None
     # KRI-1018: a letterboxed picture. `inside_picture` is the placement check of the row's
-    # block against the picture; `legible` is None for a render with no letterbox, else
-    # "readable" or why not ("unreadable" | "changed" | "not_drawn").
+    # block against the picture; `look` is None for a render with no letterbox, else "kept" (the
+    # row on the video still wears the look the placement chose) or why not ("weak_outline" |
+    # "restyled" | "not_drawn"). It does not measure the footage behind the text.
     inside_picture: bool | None = None
-    legible: str | None = None
+    look: str | None = None
 
 
 @dataclass(frozen=True)
@@ -10160,32 +10161,35 @@ def _seconds_or_none(value: object) -> float | None:
     return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
 
 
-def _spoken_text_legibility(row: Mapping[str, Any], drawn: Mapping[str, Any] | None) -> str | None:
-    """KRI-1018: whether a row placed in a letterboxed picture is readable AS DRAWN.
+def _spoken_text_look(row: Mapping[str, Any], drawn: Mapping[str, Any] | None) -> str | None:
+    """KRI-1018: whether a row placed in a letterboxed picture still wears, AS DRAWN, the look
+    the placement chose for it.
 
-    The receipt promises a look (`phone_spoken_text.picture_legibility`: fill, outline and the
-    contrast between them). The row on the finished video must still be that look: a later
-    restyle or an editor change makes the promise stale, and a row removed from the video is
-    not drawn at all. ``None`` for a render with no letterboxed picture."""
-    promised = row.get("legibility")
+    The receipt promises a look (`phone_spoken_text.picture_look`: a light fill and a dark
+    outline, drawn the same way whatever the footage shows). This confirms the row on the
+    finished video is still that look and that the fill/outline pair still has contrast: a
+    later restyle makes the promise stale, and a row removed from the video is not drawn at
+    all. It does NOT sample the footage behind the text, so "kept" never says the text was
+    measured readable. ``None`` for a render with no letterboxed picture."""
+    promised = row.get("picture_look")
     if not isinstance(promised, Mapping):
         return None
     if drawn is None:
         return "not_drawn"
-    contrast = promised.get("contrast")
-    floor = promised.get("min_contrast")
+    contrast = promised.get("outline_contrast")
+    floor = promised.get("min_outline_contrast")
     if not (
         isinstance(contrast, int | float)
         and isinstance(floor, int | float)
         and contrast >= floor
         and promised.get("inside_picture") is True
     ):
-        return "unreadable"
+        return "weak_outline"
     same = all(
         str(drawn.get(key) or "").casefold() == str(promised.get(source) or "").casefold()
         for key, source in (("color", "text_color"), ("stroke_color", "stroke_color"))
     ) and _hold_seconds(drawn.get("stroke_width")) == _hold_seconds(promised.get("stroke_width"))
-    return "readable" if same else "changed"
+    return "kept" if same else "restyled"
 
 
 def _spoken_text_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
@@ -10227,7 +10231,7 @@ def _spoken_text_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
                     if isinstance(placement, Mapping) and "picture_band" in placement
                     else None
                 ),
-                legible=_spoken_text_legibility(
+                look=_spoken_text_look(
                     row, drawn.get(element_id) if isinstance(element_id, str) else None
                 ),
             )
@@ -10517,8 +10521,9 @@ def _with_spoken_text_render(
 ) -> RequirementReceipt:
     """What the finished video does with a placed text on a spoken word beyond "it is there":
     the length the creator asked for (KRI-972), the words drawn whole (KRI-747) and, on a
-    letterboxed picture, text that is on the footage and readable (KRI-1018). "Done" only
-    when the receipt of the row as drawn says so."""
+    letterboxed picture, text that is on the footage in the look chosen for it (KRI-1018; the
+    footage is not sampled, so this is never worded as "checked readable"). "Done" only when
+    the receipt of the row as drawn says so."""
     fact = _spoken_text_fact(facts, req) if base.status == "met" else None
     if fact is None or fact.status != "placed":
         return base
@@ -10536,24 +10541,26 @@ def _with_spoken_text_render(
                 "bulamadım",
             ),
         )
-    if fact.legible is not None and fact.legible != "readable":
+    if fact.look is not None and fact.look != "kept":
         why = {
-            "unreadable": say(
-                en="it isn't clearly readable on the footage",
-                tr="görüntü üzerinde net okunmuyor",
+            "weak_outline": say(
+                en="its outline no longer stands out from the fill",
+                tr="kenar çizgisi artık dolgudan ayrışmıyor",
             ),
-            "changed": say(
-                en="its look changed after I checked it",
-                tr="görünümü kontrol ettikten sonra değişti",
+            "restyled": say(
+                en="its colours changed after I placed it",
+                tr="renkleri yerleştirdikten sonra değişti",
             ),
             "not_drawn": say(en="it isn't on the finished video", tr="bitmiş videoda yok"),
-        }[fact.legible]
+        }[fact.look]
         return _receipt(
             req,
             "partial",
             say(
-                en=f"I can't confirm {text} is readable: {why}",
-                tr=f"{text} yazısının okunur olduğunu doğrulayamıyorum: {why}",
+                en=f"I can't confirm {text} still has the light fill and dark outline I chose "
+                f"for the footage: {why}",
+                tr=f"{text} yazısında görüntü için seçtiğim açık dolgu ve koyu kenar çizgisi "
+                f"duruyor mu, doğrulayamıyorum: {why}",
             ),
         )
     asked, held = fact.hold_asked_s, fact.held_s

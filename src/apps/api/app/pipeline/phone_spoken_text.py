@@ -57,7 +57,7 @@ _MAX_CHARS = 80
 PICTURE_TEXT_COLOR = "#FFFFFF"
 PICTURE_STROKE_COLOR = "#000000"
 PICTURE_STROKE_WIDTH = 8.0
-# WCAG's minimum contrast for large text; the outline against the fill clears it by far.
+# WCAG's minimum contrast for large text, applied to fill against outline (not to the footage).
 _MIN_CONTRAST = 3.0
 
 Placer = Callable[[dict, Sequence[NormalizedBox]], tuple[dict, dict[str, Any]]]
@@ -305,18 +305,20 @@ def spoken_text_element(
     return element.model_dump(mode="json", exclude_none=True)
 
 
-def picture_legibility(placement: Mapping[str, Any]) -> dict[str, Any]:
+def picture_look(placement: Mapping[str, Any]) -> dict[str, Any]:
     """The look the receipt promises for a row placed in a letterboxed picture, and whether
-    the placement check found it inside the picture. ``contrast`` is the fill against its
-    outline (the outline is what the footage behind the text cannot take away)."""
+    the placement check found it inside the picture. ``outline_contrast`` is the fill against
+    its outline: a fixed property of the two colours, NOT a measurement of the footage behind
+    the text (nothing here samples the frame). It only guards the look against being edited
+    into something with no outline contrast."""
     from app.services.phone_text_styling import _contrast  # noqa: PLC0415
 
     return {
         "text_color": PICTURE_TEXT_COLOR,
         "stroke_color": PICTURE_STROKE_COLOR,
         "stroke_width": PICTURE_STROKE_WIDTH,
-        "contrast": round(_contrast(PICTURE_TEXT_COLOR, PICTURE_STROKE_COLOR), 2),
-        "min_contrast": _MIN_CONTRAST,
+        "outline_contrast": round(_contrast(PICTURE_TEXT_COLOR, PICTURE_STROKE_COLOR), 2),
+        "min_outline_contrast": _MIN_CONTRAST,
         "inside_picture": placement.get("inside_picture") is True,
     }
 
@@ -450,7 +452,7 @@ def spoken_text_rows(
             except Exception as exc:  # noqa: BLE001 - the captions are a nicety; the face is not
                 log.warning("phone_spoken_text.caption_boxes_failed", error=str(exc)[:200])
             placed, placement = place(row, avoid)
-            legibility = None
+            look = None
             if placement.get("picture_band") is not None:
                 # KRI-1018: a letterboxed picture. The placer kept the row inside it; the look
                 # is light with an outline, never left to a default or a restyle.
@@ -460,7 +462,7 @@ def spoken_text_rows(
                     "stroke_color": PICTURE_STROKE_COLOR,
                     "stroke_width": PICTURE_STROKE_WIDTH,
                 }
-                legibility = picture_legibility(placement)
+                look = picture_look(placement)
         except Exception as exc:  # noqa: BLE001 - one ask never fails the render
             log.warning("phone_spoken_text.failed", error=str(exc)[:200])
             receipt_rows.append({**entry, "status": "error", "error": str(exc)[:200]})
@@ -493,7 +495,7 @@ def spoken_text_rows(
                     if placed["text"] != " ".join(ask.text.split())
                     else {}
                 ),
-                **({"legibility": legibility} if legibility is not None else {}),
+                **({"picture_look": look} if look is not None else {}),
                 # A placement that could not look ("error") is never called clear of the face.
                 "face_collision": placement.get("face_collision") is True
                 or placement.get("status") == "error",

@@ -13771,7 +13771,8 @@ def _phone_talking_spoken_text_rows(
     scale = fit_transform(display_width, display_height, canvas, landscape_fit).scale
     speaker_span_s = sum(max(0.0, end - start) for start, end in keep_segments)
     # KRI-1018: a letterboxed speaker's picture is a band of the canvas; the bars are not a place
-    # to put the text.
+    # to put the text. The band is this speaker's: a row past its span plays another clip (an
+    # extra speaker), whose picture is unknown here, so that row gets no band and no claim.
     band = picture_band(display_width, display_height, canvas, scale)
 
     def place(row: dict, avoid: Any) -> tuple[dict, dict[str, Any]]:
@@ -13785,7 +13786,7 @@ def _phone_talking_spoken_text_rows(
             scale=scale,
             position_x=position_x,
             avoid=avoid,
-            picture_band=band,
+            picture_band=band if float(row["start_s"]) < speaker_span_s else None,
             **_protected_placement_kwargs(protected),
         )
 

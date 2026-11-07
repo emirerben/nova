@@ -23,6 +23,11 @@ Failure modes, written before the code:
 3. "about a second" stays in ``description``: the hold is 2.0 s and the receipt says "Done".
    Also: seconds inside the on-screen copy ("3 SECONDS LEFT") read as a hold; two different
    lengths in one ask pick one; a take that ends before the hold clips it (not a failure).
+   Numbers that are not a hold must not become one (round 2, written before the fix): "within
+   the first 5 seconds when he says cheese" (a window for the WORD), "in the first 5 seconds",
+   "after 3 seconds", "for the first 5 seconds of the video", "for a second time he says it"
+   (a count), "a second later", "about a second after he says cheese" (an offset), "in 2
+   seconds", "no longer than 2 seconds", Turkish "ilk 5 saniye içinde" / "bir saniye sonra".
 4. The receipt checks the hold only on the happy path: a 2.0 s row for a 1.0 s ask must be
    "partial".
 5. Flag off (``PHONE_SUBTITLED_SPOKEN_TEXT_ENABLED=false``): the contract still skips the pin, so
@@ -498,14 +503,40 @@ def test_a_widened_trigger_no_answer_was_about_is_left_alone():
 @pytest.mark.parametrize(
     ("description", "literal", "facts", "expected"),
     [
+        # How long the TEXT stays.
         ("big on screen for about a second", "X", None, 1.0),
         ("show it for 3 seconds", "X", None, 3.0),
         ("for about two seconds", "X", None, 2.0),
+        ("for just a second", "X", None, 1.0),
+        ("keep it up for 2,5 seconds, big", "X", None, 2.5),
+        ("let it stay 2 seconds", "X", None, 2.0),
+        ("show it for a second.", "X", None, 1.0),
+        ("bir saniye boyunca ekranda olsun", "X", None, 1.0),
+        ("2 saniye boyunca göster", "X", None, 2.0),
+        ("3 saniye kalsın", "X", None, 3.0),
+        # Seconds that are not a hold (round 2).
+        ("put X on screen within the first 5 seconds when he says cheese", "X", None, None),
+        ("in the first 5 seconds he says cheese, show it big", "X", None, None),
+        ("after 3 seconds of him talking, show it", "X", None, None),
+        ("for the first 5 seconds of the video, when he says cheese", "X", None, None),
+        ("for a second time he says it, show X big", "X", None, None),
+        ("the text should appear a second later", "X", None, None),
+        ("about a second after he says cheese", "X", None, None),
+        ("when he says cheese in 2 seconds", "X", None, None),
+        ("no longer than 2 seconds", "X", None, None),
+        ("ilk 5 saniye içinde peynir dediğinde", "X", None, None),
+        ("peynir dedikten bir saniye sonra", "X", None, None),
+        # A real hold next to a number that is not one.
+        ("within the first 5 seconds, show it for about a second", "X", None, 1.0),
+        # No length, the copy's own seconds, two holds, a quote, a negation, a typed field.
         ("big on screen for a moment", "X", None, None),
         ("put 3 SECONDS LEFT big", "3 SECONDS LEFT", None, None),
-        ("for 1 second, no, 2 seconds", "X", None, None),
+        ("for 3 SECONDS LEFT, show it for 2 seconds", "3 SECONDS LEFT", None, 2.0),
+        ("for 1 second, for 2 seconds", "X", None, None),
+        ("don't keep it for 2 seconds", "X", None, None),
         ("big on screen", "X", {"hold_s": 1.5}, 1.5),
         ("big on screen", "X", {"hold_s": 400}, None),
+        ("within the first 5 seconds", "X", {"hold_s": 1.5}, 1.5),
     ],
 )
 def test_the_hold_is_the_creators_own_length_or_nothing(description, literal, facts, expected):
@@ -660,7 +691,11 @@ def test_letterboxed_take_puts_the_big_text_inside_the_picture(monkeypatch):
     for element in restyled["text_elements"]:
         if element["id"] == "spoken-text-r3":
             element["color"] = "#000000"
-    assert _receipt_for(final, restyled).status == "partial"
+    restyled_receipt = _receipt_for(final, restyled)
+    assert restyled_receipt.status == "partial"
+    # The wording names what was checked (the look the placement chose), never "readable".
+    assert "light fill and dark outline" in (restyled_receipt.reason or "")
+    assert "readable" not in (restyled_receipt.reason or "")
     # A row removed from the video is not "Done".
     gone = copy.deepcopy(variant)
     gone["text_elements"] = [e for e in gone["text_elements"] if e["id"] != "spoken-text-r3"]
@@ -672,5 +707,44 @@ def test_a_portrait_take_is_placed_exactly_as_before(monkeypatch):
     variant = _run_job(monkeypatch, binding, final)
     [row] = [r for r in variant["text_elements"] if r["id"] == "spoken-text-r3"]
     [placement] = variant["spoken_text_placement"]["rows"]
-    assert "picture_band" not in placement["placement"] and "legibility" not in placement
+    assert "picture_band" not in placement["placement"] and "picture_look" not in placement
     assert row.get("color") is None and row.get("stroke_color") is None
+
+
+@pytest.mark.parametrize("letterbox", [False, True])
+def test_a_creator_colour_is_never_reported_as_honoured_by_the_picture_look(monkeypatch, letterbox):
+    # The row's colours are the worker's (white on a letterbox, the title look otherwise); a
+    # creator-asked colour is judged by the text-look check against the row as drawn.
+    brief = _brief(extra_facts={"text_color": "#FFD400"})
+    final, binding, _resolution = _approve(brief, _tap(_ask(brief)[0]))
+    variant = _run_job(monkeypatch, binding, final, letterbox=letterbox)
+    receipt = _receipt_for(final, variant)
+    assert receipt.status != "met", receipt
+
+
+def test_the_picture_band_is_the_speakers_and_ends_with_its_span():
+    # The band is the first speaker's letterboxed picture. The same word said past that span
+    # plays another clip (an extra speaker) whose picture is unknown: no band, no claim.
+    [ask] = brief_spoken_texts(_brief())
+
+    def placement(keep_segments):
+        rows, receipt = gb._phone_talking_spoken_text_rows(
+            [ask],
+            words=_words(),
+            cues=[],
+            caption_style="clean",
+            shown_rows=[],
+            timeline_duration_s=DURATION,
+            binding=_wide_binding(MEDIA, duration_s=DURATION, width=1920, height=1080),
+            clip_path=None,
+            keep_segments=keep_segments,
+            landscape_fit="fit",
+        )
+        assert [r["id"] for r in rows] == ["spoken-text-r3"]
+        return receipt["rows"][0]["placement"]
+
+    inside = placement([(0.0, DURATION)])
+    assert inside["picture_band"] == pytest.approx([0.3418, 0.6582], abs=0.001)
+    assert inside["inside_picture"] is True
+    past = placement([(0.0, GRILLED_S - 1.0)])
+    assert "picture_band" not in past and "inside_picture" not in past

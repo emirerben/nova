@@ -27,7 +27,6 @@ fact the model wrote.
 from __future__ import annotations
 
 import math
-import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
@@ -50,13 +49,17 @@ SPOKEN_TEXT_HOLD_KEYS = ("hold_s", "duration_s")
 # the ask is for something other than "a text on a word".
 MIN_HOLD_S = 0.3
 MAX_HOLD_S = 10.0
-# "for about a second" names one second though it holds no digit (`asset_holds.stated_seconds`
-# reads only a number and a seconds unit).
-_ONE_SECOND = re.compile(
-    r"(?<!\w)(?:for|about|around|roughly)\s+(?:(?:about|around|roughly)\s+)?(?:a|one)\s+"
-    r"(?:second|sec)(?!\w)",
-    re.IGNORECASE,
+# A length counts as the text's hold only when the words around it say how long the TEXT stays
+# ("for about a second", "hold 2 seconds", "bir saniye boyunca"). "within the first 5 seconds",
+# "after 3 seconds", "a second later" and "for a second time" are timing or counting, not a hold.
+_HOLD_LEAD = frozenset({"for", "hold", "holds", "stay", "stays", "keep", "keeps", "last", "lasts"})
+_HOLD_FILLER = frozenset({"about", "around", "roughly", "approximately", "just", "only", "maybe"})
+_HOLD_TRAIL = frozenset(
+    {"boyunca", "süresince", "suresince", "süreyle", "sureyle"}
+    | {"kalsın", "kalsin", "dursun", "kalır", "kalir"}
 )
+_NOT_A_HOLD_TRAIL = frozenset({"time", "times", "later", "ago"})
+_TOKEN_EDGE = ".,;:!?()[]\"'“”‘’"
 # Who says the trigger, when the creator names someone else ("the first time she says ...").
 SPOKEN_TEXT_SPEAKER_KEY = "speaker"
 # A `speaker` value that filters nothing: the creator themself, or anyone at all.
@@ -111,26 +114,74 @@ def _hold_in_range(value: float) -> float | None:
     return round(value, 3) if math.isfinite(value) and MIN_HOLD_S <= value <= MAX_HOLD_S else None
 
 
+def _hold_tokens(key: str) -> list[tuple[int, int, str]]:
+    tokens: list[tuple[int, int, str]] = []
+    position = 0
+    for part in key.split():
+        start = key.index(part, position)
+        position = start + len(part)
+        tokens.append((start, position, part.strip(_TOKEN_EDGE)))
+    return tokens
+
+
+def _attached_to_the_text(tokens: list[tuple[int, int, str]], start: int, end: int) -> bool:
+    """The seconds at ``start:end`` are how long the text stays: a hold word right before them
+    ("for", "hold", "stay", "keep", "last", with "about" / "just" between) or a hold word right
+    after ("boyunca", "kalsin"), and not "a second time" / "a second later"."""
+    before = [word for _s, token_end, word in tokens if token_end <= start]
+    after = [word for token_start, _e, word in tokens if token_start >= end]
+    if after and after[0] in _NOT_A_HOLD_TRAIL:
+        return False
+    if after and after[0] in _HOLD_TRAIL:
+        return True
+    index = len(before)
+    while index and before[index - 1] in _HOLD_FILLER:
+        index -= 1
+    return index > 0 and before[index - 1] in _HOLD_LEAD
+
+
+def _held_lengths(wording: str, literal: str) -> set[float]:
+    """Every length in ``wording`` that is attached to how long the text stays."""
+    from app.kria.asset_holds import _quoted_spans  # noqa: PLC0415 - import cycle
+    from app.kria.planner import _hold_key, _stated_holds  # noqa: PLC0415 - import cycle
+    from app.schemas.edit_proposal import seconds_negated  # noqa: PLC0415
+
+    key = _hold_key(wording)
+    copy_key = _hold_key(literal)
+    if copy_key:
+        key = key.replace(copy_key, " ")
+    tokens = _hold_tokens(key)
+    quoted = _quoted_spans(key)
+    spans = [
+        (start, end, value)
+        for start, end, value in _stated_holds(key)
+        if not any(lo <= start and end <= hi for lo, hi in quoted)
+        and not seconds_negated(key, start, end)
+    ]
+    for index in range(1, len(tokens)):
+        # "a second" holds no digit, so the seconds reader does not see it; it is 1 s.
+        if tokens[index][2] in ("second", "sec") and tokens[index - 1][2] == "a":
+            start, end = tokens[index - 1][0], tokens[index][1]
+            if not any(lo < end and start < hi for lo, hi, _v in spans):
+                spans.append((start, end, 1.0))
+    return {
+        float(value) for start, end, value in spans if _attached_to_the_text(tokens, start, end)
+    }
+
+
 def spoken_text_hold_s(req: BriefRequirement) -> float | None:
     """The seconds ``req`` asks its text to stay on screen, or None when it names none.
 
     A numeric ``hold_s`` fact first (a typed field, KRI-667), else the one length the
-    requirement's own wording states ("for about a second", "for 3 seconds"). Seconds that sit
-    inside the on-screen copy ("3 SECONDS LEFT") are the text, not a hold; two different
-    lengths in one ask name none."""
+    requirement's own wording attaches to how long the text stays ("for about a second",
+    "for 3 seconds", "bir saniye boyunca"). Seconds that only time the word ("within the first
+    5 seconds"), count something ("for a second time") or sit inside the on-screen copy
+    ("3 SECONDS LEFT") are not a hold; two different holds in one ask name none."""
     for key in SPOKEN_TEXT_HOLD_KEYS:
         value = req.facts.get(key)
         if isinstance(value, int | float) and not isinstance(value, bool):
             return _hold_in_range(float(value))
-    from app.kria.asset_holds import stated_seconds  # noqa: PLC0415 - import cycle
-
-    wording = " ".join((req.description or "").split())
-    literal = " ".join((req.literal or "").split())
-    if literal:
-        wording = re.sub(re.escape(literal), " ", wording, flags=re.IGNORECASE)
-    lengths = {float(s) for s in stated_seconds(wording)}
-    if _ONE_SECOND.search(wording):
-        lengths.add(1.0)
+    lengths = _held_lengths(req.description or "", req.literal or "")
     return _hold_in_range(next(iter(lengths))) if len(lengths) == 1 else None
 
 
