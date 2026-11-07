@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.73.0] - 2026-11-07
+
+### Changed
+- fix(text): authored text fit keeps off-centre lines, breaks unbreakable runs, measures like the burn (KRI-885, KRI-886, KRI-887) (#2161) <!-- release-pr: 2161 -->
+
 ## [0.88.72.0] - 2026-11-07
 
 ### Changed
