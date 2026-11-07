@@ -48,9 +48,10 @@ _CUE_TEXTS = [
     "Üçüncü ve en sevdiğim yer Yeldeğirmeni'nde.",
     "Bakın, ben günde 4 kahve içiyorum, o yüzden bu konuda biraz uzmanım.",
 ]
-# One second per cue keeps the device export short; the pop-in settles in 0.25 s.
-_CUE_SPACING_S = 1.0
-_CUE_DURATION_S = 0.9
+# A cue the compiler splits in time (KRI-632) must leave each piece longer than the device
+# test's 0.5 s rest offset; the pop-in settles in 0.25 s.
+_CUE_SPACING_S = 3.0
+_CUE_DURATION_S = 2.8
 _POSITION_TOLERANCE_PX = 0.5
 _RUN_STYLE_KEYS = (
     "font_asset_id",
@@ -176,8 +177,9 @@ def test_fixture_matches_the_caption_compiler() -> None:
 
     for key in ("canvas", "watermark_gap_px", "watermark_keepout", "cues", "asset_manifest"):
         assert shared[key] == fresh[key], f"{key} drifted; regenerate deliberately"
+    assert len(shared["unbroken_layers"]) == len(fresh["unbroken_layers"]) == len(_CUE_TEXTS)
+    assert len(shared["layers"]) == len(fresh["layers"]), "layers: cue split drifted; regenerate"
     for name in ("layers", "unbroken_layers"):
-        assert len(shared[name]) == len(fresh[name]) == len(_CUE_TEXTS), name
         for old, new in zip(shared[name], fresh[name], strict=True):
             assert _portable(old) == _portable(new), f"{name}/{old['id']} drifted; regenerate"
     if sys.platform == shared["generated_on"]:
@@ -189,12 +191,17 @@ def test_fixture_matches_the_caption_compiler() -> None:
 def test_fixture_rebreaks_every_cue_clear_of_the_mark_and_keeps_its_words() -> None:
     shared = json.loads(FIXTURE.read_text())
     keepout = shared["watermark_keepout"]
-    for cue, layer, unbroken in zip(
-        shared["cues"], shared["layers"], shared["unbroken_layers"], strict=True
-    ):
-        assert " ".join(_lines(layer)).split() == cue["text"].split()
+    for cue, unbroken in zip(shared["cues"], shared["unbroken_layers"], strict=True):
+        # KRI-632: a cue the mark would force past two rows is shown as consecutive pieces.
+        pieces = [
+            layer for layer in shared["layers"] if cue["start_s"] <= layer["start"] < cue["end_s"]
+        ]
+        assert " ".join(" ".join(_lines(piece)) for piece in pieces).split() == cue["text"].split()
         assert " ".join(_lines(unbroken)).split() == cue["text"].split()
-        assert (layer["start"], layer["end"]) == (cue["start_s"], cue["end_s"])
+        assert (pieces[0]["start"], pieces[-1]["end"]) == (cue["start_s"], cue["end_s"])
+        assert all(a["end"] == b["start"] for a, b in zip(pieces, pieces[1:], strict=False))
+        assert all(len(_lines(piece)) <= 2 for piece in pieces), cue["text"]
+    for layer in shared["layers"]:
         assert not _touches_keepout(layer, keepout), layer["id"]
     # The negative control the device test relies on: prod's layout inks the mark.
     touching = [_touches_keepout(layer, keepout) for layer in shared["unbroken_layers"]]

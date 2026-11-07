@@ -126,11 +126,18 @@ import KriaMediaEngine
         let cues = try XCTUnwrap(object["cues"] as? [[String: Any]]).compactMap { $0["text"] as? String }
         let layers = try decode([PortableTextLayer].self, "layers")
         let unbroken = try decode([PortableTextLayer].self, "unbroken_layers")
-        // The prod cues, every word kept in order by both layouts.
+        // The prod cues, every word kept in order by both layouts. A cue the mark would force
+        // past two rows is shown as consecutive pieces (KRI-632), so `layers` can hold more
+        // layers than cues; the unbroken set keeps one per cue.
         XCTAssertEqual(cues.first, "İlk durak Moda'da, deniz kenarında küçücük bir yer.")
         XCTAssertEqual(cues.count, 3)
+        let cueWords = cues.flatMap { $0.split(separator: " ").map(String.init) }
         for set in [layers, unbroken] {
-            XCTAssertEqual(set.map { words($0) }, cues.map { $0.split(separator: " ").map(String.init) })
+            XCTAssertEqual(set.flatMap { words($0) }, cueWords)
+        }
+        XCTAssertEqual(unbroken.count, cues.count)
+        for layer in layers {
+            XCTAssertLessThanOrEqual(lines(layer).count, 2, "\(layer.id): the mark must not add a third row")
         }
         let keepOut = CGRect(x: box[0], y: box[1], width: box[2] - box[0], height: box[3] - box[1])
         return Fixture(canvas: canvas, keepOut: keepOut, markRect: keepOut.insetBy(dx: gap, dy: gap),

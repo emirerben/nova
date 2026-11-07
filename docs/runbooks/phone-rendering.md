@@ -4051,6 +4051,27 @@ capability) + `authoredText` verified + client protocol >= `CAPTION_ANIMATION_MI
 phases, or replaces cues / guided `caption_meta` holding them, gets `426 client_update_required`
 (`feature: "caption_animation"`).
 
+## Caption size and spot on phone Talking edits (KRI-632)
+
+A Talking caption is at most two rows. Cues are sized by `captions.PHONE_CUE_BUDGET` (8 words, 40
+characters, 3 s). The Kria-mark re-wrap (`phone_captions._clear_of_watermark`, KRI-548) counts
+against the same two rows: when no two-row layout clears the mark, the cue is split in time at a
+pause or clause end (`_split_cue_in_time`: same words, same word times, the first piece holds until
+the second starts; up to three rounds) instead of growing a third row. Layer ids are
+`caption-<index>` over the final list, so a split moves the ids after it. Only when splitting cannot
+help (a cue that will not split, three rounds spent) does a cue gain lines again, because ink on the
+mark is worse.
+
+The worker keeps the caption block off the speaker's face band: `_phone_face_band_caption_look`
+samples the same band the titles use (`phone_subtitled_title._face_boxes`) and, when a default
+block would cross it, moves ALL captions to one steady spot (`choose_caption_look`, the KRI-827
+ladder) and saves it as `caption_editor_style.position_y_frac`. The decision is on the variant as
+`caption_face_band_placement` (`status` `preset` / `moved` / `best_effort`, `face_band`). An
+unconfirmed sampler (no clip, error, too few frames) protects the upper fallback face only, so the
+captions stay where they were. The block still grows about its centre (the saved y is a centre, the
+editor depends on that), so one- and two-row cues differ by half a row at the top edge.
+Guards: `tests/pipeline/test_phone_caption_face_band.py`, `tests/pipeline/test_phone_captions.py`.
+
 ## Caption shape on phone Talking edits (Qendresa item 12)
 
 A creator types the SHAPE of her captions: "two words at a time" and/or "in a light grey box".
