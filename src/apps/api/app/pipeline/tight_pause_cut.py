@@ -55,6 +55,11 @@ SILENCE_MIN_S = 0.1  # same min_silence_s the preflight analysis uses
 # silence, whatever Kria's absolute -30 dB spans say. A soft word ending at -38 dBFS in a
 # -58 dBFS room is 20 dB up and is protected.
 TIGHT_QUIET_ABOVE_FLOOR_DB = 15.0
+# A noise-gated / noise-suppressed take has digital silence between sentences, so the 5th
+# percentile floor collapses toward -120 dBFS and the +15 dB bar (-105 dBFS) calls the gate's
+# own fade tails (-60..-70 dBFS) "sound": every pause edge gets protected and a 0.64 s pause
+# yields no cut (KRI-1288). The bars are measured from a floor no lower than this.
+TIGHT_MIN_FLOOR_DBFS = -70.0
 # On a noisy take "silence" is ambient noise and soft speech hides in it (KRI-1017): no cuts.
 TIGHT_MAX_FLOOR_DBFS = -45.0
 # Inside a word's own stamp the loud bar is lower than elsewhere: today's cleanup never cuts
@@ -413,6 +418,7 @@ def tighten_pauses(
             return plan, TightPauseReport(
                 "no_change", 0, 0.0, None, None, None, 0, 0, False, "noisy_take", mode, limit_s
             )
+        floor_db = max(floor_db, TIGHT_MIN_FLOOR_DBFS)
         loud = _loud_runs(samples, sr, floor_db)
         stamps = _soft_zones(normalized, spans)
         in_stamp = _loud_runs(samples, sr, floor_db, TIGHT_QUIET_IN_STAMP_ABOVE_FLOOR_DB)
@@ -441,7 +447,12 @@ def tighten_pauses(
             time_saved_s=sum(r.end_s - r.start_s for r in candidates),
         )
         guarded, g_report = guard_audible_speech(
-            probe, samples, exempt=(), sr=sr, min_cut_s=TIGHT_MIN_CUT_S
+            probe,
+            samples,
+            exempt=(),
+            sr=sr,
+            min_cut_s=TIGHT_MIN_CUT_S,
+            min_floor_db=TIGHT_MIN_FLOOR_DBFS,
         )
         guard_dropped, guard_trimmed = g_report["dropped_total"], g_report["trimmed_total"]
         new = sorted(guarded.removed, key=lambda r: r.start_s)
