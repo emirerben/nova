@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.71.0] - 2026-11-07
+
+### Changed
+- fix(kria): same-photo hold add replaces the older hold and keeps creator authority (KRI-856, KRI-857) (#2172) <!-- release-pr: 2172 -->
+
 ## [0.88.70.0] - 2026-11-07
 
 ### Changed
