@@ -3000,8 +3000,8 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(suspended, stage)
         fake.mediaLibraryOwner = nextOwner
         if fails {
-            if stage == "draft" { fake.draftError = .requestFailed(status: 500) }
-            else { fake.editorVariantError = .requestFailed(status: 500) }
+            if stage == "draft" { fake.draftError = .requestFailed(status: 404, detail: RequestFailureDetail(nil, code: "thread_not_found")) }
+            else { fake.editorVariantError = .requestFailed(status: 404, detail: RequestFailureDetail(nil, code: "thread_not_found")) }
         }
         let variantsBeforeResume = fake.editorVariantCalls
         if stage.hasPrefix("legacy-project") { fake.resumeProject() }
