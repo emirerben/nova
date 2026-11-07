@@ -481,7 +481,7 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
         resolved = replace(
             resolved,
             position_x_frac=0.06 if alignment == "left" else 0.82 if alignment == "right" else x,
-            position_y_frac=min(y, 0.70),
+            position_y_frac=y,
             text_anchor=alignment,
         )
     if cues:
