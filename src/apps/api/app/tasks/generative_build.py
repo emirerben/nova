@@ -10823,6 +10823,25 @@ def _run_phone_subtitled_job(
                         caption_style=caption_style,
                         **text_canvas,
                     )
+            if (
+                title_rows
+                and protected_caption_look is None
+                and isinstance(title_receipt, Mapping)
+                and title_receipt.get("text_overlap") is True
+            ):
+                # KRI-1305: the title was boxed in by a face and accepted text on text. Never
+                # render that as is: the captions step to a spot clear of the title and faces.
+                title_receipt = {
+                    **title_receipt,
+                    **_move_captions_off_title(
+                        title_rows,
+                        title_receipt,
+                        framed_compile=framed_compile,
+                        cues=cues,
+                        caption_style=caption_style,
+                        **text_canvas,
+                    ),
+                }
             if not media_lanes_enabled:
                 if ending_request is not None and ending_source != "footage":
                     # KRI-841: no card / ending-clip lane on this render, so a Visuals video
@@ -13028,6 +13047,56 @@ def _title_on_resolved_captions(
     except Exception as exc:  # noqa: BLE001 - the first placement still renders
         log.warning("phone_title_look.resolved_captions_failed", error=str(exc)[:200])
         return title_rows, title_receipt
+
+
+def _move_captions_off_title(
+    title_rows: list[dict],
+    title_receipt: Mapping[str, Any],
+    *,
+    framed_compile: dict[str, Any],
+    cues: list[dict],
+    caption_style: str,
+    canvas: Any = None,
+) -> dict[str, Any]:
+    """KRI-1305: when the placed title still touches the captions (``text_overlap``), move the
+    captions (``framed_compile["caption_look"]``) to the first spot clear of the title block and
+    the faces. Returns receipt fields (``caption_move``; ``text_overlap`` False once cleared).
+    Fails open: any error, or no clear spot, leaves the captions where they are and the receipt
+    says ``unresolved`` -- the overlap stays visible in the job debug view."""
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.pipeline.phone_title_look import caption_look_clear_of_title  # noqa: PLC0415
+    from app.pipeline.render_geometry import NormalizedBox  # noqa: PLC0415
+
+    canvas = canvas if canvas is not None else _STORY_CANVAS
+    if caption_spot_is_asked():
+        return {"caption_move": {"status": "creator_spot_kept"}}
+    block = title_receipt.get("block")
+    if not isinstance(block, Mapping):
+        return {}
+    try:
+        found = caption_look_clear_of_title(
+            cues,
+            caption_style=caption_style,
+            canvas=canvas,
+            title_block=NormalizedBox(
+                **{k: float(block[k]) for k in NormalizedBox.__annotations__}
+            ),
+            faces=[
+                NormalizedBox(**{k: float(f[k]) for k in NormalizedBox.__annotations__})
+                for f in title_receipt.get("face_boxes") or []
+            ],
+            window=(float(title_rows[0]["start_s"]), float(title_rows[0]["end_s"])),
+            base_look=framed_compile.get("caption_look"),
+        )
+    except Exception as exc:  # noqa: BLE001 - the captions stay put; the log says why
+        log.warning("phone_title_caption_move.failed", error=str(exc)[:200])
+        return {"caption_move": {"status": "error"}}
+    if found is None:
+        return {"caption_move": {"status": "unresolved"}}
+    caption_look, receipt = found
+    if caption_look is not None:
+        framed_compile["caption_look"] = caption_look
+    return {"caption_move": receipt, "text_overlap": False}
 
 
 def _is_title_anchored(beat: Any) -> bool:
