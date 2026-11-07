@@ -87,12 +87,12 @@ final class RequirementChipsTests: XCTestCase {
 
     func testChipTitleNamesEachListItem() {
         // KRI-1289: five rows from one clause must not read the same.
-        let spec = CreativeBriefRequirement(id: "r5", description: "show each one as big text", literal: "1. Spec-kit")
-        let impeccable = CreativeBriefRequirement(id: "r6", description: "show each one as big text", literal: "2. Impeccable")
+        let spec = CreativeBriefRequirement(id: "r5", literal: "1. Spec-kit", description: "show each one as big text")
+        let impeccable = CreativeBriefRequirement(id: "r6", literal: "2. Impeccable", description: "show each one as big text")
         XCTAssertEqual(spec.chipTitle, "show each one as big text (\"1. Spec-kit\")")
         XCTAssertNotEqual(spec.chipTitle, impeccable.chipTitle)
         // Already in the description, or no description: unchanged.
-        XCTAssertEqual(CreativeBriefRequirement(id: "a", description: "Title \"Before\"", literal: "Before").chipTitle, "Title \"Before\"")
+        XCTAssertEqual(CreativeBriefRequirement(id: "a", literal: "Before", description: "Title \"Before\"").chipTitle, "Title \"Before\"")
         XCTAssertEqual(CreativeBriefRequirement(id: "b", literal: "Before").chipTitle, "Before")
     }
 
