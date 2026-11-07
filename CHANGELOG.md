@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.45.0] - 2026-11-07
+
+### Changed
+- feat(ios): quiet the chat chrome (KRI-1260) (#2156) <!-- release-pr: 2156 -->
+
+## [0.88.44.0] - 2026-11-07
+
+### Changed
+- fix(kria): "Make it without these" leaves out only what its card named, and says so (KRI-1236) (#2149) <!-- release-pr: 2149 -->
+
 ## [0.88.43.0] - 2026-11-07
 
 ### Changed

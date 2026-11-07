@@ -71,8 +71,8 @@ From `src/apps/api`:
   establish the broader numeric safety claim.
 - After the Unicode correction: the full correction suite has 82 passes.
 - Six-file neighboring suite: 281 passes, no failures or skips.
-- Red control: temporarily restoring only `caption_correct.py` from the base
-  makes the final numeric matrix fail 19/20 again; the independent allowed
+- Initial red control: temporarily restoring only `caption_correct.py` from the base
+  makes the initial 20-case numeric matrix fail 19/20 again; the independent allowed
   punctuation control passes. The fixed source was restored immediately.
 - Unicode red control: restoring the first fix at `24507bc8` makes the expanded
   numeric matrix fail 15 cases, with 33 controls passing. A key-only mutation that
@@ -98,5 +98,6 @@ requires different local alignment and is intentionally outside this safety fix.
 
 Untimed cues retain their existing unrestricted legacy correction behavior. The
 numeric safety claim here is limited to timed cues on the affected iPhone backend
-path. Independent provider transcription accuracy and number words without digits
-are not established by these tests.
+path. Independent provider transcription accuracy is not established. Alphabetic
+number words (`one`, `fifteen`) and ASCII Roman text (`IV`) are not parsed as numbers;
+the guard is limited to Unicode numeric content, raw or introduced by NFKD.
