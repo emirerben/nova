@@ -946,16 +946,12 @@ struct CreationJob: Codable, Sendable {
     /// (KRI-163) -- prefer this over `failureReason` in any user-facing copy.
     let failureMessage: String?
     let variants: [CreationVariant]
-    /// Short creator-facing sentences about one-pass render decisions (KRI-178),
-    /// e.g. "Placed 9 of 10 moments you named." Absent on older servers.
-    let renderNotes: [String]
 
     enum CodingKeys: String, CodingKey {
         case id, status, variants
         case currentPhase = "current_phase"
         case failureReason = "failure_reason"
         case failureMessage = "failure_message"
-        case renderNotes = "render_notes"
     }
 
     init(from decoder: Decoder) throws {
@@ -966,7 +962,6 @@ struct CreationJob: Codable, Sendable {
         failureReason = try values.decodeIfPresent(String.self, forKey: .failureReason)
         failureMessage = try values.decodeIfPresent(String.self, forKey: .failureMessage)
         variants = try values.decodeIfPresent([CreationVariant].self, forKey: .variants) ?? []
-        renderNotes = try values.decodeIfPresent([String].self, forKey: .renderNotes) ?? []
     }
 }
 struct ThreadDelta: Codable, Sendable { let threadID: String; let runtimeVersion: Int; let status: String; let threadRevision: Int; let events: [ThreadEvent]; let afterSequence: Int; let nextAfterSequence: Int; let hasMore: Bool; enum CodingKeys: String, CodingKey { case threadID = "thread_id"; case runtimeVersion = "runtime_version"; case status; case threadRevision = "thread_revision"; case events; case afterSequence = "after_sequence"; case nextAfterSequence = "next_after_sequence"; case hasMore = "has_more" } }
@@ -1394,7 +1389,12 @@ enum KriaClientProtocolContract {
     /// them in the editor. The server offers `editor_capabilities.background_focus` only to this protocol (and only with
     /// `backgroundFocus` verified) and answers 426 `client_update_required` (`background_focus`) to an older build polling or
     /// saving a recipe that already carries them.
-    static let version = 42
+    /// 44 (KRI-1264): decodes a placed picture card's `visual_placement.editor_style` (a Talking card's zoom and
+    /// animation; older builds fail the whole recipe on the key) and opens Zoom and Animation on a Talking card while
+    /// `editor_capabilities.media_overlay_style` holds. The server offers that capability only to this protocol (and
+    /// only with `cardStyle` verified) and answers 426 `client_update_required` (`card_style`) to an older build
+    /// polling a recipe that carries a styled card. 43 is the split-screen build (KRI-1231).
+    static let version = 44
     static let header = "X-Kria-Client-Protocol"
 }
 

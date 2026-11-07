@@ -9,8 +9,6 @@ struct TeleprompterScreen: View {
     var replacementNotice: String? = nil
     let intake: (TeleprompterTakeManifest, URL) async -> TeleprompterIntakeResult
     let intakeState: (TeleprompterTakeManifest) async -> TeleprompterIntakeResult?
-    /// Leaves the camera for the upload sources. Nil hides every Upload control on the camera.
-    let onUpload: (() -> Void)?
     /// The creator already wrote a script in the script sheet and chose to use it.
     let startsWithScript: Bool
     @Environment(\.dismiss) private var dismiss
@@ -36,7 +34,6 @@ struct TeleprompterScreen: View {
          backgroundIntake: BackgroundIntake? = nil,
          backgroundStatement: BackgroundStatement? = nil,
          startsWithScript: Bool = false,
-         onUpload: (() -> Void)? = nil,
          reportDiagnostic: @escaping (RecorderDiagnosticReport) -> Void = { _ in }) {
         _flow = StateObject(wrappedValue: {
             let flow = TeleprompterRecordingFlow(
@@ -47,7 +44,6 @@ struct TeleprompterScreen: View {
             return flow
         }())
         self.admissionMessage = admissionMessage; self.replacementNotice = replacementNotice; self.intake = intake; self.intakeState = intakeState
-        self.onUpload = onUpload
         self.startsWithScript = startsWithScript
     }
 
@@ -107,7 +103,7 @@ struct TeleprompterScreen: View {
 
     private var cameraScreen: some View {
         GeometryReader { geometry in
-            let topInset: CGFloat = flow.speakerBackgroundEnabled || flow.cinematicAvailability == .available || flow.useScript ? 116 : 60
+            let topInset: CGFloat = flow.useScript ? 116 : 60
             let bottomInset: CGFloat = max(120, captureControlsHeight + 16)
             let canvas = CGRect(x: 12, y: topInset, width: max(1, geometry.size.width - 24),
                                 height: max(0, geometry.size.height - topInset - bottomInset))
@@ -123,7 +119,7 @@ struct TeleprompterScreen: View {
                 }
                 VStack(spacing: 8) {
                     topRow
-                    if !flow.captureBusy, showsControls { optionsRow }
+                    if !flow.captureBusy, showsControls, flow.useScript { textWindowRow }
                     Spacer(minLength: 8)
                     cameraBottom
                         .background(GeometryReader { proxy in
@@ -154,8 +150,7 @@ struct TeleprompterScreen: View {
     private func accessCard(_ message: String) -> some View {
         CameraAccessCard(kind: flow.camera.errorKind, message: message,
                          openSettings: { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } },
-                         retry: { Task { await flow.camera.prepare() } },
-                         upload: onUpload.map { upload in { leaveForUpload(upload) } })
+                         retry: { Task { await flow.camera.prepare() } })
     }
 
     private var topRow: some View {
@@ -175,26 +170,28 @@ struct TeleprompterScreen: View {
         .padding(.horizontal, 16)
     }
 
-    /// Background, Cinematic and the text window: secondary camera options, kept out of the way of the capture bar.
-    @ViewBuilder private var optionsRow: some View {
-        let showsCinematic = flow.cinematicAvailability == .available
-        if flow.speakerBackgroundEnabled || showsCinematic || flow.useScript {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    if flow.speakerBackgroundEnabled {
-                        TeleprompterBackgroundMenu(flow: flow)
-                    }
-                    if showsCinematic {
-                        TeleprompterCinematicCapsule(flow: flow, camera: flow.camera)
-                    }
-                    if flow.useScript {
-                        KriaCameraCapsule(title: "Text window", symbol: "slider.horizontal.3", identifier: "teleprompter-window-settings") { showsWindowSettings = true }
-                    }
-                }
-                .padding(.horizontal, 16)
-            }
+    /// The reading window's own control, kept with Script at the top.
+    private var textWindowRow: some View {
+        KriaCameraCapsule(title: "Text window", symbol: "slider.horizontal.3", identifier: "teleprompter-window-settings") { showsWindowSettings = true }
+            .padding(.horizontal, 16)
             .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    /// Background and Cinematic: two switches on the same capsule, one row above the capture button.
+    @ViewBuilder private var lookRow: some View {
+        let showsCinematic = flow.cinematicAvailability == .available
+        if flow.speakerBackgroundEnabled || showsCinematic {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { lookControls(showsCinematic: showsCinematic) }
+                VStack(spacing: 8) { lookControls(showsCinematic: showsCinematic) }
+            }
+            .padding(.horizontal, 16).frame(maxWidth: .infinity)
         }
+    }
+
+    @ViewBuilder private func lookControls(showsCinematic: Bool) -> some View {
+        if flow.speakerBackgroundEnabled { TeleprompterBackgroundMenu(flow: flow) }
+        if showsCinematic { TeleprompterCinematicCapsule(flow: flow, camera: flow.camera) }
     }
 
     @ViewBuilder private var cameraBottom: some View {
@@ -209,9 +206,6 @@ struct TeleprompterScreen: View {
                 Text(note).kriaType(.label).foregroundStyle(Color.white)
                     .padding(.horizontal, 16).accessibilityIdentifier("teleprompter-background-note")
             }
-            if flow.background != nil, flow.stage == .camera || flow.stage == .recording {
-                TeleprompterBackgroundPreviewNotice(camera: flow.camera)
-            }
             TeleprompterCinematicNote(flow: flow, camera: flow.camera)
             if flow.camera.micSilent {
                 Label("We can’t hear you. Check that nothing is covering the microphone, then stop and record again.",
@@ -225,6 +219,7 @@ struct TeleprompterScreen: View {
                 if flow.stage == .starting || flow.stage == .finalizing {
                     TeleprompterSavingLabel(camera: flow.camera, starting: flow.stage == .starting)
                 } else {
+                    if !flow.captureBusy { lookRow }
                     captureBar
                 }
             }
@@ -237,48 +232,24 @@ struct TeleprompterScreen: View {
                                     useSteady: { allowsAutomaticScroll = true }, openSpeed: { showsSpeedSheet = true })
     }
 
-    /// Upload | capture | flip. While a take is running only the capture control stays. At accessibility sizes the
-    /// labelled Upload capsule takes its own row under the capture control, so its label never shrinks away.
+    /// Capture in the middle, flip on the trailing side. While a take is running only the capture control stays.
     private var captureBar: some View {
         let recording = flow.stage == .recording
         let idle = flow.stage == .camera
-        let capture = KriaCaptureButton(isRecording: recording, isEnabled: recording || (idle && flow.camera.phase == .ready)) {
-            if recording { flow.stop() } else { flow.record(manual: manualScrolling) }
-        }
-        let flip = Group {
-            if idle {
-                KriaCameraIconButton(symbol: "arrow.triangle.2.circlepath.camera", label: "Flip camera",
-                                     identifier: "teleprompter-flip") { flow.flipCamera() }
-            } else { Color.clear.frame(width: 44, height: 44) }
-        }
-        return Group {
-            if dynamicTypeSize.isAccessibilitySize {
-                VStack(spacing: 16) {
-                    ZStack {
-                        capture
-                        HStack { Spacer(); flip }
-                    }
-                    if idle, let onUpload { KriaCameraUploadButton(fullWidth: true) { leaveForUpload(onUpload) } }
-                }
-            } else {
-                HStack {
-                    Group {
-                        if idle, let onUpload { KriaCameraUploadButton { leaveForUpload(onUpload) } }
-                        else { Color.clear.frame(height: 44) }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    capture
-                    flip.frame(maxWidth: .infinity, alignment: .trailing)
-                }
+        return HStack {
+            Color.clear.frame(width: 44, height: 44).frame(maxWidth: .infinity)
+            KriaCaptureButton(isRecording: recording, isEnabled: recording || (idle && flow.camera.phase == .ready)) {
+                if recording { flow.stop() } else { flow.record(manual: manualScrolling) }
             }
+            Group {
+                if idle {
+                    KriaCameraIconButton(symbol: "arrow.triangle.2.circlepath.camera", label: "Flip camera",
+                                         identifier: "teleprompter-flip") { flow.flipCamera() }
+                } else { Color.clear.frame(width: 44, height: 44) }
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(.horizontal, 24)
-    }
-
-    private func leaveForUpload(_ upload: @escaping () -> Void) {
-        flow.persistDraft()
-        dismiss()
-        upload()
     }
 
     // MARK: Review (Paper S3.12)
@@ -374,7 +345,7 @@ struct TeleprompterScreen: View {
                 reviewNote(cinematic.creatorMessage, id: "teleprompter-review-cinematic")
             }
             if take.speakerBackground != nil {
-                reviewNote("Your background is added with this take. The recording itself stays unedited.", id: "teleprompter-review-background")
+                reviewNote("Your background is added with this take.", id: "teleprompter-review-background")
             }
             if let note = flow.backgroundNote { reviewNote(note, id: "teleprompter-background-note") }
             if let note = flow.photosNote { reviewNote(note, id: "teleprompter-photos-note") }
@@ -418,10 +389,10 @@ struct TeleprompterScreen: View {
                     .buttonStyle(KriaButtonStyle(role: primary, fullWidth: true)).disabled(busy)
                     .accessibilityIdentifier("teleprompter-retake")
             }
-            // Side by side while both labels fit whole; stacked once larger text needs the width.
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) { reviewAlternatives(canUse: canUse, busy: busy) }
-                VStack(spacing: 8) { reviewAlternatives(canUse: canUse, busy: busy) }
+            if canUse {
+                Button { Task { await flow.retake() } } label: { Label("Record again", systemImage: KriaSourceOption.recordSymbol) }
+                    .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium, fullWidth: true)).disabled(busy)
+                    .accessibilityIdentifier("teleprompter-retake")
             }
             if let previous = flow.pendingTake, previous.id != take.id {
                 Button("Go back to previous take") { flow.previousTake() }
@@ -434,19 +405,6 @@ struct TeleprompterScreen: View {
         }
         .padding(.horizontal, 24).padding(.top, 12).padding(.bottom, 8)
         .background(KriaColor.paper)
-    }
-
-    @ViewBuilder private func reviewAlternatives(canUse: Bool, busy: Bool) -> some View {
-        if canUse {
-            Button { Task { await flow.retake() } } label: { Label("Record again", systemImage: KriaSourceOption.recordSymbol) }
-                .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium, fullWidth: true)).disabled(busy)
-                .accessibilityIdentifier("teleprompter-retake")
-        }
-        if let onUpload {
-            Button { leaveForUpload(onUpload) } label: { Label("Upload instead", systemImage: KriaSourceOption.uploadSymbol) }
-                .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium, fullWidth: true)).disabled(busy)
-                .accessibilityIdentifier("review-upload")
-        }
     }
 
     private func closeCapture() {
@@ -466,24 +424,21 @@ private struct TeleprompterPreviewSurface: View {
     @ObservedObject var camera: TeleprompterCamera
 
     var body: some View {
+        #if DEBUG
+        if let scene = TeleprompterSceneFixture.gradient {
+            scene.accessibilityIdentifier("teleprompter-scene-fixture")
+        } else { live }
+        #else
+        live
+        #endif
+    }
+
+    @ViewBuilder private var live: some View {
         if flow.background != nil, let preview = flow.livePreview, camera.liveFramesAttached {
             LiveBackgroundPreviewView(preview: preview).accessibilityIdentifier("teleprompter-live-background")
         } else {
             TeleprompterCameraPreview(camera: camera)
         }
-    }
-}
-
-/// S24: the live composite is a convenience, not the render. Said plainly, never as a promise of the same pixels.
-private struct TeleprompterBackgroundPreviewNotice: View {
-    @ObservedObject var camera: TeleprompterCamera
-    var body: some View {
-        Label(camera.liveFramesAttached ? "Preview. Your recording stays unedited." : "Your background shows once the camera is ready.",
-              systemImage: "eye")
-            .font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.ink)
-            .padding(.horizontal, 12).padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading)
-            .kriaGlassPanel(cornerRadius: 16).padding(.horizontal, 16)
-            .accessibilityIdentifier("teleprompter-background-preview-notice")
     }
 }
 
@@ -507,12 +462,7 @@ private struct TeleprompterBackgroundMenu: View {
                     .accessibilityIdentifier("teleprompter-background-clear")
             }
         } label: {
-            HStack(spacing: 6) {
-                if loading { ProgressView() } else { KriaIcon(.gallery) }
-                Text("Background").multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-            }
-            .font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.ink)
-            .padding(.horizontal, 12).padding(.vertical, 6).frame(minHeight: 44).kriaFloatingSurface(Capsule())
+            KriaCameraCapsule(title: "Background", symbol: "photo.on.rectangle", isOn: flow.background != nil, isSwitch: true, isBusy: loading)
         }
         .disabled(flow.captureBusy || loading)
         .accessibilityLabel("Background").accessibilityValue(stateLabel)
@@ -571,7 +521,7 @@ private struct TeleprompterCinematicCapsule: View {
         // While the graph is rebuilt for a front-camera request the capsule follows the request, then the real state.
         let settling = flow.cinematicEnabled && camera.position == .front && camera.phase == .preparing
         KriaCameraCapsule(title: "Cinematic", symbol: "camera.aperture", identifier: "teleprompter-cinematic",
-                          isOn: camera.cinematicActive || settling) { flow.setCinematic(!flow.cinematicEnabled) }
+                          isOn: camera.cinematicActive || settling, isSwitch: true) { flow.setCinematic(!flow.cinematicEnabled) }
     }
 }
 

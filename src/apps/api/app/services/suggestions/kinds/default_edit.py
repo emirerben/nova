@@ -1,4 +1,4 @@
-"""``default_edit``: "Let Kria cut the first version" (first_prompt only, always chip 1)."""
+"""``default_edit``: "Let Kria decide" (first_prompt only, always chip 1)."""
 
 from __future__ import annotations
 
