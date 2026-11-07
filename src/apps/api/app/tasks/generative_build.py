@@ -13888,7 +13888,9 @@ def _phone_talking_caption_text(
     cues = _apply_creator_spellings(
         cues,
         _phone_caption_spellings(
-            snapshot, extract_spelling_asks(request), typed=creator_typed_words(request)
+            snapshot,
+            extract_spelling_asks(request),
+            typed=creator_typed_words(request) if request.strip() else None,
         ),
         request_names=names,
         typed=creator_typed_words(request) if names else (),
@@ -13999,7 +14001,9 @@ def _caption_glossary(snapshot: dict, all_candidates: dict) -> tuple[str, ...]:
 
     request = _creator_request_text(all_candidates)
     return _phone_caption_spellings(
-        snapshot, extract_spelling_asks(request), typed=creator_typed_words(request)
+        snapshot,
+        extract_spelling_asks(request),
+        typed=creator_typed_words(request) if request.strip() else None,
     )
 
 
