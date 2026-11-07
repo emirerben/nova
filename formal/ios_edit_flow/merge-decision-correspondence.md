@@ -1,7 +1,9 @@
 # Merge-decision policy companion
 
-Status: implementation and static review only. No TLC/SANY execution has been
-performed for this companion. It is separate from the unchanged default verifier.
+Status: initial execution completed 25 checks then stopped on a progress-spec
+encoding error; see execution record below. The corrected progress encoding has
+independent static approval but has not run. This companion is separate from the
+unchanged default verifier.
 The native-tested product head is bf1874e3b9325cf7d9f74ac500c59ef1d990c30b;
 this verification branch starts there and does not alter product code.
 
@@ -102,3 +104,26 @@ Swift; that restriction was removed for latest reads. Prompt authority remains a
 limited clean-baseline abstraction. Manual-dirty and execution-prerequisite
 assumptions are explicit above. Re-review of those corrections is separate from
 TLC execution; no static finding is evidence that a model check ran.
+
+
+## First execution and encoding correction
+
+Head e6dd13b89ce327ac51ac34631302f4b45e172c3c ran at
+2026-11-07 04:48:42–04:48:54 UTC. Six safety cases, ten initial policy
+mutants and nine reachability witnesses passed (25 checks). TLC rejected the
+first progress configuration because it cannot accept eventual quiescence as a
+specification conjunct. This was an encoding error, not a property violation;
+remaining progress/owner checks did not run.
+
+The correction keeps weak fairness in SpecProgress and expresses the same
+conditional obligation as `(<>quiet) => (queued ~> ~queued)`. The two progress
+configurations already disable owner change and replacement, so the redundant
+stable-owner/lifetime specification conjunct is removed. NoRearm must still
+produce a named temporal violation with the identical assumptions. Corrected
+formal execution requires a new allocated bounded batch.
+
+Independent reviewer confirmed the rewrite is logically equivalent specifically
+for these fixed-owner/lifetime progress configurations. A queued notification can
+be followed by choice/Redo and Quiesce, and NoRearm can keep it queued forever
+while quiet, so the intended negative control remains nonvacuous. TLC acceptance
+and actual progress results remain unverified until the corrected run.

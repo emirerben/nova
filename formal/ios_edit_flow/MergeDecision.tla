@@ -197,8 +197,10 @@ Next == OfferResult \/ AutoApply \/ Resolve \/ Edit \/ ReviewEdit
         \/ Save \/ Play \/ Export \/ BeginRead \/ CompleteRead
         \/ ChangeOwner \/ Navigate \/ QueueLatest \/ RunRearm \/ DrainLatest \/ Quiesce
 Spec == Init /\ [][Next]_vars
-SpecProgress == Spec /\ [](s.editor = 1 /\ s.owner = 1)
-                /\ <>s.quiet /\ WF_vars(RunRearm) /\ WF_vars(DrainLatest)
+\* Progress configurations disable replacement/owner changes. TLC cannot take
+\* eventual-quiescence as a specification conjunct: keep that assumption in
+\* the checked implication instead, preserving the same conditional obligation.
+SpecProgress == Spec /\ WF_vars(RunRearm) /\ WF_vars(DrainLatest)
 
 BooleanFields == {"pending", "resultUsed", "checkpoint", "review", "laterUsed",
     "readCancelled", "queued", "queueSeen", "rearmTask", "armed", "quiet", "badSave",
@@ -227,7 +229,7 @@ NoUnprovenOverwrite == ~s.badUnproven
 \* app exploit: whether that lifecycle is reachable requires external mapping.
 NoOldOwnerCompletion == ~s.oldOwnerRead
 NoOldOwnerPromptCompletion == ~s.oldOwnerPrompt
-QueuedObservationConverges == s.queued ~> ~s.queued
+QueuedObservationConverges == (<>s.quiet) => (s.queued ~> ~s.queued)
 
 NeverResolved == ~s.resolved
 NeverReviewedAndRedone == ~s.reviewedAndRedone
