@@ -55,6 +55,10 @@ private func nativeVisualScale(_ raw: [String: JSONValue], fallback: CGFloat = 0
     CGFloat(min(max(nativeRawNumber(raw, "scale") ?? Double(fallback), 0.05), 1.5))
 }
 
+private func nativeVisualZoom(_ raw: [String: JSONValue]) -> CGFloat {
+    CGFloat(min(max(raw["editor_style"]?.objectValue?["zoom"]?.numberValue ?? 1, 1), 4))
+}
+
 private func nativeIsFullscreen(_ raw: [String: JSONValue]) -> Bool {
     [raw["display_mode"]?.stringValue, raw["mode"]?.stringValue, nativeRawString(raw, "display_mode")]
         .compactMap { $0 }
@@ -223,7 +227,8 @@ struct NativeVideoPreview: View {
                     detail: overlay.map { nativeEffectName($0.raw, fallback: $0.kind ?? "Overlay") },
                     scale: overlay.map { nativeVisualScale($0.raw) } ?? 0.35,
                     fullscreen: overlay.map { nativeIsFullscreen($0.raw) } ?? false,
-                    rotation: overlay?.raw["editor_style"]?.objectValue?["rotation_deg"]?.numberValue ?? 0
+                    rotation: overlay?.raw["editor_style"]?.objectValue?["rotation_deg"]?.numberValue ?? 0,
+                    zoom: overlay.map { nativeVisualZoom($0.raw) } ?? 1
                 )
             case .visualBlock:
                 let block = document.visualBlocks.first { $0.id == item.id }
@@ -236,7 +241,8 @@ struct NativeVideoPreview: View {
                     detail: block?.kind,
                     scale: block.map { nativeVisualScale($0.raw) } ?? 0.35,
                     fullscreen: block.map { nativeIsFullscreen($0.raw) } ?? false,
-                    rotation: block?.raw["editor_style"]?.objectValue?["rotation_deg"]?.numberValue ?? 0
+                    rotation: block?.raw["editor_style"]?.objectValue?["rotation_deg"]?.numberValue ?? 0,
+                    zoom: block.map { nativeVisualZoom($0.raw) } ?? 1
                 )
             case .drawing:
                 // Tap-selectable only: the selected drawing's own transform layer does the move / pinch / rotate.
@@ -333,7 +339,7 @@ struct NativeVideoPreview: View {
             return CGRect(origin: .zero, size: size).insetBy(dx: 6, dy: 6)
         }
         if let position = object.position {
-            let width = min(size.width * object.scale, max(44, size.width - 24))
+            let width = min(size.width * object.scale * object.zoom, max(44, size.width - 24))
             let height = max(44, 54 * object.scale)
             let center = CGPoint(
                 x: min(max(width / 2, position.x * size.width), size.width - width / 2),
@@ -1241,6 +1247,9 @@ private struct NativeEditorPreviewObject: Identifiable, Equatable {
     let scale: CGFloat
     let fullscreen: Bool
     let rotation: Double
+    /// A media card's `editor_style.zoom`: the card is drawn `scale * zoom` wide. Only the frame shown before the
+    /// live preview is ready reads it; the ready frame is the rendered footprint. Resizing keeps writing `scale`.
+    let zoom: CGFloat
 
     init(
         item: NativeEditorTimelineItem,
@@ -1252,7 +1261,8 @@ private struct NativeEditorPreviewObject: Identifiable, Equatable {
         detail: String? = nil,
         scale: CGFloat = 0.84,
         fullscreen: Bool = false,
-        rotation: Double = 0
+        rotation: Double = 0,
+        zoom: CGFloat = 1
     ) {
         self.item = item
         self.text = text
@@ -1264,6 +1274,7 @@ private struct NativeEditorPreviewObject: Identifiable, Equatable {
         self.scale = scale
         self.fullscreen = fullscreen
         self.rotation = rotation
+        self.zoom = zoom
     }
 
     var id: String { "\(item.kind.rawValue)-\(item.id)" }

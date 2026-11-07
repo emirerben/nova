@@ -1049,6 +1049,16 @@ class Settings(BaseSettings):
     # turn: a 28/29 build knows the token and would draw the card upright. So a pinned recipe
     # that carries a tilted card answers 426 `client_update_required` (`card_tilt`) below this.
     media_card_tilt_min_client_protocol: int = 30
+    # KRI-1264: a phone Talking card's Zoom and Animation (`SubtitledOverlayCard.zoom` /
+    # `.animation`, compiled to the card clip's `visual_placement.editor_style`). Gated by the
+    # rollout token `cardStyle` in PHONE_RENDER_VERIFIED_FEATURES (absent = off, the default) and
+    # a build declaring protocol >= this value: older builds cannot decode a placement style and
+    # would fail the whole recipe, so a pinned recipe that carries one answers 426
+    # `client_update_required` (`card_style`) below it. Apply: physical-iPhone check of a 2x
+    # popped card in preview and export, then add `cardStyle` to PHONE_RENDER_VERIFIED_FEATURES
+    # (api + worker) + restart. Rollback: remove the token + restart, never a code revert; cards
+    # already saved keep their zoom and animation.
+    media_card_style_min_client_protocol: int = 44
     # KRI-1139: a Visuals-pool photo or video as a clip's tilt backdrop (`backdrop.kind =
     # "media"`, capability `clipBackdropMedia`). Not a second master flag: it is offered only
     # while `media_tilt_enabled` is on, and also needs `clipBackdropMedia` in
