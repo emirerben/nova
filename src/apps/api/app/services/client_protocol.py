@@ -107,3 +107,10 @@ def current_client_protocol() -> int | None:
 
 def in_http_request() -> bool:
     return _in_http_request.get()
+
+
+def cleanup_card_ignores_keep_original() -> bool:
+    """KRI-1291: the calling native build's cleanup card leads with "Clean up speech" whatever
+    `recommended_choice` says. The web and work outside a request declare no build: False."""
+    protocol = current_client_protocol()
+    return protocol is not None and protocol < KEEP_ORIGINAL_CARD_PROTOCOL

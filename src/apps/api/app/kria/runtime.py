@@ -2267,30 +2267,36 @@ async def _apply_strategy_approval_media(
     reused_recorded_decision = False
     kept_for_brief = None
     if submitted_analysis_id is None or submitted_choice is None:
-        from app.kria.tight_pause_ask import brief_cleanup_choice  # noqa: PLC0415
+        from app.kria.tight_pause_ask import brief_wants_original_speech  # noqa: PLC0415
+        from app.services.client_protocol import (  # noqa: PLC0415
+            cleanup_card_ignores_keep_original,
+        )
         from app.services.render_shape import readable_brief  # noqa: PLC0415
 
         current_cleanup = await current_analysis_async(db, item.id, for_update=True)
         source_policy_fingerprint = (
             resolution.source.source_policy_fingerprint if resolution.source else None
         )
-        if (
-            submitted_choice is None
-            and brief_cleanup_choice(readable_brief(brief_binding)) == "keep_original"
-        ):
-            kept_for_brief = brief_keep_original_decision(
-                current_cleanup,
-                source_policy_fingerprint=source_policy_fingerprint,
-                submitted_analysis_id=submitted_analysis_id,
-            )
-        # Otherwise a follow-up approval after the creator already chose: the
-        # projection stopped asking, so the client sends neither. Reuse the recorded one.
-        reusable = kept_for_brief or reuse_recorded_cleanup_decision(
+        # Follow-up approval after the creator already chose: the projection
+        # stopped asking, so the client sends neither. Reuse the recorded one.
+        reusable = reuse_recorded_cleanup_decision(
             current_cleanup,
             source_policy_fingerprint=source_policy_fingerprint,
             submitted_analysis_id=submitted_analysis_id,
             submitted_choice=submitted_choice,
         )
+        if (
+            reusable is None
+            and submitted_choice is None
+            and cleanup_card_ignores_keep_original()
+            and brief_wants_original_speech(readable_brief(brief_binding))
+        ):
+            # The question the thread read did not ask this build (`_brief_answers_cleanup_ask`).
+            kept_for_brief = reusable = brief_keep_original_decision(
+                current_cleanup,
+                source_policy_fingerprint=source_policy_fingerprint,
+                submitted_analysis_id=submitted_analysis_id,
+            )
         if reusable is not None:
             log.info(
                 "kria_speech_cleanup_brief_keeps_original"

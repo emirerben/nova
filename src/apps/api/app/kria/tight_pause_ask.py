@@ -8,12 +8,7 @@ reads the flag.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from app.kria.brief import BriefRequirement, CreativeBrief
-
-if TYPE_CHECKING:
-    from app.services.speech_cleanup_decision import SpeechCleanupChoice
 
 
 def wants_speech_cleanup(req: BriefRequirement) -> bool:
@@ -71,10 +66,3 @@ def brief_wants_original_speech(brief: CreativeBrief | None) -> bool:
         and any(wants_original_speech(req) for req in brief.requirements)
         and not brief_wants_speech_cleanup(brief)
     )
-
-
-def brief_cleanup_choice(brief: CreativeBrief | None) -> SpeechCleanupChoice | None:
-    """The speech-cleanup answer the creator already typed into the brief, if any (KRI-1291)."""
-    if brief_wants_speech_cleanup(brief):
-        return "clean"
-    return "keep_original" if brief_wants_original_speech(brief) else None
