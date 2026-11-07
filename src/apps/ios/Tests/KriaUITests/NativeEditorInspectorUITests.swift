@@ -3,6 +3,208 @@ import UIKit
 
 @MainActor
 final class NativeEditorInspectorUITests: XCTestCase {
+    private struct SplitTimelineSnapshot {
+        let rows: [[String: Any]]
+        let sections: [[String: Any]]
+        let mix: [String: Any]
+
+        func row(_ id: String) throws -> [String: Any] {
+            try XCTUnwrap(rows.first { $0["slot_id"] as? String == id })
+        }
+    }
+
+    private func splitSnapshot(_ app: XCUIApplication) throws -> SplitTimelineSnapshot {
+        let element = app.descendants(matching: .any)["native-editor-test-document"].firstMatch
+        XCTAssertTrue(element.waitForExistence(timeout: 5))
+        let data = try XCTUnwrap((element.value as? String)?.data(using: .utf8))
+        let root = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let payload = try XCTUnwrap(root["editor_payload"] as? [String: Any])
+        let sections = try XCTUnwrap(payload["sections"] as? [String: Any])
+        return SplitTimelineSnapshot(rows: try XCTUnwrap(sections["timeline_slots"] as? [[String: Any]]),
+            sections: try XCTUnwrap(sections["split_screen_sections"] as? [[String: Any]]),
+            mix: sections["mix"] as? [String: Any] ?? [:])
+    }
+
+    private func assertSplitPeers(_ before: SplitTimelineSnapshot, unchangedIn after: SplitTimelineSnapshot,
+                                 excluding edited: Set<String>, file: StaticString = #filePath, line: UInt = #line) throws {
+        for row in before.rows {
+            let id = try XCTUnwrap(row["slot_id"] as? String, file: file, line: line)
+            if !edited.contains(id) {
+                XCTAssertEqual(NSDictionary(dictionary: try after.row(id)), NSDictionary(dictionary: row),
+                    "Panel edits must preserve every peer and serial neighbor field", file: file, line: line)
+            }
+        }
+        XCTAssertEqual(NSArray(array: after.sections), NSArray(array: before.sections), file: file, line: line)
+        XCTAssertEqual(NSDictionary(dictionary: after.mix), NSDictionary(dictionary: before.mix), file: file, line: line)
+    }
+
+    private func revealSplitControl(_ control: XCUIElement, in app: XCUIApplication) {
+        for _ in 0..<10 where !control.isHittable { app.collectionViews.firstMatch.swipeUp() }
+        XCTAssertTrue(control.waitForExistence(timeout: 5))
+        XCTAssertTrue(control.isHittable)
+        XCTAssertTrue(control.isEnabled)
+    }
+
+    private func launchTwoPanelAcceptance() throws -> (XCUIApplication, SplitTimelineSnapshot) {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-split-screen",
+            "-ui-testing-editor-live-preview", "-ui-testing-editor-document-snapshot"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+        let first = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 30))
+        first.tap()
+        app.buttons["native-editor-adjust"].tap()
+        let create = app.buttons["native-editor-split-create-2"]
+        revealSplitControl(create, in: app)
+        create.tap()
+        app.buttons["native-editor-inspector-done"].tap()
+        let snapshot = try splitSnapshot(app)
+        XCTAssertEqual(snapshot.rows.count, 3)
+        XCTAssertEqual(snapshot.sections.count, 1)
+        XCTAssertEqual(snapshot.mix["original_level"] as? Double, 0.8)
+        XCTAssertEqual(snapshot.mix["music_level"] as? Double, 0.3)
+        XCTAssertEqual(snapshot.rows[0]["split_panel_index"] as? Int, 0)
+        XCTAssertEqual(snapshot.rows[1]["split_panel_index"] as? Int, 1)
+        return (app, snapshot)
+    }
+
+    func testSplitPanelTrimCutDuplicateAndUndoKeepPeersExact() throws {
+        let (app, original) = try launchTwoPanelAcceptance()
+        let editedID = try XCTUnwrap(original.rows[0]["slot_id"] as? String)
+        let clip = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        let timeline = app.descendants(matching: .any)["native-editor-timeline-content"].firstMatch
+        timeline.pinch(withScale: 0.5, velocity: -1)
+        selectTimelineClip(1, in: app)
+        let trailing = app.descendants(matching: .any)["native-editor-trim-trailing"].firstMatch
+        XCTAssertTrue(trailing.waitForExistence(timeout: 3))
+        XCTAssertTrue(trailing.isHittable)
+        dragHandle(trailing, by: -clip.frame.width * 0.65)
+        let trimmed = try splitSnapshot(app)
+        let shortened = try trimmed.row(editedID)
+        let duration = try XCTUnwrap(shortened["duration_s"] as? Double)
+        XCTAssertGreaterThan(duration, 0.4)
+        XCTAssertLessThan(duration, 2)
+        XCTAssertEqual(shortened["in_s"] as? Double, original.rows[0]["in_s"] as? Double)
+        try assertSplitPeers(original, unchangedIn: trimmed, excluding: [editedID])
+
+        // Re-select to align the clip start, then scrub its ruler by half the visible clip width.
+        clip.tap()
+        let ruler = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.03))
+        ruler.press(forDuration: 0.05, thenDragTo: ruler.withOffset(CGVector(dx: -clip.frame.width / 2, dy: 0)))
+        app.buttons["native-editor-adjust"].tap()
+        let cut = app.buttons["native-editor-split-cut"]
+        revealSplitControl(cut, in: app)
+        cut.tap()
+        app.buttons["native-editor-inspector-done"].tap()
+        let divided = try splitSnapshot(app)
+        XCTAssertEqual(divided.rows.count, 4)
+        let pieces = divided.rows.filter { $0["split_panel_index"] as? Int == 0 }
+        XCTAssertEqual(pieces.count, 2)
+        let left = try XCTUnwrap(pieces.first), right = try XCTUnwrap(pieces.last)
+        let leftDuration = try XCTUnwrap(left["duration_s"] as? Double)
+        let rightDuration = try XCTUnwrap(right["duration_s"] as? Double)
+        XCTAssertGreaterThan(leftDuration, 0.1)
+        XCTAssertGreaterThan(rightDuration, 0.1)
+        XCTAssertEqual(leftDuration + rightDuration, duration, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(right["split_offset_s"] as? Double), leftDuration, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(right["in_s"] as? Double),
+            try XCTUnwrap(left["in_s"] as? Double) + leftDuration, accuracy: 0.001)
+        try assertSplitPeers(original, unchangedIn: divided, excluding: [editedID])
+
+        selectTimelineClip(2, in: app)
+        app.buttons["native-editor-adjust"].tap()
+        let duplicate = app.buttons["native-editor-split-duplicate"]
+        revealSplitControl(duplicate, in: app)
+        duplicate.tap()
+        app.buttons["native-editor-inspector-done"].tap()
+        let duplicated = try splitSnapshot(app)
+        XCTAssertEqual(duplicated.rows.count, 5)
+        let copies = duplicated.rows.filter { $0["split_panel_index"] as? Int == 0 }
+        XCTAssertEqual(copies.count, 3)
+        let copy = try XCTUnwrap(copies.last)
+        XCTAssertNotEqual(copy["slot_id"] as? String, right["slot_id"] as? String)
+        XCTAssertEqual(copy["in_s"] as? Double, right["in_s"] as? Double)
+        XCTAssertEqual(copy["duration_s"] as? Double, right["duration_s"] as? Double)
+        XCTAssertEqual(try XCTUnwrap(copy["split_offset_s"] as? Double), duration, accuracy: 0.001)
+        try assertSplitPeers(divided, unchangedIn: duplicated, excluding: [])
+
+        for expected in [divided, trimmed, original] {
+            let undo = app.buttons["native-editor-undo"]
+            XCTAssertTrue(undo.isEnabled)
+            undo.tap()
+            let restored = try splitSnapshot(app)
+            XCTAssertEqual(NSArray(array: restored.rows), NSArray(array: expected.rows), "Each real action must undo in one step")
+            XCTAssertEqual(NSArray(array: restored.sections), NSArray(array: expected.sections))
+        }
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Panel trim cut duplicate restored by three independent undo actions"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    func testSplitPanelSpeedCropAndSourceGainKeepPeersExact() throws {
+        let (app, original) = try launchTwoPanelAcceptance()
+        let editedID = try XCTUnwrap(original.rows[1]["slot_id"] as? String)
+        selectTimelineClip(2, in: app)
+        app.buttons["native-editor-adjust"].tap()
+        let speed = app.sliders["native-editor-playback-rate"]
+        revealSplitControl(speed, in: app)
+        speed.adjust(toNormalizedSliderPosition: 0.6)
+        app.buttons["native-editor-inspector-done"].tap()
+        let retimed = try splitSnapshot(app)
+        let fast = try retimed.row(editedID)
+        let rate = try XCTUnwrap(fast["playback_rate"] as? Double)
+        XCTAssertGreaterThan(rate, 1)
+        XCTAssertEqual(try XCTUnwrap(fast["duration_s"] as? Double), 4 / rate, accuracy: 0.001)
+        try assertSplitPeers(original, unchangedIn: retimed, excluding: [editedID])
+
+        app.buttons["native-editor-adjust"].tap()
+        let crop = app.buttons["native-editor-footage-crop"]
+        revealSplitControl(crop, in: app)
+        crop.tap()
+        let cropEditor = app.descendants(matching: .any)["kria-crop-editor"].firstMatch
+        XCTAssertTrue(cropEditor.waitForExistence(timeout: 20), "Crop must load the actual source frame")
+        cropEditor.pinch(withScale: 2, velocity: 1)
+        app.buttons["native-editor-crop-done"].tap()
+        app.buttons["native-editor-inspector-done"].tap()
+        let cropped = try splitSnapshot(app)
+        let croppedRow = try cropped.row(editedID)
+        let rectangle = try XCTUnwrap(croppedRow["source_crop"] as? [String: Double])
+        XCTAssertGreaterThan(try XCTUnwrap(rectangle["width"]), 0)
+        XCTAssertLessThan(try XCTUnwrap(rectangle["width"]), 1)
+        XCTAssertGreaterThan(try XCTUnwrap(rectangle["height"]), 0)
+        XCTAssertLessThan(try XCTUnwrap(rectangle["height"]), 1)
+        XCTAssertEqual(croppedRow["playback_rate"] as? Double, rate)
+        XCTAssertEqual(croppedRow["duration_s"] as? Double, fast["duration_s"] as? Double)
+        try assertSplitPeers(original, unchangedIn: cropped, excluding: [editedID])
+
+        app.buttons["native-editor-adjust"].tap()
+        let volume = app.sliders["native-editor-clip-source-volume"]
+        revealSplitControl(volume, in: app)
+        volume.adjust(toNormalizedSliderPosition: 0.2)
+        app.buttons["native-editor-inspector-done"].tap()
+        let quieter = try splitSnapshot(app)
+        let quietRow = try quieter.row(editedID)
+        let gain = try XCTUnwrap(quietRow["source_audio_volume"] as? Double)
+        XCTAssertGreaterThan(gain, 0)
+        XCTAssertLessThan(gain, 1)
+        XCTAssertEqual(NSDictionary(dictionary: try XCTUnwrap(quietRow["source_crop"] as? [String: Any])),
+            NSDictionary(dictionary: try XCTUnwrap(croppedRow["source_crop"] as? [String: Any])))
+        XCTAssertEqual(quietRow["playback_rate"] as? Double, rate)
+        try assertSplitPeers(original, unchangedIn: quieter, excluding: [editedID])
+        for expected in [cropped, retimed, original] {
+            app.buttons["native-editor-undo"].tap()
+            let restored = try splitSnapshot(app)
+            XCTAssertEqual(NSArray(array: restored.rows), NSArray(array: expected.rows))
+            XCTAssertEqual(NSArray(array: restored.sections), NSArray(array: expected.sections))
+        }
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Independent panel speed crop and source gain restored by undo"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     private func selectTimelineClip(_ number: Int, in app: XCUIApplication) {
         let clip = app.descendants(matching: .any)["native-editor-clip-\(number)"].firstMatch
         let lanes = app.scrollViews["native-editor-lane-scroll"]

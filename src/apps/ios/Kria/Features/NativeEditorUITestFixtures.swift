@@ -228,6 +228,7 @@ enum NativeEditorUITestFixtures {
     /// The `speaker_background` value the stub commit transport last saved (UserDefaults; JSON `null` = cleared).
     static let savedSpeakerBackgroundKey = "kria.ui-test.saved-speaker-background.v1"
     static let savedSplitSpeakerTimelineKey = "kria.ui-test.saved-split-speaker-timeline.v1"
+    static let savedSplitControlsTimelineKey = "kria.ui-test.saved-split-controls-timeline.v1"
 
     /// The two pool visuals the Background fixture offers; no URLs, so the tiles show their placeholders offline.
     static let speakerBackgroundVisuals: [CreationVisual] = [
@@ -784,19 +785,49 @@ enum NativeEditorUITestFixtures {
     static let splitScreenControls: EditorDraft = {
         let clips = [clip(989, start: 0, duration: 4, sourceDuration: 20),
                      clip(990, start: 4, duration: 2, sourceDuration: 20)]
-        return draft(clips: clips, text: [], captions: false, music: false,
-                     sections: ["timeline_slots": slots(for: clips)], rootExtras: [
+        var value = draft(clips: clips, text: [], captions: false, music: false,
+                     sections: ["timeline_slots": slots(for: clips),
+                                "mix": .object(["original_level": .number(0.8), "music_level": .number(0.3)])], rootExtras: [
                         "render_destination": .string("device"),
                         "editor_timeline_mode": .string("authored"),
                         "editor_capabilities": .object([
                             "timeline": .bool(true),
                             "split_screen": .object(["editable": .bool(true)]),
+                            "original_audio": .object(["editable": .bool(true)]),
                             "clips": .object([
+                                "audio": .object(["editable": .bool(true)]),
                                 "source_crop": .object(["editable": .bool(true)]),
                                 "playback_rate": .object(["editable": .bool(true)])
                             ])
                         ])
                      ])
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-persistence") {
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-persistence-reset") {
+                UserDefaults.standard.removeObject(forKey: savedSplitControlsTimelineKey)
+            }
+            if let data = UserDefaults.standard.data(forKey: savedSplitControlsTimelineKey),
+               let saved = try? JSONDecoder().decode([String: JSONValue].self, from: data) {
+                var payload = value.serverSnapshot["editor_payload"]?.objectValue ?? [:]
+                var sections = payload["sections"]?.objectValue ?? [:]
+                for (key, lane) in saved { sections[key] = lane }
+                payload["sections"] = .object(sections)
+                value.serverSnapshot["editor_payload"] = .object(payload)
+                let document = EditorDocument(snapshot: value.serverSnapshot)
+                let projection = NativeEditorInteraction.timelineProjection(
+                    slots: document.clips, carousel: document.carouselMoment, splitSections: document.splitScreenSections)
+                value.clips = projection.baseClipWindows.map { window in
+                    let slot = document.clips[window.sourceIndex]
+                    let clipID = slot.id.flatMap(UUID.init(uuidString:)) ?? clips.first { $0.slotID == slot.id }?.id ?? id(1200 + window.sourceIndex)
+                    let assetID = slot.raw["asset_id"]?.stringValue.flatMap(UUID.init(uuidString:)) ?? clipID
+                    return EditorClip(id: clipID, assetID: assetID, sourceClipIndex: slot.clipIndex,
+                        start: window.start, end: window.end, trimIn: slot.inS,
+                        trimOut: slot.raw["source_end_s"]?.numberValue ?? slot.inS + (slot.durationS ?? 0),
+                        sourceDuration: slot.raw["source_duration_s"]?.numberValue,
+                        muted: slot.raw["muted"] == .bool(true), slotID: slot.id)
+                }
+            }
+        }
+        return value
     }()
 
     static var splitSpeaker: EditorDraft { makeSplitSpeaker(restoringSavedState: true) }
@@ -1112,16 +1143,21 @@ enum NativeEditorUITestCommitTransport {
                    let saved = try? JSONEncoder().encode(JSONValue.object(["timeline_slots": .array(slots), "caption_cues": fields["caption_cues"] ?? .null])) {
                     UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedTalkingRangeKey)
                 }
-                if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-speaker"), fields["timeline_slots"] != nil {
+                let splitTimelineKey: String? = if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-speaker") {
+                    NativeEditorUITestFixtures.savedSplitSpeakerTimelineKey
+                } else if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-persistence") {
+                    NativeEditorUITestFixtures.savedSplitControlsTimelineKey
+                } else { nil }
+                if let splitTimelineKey, fields["timeline_slots"] != nil {
                     var saved: [String: JSONValue] = [:]
-                    if let previous = UserDefaults.standard.data(forKey: NativeEditorUITestFixtures.savedSplitSpeakerTimelineKey) {
+                    if let previous = UserDefaults.standard.data(forKey: splitTimelineKey) {
                         saved = (try? JSONDecoder().decode([String: JSONValue].self, from: previous)) ?? [:]
                     }
                     for key in ["timeline_slots", "split_screen_sections"] {
                         if let lane = fields[key] { saved[key] = lane }
                     }
                     if let encoded = try? JSONEncoder().encode(saved) {
-                        UserDefaults.standard.set(encoded, forKey: NativeEditorUITestFixtures.savedSplitSpeakerTimelineKey)
+                        UserDefaults.standard.set(encoded, forKey: splitTimelineKey)
                     }
                 }
                 if let lane = fields["speaker_background"], let saved = try? JSONEncoder().encode(lane) {

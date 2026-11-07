@@ -116,7 +116,31 @@ struct NativeEditorView: View {
         GeometryReader { viewport in
             editorLifecycle(editorExitControls(editorPresentations(editorSurface(viewport: viewport))))
         }
+        .overlay(alignment: .topLeading) {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-document-snapshot") {
+                Text("Editor document snapshot")
+                    .font(.system(size: 1))
+                    .frame(width: 1, height: 1)
+                    .clipped()
+                    .opacity(0.01)
+                    .allowsHitTesting(false)
+                    .accessibilityLabel("Editor document snapshot")
+                    .accessibilityValue(testDocumentSnapshot)
+                    .accessibilityIdentifier("native-editor-test-document")
+            }
+            #endif
+        }
     }
+
+    #if DEBUG
+    private var testDocumentSnapshot: String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(session.document.encodeSnapshot()) else { return "" }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+    #endif
 
     private func editorSurface(viewport: GeometryProxy) -> some View {
         Group {
