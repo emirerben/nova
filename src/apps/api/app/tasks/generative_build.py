@@ -11002,6 +11002,32 @@ def _run_phone_subtitled_job(
                 # reserved nothing, and the generic pass below put the same photo elsewhere.
                 creator_pinned_media_ids = _creator_pinned_media_keys(beats, closing)
 
+                # Qendresa item 15 / KRI-1282: ONE layout context for every card this pass places
+                # -- the creator's reaction-beat pop-ins AND the generic grounded cards. Closed
+                # (None, byte-identical calls) unless every gate holds.
+                from app.pipeline.phone_recipe_shared import (  # noqa: PLC0415
+                    display_dims,
+                )
+
+                card_layout = _card_layout_context(
+                    open_=(
+                        overlay_layout == "pip"
+                        # The switch first: with it closed nothing below is evaluated.
+                        and _card_layout_planned(all_candidates)
+                        and not landscape_canvas
+                        and _card_layout_framing_ok(
+                            face_filled=bool(framed_grounding or speaker_position_x is not None),
+                            landscape_fit=landscape_fit,
+                            display_width=display_dims(binding.original)[0],
+                            display_height=display_dims(binding.original)[1],
+                        )
+                        and strategy_background_lane is None
+                        and not (lane_request is not None and lane_request.background)
+                    ),
+                    policy=current_phone_text_policy(),
+                    text_rows=title_rows + spoken_text_rows,
+                    keep_segments=speaker_keep_segments,
+                )
                 if beats_enabled and (beats or closing):
                     if lane_request is not None:
                         beat_receipt = {
@@ -11064,6 +11090,11 @@ def _run_phone_subtitled_job(
                                     **(
                                         {"protected_regions": protected_card_regions}
                                         if protected_card_regions
+                                        else {}
+                                    ),
+                                    **(
+                                        {"card_layout": card_layout}
+                                        if card_layout is not None
                                         else {}
                                     ),
                                 )
@@ -11198,27 +11229,6 @@ def _run_phone_subtitled_job(
                             ground_phone_subtitled_overlays,
                         )
 
-                        card_layout = _card_layout_context(
-                            open_=(
-                                overlay_layout == "pip"
-                                # The switch first: with it closed nothing below is evaluated.
-                                and _card_layout_planned(all_candidates)
-                                and not landscape_canvas
-                                and _card_layout_framing_ok(
-                                    face_filled=bool(
-                                        framed_grounding or speaker_position_x is not None
-                                    ),
-                                    landscape_fit=landscape_fit,
-                                    display_width=display_dims(binding.original)[0],
-                                    display_height=display_dims(binding.original)[1],
-                                )
-                                and strategy_background_lane is None
-                                and not (lane_request is not None and lane_request.background)
-                            ),
-                            policy=current_phone_text_policy(),
-                            text_rows=title_rows + spoken_text_rows,
-                            keep_segments=speaker_keep_segments,
-                        )
                         try:
                             grounded = ground_phone_subtitled_overlays(
                                 _sync_session,
