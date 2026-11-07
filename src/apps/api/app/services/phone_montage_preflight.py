@@ -120,23 +120,24 @@ def readiness_plan_blockers(
     media_snapshot: Mapping[str, Any] | None,
     client_protocol: int | None = None,
 ) -> list[RequirementReceipt]:
-    """The speed asks this draft's phone montage plan falls short on, for approval readiness.
+    """Speed/keep-whole asks the phone montage plan falls short on, for readiness.
 
     Leverkusen M2 run 3 (prod 355a33dae, thread d1ac7437): the creator's account has approval
     readiness on, and the runtime ran the KRI-775 plan only without it, so readiness rated
     "Put Taha's scream at the end of clip 2 in slow motion" as "I'll point it out after", the
     card said "have a look", and only the finished video said "Couldn't". The same plan,
     run here, says it before the card. Only checked, unmet, creator-fixable receipts of
-    clip-speed asks come back (a renderer limit stays the after-render note it was); order and
+    clip-speed and keep-whole asks come back (KRI-1295: any recorded kind, including style).
+    A renderer limit stays the after-render note it was; order and
     length keep readiness's own checks. Fails open like ``phone_montage_blockers``.
     """
-    from app.kria.brief_checks import needs_creator_choice  # noqa: PLC0415
+    from app.kria.brief_checks import _wants_whole_take, needs_creator_choice  # noqa: PLC0415
     from app.kria.speed_ask import asks_clip_speed  # noqa: PLC0415
 
     if brief is None:
         return []
-    speed_ids = {req.id for req in brief.live() if asks_clip_speed(req)}
-    if not speed_ids:
+    planned_ids = {req.id for req in brief.live() if asks_clip_speed(req) or _wants_whole_take(req)}
+    if not planned_ids:
         return []
     return [
         receipt
@@ -149,7 +150,7 @@ def readiness_plan_blockers(
             media_snapshot=media_snapshot,
             client_protocol=client_protocol,
         )
-        if receipt.requirement_id in speed_ids and needs_creator_choice(receipt)
+        if receipt.requirement_id in planned_ids and needs_creator_choice(receipt)
     ]
 
 
@@ -169,6 +170,7 @@ def montage_blockers(
     """
     from app.kria.brief_checks import (  # noqa: PLC0415
         FINAL_SOURCE_CUTS,
+        _wants_whole_take,
         build_receipts,
         montage_final_source_cuts,
         needs_creator_choice,
@@ -185,7 +187,7 @@ def montage_blockers(
     from app.kria.text_shape_ask import CURVED, text_shape  # noqa: PLC0415
 
     judged: dict[str, BriefRequirement] = {
-        req.id: req for req in brief.live() if req.kind in PREFLIGHT_KINDS
+        req.id: req for req in brief.live() if req.kind in PREFLIGHT_KINDS or _wants_whole_take(req)
     }
     # KRI-689: a clip-speed ask is settled by the same plan (which cuts, which rate, or why
     # not). Its receipt is returned whatever its status, so the draft says "Done: ... (clips 1

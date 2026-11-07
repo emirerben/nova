@@ -24,11 +24,13 @@ from app.kria.brief_checks import (
     RENDER_PROMISE_REASONS,
     _has_checker,
     _wants_source_sound_kept,
+    _wants_whole_take,
     build_receipts,
     defers_caption_words_to_phone_render,
     defers_text_to_phone,
     plan_facts_from_editor_payload,
     plan_facts_from_strategy,
+    with_planned_cuts,
 )
 from app.kria.contracts import RequirementReceipt
 from app.kria.order_replacement_receipts import with_verified_order_execution
@@ -353,6 +355,8 @@ def _no_pre_render_checker(req: Any, facts: Any) -> bool:
         return False
     if _fact_entries(req.facts.get(KEEP_TEXT_OFF_KEY)):
         return False
+    if _wants_whole_take(req):
+        return True  # KRI-1295: the typed fact can be filed under text too.
     if is_text_sequence(req):
         # 29 Ekim (prod thread 64bb9853): words shown a piece at a time are laid out by the
         # creation text pass, which runs after approval on the planned draft
@@ -572,6 +576,11 @@ def assess_readiness(
             planned_s = planned_length_s(media)
             if planned_s is not None:
                 facts = dataclasses.replace(facts, duration_s=planned_s)
+                # KRI-1295: readiness needs the same source-bounded windows as the
+                # draft receipt. Early cuts remain unverified, never a format-based
+                # refusal or proof the final video keeps the take. Actual shortened
+                # cuts arrive separately through the phone preflight blockers.
+                facts = with_planned_cuts(facts, media)
         except ValueError:
             pass  # Missing/invalid execution evidence stays unknown, never a pass.
     facts = with_verified_order_execution(
