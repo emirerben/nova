@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.58.0] - 2026-11-07
+
+### Changed
+- fix(speech-cleanup): cut long pauses whisper stamps hide on phone Talking (KRI-1270) (#2177) <!-- release-pr: 2177 -->
+
 ## [0.88.57.0] - 2026-11-07
 
 ### Changed
