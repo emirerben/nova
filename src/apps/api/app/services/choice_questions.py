@@ -4900,6 +4900,70 @@ def _typed_unclear_reply(
     return confirmed
 
 
+def _restore_answered_triggers(
+    data: Mapping[str, Any],
+    brief: Any,
+    media_snapshot: Mapping[str, Any] | None,
+    capability: ChoiceCapability | None,
+    scoped: Mapping[str, ScopedAnswer],
+) -> Any:
+    """KRI-972: ``brief`` with a spoken-text trigger put back to the words the creator's
+    occurrence answer was about, when a later turn widened it.
+
+    Tapping an option sends its sentence back as the creator's message ("…cheese. Okay.
+    Provolone, grilled cheese. Perfecto."), and the brief's trigger for "grilled cheese" can
+    come out as "Provolone grilled cheese". That changes the question's digest, so the answer
+    stopped counting and the same question was asked about the longer words, whose first word
+    is the wrong time. A shorter run of the widened trigger is the creator's only when the
+    question asked about it would carry EXACTLY the digest the answered one did (same text,
+    speaker, take and occurrences); anything else is a real change of words and is left alone.
+    """
+    if not any(conflict.startswith(f"{CONFLICT_SPEECH_OCCURRENCE}:") for conflict in scoped):
+        return brief
+    from app.kria.spoken_text_ask import narrowed_to_answer, spoken_text_asks  # noqa: PLC0415
+
+    rows = _rows(media_snapshot)
+    cap = capability or ChoiceCapability()
+
+    def asked(candidate: Any) -> dict[str, UnresolvedChoice]:
+        found = _speech_occurrence(data, candidate, rows, cap, snapshot=media_snapshot)
+        return {c.conflict_id: c for c in found}
+
+    now_asked = asked(brief)
+    live = {req.id: req for req in _live(brief)}
+    restored: dict[str, Any] = {}
+    for ask in spoken_text_asks(live.values()):
+        conflict_id = f"{CONFLICT_SPEECH_OCCURRENCE}:{ask.requirement_id}"[:80]
+        prior, now = scoped.get(conflict_id), now_asked.get(conflict_id)
+        if prior is None or prior.input_digest is None or now is None:
+            continue
+        if prior.input_digest == now.input_digest:
+            continue
+        words = ask.triggers[0].split()
+        runs = [
+            " ".join(words[start : start + length])
+            for length in range(len(words) - 1, 0, -1)
+            for start in range(len(words) - length + 1)
+        ]
+        for run in runs:
+            narrowed = narrowed_to_answer(live[ask.requirement_id], run)
+            if narrowed is None:
+                continue
+            again = asked(_with_requirements(brief, {ask.requirement_id: narrowed}))
+            if (found := again.get(conflict_id)) is not None and (
+                found.input_digest == prior.input_digest
+            ):
+                restored[ask.requirement_id] = narrowed
+                break
+    return _with_requirements(brief, restored) if restored else brief
+
+
+def _with_requirements(brief: Any, replaced: Mapping[str, Any]) -> Any:
+    return brief.model_copy(
+        update={"requirements": [replaced.get(r.id, r) for r in brief.requirements]}
+    )
+
+
 def resolve_choices(
     strategy: Any,
     brief: Any,
@@ -4936,6 +5000,7 @@ def resolve_choices(
     notices: list[str] = []
     exhausted: list[UnresolvedChoice] = []
     superseded: list[str] = []
+    brief = _restore_answered_triggers(data, brief, media_snapshot, capability, scoped)
     pending = collect_conflicts(data, brief, media_snapshot, capability)
     seen: set[str] = set()
     picks_applied = False
@@ -5293,6 +5358,14 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                 waived = _without_cut_line(changed.get(req.id, req), answer.get("value"))
                 if waived is not None:
                     changed[req.id] = waived
+            elif kind == CONFLICT_SPEECH_OCCURRENCE and req.kind == "text":
+                # KRI-972: the pick times the creator's own trigger words, not the option's
+                # sentence a later turn may have written into the trigger.
+                from app.kria.spoken_text_ask import narrowed_to_answer  # noqa: PLC0415
+
+                narrowed = narrowed_to_answer(changed.get(req.id, req), answer.get("value"))
+                if narrowed is not None:
+                    changed[req.id] = narrowed
             elif kind in TAKE_LINE_KINDS:
                 # KRI-844: the line of the take the creator picked rides the requirement that
                 # quoted the line, next to (never instead of) the quote. A declined side has

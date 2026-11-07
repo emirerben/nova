@@ -64,7 +64,7 @@ from app.kria.route_disclosure import is_route_decline_reason
 from app.kria.select_asks import ExclusionFact, only_video_ask
 from app.kria.speech_cut_ask import SpeechCutAsk, requirement_speech_cut
 from app.kria.speed_ask import asks_clip_speed
-from app.kria.spoken_text_ask import SPOKEN_TEXT_CUE_KEYS, _fact_speaker
+from app.kria.spoken_text_ask import SPOKEN_TEXT_CUE_KEYS, _fact_speaker, is_spoken_text_bar
 from app.kria.style_asks import (
     MOMENT_SHORT_MAX_S,
     MomentAsk,
@@ -214,6 +214,19 @@ class SpokenTextFact:
     face_collision: bool = False
     # KRI-724: shown on (or looked for at) the occurrence the creator picked before approval.
     pinned: bool = False
+    # KRI-972: the length the creator asked for, the seconds the row is on screen, and whether
+    # the take ended before the row could stay that long.
+    hold_asked_s: float | None = None
+    held_s: float | None = None
+    hold_clipped: bool = False
+    # KRI-747: set when the text was drawn cut to the row's character limit.
+    cut_to: str | None = None
+    # KRI-1018: a letterboxed picture. `inside_picture` is the placement check of the row's
+    # block against the picture; `look` is None for a render with no letterbox, else "kept" (the
+    # row on the video still wears the look the placement chose) or why not ("weak_outline" |
+    # "restyled" | "not_drawn"). It does not measure the footage behind the text.
+    inside_picture: bool | None = None
+    look: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2604,14 +2617,23 @@ def plan_facts_from_editor_payload(
                 and end > start >= 0
             ):
                 text_spans.append(
-                    (row_id, str(row.get("role") or "text"), float(start), float(end))
+                    (
+                        row_id,
+                        # KRI-747: the text on a spoken word is not the title (same role).
+                        "spoken_text"
+                        if is_spoken_text_bar(row)
+                        else str(row.get("role") or "text"),
+                        float(start),
+                        float(end),
+                    )
                 )
                 if not row.get("removed") and sequence_lineage(row) is not None:
                     sequence_fragments.append(row)
-            elif isinstance(row_id, str) and str(row.get("role") or "text") in {
-                "title",
-                "generative_intro",
-            }:
+            elif (
+                isinstance(row_id, str)
+                and not is_spoken_text_bar(row)
+                and str(row.get("role") or "text") in {"title", "generative_intro"}
+            ):
                 text_timing_incomplete = True
             clip = row.get("clip_id")
             if isinstance(clip, str) and clip:
@@ -10268,6 +10290,7 @@ def _with_text_look(
     """Add the look check to a text requirement's presence check (KRI-558)."""
     base = _with_title_face(req, facts, base)
     base = _with_spoken_text_face(req, facts, base)
+    base = _with_spoken_text_render(req, facts, base)
     base = _with_list_label_face(req, facts, base)
     if (text_look_facts(req) or asks_text_animation(req)) and base.status == "met":
         look = check_text_look(req, facts)
@@ -10671,17 +10694,71 @@ def _take_window_plan(req: BriefRequirement, estimate: TakeWindowEstimate | None
     )
 
 
+def _hold_seconds(value: object) -> float | None:
+    return (
+        float(value)
+        if isinstance(value, int | float) and not isinstance(value, bool) and value > 0
+        else None
+    )
+
+
+def _seconds_or_none(value: object) -> float | None:
+    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+
+
+def _spoken_text_look(row: Mapping[str, Any], drawn: Mapping[str, Any] | None) -> str | None:
+    """KRI-1018: whether a row placed in a letterboxed picture still wears, AS DRAWN, the look
+    the placement chose for it.
+
+    The receipt promises a look (`phone_spoken_text.picture_look`: a light fill and a dark
+    outline, drawn the same way whatever the footage shows). This confirms the row on the
+    finished video is still that look and that the fill/outline pair still has contrast: a
+    later restyle makes the promise stale, and a row removed from the video is not drawn at
+    all. It does NOT sample the footage behind the text, so "kept" never says the text was
+    measured readable. ``None`` for a render with no letterboxed picture."""
+    promised = row.get("picture_look")
+    if not isinstance(promised, Mapping):
+        return None
+    if drawn is None:
+        return "not_drawn"
+    contrast = promised.get("outline_contrast")
+    floor = promised.get("min_outline_contrast")
+    if not (
+        isinstance(contrast, int | float)
+        and isinstance(floor, int | float)
+        and contrast >= floor
+        and promised.get("inside_picture") is True
+    ):
+        return "weak_outline"
+    same = all(
+        str(drawn.get(key) or "").casefold() == str(promised.get(source) or "").casefold()
+        for key, source in (("color", "text_color"), ("stroke_color", "stroke_color"))
+    ) and _hold_seconds(drawn.get("stroke_width")) == _hold_seconds(promised.get("stroke_width"))
+    return "kept" if same else "restyled"
+
+
 def _spoken_text_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
     receipt = variant.get("spoken_text_placement")
     rows = receipt.get("rows") if isinstance(receipt, Mapping) else None
     if not isinstance(rows, list):
         return {}
+    elements = variant.get("text_elements")
+    drawn = {
+        element["id"]: element
+        for element in (elements if isinstance(elements, list) else [])
+        if isinstance(element, Mapping)
+        and isinstance(element.get("id"), str)
+        and not element.get("removed")
+    }
     facts: list[SpokenTextFact] = []
     for row in rows:
         if not isinstance(row, Mapping) or not isinstance(row.get("requirement_id"), str):
             continue
         triggers = row.get("triggers")
         first = triggers[0] if isinstance(triggers, list) and triggers else ""
+        start, end = _seconds_or_none(row.get("start_s")), _seconds_or_none(row.get("end_s"))
+        placement = row.get("placement")
+        element_id = row.get("element_id")
         facts.append(
             SpokenTextFact(
                 requirement_id=row["requirement_id"],
@@ -10690,6 +10767,18 @@ def _spoken_text_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
                 trigger=str(row.get("trigger") or first or ""),
                 face_collision=row.get("face_collision") is True,
                 pinned=isinstance(row.get("pin"), Mapping),
+                hold_asked_s=_hold_seconds(row.get("hold_s")),
+                held_s=round(end - start, 3) if start is not None and end is not None else None,
+                hold_clipped=row.get("hold_clipped") is True,
+                cut_to=str(row["shown_text"]) if row.get("truncated") is True else None,
+                inside_picture=(
+                    placement.get("inside_picture") is True
+                    if isinstance(placement, Mapping) and "picture_band" in placement
+                    else None
+                ),
+                look=_spoken_text_look(
+                    row, drawn.get(element_id) if isinstance(element_id, str) else None
+                ),
             )
         )
     return {"spoken_texts": tuple(facts)}
@@ -10925,6 +11014,8 @@ def _spoken_text_miss(req: BriefRequirement, fact: SpokenTextFact) -> Requiremen
             en=f"The {word} you picked was cut out of your video, so {text} isn't shown",
             tr=f"Seçtiğin {word} anı videodan kesildi, o yüzden {text} yazısı çıkmadı",
         )
+    elif fact.status == "placed" and fact.cut_to is not None:
+        return _spoken_text_cut(req, fact)
     else:
         reason = say(
             en=f"I couldn't place {text} on this video",
@@ -10950,6 +11041,89 @@ def _with_spoken_text_face(
             tr=f"{text} bir yüzün üstüne denk geliyor; yüzü açıkta bırakan bir yer bulamadım",
         ),
     )
+
+
+def _spoken_text_cut(req: BriefRequirement, fact: SpokenTextFact) -> RequirementReceipt:
+    """KRI-747: the row was drawn, but cut to the row's character limit (never the whole text)."""
+    text = f"“{fact.text or req.literal or ''}”"
+    return _receipt(
+        req,
+        "partial",
+        say(
+            en=f"{text} is longer than fits on screen, so the video shows “{fact.cut_to}”",
+            tr=(f"{text} ekrana sığmayacak kadar uzun, o yüzden videoda “{fact.cut_to}” görünüyor"),
+        ),
+    )
+
+
+# KRI-972: a hold that differs from the asked one by less than this is the same (row times are
+# rounded to milliseconds and the compiler snaps them to frames).
+_HOLD_TOLERANCE_S = 0.15
+
+
+def _with_spoken_text_render(
+    req: BriefRequirement, facts: PlanFacts, base: RequirementReceipt
+) -> RequirementReceipt:
+    """What the finished video does with a placed text on a spoken word beyond "it is there":
+    the length the creator asked for (KRI-972), the words drawn whole (KRI-747) and, on a
+    letterboxed picture, text that is on the footage in the look chosen for it (KRI-1018; the
+    footage is not sampled, so this is never worded as "checked readable"). "Done" only when
+    the receipt of the row as drawn says so."""
+    fact = _spoken_text_fact(facts, req) if base.status == "met" else None
+    if fact is None or fact.status != "placed":
+        return base
+    text = f"“{fact.text or req.literal or ''}”"
+    if fact.cut_to is not None:
+        return _spoken_text_cut(req, fact)
+    if fact.inside_picture is False:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"{text} falls outside the picture, in the black bars; I couldn't find a spot "
+                "on the footage",
+                tr=f"{text} görüntünün dışında, siyah bantlara düşüyor; görüntü üzerinde bir yer "
+                "bulamadım",
+            ),
+        )
+    if fact.look is not None and fact.look != "kept":
+        why = {
+            "weak_outline": say(
+                en="its outline no longer stands out from the fill",
+                tr="kenar çizgisi artık dolgudan ayrışmıyor",
+            ),
+            "restyled": say(
+                en="its colours changed after I placed it",
+                tr="renkleri yerleştirdikten sonra değişti",
+            ),
+            "not_drawn": say(en="it isn't on the finished video", tr="bitmiş videoda yok"),
+        }[fact.look]
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"I can't confirm {text} still has the light fill and dark outline I chose "
+                f"for the footage: {why}",
+                tr=f"{text} yazısında görüntü için seçtiğim açık dolgu ve koyu kenar çizgisi "
+                f"duruyor mu, doğrulayamıyorum: {why}",
+            ),
+        )
+    asked, held = fact.hold_asked_s, fact.held_s
+    if (
+        asked is not None
+        and held is not None
+        and not fact.hold_clipped
+        and abs(held - asked) > _HOLD_TOLERANCE_S
+    ):
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"{text} stays on screen for {held:g} s, not the {asked:g} s you asked for",
+                tr=f"{text} ekranda istediğin {asked:g} sn yerine {held:g} sn kalıyor",
+            ),
+        )
+    return base
 
 
 def _pinned_spoken_text_plan(ask: Any, facts: PlanFacts) -> str | None:
