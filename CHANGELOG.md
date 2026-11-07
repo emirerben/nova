@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.47.0] - 2026-11-07
+
+### Changed
+- fix(kria): Talking draft receipts count only the talking clip, mute footage clips, say nothing-to-cut once (KRI-980, KRI-981, KRI-748) (#2162) <!-- release-pr: 2162 -->
+
 ## [0.88.46.0] - 2026-11-07
 
 ### Changed
