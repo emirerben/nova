@@ -20,14 +20,9 @@ from app.config import settings
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_binding import media_identity, snapshot_media
 from app.kria.brief_checks import (
-    _CLEANUP_AT_APPROVAL,
-    _CLEANUP_IF_OFFERED,
-    _CLEANUP_PLANNED,
-    _NAMED_CUT_AT_RENDER,
-    _RESTART_CUT_AT_APPROVAL,
+    _REASON_TR,
+    RENDER_PROMISE_REASONS,
     _has_checker,
-    _loc,
-    _wants_cleanup,
     _wants_source_sound_kept,
     build_receipts,
     defers_caption_words_to_phone_render,
@@ -121,35 +116,56 @@ async def resolve_readiness_manifest(db, item, strategy):  # noqa: ANN001, ANN20
     return manifest
 
 
-def _cleanup_deferred(req: BriefRequirement, receipt: RequirementReceipt) -> bool:
-    """KRI-1178: a speech-cleanup ask whose only shortfall is what approval and the render do.
+# Each promise in English and as its Turkish twin: a receipt is written in its turn's language.
+_PROMISE_TEXTS = frozenset(
+    text
+    for promise in RENDER_PROMISE_REASONS
+    for text in (promise, _REASON_TR.get(promise, promise))
+)
 
-    Green 3: the receipt said "If Clean up speech is offered when you approve, choose it to cut
-    the long pauses; I'll cut the line you named out of your take if I find it said once, and
-    tell you after", and the ask landed under "Make it without these" -> "Leaves out". Both
-    halves are done later, by the approval card's "Clean up speech" choice and by the render's
-    own per-line cut: neither is an omission. Readiness cannot know whether the card offers the
-    choice (its facts never say, so its lead is always the "if offered" one); the draft reply's
-    receipt can, and says when it does not (`_CLEANUP_UNAVAILABLE`). Anything else in the reason
-    keeps the hold: cleanup unavailable, a named line that "may still be in your video", a
-    restarted sentence that stays in because retake detection is off, a length the take cannot
-    reach. With detection on, "also cuts a sentence you restarted if it finds one" (KRI-1189) is
-    the render's to do, like a named line.
+
+def _promised_at_render(req: BriefRequirement, receipt: RequirementReceipt, facts: Any) -> bool:
+    """KRI-1235: an ask whose only shortfall is what the render (or approval) does, then says.
+
+    Qendresa Q1 (prod thread b931bc4e, 2026-11-06): "I can't make this yet:" listed "every pause
+    is cut down to about 0.3 s", "I'll show it the moment you say that word" (x5) and "I'll draw a
+    curly arrow next to your ending text", and "Make it without these" dropped them all. Each is
+    a plan the phone Talking render carries out: never an omission, so it is `unverified`
+    (approvable, named for the creator to check after the render), as KRI-1178 made the speech
+    cleanup choice. Readiness cannot know whether the card offers Clean up speech, so its line
+    is always the "if offered" one; the draft reply's receipt can, and says when it does not.
+
+    Only a `partial` receipt whose reason is entirely `RENDER_PROMISE_REASONS` texts (each part
+    exactly, joined by "; ") counts, or exactly the pinned spoken-text promise re-derived for
+    this requirement. Anything else keeps the hold: cleanup unavailable, a named line that "may
+    still be in your video", a restarted sentence that stays in because retake detection is off,
+    only the long pauses cut, an arrow the creator has to draw, a length the take cannot reach.
     """
-    if receipt.status != "partial" or not receipt.reason or not _wants_cleanup(req):
+    # Receipts localize and cap public copy at 300 characters. Only complete evidence can
+    # distinguish long triggers/times or retain a shortfall appended past that boundary.
+    reason = receipt.full_reason
+    if receipt.status != "partial" or not reason or receipt.requirement_id != req.id:
         return False
-    deferred = {
-        _loc(reason)
-        for reason in (
-            _CLEANUP_PLANNED,
-            _CLEANUP_AT_APPROVAL,
-            _CLEANUP_IF_OFFERED,
-            _NAMED_CUT_AT_RENDER,
-            # KRI-1189: a restart nobody named, cut by cleanup's retake detection if it finds one.
-            _RESTART_CUT_AT_APPROVAL,
-        )
-    }
-    return all(part in deferred for part in receipt.reason.split("; "))
+    return _only_promises(reason) or reason == _pinned_promise(req, facts)
+
+
+def _only_promises(reason: str) -> bool:
+    """One promise, or several joined by "; " (a promise may hold "; " itself)."""
+    if reason in _PROMISE_TEXTS:
+        return True
+    return any(
+        reason.startswith(f"{promise}; ") and _only_promises(reason[len(promise) + 2 :])
+        for promise in _PROMISE_TEXTS
+    )
+
+
+def _pinned_promise(req: BriefRequirement, facts: Any) -> str | None:
+    """KRI-724: the draft's promise for a text pinned to one spoken occurrence, or None."""
+    from app.kria.brief_checks import _pinned_spoken_text_plan  # noqa: PLC0415
+    from app.kria.spoken_text_ask import requirement_spoken_text  # noqa: PLC0415
+
+    ask = requirement_spoken_text(req)
+    return _pinned_spoken_text_plan(ask, facts) if ask is not None else None
 
 
 # The sentence the apps send for a media-only send and for the "Let Kria cut the first version"
@@ -653,7 +669,7 @@ def assess_readiness(
             else "unsupported"
             if checked and receipt.status == "not_possible"
             else "unverified"
-            if checked and _cleanup_deferred(req, receipt)
+            if checked and _promised_at_render(req, receipt, facts)
             else "needs_choice"
             if checked
             else "unverified"
