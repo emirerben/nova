@@ -2271,17 +2271,19 @@ struct NativeEditorTemporaryVideo: Sendable {
         // suspends; a dropped sync would otherwise leave a chat edit invisible
         // until the editor is reloaded (nothing else re-polls without new events).
         let identity = editorOperationIdentity
+        // Keep the initiating account across all reads and baseline retries.
+        let owner = api?.mediaLibraryOwner
         for attempt in 0..<3 {
             syncNeedsRetry = false
-            await runPromptRevisionSync(identity: identity)
-            guard editorOperationIdentity == identity, syncNeedsRetry, !Task.isCancelled else { return }
+            await runPromptRevisionSync(identity: identity, owner: owner)
+            guard editorOperationIdentity == identity, api?.mediaLibraryOwner == owner, syncNeedsRetry, !Task.isCancelled else { return }
             Self.stagingLog.debug("sync retry attempt=\(attempt + 1, privacy: .public)")
         }
     }
 
-    private func runPromptRevisionSync(identity: EditorOperationIdentity) async {
+    private func runPromptRevisionSync(identity: EditorOperationIdentity, owner: String?) async {
         guard !isReviewingPreviousMerge, pendingMerge == nil else { return }
-        guard editorOperationIdentity == identity else { return }
+        guard editorOperationIdentity == identity, api?.mediaLibraryOwner == owner else { return }
         if isSaving, loadState == .loaded, !promptSyncStopped,
            refreshSync == .reconnecting || isRunningRefreshRetry {
             // A retry that lands mid-save would otherwise be dropped and leave the
@@ -2300,7 +2302,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 // Legacy conversations have no runtime-v2 draft endpoint.
                 // Read the same rendered authority used when opening this editor.
                 let latest = try? await api.project(threadID: threadID)
-                guard editorOperationIdentity == identity, sequence == promptRefreshSequence, !Task.isCancelled else { return }
+                guard editorOperationIdentity == identity, api.mediaLibraryOwner == owner, sequence == promptRefreshSequence, !Task.isCancelled else { return }
                 let targetJob: UUID
                 let targetVariant: String
                 let targetItem: String
@@ -2324,7 +2326,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                     targetJob = jobID; targetVariant = variantKey; targetItem = itemID
                 }
                 let current = try await api.editorVariant(jobID: targetJob, variantID: targetVariant)
-                guard editorOperationIdentity == identity, sequence == promptRefreshSequence, !Task.isCancelled else { return }
+                guard editorOperationIdentity == identity, api.mediaLibraryOwner == owner, sequence == promptRefreshSequence, !Task.isCancelled else { return }
                 noteRefreshReadSucceeded()
                 variant = current
                 snapshot = DraftSnapshot(
@@ -2335,13 +2337,13 @@ struct NativeEditorTemporaryVideo: Sendable {
                     snapshot: [:], canUndo: false, createdAt: .now)
             } else {
                 snapshot = try await api.draft(threadID: threadID)
-                guard editorOperationIdentity == identity, sequence == promptRefreshSequence, !Task.isCancelled else { return }
+                guard editorOperationIdentity == identity, api.mediaLibraryOwner == owner, sequence == promptRefreshSequence, !Task.isCancelled else { return }
                 if let targetJob = snapshot.baseJobID.flatMap(UUID.init) {
                     variant = try await api.editorVariant(jobID: targetJob, variantID: snapshot.variantKey)
                 } else { variant = nil }
                 // Only a complete read proves the path works: a draft read followed by a failing
                 // variant read must not reset the streak, or a persistent conflict retries forever.
-                guard editorOperationIdentity == identity, sequence == promptRefreshSequence, !Task.isCancelled else { return }
+                guard editorOperationIdentity == identity, api.mediaLibraryOwner == owner, sequence == promptRefreshSequence, !Task.isCancelled else { return }
                 noteRefreshReadSucceeded()
             }
             let nextJobID = snapshot.baseJobID.flatMap(UUID.init)
@@ -2362,7 +2364,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             // (never rendered); show it as unsaved edits instead of ignoring it.
             let staged = conversationRuntimeVersion == 2 && sameTarget
                 ? stagedChatDocument(snapshot: snapshot, draft: nextDraft, variant: variant) : nil
-            guard editorOperationIdentity == identity, sequence == promptRefreshSequence, !Task.isCancelled else { return }
+            guard editorOperationIdentity == identity, api.mediaLibraryOwner == owner, sequence == promptRefreshSequence, !Task.isCancelled else { return }
             // A save/load completed while this request was suspended. Its newer
             // authority wins, even when the local document is now clean.
             guard cleanDocument == baseline else { syncNeedsRetry = true; return }
@@ -2422,7 +2424,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             currentTime = min(time, duration)
             await prepareSourcePreview()
         } catch {
-            guard editorOperationIdentity == identity, sequence == promptRefreshSequence, cleanDocument == baseline, !Task.isCancelled else { return }
+            guard editorOperationIdentity == identity, api.mediaLibraryOwner == owner, sequence == promptRefreshSequence, cleanDocument == baseline, !Task.isCancelled else { return }
             let failure = Self.refreshFailure(error)
             // The loaded job was superseded by a re-plan render (its editor
             // routes now answer "content plan unavailable"/409): follow the
@@ -2430,7 +2432,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             if conversationRuntimeVersion == 2, failure == .readConflict {
                 let before = jobID
                 await adoptActiveJobFromThread(api: api, threadID: threadID)
-                guard editorOperationIdentity == identity, sequence == promptRefreshSequence, !Task.isCancelled else { return }
+                guard editorOperationIdentity == identity, api.mediaLibraryOwner == owner, sequence == promptRefreshSequence, !Task.isCancelled else { return }
                 if jobID != before || newerJobPrompt != nil || refreshSync == .newVersionRendering { return }
             }
             handleRefreshFailure(failure)
