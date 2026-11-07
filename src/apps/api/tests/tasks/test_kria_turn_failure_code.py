@@ -128,3 +128,22 @@ def test_the_window_and_the_deadline_marker_still_gate_a_retry() -> None:
     request = "Try again"
     assert not _retry_degrades(request, request, age=timedelta(minutes=30))
     assert not _retry_degrades(request, request, deadline=False)
+
+
+# --- KRI-1301: a timeout on a tap never blames the creator's request size -----------------
+
+
+def test_a_timeout_on_a_tapped_answer_does_not_say_one_change_at_a_time() -> None:
+    from app.tasks.kria_runtime import (
+        _TAPPED_ANSWER_TIMEOUT_COPY,
+        _source_is_tapped_answer,
+    )
+
+    tap = _FakeDb(None, None)
+    tap._source = SimpleNamespace(payload={"choice_selection": {"option": "x"}}, content="x")
+    typed = _FakeDb(None, "Split it into pieces")
+    turn = SimpleNamespace(source_event_id=uuid.uuid4())
+    assert _source_is_tapped_answer(tap, turn) is True
+    assert _source_is_tapped_answer(typed, turn) is False
+    en, tr = _TAPPED_ANSWER_TIMEOUT_COPY
+    assert "at a time" not in en and "Try again" in en and tr
