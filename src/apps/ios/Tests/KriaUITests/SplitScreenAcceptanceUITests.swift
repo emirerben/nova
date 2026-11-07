@@ -94,12 +94,13 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
         selectClip(3, in: app) // Serial full-screen clip starts at 4 seconds.
         let serial = clip(3, in: app)
         let pixelsPerSecond = serial.frame.width / 2
-        let timeline = app.descendants(matching: .any)["native-editor-timeline-content"].firstMatch
         func scrub(_ seconds: Double) {
-            // Short ruler drag exercises the real scroll/scrub path, never a DEBUG seek setter.
-            let start = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.03))
+            // The playhead maps rightward drag to later time; background panning uses the opposite sign.
+            let playhead = app.descendants(matching: .any)["native-editor-playhead"].firstMatch
+            XCTAssertTrue(playhead.isHittable)
+            let start = playhead.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             start.press(forDuration: 0.05, thenDragTo: start.withOffset(
-                CGVector(dx: -seconds * pixelsPerSecond, dy: 0)), withVelocity: 100, thenHoldForDuration: 0.2)
+                CGVector(dx: seconds * pixelsPerSecond, dy: 0)), withVelocity: 100, thenHoldForDuration: 0.2)
         }
         func time() throws -> Double {
             let raw = try XCTUnwrap(app.descendants(matching: .any)["native-editor-current-time"].firstMatch.value as? String)

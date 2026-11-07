@@ -1319,3 +1319,91 @@ extension NativeSplitScreenTests {
         XCTAssertNil(session.splitScreenActionError)
     }
 }
+
+extension NativeSplitScreenTests {
+    @MainActor
+    func testAPIDraftSessionLoadPreservesCanonicalAssetProvenance() throws {
+        let alias = UUID(uuidString: "A32D7E41-7590-46F3-8888-012345678901")!
+        let asset = UUID(uuidString: "B32D7E41-7590-46F3-8888-012345678902")!
+        let identities: [JSONValue?] = [nil, .null, .string(asset.uuidString), .string("registered-photo-asset")]
+        for opaqueSlot in [true, false] {
+            for identity in identities {
+                var row: [String: JSONValue] = [
+                    "id": .string(alias.uuidString), "clip_index": .number(3),
+                    "in_s": .number(1), "duration_s": .number(2), "source_duration_s": .number(12),
+                    "media_id": .string("registered-photo"), "media_kind": .string("image"),
+                    "split_section_id": .string("import-section"), "split_panel_index": .number(1),
+                    "split_offset_s": .number(0), "source_crop": .object([
+                        "x": .number(0.1), "y": .number(0.2), "width": .number(0.7), "height": .number(0.6)])]
+                if opaqueSlot { row["slot_id"] = .string("imported-panel-occurrence") }
+                row["asset_id"] = identity
+                let snapshot: [String: JSONValue] = ["edit_format": .string("montage"), "editor_payload": .object([
+                    "editor_state_version": .number(2), "sections": .object([
+                        "timeline_slots": .array([.object(row)]), "split_screen_sections": .array([.object([
+                            "id": .string("import-section"), "duration_s": .number(2), "panel_count": .number(2)])])])])]
+                let api = DraftSnapshot(draftID: "import-reopen", itemID: "item", variantKey: "variant", draftRevision: 1,
+                    snapshotHash: "hash", etag: "etag", baseJobID: nil, baseGenerationID: nil,
+                    snapshot: snapshot, canUndo: false, createdAt: .now)
+                let draft = api.editorDraft(projectID: UUID())
+                XCTAssertEqual(draft.clips.count, 1)
+                XCTAssertEqual(draft.clips.first?.id, alias)
+                let session = NativeEditorSession(draft: draft)
+                let rows = try XCTUnwrap(session.document.encodeSnapshot()["editor_payload"]?.objectValue?["sections"]?
+                    .objectValue?["timeline_slots"]?.arrayValue)
+                XCTAssertEqual(rows.count, 1)
+                let loaded = try XCTUnwrap(rows.first?.objectValue)
+                XCTAssertEqual(loaded["asset_id"], identity, "Loading must not turn a compatibility UUID into source provenance")
+                XCTAssertEqual(loaded["slot_id"], .string(opaqueSlot ? "imported-panel-occurrence" : alias.uuidString))
+                for key in ["clip_index", "in_s", "duration_s", "source_duration_s", "media_id", "media_kind",
+                            "source_crop", "split_section_id", "split_panel_index", "split_offset_s"] {
+                    XCTAssertEqual(loaded[key], row[key], key)
+                }
+                XCTAssertTrue(session.document.splitScreenIsValid)
+                XCTAssertFalse(session.isDirty(.timeline))
+                XCTAssertFalse(session.canUndo)
+                XCTAssertFalse(session.canRedo)
+            }
+        }
+    }
+
+    @MainActor
+    func testAPIDraftSessionLoadKeepsLegacyAndUnrepresentedClipAssets() throws {
+        let oldID = UUID(uuidString: "A32D7E41-7590-46F3-8888-012345678901")!
+        let oldAsset = UUID(uuidString: "B32D7E41-7590-46F3-8888-012345678902")!
+        let newID = UUID(uuidString: "C32D7E41-7590-46F3-8888-012345678903")!
+        let newAsset = UUID(uuidString: "D32D7E41-7590-46F3-8888-012345678904")!
+        for legacy in [true, false] {
+            let sections: [String: JSONValue] = legacy
+                ? ["ios_editor": .object(["clips": .array([.object([
+                    "id": .string(oldID.uuidString), "asset_id": .string(oldAsset.uuidString),
+                    "clip_index": .number(2), "start": .number(0), "end": .number(2),
+                    "trim_in": .number(1), "trim_out": .number(3), "source_duration": .number(8)])])])]
+                : ["timeline_slots": .array([.object([
+                    "id": .string(oldID.uuidString), "slot_id": .string("existing-panel"),
+                    "asset_id": .string("opaque-existing-asset"), "clip_index": .number(2),
+                    "in_s": .number(1), "duration_s": .number(2), "source_duration_s": .number(8)])])]
+            let api = DraftSnapshot(draftID: "compatibility-load", itemID: "item", variantKey: "variant", draftRevision: 1,
+                snapshotHash: "hash", etag: "etag", baseJobID: nil, baseGenerationID: nil,
+                snapshot: ["editor_payload": .object(["sections": .object(sections)])], canUndo: false, createdAt: .now)
+            var draft = api.editorDraft(projectID: UUID())
+            // A compatibility client can append a clip before a canonical server row exists.
+            draft.clips.append(EditorClip(id: newID, assetID: newAsset, sourceClipIndex: 5,
+                start: 2, end: 4, trimIn: 3, trimOut: 5, sourceDuration: 11))
+            let session = NativeEditorSession(draft: draft)
+            let rows = try XCTUnwrap(session.document.encodeSnapshot()["editor_payload"]?.objectValue?["sections"]?
+                .objectValue?["timeline_slots"]?.arrayValue)
+            XCTAssertEqual(rows.count, 2)
+            XCTAssertEqual(rows.first?.objectValue?["asset_id"], .string(legacy ? oldAsset.uuidString : "opaque-existing-asset"))
+            let added = try XCTUnwrap(rows.last?.objectValue)
+            XCTAssertEqual(added["slot_id"], .string(newID.uuidString))
+            XCTAssertEqual(added["asset_id"], .string(newAsset.uuidString))
+            XCTAssertEqual(added["clip_index"], .number(5))
+            XCTAssertEqual(added["in_s"], .number(3))
+            XCTAssertEqual(added["duration_s"], .number(2))
+            XCTAssertEqual(added["source_duration_s"], .number(11))
+            XCTAssertFalse(session.isDirty(.timeline))
+            XCTAssertFalse(session.canUndo)
+            XCTAssertFalse(session.canRedo)
+        }
+    }
+}

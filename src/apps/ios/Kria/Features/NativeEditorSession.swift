@@ -9125,7 +9125,17 @@ struct NativeEditorTemporaryVideo: Sendable {
             sections["timeline_slots"] = .array(rows.enumerated().map { index, row in
                 guard index < draft.clips.count, var value = Self.object(row) else { return row }
                 let clip = draft.clips[index]
-                value["asset_id"] = .string(clip.assetID.uuidString)
+                let canonicalRow = Self.array(sourceSections["timeline_slots"]).compactMap(Self.object).first { source in
+                    (clip.slotID != nil && source["slot_id"]?.stringValue == clip.slotID)
+                        || source["id"]?.stringValue.flatMap(UUID.init(uuidString:)) == clip.id
+                }
+                if let canonicalRow {
+                    // EditorClip requires a UUID even when a registered source is
+                    // identified only by media_id. Keep that UI fallback out of wire data.
+                    value["asset_id"] = canonicalRow["asset_id"]
+                } else {
+                    value["asset_id"] = .string(clip.assetID.uuidString)
+                }
                 // Do not manufacture an explicit unmute while hydrating a
                 // legacy slot. The absence of this field carries the backend's
                 // initial source-audio policy; explicit true or false is an
