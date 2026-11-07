@@ -37,6 +37,8 @@
       "KriaUITests/CreationUITests/testReadySuggestionChipsApplyFromTapsNearCapsuleEdges",
       "KriaUITests/CreationUITests/testPendingServerSuggestionChipsShowOnlyTheDefaultEdit",
       "KriaUITests/CreationUITests/testServerSuggestionChipsSendOnTapAndReplaceFixedChips",
+      "KriaUITests/CreationUITests/testFirstPromptChipsScrollAwayWithTheTranscriptWhileTheKeyboardIsOpen",
+      "KriaUITests/CreationUITests/testLeadSuggestionChipIsOneLineAtTheDefaultTextSize",
       "KriaUITests/CreationUITests/testServerSuggestionChipTapNamesTheOfferedChipOnTheTurn",
       "KriaUITests/SlidePostUITests/testSlidePostCreationIsTheRichLayoutThenCreateThenKriaPropose",
       "KriaUITests/SlidePostUITests/testReadySlidePostOpenedFromDrawerNeverReachesVideoEditor",

@@ -1670,6 +1670,8 @@
         "KriaTests/SuggestionCardsTests/testDismissPostsTheSetAndCardAndNeverThrows",
         "KriaTests/SuggestionCardsTests/testTheCardTapReusesThePinnedWireShape",
         "KriaUITests/CreationUITests/testServerSuggestionChipsSendOnTapAndReplaceFixedChips",
+        "KriaUITests/CreationUITests/testFirstPromptChipsScrollAwayWithTheTranscriptWhileTheKeyboardIsOpen",
+        "KriaUITests/CreationUITests/testLeadSuggestionChipIsOneLineAtTheDefaultTextSize",
         "KriaUITests/CreationUITests/testSuggestionCardsInChatAndTheEditorImproveSheetShareOneSet",
         "KriaUITests/CreationUITests/testDeclinedSuggestionCardRepliesNoLongerFitsThenTheRefreshedSet",
         "KriaUITests/CreationUITests/testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize"
