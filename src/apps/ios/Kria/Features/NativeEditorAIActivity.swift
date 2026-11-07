@@ -63,7 +63,7 @@ struct NativeEditorAIHalo: View {
     var body: some View {
         Group {
             if animates {
-                TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+                SwiftUI.TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
                     let seconds = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 8)
                     edge(angle: seconds / 8 * 360)
                         // Keyboard and sheet layout must move the outline with its control.
