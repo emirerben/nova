@@ -77,8 +77,9 @@ OfferResult == /\ s.editor = 1 /\ s.authority = A1 /\ ~s.quiet /\ ~s.resultUsed 
 Apply(automatic) ==
     /\ s.pending /\ DecisionCurrent
     /\ IF automatic THEN ~s.review /\ (AutoEligible \/ (Mutation = "UnprovenAuto" /\ Origin = "chat" /\ ~Overlap)) ELSE TRUE
-    /\ LET after == Snapshot(IF automatic THEN "auto" ELSE "chosen", s.destination)
-           boundary == (s.before.authority # s.destination \/ s.review)
+    /\ LET before == IF s.review THEN s.before ELSE s.doc
+           after == Snapshot(IF automatic THEN "auto" ELSE "chosen", s.destination)
+           boundary == (before.authority # s.destination \/ s.review)
                        /\ ~(Mutation = "NakedRechoice" /\ s.review)
        IN s' = [s EXCEPT
           !.doc = after, !.authority = s.destination, !.pending = FALSE, !.review = FALSE,
@@ -86,10 +87,10 @@ Apply(automatic) ==
           !.badDecision = @ \/ ~ScopeMatches(s.context),
           !.badUnproven = @ \/ (automatic /\ Origin = "chat" /\ ~ReceiptCurrent),
           !.checkpoint = IF boundary THEN TRUE ELSE s.checkpoint,
-          !.checkpointBefore = IF boundary THEN s.before ELSE s.checkpointBefore,
+          !.checkpointBefore = IF boundary THEN before ELSE s.checkpointBefore,
           !.checkpointAfter = IF boundary THEN after ELSE s.checkpointAfter,
           !.checkpointScope = IF boundary THEN Scope(s.editor, s.owner, s.destination) ELSE s.checkpointScope,
-          !.undo = IF boundary THEN <<>> ELSE Append(s.undo, s.before), !.redo = <<>>,
+          !.undo = IF boundary THEN <<>> ELSE Append(s.undo, before), !.redo = <<>>,
           !.rearmTask = IF automatic THEN s.rearmTask ELSE Mutation # "NoRearm",
           !.rearmScope = IF automatic THEN s.rearmScope ELSE Scope(s.editor, s.owner, s.destination)]
 AutoApply == Apply(TRUE)
