@@ -5,7 +5,7 @@ import XCTest
 @preconcurrency import AVFoundation
 import CoreImage
 
-/// KRI-1264: a phone Talking picture card's zoom and animation ride on its clip's `visualPlacement.editorStyle`
+/// KRI-1264: a phone Talking picture card's zoom and animation are in its clip's `visualPlacement.editorStyle`
 /// (the angle stays on `transform.rotationDegrees`, KRI-1141). `tests/fixtures/card-style-parity/v1.json` holds the
 /// clips the server's Talking compile writes (`tests/routes/test_overlay_card_style.py` pins them); this decodes them
 /// with the app's recipe codec and draws them through the real compositor.

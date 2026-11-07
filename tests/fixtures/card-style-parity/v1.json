@@ -1,5 +1,5 @@
 {
-  "comment": "KRI-1264: the card clip a Talking compile writes for a card with a zoom and an entrance animation. The angle stays on transform.rotation_degrees (KRI-1141); zoom and animation ride on visual_placement.editor_style. tests/routes/test_overlay_card_style.py pins the Python side, PlacedCardStyleTests the Swift side.",
+  "comment": "KRI-1264: the card clip a Talking compile writes for a card with a zoom and an entrance animation. The angle stays on transform.rotation_degrees (KRI-1141); zoom and animation are in visual_placement.editor_style. tests/routes/test_overlay_card_style.py pins the Python side, PlacedCardStyleTests the Swift side.",
   "cases": [
     {
       "name": "plain",

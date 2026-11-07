@@ -104,7 +104,7 @@ def test_a_saved_zoom_and_pop_reach_the_recipe_and_read_back_into_the_editor(mon
     style = clip.visual_placement.editor_style
     assert (style.zoom, style.animation.entrance, style.rotation_deg) == (2, "pop", 0)
     assert clip.transform.rotation_degrees == 0
-    assert clip.visual_placement.width_fraction == 0.35, "zoom rides on the style, not the size"
+    assert clip.visual_placement.width_fraction == 0.35, "the zoom is in the style, not the size"
     assert recipe_has_styled_card(recipe)
     assert _row(job)["editor_style"]["zoom"] == 2
     assert _row(job)["editor_style"]["animation"]["entrance"] == "pop"
