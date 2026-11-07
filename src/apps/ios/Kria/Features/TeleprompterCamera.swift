@@ -240,6 +240,7 @@ import UIKit
                 let audio = AVAudioSession.sharedInstance()
                 try audio.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetoothHFP])
                 try audio.setActive(true)
+                TeleprompterMicrophone.preferBottom(on: audio)
                 self.recordingRequested = true
                 output.startRecording(to: url, recordingDelegate: self)
             } catch {
@@ -339,6 +340,7 @@ import UIKit
                     let audio = AVAudioSession.sharedInstance()
                     try audio.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetoothHFP])
                     try audio.setActive(true)
+                    TeleprompterMicrophone.preferBottom(on: audio)
                     if self.isConfigured {
                         let micGone = self.session.inputs.compactMap { $0 as? AVCaptureDeviceInput }
                             .contains { $0.device.hasMediaType(.audio) && !$0.device.isConnected }
