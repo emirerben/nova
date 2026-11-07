@@ -3274,12 +3274,24 @@ def _overlay_sequence_facts(receipt: object) -> dict[str, Any]:
 _NOT_WORD_MATCHED_CARDS = frozenset({"manual", "failed", "sequence", "disabled"})
 
 
+# The lane state a phone-editor Save persists on the variant
+# (`phone_subtitled_editor.PHONE_SUBTITLED_EDITOR_LANES_FIELD`; a test pins the two together).
+# A render writes a fresh variant without it, so its presence means "edited after the render".
+_EDITOR_LANES_FIELD = "_phone_subtitled_editor_lanes_v1"
+
+
 def _grounded_card_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
     """KRI-1237: ``grounded_cards`` off a phone Talking variant's ``phone_overlay_receipt``.
 
     The worker keeps the receipt on the original take's clock (`remap_lanes_for_cut` moves only
     the lanes) and demotes a card the cut dropped to ``unplaced`` (`speech_cleanup_cut`), so
     "placed" is what is on screen and its second is moved to the finished video here.
+
+    An editor Save does not touch the receipt (review of #2153), so once the variant carries saved
+    lanes the cards on screen are the saved ones: a receipt card is shown only while a saved card
+    still shows its Visual, at that card's time (the lanes are on the finished video's clock, Range
+    included); one the creator took out is "removed in the editor". Saved lanes that cannot be read
+    give no card verdict at all (fail closed), never the render's.
     """
     receipt = variant.get("phone_overlay_receipt")
     if (
@@ -3288,25 +3300,74 @@ def _grounded_card_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
         or receipt.get("matcher") in _NOT_WORD_MATCHED_CARDS
     ):
         return {}
-    to_finished = _take_to_finished_clock(variant)
+    saved = _saved_card_starts(variant)
+    if saved is False:
+        return {}
+    to_finished = _take_to_finished_clock(variant) if saved is None else None
     cards: list[GroundedCardFact] = []
+    seen: set[str] = set()
     for status in ("placed", "unplaced"):
         rows = receipt.get(status)
         for row in rows if isinstance(rows, list) else []:
             if not isinstance(row, Mapping):
                 continue
             label = _card_label(row.get("label"))
-            start = _finite_number(row.get("start_s")) if status == "placed" else None
             reason = row.get("reason") if status == "unplaced" else None
-            cards.append(
-                GroundedCardFact(
-                    label=label,
-                    status=status,
-                    at_s=to_finished(start) if start is not None and to_finished else None,
-                    reason=reason if isinstance(reason, str) and reason else None,
+            reason = reason if isinstance(reason, str) and reason else None
+            if saved is None:
+                start = _finite_number(row.get("start_s")) if status == "placed" else None
+                at_s = to_finished(start) if start is not None and to_finished else None
+                cards.append(GroundedCardFact(label=label, status=status, at_s=at_s, reason=reason))
+                continue
+            key = _visual_key(row.get("media_id"))
+            if key is None:
+                return {}  # a receipt row the saved cards cannot be matched to: fail closed
+            if key in seen:
+                continue
+            seen.add(key)
+            if key in saved:
+                cards.append(GroundedCardFact(label=label, status="placed", at_s=saved[key]))
+            elif status == "placed":
+                cards.append(
+                    GroundedCardFact(label=label, status="unplaced", reason="removed_in_editor")
                 )
-            )
+            else:
+                cards.append(GroundedCardFact(label=label, status="unplaced", reason=reason))
+    if saved:
+        # A Visual the creator put on screen in the editor herself (the receipt never named it).
+        cards.extend(
+            GroundedCardFact(label=None, status="placed", at_s=start)
+            for key, start in saved.items()
+            if key not in seen
+        )
     return {"grounded_cards": tuple(cards)}
+
+
+def _visual_key(raw: object) -> str | None:
+    """A Visual's id as the receipt and the lanes both spell it (pool id, `asset-` or not)."""
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    return raw.strip().removeprefix("asset-").casefold()
+
+
+def _saved_card_starts(variant: Mapping[str, Any]) -> dict[str, float] | bool | None:
+    """The cards an editor Save left on screen, as {Visual key: first start on the finished
+    video}. None = no Save since the render; False = saved lanes that cannot be read."""
+    if _EDITOR_LANES_FIELD not in variant:
+        return None
+    saved = variant.get(_EDITOR_LANES_FIELD)
+    lanes = saved.get("lanes") if isinstance(saved, Mapping) else None
+    overlays = lanes.get("overlays") if isinstance(lanes, Mapping) else None
+    if not isinstance(overlays, list):
+        return False
+    starts: dict[str, float] = {}
+    for card in overlays:
+        key = _visual_key(card.get("media_id")) if isinstance(card, Mapping) else None
+        start = _finite_number(card.get("start_s")) if isinstance(card, Mapping) else None
+        if key is None or start is None:
+            return False
+        starts[key] = min(start, starts.get(key, start))
+    return starts
 
 
 def _take_to_finished_clock(variant: Mapping[str, Any]) -> Callable[[float], float] | None:
@@ -7731,6 +7792,7 @@ _CARD_MISS_WHY: dict[str, tuple[str, str]] = {
         "yalnızca boş kalan açılışa uyuyordu",
     ),
     "speech_cleanup_cut": ("its moment was cut out", "anı kesildi"),
+    "removed_in_editor": ("removed in the editor", "editörde kaldırıldı"),
     "video_not_supported": (
         "a video can't be a card on your iPhone yet",
         "video henüz iPhone'da kart olamıyor",
