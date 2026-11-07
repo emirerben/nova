@@ -57,12 +57,21 @@ enum NativeTextTransformMath {
 
     /// All four corners of `bounds` after rotating it about its own centre.
     static func corners(of bounds: CGRect, rotationDegrees: Double) -> [CGPoint] {
-        let radians = CGFloat(rotationDegrees) * .pi / 180
-        return [(-1, -1), (1, -1), (-1, 1), (1, 1)].map { sx, sy in
-            let dx = sx * bounds.width / 2, dy = sy * bounds.height / 2
-            return CGPoint(x: bounds.midX + dx * cos(radians) - dy * sin(radians),
-                           y: bounds.midY + dx * sin(radians) + dy * cos(radians))
+        let radians: CGFloat = CGFloat(rotationDegrees) * .pi / 180
+        let cosR: CGFloat = cos(radians)
+        let sinR: CGFloat = sin(radians)
+        let halfW: CGFloat = bounds.width / 2
+        let halfH: CGFloat = bounds.height / 2
+        let signs: [(CGFloat, CGFloat)] = [(-1, -1), (1, -1), (-1, 1), (1, 1)]
+        var points: [CGPoint] = []
+        for (sx, sy) in signs {
+            let dx: CGFloat = sx * halfW
+            let dy: CGFloat = sy * halfH
+            let x: CGFloat = bounds.midX + dx * cosR - dy * sinR
+            let y: CGFloat = bounds.midY + dx * sinR + dy * cosR
+            points.append(CGPoint(x: x, y: y))
         }
+        return points
     }
 
     /// The corner handle, optionally pulled inside `canvas` so a text near an
