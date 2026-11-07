@@ -6418,6 +6418,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
     var canEditDrawings: Bool { canEditOperation(["drawings.edit"], section: .drawings) }
     var canDeleteDrawings: Bool { canEditOperation(["drawings.delete"], section: .drawings) }
+    /// Set by the preview canvas: a tap (canvas fractions) that another layer received, re-run as a canvas tap.
+    var previewTapForwarder: ((CGPoint) -> Void)?
     func drawing(id: String) -> EditorDrawing? { document.drawings.first { $0.id == id } }
 
     /// Why the next stroke cannot be added to `id` (a new drawing when nil), or nil when it can: the same
