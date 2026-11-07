@@ -61,6 +61,15 @@ jobs:
           fetch-depth: 0
       - name: Test CI selection and required-check contracts
         run: python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
+      - name: Validate PR release metadata before selecting suites
+        if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch origin "$BASE_REF" --quiet
+          BASE_SHA="$(git merge-base "$HEAD_SHA" "origin/$BASE_REF")"
+          python3 scripts/release_metadata.py guard --base "$BASE_SHA" --head "$HEAD_SHA"
       - name: Select affected suites
         id: select
         env:
