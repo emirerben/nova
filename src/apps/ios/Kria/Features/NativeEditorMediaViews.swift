@@ -318,8 +318,8 @@ struct NativeVideoPreview: View {
         if object.item.kind == .drawing {
             guard let drawing = session.drawing(id: object.item.id) else { return .zero }
             let box = NativeDrawingTransformLayer.boxSize(of: drawing, in: size)
-            return CGRect(x: drawing.centerX * size.width - box.width / 2, y: drawing.centerY * size.height - box.height / 2,
-                          width: box.width, height: box.height)
+            let centre = NativeDrawingTransformLayer.centre(of: drawing, in: size)
+            return CGRect(x: centre.x - box.width / 2, y: centre.y - box.height / 2, width: box.width, height: box.height)
         }
         if object.item.id == liveTextBaseline?.id, let live = liveText.frame(in: size) {
             return live
@@ -1361,7 +1361,9 @@ private struct NativePreviewObjectView: View {
         .frame(width: frame.width, height: frame.height)
         .contentShape(Rectangle())
         .overlay {
-            if isSelected {
+            // A selected drawing's outline comes from NativeDrawingTransformLayer, which follows the live gesture;
+            // drawing a second one here (from the unchanged document) would show two boxes mid-drag.
+            if isSelected, object.item.kind != .drawing {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .stroke(KriaColor.sky, lineWidth: 2)

@@ -527,7 +527,7 @@ struct NativeDrawingTransformLayer: View {
                     .padding(Self.grab)
                     .contentShape(Rectangle())
                     .rotationEffect(.degrees(drawing.rotationDeg))
-                    .position(x: drawing.centerX * proxy.size.width, y: drawing.centerY * proxy.size.height)
+                    .position(Self.centre(of: drawing, in: proxy.size))
                     .gesture(moveGesture(proxy.size, box: box))
                     .simultaneousGesture(SpatialTapGesture(coordinateSpace: .named("native-drawing-layer")).onEnded { tap in
                         guard activeGestures.isEmpty, Date().timeIntervalSince(lastDragActivity) > 0.5 else { return }
@@ -551,11 +551,29 @@ struct NativeDrawingTransformLayer: View {
     /// The unrotated frame, padded so a thin stroke still has something to grab.
     private func frame(of drawing: EditorDrawing, in size: CGSize) -> CGSize { Self.boxSize(of: drawing, in: size) }
 
+    /// The rect the drawing's authoring canvas is aspect-fitted into on the preview. Same rule as
+    /// `NativeDrawingPainter.DrawingGeometry` (fitOrigin / fitSize): the stroke points and `centerX/Y` are fractions
+    /// of THIS rect, not of the whole canvas, so a 16:9 drawing on a 9:16 canvas sits inside a letterboxed band.
+    static func fittedRect(of drawing: EditorDrawing, in size: CGSize) -> CGRect {
+        let outputAspect = size.width / max(size.height, 1)
+        let fit = drawing.canvasAspect > outputAspect
+            ? CGSize(width: size.width, height: size.width / CGFloat(drawing.canvasAspect))
+            : CGSize(width: size.height * CGFloat(drawing.canvasAspect), height: size.height)
+        return CGRect(x: (size.width - fit.width) / 2, y: (size.height - fit.height) / 2, width: fit.width, height: fit.height)
+    }
+
+    /// Where the drawing's ink centre is on the canvas, in points (= where the painter puts it).
+    static func centre(of drawing: EditorDrawing, in size: CGSize) -> CGPoint {
+        let fit = fittedRect(of: drawing, in: size)
+        return CGPoint(x: fit.minX + CGFloat(drawing.centerX) * fit.width, y: fit.minY + CGFloat(drawing.centerY) * fit.height)
+    }
+
     static func boxSize(of drawing: EditorDrawing, in size: CGSize) -> CGSize {
         let points = drawing.strokes.flatMap(\.points)
         let xs = points.map { $0[0] }, ys = points.map { $0[1] }
-        let width = ((xs.max() ?? 0.5) - (xs.min() ?? 0.5)) * drawing.scale * size.width
-        let height = ((ys.max() ?? 0.5) - (ys.min() ?? 0.5)) * drawing.scale * size.height
+        let fit = fittedRect(of: drawing, in: size)
+        let width = ((xs.max() ?? 0.5) - (xs.min() ?? 0.5)) * drawing.scale * fit.width
+        let height = ((ys.max() ?? 0.5) - (ys.min() ?? 0.5)) * drawing.scale * fit.height
         let widest = (drawing.strokes.map(\.widthFrac).max() ?? 0.01) * min(size.width, size.height) * drawing.scale
         return CGSize(width: max(44, width + widest + 16), height: max(44, height + widest + 16))
     }
@@ -568,11 +586,13 @@ struct NativeDrawingTransformLayer: View {
                 // The gesture's local space is the whole canvas, unrotated: bring points into the box's own space
                 // (origin at its centre, turned back by the drawing's rotation).
                 let radians: CGFloat = CGFloat(-base.rotationDeg) * .pi / 180
+                let baseCentre = Self.centre(of: base, in: size)
+                let fit = Self.fittedRect(of: base, in: size)
                 let cosR: CGFloat = cos(radians)
                 let sinR: CGFloat = sin(radians)
                 func inBox(_ point: CGPoint) -> CGPoint {
-                    let dx: CGFloat = point.x - CGFloat(base.centerX) * size.width
-                    let dy: CGFloat = point.y - CGFloat(base.centerY) * size.height
+                    let dx: CGFloat = point.x - baseCentre.x
+                    let dy: CGFloat = point.y - baseCentre.y
                     return CGPoint(x: dx * cosR - dy * sinR, y: dx * sinR + dy * cosR)
                 }
                 if cornerDrag == nil {
@@ -590,8 +610,8 @@ struct NativeDrawingTransformLayer: View {
                     return
                 }
                 // Clamped to the frame: a centre outside 0...1 is an invalid drawing the preview compile would drop.
-                let x = NativeSpeakerFrameGesture.snappedToCenter(min(1, max(0, base.centerX + value.translation.width / max(size.width, 1))))
-                let y = NativeSpeakerFrameGesture.snappedToCenter(min(1, max(0, base.centerY + value.translation.height / max(size.height, 1))))
+                let x = NativeSpeakerFrameGesture.snappedToCenter(min(1, max(0, base.centerX + value.translation.width / max(fit.width, 1))))
+                let y = NativeSpeakerFrameGesture.snappedToCenter(min(1, max(0, base.centerY + value.translation.height / max(fit.height, 1))))
                 if (x.snapped && !snapX) || (y.snapped && !snapY) { haptic.selectionChanged() }
                 snapX = x.snapped; snapY = y.snapped
                 update(base) { $0.centerX = x.value; $0.centerY = y.value }

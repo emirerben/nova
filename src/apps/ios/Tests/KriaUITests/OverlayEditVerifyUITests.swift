@@ -60,6 +60,127 @@ final class OverlayEditVerifyUITests: XCTestCase {
         XCTAssertTrue(ok, "device pip card clamps at 62%: \(String(describing: after))")
     }
 
+    // MARK: drawing regressions (aspect mismatch, single outline)
+
+    static let wide = Kind(name: "drawing (16:9 on a 9:16 canvas)", tag: "drawing", idA: "draw-wide", idB: "draw-wide", drag: CGVector(dx: 0.15, dy: 0.1), measuresTransformFrame: true)
+
+    private func wideHarness() -> Harness {
+        var h = Harness(self, Self.wide)
+        h.fixtureFile = "OverlayEditVerifyWideDrawingDraft.json"
+        h.customArgs = ["-ui-testing-editor", "-ui-testing-editor-captured-creation"]
+        h.launch()
+        return h
+    }
+
+    private func transform(_ h: Harness) -> XCUIElement { h.app.descendants(matching: .any)["native-editor-drawing-transform"].firstMatch }
+
+    private func drawingIsSelected(_ h: Harness) -> Bool {
+        transform(h).exists || h.isSelected("draw-wide")
+    }
+
+    /// A 16:9 drawing on the 9:16 canvas: its transform frame sits in the letterboxed band, a tap on the ink selects it, a tap on the
+    /// empty top or bottom bar does not, and a drag still moves it by about the drag distance.
+    func testDrawingOnAWideCanvasStaysInItsBand() {
+        let kind = Self.wide
+        let name = kind.name
+        let h = wideHarness()
+        h.shot("wide-0-start")
+        let c0 = h.canvas.frame
+        // Empty bars: the fitted band is 0.5625/1.7778 = 31.6% of the canvas height, centred, so 12% and 88% are outside it.
+        for (label, y) in [("top bar", 0.12), ("bottom bar", 0.88)] {
+            let c = h.canvas.frame
+            h.canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: y)).tap()
+            let selected = drawingIsSelected(h)
+            h.shot("wide-1-tap-\(label.replacingOccurrences(of: " ", with: "-"))")
+            Verify.record(name, "tap on the empty \(label) does not select", !selected,
+                          "tapped (50%, \(Int(y * 100))%) of the \(Int(c.width))x\(Int(c.height))pt canvas; drawing selected: \(selected)")
+            XCTAssertFalse(selected, "tap on the \(label) selected the drawing")
+        }
+        h.canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let selected = drawingIsSelected(h)
+        h.shot("wide-2-tap-on-ink")
+        Verify.record(name, "tap on the visible ink selects", selected, "tapped canvas centre (the ink's centre); selected: \(selected)")
+        XCTAssertTrue(selected, "tap on the ink selects the drawing")
+        guard selected, transform(h).waitForExistence(timeout: 3) else { return }
+
+        // Band check, in the (possibly resized) current canvas.
+        let c = h.canvas.frame
+        let f = transform(h).frame
+        let bandH = c.height * 0.5625 / 1.7778
+        let bandTop = c.midY - bandH / 2, bandBottom = c.midY + bandH / 2
+        let centreOK = f.midY >= bandTop && f.midY <= bandBottom
+        let insideCanvas = f.minX >= c.minX - 22 - 2 && f.maxX <= c.maxX + 22 + 2
+        // The frame includes a 22pt grab margin on every side.
+        let marginOK = f.minY >= bandTop - 22 - 2 && f.maxY <= bandBottom + 22 + 2
+        Verify.record(name, "transform frame sits inside the letterboxed band", centreOK && marginOK && insideCanvas,
+                      "canvas y \(Int(c.minY))...\(Int(c.maxY)) (h \(Int(c.height))pt); band y \(Int(bandTop))...\(Int(bandBottom)) (h \(Int(bandH))pt); frame y \(Int(f.minY))...\(Int(f.maxY)) centre \(Int(f.midY)); frame x \(Int(f.minX))...\(Int(f.maxX)) vs canvas x \(Int(c.minX))...\(Int(c.maxX))")
+        XCTAssertTrue(centreOK && marginOK && insideCanvas, "wide drawing frame outside its band")
+
+        // Drag moves by about the drag distance.
+        guard let before = h.read("draw-wide", kind: kind) else { return }
+        let centre = h.app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: f.midX, dy: f.midY))
+        centre.press(forDuration: 0.15, thenDragTo: centre.withOffset(CGVector(dx: kind.drag.dx * c.width, dy: kind.drag.dy * c.height)))
+        h.shot("wide-3-after-drag")
+        guard let after = h.read("draw-wide", kind: kind) else { return }
+        let gx = Double(after.x - before.x), gy = Double(after.y - before.y)
+        let ok = abs(gx - 15) <= 3 && abs(gy - 10) <= 3
+        Verify.record(name, "drag moves by about the drag distance", ok, "expected (15.0, 10.0)%; measured (\(gx), \(gy))%; frame centre \(before.x),\(before.y) -> \(after.x),\(after.y)")
+        XCTAssertTrue(ok, "wide drawing moved by \(gx), \(gy)")
+        _ = c0
+    }
+
+    /// Counts the selection outline of the selected drawing while it is dragged and pinched (the gesture runs on a background queue
+    /// and is held, the main thread samples mid-gesture) and after release. The preview object for a drawing draws no outline (the app skips it
+    /// for the drawing kind), so the only outline element is native-editor-drawing-transform.
+    func testDrawingHasOneOutlineDuringDragAndPinch() {
+        let name = "drawing (single outline)"
+        let h = wideHarness()
+        h.canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        guard transform(h).waitForExistence(timeout: 5) else {
+            Verify.record(name, "drawing selected", false, "no transform layer after tap"); XCTFail("not selected"); return
+        }
+        func outlineCount() -> (transform: Int, previewValue: String) {
+            let n = h.app.descendants(matching: .any).matching(identifier: "native-editor-drawing-transform").count
+            let v = h.app.descendants(matching: .any)["native-editor-preview-drawing-draw-wide"].firstMatch.value as? String ?? "?"
+            return (n, v)
+        }
+        let rest = outlineCount()
+        h.shot("outline-0-selected-at-rest")
+        Verify.record(name, "one outline at rest", rest.transform == 1, "transform elements: \(rest.transform); preview drawing value: \(rest.previewValue)")
+        XCTAssertEqual(rest.transform, 1)
+
+        // Mid-drag.
+        let c = h.canvas.frame, f = transform(h).frame
+        let centre = h.app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: f.midX, dy: f.midY))
+        let end = centre.withOffset(CGVector(dx: 0.15 * c.width, dy: 0.1 * c.height))
+        // The gesture call blocks the test thread while it spins the run loop; a block scheduled on the main queue runs in the middle of it.
+        var midDrag: (transform: Int, previewValue: String) = (-1, "not sampled")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            midDrag = outlineCount()
+            h.shot("outline-1-mid-drag")
+        }
+        centre.press(forDuration: 0.15, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 6)
+        let afterDrag = outlineCount()
+        h.shot("outline-2-after-drag-release")
+        Verify.record(name, "one outline mid-drag", midDrag.transform == 1, "transform elements: \(midDrag.transform); preview drawing value: \(midDrag.previewValue)")
+        Verify.record(name, "one outline after drag release", afterDrag.transform == 1, "transform elements: \(afterDrag.transform); preview drawing value: \(afterDrag.previewValue)")
+        XCTAssertEqual(midDrag.transform, 1); XCTAssertEqual(afterDrag.transform, 1)
+
+        // Mid-pinch (slow pinch on the drawing).
+        var midPinch: (transform: Int, previewValue: String) = (-1, "not sampled")
+        let target = transform(h)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            midPinch = outlineCount()
+            h.shot("outline-3-mid-pinch")
+        }
+        target.pinch(withScale: 2.0, velocity: 0.25)
+        let afterPinch = outlineCount()
+        h.shot("outline-4-after-pinch-release")
+        Verify.record(name, "one outline mid-pinch", midPinch.transform == 1, "transform elements: \(midPinch.transform); preview drawing value: \(midPinch.previewValue)")
+        Verify.record(name, "one outline after pinch release", afterPinch.transform == 1, "transform elements: \(afterPinch.transform); preview drawing value: \(afterPinch.previewValue)")
+        XCTAssertEqual(midPinch.transform, 1); XCTAssertEqual(afterPinch.transform, 1)
+    }
+
     /// The handle is a 44x44pt zone centred on the visible dot. The text element's accessibility frame includes the 22pt handle
     /// circle, so the dot centre is the frame's bottom-right minus 11pt on each axis. Probed along x at 0 (on the dot), 21 (just inside the zone edge),
     /// 32, 42 and 52pt from the dot centre (= 10, 20, 30pt beyond the 22pt zone edge): a grab is expected up to 22pt, none beyond.
@@ -193,9 +314,11 @@ final class OverlayEditVerifyUITests: XCTestCase {
 struct Placement: Equatable { var x: Int; var y: Int; var size: Int }
 
 enum Verify {
+    /// Evidence lives outside the git tree: the test runner's temp directory (override with OVERLAY_EDIT_VERIFY_DIR).
     static let outDir: URL = {
-        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent(".overlay-edit-verify")
+        let override = ProcessInfo.processInfo.environment["OVERLAY_EDIT_VERIFY_DIR"]
+        let url = override.map { URL(fileURLWithPath: $0) }
+            ?? URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("overlay-edit-verify")
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }()
@@ -224,8 +347,14 @@ struct Harness {
 
     /// Several elements share the preview identifier; the canvas is the largest of them.
     var canvas: XCUIElement {
-        let all = app.descendants(matching: .any).matching(identifier: "native-editor-preview").allElementsBoundByIndex
-        return all.max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height } ?? app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        // The element list can change between enumeration and the frame read (the panel opens and the preview resizes): retry.
+        for _ in 0..<5 {
+            let all = app.descendants(matching: .any).matching(identifier: "native-editor-preview").allElementsBoundByIndex
+            let sized = all.filter { $0.exists }.map { (element: $0, area: $0.frame.width * $0.frame.height) }
+            if let best = sized.max(by: { $0.area < $1.area }) { return best.element }
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+        return app.descendants(matching: .any)["native-editor-preview"].firstMatch
     }
 
     func launch() {

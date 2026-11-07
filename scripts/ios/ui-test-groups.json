@@ -422,6 +422,8 @@
       "KriaUITests/OverlayEditVerifyUITests/testVisualBlock",
       "KriaUITests/OverlayEditVerifyUITests/testDrawing",
       "KriaUITests/OverlayEditVerifyUITests/testHandleGrabbedTwentyPointsOutsideTheCorner",
+      "KriaUITests/OverlayEditVerifyUITests/testDrawingOnAWideCanvasStaysInItsBand",
+      "KriaUITests/OverlayEditVerifyUITests/testDrawingHasOneOutlineDuringDragAndPinch",
       "KriaUITests/OverlayEditVerifySpeakerUITests/testSpeakerFrame"
     ],
     "smoke": [
