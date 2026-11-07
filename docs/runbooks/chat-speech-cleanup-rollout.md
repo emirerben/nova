@@ -45,8 +45,8 @@ setting the flag:
 2. Land KRI-1189 (the `cut_restarts` brief fact; child of KRI-1174, related to KRI-1176) first. The
    brief model records an unquoted restart ask as `cut_restarts: true` (Main Creator v119, brief
    extractor v54) and receipts key on it: before render "Clean up speech also cuts a sentence you
-   restarted if it finds one" (detection on, approvable via `_cleanup_deferred`) or "... stays in"
-   (off, held); after render a `retake` row is "Done", none is "didn't find" (on) or "stays in"
+   restarted if it finds one" (detection on, approvable: `RENDER_PROMISE_REASONS`) or "... stays
+   in" (off, held); after render a `retake` row is "Done", none is "didn't find" (on) or "stays in"
    (off). Briefs written before it carry no fact and keep "may still be in your video".
 3. `fly secrets set SPEECH_CLEANUP_RETAKES_ENABLED=true --app nova-video` and restart api and
    worker (every ready analysis is retired once and consent is asked again), then the canary
