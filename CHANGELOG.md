@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.57.0] - 2026-11-07
+
+### Changed
+- fix(chat): turn on captions reaches hidden lyrics on lip-sync/song videos (KRI-1001) (#2158) <!-- release-pr: 2158 -->
+
+## [0.88.56.0] - 2026-11-07
+
+### Changed
+- fix(kria): spoken-word text on the right word, asked hold, inside the letterboxed picture (KRI-972, KRI-747, KRI-1018) (#2160) <!-- release-pr: 2160 -->
+
+## [0.88.55.0] - 2026-11-07
+
+### Fixed
+- fix(fly): analyse Visuals six at a time on a small always-on process (KRI-1240) (#2148) <!-- release-pr: 2148 -->
+
+## [0.88.54.0] - 2026-11-07
+
+### Changed
+- fix(phone-text): lyric rows take the Lyric preference; keep the plan's shadow (KRI-1095, KRI-1050) (#2168) <!-- release-pr: 2168 -->
+
+## [0.88.53.0] - 2026-11-07
+
+### Changed
+- fix(api): get main's API suite green (Turkish fold guard exemption, brief digest re-freeze) (#2178) <!-- release-pr: 2178 -->
+
 ## [0.88.52.0] - 2026-11-07
 
 ### Changed
