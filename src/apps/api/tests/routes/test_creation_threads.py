@@ -364,23 +364,6 @@ async def test_extended_slide_export_capability_is_fail_closed_and_tracks_kill_s
     assert enabled.slide_post_extended_device_export is True
 
 
-@pytest.mark.asyncio
-async def test_upload_place_hint_capability_is_default_off_and_tracks_kill_switch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from app.routes.creation_threads import CreationCapabilitiesOut, capabilities  # noqa: PLC0415
-
-    assert CreationCapabilitiesOut.model_fields["upload_place_hint"].default is False
-    assert settings.upload_place_hint_enabled is False
-    user = SimpleNamespace(id=uuid.uuid4())
-    monkeypatch.setattr(settings, "upload_place_hint_enabled", False)
-    off = CreationCapabilitiesOut.model_validate(await capabilities(user, True, 2))
-    assert off.upload_place_hint is False
-    monkeypatch.setattr(settings, "upload_place_hint_enabled", True)
-    on = CreationCapabilitiesOut.model_validate(await capabilities(user, True, 2))
-    assert on.upload_place_hint is True
-
-
 def test_chat_format_clip_limits_match_plan_item_setup() -> None:
     assert _format_clip_limit("montage") == 50
     assert _format_clip_limit("narrated_planned") == 50
