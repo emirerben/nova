@@ -133,3 +133,85 @@ def test_caption_correction_malicious_filename_eval() -> None:
         ],
     )
     assert hints == ["selpak fil"]
+
+
+# KRI-1263: the talk-to-camera path runs the free-form proofreader (no trusted aliases). Each
+# row is a real Whisper misspelling and the correction gpt-4o returns for it; replay applies
+# that output through the word alignment, live mode asks the model itself.
+LEGACY_CASES = [
+    {
+        "id": "alot_split",
+        "language": "en",
+        "text": "I have alot of time today",
+        "model_line": "I have a lot of time today",
+        "expected": "I have a lot of time today",
+    },
+    {
+        "id": "your_youre",
+        "language": "en",
+        "text": "your going to love this",
+        "model_line": "you're going to love this",
+        "expected": "you're going to love this",
+    },
+    {
+        "id": "transposed_letters",
+        "language": "en",
+        "text": "teh coffee here is really good",
+        "model_line": "the coffee here is really good",
+        "expected": "the coffee here is really good",
+    },
+    {
+        "id": "turkish_accusative",
+        "language": "tr",
+        "text": "Bu nereye çalıştırıyor",
+        "model_line": "Bu nereyi çalıştırıyor",
+        "expected": "Bu nereyi çalıştırıyor",
+    },
+    {
+        "id": "good_fix_beside_a_rewording",
+        "language": "en",
+        "text": "I think thier plan is fine",
+        "model_line": "I believe their plan is fine",
+        "expected": "I think their plan is fine",
+    },
+    {
+        "id": "number_hallucination",
+        "language": "en",
+        "text": "we have 10 dogs and alot of toys",
+        "model_line": "we have 11 dogs and a lot of toys",
+        "expected": "we have 10 dogs and a lot of toys",
+    },
+    {
+        "id": "emoji_kept",
+        "language": "en",
+        "text": "teh fire 🔥 burns",
+        "model_line": "the fire 🔥 burns",
+        "expected": "the fire 🔥 burns",
+    },
+]
+
+
+@pytest.mark.parametrize("case", LEGACY_CASES, ids=lambda case: case["id"])
+def test_legacy_caption_correction_keeps_timing_and_lands_good_fixes(
+    case, eval_mode: str, monkeypatch
+) -> None:
+    if eval_mode == "live":
+        if not os.environ.get("OPENAI_API_KEY"):
+            pytest.skip("--eval-mode=live requires OPENAI_API_KEY")
+    else:
+        monkeypatch.setattr(
+            correction,
+            "_llm_correct_lines",
+            lambda texts, language, *, model: [case["model_line"]],
+        )
+    before = _cue(case["text"])
+    output = correction.correct_caption_cues([before], case["language"])[0]
+
+    spans = [(word["start_s"], word["end_s"]) for word in output["words"]]
+    assert spans[0][0] == before["start_s"]
+    assert spans[-1][1] == before["end_s"]
+    assert all(a[1] <= b[0] + 1e-9 for a, b in zip(spans, spans[1:]))
+    assert " ".join(word["text"] for word in output["words"]) == output["text"]
+    assert abs(len(output["words"]) - len(before["words"])) <= 2
+    if eval_mode != "live":
+        assert output["text"] == case["expected"]

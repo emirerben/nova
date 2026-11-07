@@ -776,7 +776,6 @@ struct DirectionStage: View {
     /// (older server, nothing choosable) hides the picker; the parent reads the pick
     /// when it sends the approval, so `decide` needs no extra argument.
     var renderShape: (offer: RenderShapeOffer, choice: Binding<RenderShapeChoice>)? = nil
-    var automaticRepairs: Binding<Bool>? = nil
     /// KRI-881: the draft's sourced wording and sources (`draft_applied.research_preview`). Nil (no research, an
     /// older server, or an unreadable payload) leaves the card exactly as it was.
     var researchPreview: ResearchPreview? = nil
@@ -835,21 +834,6 @@ struct DirectionStage: View {
 
             if let renderShape {
                 VideoShapeCard(offer: renderShape.offer, choice: renderShape.choice, isEnabled: !isBusy)
-            }
-
-            Text("Nothing renders until you approve this direction.")
-                .font(KriaFont.body(12))
-                .foregroundStyle(KriaColor.zinc)
-
-            if let automaticRepairs {
-                Toggle(isOn: automaticRepairs) {
-                    Text("Allow up to 2 automatic repairs")
-                        .font(KriaFont.body(14).weight(.medium))
-                    Text("If a video check fails, Kria can rebuild it with the same clips, text, timing and sound. Permission lasts 30 minutes.")
-                        .font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
-                }
-                .disabled(isBusy)
-                .accessibilityIdentifier("automatic-repair-consent")
             }
 
             cleanupActions
@@ -1162,13 +1146,13 @@ struct KriaFilledChip: View {
     let text: String
     /// KRI-756: one muted line under the label (footage evidence). Hidden when nil.
     var caption: String? = nil
-    /// KRI-756: the lead chip of a set (the stock "let Kria cut it" move) carries the quiet "Recommended" tag.
+    /// KRI-756: the lead chip of a set (the stock "let Kria cut it" move) is announced as recommended to VoiceOver only.
     var isPrimary = false
     var state: KriaAnswerState = .idle
     let action: () -> Void
 
     var body: some View {
-        KriaAnswerChip(title: text, caption: caption, state: state, isRecommended: isPrimary, action: action)
+        KriaAnswerChip(title: text, caption: caption, state: state, action: action)
             .accessibilityLabel(caption.map { "\(text), \($0)" } ?? text)
             .accessibilityValue(isPrimary ? "Recommended" : "")
     }

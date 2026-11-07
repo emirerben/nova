@@ -94,9 +94,9 @@ _POSITION_WORDS = {
 
 # Where each asked position puts the caption block on the canvas (x0, y0, x1, y1), from the
 # writer's own anchors (`phone_text_style._candidates`): a left / right corner at x 0.06 / 0.82
-# with the 0.68 caption width, a bottom block ending at y 0.70, a top block starting at 0.12.
+# with the 0.68 caption width, a bottom block ending at y 0.84, a top block starting at 0.12.
 _ZONE_X = {"left": (0.06, 0.74), "center": (0.16, 0.84), "right": (0.14, 0.82)}
-_ZONE_Y = {"top": (0.12, 0.24), "middle": (0.44, 0.56), "bottom": (0.58, 0.70)}
+_ZONE_Y = {"top": (0.12, 0.24), "middle": (0.44, 0.56), "bottom": (0.72, 0.84)}
 
 
 @dataclass(frozen=True)

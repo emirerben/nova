@@ -115,11 +115,17 @@ final class TextDeletionTests: XCTestCase {
         let chat = snapshot(["base_generation": .string("g1"), "text_elements": chatText], revision: 2)
         let (session, fake) = await loaded(chat)
         XCTAssertTrue(session.hasOnlyChatStagedChanges)
+        let sent = try XCTUnwrap(session.exportEditorState())
         XCTAssertTrue(session.deleteText(id: "clip-label-unified-cut-1"))
         XCTAssertFalse(session.hasOnlyChatStagedChanges, "a manual delete is a local edit: the next send flushes it")
         // A newer chat draft that still contains the deleted element must not silently bring it back.
-        fake.draftSnapshot = snapshot(["base_generation": .string("g1"),
+        let newer = snapshot(["base_generation": .string("g1"),
             "text_elements": .array([Self.text("guided-title", "newer"), Self.text("clip-label-unified-cut-1", "11")])], revision: 3)
+        var echoed = newer.snapshot
+        echoed["client_state_id"] = .string(sent.clientStateID)
+        fake.draftSnapshot = DraftSnapshot(draftID: newer.draftID, itemID: newer.itemID, variantKey: newer.variantKey,
+            draftRevision: newer.draftRevision, snapshotHash: newer.snapshotHash, etag: newer.etag, baseJobID: newer.baseJobID,
+            baseGenerationID: newer.baseGenerationID, snapshot: echoed, canUndo: newer.canUndo, createdAt: newer.createdAt)
         await session.synchronizePromptRevision()
         // KRI-935: the newer chat edit applies by itself, but what the creator deleted stays deleted.
         XCTAssertEqual(session.document.textElements.first { $0.id == "guided-title" }?.text, "newer")

@@ -545,7 +545,6 @@ private struct CreationWorkspaceView: View {
     @State private var pendingTurnSubmission: ChatTurnSubmissionIdentity?
     @State private var sendReceipt: ChatSendReceipt?
     @State private var approval: ApprovalSnapshot?
-    @State private var allowAutomaticRepairs = true
     /// KRI-306: the creator's pending video-shape pick for the approval / plan on screen.
     @State private var renderShapePick = RenderShapePickerState()
     @State private var approvalNotice: String?
@@ -2163,6 +2162,7 @@ private struct CreationWorkspaceView: View {
     private var genericChatWorkspace: some View {
         ChatConversationScroll(isLoaded: initialConversationLoaded, updateToken: timelineUpdateToken, scrollRequest: scrollRequest, dismissKeyboard: { composerFocused = false }) {
             conversationContent
+            firstPromptSuggestions
         }
         .accessibilityHidden(projectsDrawerOpen)
         .allowsHitTesting(!projectsDrawerOpen)
@@ -2185,28 +2185,6 @@ private struct CreationWorkspaceView: View {
                         .background(KriaColor.paper)
                         .accessibilityIdentifier("routed-device-render")
                 }
-                // KRI-756: the first-prompt chips sit just above the composer, not inside the scrolling transcript.
-                let firstPromptChips = suggestionChips(for: .firstPrompt)
-                if !firstPromptChips.isEmpty {
-                    SuggestionChipRow(chips: firstPromptChips, sendingID: sendingSuggestionID) { sendSuggestion($0) }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 4)
-                        .background(KriaColor.paper)
-                        .accessibilityIdentifier("first-prompt-suggestions")
-                } else if suggestionsLoading, suggestionSurface == .firstPrompt,
-                          prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    // The first prompt's chips are still being written (Paper S2.09 state A): two quiet placeholders.
-                    HStack(spacing: 8) {
-                        KriaSkeletonBar(width: 140, height: 44)
-                        KriaSkeletonBar(width: 112, height: 44)
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 4)
-                    .background(KriaColor.paper)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Loading suggestions")
-                    .accessibilityIdentifier("first-prompt-suggestions-loading")
-                }
                 waitingBar
                 ChatComposer(
                     text: promptBinding,
@@ -2228,6 +2206,28 @@ private struct CreationWorkspaceView: View {
             }
             .accessibilityHidden(projectsDrawerOpen)
             .allowsHitTesting(!projectsDrawerOpen)
+        }
+    }
+
+    /// KRI-756: the first-prompt chips end the transcript, so they scroll away with it instead of covering the page
+    /// while the keyboard is up.
+    @ViewBuilder private var firstPromptSuggestions: some View {
+        let firstPromptChips = suggestionChips(for: .firstPrompt)
+        if !firstPromptChips.isEmpty {
+            SuggestionChipRow(chips: firstPromptChips, sendingID: sendingSuggestionID) { sendSuggestion($0) }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("first-prompt-suggestions")
+        } else if suggestionsLoading, suggestionSurface == .firstPrompt,
+                  prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // The first prompt's chips are still being written (Paper S2.09 state A): two quiet placeholders.
+            HStack(spacing: 8) {
+                KriaSkeletonBar(width: 140, height: 44)
+                KriaSkeletonBar(width: 112, height: 44)
+                Spacer(minLength: 0)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Loading suggestions")
+            .accessibilityIdentifier("first-prompt-suggestions-loading")
         }
     }
 
@@ -2317,7 +2317,6 @@ private struct CreationWorkspaceView: View {
                     format: selectedFormat,
                     speechCleanup: approval.retryOfExecutionID == nil ? fullThread?.speechCleanup : nil,
                     renderShape: approval.retryOfExecutionID == nil ? renderShapePicker : nil,
-                    automaticRepairs: approval.automaticRepairLimit == 2 ? $allowAutomaticRepairs : nil,
                     researchPreview: ResearchPreview.parse(activeProposalEvent?.payload?["research_preview"]),
                     replyLanguage: ClipAnswerLanguage(threadState: threadState),
                     isBusy: isActing || pendingUploadCount > 0,
@@ -3541,7 +3540,7 @@ private struct CreationWorkspaceView: View {
                     speechCleanupChoice: cleanupChoice,
                     outputOrientation: shape?.orientation,
                     landscapeFit: shape?.landscapeFit,
-                    automaticRepairAttempts: decision == "approve" && approval.automaticRepairLimit == 2 && allowAutomaticRepairs ? 2 : 0
+                    automaticRepairAttempts: decision == "approve" ? approval.automaticRepairLimit ?? 0 : 0
                 )
             } catch let error as APIError where error == .conflict && speechCleanupConflictCodes.contains(error.conflictCode ?? "") {
                 // The approval stays PENDING with the same id/fingerprint --

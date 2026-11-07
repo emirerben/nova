@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import contextvars
 import copy
+import functools
 import hashlib
 import inspect
 import json
@@ -22861,6 +22862,89 @@ def _build_ai_timeline(
 
 _CONTEXT_LABEL_CONTIGUITY_EPSILON_S = 0.001
 _CONTEXT_LABEL_COMBINED_MAX_CHARS = 120
+# KRI-888: a stack is bounded by what the frame draws, measured with the renderer's own
+# wrap (`measure_text_overlay_box`) on the tighter of the two canvases, not by characters.
+# `TextElement.text` is also capped at 500 characters.
+_CONTEXT_LABEL_STACKED_MAX_CHARS = 500
+# The measured block excludes the glow the label draws below it: ink ends 25px (portrait)
+# to 30px (landscape) past `bottom` through `_draw_frame`, so the block keeps this much room.
+_CONTEXT_LABEL_GLOW_PAD_PX = 32
+# Used only when skia is unavailable: the label bar's measured one-line width, and the
+# five lines landscape's 1080px height holds.
+_CONTEXT_LABEL_LINE_CHARS = 28
+_CONTEXT_LABEL_STACKED_MAX_LINES = 5
+# The element shape `_context_sport_text_elements` and the guided compile both emit.
+_CONTEXT_LABEL_ELEMENT_SHAPE: dict[str, Any] = {
+    "start_s": 0.0,
+    "end_s": 2.0,
+    "role": "generative_sequence",
+    "position": "custom",
+    "x_frac": 0.86,
+    "y_frac": 0.86,
+    "font_family": "Inter",
+    "size_class": "small",
+    "color": "#FFFFFF",
+    "highlight_color": "#FFFFFF",
+    "alignment": "right",
+    "effect": "static",
+    "z": 8,
+}
+
+
+def _context_label_lines(text: str) -> int:
+    return sum(max(1, -(-len(part) // _CONTEXT_LABEL_LINE_CHARS)) for part in text.split("\n"))
+
+
+@functools.lru_cache(maxsize=256)
+def _context_label_stack_fits(text: str) -> bool:
+    """Whether ``text`` draws inside the frame on both portrait and landscape."""
+    if len(text) > _CONTEXT_LABEL_STACKED_MAX_CHARS:
+        return False
+    try:
+        from app.pipeline import text_overlay_skia as cloud  # noqa: PLC0415
+        from app.pipeline.canvas import LANDSCAPE, PORTRAIT  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 - no skia here (structural evals CI)
+        return _context_label_lines(text) <= _CONTEXT_LABEL_STACKED_MAX_LINES
+    burn = _context_sport_burn_dicts(
+        [{**_CONTEXT_LABEL_ELEMENT_SHAPE, "text": text}], video_duration_s=2.0
+    )
+    if not burn:
+        return False
+    return all(
+        cloud.measure_text_overlay_box(burn[0], render_canvas=canvas)["bottom"] * canvas.height
+        + _CONTEXT_LABEL_GLOW_PAD_PX
+        < canvas.height
+        for canvas in (PORTRAIT, LANDSCAPE)
+    )
+
+
+def _combined_context_label_text(
+    rows: list[dict[str, Any]], *, clip_id: str
+) -> tuple[str, list[dict[str, Any]]]:
+    """One clip's labels as one overlay text, and the rows it actually holds.
+
+    KRI-888: a creator label can run 80 characters, so two can pass the joined cap.
+    Failing the render over copy the creator wrote is wrong; each label keeps its own
+    line instead, up to what the frame can draw. The rows returned are exactly the
+    labels in the text, so provenance never claims a label the frame cannot show.
+    """
+    texts = [str(row["sport"]) for row in rows]
+    joined = " · ".join(texts)
+    if len(joined) <= _CONTEXT_LABEL_COMBINED_MAX_CHARS:
+        return joined, list(rows)
+    kept: list[dict[str, Any]] = []
+    for row, text in zip(rows, texts, strict=True):
+        stacked = "\n".join([*(str(r["sport"]) for r in kept), text])
+        if kept and not _context_label_stack_fits(stacked):
+            log.warning(
+                "context_label_stack_truncated",
+                clip_id=clip_id,
+                kept=len(kept),
+                dropped=[r.get("intent_id") or "" for r in rows[len(kept) :]],
+            )
+            break
+        kept.append(row)
+    return "\n".join(str(r["sport"]) for r in kept), kept
 
 
 def _resolve_clip_id_for_media_id(media_id: str, clip_id_to_gcs: dict[str, str]) -> str | None:
@@ -23051,6 +23135,7 @@ def _grounded_context_labels(
                     vision_answer=vision_answer,
                     vision_confidence=vision_confidence,
                     intent_id=intent.intent_id,
+                    source_quote=getattr(intent, "source_quote", None),
                 )
                 if grounded is not None:
                     break
@@ -23154,13 +23239,8 @@ def _context_sport_text_elements(
                 continue
             seen_texts.add(text)
             rendered_rows.append(row)
-        sport = " · ".join(str(row["sport"]) for row in rendered_rows)
+        sport, shown_rows = _combined_context_label_text(rendered_rows, clip_id=clip_id)
         if sport:
-            if len(sport) > _CONTEXT_LABEL_COMBINED_MAX_CHARS:
-                raise ValueError(
-                    "Combined context labels for clip "
-                    f"{clip_id!r} exceed the {_CONTEXT_LABEL_COMBINED_MAX_CHARS}-character limit"
-                )
             row = rendered_rows[0]
             # Keep the stable source identity used to merge and pin rendered
             # labels across re-renders. Stored snapshots retain this shape.
@@ -23173,7 +23253,7 @@ def _context_sport_text_elements(
                 "confidence": row.get("confidence"),
                 "intent_id": row.get("intent_id") or "",
             }
-            if len(rendered_rows) > 1:
+            if len(shown_rows) > 1:
                 source_params["context_label_provenance"] = [
                     {
                         "text": candidate["sport"],
@@ -23181,7 +23261,12 @@ def _context_sport_text_elements(
                         "confidence": candidate.get("confidence"),
                         "intent_id": candidate.get("intent_id") or "",
                     }
-                    for candidate in rendered_rows
+                    for candidate in shown_rows
+                ]
+            if len(shown_rows) < len(rendered_rows):
+                source_params["context_labels_not_shown"] = [
+                    candidate.get("intent_id") or ""
+                    for candidate in rendered_rows[len(shown_rows) :]
                 ]
             element = TextElement(
                 text=sport,

@@ -13,12 +13,13 @@ import os
 import re
 import unicodedata
 from difflib import SequenceMatcher
-from typing import Any
+from typing import Any, NamedTuple
 
 import structlog
 
 from app.config import settings
 from app.pipeline.caption_language import LANGUAGE_NAMES
+from app.pipeline.caption_spelling import _merge_words, _split_word
 
 log = structlog.get_logger()
 
@@ -213,37 +214,168 @@ def _llm_correct_lines(texts: list[str], language: str | None, *, model: str) ->
     return [str(line) for line in lines]
 
 
-# A same-position word edit (case ending, spelling) must still look like the
-# spoken word; anything less is a replacement and is refused.
-_WORD_EDIT_MIN_RATIO = 0.75
+# A word the proofreader changes is judged on its own, never with the rest of its line
+# (KRI-1263): an accepted edit lands, a refused one keeps the spoken word.
+_WORD_EDIT_MIN_RATIO = 0.5
+_WORD_EDIT_MAX_DISTANCE = 2
+_MAX_LINE_WORD_DELTA = 2
+_WORD_RE = re.compile(r"[\W_]+", re.UNICODE)
 
 
-def _retime_corrected_text(cue: dict[str, Any], new_text: str) -> dict[str, Any] | None:
-    """Apply corrected text onto a timed cue, keeping every word's timing.
+class _Retimed(NamedTuple):
+    """One corrected line on its timed words: ``cue`` is None when no edit survived."""
 
-    Returns None when the corrected tokens cannot be aligned 1:1 (same count, same
-    order, each a same-length edit of the spoken word) -- the caller then keeps the
-    original timed cue instead of dropping its word list (KRI-708).
+    cue: dict[str, Any] | None
+    accepted: int
+    reverted: int
+
+
+def _has_numeric_content(text: str) -> bool:
+    """Include fractions/numerals and compatibility forms such as ㎟ -> mm2."""
+
+    return any(ch.isnumeric() for ch in text) or any(
+        ch.isnumeric() for ch in unicodedata.normalize("NFKD", text)
+    )
+
+
+def _word_key(text: str) -> str:
+    """Fold spelling, but keep numeric tokens exact before alignment."""
+
+    # Punctuation can change a number's value, sign or units ("1.5" != "15").
+    # Folding it away would send an unsafe edit through the unguarded equal path.
+    if _has_numeric_content(text):
+        return text
+
+    key = _WORD_RE.sub("", _fold(text))
+    return key or text
+
+
+def _edit_distance(left: str, right: str) -> int:
+    """Optimal string alignment distance: a swapped pair of letters ("teh" -> "the") costs 1."""
+
+    rows = [[0] * (len(right) + 1) for _ in range(len(left) + 1)]
+    for i in range(len(left) + 1):
+        rows[i][0] = i
+    for j in range(len(right) + 1):
+        rows[0][j] = j
+    for i in range(1, len(left) + 1):
+        for j in range(1, len(right) + 1):
+            cost = 0 if left[i - 1] == right[j - 1] else 1
+            rows[i][j] = min(rows[i - 1][j] + 1, rows[i][j - 1] + 1, rows[i - 1][j - 1] + cost)
+            if i > 1 and j > 1 and left[i - 1] == right[j - 2] and left[i - 2] == right[j - 1]:
+                rows[i][j] = min(rows[i][j], rows[i - 2][j - 2] + 1)
+    return rows[-1][-1]
+
+
+def _is_word_edit(old: str, new: str) -> bool:
+    """True when ``new`` reads as the spoken ``old`` spelled or inflected correctly.
+
+    Numbers never change ("10" -> "11" rewrites what was said). Dropping or adding a
+    suffix of two or more letters ("Arabası" -> "Araba") rewords it (KRI-708), a
+    one-letter ending ("your" -> "you're", "nereye" -> "nereyi") does not.
+    """
+
+    if not old or not new or _has_numeric_content(old + new):
+        return False
+    longer, shorter = (old, new) if len(old) >= len(new) else (new, old)
+    if longer.startswith(shorter) and len(longer) - len(shorter) >= 2:
+        return False
+    if len(longer) < 2:
+        return False
+    distance = _edit_distance(old, new)
+    if distance <= (1 if len(longer) <= 3 else _WORD_EDIT_MAX_DISTANCE):
+        return True
+    return len(shorter) >= 4 and SequenceMatcher(None, old, new).ratio() >= _WORD_EDIT_MIN_RATIO
+
+
+def _is_respacing(old: str, new: str) -> bool:
+    """True when the same letters were only split or joined ("alot" -> "a lot")."""
+
+    return (
+        bool(old)
+        and bool(new)
+        and not _has_numeric_content(old + new)
+        and _edit_distance(old, new) <= 1
+    )
+
+
+def _retime_corrected_text(cue: dict[str, Any], new_text: str) -> _Retimed:
+    """Apply corrected text onto a timed cue, one word at a time.
+
+    The spoken and corrected words are aligned (`difflib`), then each change is judged
+    alone. An edited word keeps its timing, a word written as two shares its span
+    (`caption_spelling._split_word`), two written as one span both. A change that fails
+    its bound (a rewording, a dropped or added word, a new number) keeps the spoken word
+    and counts as reverted; the rest of the line still lands. A line whose word count
+    moves by more than two is kept whole (KRI-708's rewording guard).
     """
 
     words = _timed_words(cue)
     tokens = new_text.split()
-    if words is None or len(tokens) != len(words):
-        return None
-    for word, token in zip(words, tokens):
-        old = _fold(str(word["text"]))
-        new = _fold(token)
-        # Same-length edits only: dropping/adding letters ("Arabası" -> "Araba")
-        # rewords what was said, a vowel/case fix ("Kaçer" -> "Kaçar") does not.
-        if (
-            not new
-            or len(new) != len(old)
-            or SequenceMatcher(None, old, new).ratio() < _WORD_EDIT_MIN_RATIO
-        ):
-            return None
-    for word, token in zip(words, tokens):
-        word["text"] = token
-    return {**cue, "text": new_text, "words": words}
+    if words is None or not tokens:
+        return _Retimed(None, 0, 0)
+    old_keys = [_word_key(str(word["text"])) for word in words]
+    new_keys = [_word_key(token) for token in tokens]
+    opcodes = SequenceMatcher(None, old_keys, new_keys, autojunk=False).get_opcodes()
+    if abs(len(tokens) - len(words)) > _MAX_LINE_WORD_DELTA:
+        refused = sum(max(i2 - i1, j2 - j1) for tag, i1, i2, j1, j2 in opcodes if tag != "equal")
+        return _Retimed(None, 0, refused)
+
+    out: list[dict[str, Any]] = []
+    accepted = reverted = 0
+    respelled_in_place: list[tuple[int, dict[str, Any]]] = []
+    beside_refused: set[int] = set()
+    for tag, i1, i2, j1, j2 in opcodes:
+        spoken, written = words[i1:i2], tokens[j1:j2]
+        start, reverted_before = len(out), reverted
+        if tag == "equal":
+            for word, token in zip(spoken, written):
+                if word["text"] != token:
+                    respelled_in_place.append((len(out), word))
+                out.append({**word, "text": token})
+        elif tag == "replace" and len(spoken) == len(written):
+            for word, token, old_key, new_key in zip(
+                spoken, written, old_keys[i1:i2], new_keys[j1:j2]
+            ):
+                if _is_word_edit(old_key, new_key):
+                    accepted += 1
+                    out.append({**word, "text": token})
+                else:
+                    reverted += 1
+                    out.append(word)
+        elif tag == "replace" and (len(spoken), len(written)) == (1, 2):
+            if _is_respacing(old_keys[i1], "".join(new_keys[j1:j2])):
+                accepted += 1
+                out.extend(_split_word(spoken[0], written[0], written[1]))
+            else:
+                reverted += 2
+                out.extend(spoken)
+        elif tag == "replace" and (len(spoken), len(written)) == (2, 1):
+            if _is_respacing("".join(old_keys[i1:i2]), new_keys[j1]):
+                accepted += 1
+                out.append(_merge_words(spoken[0], spoken[1], written[0]))
+            else:
+                reverted += 2
+                out.extend(spoken)
+        else:
+            reverted += max(len(spoken), len(written))
+            out.extend(spoken)
+        if reverted > reverted_before:
+            beside_refused.update((start - 1, len(out)))
+    # Case and punctuation on a matched word move with the words beside it, so the ones
+    # next to a refused change stay spoken ("mi şimdi?" is not "mi? şimdi?").
+    for index, word in respelled_in_place:
+        if index in beside_refused:
+            out[index] = word
+        else:
+            accepted += 1
+    if not accepted:
+        return _Retimed(None, 0, reverted)
+    return _Retimed(
+        {**cue, "text": " ".join(str(word["text"]) for word in out), "words": out},
+        accepted,
+        reverted,
+    )
 
 
 def _legacy_correct_caption_cues(
@@ -263,26 +395,44 @@ def _legacy_correct_caption_cues(
         return cues
     out: list[dict[str, Any]] = []
     changes: list[dict[str, str]] = []
+    reverted_examples: list[dict[str, str]] = []
+    accepted_words = reverted_words = reverted_lines = 0
     for cue, new_text in zip(cues, corrected):
         stripped = new_text.strip()
-        if stripped and stripped != str(cue.get("text", "")).strip():
-            if cue.get("words"):
-                retimed = _retime_corrected_text(cue, stripped)
-                if retimed is None:
-                    log.info(
-                        "caption_correction_unaligned_kept_original",
-                        before=str(cue.get("text", ""))[:120],
-                    )
-                    out.append(cue)
-                    continue
-                changes.append({"before": str(cue.get("text", ""))[:300], "after": stripped[:300]})
-                out.append(retimed)
-                continue
+        if not stripped or stripped == str(cue.get("text", "")).strip():
+            out.append(cue)
+            continue
+        if not cue.get("words"):
             changes.append({"before": str(cue.get("text", ""))[:300], "after": stripped[:300]})
             out.append({**cue, "text": stripped})
-        else:
+            continue
+        retimed = _retime_corrected_text(cue, stripped)
+        accepted_words += retimed.accepted
+        reverted_words += retimed.reverted
+        if retimed.reverted:
+            reverted_examples.append(
+                {"before": str(cue.get("text", ""))[:300], "proposed": stripped[:300]}
+            )
+        if retimed.cue is None:
+            reverted_lines += 1
+            log.info(
+                "caption_correction_unaligned_kept_original",
+                before=str(cue.get("text", ""))[:120],
+            )
             out.append(cue)
-    log.info("caption_correction_done", cues=len(out), changed=len(changes), model=model)
+            continue
+        changes.append(
+            {"before": str(cue.get("text", ""))[:300], "after": retimed.cue["text"][:300]}
+        )
+        out.append(retimed.cue)
+    log.info(
+        "caption_correction_done",
+        cues=len(out),
+        changed=len(changes),
+        accepted_words=accepted_words,
+        reverted_words=reverted_words,
+        model=model,
+    )
     try:
         from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -294,6 +444,10 @@ def _legacy_correct_caption_cues(
                 "language": language,
                 "changed": len(changes),
                 "changes": changes[:20],
+                "accepted_words": accepted_words,
+                "reverted_words": reverted_words,
+                "reverted_lines": reverted_lines,
+                "reverted_examples": reverted_examples[:10],
             },
         )
     except Exception:  # noqa: BLE001

@@ -2990,6 +2990,27 @@ struct LocalEditorOperations: EditorOperations {
     }
 }
 
+enum EditorCompatibilityClipIdentity {
+    static func id(projectID: UUID, slotID: String) -> UUID {
+        if let id = UUID(uuidString: slotID) { return id }
+        return scopedID(projectID: projectID, domain: "slot", key: slotID)
+    }
+
+    static func assetID(projectID: UUID, sourceID: String) -> UUID {
+        if let id = UUID(uuidString: sourceID) { return id }
+        return scopedID(projectID: projectID, domain: "asset", key: sourceID)
+    }
+
+    private static func scopedID(projectID: UUID, domain: String, key: String) -> UUID {
+        let input = "kria.editor-\(domain)/v1\0" + projectID.uuidString + "\0" + key
+        var bytes = Array(SHA256.hash(data: Data(input.utf8)).prefix(16))
+        bytes[6] = (bytes[6] & 0x0f) | 0x80
+        bytes[8] = (bytes[8] & 0x3f) | 0x80
+        return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                           bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
+    }
+}
+
 extension DraftSnapshot {
     /// Rebase the recoverable runtime draft onto the live render variant.
     /// Direct editor commits intentionally do not mint a runtime-draft head, so
@@ -3155,11 +3176,22 @@ extension DraftSnapshot {
                 return EditorClip(id: id, assetID: assetID, sourceClipIndex: Self.integer(object["clip_index"]), start: start, end: end, trimIn: trimIn, trimOut: trimOut, sourceDuration: Self.number(object["source_duration"] ?? object["source_duration_s"]), muted: object["muted"] == .bool(true))
             }
             guard let duration = Self.number(object["duration_s"]), duration > 0 else { return nil }
-            let id = Self.uuid(object["id"]) ?? Self.uuid(object["slot_id"]) ?? UUID()
+            let canonicalID = [object["slot_id"]?.stringValue, object["id"]?.stringValue]
+                .compactMap { $0 }.first { !$0.isEmpty }
+            let id = Self.uuid(object["id"]) ?? Self.uuid(object["slot_id"])
+                ?? canonicalID.map { EditorCompatibilityClipIdentity.id(projectID: projectID, slotID: $0) } ?? UUID()
+            let assetID: UUID
+            if let explicit = Self.uuid(object["asset_id"]) {
+                assetID = explicit
+            } else if let opaqueAsset = object["asset_id"]?.stringValue, !opaqueAsset.isEmpty {
+                assetID = EditorCompatibilityClipIdentity.assetID(projectID: projectID, sourceID: opaqueAsset)
+            } else {
+                assetID = id
+            }
             let sourceStart = Self.number(object["in_s"]) ?? 0
             let start = cursor; cursor += duration
             let sourceDuration = Self.number(object["source_duration"] ?? object["source_duration_s"]) ?? (sourceStart + duration)
-            return EditorClip(id: id, assetID: Self.uuid(object["asset_id"]) ?? id, sourceClipIndex: Self.integer(object["clip_index"]) ?? index, start: start, end: start + duration, trimIn: sourceStart, trimOut: sourceStart + duration, sourceDuration: sourceDuration, muted: object["muted"] == .bool(true), slotID: object["slot_id"]?.stringValue)
+            return EditorClip(id: id, assetID: assetID, sourceClipIndex: Self.integer(object["clip_index"]) ?? index, start: start, end: start + duration, trimIn: sourceStart, trimOut: sourceStart + duration, sourceDuration: sourceDuration, muted: object["muted"] == .bool(true), slotID: object["slot_id"]?.stringValue)
         }
         let textValues = Self.array(sections["text_elements"] ?? legacy["text"])
         let text = textValues.compactMap { value -> TextLayer? in
@@ -3248,16 +3280,22 @@ extension DraftSnapshot {
         var changed: Set<EditorSection> = []
         for lane in Self.stagedLaneKeys where draftPayload[lane.key] != nil && !changed.contains(lane.section) {
             var candidate = sections
+            let removesMusic = lane.section == .music && draftPayload["remove_music"] == .bool(true)
+            if removesMusic { candidate.removeValue(forKey: "music") }
             if lane.section == .timeline {
                 guard let merged = Self.mergedTimeline(draft: Self.array(draftValue("timeline_slots")), base: Self.array(baseSections["timeline_slots"])) else { continue }
                 candidate["timeline_slots"] = .array(merged)
             } else {
                 for key in lane.sectionKeys {
-                    if key == "music_track_id", draftPayload["remove_music"] == .bool(true) { candidate[key] = .null }
+                    // Removal clears the canonical track/window pair. Retaining
+                    // the previous track's window creates an unrepresentable
+                    // selected state when a later rebase validates typed output.
+                    if removesMusic { candidate[key] = .null }
                     else if let value = draftValue(key) { candidate[key] = value }
                 }
             }
             let differs = lane.sectionKeys.contains { Self.strippingNulls(candidate[$0]) != Self.strippingNulls(baseSections[$0]) }
+                || (removesMusic && candidate["music"] != baseSections["music"])
             guard differs else { continue }
             sections = candidate; changed.insert(lane.section)
         }
