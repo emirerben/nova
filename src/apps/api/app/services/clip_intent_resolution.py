@@ -2262,6 +2262,7 @@ async def resolve_clip_intents_for_turn(
                 creator_request=creator_request,
                 records=member_records,
                 intent_id=intent.intent_id,
+                source_quote=intent.source_quote,
             )
             if named is not None:
                 work.caption_text = named.text
@@ -2278,6 +2279,7 @@ async def resolve_clip_intents_for_turn(
             creator_request=creator_request,
             records=member_records,
             intent_id=intent.intent_id,
+            source_quote=intent.source_quote,
         )
         if grounded is not None:
             work.caption_text = grounded.text
@@ -2323,6 +2325,7 @@ async def resolve_clip_intents_for_turn(
             vision_answer=output.answer,
             vision_confidence=output.confidence,
             intent_id=candidate.intent_id,
+            source_quote=cand_intent.source_quote,
         )
         if re_grounded is not None:
             work.caption_text = re_grounded.text
@@ -2755,6 +2758,7 @@ def _apply_vision_result(
                     creator_request=creator_request,
                     record=records_by_id[candidate.media_id],
                     intent_id=candidate.intent_id,
+                    source_quote=work.intent.source_quote,
                 )
                 if label is not None:
                     work.kept.append(
@@ -2780,6 +2784,7 @@ def _apply_vision_result(
             vision_answer=output.answer,
             vision_confidence=output.confidence,
             intent_id=candidate.intent_id,
+            source_quote=work.intent.source_quote,
         )
         if label is not None:
             work.kept.append(

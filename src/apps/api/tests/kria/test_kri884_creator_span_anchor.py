@@ -102,3 +102,136 @@ def test_intents_stored_without_a_quote_redump_byte_identically() -> None:
     intent = ClipIntent.model_validate(row)
     assert intent.source_quote is None
     assert "source_quote" not in intent.model_dump(mode="json")
+
+
+# Added after review: sites that still printed the first match, and quotes that did not anchor.
+
+_TWO_VERSIONS = "Put Salsa + chips on the first clip. Put Salsa chips on the second clip."
+_SECOND = "Put Salsa chips on the second clip"
+
+
+def _two_version_intent() -> ClipIntent:
+    return ClipIntent(
+        intent_id="text_second",
+        op="label",
+        attribute="the second clip",
+        creator_text="Salsa chips",
+        source_quote=_SECOND,
+    )
+
+
+@pytest.mark.parametrize(
+    ("request_text", "quote"),
+    [
+        ("Put Salsa + chips on the first clip. Put Salsa chips on the\nsecond clip.", _SECOND),
+        ("Put Salsa + chips on the first clip. Put Salsa chips  on the second clip.", _SECOND),
+        (
+            "Put ☕️ Salsa + chips on the first clip. Put ☕️ Salsa chips on the second clip.",
+            "Put ☕ Salsa chips on the second clip",
+        ),
+    ],
+)
+def test_a_quote_the_planner_accepts_after_folding_still_anchors(request_text, quote) -> None:
+    label = _label("Salsa chips", quote, request_text)
+    assert label is not None and label.text == "Salsa chips"
+
+
+def test_a_quote_with_full_width_letters_still_anchors() -> None:
+    request = "Put Salsa + chips on the first clip. Put Salsa chips on the second clip."
+    quote = "Ｐut Salsa chips on the second clip"
+    label = _label("Salsa chips", quote, request)
+    assert label is not None and label.text == "Salsa chips"
+
+
+def test_the_tapped_clip_path_prints_its_own_intents_version() -> None:
+    from app.services.clip_intent_planning import _selected_assignments
+    from app.services.clip_intent_resolution import IntentClip
+
+    clip = IntentClip(
+        media_id="m1",
+        kind="video",
+        analysis={"subject": RECORD.subject, "description": ""},
+        gcs_path="users/u/clips/m1.mp4",
+    )
+    assignments = _selected_assignments(
+        _two_version_intent(), ["m1"], {"m1": clip}, _TWO_VERSIONS, evidence="tapped"
+    )
+    assert assignments is not None and [a.value for a in assignments] == ["Salsa chips"]
+
+
+def _vision_state(intent: ClipIntent):
+    from app.services.clip_intent_resolution import _IntentWork
+
+    work = _IntentWork(intent=intent)
+    return {intent.intent_id: work}, {"m1": RECORD}
+
+
+def test_a_vision_confirmed_creator_label_prints_its_own_intents_version() -> None:
+    from app.agents.clip_question import ClipQuestionOutput
+    from app.services.clip_intent_resolution import _apply_vision_result, _VisionCandidate
+
+    intent = _two_version_intent()
+    work_by_id, records = _vision_state(intent)
+    candidate = _VisionCandidate(
+        media_id="m1",
+        intent_id=intent.intent_id,
+        op="label",
+        question="q",
+        fallback_value=None,
+        creator_text=intent.creator_text,
+        attribute=intent.attribute,
+    )
+    _apply_vision_result(
+        candidate,
+        ClipQuestionOutput(answer="yes", confidence=0.95, evidence="bowls"),
+        work_by_id=work_by_id,
+        records_by_id=records,
+        creator_request=_TWO_VERSIONS,
+    )
+    assert [a.value for a in work_by_id[intent.intent_id].kept] == ["Salsa chips"]
+
+
+def test_a_vision_named_label_prints_its_own_intents_version() -> None:
+    from app.agents.clip_question import ClipQuestionOutput
+    from app.services.clip_intent_resolution import _apply_vision_result, _VisionCandidate
+
+    intent = ClipIntent(
+        intent_id="text_second",
+        op="label",
+        attribute="the second clip",
+        source_quote=_SECOND,
+    )
+    work_by_id, records = _vision_state(intent)
+    candidate = _VisionCandidate(
+        media_id="m1",
+        intent_id=intent.intent_id,
+        op="label",
+        question="q",
+        fallback_value="Salsa chips",
+        creator_text=None,
+        attribute=intent.attribute,
+    )
+    _apply_vision_result(
+        candidate,
+        ClipQuestionOutput(answer="Salsa chips", confidence=0.95, evidence="bowls"),
+        work_by_id=work_by_id,
+        records_by_id=records,
+        creator_request=_TWO_VERSIONS,
+    )
+    assert [a.value for a in work_by_id[intent.intent_id].kept] == ["Salsa chips"]
+
+
+def test_a_rebuilt_caption_intent_keeps_the_quote() -> None:
+    from app.services.clip_intent_planning import with_labels_kept_as_written
+    from tests.kria.test_kri804_label_text_reply import KEEP_LONG, LONG, SHOT
+
+    quote = f'Put "{LONG}" on {SHOT}'
+    intent = ClipIntent(
+        intent_id="text_bowls",
+        op="label",
+        attribute=SHOT,
+        creator_text=LONG,
+        source_quote=quote,
+    )
+    (kept,) = with_labels_kept_as_written([intent], f"{quote}\n{KEEP_LONG}")
+    assert kept.op == "caption" and kept.source_quote == quote

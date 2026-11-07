@@ -643,12 +643,8 @@ def test_narrated_guided_plan_keeps_generic_context_labels_after_narration_mater
     assert job.assembly_plan["guided_story_execution_plan"] == repaired
 
 
-def test_editor_revision_stacks_two_long_creator_labels_instead_of_failing(monkeypatch) -> None:
-    """KRI-888: the revision projection must not raise on two long creator labels.
-
-    Failure modes: the first approval plan raises; the editor revision raises on the
-    joined text; a label is dropped from the stack.
-    """
+def _guided_label_stack(monkeypatch, texts: list[str]):
+    """The approval plan and runtime plan for one clip carrying these creator labels."""
     from app.pipeline.guided_story import compile_guided_runtime_plan
     from app.schemas.clip_intents import ClipAssignment, ResolvedClipIntent
     from app.schemas.edit_proposal import (
@@ -659,8 +655,6 @@ def test_editor_revision_stacks_two_long_creator_labels_instead_of_failing(monke
     )
     from app.schemas.guided_edit_revision import guided_editor_revision_from_approval
 
-    first = " ".join(["il"] * 26)
-    second = " ".join(["li"] * 26)
     media = [
         MediaRef(
             lane="clip",
@@ -686,7 +680,9 @@ def test_editor_revision_stacks_two_long_creator_labels_instead_of_failing(monke
                 creator_text=text,
                 assignments=[ClipAssignment(media_id="city-clip", value=text, confidence=1.0)],
             )
-            for intent_id, attribute, text in (("one", "first", first), ("two", "later", second))
+            for intent_id, attribute, text in (
+                (f"i{n}", f"label {n}", text) for n, text in enumerate(texts)
+            )
         ],
         story_beats=[
             StoryBeat(
@@ -718,7 +714,7 @@ def test_editor_revision_stacks_two_long_creator_labels_instead_of_failing(monke
         assembly_plan={"guided_edit": raw},
         all_candidates={
             "creator_strategy": {"sport_labels": True},
-            "creator_request": f"first clips {first}, later clips {second}",
+            "creator_request": " ".join(f"label {n} clips {text}," for n, text in enumerate(texts)),
         },
     )
 
@@ -739,7 +735,6 @@ def test_editor_revision_stacks_two_long_creator_labels_instead_of_failing(monke
     monkeypatch.setattr(gb.settings, "clip_intents_enabled", True)
 
     plan, _track = gb._guided_execution_plan(str(job.id), raw)
-    assert [row["text"] for row in plan["context_label_text_elements"]] == [f"{first}\n{second}"]
 
     revision = guided_editor_revision_from_approval(
         proposal_version=raw["proposal_version"],
@@ -749,7 +744,35 @@ def test_editor_revision_stacks_two_long_creator_labels_instead_of_failing(monke
     )
     revision["state_hash"] = ""
     runtime = compile_guided_runtime_plan(plan, raw, revision)
-    assert [row["text"] for row in runtime["context_label_text_elements"]] == [f"{first}\n{second}"]
+    return plan, runtime
+
+
+def test_editor_revision_stacks_two_long_creator_labels_instead_of_failing(monkeypatch) -> None:
+    """KRI-888: the revision projection must not raise on two long creator labels.
+
+    Failure modes: the first approval plan raises; the editor revision raises on the
+    joined text; a label is dropped from the stack.
+    """
+    first = " ".join(["il"] * 26)
+    second = " ".join(["li"] * 26)
+    plan, runtime = _guided_label_stack(monkeypatch, [first, second])
+    for compiled in (plan, runtime):
+        assert [row["text"] for row in compiled["context_label_text_elements"]] == [
+            f"{first}\n{second}"
+        ]
+
+
+def test_guided_stack_provenance_lists_only_labels_the_frame_holds(monkeypatch) -> None:
+    """KRI-888: past what the frame draws, provenance and the element agree."""
+    texts = [f"{n} " + " ".join(["salsa"] * 7) for n in range(7)]
+    plan, runtime = _guided_label_stack(monkeypatch, texts)
+    for compiled in (plan, runtime):
+        (element,) = compiled["context_label_text_elements"]
+        printed = element["text"].split("\n")
+        params = element["source_params"]
+        assert 1 < len(printed) < len(texts)
+        assert [p["text"] for p in params["context_label_provenance"]] == printed
+        assert params["context_labels_not_shown"] == [f"i{n}" for n in range(len(printed), 7)]
 
 
 def test_unified_montage_room_labels_draw_once_per_clip(monkeypatch) -> None:

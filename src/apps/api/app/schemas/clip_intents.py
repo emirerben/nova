@@ -591,17 +591,41 @@ def creator_literal_span(haystack: str, phrase: str, *, near: str | None = None)
     return haystack[start:end]
 
 
-def _quote_range(haystack: str, quote: str | None) -> tuple[int, int] | None:
-    """Where the intent's quote sits in the request; None when it can't be found.
+def _folded(text: str) -> tuple[str, list[int]]:
+    """``text`` as the planner fence compares it, with each kept character's source offset.
 
-    Typed apostrophes, dashes and quotes fold one character to one character, so the
-    offsets still index ``haystack``.
+    Typed quotes, dashes and apostrophes unify, NFKC applies, variation selectors drop and
+    every run of whitespace is one space. The planner accepts a ``source_quote`` on this
+    form, so the quote has to be found on it too.
     """
-    quote = (quote or "").strip()
-    if not quote:
+    chars: list[str] = []
+    origin: list[int] = []
+    for at, char in enumerate(text):
+        if 0xFE00 <= ord(char) <= 0xFE0F:
+            continue
+        for piece in unicodedata.normalize("NFKC", char).translate(_APOSTROPHES):
+            if piece.isspace() or unicodedata.category(piece) == "Cc":
+                if chars and chars[-1] == " ":
+                    continue
+                piece = " "
+            chars.append(piece)
+            origin.append(at)
+    while chars and chars[-1] == " ":
+        chars.pop()
+        origin.pop()
+    return "".join(chars), origin
+
+
+def _quote_range(haystack: str, quote: str | None) -> tuple[int, int] | None:
+    """Where the intent's quote sits in the request; None when it can't be found."""
+    folded_quote = _folded((quote or "").strip())[0].strip()
+    if not folded_quote:
         return None
-    at = haystack.translate(_APOSTROPHES).find(quote.translate(_APOSTROPHES))
-    return None if at < 0 else (at, at + len(quote))
+    folded, origin = _folded(haystack)
+    at = folded.find(folded_quote)
+    if at < 0:
+        return None
+    return origin[at], origin[at + len(folded_quote) - 1] + 1
 
 
 def _extend(text: str, at: int, symbols: list[str], *, step: int) -> int | None:

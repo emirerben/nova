@@ -464,6 +464,7 @@ def with_labels_kept_as_written(
                 op="caption",
                 attribute=intent.attribute,
                 source_kind=intent.source_kind,
+                source_quote=intent.source_quote,
                 creator_text=text,
             )
         kept.append(intent)
@@ -1117,6 +1118,7 @@ def _selected_assignments(
                     creator_request=creator_request,
                     record=clip_record(clip.analysis, kind=clip.kind),
                     intent_id=intent.intent_id,
+                    source_quote=intent.source_quote,
                 )
             if label is None:
                 return None

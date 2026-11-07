@@ -555,3 +555,76 @@ def test_legacy_rows_cannot_fallback_into_the_visual_label_lane():
         )
         == []
     )
+
+
+# KRI-888 follow-up: the stack is bounded by what the frame can draw, not by characters.
+
+
+def _label_rows(count: int, length: int) -> list[dict]:
+    words = ("salsa chips and dips for the table " * 4).split()
+    rows = []
+    for n in range(count):
+        text = f"{n}"
+        for word in words:
+            if len(text) + 1 + len(word) > length:
+                break
+            text += f" {word}"
+        rows.append(
+            {
+                "clip_id": "clip-a",
+                "sport": text,
+                "source": "grounded_label",
+                "grounding": "creator_text",
+                "confidence": 1.0,
+                "intent_id": f"i{n}",
+            }
+        )
+    return rows
+
+
+def _stacked_elements(rows: list[dict]) -> list[dict]:
+    return _context_sport_text_elements(
+        rows,
+        steps=[SimpleNamespace(clip_id="clip-a", slot={"transition_in": "cut"})],
+        resolved_plans=[{"duration_s": 2.0}],
+        video_duration_s=2.0,
+    )
+
+
+@pytest.mark.parametrize("canvas_name", ["PORTRAIT", "LANDSCAPE"])
+@pytest.mark.parametrize("count", [2, 5, 7])
+def test_a_stack_of_long_creator_labels_is_drawn_inside_the_frame(canvas_name, count):
+    import numpy as np
+
+    from app.pipeline import canvas as canvases
+    from app.pipeline import text_overlay_skia as skia_renderer
+
+    canvas = getattr(canvases, canvas_name)
+    (element,) = _stacked_elements(_label_rows(count, 75))
+    (overlay,) = _context_sport_burn_dicts([element], video_duration_s=2.0)
+    image = skia_renderer._draw_frame(overlay, 0.0, 2.0, render_canvas=canvas)
+    alpha = np.array(image.toarray())[..., 3]
+    rows_with_ink = np.where(alpha.max(axis=1) > 0)[0]
+    assert rows_with_ink.size
+    assert rows_with_ink.max() < canvas.height - 1
+
+
+@pytest.mark.parametrize("count", [2, 5, 7])
+def test_provenance_lists_exactly_the_labels_the_overlay_text_holds(count):
+    (element,) = _stacked_elements(_label_rows(count, 75))
+    printed = element["text"].split("\n")
+    provenance = element["source_params"].get("context_label_provenance")
+    assert printed
+    if len(printed) > 1:
+        assert [p["text"] for p in provenance] == printed
+    else:
+        assert provenance is None
+    assert element["source_params"]["intent_id"] == "i0"
+
+
+def test_labels_the_frame_cannot_hold_are_named_in_the_element_not_just_the_log():
+    (element,) = _stacked_elements(_label_rows(7, 75))
+    dropped = element["source_params"].get("context_labels_not_shown")
+    kept = element["text"].split("\n")
+    assert dropped == [f"i{n}" for n in range(len(kept), 7)]
+    assert dropped
