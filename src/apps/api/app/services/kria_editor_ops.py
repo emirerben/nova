@@ -231,6 +231,10 @@ def _has_song_lyric_captions(job: Any, variant: dict[str, Any]) -> bool:
         for row in variant.get("text_elements") or []
     ):
         return False
+    if _guided_v2_revision(job, variant) is None:
+        # Hidden lyrics live on the guided revision. Without one there is nothing to read the
+        # toggle from or write it to, so chat must not claim captions are on (or offer them).
+        return False
     caption_meta = _editor_capabilities(job, variant).get("caption_meta")
     return caption_meta is True or (
         isinstance(caption_meta, dict) and bool(caption_meta.get("editable"))
@@ -3253,6 +3257,9 @@ def _before_lanes(
             for key in state.caption_patch
             if key != "font_set"
         }
+        # The carried lyric look is restored with the toggle, so Undo puts back the whole
+        # `caption_meta` Save replaced rather than `{enabled}` alone.
+        before["caption_meta"].update(_song_lyric_meta_carry(state))
     if "timeline" in changed:
         before["timeline_slots"] = [
             row.model_dump(mode="json", exclude_none=True)

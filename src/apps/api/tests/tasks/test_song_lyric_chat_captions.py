@@ -96,7 +96,8 @@ def test_chat_turn_on_captions_reveals_hidden_song_lyrics_and_the_editor_toggle_
     assert compiled.payload.caption_meta.y_frac == 0.7
     # ... without the receipt claiming the creator asked for it.
     assert len(compiled.changes) == 1
-    assert compiled.before["caption_meta"] == {"enabled": False}  # Undo restores hidden
+    # Undo restores hidden AND the look Save would otherwise replace.
+    assert compiled.before["caption_meta"] == {"enabled": False, "style": "sentence", "y_frac": 0.7}
     assert [(e.lane, e.field) for e in compiled.diff.entries] == [("caption_meta", "enabled")]
     # The phone applies the draft; the cloud Save path takes the same payload.
     gj.require_guided_story_editor_commit(job, "guided_story", compiled.payload)
@@ -145,6 +146,105 @@ def test_a_video_without_lyric_rows_is_not_offered_captions(harness, composer, m
     variant["text_elements"] = [
         row for row in variant["text_elements"] if not row["id"].startswith("song-caption-")
     ]
+    snapshot = build_editor_snapshot(job, variant)
+    assert "caption" not in snapshot["allowed_op_families"]
+    assert "captions" not in snapshot
+
+
+def _hidden_lyrics_item(harness, monkeypatch, sync="lipsync"):
+    from app.routes import generative_jobs as gj
+
+    monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", True)
+    job, _snapshot, _bindings = harness(
+        sync=sync, song_analysis=_lyrics_analysis(), creator_request=_UNASKED
+    )
+    gb._run_generative_job(str(job.id))
+    return job, job.assembly_plan["variants"][0]
+
+
+def test_a_captions_scoped_turn_keeps_the_planned_lyric_look(harness, composer, monkeypatch):
+    """The Kria runtime strips every commit lane outside a flagged scope (KRI-441 layer 3);
+    the lyric look riding along with the toggle is not a change and must not be stripped."""
+    from app.kria import plan_review
+    from app.services.kria_editor_ops import compile_editor_ops
+
+    job, variant = _hidden_lyrics_item(harness, monkeypatch)
+    compiled = compile_editor_ops(
+        job, variant, [{"op": "set_caption_meta", "patch": {"enabled": True}}]
+    )
+    repaired, report = plan_review.repair_compiled(compiled, ["captions"])
+    meta = repaired.payload.caption_meta
+    assert (meta.enabled, meta.style, meta.y_frac) == (True, "sentence", 0.7)
+    assert not report
+    assert plan_review.repair_note(report, []) == ""
+    data = repaired.payload.model_dump(mode="json", exclude_none=True)
+    assert plan_review.changed_sections(data, repaired.before, ["captions"]) == ["captions"]
+
+
+def test_a_look_only_scope_does_not_turn_the_lyrics_on(harness, composer, monkeypatch):
+    from app.kria import plan_review
+    from app.services.kria_editor_ops import compile_editor_ops
+
+    job, variant = _hidden_lyrics_item(harness, monkeypatch)
+    compiled = compile_editor_ops(
+        job, variant, [{"op": "set_caption_meta", "patch": {"enabled": True}}]
+    )
+    repaired, report = plan_review.repair_compiled(compiled, ["look"])
+    assert report.reverted_sections == ["captions"]
+    assert repaired.payload.caption_meta is None
+
+
+def test_undoing_the_toggle_restores_hidden_with_the_planned_lyric_look(
+    harness, composer, monkeypatch
+):
+    """Undo commits `caption_meta` wholesale too, so it must put the look back with `enabled`."""
+    from app.kria import plan_review
+    from app.routes import generative_jobs as gj
+    from app.routes.generative_jobs import EditorCommitCaptionMeta, variant_render_baseline
+    from app.services.kria_editor_ops import compile_editor_ops, editor_payload_dump
+
+    job, variant = _hidden_lyrics_item(harness, monkeypatch)
+    compiled = compile_editor_ops(
+        job, variant, [{"op": "set_caption_meta", "patch": {"enabled": True}}]
+    )
+    compiled, _report = plan_review.repair_compiled(compiled, ["captions"])
+    data = editor_payload_dump(compiled.payload)
+    record = plan_review.build_restore_record(
+        data, compiled.before, ["captions"], turn_id="t1", base_job_id=str(job.id)
+    )
+    lanes, _toggle = plan_review.restore_section(record, "captions", data)
+    assert lanes["caption_meta"] == {"enabled": False, "style": "sentence", "y_frac": 0.7}
+
+    gj.prepare_editor_commit(job, "guided_story", compiled.payload)
+    assert _drawn_lyrics(job)
+    undo = compiled.payload.model_copy(
+        update={
+            "caption_meta": EditorCommitCaptionMeta(**lanes["caption_meta"]),
+            "guided_revision_number": compiled.payload.guided_revision_number + 1,
+            "base_generation": variant_render_baseline(job.assembly_plan["variants"][0]),
+        }
+    )
+    gj.prepare_editor_commit(job, "guided_story", undo)
+    _shown, revision, _timeline = _editor_read(job)
+    assert revision["caption_meta"]["enabled"] is False
+    assert (revision["caption_meta"]["style"], revision["caption_meta"]["y_frac"]) == (
+        "sentence",
+        0.7,
+    )
+    assert _drawn_lyrics(job) == []
+
+
+def test_without_a_guided_revision_chat_is_not_told_the_lyrics_are_on(
+    harness, composer, monkeypatch
+):
+    """The revision is where hidden lyrics are stored; chat must not read `enabled=True` by
+    default when it cannot see that revision."""
+    from app.services import kria_editor_ops
+    from app.services.kria_editor_ops import build_editor_snapshot
+
+    job, variant = _hidden_lyrics_item(harness, monkeypatch)
+    assert build_editor_snapshot(job, variant)["captions"]["meta"]["enabled"] is False
+    monkeypatch.setattr(kria_editor_ops, "_guided_v2_revision", lambda *_args: None)
     snapshot = build_editor_snapshot(job, variant)
     assert "caption" not in snapshot["allowed_op_families"]
     assert "captions" not in snapshot
