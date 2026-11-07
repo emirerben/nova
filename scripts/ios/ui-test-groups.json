@@ -145,7 +145,7 @@
       "KriaUITests/CreationUITests/testReviewPlanFlagsUpdatesAndUndoesASectionFromTheFeedCTA",
       "KriaUITests/CreationUITests/testReviewPlanUndoAllPutsEverythingBack",
       "KriaUITests/CreationUITests/testReviewPlanManualEditsOfTitleCaptionsAndMixFlagTheirSections",
-      "KriaUITests/CreationUITests/testReviewPlanOpensFromTheProjectAndKeepAsIsSendsNothing",
+      "KriaUITests/CreationUITests/testFinishedVideoHasNoReviewRowOrRenderNotes",
       "KriaUITests/CreationUITests/testLivePlanFeedRendersStructuredPayloadsAndOffersReview",
       "KriaUITests/CreationUITests/testClipPickerSlideNearBottomEdgeAutoScrollsAndVerticalDragStillScrolls",
       "KriaUITests/TeleprompterUITests/testScriptIsSavedAndCameraFailureKeepsItEditable",

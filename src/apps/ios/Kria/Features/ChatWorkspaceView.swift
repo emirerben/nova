@@ -904,7 +904,8 @@ private struct CreationWorkspaceView: View {
     }
 
     @ViewBuilder private var planFeedView: some View {
-        let feed = planFeed.paced(by: deviceBuildStage)
+        let serverFeed = planFeed
+        let feed = serverFeed.paced(by: deviceBuildStage)
         let device = deviceRenderKey
         let devicePhase = device.flatMap { model.deviceRenders.presentations[$0]?.phase } ?? .preparing
         PlanBlockFeed(
@@ -915,15 +916,18 @@ private struct CreationWorkspaceView: View {
             isStopping: isStoppingRender,
             stopMessage: stopMessage,
             stop: stopRender,
-            // The Review CTA / Change pills exist only when the server speaks live-plan contract v2.
-            openReview: capabilities?.livePlanReviewAvailable == true ? { openPlanReview(section: $0) } : nil
+            // The Change pills exist only when the server speaks live-plan contract v2.
+            openReview: capabilities?.livePlanReviewAvailable == true ? { openPlanReview(section: $0) } : nil,
+            // The server's plan, not the device-paced one: an iPhone build holds `feed` incomplete while it builds.
+            phase: serverFeed.phase(workspaceReady: currentProject.status == .ready),
+            buildStage: deviceBuildStage
         )
         .id("plan-feed")
     }
 
-    /// Opens the Review sheet (KRI-440). `section` is the card whose Change was tapped, nil for the CTA or the
-    /// project's Review row. The sheet starts from the feed's blocks so it shows at once, then loads the snapshot.
-    private func openPlanReview(section: PlanSectionID?) {
+    /// Opens the Review sheet (KRI-440). `section` is the card whose Change was tapped. The sheet starts from the
+    /// feed's blocks so it shows at once, then loads the snapshot.
+    private func openPlanReview(section: PlanSectionID) {
         let seed = planFeed.isEmpty ? [] : planFeed.paced(by: deviceBuildStage).blocks
         reviewPresentation = ReviewPlanPresentation(seed: seed, initialFlag: section)
     }
@@ -2382,25 +2386,6 @@ private struct CreationWorkspaceView: View {
                 rerecordActions: rerecordActions
             )
             .id("ready")
-            if capabilities?.livePlanReviewAvailable == true, currentProject.runtimeVersion == 2,
-               let activeJob = fullThread?.activeJobID ?? currentProject.activeJobID?.uuidString {
-                ProjectReviewEntry(threadID: project.id, jobKey: activeJob, api: model.api) { openPlanReview(section: nil) }
-                    .id("project-review-entry")
-            }
-            // Short creator-facing sentences about one-pass render decisions
-            // (KRI-178), e.g. "Placed 9 of 10 moments you named." Only shown
-            // once the job itself is in a ready/done state, mirroring the
-            // failureMessage precedent in CreationConfirmationStage.
-            if currentProject.status == .ready, let renderNotes = fullThread?.job?.renderNotes,
-                !renderNotes.isEmpty
-            {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(renderNotes.enumerated()), id: \.offset) { _, note in
-                        Text(note).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
-                    }
-                }
-                .accessibilityIdentifier("chat.job.renderNotes")
-            }
             if let variants = fullThread?.job?.variants, variants.count > 1 {
                 ForEach(variants.compactMap { $0.variantID }, id: \.self) { variantID in
                     let variant = variants.first { $0.variantID == variantID }
