@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.49.0] - 2026-11-07
+
+### Changed
+- fix(api): creator labels anchor to their own quote and stack instead of failing (KRI-884, KRI-888) (#2166) <!-- release-pr: 2166 -->
+
 ## [0.88.48.0] - 2026-11-07
 
 ### Changed
