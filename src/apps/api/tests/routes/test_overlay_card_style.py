@@ -1,10 +1,10 @@
 """KRI-1264: zoom and animation on a phone Talking edit's picture card, end to end on the server.
 
-The editor writes ``media_overlays[i].editor_style`` (zoom, animation, and the KRI-1141 angle). Save
-keeps zoom and animation on ``SubtitledOverlayCard``, the compile writes them as the card clip's
-``visual_placement.editor_style`` (the angle stays on ``transform.rotation_degrees``), and the pinned
-recipe reads back into the editor as the same ``editor_style``. Before this Save refused both and
-the compile had nowhere to put them. Rendering is `PlacedCardStyleTests` on the device engine.
+The editor writes ``media_overlays[i].editor_style`` (zoom, animation, and the KRI-1141 angle).
+Save keeps zoom and animation on ``SubtitledOverlayCard``, the compile writes them as the card
+clip's ``visual_placement.editor_style`` (the angle stays on ``transform.rotation_degrees``), and
+the pinned recipe reads back into the editor as the same ``editor_style``. Before this Save refused
+both and the compile had nowhere to put them. Rendering is `PlacedCardStyleTests` on the device.
 """
 
 from __future__ import annotations
@@ -57,6 +57,11 @@ def _open_style(monkeypatch, *, protocol=CARD_STYLE_PROTOCOL, verified=True, til
         tokens.append("clipTilt")
     monkeypatch.setattr(gj.settings, "phone_render_verified_features", tokens)
     set_client_protocol(protocol)
+
+
+def _close_style(monkeypatch):
+    tokens = [t for t in gj.settings.phone_render_verified_features if t != "cardStyle"]
+    monkeypatch.setattr(gj.settings, "phone_render_verified_features", tokens)
 
 
 _POP = {"version": 1, "entrance": "pop", "exit": "none", "loop": "none", "speed": 1}
@@ -257,7 +262,7 @@ def test_a_stored_style_survives_a_save_from_an_older_build_and_after_the_token_
     _resave(job, media_overlays=[_overlay_payload(x_frac=0.7, editor_style=style)])
     assert _card_clip(job)[1].visual_placement.editor_style.zoom == 2
 
-    monkeypatch.setattr(gj.settings, "phone_render_verified_features", [])
+    _close_style(monkeypatch)
     _resave(job, media_overlays=[_overlay_payload(x_frac=0.8, editor_style=style)])
     assert _card_clip(job)[1].visual_placement.editor_style.zoom == 2
     with pytest.raises(HTTPException):
@@ -315,13 +320,13 @@ def test_the_capability_needs_the_token_the_build_and_an_open_card_lane(monkeypa
     set_client_protocol(CARD_STYLE_PROTOCOL - 1)
     assert gj._media_overlay_style_capability(variant, open_lane) is False
     set_client_protocol(CARD_STYLE_PROTOCOL)
-    monkeypatch.setattr(gj.settings, "phone_render_verified_features", [])
+    _close_style(monkeypatch)
     assert card_style_supported() is False
     assert gj._media_overlay_style_capability(variant, open_lane) is False
 
 
 def test_the_editor_map_carries_the_capability_only_while_it_is_open(monkeypatch):
-    job = phone_job(monkeypatch)
+    job = _rendered_job(monkeypatch)
     variant = job.assembly_plan["variants"][0]
     set_client_protocol(CARD_STYLE_PROTOCOL)
     closed = gj._editor_capabilities(job, variant)
