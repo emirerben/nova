@@ -1,7 +1,8 @@
 """Replay + fuzz harness for the suggestion agent ``nova.chat.suggestion_agent``.
 
-Free, offline, no network, no skia, no paid call, no database. The model is ALWAYS a client
-holding a hand-authored raw answer (or a seeded random string); nothing here can reach OpenAI.
+Free, offline, no network, no skia, no paid call, no database. The model is a client holding a
+hand-authored raw answer (or a seeded random string); nothing here can reach OpenAI, except
+``run_thread(..., live=True)`` under ``--eval-mode=live`` with the conftest gates.
 
 What is real (so the eval catches a wiring bug, not only a validator bug):
 
@@ -24,13 +25,19 @@ Cassette format (``tests/fixtures/agent_evals/suggestion_agent/*.json``)::
 
 These are hand-authored raw answers, NOT recorded model output: they pin what the server does
 with an answer of that shape. The paid live eval (``tests/evals/README.md``) records real ones.
+
+The thread section at the bottom runs ten thread inputs through the same task body. With
+``live=True`` it books through the real ledger under ``live_eval`` (the only place in this
+harness a model can be paid); every other path here keeps the model and the ledger fake.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import json
+import math
 import random
+from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack
 from dataclasses import dataclass, field
@@ -149,12 +156,19 @@ def run_agent(
     client: Any,
     *,
     exit_stack: ExitStack | None = None,
+    run_context: Callable[[], Any] | None = None,
+    real_ledger: bool = False,
 ) -> tuple[dict[str, Any], FakeStore, list[dict[str, Any]], list[Any]]:
     """The real ``_run_agent`` with a fake model client, ledger and store.
 
     Returns ``(task_result, store, events, paid_call_requests)``. The reservation fake returns
     no receipt (like the cost-control-off legacy path) and records the request so a test can
     check which ledger feature / capability the run books under.
+
+    ``run_context`` swaps the task's production ``RunContext`` for an attributed one (the live
+    eval books under ``live_eval`` with a run id and cap). ``real_ledger`` leaves
+    ``reserve_paid_call`` alone, so the reservation, the per-run cap and the sub-budget are the
+    database's; only the live eval sets it.
     """
     from app.services import ai_cost_control  # noqa: PLC0415
     from app.tasks import kria_suggester  # noqa: PLC0415
@@ -167,7 +181,14 @@ def run_agent(
 
     with ExitStack() as stack:
         stack.enter_context(mock.patch("app.agents._model_client.default_client", lambda: client))
-        stack.enter_context(mock.patch.object(ai_cost_control, "reserve_paid_call", reserve))
+        if not real_ledger:
+            stack.enter_context(mock.patch.object(ai_cost_control, "reserve_paid_call", reserve))
+        if run_context is not None:
+            stack.enter_context(
+                mock.patch.object(
+                    kria_suggester, "RunContext", lambda *args, **kwargs: run_context()
+                )
+            )
         stack.enter_context(mock.patch.object(kria_suggester.store, "put_result", store.put_result))
         events = stack.enter_context(capture_logs())
         result = kria_suggester._run_agent(ctx.thread_id, ctx, plan, "eval")
@@ -608,3 +629,214 @@ def quiet_logs() -> None:
     import logging  # noqa: PLC0415
 
     structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(logging.WARNING))
+
+
+# ── Thread inputs and the live (paid) run ────────────────────────────────────────────
+
+THREAD_DIR = h.FIXTURE_DIR.parent / "suggestion_agent_threads"
+LIVE_REPORT_DIR = h.REPO_ROOT / ".suggestion-agent-live"
+LIVE_HARD_ERRORS = frozenset({"provider_error", "timeout", "budget"})
+"""A run that ended here made no usable paid call (key, network, ledger or call cap). The other
+fallback reasons are measured outcomes of a real answer and are reported, not failed."""
+
+
+def thread_cases() -> list[h.Case]:
+    return [h.load_case(p) for p in sorted(THREAD_DIR.glob("*.json"))]
+
+
+def thread_context(case: h.Case) -> sc.SuggestionContext:
+    """The case context plus the thread's transcripts, measured signals and typed request.
+
+    Transcripts and signals are keyed by 1-based clip ordinal in the fixture.
+    """
+    ctx = cassette_context(case.raw, case)
+    by_ordinal = {str(c["ordinal"]): c["media_id"] for c in ctx.clips}
+    signals = {by_ordinal[k]: v for k, v in (case.raw.get("signals") or {}).items()}
+    typed = case.raw.get("typed_request")
+    return dataclasses.replace(
+        ctx,
+        signals=signals,
+        signals_version="sv_thread" if signals else ctx.signals_version,
+        typed_request=typed if ctx.state == "ready" else None,
+    )
+
+
+def eval_run_context(case: h.Case) -> Any:
+    """The attributed context of a live run: purpose, run id, cap and the acknowledgement all
+    come from the conftest gate (``NOVA_EVAL_*``), the same carrier every other live eval uses."""
+    from .runners.eval_runner import build_eval_run_context  # noqa: PLC0415
+
+    return build_eval_run_context(case.name, is_live=True)
+
+
+class DryRunClient:
+    """The zero-cost stand-in for the paid model: answers each call with a seeded plausible
+    ranking over the kinds and handles THIS call's schema issued, and records every call."""
+
+    def __init__(self, seed: str = "thread-dry-run") -> None:
+        self.seed = seed
+        self.calls: list[dict[str, Any]] = []
+
+    def invoke(self, **kwargs: Any):  # noqa: ANN201
+        from app.agents._runtime import ModelInvocation  # noqa: PLC0415
+
+        self.calls.append(kwargs)
+        pick = kwargs["response_schema"]["properties"]["ranked"]["items"]
+        kinds = list(pick["properties"]["kind"]["enum"])
+        rng = random.Random(f"{self.seed}|{len(self.calls)}|{kwargs['prompt'][:200]}")
+        picked = rng.sample(kinds, k=min(len(kinds), 3)) if kinds else []
+        ranked = [
+            {"kind": kind, "target_ids": ["all"], "why": "", "copy": None, "rank": rank}
+            for rank, kind in enumerate(picked, 1)
+        ]
+        raw = json.dumps({"ranked": ranked})
+        return ModelInvocation(raw_text=raw, tokens_in=0, tokens_out=0, raw_response=None)
+
+
+@dataclass
+class ThreadRun:
+    name: str
+    state: str
+    language: str
+    n_clips: int
+    status: str
+    fallback_reason: str | None
+    picks_made: int
+    picks_kept: int
+    drops: dict[str, int]
+    cost_usd: float | None
+    latency_ms: int | None
+    estimated_cost_usd: float
+    picked: list[str]
+    served_kinds: list[str]
+    cards: list[str]
+    problems: list[str]
+    raw_text: str | None
+
+    def as_row(self) -> dict[str, Any]:
+        return dataclasses.asdict(self)
+
+
+def preflight_estimates(cases: list[h.Case]) -> dict[str, float]:
+    """Worst-case cost of one run per thread: the whole prompt in, the full output budget out.
+    The ledger refuses a call over the run cap anyway; this refuses the batch BEFORE the first
+    call, so an over-cap selection never starts spending."""
+    from app.agents.suggestion_agent import SuggestionAgent, SuggestionAgentInput  # noqa: PLC0415
+
+    out: dict[str, float] = {}
+    for case in cases:
+        ctx = thread_context(case)
+        plan = sc.build_candidates(ctx)
+        payload = SuggestionAgentInput.model_validate(sc.build_agent_input(ctx, plan))
+        out[case.name] = SuggestionAgent(None).estimated_cost_usd(payload)
+    return out
+
+
+def run_thread(case: h.Case, client: Any, *, live: bool) -> ThreadRun:
+    """One thread through the real task body, then the same oracles the replay uses.
+
+    ``live`` uses the production ledger with the eval attribution; otherwise the reservation is
+    the fake and the run costs nothing. The model client is whatever the caller passes.
+    """
+    from app.services import suggestion_serve  # noqa: PLC0415
+    from app.services import suggestion_store as store_mod  # noqa: PLC0415
+
+    ctx = thread_context(case)
+    plan = sc.build_candidates(ctx)
+    estimated = preflight_estimates([case])[case.name]
+    recorder = _InvocationLog(client)
+    with _Flags():
+        result, store, events, _ = run_agent(
+            ctx,
+            plan,
+            recorder,
+            run_context=(lambda: eval_run_context(case)) if live else None,
+            real_ledger=live,
+        )
+        assert len(store.puts) == 1, "the task must write exactly one result per run"
+        stored = store.puts[0][2]
+        picks = store_mod.picks_from_result(stored)
+        served = suggestion_serve._final(ctx, plan, stored)
+        cards_set = sc.assemble_suggestions(ctx, plan, picks)[0]
+    runs = [e for e in events if e.get("event") == f"{EVENT_PREFIX}agent_run"]
+    assert len(runs) == 1, f"expected exactly one agent_run event, got {len(runs)}"
+    run = runs[0]
+    problems = check_agent_set(case, served, plan, ctx)
+    problems += check_cards(ctx, plan, cards_set, served.suggestions)
+    return ThreadRun(
+        name=case.name,
+        state=plan.state,
+        language=ctx.language,
+        n_clips=len(ctx.clips),
+        status=result["status"],
+        fallback_reason=run.get("fallback_reason"),
+        picks_made=(run.get("n_out") or 0) + (run.get("n_dropped") or 0),
+        picks_kept=run.get("n_out") or 0,
+        drops=dict(run.get("drop_reasons") or {}),
+        cost_usd=run.get("cost_usd"),
+        latency_ms=run.get("latency_ms"),
+        estimated_cost_usd=round(estimated, 6),
+        picked=[p["kind"] for p in (stored.get("picks") or [])],
+        served_kinds=[c.kind for c in served.chips],
+        cards=[s.kind for s in cards_set.suggestions] if cards_set else [],
+        problems=problems,
+        raw_text=recorder.last_raw,
+    )
+
+
+class _InvocationLog:
+    """Forwards to the model client and keeps the last raw answer for the report."""
+
+    supports_clarification_retry = False
+
+    def __init__(self, delegate: Any) -> None:
+        self.delegate = delegate
+        self.last_raw: str | None = None
+
+    def invoke(self, **kwargs: Any):  # noqa: ANN201
+        inv = self.delegate.invoke(**kwargs)
+        self.last_raw = inv.raw_text
+        return inv
+
+
+def percentile(values: list[float], q: float) -> float | None:
+    """Nearest-rank percentile; None for an empty list."""
+    if not values:
+        return None
+    ordered = sorted(values)
+    return ordered[max(math.ceil(q * len(ordered)), 1) - 1]
+
+
+def summarize(runs: list[ThreadRun]) -> dict[str, Any]:
+    """The numbers the README records: cost per run, p50 / p95 latency, and two shares over every
+    pick the model made. ``witness_pass_share`` is the task's own n_out / n_in (a pick the engine
+    or the registry accepts). ``ready_cards_per_pick`` is the stricter one: picks that became a
+    proven v2 card in a finished edit (first-prompt picks only reorder chips)."""
+    costs = [r.cost_usd for r in runs if r.cost_usd is not None]
+    latencies = [float(r.latency_ms) for r in runs if r.latency_ms is not None]
+    picks_in = sum(r.picks_made for r in runs)
+    picks_out = sum(r.picks_kept for r in runs)
+    ready = [r for r in runs if r.state == "ready"]
+    ready_picks = sum(r.picks_made for r in ready)
+    ready_cards = sum(len(r.cards) for r in ready)
+    reasons = Counter(r.fallback_reason for r in runs if r.fallback_reason)
+    drops: Counter[str] = Counter()
+    for r in runs:
+        drops.update(r.drops)
+    return {
+        "runs": len(runs),
+        "ok_runs": sum(1 for r in runs if r.status == "ok"),
+        "fallback_reasons": dict(reasons),
+        "cost_usd_total": round(sum(costs), 6),
+        "cost_usd_per_run_mean": round(sum(costs) / len(costs), 6) if costs else None,
+        "cost_usd_per_run_max": max(costs) if costs else None,
+        "estimated_cost_usd_total": round(sum(r.estimated_cost_usd for r in runs), 6),
+        "latency_ms_p50": percentile(latencies, 0.5),
+        "latency_ms_p95": percentile(latencies, 0.95),
+        "picks": picks_in,
+        "picks_passing_witness": picks_out,
+        "witness_pass_share": round(picks_out / picks_in, 4) if picks_in else None,
+        "ready_cards_per_pick": round(ready_cards / ready_picks, 4) if ready_picks else None,
+        "drop_reasons": dict(drops),
+        "contract_problems": sum(len(r.problems) for r in runs),
+    }

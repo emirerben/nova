@@ -32,6 +32,9 @@ tmp/
 # Suggestion-chip replay eval artifact (OLD vs NEW chips; scripts/suggestion_chip_report.py)
 .chip-eval/
 
+# Paid suggestion-agent live eval report (tests/evals/test_suggestion_agent_evals.py)
+.suggestion-agent-live/
+
 # Built sound-effect library (scripts/seed_sfx_library.py build) — audio never in git
 .sfx-library/
 

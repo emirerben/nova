@@ -1,0 +1,83 @@
+{
+ "name": "t08_talking_head_captions_on_ready_en",
+ "description": "English ready. Two talking-head clips, captions already on, no title.",
+ "tags": [
+  "thread",
+  "english",
+  "ready",
+  "captions",
+  "speech"
+ ],
+ "context": {
+  "thread_id": "thread-t08",
+  "state": "ready",
+  "language": "en",
+  "client_protocol": 13,
+  "media_digest": "digest-t08",
+  "runtime_version": 2,
+  "edit_format": "montage",
+  "clips": [
+   {
+    "media_id": "clip-1",
+    "ordinal": 1,
+    "kind": "video",
+    "subject": "creator talking to camera at a desk",
+    "setting": "",
+    "has_speech": true,
+    "to_camera": true,
+    "duration_s": 18.0,
+    "notable_moments": [
+     {
+      "start_s": 0.5,
+      "end_s": 3.0,
+      "label": "opening line"
+     }
+    ]
+   },
+   {
+    "media_id": "clip-2",
+    "ordinal": 2,
+    "kind": "video",
+    "subject": "creator holding up a notebook",
+    "setting": "",
+    "has_speech": true,
+    "to_camera": true,
+    "duration_s": 12.0,
+    "notable_moments": []
+   }
+  ],
+  "understanding": "n/a",
+  "render_generation_id": "gen-1",
+  "variant_id": "v1",
+  "resolved_archetype": "unified_montage",
+  "snapshot_preset": "subtitled",
+  "snapshot": {
+   "slots": [
+    {
+     "slot_id": "slot-0",
+     "media_id": "clip-1",
+     "output_start_s": 0.0,
+     "output_end_s": 3.0,
+     "duration_s": 3.0,
+     "transition_after": "cut"
+    },
+    {
+     "slot_id": "slot-1",
+     "media_id": "clip-2",
+     "output_start_s": 3.0,
+     "output_end_s": 6.0,
+     "duration_s": 3.0,
+     "transition_after": "cut"
+    }
+   ],
+   "total_duration_s": 6.0
+  }
+ },
+ "transcripts": {
+  "1": "three things I wish I knew before my first year of freelancing and the second one cost me a lot",
+  "2": "write the price down before the call not during it"
+ },
+ "expect": {
+  "state": "ready"
+ }
+}
