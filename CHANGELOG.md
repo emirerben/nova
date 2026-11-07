@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.55.0] - 2026-11-07
+
+### Fixed
+- fix(fly): analyse Visuals six at a time on a small always-on process (KRI-1240) (#2148) <!-- release-pr: 2148 -->
+
 ## [0.88.54.0] - 2026-11-07
 
 ### Changed
