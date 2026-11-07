@@ -345,7 +345,7 @@ def make_time_projector(
     window = _segment_window
     fps = GUIDED_FPS
 
-    def old_anchor(time_s: float) -> tuple[dict[str, Any], float] | None:
+    def old_anchor(time_s: float) -> tuple[dict[str, Any], float, float | None] | None:
         for segment in reversed(old_segments):
             output_start, output_end, source_start, source_end = window(segment)
             contains = (
@@ -354,24 +354,35 @@ def make_time_projector(
                 else output_start <= time_s < output_end
             )
             if contains and output_end > output_start:
+                hold = min(float(segment.get("freeze_hold_s") or 0), output_end - output_start)
+                moving = output_end - output_start - hold
+                held_offset = (
+                    max(0.0, time_s - (output_end - hold))
+                    if hold and time_s >= output_end - hold
+                    else None
+                )
                 source_time = min(
                     source_end,
                     source_start
                     + max(0.0, time_s - output_start)
                     * (source_end - source_start)
-                    / (output_end - output_start),
+                    / max(moving, 1e-9),
                 )
-                return segment, source_time
+                return segment, source_time, held_offset
         if old_segments and abs(time_s - window(old_segments[-1])[1]) <= 1e-6:
             segment = old_segments[-1]
-            return segment, window(segment)[3]
+            return (
+                segment,
+                window(segment)[3],
+                float(segment.get("freeze_hold_s")) if segment.get("freeze_hold_s") else None,
+            )
         return None
 
     def project(time_s: float) -> tuple[float, str] | None:
         anchored = old_anchor(time_s)
         if anchored is None:
             return None
-        old_segment, source_time = anchored
+        old_segment, source_time, held_offset = anchored
         old_segment_id = str(old_segment.get("segment_id") or "")
         if old_segment_id:
             candidates = [
@@ -407,11 +418,11 @@ def make_time_projector(
         output_start, output_end, source_start, source_end = window(segment)
         clamped_source = min(source_end, max(source_start, source_time))
         source_span = source_end - source_start
-        offset = (
-            (clamped_source - source_start) * (output_end - output_start) / source_span
-            if source_span > 0
-            else 0
-        )
+        hold = min(float(segment.get("freeze_hold_s") or 0), output_end - output_start)
+        moving = output_end - output_start - hold
+        offset = (clamped_source - source_start) * moving / source_span if source_span > 0 else 0
+        if held_offset is not None and hold and abs(source_time - source_end) <= 1e-6:
+            offset = moving + min(held_offset, hold)
         projected = min(output_end, max(output_start, output_start + offset))
         return round(round(projected * fps) / fps, 6), str(segment["segment_id"])
 

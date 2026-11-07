@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "legacy_serial",
+      "slots": [
+        {"slot_id": "before", "clip_index": 0, "in_s": 1, "duration_s": 2},
+        {"slot_id": "after", "clip_index": 1, "in_s": 3, "duration_s": 3}
+      ],
+      "split_screen_sections": [],
+      "expected_duration_s": 5,
+      "expected_windows": [
+        {"slot_id": "before", "start_s": 0, "end_s": 2},
+        {"slot_id": "after", "start_s": 2, "end_s": 5}
+      ]
+    },
+    {
+      "name": "two_panels_with_fullscreen_neighbors",
+      "slots": [
+        {"slot_id": "before", "clip_index": 0, "in_s": 0, "duration_s": 2},
+        {"slot_id": "top", "clip_index": 1, "in_s": 7, "duration_s": 4, "split_section_id": "duo", "split_panel_index": 0, "split_offset_s": 0},
+        {"slot_id": "bottom", "clip_index": 2, "in_s": 2, "duration_s": 4, "split_section_id": "duo", "split_panel_index": 1, "split_offset_s": 0},
+        {"slot_id": "after", "clip_index": 0, "in_s": 9, "duration_s": 1}
+      ],
+      "split_screen_sections": [{"id": "duo", "duration_s": 4, "panel_count": 2, "panel_weights": [1, 1], "gutter": 0, "background_color": "#000000"}],
+      "expected_duration_s": 7,
+      "expected_windows": [
+        {"slot_id": "before", "start_s": 0, "end_s": 2},
+        {"slot_id": "top", "start_s": 2, "end_s": 6},
+        {"slot_id": "bottom", "start_s": 2, "end_s": 6},
+        {"slot_id": "after", "start_s": 6, "end_s": 7}
+      ]
+    },
+    {
+      "name": "three_panels_independent_gaps_and_clocks",
+      "slots": [
+        {"slot_id": "top-first", "clip_index": 0, "in_s": 3, "duration_s": 1, "playback_rate": 2, "split_section_id": "trio", "split_panel_index": 0, "split_offset_s": 0},
+        {"slot_id": "top-second", "clip_index": 0, "in_s": 9, "duration_s": 2, "split_section_id": "trio", "split_panel_index": 0, "split_offset_s": 2},
+        {"slot_id": "middle-photo", "clip_index": 1, "in_s": 0, "duration_s": 4, "split_section_id": "trio", "split_panel_index": 1, "split_offset_s": 0},
+        {"slot_id": "bottom", "clip_index": 2, "in_s": 8, "duration_s": 2, "split_section_id": "trio", "split_panel_index": 2, "split_offset_s": 1},
+        {"slot_id": "after", "clip_index": 2, "in_s": 1, "duration_s": 2}
+      ],
+      "split_screen_sections": [{"id": "trio", "duration_s": 4, "panel_count": 3, "panel_weights": [1, 2, 1], "gutter": 0.02, "background_color": "#112233"}],
+      "expected_duration_s": 6,
+      "expected_windows": [
+        {"slot_id": "top-first", "start_s": 0, "end_s": 1},
+        {"slot_id": "top-second", "start_s": 2, "end_s": 4},
+        {"slot_id": "middle-photo", "start_s": 0, "end_s": 4},
+        {"slot_id": "bottom", "start_s": 1, "end_s": 3},
+        {"slot_id": "after", "start_s": 4, "end_s": 6}
+      ],
+      "expected_panel_rectangles": [
+        {"x": 0, "y": 0, "width": 1, "height": 0.24},
+        {"x": 0, "y": 0.26, "width": 1, "height": 0.48},
+        {"x": 0, "y": 0.76, "width": 1, "height": 0.24}
+      ],
+      "source_samples": [
+        {"slot_id": "top-first", "output_s": 0.5, "expected_source_s": 4},
+        {"slot_id": "top-second", "output_s": 2.5, "expected_source_s": 9.5},
+        {"slot_id": "bottom", "output_s": 2.5, "expected_source_s": 9.5}
+      ]
+    },
+    {
+      "name": "empty_bottom_panel_retains_section_duration",
+      "slots": [
+        {"slot_id": "top", "clip_index": 0, "in_s": 0, "duration_s": 1, "split_section_id": "gap", "split_panel_index": 0, "split_offset_s": 1},
+        {"slot_id": "after", "clip_index": 1, "in_s": 0, "duration_s": 1}
+      ],
+      "split_screen_sections": [{"id": "gap", "duration_s": 4, "panel_count": 2}],
+      "expected_duration_s": 5,
+      "expected_windows": [
+        {"slot_id": "top", "start_s": 1, "end_s": 2},
+        {"slot_id": "after", "start_s": 4, "end_s": 5}
+      ]
+    }
+  ]
+}

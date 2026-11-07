@@ -93,6 +93,7 @@ MAIN_CREATOR_PROMPT_SOURCES = (
     "app/agents/skills/grounded-hook/SKILL.md",
     "app/agents/skills/meaningful-moment/SKILL.md",
     "prompts/main_creator.txt",
+    "prompts/main_creator_split_screen.txt",
     "prompts/main_creator_turn.txt",
 )
 MAIN_CREATOR_PROMPT_VERSION = prompt_fingerprint("mc", MAIN_CREATOR_PROMPT_SOURCES)
@@ -1597,6 +1598,9 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 "\n" + _VOICEOVER_SCRIPT_PROMPT_SECTION if input.voiceover_script_available else ""
             ),
         )
+        split_capability = input.capability_manifest.capabilities.get("split_screen")
+        if split_capability is not None and split_capability.available:
+            prompt += "\n" + load_prompt("main_creator_split_screen")
         turn = load_prompt(
             "main_creator_turn",
             creator_context=input.creator_context or "(not available)",

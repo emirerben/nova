@@ -5376,6 +5376,9 @@ def _run_phone_guided_job(
             narration_binding = make_device_narration_binding(plan.narration, asset).model_dump(
                 mode="json"
             )
+        from app.pipeline.phone_initial_split_screen import compile_initial_split_screen
+
+        request = compile_initial_split_screen(job, request)
         pin_device_request(
             job,
             request,
@@ -6117,6 +6120,9 @@ def _run_phone_voiceover_montage_job(
             variants.append(new_entry)
         current["variants"] = variants
         job.assembly_plan = current
+        from app.pipeline.phone_initial_split_screen import compile_initial_split_screen
+
+        request = compile_initial_split_screen(job, request)
         pin_device_request(job, request, base_generation=generation)
         job.status = "awaiting_device"
         job.error_detail = None
@@ -12258,6 +12264,9 @@ def _run_phone_subtitled_job(
             # gcs_path so pool deletion still sees the photo/video as referenced.
             current[PHONE_VISUALS_FIELD] = visual_rows
         job.assembly_plan = current
+        from app.pipeline.phone_initial_split_screen import compile_initial_split_screen
+
+        request = compile_initial_split_screen(job, request)
         pin_device_request(job, request, base_generation=generation)
         job.status = "awaiting_device"
         job.error_detail = None
@@ -15466,6 +15475,9 @@ def _run_phone_narrated_job(
             narration_binding = make_device_narration_binding(cleaned_narration, asset).model_dump(
                 mode="json"
             )
+        from app.pipeline.phone_initial_split_screen import compile_initial_split_screen
+
+        request = compile_initial_split_screen(job, request)
         pin_device_request(
             job,
             request,

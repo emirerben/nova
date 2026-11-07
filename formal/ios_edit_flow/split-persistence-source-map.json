@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "reviewed_source_revision": "5b46bc1ea4343b8e746fb7d0df14f1cc63b229e6",
+  "reviewed_main_revision": "a518aed8c86f6ed9a17004327141f252eb395502",
+  "scope": "Manually mapped finite split persistence and source-provenance contract. Full-file digests detect changes; they do not certify every function in those files.",
+  "limits": [
+    "One section with two or three panel occurrences and opaque source-clock/crop tokens.",
+    "One pending Save and bounded local edits across acknowledgement.",
+    "No claim about arbitrary numeric geometry, render pixels, owner/account races, crash storage or full lifecycle liveness.",
+    "Original lifecycle coverage hashes and sync commit remain unchanged.",
+    "Values denote admitted/canonicalized rows. Explicit-empty request clears to absent durable definitions; database transaction atomicity is assumed, not proved."
+  ],
+  "files": [
+    {
+      "path": "src/apps/ios/Kria/Features/NativeEditorSession.swift",
+      "sha256": "6f2764e07740771bc02e52f510df837a6bcaea4737785097c34a33219b991026",
+      "reviewed_obligations": [
+        "saveOnce pre-await split validity and captured submission",
+        "commitRequest definition presence and explicit-empty unstack",
+        "acknowledge/copy submitted timeline baseline",
+        "snapshotPreservingClipMetadata canonical identity preservation"
+      ]
+    },
+    {
+      "path": "src/apps/ios/Kria/Core/NativeEditorDocument.swift",
+      "sha256": "d7a3f99e804068aec18c8153d9f7611f0d7851f4ce40690b8917470a28e16e58",
+      "reviewed_obligations": [
+        "raw/fallback timeline and split-definition loading",
+        "timeline encoding and dirty identity"
+      ]
+    },
+    {
+      "path": "src/apps/ios/Kria/Core/NativeEditorMerge.swift",
+      "sha256": "b996ff18aa47df533ba440c5e13acae61500c25d7a6c6fb81b6e1be418c1a534",
+      "reviewed_obligations": [
+        "coupled timeline/definitions/dependent lanes",
+        "invalid merged-document adoption refusal"
+      ]
+    },
+    {
+      "path": "src/apps/ios/Kria/Core/Models.swift",
+      "sha256": "cf14f567c38ea5c6c2e9b7e36e9d598ed8b92545b57b728fe71c09f29705ddd9",
+      "reviewed_obligations": [
+        "EditorDraft.persistedSnapshot compatibility projection"
+      ]
+    },
+    {
+      "path": "src/apps/ios/Kria/Core/Services.swift",
+      "sha256": "f4d65a33d146015dca7e44277e34aa00a8f1db822dda55781f90833ac207361a",
+      "reviewed_obligations": [
+        "decodedEditorDraft compatibility UUID",
+        "authoritative stagedChatEdit and mergedTimeline membership",
+        "fallback timeline definition replacement"
+      ]
+    },
+    {
+      "path": "src/apps/ios/Kria/Core/NativeSplitScreen.swift",
+      "sha256": "7af36e9945f0f9c5d4512480afe5056b8713441f45f1018e121fbf60bba1c7b2",
+      "reviewed_obligations": [
+        "validity predicate boundary; numeric geometry is abstracted"
+      ]
+    },
+    {
+      "path": "src/apps/api/app/services/authored_editor.py",
+      "sha256": "d8c99391340d0805aa6854c3eeaf3d91582fb9ee91d01600cce140433c2ad07f",
+      "reviewed_obligations": [
+        "omitted versus explicit split-definition preparation",
+        "baseline generation admission fence"
+      ]
+    },
+    {
+      "path": "src/apps/api/app/routes/generative_jobs.py",
+      "sha256": "03494c0a8fa6e3a9e0a2e88a7850bf34d4afaf2fe7b025e47e28617447d51a05",
+      "reviewed_obligations": [
+        "admitted authored rows plus retained/replaced/cleared split definitions"
+      ]
+    },
+    {
+      "path": "src/apps/api/app/services/editor_empty_drafts.py",
+      "sha256": "fa630d220e0db99e5900421a55159fa8a2142a696cacf64e09862352a7806b04",
+      "reviewed_obligations": [
+        "stage_prepared_editor_draft immutable rows/definitions snapshot"
+      ]
+    },
+    {
+      "path": "src/apps/api/app/kria/drafts.py",
+      "sha256": "7ffae63df2027fe4df4cd188cb22b8178eb0a8c123bc83221f2a6407faab72e6",
+      "reviewed_obligations": [
+        "one immutable draft snapshot revision in caller transaction"
+      ]
+    },
+    {
+      "path": "src/apps/api/app/routes/plan_items.py",
+      "sha256": "4b86344762de15ec121547a627ce6b22a470f80d66263f3cf5de778cb07b91f9",
+      "reviewed_obligations": [
+        "commit staged draft before response; dispatch may fail after durable commit"
+      ]
+    }
+  ]
+}

@@ -1094,6 +1094,7 @@ enum EditorSpeakerBackgroundPatch: Equatable, Sendable {
 struct EditorCommitRequest: Codable, Sendable {
     // Optionals are intentional: nil means “section omitted/untouched”, while
     // [] means “replace this section with empty”.
+    var splitScreenSections: [JSONValue]?
     var timelineSlots: [JSONValue]?
     var textElements: [JSONValue]?
     var captionCues: [JSONValue]?
@@ -1130,14 +1131,14 @@ struct EditorCommitRequest: Codable, Sendable {
     var deletions: [EditorDeletion]?
     var baseGeneration: String
 
-    init(timelineSlots: [JSONValue]? = nil, textElements: [JSONValue]? = nil, captionCues: [JSONValue]? = nil, captionMeta: [String: JSONValue]? = nil, mix: [String: JSONValue]? = nil, musicTrackID: String? = nil, removeMusic: Bool = false, musicWindow: EditorCommitMusicWindow? = nil, backgroundMusic: EditorCommitBackgroundMusic? = nil, userSong: EditorCommitUserSong? = nil, lyrics: EditorCommitLyrics? = nil, orientation: String? = nil, landscapeFit: String? = nil, soundEffects: [JSONValue]? = nil, mediaOverlays: [JSONValue]? = nil, visualBlocks: [JSONValue]? = nil, motionScenes: [JSONValue]? = nil, motionRuntimeHash: String? = nil, cameraEffects: [JSONValue]? = nil, drawings: [JSONValue]? = nil, carouselMoment: EditorCarouselMomentPatch = .omitted, speakerBackground: EditorSpeakerBackgroundPatch = .omitted, title: String? = nil, acceptedSuggestionIDs: [String]? = nil, copilotReceiptIDs: [UUID] = [], guidedRevision: [String: JSONValue]? = nil, guidedRevisionNumber: Int? = nil, retryGuidedRevision: Bool = false, editorStateVersion: Int? = nil, deletions: [EditorDeletion]? = nil, baseGeneration: String) {
-        self.timelineSlots = timelineSlots; self.textElements = textElements; self.captionCues = captionCues; self.captionMeta = captionMeta; self.mix = mix; self.musicTrackID = musicTrackID; self.removeMusic = removeMusic; self.musicWindow = musicWindow; self.backgroundMusic = backgroundMusic; self.userSong = userSong; self.lyrics = lyrics; self.orientation = orientation; self.landscapeFit = landscapeFit; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.motionRuntimeHash = motionRuntimeHash; self.cameraEffects = cameraEffects; self.drawings = drawings; self.carouselMoment = carouselMoment; self.speakerBackground = speakerBackground; self.title = title; self.acceptedSuggestionIDs = acceptedSuggestionIDs; self.copilotReceiptIDs = copilotReceiptIDs; self.guidedRevision = guidedRevision; self.guidedRevisionNumber = guidedRevisionNumber; self.retryGuidedRevision = retryGuidedRevision; self.editorStateVersion = editorStateVersion; self.deletions = deletions; self.baseGeneration = baseGeneration
+    init(timelineSlots: [JSONValue]? = nil, splitScreenSections: [JSONValue]? = nil, textElements: [JSONValue]? = nil, captionCues: [JSONValue]? = nil, captionMeta: [String: JSONValue]? = nil, mix: [String: JSONValue]? = nil, musicTrackID: String? = nil, removeMusic: Bool = false, musicWindow: EditorCommitMusicWindow? = nil, backgroundMusic: EditorCommitBackgroundMusic? = nil, userSong: EditorCommitUserSong? = nil, lyrics: EditorCommitLyrics? = nil, orientation: String? = nil, landscapeFit: String? = nil, soundEffects: [JSONValue]? = nil, mediaOverlays: [JSONValue]? = nil, visualBlocks: [JSONValue]? = nil, motionScenes: [JSONValue]? = nil, motionRuntimeHash: String? = nil, cameraEffects: [JSONValue]? = nil, drawings: [JSONValue]? = nil, carouselMoment: EditorCarouselMomentPatch = .omitted, speakerBackground: EditorSpeakerBackgroundPatch = .omitted, title: String? = nil, acceptedSuggestionIDs: [String]? = nil, copilotReceiptIDs: [UUID] = [], guidedRevision: [String: JSONValue]? = nil, guidedRevisionNumber: Int? = nil, retryGuidedRevision: Bool = false, editorStateVersion: Int? = nil, deletions: [EditorDeletion]? = nil, baseGeneration: String) {
+        self.splitScreenSections = splitScreenSections; self.timelineSlots = timelineSlots; self.textElements = textElements; self.captionCues = captionCues; self.captionMeta = captionMeta; self.mix = mix; self.musicTrackID = musicTrackID; self.removeMusic = removeMusic; self.musicWindow = musicWindow; self.backgroundMusic = backgroundMusic; self.userSong = userSong; self.lyrics = lyrics; self.orientation = orientation; self.landscapeFit = landscapeFit; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.motionRuntimeHash = motionRuntimeHash; self.cameraEffects = cameraEffects; self.drawings = drawings; self.carouselMoment = carouselMoment; self.speakerBackground = speakerBackground; self.title = title; self.acceptedSuggestionIDs = acceptedSuggestionIDs; self.copilotReceiptIDs = copilotReceiptIDs; self.guidedRevision = guidedRevision; self.guidedRevisionNumber = guidedRevisionNumber; self.retryGuidedRevision = retryGuidedRevision; self.editorStateVersion = editorStateVersion; self.deletions = deletions; self.baseGeneration = baseGeneration
     }
 
-    private enum CodingKeys: String, CodingKey { case timelineSlots = "timeline_slots"; case textElements = "text_elements"; case captionCues = "caption_cues"; case captionMeta = "caption_meta"; case mix; case musicTrackID = "music_track_id"; case removeMusic = "remove_music"; case musicWindow = "music_window"; case backgroundMusic = "background_music"; case userSong = "user_song"; case lyrics; case orientation; case landscapeFit = "landscape_fit"; case soundEffects = "sound_effects"; case mediaOverlays = "media_overlays"; case visualBlocks = "visual_blocks"; case motionScenes = "motion_scenes"; case motionRuntimeHash = "motion_runtime_hash"; case cameraEffects = "camera_effects"; case drawings; case carouselMoment = "carousel_moment"; case speakerBackground = "speaker_background"; case title; case acceptedSuggestionIDs = "accepted_suggestion_ids"; case copilotReceiptIDs = "copilot_receipt_ids"; case guidedRevision = "guided_revision"; case guidedRevisionNumber = "guided_revision_number"; case retryGuidedRevision = "retry_guided_revision"; case editorStateVersion = "editor_state_version"; case deletions; case baseGeneration = "base_generation" }
+    private enum CodingKeys: String, CodingKey { case splitScreenSections = "split_screen_sections"; case timelineSlots = "timeline_slots"; case textElements = "text_elements"; case captionCues = "caption_cues"; case captionMeta = "caption_meta"; case mix; case musicTrackID = "music_track_id"; case removeMusic = "remove_music"; case musicWindow = "music_window"; case backgroundMusic = "background_music"; case userSong = "user_song"; case lyrics; case orientation; case landscapeFit = "landscape_fit"; case soundEffects = "sound_effects"; case mediaOverlays = "media_overlays"; case visualBlocks = "visual_blocks"; case motionScenes = "motion_scenes"; case motionRuntimeHash = "motion_runtime_hash"; case cameraEffects = "camera_effects"; case drawings; case carouselMoment = "carousel_moment"; case speakerBackground = "speaker_background"; case title; case acceptedSuggestionIDs = "accepted_suggestion_ids"; case copilotReceiptIDs = "copilot_receipt_ids"; case guidedRevision = "guided_revision"; case guidedRevisionNumber = "guided_revision_number"; case retryGuidedRevision = "retry_guided_revision"; case editorStateVersion = "editor_state_version"; case deletions; case baseGeneration = "base_generation" }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encodeIfPresent(timelineSlots, forKey: .timelineSlots); try c.encodeIfPresent(textElements, forKey: .textElements); try c.encodeIfPresent(captionCues, forKey: .captionCues); try c.encodeIfPresent(captionMeta, forKey: .captionMeta); try c.encodeIfPresent(mix, forKey: .mix); try c.encodeIfPresent(musicTrackID, forKey: .musicTrackID); try c.encode(removeMusic, forKey: .removeMusic); try c.encodeIfPresent(musicWindow, forKey: .musicWindow); try c.encodeIfPresent(backgroundMusic, forKey: .backgroundMusic); try c.encodeIfPresent(userSong, forKey: .userSong); try c.encodeIfPresent(lyrics, forKey: .lyrics); try c.encodeIfPresent(orientation, forKey: .orientation); try c.encodeIfPresent(landscapeFit, forKey: .landscapeFit); try c.encodeIfPresent(soundEffects, forKey: .soundEffects); try c.encodeIfPresent(mediaOverlays, forKey: .mediaOverlays); try c.encodeIfPresent(visualBlocks, forKey: .visualBlocks); try c.encodeIfPresent(motionScenes, forKey: .motionScenes); try c.encodeIfPresent(motionRuntimeHash, forKey: .motionRuntimeHash); try c.encodeIfPresent(cameraEffects, forKey: .cameraEffects); try c.encodeIfPresent(drawings, forKey: .drawings)
+        try c.encodeIfPresent(splitScreenSections, forKey: .splitScreenSections); try c.encodeIfPresent(timelineSlots, forKey: .timelineSlots); try c.encodeIfPresent(textElements, forKey: .textElements); try c.encodeIfPresent(captionCues, forKey: .captionCues); try c.encodeIfPresent(captionMeta, forKey: .captionMeta); try c.encodeIfPresent(mix, forKey: .mix); try c.encodeIfPresent(musicTrackID, forKey: .musicTrackID); try c.encode(removeMusic, forKey: .removeMusic); try c.encodeIfPresent(musicWindow, forKey: .musicWindow); try c.encodeIfPresent(backgroundMusic, forKey: .backgroundMusic); try c.encodeIfPresent(userSong, forKey: .userSong); try c.encodeIfPresent(lyrics, forKey: .lyrics); try c.encodeIfPresent(orientation, forKey: .orientation); try c.encodeIfPresent(landscapeFit, forKey: .landscapeFit); try c.encodeIfPresent(soundEffects, forKey: .soundEffects); try c.encodeIfPresent(mediaOverlays, forKey: .mediaOverlays); try c.encodeIfPresent(visualBlocks, forKey: .visualBlocks); try c.encodeIfPresent(motionScenes, forKey: .motionScenes); try c.encodeIfPresent(motionRuntimeHash, forKey: .motionRuntimeHash); try c.encodeIfPresent(cameraEffects, forKey: .cameraEffects); try c.encodeIfPresent(drawings, forKey: .drawings)
         switch carouselMoment { case .omitted: break; case .remove: try c.encodeNil(forKey: .carouselMoment); case let .replace(value): try c.encode(value, forKey: .carouselMoment) }
         switch speakerBackground { case .omitted: break; case .remove: try c.encodeNil(forKey: .speakerBackground); case let .replace(value): try c.encode(value, forKey: .speakerBackground) }
         try c.encodeIfPresent(title, forKey: .title)
@@ -1145,7 +1146,7 @@ struct EditorCommitRequest: Codable, Sendable {
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        timelineSlots = try c.decodeIfPresent([JSONValue].self, forKey: .timelineSlots); textElements = try c.decodeIfPresent([JSONValue].self, forKey: .textElements); captionCues = try c.decodeIfPresent([JSONValue].self, forKey: .captionCues); captionMeta = try c.decodeIfPresent([String: JSONValue].self, forKey: .captionMeta); mix = try c.decodeIfPresent([String: JSONValue].self, forKey: .mix); musicTrackID = try c.decodeIfPresent(String.self, forKey: .musicTrackID); removeMusic = try c.decodeIfPresent(Bool.self, forKey: .removeMusic) ?? false; musicWindow = try c.decodeIfPresent(EditorCommitMusicWindow.self, forKey: .musicWindow); backgroundMusic = try c.decodeIfPresent(EditorCommitBackgroundMusic.self, forKey: .backgroundMusic); userSong = try c.decodeIfPresent(EditorCommitUserSong.self, forKey: .userSong); lyrics = try c.decodeIfPresent(EditorCommitLyrics.self, forKey: .lyrics); orientation = try c.decodeIfPresent(String.self, forKey: .orientation); landscapeFit = try c.decodeIfPresent(String.self, forKey: .landscapeFit); soundEffects = try c.decodeIfPresent([JSONValue].self, forKey: .soundEffects); mediaOverlays = try c.decodeIfPresent([JSONValue].self, forKey: .mediaOverlays); visualBlocks = try c.decodeIfPresent([JSONValue].self, forKey: .visualBlocks); motionScenes = try c.decodeIfPresent([JSONValue].self, forKey: .motionScenes); motionRuntimeHash = try c.decodeIfPresent(String.self, forKey: .motionRuntimeHash); cameraEffects = try c.decodeIfPresent([JSONValue].self, forKey: .cameraEffects); drawings = try c.decodeIfPresent([JSONValue].self, forKey: .drawings); if !c.contains(.carouselMoment) { carouselMoment = .omitted } else if try c.decodeNil(forKey: .carouselMoment) { carouselMoment = .remove } else { carouselMoment = .replace(try c.decode([String: JSONValue].self, forKey: .carouselMoment)) }; if !c.contains(.speakerBackground) { speakerBackground = .omitted } else if try c.decodeNil(forKey: .speakerBackground) { speakerBackground = .remove } else { speakerBackground = .replace(try c.decode([String: JSONValue].self, forKey: .speakerBackground)) }; title = try c.decodeIfPresent(String.self, forKey: .title); acceptedSuggestionIDs = try c.decodeIfPresent([String].self, forKey: .acceptedSuggestionIDs); copilotReceiptIDs = try c.decodeIfPresent([UUID].self, forKey: .copilotReceiptIDs) ?? []; guidedRevision = try c.decodeIfPresent([String: JSONValue].self, forKey: .guidedRevision); guidedRevisionNumber = try c.decodeIfPresent(Int.self, forKey: .guidedRevisionNumber); retryGuidedRevision = try c.decodeIfPresent(Bool.self, forKey: .retryGuidedRevision) ?? false; editorStateVersion = try c.decodeIfPresent(Int.self, forKey: .editorStateVersion); deletions = try c.decodeIfPresent([EditorDeletion].self, forKey: .deletions); baseGeneration = try c.decodeIfPresent(String.self, forKey: .baseGeneration) ?? ""
+        splitScreenSections = try c.decodeIfPresent([JSONValue].self, forKey: .splitScreenSections); timelineSlots = try c.decodeIfPresent([JSONValue].self, forKey: .timelineSlots); textElements = try c.decodeIfPresent([JSONValue].self, forKey: .textElements); captionCues = try c.decodeIfPresent([JSONValue].self, forKey: .captionCues); captionMeta = try c.decodeIfPresent([String: JSONValue].self, forKey: .captionMeta); mix = try c.decodeIfPresent([String: JSONValue].self, forKey: .mix); musicTrackID = try c.decodeIfPresent(String.self, forKey: .musicTrackID); removeMusic = try c.decodeIfPresent(Bool.self, forKey: .removeMusic) ?? false; musicWindow = try c.decodeIfPresent(EditorCommitMusicWindow.self, forKey: .musicWindow); backgroundMusic = try c.decodeIfPresent(EditorCommitBackgroundMusic.self, forKey: .backgroundMusic); userSong = try c.decodeIfPresent(EditorCommitUserSong.self, forKey: .userSong); lyrics = try c.decodeIfPresent(EditorCommitLyrics.self, forKey: .lyrics); orientation = try c.decodeIfPresent(String.self, forKey: .orientation); landscapeFit = try c.decodeIfPresent(String.self, forKey: .landscapeFit); soundEffects = try c.decodeIfPresent([JSONValue].self, forKey: .soundEffects); mediaOverlays = try c.decodeIfPresent([JSONValue].self, forKey: .mediaOverlays); visualBlocks = try c.decodeIfPresent([JSONValue].self, forKey: .visualBlocks); motionScenes = try c.decodeIfPresent([JSONValue].self, forKey: .motionScenes); motionRuntimeHash = try c.decodeIfPresent(String.self, forKey: .motionRuntimeHash); cameraEffects = try c.decodeIfPresent([JSONValue].self, forKey: .cameraEffects); drawings = try c.decodeIfPresent([JSONValue].self, forKey: .drawings); if !c.contains(.carouselMoment) { carouselMoment = .omitted } else if try c.decodeNil(forKey: .carouselMoment) { carouselMoment = .remove } else { carouselMoment = .replace(try c.decode([String: JSONValue].self, forKey: .carouselMoment)) }; if !c.contains(.speakerBackground) { speakerBackground = .omitted } else if try c.decodeNil(forKey: .speakerBackground) { speakerBackground = .remove } else { speakerBackground = .replace(try c.decode([String: JSONValue].self, forKey: .speakerBackground)) }; title = try c.decodeIfPresent(String.self, forKey: .title); acceptedSuggestionIDs = try c.decodeIfPresent([String].self, forKey: .acceptedSuggestionIDs); copilotReceiptIDs = try c.decodeIfPresent([UUID].self, forKey: .copilotReceiptIDs) ?? []; guidedRevision = try c.decodeIfPresent([String: JSONValue].self, forKey: .guidedRevision); guidedRevisionNumber = try c.decodeIfPresent(Int.self, forKey: .guidedRevisionNumber); retryGuidedRevision = try c.decodeIfPresent(Bool.self, forKey: .retryGuidedRevision) ?? false; editorStateVersion = try c.decodeIfPresent(Int.self, forKey: .editorStateVersion); deletions = try c.decodeIfPresent([EditorDeletion].self, forKey: .deletions); baseGeneration = try c.decodeIfPresent(String.self, forKey: .baseGeneration) ?? ""
     }
 }
 
@@ -1394,7 +1395,8 @@ enum KriaClientProtocolContract {
     /// them in the editor. The server offers `editor_capabilities.background_focus` only to this protocol (and only with
     /// `backgroundFocus` verified) and answers 426 `client_update_required` (`background_focus`) to an older build polling or
     /// saving a recipe that already carries them.
-    static let version = 42
+    /// 43 preserves editable split-screen sections and renders ordinary media in independent panel viewports.
+    static let version = 43
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -2288,6 +2290,8 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "TIMELINE_INVALID_PARENT": timeline,
             "TIMELINE_IMAGE_SPLIT_UNSUPPORTED": "A photo can’t be split. Keep it whole or trim it instead. Your edits are still here.",
             "authored_seconds_required": timeline,
+            "split_screen_unavailable": "Split-screen editing isn’t available right now. Try saving again later. Your edits are still here.",
+            "split_screen_requires_atomic_commit": "This edit’s clips and panel settings must be saved together. Update Kria and try saving again. Your edits are still here.",
             "GUIDED_REVISION_INVALID": timeline,
             "GUIDED_TEXT_IDENTITY_MISMATCH": timeline,
             "GUIDED_TOMBSTONE_LIMIT": "This edit has too many removed items to save. Restore or re-add a few and try again. Your edits are still here.",
@@ -3017,6 +3021,7 @@ extension DraftSnapshot {
                sections["timeline_slots"] == nil,
                let value = timeline?["slots"], case let .array(slots) = value {
                 sections["timeline_slots"] = .array(slots)
+                sections["split_screen_sections"] = timeline?["split_screen_sections"] ?? .array([])
                 payload["sections"] = .object(sections)
                 document["editor_payload"] = .object(payload)
             }
@@ -3123,10 +3128,14 @@ extension DraftSnapshot {
             if !isIntentionalEmpty, let timeline,
                let slotValue = timeline["slots"], case let .array(slots) = slotValue {
                 sections["timeline_slots"] = .array(slots)
+                sections["split_screen_sections"] = timeline["split_screen_sections"] ?? .array([])
             } else if !isIntentionalEmpty,
                       ["narrated", "voiceover"].contains(authoritativeVariant["resolved_archetype"]?.stringValue ?? "") {
                 let slots = Self.narratedTimelineSlots(authoritativeVariant)
-                if !slots.isEmpty { sections["timeline_slots"] = .array(slots) }
+                if !slots.isEmpty {
+                    sections["timeline_slots"] = .array(slots)
+                    sections["split_screen_sections"] = .array([])
+                }
             }
             let baseline = [authoritativeVariant["render_generation_id"]?.stringValue,
                 authoritativeVariant["render_finished_at"]?.stringValue, baseGenerationID,
@@ -3216,7 +3225,8 @@ extension DraftSnapshot {
     /// copy (`kria_editor_ops.merge_editor_draft`), so the flat keys identify
     /// the changed lanes and `sections` carries their full content.
     private static let stagedLaneKeys: [(key: String, section: EditorSection, sectionKeys: [String])] = [
-        ("timeline_slots", .timeline, ["timeline_slots"]), ("text_elements", .text, ["text_elements"]),
+        ("timeline_slots", .timeline, ["timeline_slots", "split_screen_sections"]),
+        ("split_screen_sections", .timeline, ["timeline_slots", "split_screen_sections"]), ("text_elements", .text, ["text_elements"]),
         ("caption_cues", .captions, ["caption_cues"]), ("caption_meta", .captionMeta, ["caption_meta"]),
         ("mix", .mix, ["mix"]), ("music_track_id", .music, ["music_track_id", "music_window"]),
         ("music_window", .music, ["music_track_id", "music_window"]), ("remove_music", .music, ["music_track_id", "music_window"]),
@@ -3254,8 +3264,13 @@ extension DraftSnapshot {
         for lane in Self.stagedLaneKeys where draftPayload[lane.key] != nil && !changed.contains(lane.section) {
             var candidate = sections
             if lane.section == .timeline {
-                guard let merged = Self.mergedTimeline(draft: Self.array(draftValue("timeline_slots")), base: Self.array(baseSections["timeline_slots"])) else { continue }
-                candidate["timeline_slots"] = .array(merged)
+                let explicitSections = draftValue("split_screen_sections")
+                let authoritative = explicitSections != nil
+                let rows = draftValue("timeline_slots") ?? baseSections["timeline_slots"]
+                if let merged = Self.mergedTimeline(draft: Self.array(rows), base: Self.array(baseSections["timeline_slots"]), authoritative: authoritative) {
+                    candidate["timeline_slots"] = .array(merged)
+                } else if !authoritative { continue }
+                if let explicitSections { candidate["split_screen_sections"] = explicitSections }
             } else {
                 for key in lane.sectionKeys {
                     if key == "music_track_id", draftPayload["remove_music"] == .bool(true) { candidate[key] = .null }
@@ -3276,8 +3291,8 @@ extension DraftSnapshot {
     /// slot rows by identity (`slot_id`, else `clip_index`) so media/asset
     /// metadata survives. Draft order wins (reorder); base slots the draft does
     /// not mention keep their place at the end. Nil when nothing changed.
-    private static func mergedTimeline(draft: [JSONValue], base: [JSONValue]) -> [JSONValue]? {
-        guard !draft.isEmpty else { return nil }
+    private static func mergedTimeline(draft: [JSONValue], base: [JSONValue], authoritative: Bool = false) -> [JSONValue]? {
+        guard !draft.isEmpty || authoritative else { return nil }
         var unmatched = base.compactMap(object)
         func take(_ row: [String: JSONValue]) -> [String: JSONValue]? {
             let index = row["slot_id"]?.stringValue.flatMap { id in unmatched.firstIndex { $0["slot_id"]?.stringValue == id } }
@@ -3289,15 +3304,24 @@ extension DraftSnapshot {
             guard let row = object(value) else { continue }
             let matched = take(row)
             var slot = matched ?? [:]
+            if matched == nil, let source = base.compactMap(object).first(where: { $0["clip_index"] == row["clip_index"] }) {
+                for key in ["asset_id", "media_id", "media_kind", "kind", "source_duration_s", "source_duration"] {
+                    slot[key] = source[key]
+                }
+            }
+            if authoritative {
+                for key in ["split_section_id", "split_panel_index", "split_offset_s"] { slot.removeValue(forKey: key) }
+            }
             for (key, field) in row { slot[key] = field }
             // KRI-773: a draft clip that matches no saved clip is a new placement. An id it carries
             // (chat minted `cs-<state>-<n>` ids before #1698, and they live on in stored drafts) was
             // never a real slot; keeping it made every Save fail 409 TIMELINE_STALE, and "Reload and
             // keep my edits" re-applied the same timeline.
-            if matched == nil, slot["removed"] != .bool(true), slot["slot_id"] != nil { slot.removeValue(forKey: "slot_id") }
+            if matched == nil, slot["removed"] != .bool(true),
+               let id = slot["slot_id"]?.stringValue, UUID(uuidString: id) == nil { slot.removeValue(forKey: "slot_id") }
             merged.append(slot)
         }
-        merged.append(contentsOf: unmatched)
+        if !authoritative { merged.append(contentsOf: unmatched) }
         // Historical chat drafts can carry a window longer than their clip
         // (Troya: 3 s on 3.36 s from 0.9 s).
         // Preserve authoring intent; feasible footage mapping belongs to the

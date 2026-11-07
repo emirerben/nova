@@ -258,3 +258,167 @@ final class NativeEditorMergeTests: XCTestCase {
         XCTAssertNil(NativeEditorMerge.merge(base: base, local: local, remote: remote).state)
     }
 }
+
+extension NativeEditorMergeTests {
+    private func persistedMergeDocument(_ document: EditorDocument) throws -> EditorDocument {
+        EditorDocument(snapshot: try XCTUnwrap(document.mergeValidationSnapshot()))
+    }
+
+    private func fallbackSplitMergeDocument(weights: [Double] = [1, 1], sourceStart: Double = 0) -> EditorDocument {
+        let section = EditorSplitScreenSection(id: "fallback", durationS: 4, panelCount: 2, panelWeights: weights)
+        let slots: [JSONValue] = (0..<2).map { panel in .object([
+            "slot_id": .string("fallback-\(panel)"), "clip_index": .number(Double(panel)), "in_s": .number(sourceStart),
+            "duration_s": .number(4), "split_section_id": .string("fallback"),
+            "split_panel_index": .number(Double(panel)), "split_offset_s": .number(0)]) }
+        return EditorDocument(snapshot: ["future_metadata": .string("keep"),
+            "user_timeline": .object(["slots": .array(slots), "split_screen_sections": .array([section.json])]),
+            "text_elements": .array([.object(["id": .string("title"), "text": .string("Before"),
+                "start_s": .number(0), "end_s": .number(2)])])])
+    }
+
+    func testFallbackLayoutAndLocalTextRequireChoiceWithoutShadowingLatestDefinitions() throws {
+        let base = fallbackSplitMergeDocument()
+        var local = base
+        local.textElements[0].text = "Local"
+        let remote = fallbackSplitMergeDocument(weights: [2, 1])
+        guard case .conflicts = NativeEditorMerge.documents(base: base, local: local, remote: remote,
+            baseSong: nil, remoteSong: nil) else { return XCTFail("A real remote layout edit owns dependent text; stale root definitions must not win silently") }
+        for preference in [AuthoredJSONMerge.Preference.local, .remote] {
+            let chosen = preference == .local ? local : remote
+            guard case .resolved(let merged) = NativeEditorMerge.documents(base: base, local: local, remote: remote,
+                baseSong: nil, remoteSong: nil, preference: preference) else { XCTFail("Choice must resolve"); continue }
+            XCTAssertEqual(merged.splitScreenSections, chosen.splitScreenSections)
+            let canonicalChosen = EditorDocument(snapshot: try XCTUnwrap(chosen.mergeValidationSnapshot()))
+            XCTAssertEqual(try persistedMergeDocument(merged).clips, canonicalChosen.clips)
+            XCTAssertEqual(try persistedMergeDocument(merged).textElements, canonicalChosen.textElements)
+            XCTAssertEqual(merged.encodeSnapshot()["future_metadata"], .string("keep"))
+        }
+    }
+
+    func testFallbackRowsAndLayoutMergeWithIndependentTitleWithoutInventingLocalTimelineEdit() throws {
+        let base = fallbackSplitMergeDocument()
+        var local = base
+        local.title = "Local title"
+        let remote = fallbackSplitMergeDocument(weights: [2, 1], sourceStart: 3)
+        guard case .resolved(let merged) = NativeEditorMerge.documents(base: base, local: local, remote: remote,
+            baseSong: nil, remoteSong: nil) else { return XCTFail("Envelope normalization must not invent a competing timeline edit") }
+        XCTAssertEqual(merged.splitScreenSections, remote.splitScreenSections)
+        let canonicalRemote = EditorDocument(snapshot: try XCTUnwrap(remote.mergeValidationSnapshot()))
+        XCTAssertEqual(try persistedMergeDocument(merged).clips, canonicalRemote.clips)
+        XCTAssertEqual(merged.title, "Local title")
+        XCTAssertTrue(merged.splitScreenIsValid)
+        let reopened = EditorDocument(snapshot: merged.encodeSnapshot())
+        XCTAssertEqual(try persistedMergeDocument(reopened).clips, canonicalRemote.clips)
+        XCTAssertEqual(reopened.splitScreenSections, remote.splitScreenSections)
+    }
+
+    private func splitMergeDocument() -> EditorDocument {
+        var slots = (0..<2).map { index in
+            EditorTimelineSlot(id: "panel-\(index)", clipIndex: index, inS: 0, durationS: 4,
+                raw: ["speaker_subject": .bool(true), "speaker_frame_override": .object(["mode": .string("inherit")])])
+        }
+        for index in slots.indices { slots[index].setSplitMembership(sectionID: "s", panelIndex: index, offset: 0) }
+        var value = EditorDocument(clips: slots, title: "Before", orientation: "portrait")
+        value.splitScreenSections = [.init(id: "s", durationS: 4, panelCount: 2)]
+        value.speakerBackground = .init(color: "#223344", speakerFrame: .preset("small_bottom_right"))
+        let decoded = EditorDocument(snapshot: value.encodeSnapshot())
+        XCTAssertNotNil(decoded.speakerBackground)
+        XCTAssertFalse(decoded.unreadableSpeakerBackground)
+        XCTAssertTrue(decoded.splitScreenIsValid)
+        XCTAssertNotNil(decoded.mergeValidationSnapshot())
+        XCTAssertEqual(decoded.orientation, "portrait")
+        return decoded
+    }
+
+    func testSplitLayoutOnlyEditMergesWithRemoteTitleAndKeepsRemoteMetadata() throws {
+        let base = splitMergeDocument()
+        var local = base
+        local.splitScreenSections[0].panelWeights = [2, 1]
+        local.splitScreenSections[0].gutter = 0.02
+        var wire = base.encodeSnapshot()
+        wire["future_metadata"] = .string("latest")
+        var remote = EditorDocument(snapshot: wire)
+        remote.title = "Latest title"
+        guard case .resolved(let merged) = NativeEditorMerge.documents(base: base, local: local, remote: remote,
+            baseSong: nil, remoteSong: nil) else { return XCTFail("Layout and unrelated title should merge") }
+        XCTAssertEqual(merged.splitScreenSections, local.splitScreenSections)
+        XCTAssertEqual(try persistedMergeDocument(merged).clips, try persistedMergeDocument(base).clips)
+        XCTAssertEqual(merged.title, remote.title)
+        XCTAssertEqual(merged.encodeSnapshot()["future_metadata"], .string("latest"))
+        XCTAssertTrue(merged.splitScreenIsValid)
+    }
+
+    func testSplitLayoutAndMemberEditsRequireAtomicConflictChoice() throws {
+        let base = splitMergeDocument()
+        var local = base, remote = base
+        local.splitScreenSections[0].panelWeights = [3, 1]
+        remote.clips[1].durationS = 3
+        remote.title = "Remote title"
+        guard case .conflicts = NativeEditorMerge.documents(base: base, local: local, remote: remote,
+            baseSong: nil, remoteSong: nil) else { return XCTFail("Layout and member timing are one dependent bundle") }
+        for preference in [AuthoredJSONMerge.Preference.local, .remote] {
+            let chosen = preference == .local ? local : remote
+            guard case .resolved(let merged) = NativeEditorMerge.documents(base: base, local: local, remote: remote,
+                baseSong: nil, remoteSong: nil, preference: preference) else { XCTFail("Choice must resolve"); continue }
+            XCTAssertEqual(merged.splitScreenSections, chosen.splitScreenSections)
+            XCTAssertEqual(try persistedMergeDocument(merged).clips, try persistedMergeDocument(chosen).clips)
+            XCTAssertEqual(merged.title, "Remote title")
+            XCTAssertTrue(merged.splitScreenIsValid)
+        }
+    }
+
+    func testExplicitUnstackClearSurvivesAutomaticMergeAndReopen() throws {
+        let base = splitMergeDocument()
+        var local = base, remote = base
+        local.clips = [local.clips[1]]
+        local.clips[0].clearSplitMembership()
+        local.splitScreenSections = []
+        remote.title = "Latest"
+        guard case .resolved(let merged) = NativeEditorMerge.documents(base: base, local: local, remote: remote,
+            baseSong: nil, remoteSong: nil) else { return XCTFail("Unstack and title should merge") }
+        let encoded = merged.encodeSnapshot()
+        XCTAssertEqual(encoded["editor_payload"]?.objectValue?["sections"]?.objectValue?["split_screen_sections"], .array([]))
+        XCTAssertEqual(try persistedMergeDocument(merged).clips, try persistedMergeDocument(local).clips)
+        XCTAssertEqual(merged.title, "Latest")
+        XCTAssertTrue(merged.splitScreenIsValid)
+        XCTAssertEqual(EditorDocument(snapshot: encoded).splitScreenSections, [])
+    }
+
+    func testScopedSpeakerConflictChoiceKeepsEachChosenOccurrenceAndPeerExact() throws {
+        let base = splitMergeDocument()
+        var local = base, remote = base
+        local.clips[0].raw["speaker_frame_override"] = EditorSpeakerFrameOverride.custom(.preset("small_top_left")!).json
+        remote.clips[1].raw["speaker_frame_override"] = EditorSpeakerFrameOverride.full.json
+        guard case .conflicts = NativeEditorMerge.documents(base: base, local: local, remote: remote,
+            baseSong: nil, remoteSong: nil) else { return XCTFail("Existing timeline ownership requires a choice") }
+        for preference in [AuthoredJSONMerge.Preference.local, .remote] {
+            let chosen = preference == .local ? local : remote
+            guard case .resolved(let merged) = NativeEditorMerge.documents(base: base, local: local, remote: remote,
+                baseSong: nil, remoteSong: nil, preference: preference) else { XCTFail("Choice must resolve"); continue }
+            XCTAssertEqual(try persistedMergeDocument(merged).clips, try persistedMergeDocument(chosen).clips)
+            XCTAssertEqual(merged.splitScreenSections, base.splitScreenSections)
+            XCTAssertEqual(merged.speakerBackground, base.speakerBackground)
+        }
+    }
+
+    func testAutomaticMergeRefusesOrphanedSplitMembership() {
+        let base = splitMergeDocument()
+        var remote = base
+        remote.splitScreenSections = []
+        if case .resolved = NativeEditorMerge.documents(base: base, local: base, remote: remote,
+            baseSong: nil, remoteSong: nil) { XCTFail("An automatic update cannot adopt orphaned panel members") }
+    }
+
+    func testPlainLegacyTimelineMergeDoesNotInventSplitField() throws {
+        let base = EditorDocument(snapshot: ["timeline_slots": .array([.object([
+            "slot_id": .string("ordinary"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(4)])])])
+        var local = base, remote = base
+        local.clips[0].durationS = 3
+        remote.title = "Latest"
+        guard case .resolved(let merged) = NativeEditorMerge.documents(base: base, local: local, remote: remote,
+            baseSong: nil, remoteSong: nil) else { return XCTFail("Ordinary timeline behavior must remain") }
+        XCTAssertEqual(try persistedMergeDocument(merged).clips, try persistedMergeDocument(local).clips)
+        XCTAssertEqual(merged.title, "Latest")
+        XCTAssertNil(merged.encodeSnapshot()["split_screen_sections"])
+    }
+}

@@ -5,6 +5,32 @@ import XCTest
 /// The crop editor's pure math: whatever a finger does, the rectangle stays inside the frame, never gets
 /// smaller than the floor, and (in Fill frame) keeps the shape that will export.
 final class KriaCropGeometryTests: XCTestCase {
+    func testCropGestureTransactionWaitsForBothRecognizersInEitherEndOrder() {
+        for first in [KriaCropGestureState.Kind.drag, .pinch] {
+            var gestures = KriaCropGestureState()
+            let base = KriaCropGeometry.full
+            XCTAssertTrue(gestures.begin(.drag, at: base))
+            XCTAssertFalse(gestures.begin(.pinch, at: base))
+            XCTAssertFalse(gestures.end(first))
+            let remaining: KriaCropGestureState.Kind = first == .drag ? .pinch : .drag
+            XCTAssertEqual(gestures.base(for: remaining), base)
+            XCTAssertFalse(gestures.begin(remaining, at: .init(x: 0.2, y: 0.2, width: 0.4, height: 0.4)))
+            XCTAssertEqual(gestures.base(for: remaining), base, "Cumulative updates must retain their original baseline")
+            XCTAssertTrue(gestures.end(remaining))
+            XCTAssertFalse(gestures.end(first), "A duplicate end cannot commit a second undo step")
+        }
+    }
+
+    func testPureCropPinchEndsItsTransactionAndNextGestureGetsANewBaseline() {
+        var gestures = KriaCropGestureState()
+        XCTAssertTrue(gestures.begin(.pinch, at: KriaCropGeometry.full))
+        XCTAssertTrue(gestures.end(.pinch))
+        let next = NormalizedSourceRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
+        XCTAssertTrue(gestures.begin(.drag, at: next))
+        XCTAssertEqual(gestures.base(for: .drag), next)
+        XCTAssertTrue(gestures.end(.drag))
+    }
+
     private typealias Geometry = KriaCropGeometry
     private let inside = 0.000_001
 

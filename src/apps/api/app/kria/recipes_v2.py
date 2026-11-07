@@ -14,6 +14,7 @@ from app.kria.portable_text import PortableTextLayer
 from app.kria.portable_visual import VisualCanvasFill
 from app.kria.recipes import EditRecipeV1
 from app.kria.render_assets import RenderAssetManifest, VisualRenderAsset
+from app.kria.split_screen import RecipeSplitScreenSection
 
 # The longest timeline the device engine builds (seconds): `EditRecipeV2` refuses a longer one.
 MAX_TIMELINE_S = 1800
@@ -36,10 +37,15 @@ class EditRecipeV2(EditRecipeV1):
     text_layers: list[PortableTextLayer] = Field(default_factory=list, max_length=500)
     drawing_layers: list[PortableDrawingLayer] = Field(default_factory=list, max_length=12)
     speaker_background: SpeakerBackgroundLayer | None = None
+    split_screen_sections: list[RecipeSplitScreenSection] = Field(
+        default_factory=list, max_length=100
+    )
 
     @model_serializer(mode="wrap")
     def preserve_legacy_camera_shape(self, handler):
         payload = handler(self)
+        if not self.split_screen_sections:
+            payload.pop("split_screen_sections", None)
         if not self.visual_fills:
             payload.pop("visual_fills", None)
         if self.motion_scenes is None:
@@ -51,6 +57,44 @@ class EditRecipeV2(EditRecipeV1):
         if self.speaker_background is None:
             payload.pop("speaker_background", None)
         return payload
+
+    @property
+    def duration(self) -> float:
+        return max(
+            super().duration,
+            max((section.end for section in self.split_screen_sections), default=0),
+        )
+
+    @model_validator(mode="after")
+    def validate_split_sections(self):
+        sections = {section.id: section for section in self.split_screen_sections}
+        if len(sections) != len(self.split_screen_sections):
+            raise ValueError("split section ids must be unique")
+        ordered = sorted(sections.values(), key=lambda section: section.start)
+        if any(left.end > right.start + 1e-6 for left, right in zip(ordered, ordered[1:])):
+            raise ValueError("split sections must not overlap")
+        used = set()
+        for track in self.tracks:
+            for clip in track.clips:
+                member = clip.split_screen
+                if member is None:
+                    continue
+                section = sections.get(member.section_id)
+                if section is None or member.panel_index >= len(section.panel_weights):
+                    raise ValueError("split clip references an unknown section or panel")
+                end = (
+                    clip.timeline_start
+                    + clip.source_duration / clip.rate
+                    + (clip.hold_duration or 0)
+                )
+                if clip.timeline_start < section.start - 1e-6 or end > section.end + 1e-6:
+                    raise ValueError("split clip exceeds its section")
+                used.add(section.id)
+        if used != set(sections):
+            raise ValueError("split section has no clips")
+        if sections:
+            self.required_capabilities |= {"splitScreen"}
+        return self
 
     @model_validator(mode="after")
     def validate_asset_manifest(self) -> EditRecipeV2:
@@ -85,7 +129,41 @@ class EditRecipeV2(EditRecipeV1):
         ):
             self.required_capabilities |= {"singleWordText"}
         manifest = {asset.id: asset for asset in self.asset_manifest.assets}
+        for track in self.tracks:
+            for clip in track.clips:
+                if clip.speaker_frame_override is None:
+                    continue
+                self.required_capabilities |= {"splitScreen"}
+                if clip.speaker_frame_override.mode == "inherit":
+                    continue
+                background = self.speaker_background
+                subject = background is not None and (
+                    clip.id in background.subject_clip_ids
+                    if background.subject_clip_ids is not None
+                    else track.id == background.subject_track_id
+                )
+                if (
+                    not subject
+                    or track.kind != "video"
+                    or getattr(manifest.get(clip.source_asset_id), "kind", None) != "original"
+                ):
+                    raise ValueError(
+                        "speaker frame override requires an original video speaker "
+                        "subject and background; reset the occurrence frame to inherit first"
+                    )
+                self.required_capabilities |= {"splitScreen"}
         if self.speaker_background is not None:
+            if self.speaker_background.subject_clip_ids is not None:
+                eligible = {
+                    clip.id
+                    for track in self.tracks
+                    if track.kind == "video"
+                    for clip in track.clips
+                    if getattr(manifest.get(clip.source_asset_id), "kind", None) == "original"
+                }
+                if not set(self.speaker_background.subject_clip_ids).issubset(eligible):
+                    raise ValueError("speaker subjects require original video occurrences")
+                self.required_capabilities |= {"splitScreen"}
             if self.speaker_background.uses_color:
                 # KRI-1173: a flat colour names no asset and downloads nothing; it has its own
                 # capability (the new drawing), beside the base one.

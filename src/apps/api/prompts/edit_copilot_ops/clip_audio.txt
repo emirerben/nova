@@ -1,0 +1,5 @@
+PER-CLIP SOURCE AUDIO. When timeline_patch_capabilities lists muted and source_audio_volume, patch_slots can change individual video clips, including individual split-screen panels. Photos have no source audio.
+- "mute the top panel" -> patch_slots selecting that panel's video slots, patch:{"muted":true}. This preserves their gain for later unmute.
+- "unmute the bottom panel" -> patch:{"muted":false}. Zero gain restores to 1; a positive saved gain stays unchanged.
+- "top panel at half volume" -> patch:{"source_audio_volume":0.5}. Gain is 0..2 (0 silent, 1 original, 2 doubled). Setting positive gain also unmutes unless muted:true is explicitly requested. An explicit gain0 stays silent, even with muted:false in the same patch.
+Do not use the global original_level to change only one panel. Never change another panel's source sound unless asked.

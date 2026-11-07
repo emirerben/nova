@@ -3451,6 +3451,7 @@
                 "speakerBackgroundColor",
                 "speakerFrameWindows",
                 "backgroundFocus",
+                "splitScreen",
                 "clipTilt",
                 "clipBackdropMedia",
                 "scriptFonts",
@@ -3584,6 +3585,7 @@
                 "speakerBackgroundColor",
                 "speakerFrameWindows",
                 "backgroundFocus",
+                "splitScreen",
                 "clipTilt",
                 "clipBackdropMedia",
                 "scriptFonts",
@@ -3618,6 +3620,14 @@
             "$ref": "#/components/schemas/SpeakerBackgroundLayer",
             "default": null,
             "nullable": true
+          },
+          "split_screen_sections": {
+            "items": {
+              "$ref": "#/components/schemas/RecipeSplitScreenSection"
+            },
+            "maxItems": 100,
+            "title": "Split Screen Sections",
+            "type": "array"
           },
           "text_layers": {
             "items": {
@@ -4195,6 +4205,16 @@
             "$ref": "#/components/schemas/EditorCommitSpeakerBackground",
             "default": null,
             "nullable": true
+          },
+          "split_screen_sections": {
+            "default": null,
+            "items": {
+              "$ref": "#/components/schemas/SplitScreenSection"
+            },
+            "maxItems": 100,
+            "nullable": true,
+            "title": "Split Screen Sections",
+            "type": "array"
           },
           "text_elements": {
             "default": null,
@@ -5030,6 +5050,16 @@
             "default": null,
             "nullable": true
           },
+          "split_screen_sections": {
+            "default": null,
+            "items": {
+              "$ref": "#/components/schemas/SplitScreenSection"
+            },
+            "maxItems": 100,
+            "nullable": true,
+            "title": "Split Screen Sections",
+            "type": "array"
+          },
           "text_elements": {
             "default": null,
             "items": {
@@ -5097,6 +5127,22 @@
       "EditorStateTimelineSlot": {
         "description": "A Save timeline row plus the media identity of an UNSAVED added clip.\n\nA saved row's media is recoverable from ``clip_index`` against the persisted\nsources; a clip the creator just added is not in them yet, so the client names it\nhere (all optional, ignored by the Save route which uses ``TimelineSlotEdit``).",
         "properties": {
+          "audio_fade_in": {
+            "default": null,
+            "maximum": 60,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Audio Fade In",
+            "type": "number"
+          },
+          "audio_fade_out": {
+            "default": null,
+            "maximum": 60,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Audio Fade Out",
+            "type": "number"
+          },
           "clip_index": {
             "title": "Clip Index",
             "type": "integer"
@@ -5111,6 +5157,22 @@
             "default": null,
             "nullable": true,
             "title": "Duration S",
+            "type": "number"
+          },
+          "freeze_frame_s": {
+            "default": null,
+            "maximum": 1800,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Freeze Frame S",
+            "type": "number"
+          },
+          "freeze_hold_s": {
+            "default": null,
+            "maximum": 1800,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Freeze Hold S",
             "type": "number"
           },
           "in_s": {
@@ -5163,6 +5225,11 @@
             "title": "Media Kind",
             "type": "string"
           },
+          "media_transform": {
+            "$ref": "#/components/schemas/app__kria__recipes__MediaTransform",
+            "default": null,
+            "nullable": true
+          },
           "muted": {
             "default": null,
             "nullable": true,
@@ -5194,6 +5261,14 @@
             "title": "Slot Id",
             "type": "string"
           },
+          "source_audio_volume": {
+            "default": null,
+            "maximum": 2,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Source Audio Volume",
+            "type": "number"
+          },
           "source_crop": {
             "additionalProperties": {
               "type": "number"
@@ -5224,6 +5299,40 @@
             "nullable": true,
             "title": "Source Start Locked",
             "type": "boolean"
+          },
+          "speaker_frame_override": {
+            "$ref": "#/components/schemas/SpeakerFrameOverride",
+            "default": null,
+            "nullable": true
+          },
+          "speaker_subject": {
+            "default": null,
+            "nullable": true,
+            "title": "Speaker Subject",
+            "type": "boolean"
+          },
+          "split_offset_s": {
+            "default": null,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Split Offset S",
+            "type": "number"
+          },
+          "split_panel_index": {
+            "default": null,
+            "maximum": 2,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Split Panel Index",
+            "type": "integer"
+          },
+          "split_section_id": {
+            "default": null,
+            "maxLength": 160,
+            "minLength": 1,
+            "nullable": true,
+            "title": "Split Section Id",
+            "type": "string"
           },
           "tilt": {
             "additionalProperties": true,
@@ -7618,7 +7727,7 @@
             "type": "string"
           },
           "transform": {
-            "$ref": "#/components/schemas/MediaTransform"
+            "$ref": "#/components/schemas/app__agents___schemas__visual_block__MediaTransform"
           },
           "transition_in": {
             "default": "cut",
@@ -7880,36 +7989,35 @@
         "type": "object"
       },
       "MediaTransform": {
-        "description": "Shared fullscreen transform mirrored by the editor preview.",
+        "additionalProperties": false,
         "properties": {
-          "fit_mode": {
-            "default": "contain",
-            "enum": [
-              "contain",
-              "cover"
-            ],
-            "title": "Fit Mode",
-            "type": "string"
-          },
-          "focal_x": {
-            "default": 0.5,
-            "maximum": 1.0,
-            "minimum": 0.0,
-            "title": "Focal X",
+          "position_x": {
+            "default": 0,
+            "maximum": 100000,
+            "minimum": -100000,
+            "title": "Position X",
             "type": "number"
           },
-          "focal_y": {
-            "default": 0.5,
-            "maximum": 1.0,
-            "minimum": 0.0,
-            "title": "Focal Y",
+          "position_y": {
+            "default": 0,
+            "maximum": 100000,
+            "minimum": -100000,
+            "title": "Position Y",
             "type": "number"
           },
-          "zoom": {
-            "default": 1.0,
-            "maximum": 4.0,
-            "minimum": 1.0,
-            "title": "Zoom",
+          "rotation_degrees": {
+            "default": 0,
+            "maximum": 3600,
+            "minimum": -3600,
+            "title": "Rotation Degrees",
+            "type": "number"
+          },
+          "scale": {
+            "default": 1,
+            "exclusiveMinimum": true,
+            "maximum": 20,
+            "minimum": 0,
+            "title": "Scale",
             "type": "number"
           }
         },
@@ -10238,6 +10346,58 @@
         "title": "QuestionnaireBody",
         "type": "object"
       },
+      "RecipeSplitScreenSection": {
+        "additionalProperties": false,
+        "properties": {
+          "background_color": {
+            "default": "#000000",
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "title": "Background Color",
+            "type": "string"
+          },
+          "end": {
+            "exclusiveMinimum": true,
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "End",
+            "type": "number"
+          },
+          "gutter": {
+            "default": 0,
+            "maximum": 0.1,
+            "minimum": 0,
+            "title": "Gutter",
+            "type": "number"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "panel_weights": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 2,
+            "title": "Panel Weights",
+            "type": "array"
+          },
+          "start": {
+            "minimum": 0,
+            "title": "Start",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "start",
+          "end"
+        ],
+        "title": "RecipeSplitScreenSection",
+        "type": "object"
+      },
       "RegisterAssetBody": {
         "properties": {
           "capture_time": {
@@ -12524,6 +12684,16 @@
             "default": null,
             "nullable": true
           },
+          "subject_clip_ids": {
+            "default": null,
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500,
+            "nullable": true,
+            "title": "Subject Clip Ids",
+            "type": "array"
+          },
           "subject_track_id": {
             "default": "subtitled",
             "maxLength": 160,
@@ -12634,6 +12804,31 @@
         "title": "SpeakerFrame",
         "type": "object"
       },
+      "SpeakerFrameOverride": {
+        "additionalProperties": false,
+        "description": "Occurrence frame: inherit the global frame, disable inset, or supply custom geometry.",
+        "properties": {
+          "frame": {
+            "$ref": "#/components/schemas/SpeakerFrame",
+            "default": null,
+            "nullable": true
+          },
+          "mode": {
+            "enum": [
+              "inherit",
+              "full",
+              "custom"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "SpeakerFrameOverride",
+        "type": "object"
+      },
       "SpeakerFullScreenWindow": {
         "additionalProperties": false,
         "description": "Qendresa item 16: from ``start`` to ``end`` (output seconds) the speaker's own take shows\nfull-frame and untouched (no mask, no background, no corner frame).",
@@ -12657,6 +12852,83 @@
           "end"
         ],
         "title": "SpeakerFullScreenWindow",
+        "type": "object"
+      },
+      "SplitScreenMembership": {
+        "additionalProperties": false,
+        "properties": {
+          "panel_index": {
+            "maximum": 2,
+            "minimum": 0,
+            "title": "Panel Index",
+            "type": "integer"
+          },
+          "section_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Section Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "section_id",
+          "panel_index"
+        ],
+        "title": "SplitScreenMembership",
+        "type": "object"
+      },
+      "SplitScreenSection": {
+        "additionalProperties": false,
+        "properties": {
+          "background_color": {
+            "default": "#000000",
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "title": "Background Color",
+            "type": "string"
+          },
+          "duration_s": {
+            "maximum": 1800,
+            "minimum": 0.1,
+            "title": "Duration S",
+            "type": "number"
+          },
+          "gutter": {
+            "default": 0,
+            "maximum": 0.1,
+            "minimum": 0,
+            "title": "Gutter",
+            "type": "number"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "panel_count": {
+            "enum": [
+              2,
+              3
+            ],
+            "title": "Panel Count",
+            "type": "integer"
+          },
+          "panel_weights": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 2,
+            "title": "Panel Weights",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "duration_s",
+          "panel_count"
+        ],
+        "title": "SplitScreenSection",
         "type": "object"
       },
       "StaggeredContent": {
@@ -14356,6 +14628,16 @@
             "title": "Source Start",
             "type": "number"
           },
+          "speaker_frame_override": {
+            "$ref": "#/components/schemas/SpeakerFrameOverride",
+            "default": null,
+            "nullable": true
+          },
+          "split_screen": {
+            "$ref": "#/components/schemas/SplitScreenMembership",
+            "default": null,
+            "nullable": true
+          },
           "still_layout": {
             "default": null,
             "enum": [
@@ -14603,6 +14885,13 @@
             "title": "Source Pool",
             "type": "array"
           },
+          "split_screen_sections": {
+            "items": {
+              "$ref": "#/components/schemas/SplitScreenSection"
+            },
+            "title": "Split Screen Sections",
+            "type": "array"
+          },
           "tombstones": {
             "items": {
               "additionalProperties": true,
@@ -14630,6 +14919,22 @@
       "TimelineSlotEdit": {
         "description": "One slot as posted by the timeline editor.\n\n`slot_id=None` marks a NEW slot (the server assigns a uuid4). `clip_index`\nindexes into `job.all_candidates[\"clip_paths\"]` \u2014 clients never send paths.\nBeat slots size in `duration_beats` (walked against the real grid); slots\nwith `duration_beats=None` (no-grid variants, footage-trimmed slots, or the\nexact terminal tail after a grid's final usable beat) send their exact\nwindow in `duration_s`.",
         "properties": {
+          "audio_fade_in": {
+            "default": null,
+            "maximum": 60,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Audio Fade In",
+            "type": "number"
+          },
+          "audio_fade_out": {
+            "default": null,
+            "maximum": 60,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Audio Fade Out",
+            "type": "number"
+          },
           "clip_index": {
             "title": "Clip Index",
             "type": "integer"
@@ -14644,6 +14949,22 @@
             "default": null,
             "nullable": true,
             "title": "Duration S",
+            "type": "number"
+          },
+          "freeze_frame_s": {
+            "default": null,
+            "maximum": 1800,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Freeze Frame S",
+            "type": "number"
+          },
+          "freeze_hold_s": {
+            "default": null,
+            "maximum": 1800,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Freeze Hold S",
             "type": "number"
           },
           "in_s": {
@@ -14679,6 +15000,11 @@
             "title": "Look Preset",
             "type": "string"
           },
+          "media_transform": {
+            "$ref": "#/components/schemas/app__kria__recipes__MediaTransform",
+            "default": null,
+            "nullable": true
+          },
           "muted": {
             "default": null,
             "nullable": true,
@@ -14710,6 +15036,14 @@
             "title": "Slot Id",
             "type": "string"
           },
+          "source_audio_volume": {
+            "default": null,
+            "maximum": 2,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Source Audio Volume",
+            "type": "number"
+          },
           "source_crop": {
             "additionalProperties": {
               "type": "number"
@@ -14732,6 +15066,40 @@
             "nullable": true,
             "title": "Source Start Locked",
             "type": "boolean"
+          },
+          "speaker_frame_override": {
+            "$ref": "#/components/schemas/SpeakerFrameOverride",
+            "default": null,
+            "nullable": true
+          },
+          "speaker_subject": {
+            "default": null,
+            "nullable": true,
+            "title": "Speaker Subject",
+            "type": "boolean"
+          },
+          "split_offset_s": {
+            "default": null,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Split Offset S",
+            "type": "number"
+          },
+          "split_panel_index": {
+            "default": null,
+            "maximum": 2,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Split Panel Index",
+            "type": "integer"
+          },
+          "split_section_id": {
+            "default": null,
+            "maxLength": 160,
+            "minLength": 1,
+            "nullable": true,
+            "title": "Split Section Id",
+            "type": "string"
           },
           "tilt": {
             "additionalProperties": true,
@@ -14854,7 +15222,7 @@
           },
           "source_audio_volume": {
             "default": null,
-            "maximum": 1.0,
+            "maximum": 2.0,
             "minimum": 0.0,
             "nullable": true,
             "title": "Source Audio Volume",
@@ -15791,6 +16159,79 @@
           "fingerprint"
         ],
         "title": "VoiceoverRenderAsset",
+        "type": "object"
+      },
+      "app__agents___schemas__visual_block__MediaTransform": {
+        "description": "Shared fullscreen transform mirrored by the editor preview.",
+        "properties": {
+          "fit_mode": {
+            "default": "contain",
+            "enum": [
+              "contain",
+              "cover"
+            ],
+            "title": "Fit Mode",
+            "type": "string"
+          },
+          "focal_x": {
+            "default": 0.5,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Focal X",
+            "type": "number"
+          },
+          "focal_y": {
+            "default": 0.5,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Focal Y",
+            "type": "number"
+          },
+          "zoom": {
+            "default": 1.0,
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Zoom",
+            "type": "number"
+          }
+        },
+        "title": "MediaTransform",
+        "type": "object"
+      },
+      "app__kria__recipes__MediaTransform": {
+        "additionalProperties": false,
+        "properties": {
+          "position_x": {
+            "default": 0,
+            "maximum": 100000,
+            "minimum": -100000,
+            "title": "Position X",
+            "type": "number"
+          },
+          "position_y": {
+            "default": 0,
+            "maximum": 100000,
+            "minimum": -100000,
+            "title": "Position Y",
+            "type": "number"
+          },
+          "rotation_degrees": {
+            "default": 0,
+            "maximum": 3600,
+            "minimum": -3600,
+            "title": "Rotation Degrees",
+            "type": "number"
+          },
+          "scale": {
+            "default": 1,
+            "exclusiveMinimum": true,
+            "maximum": 20,
+            "minimum": 0,
+            "title": "Scale",
+            "type": "number"
+          }
+        },
+        "title": "MediaTransform",
         "type": "object"
       }
     },

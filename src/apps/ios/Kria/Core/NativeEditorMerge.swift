@@ -84,10 +84,24 @@ enum NativeEditorMerge {
         func state(_ document: EditorDocument, authority: JSONValue?) -> State {
             let raw = document.encodeSnapshot()
             let payload = raw["editor_payload"]?.objectValue
+            var sections = payload?["sections"]?.objectValue ?? payload ?? raw
+            // Promote fallback rows without expanding defaults into untouched raw fields.
+            // Otherwise adopting a clean remote timeline looks like a new local edit.
+            if document.splitScreenIsValid {
+                if sections["timeline_slots"] == nil,
+                   let fallbackRows = raw["user_timeline"]?.objectValue?["slots"] {
+                    sections["timeline_slots"] = fallbackRows
+                }
+                if sections["split_screen_sections"] != nil
+                    || raw["user_timeline"]?.objectValue?["split_screen_sections"] != nil
+                    || !document.splitScreenSections.isEmpty {
+                    sections["split_screen_sections"] = .array(document.splitScreenSections.map(\.json))
+                }
+            }
             let deletions = payload?["deletions"] ?? (document.deletions.isEmpty ? nil : .array(document.deletions.map {
                 .object(["kind": .string($0.kind), "id": .string($0.id)])
             }))
-            return State(sections: payload?["sections"]?.objectValue ?? payload ?? raw,
+            return State(sections: sections,
                          editorState: payload?["editor_state"] ?? (document.editorState == "empty" ? .string("empty") : nil), deletions: deletions,
                          userSong: song(document, authority: authority))
         }
@@ -123,7 +137,8 @@ enum NativeEditorMerge {
             }
             decoded.editorState = value
         }
-        guard let validated = decoded.mergeValidationSnapshot(preservingOpaqueFrom: remote),
+        guard decoded.splitScreenIsValid,
+              let validated = decoded.mergeValidationSnapshot(preservingOpaqueFrom: remote),
               preservesExplicitValues(.object(selected.sections), in:
                 validated["editor_payload"]?.objectValue?["sections"] ?? .object(validated)),
               validIntervals(.object(selected.sections)) else {
@@ -175,7 +190,7 @@ enum NativeEditorMerge {
     }
 
     private static let authored: Set<String> = [
-        "timeline_slots", "speech_timing_basis", "clip_audio", "text_elements",
+        "timeline_slots", "split_screen_sections", "speech_timing_basis", "clip_audio", "text_elements",
         "caption_cues", "caption_meta", "mix", "music", "music_track_id", "music_window",
         "background_music", "sound_effects", "media_overlays", "visual_blocks",
         "motion_scenes", "motion_runtime_hash", "camera_effects", "drawings",
@@ -210,6 +225,8 @@ enum NativeEditorMerge {
         let deletionChanged = local.deletions != base.deletions || remote.deletions != base.deletions
         let timelineChanged = local.sections["timeline_slots"] != base.sections["timeline_slots"]
             || remote.sections["timeline_slots"] != base.sections["timeline_slots"]
+            || local.sections["split_screen_sections"] != base.sections["split_screen_sections"]
+            || remote.sections["split_screen_sections"] != base.sections["split_screen_sections"]
             || local.editorState != base.editorState || remote.editorState != base.editorState
         let requiresCoupledDeletion = deletionChanged && [base, local, remote].contains { state in
             guard case .array(let rows)? = state.deletions else { return state.deletions != nil }

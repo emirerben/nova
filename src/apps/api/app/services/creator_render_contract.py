@@ -717,6 +717,25 @@ FIELD_MATRIX: dict[str, FieldRule] = {
     ),
     **_rules(
         "upstream_resolved",
+        "phone_initial_split_screen",
+        "split_screen",
+        "split_screen.panels[]",
+        "split_screen.panels[].media_id",
+        "split_screen.panels[].source_start_s",
+        "split_screen.start_s",
+        "split_screen.duration_s",
+        "split_screen.panel_weights[]",
+        "split_screen.gutter",
+        "split_screen.background_color",
+        note=(
+            "Capability policy validates availability and approved media; the initial phone "
+            "compiler lowers source clocks and layout through the editable section command "
+            "before pinning the device request. This contract does not independently pin or "
+            "verify panel placement."
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
         "speaker_background_repair",
         "background_media",
         "background_media.media_id",
