@@ -764,6 +764,9 @@ def _place(
     if pinned_position:
         positions = ["authored"]
     fixed = pinned_position or position_fixed or lane_fixed
+    # Only a caption position the creator asked for this turn goes to the real bottom; an
+    # unasked or saved caption keeps clear above the wordmark (the obstacle fit relies on it).
+    bottom_edge = CAPTION_BOTTOM_EDGE if role == "caption" and position_fixed else 0.70
 
     def spots(strategy: _FitStrategy) -> list[str]:
         if fixed:
@@ -787,6 +790,7 @@ def _place(
                 canvas=canvas,
                 block_rows=block_rows,
                 anchors=LABEL_ANCHORS,
+                bottom_edge=bottom_edge,
             ):
                 return row
     except _ProbeBudgetSpent:
@@ -801,6 +805,7 @@ def _place(
         canvas=canvas,
         block_rows=block_rows,
         anchors=LABEL_ANCHORS,
+        bottom_edge=bottom_edge,
     )
     asked = original.get("position") if pinned_position else wanted.get("position")
     record_text_fit_relaxed(
@@ -872,6 +877,7 @@ def _candidates(
     block_rows,
     anchors: dict,
     probe: bool,
+    bottom_edge: float = 0.70,
 ):
     """Yield each anchor, offset and size `strategy` allows, `row` mutated to that placement.
 
@@ -920,9 +926,9 @@ def _candidates(
         else:
             x, y, alignment = anchors[position]
         if position in {"bottom_left", "bottom", "bottom_right"}:
-            # Stacking within the corner. A caption ends at the real bottom (the default caption
-            # spot); every other role keeps clear above the wordmark.
-            y = (CAPTION_BOTTOM_EDGE if role == "caption" else 0.70) - offset
+            # Stacking within the corner; `bottom_edge` is 0.70 (clear above the wordmark) unless
+            # `_place` was given an asked caption spot.
+            y = bottom_edge - offset
             if role == "pinned":
                 y = max(0.12, y - max(0.0, 0.86 - float(original.get("y_frac") or 0.86)))
         elif position.startswith("top"):
@@ -973,7 +979,7 @@ def _candidates(
             except _fit_errors():
                 continue
             order += 1
-            in_frame = _in_frame(swept, caption=role == "caption")
+            in_frame = _in_frame(swept, caption=bottom_edge != 0.70)
             candidate = _Candidate(swept, height, in_frame, order)
             yield candidate
             if not probe and candidate.in_frame:
