@@ -197,16 +197,20 @@ import XCTest
         XCTAssertTrue(talking.waitForExistence(timeout: 10))
         if !talking.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
         talking.tap()
-        let upload = app.buttons["choose-videos"]
-        if upload.waitForExistence(timeout: 10) { upload.tap() }
-        else {
-            XCTAssertTrue(app.buttons["Attach footage"].waitForExistence(timeout: 5), "no way into Add media with footage attached")
-            app.buttons["Attach footage"].tap()
-        }
-        if app.buttons["upload-source-photos"].waitForExistence(timeout: 5) {
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
-            XCTAssertTrue(app.buttons["upload-source-photos"].waitForNonExistence(timeout: 5))
-        }
+        // With footage attached the stage has no Add media entry of its own: the composer + is the way in. Add script
+        // opens the camera from Add media, so closing the camera leaves the clip list open.
+        let plus = app.buttons["chat-attach"]
+        XCTAssertTrue(plus.waitForExistence(timeout: 10), "no way into Add media with footage attached")
+        plus.tap()
+        let addScript = app.buttons["attach-script"]
+        XCTAssertTrue(addScript.waitForExistence(timeout: 5), "Talk to camera offers the optional script")
+        addScript.tap()
+        let noScript = app.buttons["teleprompter-no-script"]
+        XCTAssertTrue(noScript.waitForExistence(timeout: 20))
+        noScript.tap()
+        let close = app.buttons["teleprompter-close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 20))
+        close.tap()
         let footage = app.scrollViews["attachment-step-footage"]
         XCTAssertTrue(footage.waitForExistence(timeout: 5), "Add media did not open on Footage")
         let recording = footage.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH 'Screen Recording'")).firstMatch
