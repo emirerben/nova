@@ -625,7 +625,7 @@ STAND_INS = (
     "planner double.",
     "The mute kind is dark as shipped (`PINNED_TAP_APPLIES_CLIP_SOUND = False`). Every mute cell "
     "runs with that constant patched on and is marked `[not shipped]`; it proves what the seam "
-    "would do, not that a phone would then mute the clip.",
+    "would do; that the phone recipe then mutes the clip is `test_r8_mute_render.py`.",
     "Not exercised: a device, the render itself (a tap stages a draft or an approval; the render "
     "worker and the phone export are not run), a live model, and any paid call.",
 )
