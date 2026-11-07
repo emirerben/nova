@@ -1,5 +1,7 @@
 # Formal verification boundary
 
+The historical execution below is not current-head admission. The read-only audit at `f00162b1`, against integrated main `a518aed8`, finds 36 drifts among 98 nonempty covered entries and two covered feature changes. See [the current verification record](verification-2026-11-07.md) and local `formal-source-audit-f00162b1c.json`. The shared coordinator owns model, coverage and verifier maintenance; none was changed here.
+
 The unchanged pinned TLC 1.8.0 artifact was recovered from a local cache and independently verified against SHA-256 `fc6878c603f0fdc18b9fe3e5bf51860cb90ab5b1154e3c371660c036d6bdd63e`. `make verify-phone-render` ran through the supported `TLA2TOOLS` and `JAVA` overrides. Its model inputs were unchanged from `44dc5d213`.
 
 Observed result: happy publication, 20 model scenarios, five historical counterexamples and 33 mutation checks passed their expected outcomes; no residual finding. The verifier exited 3 for 27 covered-function drifts (`make` exited 2). No source hash, invariant, bound, timeout, historical model or mutation was changed.
