@@ -2290,6 +2290,8 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "TIMELINE_INVALID_PARENT": timeline,
             "TIMELINE_IMAGE_SPLIT_UNSUPPORTED": "A photo can’t be split. Keep it whole or trim it instead. Your edits are still here.",
             "authored_seconds_required": timeline,
+            "split_screen_unavailable": "Split-screen editing isn’t available right now. Try saving again later. Your edits are still here.",
+            "split_screen_requires_atomic_commit": "This edit’s clips and panel settings must be saved together. Update Kria and try saving again. Your edits are still here.",
             "GUIDED_REVISION_INVALID": timeline,
             "GUIDED_TEXT_IDENTITY_MISMATCH": timeline,
             "GUIDED_TOMBSTONE_LIMIT": "This edit has too many removed items to save. Restore or re-add a few and try again. Your edits are still here.",

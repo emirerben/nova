@@ -222,6 +222,7 @@ class CompiledEditorDraft:
     # for a speech cut. Never read by the draft/render path itself.
     before: dict[str, Any] = field(default_factory=dict)
     canonical_duration_s: float | None = None
+    timeline_rebase: dict[str, tuple[Any, Any]] = field(default_factory=dict)
 
 
 def is_caption_text_bar(row: dict[str, Any]) -> bool:
@@ -751,6 +752,44 @@ def _source_pool_rows(job: Any, variant: dict[str, Any]) -> list[dict[str, Any]]
         }
         for index, path in enumerate(paths)
     ]
+
+
+def replacement_source_pool(job: Any, variant: dict) -> list[dict]:
+    """Path-free replacement choices from the phone's authoritative ready catalog."""
+    from app.services.phone_editor_sources import (
+        immutable_video_source_duration,
+        phone_editor_source_revision,
+    )
+    from app.services.phone_sources import PHONE_SOURCES_FIELD
+
+    if not (
+        (job.assembly_plan or {}).get(PHONE_SOURCES_FIELD)
+        or variant.get("_editor_sources_v1")
+        or _guided_v2_revision(job, variant)
+    ):
+        return _source_pool_rows(job, variant)
+    try:
+        sources = (phone_editor_source_revision(job, variant) or {}).get("sources") or []
+        result = []
+        for index, source in enumerate(sources):
+            duration = (
+                immutable_video_source_duration(job, variant, index)
+                if source["kind"] == "video"
+                else None
+            )
+            result.append(
+                {
+                    "clip_index": index,
+                    "media_id": source["media_id"],
+                    "kind": source["kind"],
+                    "duration_s": duration,
+                    "generation": source["generation"],
+                    "ready": True,
+                }
+            )
+        return result
+    except ValueError:
+        return []
 
 
 def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
@@ -1486,6 +1525,7 @@ def build_editor_snapshot(
         # Unlocks add_unused_sources/set_media_duration/stack_images bulk
         # selectors — see `_source_pool_rows`.
         snapshot["source_pool"] = _source_pool_rows(job, variant)
+        snapshot["replacement_source_pool"] = replacement_source_pool(job, variant)
     if "text" in families and _text_appearance_enabled():
         # The web drawer builds this inventory client-side; the server chat
         # path never did, so the model's correct "remove shadow and outline"
@@ -1856,6 +1896,40 @@ def project_editor_draft(
             }
             for row in source_rows
         }
+        if job is not None and (
+            (job.assembly_plan or {}).get("_phone_sources_v1")
+            or variant.get("_editor_sources_v1")
+            or _guided_v2_revision(job, variant)
+        ):
+            for source in replacement_source_pool(job, variant):
+                if source.get("ready"):
+                    source_metadata.setdefault(source["clip_index"], {}).update(
+                        media_id=source["media_id"],
+                        media_kind=source["kind"],
+                        **(
+                            {"source_duration_s": source["duration_s"]}
+                            if source.get("duration_s") is not None
+                            else {}
+                        ),
+                    )
+        for incoming in payload["timeline_slots"]:
+            original = originals.get(incoming.get("slot_id"))
+            if original is not None and original.get("clip_index") != incoming.get("clip_index"):
+                for key in (
+                    "asset_id",
+                    "media_id",
+                    "media_kind",
+                    "kind",
+                    "source_duration_s",
+                    "source_duration",
+                    "source_end_s",
+                    "source_gcs_path",
+                    "native_source_span_s",
+                    "native_composite_source",
+                    "freeze_frame_s",
+                    "freeze_hold_s",
+                ):
+                    original.pop(key, None)
         projected.pop("guided_draft_slots", None)
         projected["user_timeline"] = {
             "slots": [
@@ -2331,6 +2405,7 @@ class _DraftState:
     # `remove_background` cleared it. Reaches the payload only when "speaker_background" is in
     # `changed`, so an untouched lane is absent (leave unchanged), never an explicit clear.
     speaker_background: dict[str, Any] | None = None
+    drawings: list[dict[str, Any]] = field(default_factory=list)
 
     def text_bar(self, index: object) -> dict[str, Any]:
         row = self.text_bars[_require_index(self.text_bars, index, "Text")]
@@ -3087,6 +3162,19 @@ def compile_editor_ops(
     before_sfx = copy.deepcopy(state.sound_effects)
     before_overlays = copy.deepcopy(state.media_overlays)
 
+    canvas_initial = {
+        lane: copy.deepcopy(getattr(state, lane))
+        for lane in (
+            "text",
+            "captions",
+            "sound_effects",
+            "camera_effects",
+            "media_overlays",
+            "visual_blocks",
+        )
+    }
+    canvas_initial["drawings"] = copy.deepcopy(variant.get("drawings") or [])
+    canvas_initial["speaker_background"] = copy.deepcopy(background_current(job, variant))
     canonical_duration_s = None
     sequence_ops = []
     for op in ops:
@@ -3181,6 +3269,22 @@ def compile_editor_ops(
         "preserve_all" if preserve_text else "preserve_absolute" if duration_edit else "follow"
     )
     guided = _guided_v2_revision(job, variant)
+    rebase_fields = {
+        "text_elements": "text",
+        "caption_cues": "captions",
+        "drawings": "drawings",
+        "speaker_background": "speaker_background",
+        "sound_effects": "sound_effects",
+        "camera_effects": "camera_effects",
+        "media_overlays": "media_overlays",
+        "visual_blocks": "visual_blocks",
+    }
+    state.drawings = copy.deepcopy(variant.get("drawings") or [])
+    if "speaker_background" not in state.changed:
+        state.speaker_background = copy.deepcopy(background_current(job, variant))
+    rebase_before = {
+        key: copy.deepcopy(getattr(state, lane)) for key, lane in rebase_fields.items()
+    }
     if "timeline" in changed and (
         state.split_screen_sections or state.initial_split_screen_sections
     ):
@@ -3190,6 +3294,21 @@ def compile_editor_ops(
             state.initial_slots, state.initial_split_screen_sections
         )
         new_segments, new_total = _split_timeline_segments(state.slots, state.split_screen_sections)
+        state.drawings = copy.deepcopy(variant.get("drawings") or [])
+        if "speaker_background" not in state.changed:
+            state.speaker_background = copy.deepcopy(background_current(job, variant))
+        canvas_before = {
+            lane: copy.deepcopy(getattr(state, lane))
+            for lane in (
+                "text",
+                "sound_effects",
+                "media_overlays",
+                "camera_effects",
+                "visual_blocks",
+                "drawings",
+                "captions",
+            )
+        }
         state.explicit_text_ids.update(_explicit_text_timing_ids(initial_text, state.text))
         rebase_guided_text(
             state,
@@ -3203,6 +3322,15 @@ def compile_editor_ops(
                 if text_timing == "follow" and abs(old_total - new_total) < 1e-6
                 else text_timing
             ),
+        )
+        from app.agents.editor_ops_v2.split_screen import rebase_split_canvas
+
+        rebase_split_canvas(
+            state,
+            canvas_before,
+            text_timing=text_timing,
+            explicit_text_ids=state.explicit_text_ids,
+            initial=canvas_initial,
         )
     elif "timeline" in changed and guided is not None and _is_guided_native(job, variant):
         from app.services.kria_editor_timeline import rebase_guided_text  # noqa: PLC0415
@@ -3277,6 +3405,7 @@ def compile_editor_ops(
         base_generation=state.base_generation,
         text_elements=state.text if "text" in changed else None,
         caption_cues=state.captions if "captions" in changed else None,
+        drawings=state.drawings if "drawings" in changed else None,
         caption_meta=(
             EditorCommitCaptionMeta(**state.caption_patch) if "caption_meta" in changed else None
         ),
@@ -3337,6 +3466,13 @@ def compile_editor_ops(
         text_diff=text_diff,
         diff=diff,
         canonical_duration_s=canonical_duration_s,
+        timeline_rebase={
+            key: (rebase_before[key], copy.deepcopy(getattr(state, lane)))
+            for key, lane in rebase_fields.items()
+            if "timeline" in changed
+            and (state.initial_split_screen_sections or state.split_screen_sections)
+            and rebase_before[key] != getattr(state, lane)
+        },
         before=_before_lanes(
             state,
             variant,
@@ -3387,6 +3523,10 @@ def _before_lanes(
         before["sound_effects"] = sound_effects
     if "media_overlays" in changed:
         before["media_overlays"] = media_overlays or []
+    if "drawings" in changed:
+        before["drawings"] = copy.deepcopy(variant.get("drawings") or [])
+    if "speaker_background" in changed:
+        before["speaker_background"] = copy.deepcopy(background_current(state.job, variant))
     if "mix" in changed:
         mix: dict[str, Any] = {}
         if state.mix_level is not None and variant.get("mix") is not None:

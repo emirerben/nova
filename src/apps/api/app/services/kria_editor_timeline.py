@@ -651,7 +651,7 @@ def rebase_guided_text(
         except GuidedTimelineError as exc:
             raise _op_error("Too many effects would be removed by that timeline change") from exc
         for lane in ("sound_effects", "visual_blocks"):
-            if lane in lanes:
+            if lane in baseline:
                 before = len(baseline[lane])
                 after = len(lanes[lane])
                 if after < before:

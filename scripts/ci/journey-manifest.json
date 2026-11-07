@@ -3443,6 +3443,7 @@
       "needs_native": true,
       "api_tests": "tests/kria/test_split_screen.py tests/kria/test_clip_source_clock.py tests/kria/test_split_screen_persistence_postgres.py tests/agents/test_editable_split_screen_ops.py tests/agents/test_initial_split_screen.py",
       "xctests": [
+        "KriaTests/EditorSaveErrorTests/testSplitScreenRefusalsExplainAvailabilityAndAtomicSaveWithoutLeakingDetails",
         "KriaTests/NativeSplitScreenTests/testSectionAdvancesClockOnceIncludingEmptyTail",
         "KriaTests/NativeSplitScreenTests/testTimelineSnapshotIncludesSectionOnlyChangesAndRetainsSourceFields",
         "KriaTests/NativeSplitScreenTests/testMalformedLayoutAndPanelOverlapAreRejected",

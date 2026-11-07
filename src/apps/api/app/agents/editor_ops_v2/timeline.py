@@ -1141,7 +1141,19 @@ def _op_reorder_clips_by(state: Any, op: dict[str, Any]) -> None:
     criterion = op.get("criterion")
     if criterion not in _ORDER_CRITERIA:
         raise _err("That ordering is not supported")
-    state.slots[:] = [rows[i] for i in permutation]
+    if any(row.get("split_section_id") for row in rows if not row.get("removed")):
+        from app.agents.editor_ops_v2.split_screen import install_live_units, live_timeline_units
+
+        units = live_timeline_units(rows)
+        unit_by_row = {id(row): i for i, unit in enumerate(units) for row in unit}
+        ordered = list(
+            dict.fromkeys(
+                unit_by_row[id(rows[i])] for i in permutation if not rows[i].get("removed")
+            )
+        )
+        install_live_units(state.slots, [units[i] for i in ordered])
+    else:
+        state.slots[:] = [rows[i] for i in permutation]
     state.changed.add("timeline")
     if criterion == "custom":
         state.summary = "Reorder clips"

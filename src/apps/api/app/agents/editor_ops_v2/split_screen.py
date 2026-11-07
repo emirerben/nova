@@ -56,7 +56,33 @@ class RemoveSection(SectionCommand):
     keep_panel: int = Field(default=0, ge=0, le=2, strict=True)
 
 
+class DuplicateClip(SectionCommand):
+    slot_index: int = Field(ge=0, strict=True)
+
+
+class ReplaceClipSource(DuplicateClip):
+    clip_index: int = Field(ge=0, strict=True)
+
+
+class MoveSplitClip(DuplicateClip):
+    direction: Literal["earlier", "later"]
+
+
+class MoveSplitScreen(SectionCommand):
+    section_id: str
+    direction: Literal["earlier", "later"]
+
+
+_OCCURRENCE_MODELS = {
+    "duplicate_clip": DuplicateClip,
+    "replace_clip_source": ReplaceClipSource,
+    "move_split_clip": MoveSplitClip,
+    "move_split_screen": MoveSplitScreen,
+}
+
+
 _MODELS = {
+    **_OCCURRENCE_MODELS,
     "create_split_screen": CreateSection,
     "update_split_screen": UpdateSection,
     "assign_split_panel": AssignPanel,
@@ -67,6 +93,8 @@ _MEMBERSHIP = ("split_section_id", "split_panel_index", "split_offset_s")
 
 
 def _coerce(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None:
+    if name in _OCCURRENCE_MODELS:
+        return _coerce_occurrence(name, payload, snapshot, state)
     if snapshot.get("split_screen_available") is not True:
         state.reject(
             op=name,
@@ -114,6 +142,29 @@ def _coerce(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None
         return None
 
 
+def _coerce_occurrence(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None:
+    try:
+        command = _OCCURRENCE_MODELS[name].model_validate(payload).model_dump()
+        if not set(snapshot.get("allowed_op_families", [])) & {"timeline", "clip", "clips"}:
+            raise ValueError("Timeline editing is unavailable")
+        if "slot_index" in command:
+            row = snapshot["slots"][command["slot_index"]]
+            split = bool(row.get("split_section_id"))
+        else:
+            split = True
+        if (split or name.startswith("move_split")) and not snapshot.get("split_screen_available"):
+            raise ValueError("Split editing is unavailable")
+        if name == "replace_clip_source" and not any(
+            r.get("clip_index") == command["clip_index"] and r.get("ready")
+            for r in snapshot.get("replacement_source_pool", [])
+        ):
+            raise ValueError("Source is not approved")
+        return command
+    except (ValidationError, ValueError, IndexError, KeyError, TypeError):
+        state.invalid_value()
+        return None
+
+
 SPECS = [
     OpSpec(
         name=name,
@@ -153,6 +204,9 @@ def _bound_duration(row: dict, room: float, editor: Any) -> None:
 def _apply(state: Any, op: dict[str, Any]) -> None:
     from app.services import kria_editor_ops as editor
 
+    if op["op"] in _OCCURRENCE_MODELS:
+        _apply_occurrence(state, op)
+        return
     if not editor.split_screen_available(state.job, state.variant):
         raise editor.KriaEditorOpError("Split screen is unavailable for this edit")
     name = op["op"]
@@ -320,6 +374,317 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
     except (ValueError, TypeError) as exc:
         raise editor.KriaEditorOpError(str(exc)) from exc
     state.changed.add("timeline")
+
+
+def live_timeline_units(rows: list[dict]) -> list[list[dict]]:
+    units: list[list[dict]] = []
+    sections: dict[str, list[dict]] = {}
+    for row in rows:
+        if row.get("removed"):
+            continue
+        section = row.get("split_section_id")
+        if section and section in sections:
+            sections[section].append(row)
+        else:
+            unit = [row]
+            units.append(unit)
+            if section:
+                sections[section] = unit
+    return units
+
+
+def install_live_units(rows: list[dict], units: list[list[dict]]) -> None:
+    live = iter(row for unit in units for row in unit)
+    rows[:] = [row if row.get("removed") else next(live) for row in rows]
+
+
+def _apply_occurrence(state: Any, op: dict) -> None:
+    from app.services import kria_editor_ops as editor
+
+    name = op["op"]
+    try:
+        command = (
+            _OCCURRENCE_MODELS[name]
+            .model_validate({k: v for k, v in op.items() if k != "op"})
+            .model_dump()
+        )
+        if editor._editor_capabilities(state.job, state.variant).get("timeline") is not True:
+            raise ValueError("Timeline editing is unavailable")
+        row = None
+        if "slot_index" in command:
+            index = editor._snapshot_slot_index(state, command["slot_index"])
+            row = state.slots[index]
+        if (
+            name.startswith("move_split") or (row and row.get("split_section_id"))
+        ) and not editor.split_screen_available(state.job, state.variant):
+            raise ValueError("Split editing is unavailable")
+        if name == "duplicate_clip":
+            duplicate = editor.copy_source_occurrence(row)
+            duplicate.update(slot_id=str(uuid4()), parent_segment_id=None)
+            if row.get("split_section_id"):
+                duplicate["split_offset_s"] = row["split_offset_s"] + editor._slot_duration(row)
+            state.slots.insert(index + 1, duplicate)
+        elif name == "replace_clip_source":
+            source = next(
+                (
+                    r
+                    for r in editor.replacement_source_pool(state.job, state.variant)
+                    if r["clip_index"] == command["clip_index"] and r.get("ready")
+                ),
+                None,
+            )
+            if source is None:
+                raise ValueError("Source is not approved")
+            photo = source["kind"] == "image"
+            frame = row.get("speaker_frame_override") or {}
+            speaker = frame.get("mode") in {"custom", "full"}
+            if photo and speaker:
+                raise ValueError("Use default framing before replacing this speaker with a photo")
+            duration = source.get("duration_s")
+            if not photo and (duration is None or duration < 0.1):
+                raise ValueError("The selected video needs an approved measured duration")
+            for key in (
+                "asset_id",
+                "media_id",
+                "media_kind",
+                "kind",
+                "source_duration_s",
+                "source_duration",
+                "source_end_s",
+                "source_gcs_path",
+                "native_source_span_s",
+                "native_composite_source",
+                "freeze_frame_s",
+                "freeze_hold_s",
+            ):
+                row.pop(key, None)
+            row.update(
+                clip_index=command["clip_index"],
+                in_s=0,
+                media_kind=source["kind"],
+                speaker_subject=speaker,
+                freeze_hold_s=0,
+                duration_beats=None,
+                source_start_locked=True,
+            )
+            if photo:
+                row["playback_rate"] = 1.0
+            else:
+                row["source_duration_s"] = duration
+                row["duration_s"] = min(
+                    editor._slot_duration(row), duration / editor._slot_rate(row)
+                )
+                for key in ("layout", "still_layout"):
+                    if row.get(key) == "supporting_card":
+                        row[key] = "fullscreen"
+        elif name == "move_split_clip":
+            if not row.get("split_section_id"):
+                raise ValueError("Select a split panel clip")
+            peers = sorted(
+                [
+                    r
+                    for r in state.slots
+                    if not r.get("removed")
+                    and r.get("split_section_id") == row["split_section_id"]
+                    and r.get("split_panel_index") == row["split_panel_index"]
+                ],
+                key=lambda r: r["split_offset_s"],
+            )
+            position = next(i for i, r in enumerate(peers) if r is row)
+            target = position + (-1 if command["direction"] == "earlier" else 1)
+            if not 0 <= target < len(peers):
+                raise ValueError("There is no neighboring clip in this panel")
+            other = peers[target]
+            earlier, later = sorted([row, other], key=lambda r: r["split_offset_s"])
+            start = earlier["split_offset_s"]
+            gap = max(0, later["split_offset_s"] - start - editor._slot_duration(earlier))
+            later["split_offset_s"] = start
+            earlier["split_offset_s"] = start + editor._slot_duration(later) + gap
+        else:
+            groups = live_timeline_units(state.slots)
+            position = next(
+                i
+                for i, group in enumerate(groups)
+                if group[0].get("split_section_id") == command["section_id"]
+            )
+            target = position + (-1 if command["direction"] == "earlier" else 1)
+            if not 0 <= target < len(groups):
+                raise ValueError("There is no neighboring timeline section")
+            groups[position], groups[target] = groups[target], groups[position]
+            install_live_units(state.slots, groups)
+        validate_state(state)
+    except (ValueError, TypeError, StopIteration) as exc:
+        raise editor.KriaEditorOpError(str(exc) or "The target is no longer available") from exc
+    state.changed.add("timeline")
+
+
+def rebase_split_canvas(
+    state: Any,
+    before: dict[str, Any],
+    *,
+    text_timing: str,
+    explicit_text_ids: set[str],
+    initial: dict[str, Any],
+) -> None:
+    """Canvas timing follows serial units, never an individual panel's source clock."""
+
+    def windows(
+        rows: list[dict], sections: list[dict]
+    ) -> list[tuple[frozenset[str], float, float]]:
+        starts, _, _ = layout_split_timeline(rows, sections)
+        active = [r for r in rows if not r.get("removed")]
+        section_by_id = {s["id"]: s for s in sections}
+        result = []
+        seen = set()
+        from app.services.kria_editor_ops import _slot_duration
+
+        for row, start in zip(active, starts, strict=True):
+            key = row.get("split_section_id") or row["slot_id"]
+            if key in seen:
+                continue
+            seen.add(key)
+            if row.get("split_section_id"):
+                start -= row["split_offset_s"]
+                duration = section_by_id[key]["duration_s"]
+            else:
+                duration = _slot_duration(row)
+            members = (
+                frozenset(str(r["slot_id"]) for r in active if r.get("split_section_id") == key)
+                if row.get("split_section_id")
+                else frozenset({str(row["slot_id"])})
+            )
+            result.append((members, start, start + duration))
+        return result
+
+    old = windows(state.initial_slots, state.initial_split_screen_sections)
+    new = windows(state.slots, state.split_screen_sections)
+    if old == new or not old or not new:
+        return
+    destinations = {}
+    for members, _, _ in old:
+        matches = [(a, b) for other, a, b in new if members & other]
+        if matches:
+            destinations[members] = (min(a for a, _ in matches), max(b for _, b in matches))
+    old_end, new_end = max(r[2] for r in old), max(r[2] for r in new)
+
+    def point(time: float) -> float:
+        if time >= old_end:
+            return new_end + time - old_end
+        for key, start, end in reversed(old):
+            if start <= time < end:
+                if key not in destinations:
+                    return next(
+                        (destinations[k][0] for k, a, _ in old if a >= end and k in destinations),
+                        new_end,
+                    )
+                a, b = destinations[key]
+                return min(b, a + time - start)
+        return min(time, new_end)
+
+    def span(start: float, end: float) -> tuple[float, float]:
+        parts = []
+        for key, a, b in old:
+            if a < end and b > start and key in destinations:
+                x, y = destinations[key]
+                parts.append((min(y, x + max(0, start - a)), min(y, x + min(b - a, end - a))))
+        if not parts:
+            return point(start), point(start)
+        return min(p[0] for p in parts), new_end + end - old_end if end > old_end else max(
+            p[1] for p in parts
+        )
+
+    from app.services.kria_editor_ops import copy_source_occurrence
+
+    speech = any(
+        copy_source_occurrence(r).get("speaker_subject") is True for r in state.initial_slots
+    )
+    for lane, original in before.items():
+        if lane == "captions" and speech:
+            continue
+        if original is None:
+            continue
+        current = getattr(state, lane)
+        by_id = {row.get("id"): row for row in current or []}
+        for index, source in enumerate(original):
+            if lane == "text" and (
+                text_timing != "follow" or str(source.get("id") or "") in explicit_text_ids
+            ):
+                continue
+            row = (
+                by_id.get(source.get("id"))
+                if source.get("id") is not None
+                else (current[index] if current and index < len(current) else None)
+            )
+            if lane != "text":
+                prior_rows = initial.get(lane) or []
+                prior = (
+                    next((r for r in prior_rows if r.get("id") == source.get("id")), None)
+                    if source.get("id") is not None
+                    else (prior_rows[index] if index < len(prior_rows) else None)
+                )
+                timing_keys = ("at_s", "start_s", "end_s", "start", "end")
+                if prior is None or any(prior.get(key) != source.get(key) for key in timing_keys):
+                    if row is None:
+                        row = copy.deepcopy(source)
+                        current.append(row)
+                    for key in timing_keys:
+                        if key in source:
+                            row[key] = source[key]
+                    continue
+            if row is None:
+                continue
+            if (source.get("source_params") or {}).get("segment_id"):
+                continue
+            if any(
+                source.get(key)
+                for key in ("segment_id", "source_segment_id", "timeline_clip_id", "slot_id")
+            ):
+                continue
+            if "at_s" in source:
+                row["at_s"] = round(point(float(source["at_s"])), 6)
+            else:
+                sk = "start_s" if "start_s" in source else "start"
+                ek = "end_s" if "end_s" in source else "end"
+                if sk not in source or ek not in source:
+                    continue
+                row[sk], row[ek] = (round(t, 6) for t in span(float(source[sk]), float(source[ek])))
+            if lane == "text" and not source.get("segment_id"):
+                row.pop("segment_id", None)
+            if lane == "captions":
+                for word in row.get("words") or []:
+                    if "start_s" in word and "end_s" in word:
+                        word["start_s"], word["end_s"] = (
+                            round(t, 6) for t in span(float(word["start_s"]), float(word["end_s"]))
+                        )
+            state.changed.add(lane)
+    for lane in ("captions", "drawings", "media_overlays", "visual_blocks", "camera_effects"):
+        rows = getattr(state, lane)
+        if rows is not None and lane in state.changed:
+            rows[:] = [
+                row
+                for row in rows
+                if not ("start_s" in row and "end_s" in row and row["end_s"] <= row["start_s"])
+            ]
+    if state.speaker_background is not None:
+        for key in ("windows", "full_screen_windows"):
+            if state.speaker_background.get(key) != (initial.get("speaker_background") or {}).get(
+                key
+            ):
+                continue
+            for window in state.speaker_background.get(key) or []:
+                window["start_s"], window["end_s"] = (
+                    round(t, 6) for t in span(float(window["start_s"]), float(window["end_s"]))
+                )
+            if state.speaker_background.get(key):
+                state.speaker_background[key] = [
+                    window
+                    for window in state.speaker_background[key]
+                    if window["end_s"] - window["start_s"] >= 0.5
+                ]
+                state.speaker_background[key].sort(key=lambda window: window["start_s"])
+                if not state.speaker_background[key]:
+                    state.speaker_background.pop(key)
+                state.changed.add("speaker_background")
 
 
 def register_handlers() -> None:

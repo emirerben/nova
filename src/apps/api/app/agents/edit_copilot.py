@@ -110,7 +110,7 @@ log = structlog.get_logger()
 # family (flag + verified token + protocol 42), so every other prompt is byte-identical.
 # v117: editable split-screen sections and per-clip audio gain on top of v116.
 # v118: occurrence speaker framing (custom/full/inherit) on verified split-origin edits.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-06-v118"
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-07-v119"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1437,6 +1437,11 @@ def _format_snapshot(snapshot: dict) -> str:
         lines.append("\nSAFE SOURCE POOL SUMMARY (counts/digests only; no source paths):")
         lines.append(_field(json.dumps(summary, ensure_ascii=False), max_chars=1800))
 
+    if isinstance(snapshot.get("replacement_source_pool"), list):
+        lines.append(
+            "replacement_source_pool: "
+            + json.dumps(snapshot["replacement_source_pool"], ensure_ascii=False)
+        )
     source_pool = snapshot.get("source_pool")
     if isinstance(source_pool, list):
         unused = [

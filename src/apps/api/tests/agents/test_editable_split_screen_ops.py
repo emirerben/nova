@@ -965,3 +965,511 @@ def test_panel_transition_uses_clock_not_storage_order(document, monkeypatch, ap
     updated, _ = apply(job, variant, op)
     rows = updated["user_timeline"]["slots"]
     assert [rows[i]["split_offset_s"] for i in [3, 0, 1]] == pytest.approx([0, 1.8, 3.8])
+
+
+# Parity failure modes: minted IDs inherit caption ownership; replacement retains stale
+# source clocks; sequential panel assignments collide; section moves tear the group.
+def test_duplicate_ordinary_keeps_properties_without_caption_parent(document):
+    job, variant = document
+    original = deepcopy(variant["user_timeline"]["slots"][0])
+    original["parent_segment_id"] = "old-parent"
+    variant["user_timeline"]["slots"][0] = original
+    result, payload = apply(job, variant, {"op": "duplicate_clip", "slot_index": 0})
+    rows = result["user_timeline"]["slots"]
+    assert rows[1]["slot_id"] != rows[0]["slot_id"]
+    assert not rows[1].get("parent_segment_id")
+    for key in ("clip_index", "source_crop", "muted", "duration_s"):
+        assert rows[1][key] == original[key]
+
+
+def test_replace_source_keeps_occurrence_appearance_and_resets_clock(document):
+    job, variant = document
+    rows = variant["user_timeline"]["slots"]
+    rows[0].update(in_s=1, freeze_hold_s=1, freeze_frame_s=3, source_audio_volume=0.5)
+    job.all_candidates["clip_paths"][1] = "approved.mp4"
+    rows[1]["source_duration_s"] = 2
+    identity, crop = rows[0]["slot_id"], deepcopy(rows[0]["source_crop"])
+    result, payload = apply(
+        job, variant, {"op": "replace_clip_source", "slot_index": 0, "clip_index": 1}
+    )
+    row = result["user_timeline"]["slots"][0]
+    assert row["slot_id"] == identity and row["clip_index"] == 1
+    assert row["source_crop"] == crop and row["source_audio_volume"] == 0.5
+    assert row["in_s"] == 0 and row["duration_s"] <= 2
+    assert row.get("freeze_hold_s", 0) == 0 and row.get("speaker_subject") is False
+
+
+def test_atomic_panel_and_section_moves_preserve_gap_and_peers(document):
+    job, variant = document
+    variant["user_timeline"]["slots"][0]["duration_s"] = 2
+    variant, payload = apply(
+        job,
+        variant,
+        {"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2, "duration_s": 8},
+    )
+    section = payload["split_screen_sections"][0]["id"]
+    variant, _ = apply(job, variant, {"op": "duplicate_clip", "slot_index": 0})
+    rows = variant["user_timeline"]["slots"]
+    rows[1]["split_offset_s"] = 3
+    rows[1]["duration_s"] = 3
+    peer = deepcopy(rows[2])
+    variant, _ = apply(
+        job, variant, {"op": "move_split_clip", "slot_index": 0, "direction": "later"}
+    )
+    rows = variant["user_timeline"]["slots"]
+    assert [r["split_offset_s"] for r in rows[:2]] == [4, 0]
+    assert rows[2] == peer
+    variant, _ = apply(
+        job, variant, {"op": "move_split_screen", "section_id": section, "direction": "later"}
+    )
+    rows = variant["user_timeline"]["slots"]
+    assert not rows[0].get("split_section_id")
+    assert all(r["split_section_id"] == section for r in rows[1:])
+
+
+@pytest.mark.parametrize("photo", [False, True])
+def test_replace_source_clears_stale_metadata_preserves_scoped_frame(document, photo):
+    job, variant = document
+    rows = variant["user_timeline"]["slots"]
+    rows[0].update(
+        source_end_s=4,
+        source_gcs_path="old-path",
+        freeze_frame_s=4,
+        freeze_hold_s=1,
+        media_transform={"scale": 1.2},
+        speaker_frame_override={"mode": "full"},
+    )
+    job.all_candidates["clip_paths"][1] = "approved.mp4"
+    rows[1]["source_duration_s"] = 8
+    if photo:
+        job.all_candidates["clip_paths"][1] = "approved.jpg"
+        before = deepcopy(variant)
+        with pytest.raises(editor.KriaEditorOpError, match="default framing"):
+            apply(job, variant, {"op": "replace_clip_source", "slot_index": 0, "clip_index": 1})
+        assert variant == before
+        rows[0]["speaker_frame_override"] = {"mode": "inherit"}
+    result, payload = apply(
+        job, variant, {"op": "replace_clip_source", "slot_index": 0, "clip_index": 1}
+    )
+    row = result["user_timeline"]["slots"][0]
+    assert row.get("source_gcs_path") != "old-path"
+    assert not row.get("freeze_frame_s") and not row.get("source_end_s")
+    assert row["speaker_subject"] is (not photo)
+    assert row["speaker_frame_override"] == rows[0]["speaker_frame_override"]
+
+
+def test_duplicate_split_refuses_collision_atomically_and_gate_closed(document, monkeypatch):
+    job, variant = document
+    variant, _ = apply(
+        job, variant, {"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2}
+    )
+    before = deepcopy(variant)
+    with pytest.raises(editor.KriaEditorOpError):
+        apply(job, variant, {"op": "duplicate_clip", "slot_index": 0})
+    assert variant == before
+    monkeypatch.setattr(editor, "_editor_capabilities", lambda *args: {"timeline": False})
+    snapshot = editor.build_editor_snapshot(job, variant)
+    assert (
+        parse_editor_operation(
+            {"op": "duplicate_clip", "slot_index": 0}, snapshot, _ParseState(0.99)
+        )
+        is None
+    )
+    with pytest.raises(editor.KriaEditorOpError, match="unavailable"):
+        editor.compile_editor_ops(job, variant, [{"op": "duplicate_clip", "slot_index": 0}])
+
+
+def test_duplicate_preserves_held_source_clock_and_source_admission(document):
+    job, variant = document
+    row = variant["user_timeline"]["slots"][0]
+    row.update(
+        duration_s=4, in_s=0, source_duration_s=2, source_end_s=2, freeze_frame_s=2, freeze_hold_s=2
+    )
+    variant, _ = apply(job, variant, {"op": "duplicate_clip", "slot_index": 0})
+    rows = variant["user_timeline"]["slots"]
+    for key in ("in_s", "duration_s", "source_end_s", "freeze_frame_s", "freeze_hold_s"):
+        assert rows[0][key] == rows[1][key]
+    snapshot = editor.build_editor_snapshot(job, variant)
+    snapshot["editor_ops_version"] = 2
+    assert (
+        parse_editor_operation(
+            {"op": "replace_clip_source", "slot_index": 0, "clip_index": 999},
+            snapshot,
+            _ParseState(0.99),
+        )
+        is None
+    )
+    before = deepcopy(variant)
+    with pytest.raises(editor.KriaEditorOpError, match="approved"):
+        editor.compile_editor_ops(
+            job, variant, [{"op": "replace_clip_source", "slot_index": 0, "clip_index": 999}]
+        )
+    assert variant == before
+
+
+def test_move_two_sections_retains_every_member_and_section(document):
+    job, variant = document
+    variant, payload = apply(
+        job, variant, {"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2}
+    )
+    first = payload["split_screen_sections"][0]["id"]
+    variant, payload = apply(
+        job, variant, {"op": "create_split_screen", "slot_indexes": [2], "panel_count": 2}
+    )
+    sections = deepcopy(variant["user_timeline"]["split_screen_sections"])
+    rows = deepcopy(variant["user_timeline"]["slots"])
+    variant, _ = apply(
+        job, variant, {"op": "move_split_screen", "section_id": first, "direction": "later"}
+    )
+    assert variant["user_timeline"]["slots"] == rows[2:] + rows[:2]
+    assert variant["user_timeline"]["split_screen_sections"] == sections
+
+
+@pytest.mark.parametrize("inside", [False, True])
+def test_section_move_ignores_removed_tombstones(document, inside):
+    job, variant = document
+    variant, payload = apply(
+        job, variant, {"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2}
+    )
+    section = payload["split_screen_sections"][0]["id"]
+    rows = variant["user_timeline"]["slots"]
+    tombstone = {**deepcopy(rows[-1]), "slot_id": "removed-occurrence", "removed": True}
+    rows.insert(1 if inside else 2, tombstone)
+    variant, _ = apply(
+        job, variant, {"op": "move_split_screen", "section_id": section, "direction": "later"}
+    )
+    live = [r for r in variant["user_timeline"]["slots"] if not r.get("removed")]
+    assert not live[0].get("split_section_id")
+    assert all(r.get("split_section_id") == section for r in live[1:])
+    assert tombstone in variant["user_timeline"]["slots"]
+
+
+def test_generic_custom_reorder_groups_section_members(document):
+    job, variant = document
+    variant, _ = apply(
+        job, variant, {"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2}
+    )
+    original = deepcopy(variant["user_timeline"]["slots"])
+    variant, _ = apply(
+        job, variant, {"op": "reorder_clips_by", "criterion": "custom", "order": [2, 1, 0]}
+    )
+    assert variant["user_timeline"]["slots"] == original[2:] + original[:2]
+
+
+def test_section_reorder_moves_canvas_title_and_sound(document):
+    job, variant = document
+    variant, payload = apply(
+        job, variant, {"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2}
+    )
+    section = payload["split_screen_sections"][0]["id"]
+    following_duration = variant["user_timeline"]["slots"][-1]["duration_s"]
+    variant["text_elements"] = [
+        {"id": "canvas-title", "text": "Title", "start_s": 0.5, "end_s": 1.5}
+    ]
+    variant["sound_effects"] = [{"id": "canvas-sound", "sfx_id": "pop", "at_s": 1, "volume": 1}]
+    variant["media_overlays"] = [{"id": "canvas-overlay", "start_s": 0.5, "end_s": 1.5}]
+    result, payload = apply(
+        job, variant, {"op": "move_split_screen", "section_id": section, "direction": "later"}
+    )
+    assert result["text_elements"][0]["start_s"] == 0.5 + following_duration
+    assert result["sound_effects"][0]["at_s"] == 1 + following_duration
+    assert result["media_overlays"][0]["start_s"] == 0.5 + following_duration
+
+
+def test_replace_admits_ready_import_and_uses_original_receipt_duration(document):
+    from app.services.phone_sources import PHONE_SOURCES_FIELD, bind_phone_sources
+    from tests.services.test_phone_sources import receipt
+
+    job, variant = document
+    receipts = [receipt("one"), receipt("two"), receipt("imported")]
+    bindings = bind_phone_sources(receipts, [r["gcs_path"] for r in receipts])
+    job.all_candidates["clip_paths"] = [r["gcs_path"] for r in receipts[:2]]
+    job.assembly_plan[PHONE_SOURCES_FIELD] = [b.model_dump(mode="json") for b in bindings[:2]]
+    variant["_editor_sources_v1"] = {
+        "sources": [
+            {
+                "source_index": 2,
+                "status": "ready",
+                "media_id": "imported",
+                "lane": "clip",
+                "gcs_path": receipts[2]["gcs_path"],
+                "generation": "123",
+                "kind": "video",
+                "duration_s": 10,
+                "source_binding": bindings[2].model_dump(mode="json"),
+            }
+        ]
+    }
+    pool = editor.replacement_source_pool(job, variant)
+    assert pool[1]["duration_s"] == 10  # receipt beats the saved 2-second timeline hint
+    assert "proxy" not in str(pool)
+    result, _ = apply(job, variant, {"op": "replace_clip_source", "slot_index": 0, "clip_index": 2})
+    row = result["user_timeline"]["slots"][0]
+    assert row["clip_index"] == 2 and row["media_id"] == "imported"
+    assert row["source_duration_s"] == 10
+    variant["_editor_sources_v1"]["sources"][0]["status"] = "preparing"
+    snapshot = editor.build_editor_snapshot(job, variant)
+    snapshot["editor_ops_version"] = 2
+    assert (
+        parse_editor_operation(
+            {"op": "replace_clip_source", "slot_index": 0, "clip_index": 2},
+            snapshot,
+            _ParseState(0.99),
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("criterion", ["capture_time", "random"])
+def test_generic_automatic_reorder_keeps_section_unit(document, criterion):
+    job, variant = document
+    variant, _ = apply(
+        job, variant, {"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2}
+    )
+    before = deepcopy(variant["user_timeline"]["slots"])
+    snapshot = editor.build_editor_snapshot(job, variant)
+    snapshot["editor_ops_version"] = 2
+    for index, row in enumerate(snapshot["slots"]):
+        row["facts"] = [{"kind": "capture_time", "value": f"2026-09-{23 - index}T07:00:00Z"}]
+    parsed = parse_editor_operation(
+        {"op": "reorder_clips_by", "criterion": criterion}, snapshot, _ParseState(0.99)
+    )
+    assert parsed is not None
+    draft = editor.compile_editor_ops(job, variant, [parsed])
+    result = editor.project_editor_draft(
+        variant, draft.payload.model_dump(mode="json", exclude_none=True), job
+    )
+    members = [row for row in result["user_timeline"]["slots"] if row.get("split_section_id")]
+    assert members == before[:2]
+    indices = [
+        i for i, r in enumerate(result["user_timeline"]["slots"]) if r.get("split_section_id")
+    ]
+    assert indices[1] == indices[0] + 1
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_section_canvas_move_honors_protected_text(document, explicit):
+    job, variant = document
+    variant, payload = apply(
+        job, variant, {"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2}
+    )
+    section = payload["split_screen_sections"][0]["id"]
+    variant["text_elements"] = [{"id": "title", "text": "Title", "start_s": 0.2, "end_s": 0.8}]
+    operations = [{"op": "move_split_screen", "section_id": section, "direction": "later"}]
+    if explicit:
+        snapshot = editor.build_editor_snapshot(job, variant)
+        snapshot["editor_ops_version"] = 2
+        snapshot["allowed_op_families"].append("text")
+        parsed = parse_editor_operation(
+            {"op": "set_texts_timing", "selector": {"group": "all"}, "start_s": 0.4, "end_s": 1.2},
+            snapshot,
+            _ParseState(0.99),
+        )
+        assert parsed is not None
+        operations.append(parsed)
+    draft = editor.compile_editor_ops(job, variant, operations, preserve_text=not explicit)
+    row = draft.payload.text_elements[0]
+    assert row["start_s"] == (0.4 if explicit else 0.2)
+    assert row["end_s"] == (1.2 if explicit else 0.8)
+
+
+def test_section_move_rebases_drawings_background_and_manual_captions(document):
+    job, variant = document
+    variant, payload = apply(
+        job, variant, {"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2}
+    )
+    section = payload["split_screen_sections"][0]["id"]
+    variant["drawings"] = [{"id": "drawing", "start_s": 0.2, "end_s": 0.8}]
+    variant["caption_cues"] = [
+        {
+            "id": "cue",
+            "text": "Hello",
+            "start_s": 0.2,
+            "end_s": 0.8,
+            "words": [{"text": "Hello", "start_s": 0.2, "end_s": 0.8}],
+        }
+    ]
+    variant["speaker_background"] = {
+        "kind": "color",
+        "color": "#000000",
+        "windows": [{"start_s": 0.2, "end_s": 0.8, "media_id": "background", "kind": "image"}],
+    }
+    draft = editor.compile_editor_ops(
+        job, variant, [{"op": "move_split_screen", "section_id": section, "direction": "later"}]
+    )
+    payload = draft.payload.model_dump(mode="json", exclude_none=True)
+    assert payload["drawings"][0]["start_s"] == 2.2
+    assert payload["caption_cues"][0]["start_s"] == 2.2
+    assert payload["caption_cues"][0]["words"][0]["end_s"] == 2.8
+    assert payload["speaker_background"]["windows"][0]["start_s"] == 2.2
+
+
+def test_section_move_keeps_explicit_sfx_time_and_rebases_unchanged_peer(document):
+    job, variant = document
+    variant, payload = apply(
+        job, variant, {"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2}
+    )
+    section = payload["split_screen_sections"][0]["id"]
+    variant["sound_effects"] = [
+        {"id": "explicit", "sfx_id": "pop", "at_s": 0.3, "volume": 1},
+        {"id": "follow", "sfx_id": "pop", "at_s": 0.4, "volume": 1},
+    ]
+    draft = editor.compile_editor_ops(
+        job,
+        variant,
+        [
+            {"op": "move_split_screen", "section_id": section, "direction": "later"},
+            {"op": "patch_sfx", "sfx_index": 0, "at_s": 0.7},
+        ],
+    )
+    assert draft.payload.sound_effects[0]["at_s"] == 0.7
+    assert draft.payload.sound_effects[1]["at_s"] == 2.4
+    old, new = draft.timeline_rebase["sound_effects"]
+    assert [r["at_s"] for r in old] == [0.7, 0.4]
+    assert [r["at_s"] for r in new] == [0.7, 2.4]
+    assert "timeline_rebase" not in draft.payload.model_dump()
+
+
+def test_section_move_does_not_rebase_speech_captions_on_minted_source(document):
+    job, variant = document
+    variant["user_timeline"]["slots"][0].update(
+        slot_id="minted-uuid",
+        parent_segment_id="native-phone-talking-source-a",
+        speaker_subject=True,
+    )
+    variant, payload = apply(
+        job, variant, {"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2}
+    )
+    section = payload["split_screen_sections"][0]["id"]
+    variant["caption_cues"] = [{"id": "speech", "text": "Hello", "start_s": 0.2, "end_s": 0.8}]
+    result, _ = apply(
+        job, variant, {"op": "move_split_screen", "section_id": section, "direction": "later"}
+    )
+    assert result["caption_cues"] == variant["caption_cues"]
+
+
+def test_section_move_respects_explicit_camera_overlay_and_background_sequence(document):
+    job, variant = document
+    variant, payload = apply(
+        job, variant, {"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2}
+    )
+    section = payload["split_screen_sections"][0]["id"]
+    variant["media_overlays"] = [{"id": "overlay", "start_s": 0.1, "end_s": 0.5}]
+    variant["camera_effects"] = [{"id": "camera", "start_s": 0.1, "end_s": 0.5}]
+    sequence = {
+        "op": "set_background_sequence",
+        "asset_ids": ["one", "two"],
+        "kinds": ["image", "image"],
+        "cadence_s": 1,
+    }
+    expected = editor.compile_editor_ops(job, variant, [sequence]).payload.speaker_background
+    draft = editor.compile_editor_ops(
+        job,
+        variant,
+        [
+            {"op": "move_split_screen", "section_id": section, "direction": "later"},
+            {"op": "patch_overlay", "overlay_index": 0, "patch": {"start_s": 0.6, "end_s": 1.3}},
+            {"op": "patch_camera_effect", "camera_effect_index": 0, "start_s": 0.7, "end_s": 1.4},
+            sequence,
+        ],
+    )
+    assert draft.payload.media_overlays[0]["start_s"] == 0.6
+    assert draft.payload.camera_effects[0]["start_s"] == 0.7
+    assert draft.payload.speaker_background == expected
+    assert (
+        not {"media_overlays", "camera_effects", "speaker_background"}
+        & draft.timeline_rebase.keys()
+    )
+
+
+def test_canvas_follows_section_creation_extension_and_unstack(document):
+    job, variant = document
+    variant["drawings"] = [{"id": "drawing", "start_s": 2.2, "end_s": 2.8}]
+    variant["speaker_background"] = {
+        "kind": "color",
+        "color": "#000000",
+        "windows": [{"media_id": "bg", "kind": "image", "start_s": 2.2, "end_s": 2.8}],
+    }
+    variant, payload = apply(
+        job, variant, {"op": "create_split_screen", "slot_indexes": [0, 1], "panel_count": 2}
+    )
+    assert variant["drawings"][0]["start_s"] == 0.2
+    assert variant["speaker_background"]["windows"][0]["start_s"] == 0.2
+    section = payload["split_screen_sections"][0]["id"]
+    variant, _ = apply(
+        job, variant, {"op": "remove_split_screen", "section_id": section, "keep_panel": 1}
+    )
+    assert variant["drawings"][0]["start_s"] == 0.2
+
+
+def test_section_extension_moves_following_canvas(document):
+    job, variant = document
+    variant, payload = apply(
+        job, variant, {"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2}
+    )
+    section = payload["split_screen_sections"][0]["id"]
+    variant["drawings"] = [{"id": "drawing", "start_s": 2.2, "end_s": 2.8}]
+    variant, _ = apply(
+        job, variant, {"op": "update_split_screen", "section_id": section, "duration_s": 4}
+    )
+    assert variant["drawings"][0]["start_s"] == 4.2
+    variant, _ = apply(
+        job, variant, {"op": "remove_split_screen", "section_id": section, "keep_panel": 0}
+    )
+    assert variant["drawings"][0]["start_s"] == 2.2
+
+
+def test_removing_section_drops_canvas_interval_without_surviving_unit(document):
+    job, variant = document
+    variant, _ = apply(
+        job, variant, {"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2}
+    )
+    variant["drawings"] = [{"id": "removed-drawing", "start_s": 0.2, "end_s": 0.8}]
+    result, _ = apply(
+        job,
+        variant,
+        {"op": "patch_slots", "selector": {"slot_indexes": [0, 1]}, "patch": {"removed": True}},
+    )
+    assert result["drawings"] == []
+
+
+def test_ordinary_timeline_edit_does_not_claim_split_rebase_dependencies(document, monkeypatch):
+    job, variant = document
+    assert not editor._variant_split_sections(variant)
+    monkeypatch.setattr(
+        editor,
+        "_editor_capabilities",
+        lambda *args: {"timeline": True, "clips": {"playback_rate": True}},
+    )
+    draft = editor.compile_editor_ops(
+        job,
+        variant,
+        [{"op": "patch_slots", "selector": {"slot_indexes": [0]}, "patch": {"playback_rate": 2}}],
+    )
+    assert draft.timeline_rebase == {}
+
+
+def test_split_shrink_removes_partial_background_windows_below_minimum(document):
+    job, variant = document
+    variant, payload = apply(
+        job,
+        variant,
+        {"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2, "duration_s": 3},
+    )
+    section = payload["split_screen_sections"][0]["id"]
+    variant["speaker_background"] = {
+        "kind": "color",
+        "color": "#000000",
+        "windows": [
+            {"media_id": "short", "kind": "image", "start_s": 1.5, "end_s": 2.5},
+            {"media_id": "survivor", "kind": "image", "start_s": 0, "end_s": 1},
+        ],
+        "full_screen_windows": [{"start_s": 1.5, "end_s": 2.5}, {"start_s": 0, "end_s": 1}],
+    }
+    result, _ = apply(
+        job, variant, {"op": "update_split_screen", "section_id": section, "duration_s": 1.8}
+    )
+    background = result["speaker_background"]
+    assert [r["media_id"] for r in background["windows"]] == ["survivor"]
+    assert len(background["full_screen_windows"]) == 1
+    assert background["full_screen_windows"][0]["end_s"] == 1

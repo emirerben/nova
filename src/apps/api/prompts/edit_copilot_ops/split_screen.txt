@@ -5,3 +5,5 @@ SPLIT SCREEN. Use only when split_screen_available is true. Otherwise explain th
 - swap_split_panels {section_id,first_panel:0,second_panel:1} swaps every member and its source clock intact.
 - remove_split_screen {section_id,keep_panel:0} unstacks that panel into full-screen clips in offset order and discards other panels.
 set_total_duration counts each section once and preserves playback rates while resizing coverage. trim_output_start removes the elapsed output window from all simultaneous panels. Use swap_split_panels for panel order.
+
+move_split_clip {slot_index, direction: "earlier"|"later"} atomically swaps adjacent clips inside the same panel, preserving the gap and all other panels. move_split_screen {section_id, direction: "earlier"|"later"} moves the complete section past the adjacent timeline unit. Use these for ordering rather than sequential overlapping assignments.

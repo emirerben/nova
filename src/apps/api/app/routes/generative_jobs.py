@@ -10362,14 +10362,7 @@ async def dispatch_edit_timeline(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
     from app.services.split_screen_editor import require_split_screen_commit
 
-    require_split_screen_commit(
-        candidate_variant, EditorCommitRequest(timeline_slots=payload.slots)
-    )
-    if any(
-        row.get("speaker_frame_override") is not None
-        for row in (candidate_variant.get("user_timeline") or {}).get("slots") or []
-    ) or any(row.speaker_frame_override is not None for row in payload.slots):
-        raise HTTPException(422, detail={"code": "split_screen_requires_atomic_commit"})
+    require_split_screen_commit(candidate_variant, EditorCommitRequest())
     guided_v2 = candidate_variant.get("resolved_archetype") == "guided_story" and getattr(
         settings, "guided_story_editor_v2_enabled", False
     )
@@ -10379,6 +10372,14 @@ async def dispatch_edit_timeline(
         variant = require_editable_variant(job, variant_id, allow_guided_text=True)
     else:
         variant = require_editable_variant(job, variant_id)
+    require_split_screen_commit(
+        candidate_variant, EditorCommitRequest(timeline_slots=payload.slots)
+    )
+    if any(
+        row.get("speaker_frame_override") is not None
+        for row in (candidate_variant.get("user_timeline") or {}).get("slots") or []
+    ) or any(row.speaker_frame_override is not None for row in payload.slots):
+        raise HTTPException(422, detail={"code": "split_screen_requires_atomic_commit"})
     if variant.get("resolved_archetype") == "guided_story" and getattr(
         settings, "guided_story_editor_v2_enabled", False
     ):
@@ -11117,7 +11118,16 @@ def require_guided_story_editor_commit(
         # KRI-428: the creator's own song is not catalog music, so the reference-only
         # gate above never applies to it -- but it only exists on a phone guided-v2
         # variant whose current plan actually carries one.
-        if not getattr(settings, "guided_story_editor_v2_enabled", False):
+        from app.services.phone_rollout import split_screen_supported
+
+        authored_song_supported = (
+            variant.get("editor_split_screen_origin") is True
+            and variant.get("render_destination") == "device"
+            and split_screen_supported()
+        )
+        if (
+            variant.get("editor_timeline_mode") == "authored" and not authored_song_supported
+        ) or not getattr(settings, "guided_story_editor_v2_enabled", False):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=_GUIDED_STORY_EDIT_ERROR,
