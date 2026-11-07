@@ -7110,6 +7110,34 @@ final class NativeEditorSessionTests: XCTestCase {
     /// KRI-935: a preview whose source pool answers 409 ("a newer version exists") loads the newest version on
     /// its own, keeps the unsaved edit, and rebuilds. A server that keeps answering 409 gets one reload per
     /// generation, then a Retry that reloads again: never "close and reopen", never an endless "Preparing preview".
+    func testDefaultSessionRefreshUsesLoadedThreadIdentityNamespace() async throws {
+        let thread = UUID(), job = UUID()
+        let variant = Self.variant(duration: 2, generation: "g1")
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "initial",
+            draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: job.uuidString, baseGenerationID: "g1",
+            snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: variant)
+        // The default initializer's private storage UUID is intentionally unrelated
+        // to the subsequently loaded thread. It must never namespace server slots.
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: thread)
+        let initial = try XCTUnwrap(session.timelineClips.first)
+        var rendered = variant
+        rendered["render_generation_id"] = .string("g2")
+        XCTAssertTrue(session.rebaseCleanDraft(from: rendered))
+        let refreshed = try XCTUnwrap(session.timelineClips.first)
+        XCTAssertEqual(refreshed.id, initial.id)
+        XCTAssertEqual(refreshed.assetID, initial.assetID)
+        XCTAssertEqual(session.draft.clips.first?.assetID, initial.assetID)
+
+        await session.load(api: fake, threadID: UUID())
+        let replacement = try XCTUnwrap(session.timelineClips.first)
+        XCTAssertNotEqual(replacement.id, initial.id, "the same opaque slot in a different project has different identity")
+        XCTAssertNotEqual(replacement.assetID, initial.assetID)
+        XCTAssertTrue(session.rebaseCleanDraft(from: rendered))
+        XCTAssertEqual(session.timelineClips.first?.id, replacement.id)
+        XCTAssertEqual(session.timelineClips.first?.assetID, replacement.assetID)
+    }
+
     func testPreviewConflictLoadsNewestVersionOncePerGenerationThenRetryReloads() async throws {
         let threadID = UUID(), jobID = UUID()
         let fake = EditorCommitSpy(

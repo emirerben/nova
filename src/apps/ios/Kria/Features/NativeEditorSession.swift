@@ -1142,6 +1142,10 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private let projectID: UUID
+    /// Every compatibility identity uses the loaded project, including refreshes
+    /// of a session constructed before its thread was known. Storage keeps its
+    /// existing initialization root; this scope is only for document identities.
+    private var editorIdentityProjectID: UUID { threadID ?? projectID }
     private var etag: String = ""
 
     var draft: EditorDraft {
@@ -1246,6 +1250,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// they need no editor-commit before the next chat message.
     private var chatStagedDocument: EditorDocument?
     private var chatStagedSections: Set<EditorSection> = []
+    /// A submitted manual edit is not chat-owned merely because a reply echoes it.
+    private var chatStagedHasNoManualBase = false
 
     /// Editor documents submitted with a chat turn, keyed by the `client_state_id`
     /// the server echoes on the draft it builds from them. The apply path uses the
@@ -1311,13 +1317,14 @@ struct NativeEditorTemporaryVideo: Sendable {
     private func mergeChatDraft(_ staged: (document: EditorDocument, sections: Set<EditorSection>),
                                 submitted: SubmittedEditorState?, revision: Int) {
         let proven = submitted.flatMap { $0.authority == mergeAuthority ? $0 : nil }
-        let base = proven?.document ?? cleanDocument
+        let cumulativeChatOnly = hasOnlyChatStagedChanges
+        let base = proven?.document ?? (cumulativeChatOnly ? document : cleanDocument)
         var remote = base
         for section in staged.sections { copy(section, from: staged.document, into: &remote) }
         // Chat changes authored fields; rendered authority remains the current one.
         remote.revision = document.revision
         remote.capabilities = document.capabilities
-        let requiresChoice = proven == nil && hasUnsavedChanges
+        let requiresChoice = proven == nil && hasUnsavedChanges && !cumulativeChatOnly
         let context = PendingMerge(origin: requiresChoice ? .unprovenChat : .submittedChat,
             authority: mergeAuthority, stagedSections: staged.sections,
             base: base, clean: cleanDocument, remote: remote, baseSong: mergeAuthority.song,
@@ -1330,14 +1337,11 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     var hasOnlyChatStagedChanges: Bool {
-        guard hasUnsavedChanges, let staged = chatStagedDocument, !changedSections.isEmpty,
+        guard chatStagedHasNoManualBase, hasUnsavedChanges, let staged = chatStagedDocument, !changedSections.isEmpty,
               changedSections.isSubset(of: chatStagedSections), pendingText == nil else { return false }
-        for section in changedSections {
-            var probe = document
-            copy(section, from: staged, into: &probe)
-            if probe != document { return false }
-        }
-        return true
+        return changedSections.allSatisfy { document.snapshot(for: $0) == staged.snapshot(for: $0) }
+            && document.deletions == staged.deletions && document.editorState == staged.editorState
+            && document.userSong == staged.userSong
     }
     private struct EditorOperationIdentity: Equatable {
         let loadEpoch: UInt64
@@ -1355,6 +1359,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
     private func beginEditorLoad() -> UInt64 {
         clearMergeDecisionCheckpoint()
+        clipIDsBySlot.removeAll()
         editorLoadEpoch &+= 1
         resetLatestJobDrain()
         pendingLoadObservation = nil
@@ -2173,7 +2178,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             if let jobID { authoritativeVariant = try await readLoadObservation(epoch: epoch, target: "variant:\(jobID):\(requestedVariantKey)") { try await api.editorVariant(jobID: jobID, variantID: requestedVariantKey) } }
             else { authoritativeVariant = nil }
             guard editorLoadEpoch == epoch else { return }
-            let loadedDraft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: authoritativeVariant)
+            let loadedDraft = snapshot.editorDraft(projectID: editorIdentityProjectID, authoritativeVariant: authoritativeVariant)
             draft = loadedDraft
             configureCapabilities(from: authoritativeVariant, songVariantKey: requestedVariantKey)
             await applyCloudReadOnlyIfNeeded(api: api, variant: authoritativeVariant)
@@ -2241,6 +2246,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// Show a staged chat edit as unsaved changes on top of the clean document.
     /// The clean baseline stays on the undo stack, so one Undo discards it.
     private func applyStagedChatDocument(_ staged: (document: EditorDocument, sections: Set<EditorSection>), revision: Int) {
+        chatStagedHasNoManualBase = !hasUnsavedChanges || hasOnlyChatStagedChanges
         appendUndo(document); redoStack.removeAll()
         document = staged.document
         changedSections.formUnion(staged.sections)
@@ -2340,7 +2346,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             }
             let nextJobID = snapshot.baseJobID.flatMap(UUID.init)
             let nextVariantKey = snapshot.variantKey
-            let nextDraft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: variant)
+            let nextDraft = snapshot.editorDraft(projectID: editorIdentityProjectID, authoritativeVariant: variant)
             let sameTarget = nextJobID == jobID && nextVariantKey == variantKey && snapshot.itemID == itemID
             // A different job needs its video reloaded: adoptLatestJob owns that.
             if conversationRuntimeVersion == 2, nextJobID != jobID {
@@ -2922,7 +2928,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 let snapshot = DraftSnapshot(draftID: "latest-\(target.uuidString)", itemID: item, variantKey: variantID,
                     draftRevision: 0, snapshotHash: "", etag: "", baseJobID: target.uuidString,
                     baseGenerationID: generation, snapshot: [:], canUndo: false, createdAt: .now)
-                let draft = snapshot.editorDraft(projectID: ticket.threadID, authoritativeVariant: variant)
+                let draft = snapshot.editorDraft(projectID: editorIdentityProjectID, authoritativeVariant: variant)
                 var clean = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(draft))
                 clean.revision.baseGeneration = generation ?? ""
                 latestJobGate.finish(ticket)
@@ -2948,7 +2954,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             let variant = try await readLatestJob(ticket, window: window) { try await api.editorVariant(jobID: target, variantID: snapshot.variantKey) }
             guard !Task.isCancelled, observersVisible, api.mediaLibraryOwner == owner, latestJobGate.matches(ticket), jobID == expectedJob,
                   threadID == ticket.threadID, !isSaving, activeSaveAttemptID == nil else { return }
-            let latestDraft = snapshot.editorDraft(projectID: ticket.threadID, authoritativeVariant: variant)
+            let latestDraft = snapshot.editorDraft(projectID: editorIdentityProjectID, authoritativeVariant: variant)
             let latestClean = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(latestDraft))
             latestJobGate.finish(ticket)
             newerJobPrompt = nil
@@ -3166,7 +3172,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 canUndo: false,
                 createdAt: .now
             )
-            let loadedDraft = snapshot.editorDraft(projectID: projectID, authoritativeVariant: variant)
+            let loadedDraft = snapshot.editorDraft(projectID: editorIdentityProjectID, authoritativeVariant: variant)
             draft = loadedDraft
             legacyPromptSnapshot = loadedDraft.serverSnapshot
             configureCapabilities(from: variant, songVariantKey: resolved.variantID)
@@ -8144,7 +8150,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 canUndo: false,
                 createdAt: .now
             )
-            let latestDraft = snapshot.editorDraft(projectID: projectID, authoritativeVariant: variant)
+            let latestDraft = snapshot.editorDraft(projectID: editorIdentityProjectID, authoritativeVariant: variant)
             if conversationRuntimeVersion == 1 { legacyPromptSnapshot = latestDraft.serverSnapshot }
             var latestClean = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(latestDraft))
             latestClean.revision.baseGeneration = generation
@@ -8234,6 +8240,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             return false
         }
         let selected = selection
+        let chatOnlyBefore = !hasUnsavedChanges || hasOnlyChatStagedChanges
         let before = local
         let preservesAuthority = context.localOverride == nil && !isReviewingPreviousMerge
             && before.revision.baseGeneration == context.clean.revision.baseGeneration
@@ -8257,8 +8264,9 @@ struct NativeEditorTemporaryVideo: Sendable {
         canKeepLocalMergeConflicts = true
         if let revision = context.stagedRevision { appliedChatDraftRevision = revision }
         if context.origin == .rendered {
-            chatStagedDocument = nil; chatStagedSections = []
+            chatStagedDocument = nil; chatStagedSections = []; chatStagedHasNoManualBase = false
         } else {
+            chatStagedHasNoManualBase = chatOnlyBefore
             chatStagedDocument = context.remote
             chatStagedSections = context.stagedSections
         }
@@ -8951,7 +8959,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             draftRevision: value.revision.number ?? 0, snapshotHash: value.revision.snapshotHash ?? "", etag: etag,
             baseJobID: jobID?.uuidString, baseGenerationID: value.revision.baseGeneration.nilIfEmpty,
             snapshot: value.encodeSnapshot(), canUndo: canUndo, createdAt: .now
-        ).editorDraft(projectID: projectID)
+        ).editorDraft(projectID: editorIdentityProjectID)
         for (index, slot) in value.clips.enumerated() where projected.clips.indices.contains(index) {
             guard let slotID = slot.id else { continue }
             let stableID = clipID(for: slotID)
@@ -8970,7 +8978,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     private func clipID(for slotID: String?) -> UUID {
         guard let slotID, !slotID.isEmpty else { return UUID() }
         if let id = clipIDsBySlot[slotID] { return id }
-        let id = EditorCompatibilityClipIdentity.id(projectID: projectID, slotID: slotID)
+        let id = EditorCompatibilityClipIdentity.id(projectID: editorIdentityProjectID, slotID: slotID)
         clipIDsBySlot[slotID] = id
         return id
     }
@@ -10193,7 +10201,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             canUndo: false,
             createdAt: .now
         )
-        let draft = snapshot.editorDraft(projectID: projectID, authoritativeVariant: variant)
+        let draft = snapshot.editorDraft(projectID: editorIdentityProjectID, authoritativeVariant: variant)
         return EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(draft)).textElements
     }
 
@@ -10269,7 +10277,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             createdAt: .now
         )
         let selected = selection
-        replace(with: snapshot.editorDraft(projectID: projectID, authoritativeVariant: variant))
+        replace(with: snapshot.editorDraft(projectID: editorIdentityProjectID, authoritativeVariant: variant))
         if conversationRuntimeVersion == 1 {
             // Compare raw authority, before client metadata/hydration. Reusing
             // encodeSnapshot here would cache random compatibility clip IDs.
@@ -10278,7 +10286,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 draftRevision: 0, snapshotHash: "", etag: "", baseJobID: snapshot.baseJobID,
                 baseGenerationID: generation, snapshot: [:], canUndo: false, createdAt: .now
             )
-            legacyPromptSnapshot = authority.editorDraft(projectID: projectID, authoritativeVariant: variant).serverSnapshot
+            legacyPromptSnapshot = authority.editorDraft(projectID: editorIdentityProjectID, authoritativeVariant: variant).serverSnapshot
         }
         cleanDocument = document
         undoStack.removeAll()

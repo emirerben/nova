@@ -6,6 +6,13 @@ import XCTest
 /// (never rendered). The editor must show it immediately as UNSAVED edits.
 @MainActor
 final class ChatDraftStagingTests: XCTestCase {
+    private func reportPendingMerge(_ session: NativeEditorSession, label: String) {
+        guard let state = session.pendingMergeSnapshotForTesting() else { return }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(state), let text = String(data: data, encoding: .utf8) else { return }
+        print("MERGE_FIXTURE \(label) \(text)")
+    }
+
     private static let jobID = "5b1d2f0a-6c0e-4b8e-9d0a-1c2d3e4f5a6b"
     private static let musicID = "8c9c1e0e-2d62-4a44-8d0c-2f4d3a0a9b11"
 
@@ -769,6 +776,7 @@ final class ChatDraftStagingTests: XCTestCase {
         let before = session.document
         await session.adoptLatestJob(newProject, api: fake)
         let adopted = await settle { session.document.revision.baseGeneration == "gNew" }
+        reportPendingMerge(session, label: "chat-replan-matching-base")
         XCTAssertTrue(adopted)
         XCTAssertNil(session.newerJobPrompt)
         XCTAssertNil(session.mergeConflictMessage)
@@ -919,6 +927,31 @@ final class ChatDraftStagingTests: XCTestCase {
     }
 
     /// Real sequence (thread 8f208e18): rev A edits labels, rev B (cumulative) changes the title.
+    func testProvenReplyEchoingManualFontCannotAuthorizeUnprovenCumulativeOverwrite() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        session.setTextStyle(id: "t1", style: "Inter")
+        let submitted = session.document
+        let sent = try XCTUnwrap(session.exportEditorState())
+        fake.draftSnapshot = Self.echoing(sent.clientStateID, try Self.wordingDraft(from: submitted, text: "first reply", revision: 2))
+        await session.synchronizePromptRevision()
+        XCTAssertNil(session.mergeConflictMessage)
+        XCTAssertEqual(session.document.textElements.first?.text, "first reply")
+        XCTAssertEqual(session.document.textElements.first?.raw["font_family"], .string("Inter"))
+        XCTAssertFalse(session.hasOnlyChatStagedChanges, "echoing an existing manual font does not make that font chat-owned")
+        let before = session.document
+        let history = session.undoHistoryCount
+        var overwritten = before
+        overwritten.textElements[0].raw["font_family"] = .string("Courier")
+        fake.draftSnapshot = Self.echoing("unknown-cumulative-state", try Self.wordingDraft(from: overwritten, text: "second reply", revision: 3))
+        await session.synchronizePromptRevision()
+        XCTAssertNotNil(session.mergeConflictMessage)
+        XCTAssertEqual(session.document, before, "a cumulative result without submitted provenance cannot overwrite the manual base")
+        XCTAssertEqual(session.undoHistoryCount, history)
+        XCTAssertTrue(session.canUndo)
+        await session.save()
+        XCTAssertEqual(fake.commitCount, 0)
+    }
+
     func testCumulativeTitleChangeReplacesTheStagedLabelsAndUpdatesTheDocument() async throws {
         let (session, fake) = await loaded(Self.bootstrapSnapshot())
         fake.draftSnapshot = Self.textDraft(revision: 2, texts: [("t1", "hello A")])
@@ -1590,6 +1623,7 @@ extension ChatDraftStagingTests {
         let before = session.document
         fake.editorVariantsByJob[jobB] = [Self.variant(generation: "gNew")]
         let merged = await settle { session.document.revision.baseGeneration == "gNew" }
+        reportPendingMerge(session, label: "chat-replan-ready-after-rendering")
         XCTAssertTrue(merged)
         XCTAssertNil(session.newerJobPrompt)
         XCTAssertNil(session.mergeConflictMessage)
@@ -1705,28 +1739,44 @@ extension ChatDraftStagingTests {
 
     func testLateOldLoadRetryAfterCannotDelayAnotherTargetOrAccount() async throws {
         for (changeAccount, sameTarget) in [(false, false), (true, true), (false, true)] {
-            let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.variant())
-            fake.mediaLibraryOwner = "first"
-            fake.suspendNextEditorVariant = true
+            let old = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.variant())
+            old.mediaLibraryOwner = "first"
+            old.suspendNextEditorVariant = true
+            let replacement = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.variant(generation: "g2"))
+            replacement.mediaLibraryOwner = changeAccount ? "second" : "first"
             let session = NativeEditorSession()
+            let thread = UUID()
             var delays: [Duration] = []
             var now = ContinuousClock.now
             session.loadReadNow = { now }
             session.loadReadSleep = { delay in delays.append(delay); now = now.advanced(by: delay); await Task.yield() }
-            let oldLoad = Task { await session.load(api: fake, threadID: UUID(), variantID: "initial") }
-            let suspended = await settle { fake.editorVariantIsSuspended }; XCTAssertTrue(suspended)
-            fake.editorVariantScript = [.failure(.requestFailed(status: 429, detail: .init("old target", retryAfter: 600)))]
-            if changeAccount { fake.mediaLibraryOwner = "second" }
+            let oldLoad = Task { await session.load(api: old, threadID: thread, variantID: "initial") }
+            let suspended = await settle { old.editorVariantIsSuspended }
+            XCTAssertTrue(suspended)
             let newVariant = sameTarget ? "initial" : "other"
-            let newLoad = Task { await session.load(api: fake, threadID: UUID(), variantID: newVariant) }
-            for _ in 0..<20 { await Task.yield() }
-            XCTAssertEqual(fake.editorVariantJobIDs.count, 1, "the new lifetime still waits for the old transport")
-            fake.resumeEditorVariant()
+            var replacementFinished = false
+            let newLoad = Task {
+                await session.load(api: replacement, threadID: thread, variantID: newVariant)
+                replacementFinished = true
+            }
+            let replaced = await settle { replacementFinished }
+            XCTAssertTrue(replaced, "a replacement epoch cannot wait for an obsolete transport")
+            XCTAssertTrue(old.editorVariantIsSuspended, "the original GET is still held while replacement completes")
+            XCTAssertEqual(replacement.editorVariantJobIDs.count, 1)
+            XCTAssertEqual(session.loadState, .loaded)
+            XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+            old.editorVariantError = .requestFailed(status: 429, detail: .init("old target", retryAfter: 600))
+            old.resumeEditorVariant()
             await oldLoad.value; await newLoad.value
             XCTAssertEqual(session.loadState, .loaded)
-            XCTAssertEqual(fake.lastVariantID, newVariant)
-            XCTAssertEqual(delays, sameTarget && !changeAccount ? [.seconds(600)] : [],
-                "only the same account/environment/request target inherits the late deadline across lifetimes")
+            XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+            XCTAssertEqual(replacement.lastVariantID, newVariant)
+            await session.load(api: replacement, threadID: thread, variantID: newVariant)
+            XCTAssertEqual(session.loadState, .loaded)
+            XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+            XCTAssertTrue(delays.isEmpty, "an obsolete epoch cannot install a late deadline, even for the same owner and target")
+            XCTAssertEqual(old.commitCount + replacement.commitCount, 0)
+            session.setObserversVisible(false)
         }
     }
 

@@ -227,12 +227,23 @@ enum NativeEditorMerge {
               case .array(let after)? = changed.sections["timeline_slots"],
               !before.isEmpty, before.count == after.count else { return false }
         let trim: Set<String> = ["in_s", "duration_s", "duration_beats"]
+        func stableFields(_ fields: [String: JSONValue]) -> [String: JSONValue] {
+            var result = fields.filter { !trim.contains($0.key) }
+            // Editing serializes these schema defaults even when the original
+            // snapshot omitted them. Preserve every unknown field and every
+            // nondefault transition/look value in the identity comparison.
+            for key in ["parent_segment_id", "look_adjustments", "transition_duration_s"] where result[key] == .null {
+                result.removeValue(forKey: key)
+            }
+            if result["transition_after"] == .string("cut") { result.removeValue(forKey: "transition_after") }
+            return result
+        }
         var ids = Set<String>()
         return zip(before, after).allSatisfy { old, new in
             guard let a = old.objectValue, let b = new.objectValue,
                   let id = (a["slot_id"] ?? a["id"])?.stringValue, !id.isEmpty,
                   ids.insert(id).inserted else { return false }
-            return a.filter { !trim.contains($0.key) } == b.filter { !trim.contains($0.key) }
+            return stableFields(a) == stableFields(b)
         }
     }
 

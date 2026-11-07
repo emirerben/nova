@@ -223,6 +223,23 @@ final class NativeEditorMergeTests: XCTestCase {
             XCTAssertEqual(result.state?.sections["text_elements"], remote.sections["text_elements"])
             XCTAssertTrue(result.conflicts.isEmpty)
         }
+        var serializedTrim = trim
+        serializedTrim["parent_segment_id"] = .null
+        serializedTrim["look_adjustments"] = .null
+        serializedTrim["transition_duration_s"] = .null
+        serializedTrim["transition_after"] = .string("cut")
+        local.sections["timeline_slots"] = .array([.object(serializedTrim)])
+        let canonical = NativeEditorMerge.merge(base: base, local: local, remote: remote)
+        XCTAssertTrue(canonical.conflicts.isEmpty, "serializing known schema defaults is not a source change")
+        XCTAssertEqual(canonical.state?.sections["timeline_slots"], local.sections["timeline_slots"])
+        XCTAssertEqual(canonical.state?.sections["text_elements"], remote.sections["text_elements"])
+        var transition = serializedTrim; transition["transition_after"] = .string("dissolve")
+        local.sections["timeline_slots"] = .array([.object(transition)])
+        XCTAssertNil(NativeEditorMerge.merge(base: base, local: local, remote: remote).state)
+        var unknownSlot = serializedTrim; unknownSlot["future_source"] = .null
+        local.sections["timeline_slots"] = .array([.object(unknownSlot)])
+        XCTAssertNil(NativeEditorMerge.merge(base: base, local: local, remote: remote).state)
+        local.sections["timeline_slots"] = .array([.object(trim)])
         var timed = wording; timed["end_s"] = .number(2.2)
         remote.sections["text_elements"] = .array([.object(timed)])
         XCTAssertNil(NativeEditorMerge.merge(base: base, local: local, remote: remote).state)
