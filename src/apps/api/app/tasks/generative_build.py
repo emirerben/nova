@@ -13803,13 +13803,22 @@ def _phone_talking_closing_rows(
     return [placed], receipt, []
 
 
-def _phone_caption_spellings(snapshot: dict, quoted: tuple[str, ...]) -> tuple[str, ...]:
+def _phone_caption_spellings(
+    snapshot: dict, quoted: tuple[str, ...], *, typed: tuple[str, ...] | None = None
+) -> tuple[str, ...]:
     """KRI-793: the words the creator wants spelled their way in the captions -- the quoted
     asks in their request (KRI-631) plus every word the approved brief pinned on the job
     (``creator_brief_binding``) lists for its captions. An unreadable binding adds none,
-    so the render runs exactly as before."""
+    so the render runs exactly as before.
+
+    KRI-1283: ``typed`` (``creator_typed_words`` of the saved request) limits the brief's
+    listed words to ones the creator typed. A label Kria wrote from the transcript ("5. Cloud
+    Code Game Studios", a mishearing of "Claude") is never a creator spelling, so it can
+    not lock the mishearing into the captions. Quoted asks always stay. ``None`` = no limit.
+    """
     from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
     from app.kria.brief_checks import brief_caption_spellings  # noqa: PLC0415
+    from app.pipeline.caption_spelling import _fold  # noqa: PLC0415
 
     listed: tuple[str, ...] = ()
     raw_binding = snapshot.get("creator_brief_binding")
@@ -13818,6 +13827,11 @@ def _phone_caption_spellings(snapshot: dict, quoted: tuple[str, ...]) -> tuple[s
             listed = brief_caption_spellings(BriefBinding.model_validate(raw_binding).resolve())
         except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
             log.warning("phone_caption_spellings.binding_unreadable", error=str(exc)[:200])
+    if typed is not None:
+        typed_keys = {_fold(t) for t in typed}
+        listed = tuple(
+            w for w in listed if all(_fold(part) in typed_keys for part in re.findall(r"\w+", w))
+        )
     folded: set[str] = set()
     targets: list[str] = []
     for word in (*quoted, *listed):
@@ -13873,7 +13887,9 @@ def _phone_talking_caption_text(
     names = creator_request_names(request) if settings.caption_request_names_enabled else ()
     cues = _apply_creator_spellings(
         cues,
-        _phone_caption_spellings(snapshot, extract_spelling_asks(request)),
+        _phone_caption_spellings(
+            snapshot, extract_spelling_asks(request), typed=creator_typed_words(request)
+        ),
         request_names=names,
         typed=creator_typed_words(request) if names else (),
     )
@@ -13976,10 +13992,14 @@ def _clip_spoken_language(clip_metas: Any, clip_id: Any) -> str:
 def _caption_glossary(snapshot: dict, all_candidates: dict) -> tuple[str, ...]:
     """KRI-838: the creator's own names and spellings for the captions -- the do-not-translate
     list of the caption translator (the same words ``_apply_creator_spellings`` applies)."""
-    from app.pipeline.caption_spelling import extract_spelling_asks  # noqa: PLC0415
+    from app.pipeline.caption_spelling import (
+        creator_typed_words,  # noqa: PLC0415
+        extract_spelling_asks,  # noqa: PLC0415
+    )
 
+    request = _creator_request_text(all_candidates)
     return _phone_caption_spellings(
-        snapshot, extract_spelling_asks(_creator_request_text(all_candidates))
+        snapshot, extract_spelling_asks(request), typed=creator_typed_words(request)
     )
 
 
