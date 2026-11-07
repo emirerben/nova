@@ -1536,6 +1536,7 @@ def _compile_overlay_track(
                     window_end=window_end,
                     fade_in=card.fade,
                     fade_out=card.fade,
+                    editor_style=card.placement_style(),
                 ),
             )
         )
@@ -1714,6 +1715,7 @@ def _compile_video_overlay_clip(
             window_end=window_end,
             fade_in=card.fade,
             fade_out=card.fade,
+            editor_style=card.placement_style(),
         ),
     )
 

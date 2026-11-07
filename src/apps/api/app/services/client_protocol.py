@@ -55,6 +55,10 @@ SPEAKER_FULL_OPENING_PROTOCOL = 41
 # `windows[i].focus` (the `backgroundFocus` capability: the picture aimed at its text column).
 BACKGROUND_FOCUS_PROTOCOL = 42
 
+# KRI-1264: the first build that decodes a placed picture card's `visual_placement.editor_style`
+# (a Talking card's zoom and animation) and edits them. 43 is the split-screen build (KRI-1231).
+CARD_STYLE_PROTOCOL = 44
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()

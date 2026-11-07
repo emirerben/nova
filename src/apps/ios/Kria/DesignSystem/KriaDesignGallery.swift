@@ -190,8 +190,6 @@ struct KriaDesignGallery: View {
         caption("On a fill card")
         KriaSourceRow(options: [.record(action: {}), .upload(action: {})], onFill: true)
             .padding(12).background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20))
-        caption("Camera")
-        HStack { KriaCameraUploadButton {}; Spacer() }.padding(16).background(Color.black)
     }
 }
 

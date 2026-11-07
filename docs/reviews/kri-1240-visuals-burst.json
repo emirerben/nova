@@ -1,0 +1,925 @@
+{
+  "before": {
+    "topology": "before",
+    "workers": {
+      "main": "worker --loglevel=info --concurrency=1 -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs,creator-render-v2,creator-fidelity-v1,autoplace-jobs,speech-analysis,visuals-analysis -n main@%h"
+    },
+    "gemini_delay_s": "25",
+    "storage": "gcs nova-videos-dev kri1240-bench/before-e9c1ce",
+    "dispatch_loop_s": 0.1,
+    "load_avg_start": "125.26 81.78 81.02",
+    "load_avg_at_dispatch": "89.88 80.54 80.69",
+    "load_avg_end": "40.93 46.53 64.26",
+    "prewarm_lines": {
+      "main": [
+        "[bench] CLIP prewarm handler disconnected for this worker (macOS fork+torch segfault)"
+      ]
+    },
+    "per_asset": [
+      {
+        "file": "shot1.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 26.66,
+        "real_work_s": null
+      },
+      {
+        "file": "shot2.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 51.83,
+        "real_work_s": null
+      },
+      {
+        "file": "shot3.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 77.15,
+        "real_work_s": null
+      },
+      {
+        "file": "shot4.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 102.44,
+        "real_work_s": null
+      },
+      {
+        "file": "shot5.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 127.57,
+        "real_work_s": null
+      },
+      {
+        "file": "rec1.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 154.7,
+        "real_work_s": null
+      },
+      {
+        "file": "rec2.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 182.02,
+        "real_work_s": null
+      },
+      {
+        "file": "rec3.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 209.15,
+        "real_work_s": null
+      },
+      {
+        "file": "rec4.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 239.25,
+        "real_work_s": null
+      },
+      {
+        "file": "rec5.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 276.55,
+        "real_work_s": null
+      }
+    ],
+    "real_work_lines": [
+      "[bench] REAL _analyze_image asset.png real_work_s=0.04 then simulated Gemini wait 25.0s pid=57430",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=57430",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=57430",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=57430",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=57430",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.09 then simulated Gemini wait 25.0s pid=57430",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.08 then simulated Gemini wait 25.0s pid=57430",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.08 then simulated Gemini wait 25.0s pid=57430",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.08 then simulated Gemini wait 25.0s pid=57430",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.94 then simulated Gemini wait 25.0s pid=57430"
+    ],
+    "first_ready_s": 26.66,
+    "last_ready_s": 276.55,
+    "total_wall_s": 276.55,
+    "n_ready": 10,
+    "memory": {
+      "tree_of": "main process",
+      "parent_pid": 57304,
+      "idle_after_ready_parent_mb": 134.8,
+      "idle_after_ready_total_mb": 138.8,
+      "idle_by_pid_mb": {
+        "57304": 134.8,
+        "57430": 4.0
+      },
+      "peak_per_pid_mb": {
+        "57304": 62.0,
+        "57430": 117.2,
+        "67398": 15.5
+      },
+      "peak_total_mb": 178.8,
+      "n_samples": 514,
+      "main_worker_idle_total_mb": 140.9
+    }
+  },
+  "after": {
+    "topology": "after",
+    "workers": {
+      "main": "worker --loglevel=info --concurrency=1 -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs,creator-render-v2,creator-fidelity-v1,autoplace-jobs,speech-analysis,visuals-analysis -n main@%h",
+      "visuals": "worker --loglevel=info --concurrency=4 -Q visuals-analysis --max-memory-per-child=1048576 -n visuals@%h"
+    },
+    "gemini_delay_s": "25",
+    "storage": "gcs nova-videos-dev kri1240-bench/after-c58d3e",
+    "dispatch_loop_s": 0.16,
+    "load_avg_start": "49.75 48.27 64.57",
+    "load_avg_at_dispatch": "52.13 49.02 63.91",
+    "load_avg_end": "20.19 40.12 59.38",
+    "prewarm_lines": {
+      "main": [
+        "[bench] CLIP prewarm handler disconnected for this worker (macOS fork+torch segfault)"
+      ],
+      "visuals": [
+        "[2026-11-07 01:15:52,186: WARNING/MainProcess] [worker_ready] visuals-only worker (small VM) \u2014 skipping CLIP prewarm"
+      ]
+    },
+    "per_asset": [
+      {
+        "file": "shot1.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 27.02,
+        "real_work_s": null
+      },
+      {
+        "file": "shot2.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 27.02,
+        "real_work_s": null
+      },
+      {
+        "file": "shot3.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 27.02,
+        "real_work_s": null
+      },
+      {
+        "file": "shot4.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 26.5,
+        "real_work_s": null
+      },
+      {
+        "file": "shot5.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 27.54,
+        "real_work_s": null
+      },
+      {
+        "file": "rec1.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 54.89,
+        "real_work_s": null
+      },
+      {
+        "file": "rec2.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 60.55,
+        "real_work_s": null
+      },
+      {
+        "file": "rec3.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 65.14,
+        "real_work_s": null
+      },
+      {
+        "file": "rec4.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 60.55,
+        "real_work_s": null
+      },
+      {
+        "file": "rec5.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 57.47,
+        "real_work_s": null
+      }
+    ],
+    "real_work_lines": [
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=67903",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.08 then simulated Gemini wait 25.0s pid=67903",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=67902",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=67905",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=67910",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=67907",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.09 then simulated Gemini wait 25.0s pid=67902",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.10 then simulated Gemini wait 25.0s pid=67907",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.08 then simulated Gemini wait 25.0s pid=67910",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.10 then simulated Gemini wait 25.0s pid=67905"
+    ],
+    "first_ready_s": 26.5,
+    "last_ready_s": 65.14,
+    "total_wall_s": 65.14,
+    "n_ready": 10,
+    "memory": {
+      "tree_of": "visuals process",
+      "parent_pid": 67872,
+      "idle_after_ready_parent_mb": 306.3,
+      "idle_after_ready_total_mb": 352.3,
+      "idle_by_pid_mb": {
+        "67872": 306.3,
+        "67905": 12.9,
+        "67907": 13.4,
+        "67910": 8.7,
+        "67902": 11.0
+      },
+      "peak_per_pid_mb": {
+        "67872": 31.5,
+        "67905": 116.5,
+        "67907": 115.8,
+        "67910": 116.1,
+        "67902": 117.1,
+        "68277": 2.2
+      },
+      "peak_total_mb": 495.7,
+      "n_samples": 123,
+      "main_worker_idle_total_mb": 323.8
+    }
+  },
+  "visuals_alone": {
+    "topology": "visuals_alone",
+    "workers": {
+      "visuals": "worker --loglevel=info --concurrency=4 -Q visuals-analysis --max-memory-per-child=1048576 -n visuals@%h"
+    },
+    "gemini_delay_s": "25",
+    "storage": "gcs nova-videos-dev kri1240-bench/visuals_alone-958c15",
+    "dispatch_loop_s": 0.13,
+    "load_avg_start": "17.63 38.92 58.72",
+    "load_avg_at_dispatch": "9.56 33.45 55.57",
+    "load_avg_end": "4.30 25.44 50.25",
+    "prewarm_lines": {
+      "visuals": [
+        "[2026-11-07 01:18:00,943: WARNING/MainProcess] [worker_ready] visuals-only worker (small VM) \u2014 skipping CLIP prewarm"
+      ]
+    },
+    "per_asset": [
+      {
+        "file": "shot1.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 26.22,
+        "real_work_s": null
+      },
+      {
+        "file": "shot2.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 26.22,
+        "real_work_s": null
+      },
+      {
+        "file": "shot3.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 26.22,
+        "real_work_s": null
+      },
+      {
+        "file": "shot4.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 26.23,
+        "real_work_s": null
+      },
+      {
+        "file": "shot5.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 53.03,
+        "real_work_s": null
+      },
+      {
+        "file": "rec1.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 56.64,
+        "real_work_s": null
+      },
+      {
+        "file": "rec2.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 57.15,
+        "real_work_s": null
+      },
+      {
+        "file": "rec3.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 59.2,
+        "real_work_s": null
+      },
+      {
+        "file": "rec4.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 80.24,
+        "real_work_s": null
+      },
+      {
+        "file": "rec5.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 85.83,
+        "real_work_s": null
+      }
+    ],
+    "real_work_lines": [
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=68439",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=68438",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=68440",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=68441",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.04 then simulated Gemini wait 25.0s pid=68439",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.09 then simulated Gemini wait 25.0s pid=68438",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.08 then simulated Gemini wait 25.0s pid=68440",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.10 then simulated Gemini wait 25.0s pid=68441",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.08 then simulated Gemini wait 25.0s pid=68439",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.09 then simulated Gemini wait 25.0s pid=68438"
+    ],
+    "first_ready_s": 26.22,
+    "last_ready_s": 85.83,
+    "total_wall_s": 85.83,
+    "n_ready": 10,
+    "memory": {
+      "tree_of": "visuals process",
+      "parent_pid": 68431,
+      "idle_after_ready_parent_mb": 329.8,
+      "idle_after_ready_total_mb": 425.6,
+      "idle_by_pid_mb": {
+        "68431": 329.8,
+        "68438": 25.1,
+        "68439": 23.6,
+        "68440": 23.5,
+        "68441": 23.6
+      },
+      "peak_per_pid_mb": {
+        "68431": 295.7,
+        "68438": 120.0,
+        "68439": 120.8,
+        "68440": 117.0,
+        "68441": 117.2
+      },
+      "peak_total_mb": 768.8,
+      "n_samples": 162,
+      "main_worker_idle_total_mb": null
+    }
+  },
+  "visuals_alone_c4_n14": {
+    "topology": "visuals_alone",
+    "workers": {
+      "visuals": "worker --loglevel=info --concurrency=4 -Q visuals-analysis --max-memory-per-child=1048576 -n visuals@%h"
+    },
+    "gemini_delay_s": "25",
+    "storage": "gcs nova-videos-dev kri1240-bench/visuals_alone-de50b2",
+    "dispatch_loop_s": 0.13,
+    "load_avg_start": "4.85 19.94 45.38",
+    "load_avg_at_dispatch": "4.00 16.86 42.49",
+    "load_avg_end": "49.37 24.12 41.50",
+    "prewarm_lines": {
+      "visuals": [
+        "[2026-11-07 01:21:57,816: WARNING/MainProcess] [worker_ready] visuals-only worker (small VM) \u2014 skipping CLIP prewarm"
+      ]
+    },
+    "per_asset": [
+      {
+        "file": "shot1.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 26.33,
+        "real_work_s": null
+      },
+      {
+        "file": "shot2.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 26.33,
+        "real_work_s": null
+      },
+      {
+        "file": "shot3.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 26.33,
+        "real_work_s": null
+      },
+      {
+        "file": "shot4.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 26.34,
+        "real_work_s": null
+      },
+      {
+        "file": "shot5.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 51.94,
+        "real_work_s": null
+      },
+      {
+        "file": "shot1.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 51.94,
+        "real_work_s": null
+      },
+      {
+        "file": "shot2.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 51.94,
+        "real_work_s": null
+      },
+      {
+        "file": "rec1.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 54.05,
+        "real_work_s": null
+      },
+      {
+        "file": "rec2.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 84.86,
+        "real_work_s": null
+      },
+      {
+        "file": "rec3.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 81.65,
+        "real_work_s": null
+      },
+      {
+        "file": "rec4.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 81.66,
+        "real_work_s": null
+      },
+      {
+        "file": "rec5.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 82.79,
+        "real_work_s": null
+      },
+      {
+        "file": "rec1.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 112.87,
+        "real_work_s": null
+      },
+      {
+        "file": "rec2.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 120.22,
+        "real_work_s": null
+      }
+    ],
+    "real_work_lines": [
+      "[bench] REAL _analyze_image asset.png real_work_s=0.04 then simulated Gemini wait 25.0s pid=69363",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=69365",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=69364",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=69362",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.04 then simulated Gemini wait 25.0s pid=69363",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.04 then simulated Gemini wait 25.0s pid=69365",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=69364",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.10 then simulated Gemini wait 25.0s pid=69362",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.10 then simulated Gemini wait 25.0s pid=69365",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.09 then simulated Gemini wait 25.0s pid=69364",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.10 then simulated Gemini wait 25.0s pid=69362",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.08 then simulated Gemini wait 25.0s pid=69363",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.11 then simulated Gemini wait 25.0s pid=69365",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.08 then simulated Gemini wait 25.0s pid=69364"
+    ],
+    "first_ready_s": 26.33,
+    "last_ready_s": 120.22,
+    "total_wall_s": 120.22,
+    "n_ready": 14,
+    "memory": {
+      "tree_of": "visuals process",
+      "parent_pid": 69356,
+      "idle_after_ready_parent_mb": 327.9,
+      "idle_after_ready_total_mb": 424.1,
+      "idle_by_pid_mb": {
+        "69356": 327.9,
+        "69362": 25.2,
+        "69363": 23.7,
+        "69364": 23.6,
+        "69365": 23.7
+      },
+      "peak_per_pid_mb": {
+        "69356": 274.5,
+        "69362": 118.4,
+        "69363": 123.8,
+        "69364": 123.8,
+        "69365": 123.7,
+        "69743": 21.8,
+        "69924": 0.7
+      },
+      "peak_total_mb": 773.7,
+      "n_samples": 225,
+      "main_worker_idle_total_mb": null
+    },
+    "variant_key": "visuals_alone_c4_n14",
+    "n_files": 14
+  },
+  "visuals_alone_c6_n14": {
+    "topology": "visuals_alone",
+    "workers": {
+      "visuals": "worker --loglevel=info --concurrency=6 -Q visuals-analysis --max-memory-per-child=1048576 -n visuals@%h"
+    },
+    "gemini_delay_s": "25",
+    "storage": "gcs nova-videos-dev kri1240-bench/visuals_alone-e4a1cc",
+    "dispatch_loop_s": 0.32,
+    "load_avg_start": "48.04 24.69 41.50",
+    "load_avg_at_dispatch": "54.47 30.90 42.47",
+    "load_avg_end": "19.33 25.99 39.54",
+    "prewarm_lines": {
+      "visuals": [
+        "[2026-11-07 01:25:16,275: WARNING/MainProcess] [worker_ready] visuals-only worker (small VM) \u2014 skipping CLIP prewarm"
+      ]
+    },
+    "per_asset": [
+      {
+        "file": "shot1.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 26.67,
+        "real_work_s": null
+      },
+      {
+        "file": "shot2.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 26.67,
+        "real_work_s": null
+      },
+      {
+        "file": "shot3.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 26.67,
+        "real_work_s": null
+      },
+      {
+        "file": "shot4.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 26.67,
+        "real_work_s": null
+      },
+      {
+        "file": "shot5.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 26.67,
+        "real_work_s": null
+      },
+      {
+        "file": "shot1.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 26.67,
+        "real_work_s": null
+      },
+      {
+        "file": "shot2.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 52.09,
+        "real_work_s": null
+      },
+      {
+        "file": "rec1.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 60.89,
+        "real_work_s": null
+      },
+      {
+        "file": "rec2.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 59.34,
+        "real_work_s": null
+      },
+      {
+        "file": "rec3.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 55.72,
+        "real_work_s": null
+      },
+      {
+        "file": "rec4.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 66.03,
+        "real_work_s": null
+      },
+      {
+        "file": "rec5.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 61.41,
+        "real_work_s": null
+      },
+      {
+        "file": "rec1.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 79.38,
+        "real_work_s": null
+      },
+      {
+        "file": "rec2.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 82.96,
+        "real_work_s": null
+      }
+    ],
+    "real_work_lines": [
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=70667",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=70670",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=70671",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=70672",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=70668",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=70669",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=70667",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.08 then simulated Gemini wait 25.0s pid=70672",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.10 then simulated Gemini wait 25.0s pid=70670",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.08 then simulated Gemini wait 25.0s pid=70671",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.08 then simulated Gemini wait 25.0s pid=70669",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.09 then simulated Gemini wait 25.0s pid=70668",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.08 then simulated Gemini wait 25.0s pid=70667",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.08 then simulated Gemini wait 25.0s pid=70672"
+    ],
+    "first_ready_s": 26.67,
+    "last_ready_s": 82.96,
+    "total_wall_s": 82.96,
+    "n_ready": 14,
+    "memory": {
+      "tree_of": "visuals process",
+      "parent_pid": 70638,
+      "idle_after_ready_parent_mb": 318.6,
+      "idle_after_ready_total_mb": 403.6,
+      "idle_by_pid_mb": {
+        "70667": 12.7,
+        "70668": 13.5,
+        "70669": 11.8,
+        "70638": 318.6,
+        "70670": 10.7,
+        "70671": 12.9,
+        "70672": 23.4
+      },
+      "peak_per_pid_mb": {
+        "70667": 118.2,
+        "70668": 116.5,
+        "70669": 116.7,
+        "70638": 38.4,
+        "70670": 117.0,
+        "70671": 116.5,
+        "70672": 116.4,
+        "71082": 2.9,
+        "71165": 2.0,
+        "71170": 0.4
+      },
+      "peak_total_mb": 739.2,
+      "n_samples": 157,
+      "main_worker_idle_total_mb": null
+    },
+    "variant_key": "visuals_alone_c6_n14",
+    "n_files": 14
+  },
+  "visuals_alone_c6_n10": {
+    "topology": "visuals_alone",
+    "workers": {
+      "visuals": "worker --loglevel=info --concurrency=6 -Q visuals-analysis --max-memory-per-child=1048576 -n visuals@%h"
+    },
+    "gemini_delay_s": "25",
+    "storage": "gcs nova-videos-dev kri1240-bench/visuals_alone-ac62fd",
+    "dispatch_loop_s": 0.13,
+    "load_avg_start": "16.66 25.20 39.10",
+    "load_avg_at_dispatch": "9.11 21.81 37.05",
+    "load_avg_end": "6.26 18.70 34.84",
+    "prewarm_lines": {
+      "visuals": [
+        "[2026-11-07 01:27:58,933: WARNING/MainProcess] [worker_ready] visuals-only worker (small VM) \u2014 skipping CLIP prewarm"
+      ]
+    },
+    "per_asset": [
+      {
+        "file": "shot1.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 26.63,
+        "real_work_s": null
+      },
+      {
+        "file": "shot2.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 26.64,
+        "real_work_s": null
+      },
+      {
+        "file": "shot3.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 26.64,
+        "real_work_s": null
+      },
+      {
+        "file": "shot4.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 26.64,
+        "real_work_s": null
+      },
+      {
+        "file": "shot5.png",
+        "kind": "image",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 26.64,
+        "real_work_s": null
+      },
+      {
+        "file": "rec1.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 28.7,
+        "real_work_s": null
+      },
+      {
+        "file": "rec2.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 60.14,
+        "real_work_s": null
+      },
+      {
+        "file": "rec3.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 58.08,
+        "real_work_s": null
+      },
+      {
+        "file": "rec4.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 60.65,
+        "real_work_s": null
+      },
+      {
+        "file": "rec5.mp4",
+        "kind": "video",
+        "status": "ready",
+        "error_code": null,
+        "seconds_to_final": 56.53,
+        "real_work_s": null
+      }
+    ],
+    "real_work_lines": [
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=71305",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=71310",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=71303",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=71308",
+      "[bench] REAL _analyze_image asset.png real_work_s=0.03 then simulated Gemini wait 25.0s pid=71311",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.09 then simulated Gemini wait 25.0s pid=71306",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.08 then simulated Gemini wait 25.0s pid=71310",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.10 then simulated Gemini wait 25.0s pid=71308",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.08 then simulated Gemini wait 25.0s pid=71311",
+      "[bench] REAL _analyze_video asset.mp4 real_work_s=0.08 then simulated Gemini wait 25.0s pid=71305"
+    ],
+    "first_ready_s": 26.63,
+    "last_ready_s": 60.65,
+    "total_wall_s": 60.65,
+    "n_ready": 10,
+    "memory": {
+      "tree_of": "visuals process",
+      "parent_pid": 71291,
+      "idle_after_ready_parent_mb": 311.9,
+      "idle_after_ready_total_mb": 439.7,
+      "idle_by_pid_mb": {
+        "71303": 17.4,
+        "71305": 17.3,
+        "71306": 22.8,
+        "71308": 23.4,
+        "71310": 23.4,
+        "71311": 23.5,
+        "71291": 311.9
+      },
+      "peak_per_pid_mb": {
+        "71303": 118.5,
+        "71305": 117.8,
+        "71306": 101.8,
+        "71308": 117.8,
+        "71310": 117.8,
+        "71311": 118.3,
+        "71291": 255.5,
+        "71367": 2.2,
+        "71482": 2.2,
+        "71485": 1.2,
+        "71518": 0.4
+      },
+      "peak_total_mb": 946.4,
+      "n_samples": 116,
+      "main_worker_idle_total_mb": null
+    },
+    "variant_key": "visuals_alone_c6_n10",
+    "n_files": 10
+  }
+}

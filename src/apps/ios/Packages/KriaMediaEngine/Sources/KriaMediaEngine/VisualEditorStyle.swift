@@ -20,8 +20,20 @@ public struct VisualEditorStyle: Codable, Equatable, Sendable {
     public var zoom: Double = 1
     public var animation: Animation = .init()
     enum CodingKeys: String, CodingKey { case version, rotationDegrees = "rotation_deg", fitMode = "fit_mode", zoom, animation }
+    /// `RecipeJSON.decoder()` turns `rotation_deg` into `rotationDeg` before it looks a key up, so the snake-case keys
+    /// above only match the editor document's plain decoder. A pinned recipe's card style arrives through the recipe one.
+    private enum RecipeKeys: String, CodingKey { case rotationDegrees = "rotationDeg", fitMode }
     public init(rotationDegrees: Double = 0, fitMode: String = "cover", zoom: Double = 1, animation: Animation = .init()) {
         self.rotationDegrees = rotationDegrees; self.fitMode = fitMode; self.zoom = zoom; self.animation = animation
+    }
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: CodingKeys.self)
+        let recipe = try decoder.container(keyedBy: RecipeKeys.self)
+        version = try keys.decode(Int.self, forKey: .version)
+        rotationDegrees = try keys.decodeIfPresent(Double.self, forKey: .rotationDegrees) ?? recipe.decode(Double.self, forKey: .rotationDegrees)
+        fitMode = try keys.decodeIfPresent(String.self, forKey: .fitMode) ?? recipe.decode(String.self, forKey: .fitMode)
+        zoom = try keys.decode(Double.self, forKey: .zoom)
+        animation = try keys.decode(Animation.self, forKey: .animation)
     }
     public func validate() throws {
         guard version == 1, animation.version == 1, rotationDegrees.isFinite, (-360...360).contains(rotationDegrees),

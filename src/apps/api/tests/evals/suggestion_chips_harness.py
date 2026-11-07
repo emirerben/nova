@@ -84,7 +84,7 @@ MESSAGE_DECK: dict[str, dict[str, str]] = {
 }
 
 LABEL_DECK: dict[str, dict[str, str]] = {
-    "default_edit": {"en": "Let Kria cut the first version", "tr": "İlk versiyonu Kria kessin"},
+    "default_edit": {"en": "Let Kria decide", "tr": "İlk versiyonu Kria kessin"},
     "hook": {"en": "Add a hook to the opening", "tr": "Açılışa bir hook ekle"},
     "captions": {"en": "Add captions", "tr": "Altyazı ekle"},
     "sfx": {"en": "Add sound effects", "tr": "Ses efektleri ekle"},

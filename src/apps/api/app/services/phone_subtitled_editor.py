@@ -441,11 +441,11 @@ def sections_from_lanes(
                 ),
                 "entrance_token": entrance_token,
                 "exit_token": exit_token,
-                # KRI-1141: only a tilted card carries a style, so an untilted card's section is
-                # byte-identical. The editor writes the same `editor_style.rotation_deg`.
+                # KRI-1141 / KRI-1264: only a tilted, zoomed or animated card carries a style, so a
+                # plain card's section is byte-identical. The editor writes the same `editor_style`.
                 **(
-                    {"editor_style": VisualEditorStyle(rotation_deg=card.rotation_deg).model_dump()}
-                    if card.rotation_deg
+                    {"editor_style": style.model_dump()}
+                    if (style := card.editor_style()) is not None
                     else {}
                 ),
                 "source": "phone_lane",
@@ -620,6 +620,14 @@ def lanes_from_recipe(
                         fade=bool(placement.fade_in or placement.fade_out),
                         z=max(placement.order - 1, 0),
                         rotation_deg=wrap_degrees(float(clip.transform.rotation_degrees)),
+                        **(
+                            {
+                                "zoom": placement.editor_style.zoom,
+                                "animation": placement.editor_style.animation,
+                            }
+                            if placement.editor_style is not None
+                            else {}
+                        ),
                         # KRI-183: a video card compiled from a video visual
                         # keeps its kind + source start; deriving it as a
                         # photo card would make every later Save fail the
@@ -853,31 +861,34 @@ def _visual_bindings(assembly_plan: dict) -> tuple[PhoneVisualBinding, ...]:
     return tuple(bindings)
 
 
-def _card_rotation(item: dict, display_mode: str) -> float:
-    """The tilt a committed card's ``editor_style`` asks for (KRI-1141), wrapped to (-180, 180].
+def _card_style(item: dict, display_mode: str) -> dict[str, Any]:
+    """The ``SubtitledOverlayCard`` fields a committed card's ``editor_style`` asks for.
 
-    A phone Talking card keeps ONE style field, the angle. Any other part of the style (fit, zoom,
-    animation) has no home in the pinned recipe, so a Save that sets one is refused instead of
-    silently dropped, and so is an angle on a full-screen cutaway, which has nothing to turn.
+    The angle (KRI-1141, wrapped to (-180, 180]), the zoom and the animation (KRI-1264). The fit
+    has no home in the pinned recipe, so a Save that sets it is refused instead of silently
+    dropped, and so is any style on a full-screen cutaway, which has nothing to turn or zoom.
     """
     raw = item.get("editor_style")
     if raw is None:
-        return 0.0
+        return {}
     try:
         style = VisualEditorStyle.model_validate(raw)
     except ValidationError as exc:
         raise ValueError("a picture card's style is invalid") from exc
-    if style.fit_mode != "cover" or style.zoom != 1 or style.animation != VisualAnimation():
-        raise ValueError(
-            "a picture card on a Talking edit can only be tilted -- its fit, zoom and "
-            "animation can't be changed here yet"
-        )
+    if style.fit_mode != "cover":
+        raise ValueError("a picture card's fit can't be changed on a Talking edit yet")
     rotation = wrap_degrees(style.rotation_deg)
-    if rotation and display_mode == "fullscreen":
-        raise ValueError(
-            "a full-screen picture can't be tilted -- put it on top of the video first"
-        )
-    return rotation
+    if display_mode == "fullscreen":
+        if rotation:
+            raise ValueError(
+                "a full-screen picture can't be tilted -- put it on top of the video first"
+            )
+        if style.zoom != 1 or style.animation != VisualAnimation():
+            raise ValueError(
+                "a full-screen picture can't be zoomed or animated -- put it on top of the "
+                "video first"
+            )
+    return {"rotation_deg": rotation, "zoom": style.zoom, "animation": style.animation}
 
 
 def _overlays_from_sections(
@@ -966,7 +977,7 @@ def _overlays_from_sections(
                 scale=item.get("scale", 0.35),
                 fade=fade,
                 z=max(int(item.get("z") or 0), 0),
-                rotation_deg=_card_rotation(item, display_mode),
+                **_card_style(item, display_mode),
                 kind="video" if binding.kind == "video" else "image",
                 source_start_s=source_start_s,
                 **({"display_mode": "fullscreen"} if display_mode == "fullscreen" else {}),

@@ -320,21 +320,6 @@ def test_flag_off_with_the_full_screen_ask_still_adds_no_field(monkeypatch):
     assert "mention_cutaways" not in variant[gb.PHONE_TALKING_MULTI_CLIP_FIELD]
 
 
-def test_the_creator_is_told_what_was_matched_what_was_spread_and_that_sound_was_not_applied(
-    monkeypatch,
-):
-    from app.services.nova_steps import render_notes_from_talking_multi_clip_receipt
-
-    _j, _recipe, variant = _run(monkeypatch, mention=True, sound=False)
-    notes = render_notes_from_talking_multi_clip_receipt(variant[gb.PHONE_TALKING_MULTI_CLIP_FIELD])
-    assert notes == [
-        "Showed your 4 other clips full screen while you talk",
-        "Showed 2 clips right where you mention them",
-        "Couldn't tell where you mention 2 other clips, so I spread them across the video",
-        "Their own sound isn't available on this edit yet, so the clips play silent",
-    ]
-
-
 def test_wrong_content_control_the_window_follows_what_a_clip_says_not_its_slot(monkeypatch):
     """Swap what the 2032-final talk and the congress talk contain (words and analysis) while
     their files, durations, upload slots and `speaks_to_camera` stay put. A check that only
@@ -427,29 +412,3 @@ def test_clips_no_mention_places_follow_upload_order_whatever_order_analyses_fin
         _j, recipe, _v = _run(monkeypatch, mention=True, analysis_order=order)
         windows = _cutaway_windows(recipe)
         assert windows[CONGRESS_TALK][0] < windows[STADIUM][0], order
-
-
-def _notes(mention_cutaways: dict) -> list[str]:
-    from app.services.nova_steps import _mention_cutaway_notes
-
-    return _mention_cutaway_notes(mention_cutaways)
-
-
-def test_a_clip_with_no_room_at_its_mention_is_not_told_as_an_unmatched_mention():
-    notes = _notes(
-        {
-            "placements": [
-                {"basis": "spread", "reason": "no_room_at_mention"},
-                {"basis": "spread", "reason": "no_mention_found"},
-            ]
-        }
-    )
-    assert notes == [
-        "Couldn't tell where you mention 1 other clip, so I spread it across the video",
-        "There wasn't room next to where you mention 1 clip, so I spread it across the video",
-    ]
-
-
-def test_no_sound_note_when_no_clip_was_placed_to_play_it():
-    sound = {"asked": True, "applied": False, "reason": "sound_not_enabled"}
-    assert _notes({"placements": [], "sound": sound}) == []

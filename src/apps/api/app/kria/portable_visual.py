@@ -2,8 +2,16 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
+from app.agents._schemas.visual_editor import VisualEditorStyle
 from app.kria.portable_text import TextInk
 
 
@@ -23,12 +31,22 @@ class VisualMediaPlacement(BaseModel):
     window_end: float = Field(gt=0, le=1800)
     fade_in: bool = False
     fade_out: bool = False
+    # KRI-1264: a phone Talking card's zoom and animation (`VisualMediaPlacement.editorStyle` on
+    # the device). Omitted while None, so every placement that predates it keeps its bytes.
+    editor_style: VisualEditorStyle | None = None
 
     @model_validator(mode="after")
     def window(self):
         if self.window_end <= self.window_start:
             raise ValueError("visual window must have positive duration")
         return self
+
+    @model_serializer(mode="wrap")
+    def _omit_unstyled(self, handler: SerializerFunctionWrapHandler) -> dict:
+        payload = handler(self)
+        if self.editor_style is None:
+            payload.pop("editor_style", None)
+        return payload
 
 
 class VisualCanvasFill(BaseModel):
