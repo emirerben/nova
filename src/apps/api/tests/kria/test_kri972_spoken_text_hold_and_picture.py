@@ -542,7 +542,8 @@ def test_a_widened_trigger_no_answer_was_about_is_left_alone():
         ("within the first 5 seconds when he says cheese", "X", {"hold_s": 1.0}, 1.0),
         ("peynir dediğinde ekranda dursun", "X", {"hold_s": 1}, 1.0),
         ("big on screen for a second", "X", {"hold_s": 3}, 3.0),
-        ("big on screen for a second", "X", {"hold_s": 400}, None),
+        ("big on screen for a second", "X", {"hold_s": 400}, 1.0),
+        ("big on screen", "X", {"hold_s": 400}, None),
         ("big on screen", "X", {"hold_s": "1.5"}, 1.5),
         ("big on screen", "X", {"hold_s": 0}, None),
         ("big on screen", "X", {"hold_s": -2}, None),
@@ -607,6 +608,130 @@ def test_a_photo_hold_is_not_a_text_hold():
         ]
     )
     assert update.facts["hold_s"] == "2"
+
+
+def _through_the_brief(prior: CreativeBrief, raw_updates: list[dict]) -> CreativeBrief:
+    """The product's own update path: parse -> bind to the shown brief -> apply."""
+    from app.kria.brief import apply_updates, bind_updates, parse_brief_updates
+
+    bound = bind_updates(prior, parse_brief_updates(raw_updates))
+    return apply_updates(prior, bound, source_turn_id="t2")
+
+
+def _live(brief: CreativeBrief) -> BriefRequirement:
+    return brief.live()[0]
+
+
+@pytest.mark.parametrize(
+    ("hold_s", "stored"),
+    [
+        ("1,5", 1.5),
+        ("2", 2.0),
+        (3, 3.0),
+        (400, None),
+        (0, None),
+        (-1, None),
+        ("a second", None),
+        (True, None),
+        (None, None),
+    ],
+)
+def test_a_partial_change_to_a_text_stores_a_length_or_none(hold_s, stored):
+    # The correction turn: target + facts, no kind. It used to skip the boundary and keep "1,5".
+    prior = _brief(extra_facts={"hold_s": 1.0})
+    after = _through_the_brief(
+        prior,
+        [{"operation": "change", "target_requirement_id": "r3", "facts": {"hold_s": hold_s}}],
+    )
+    req = _live(after)
+    assert req.kind == "text" and req.facts.get("hold_s") == stored
+    assert req.facts["triggers"] == ["grilled cheese"]
+
+
+def test_a_change_that_does_not_touch_the_length_keeps_it():
+    prior = _brief(extra_facts={"hold_s": 1.0})
+    after = _through_the_brief(
+        prior,
+        [{"operation": "change", "target_requirement_id": "r3", "description": "in red"}],
+    )
+    assert _live(after).facts["hold_s"] == 1.0
+
+
+def test_a_partial_change_to_a_photo_hold_is_left_as_written():
+    prior = CreativeBrief(
+        requirements=[
+            BriefRequirement(
+                id="r1",
+                kind="timing",
+                scope="clip:p1",
+                description="keep the photo for 2 seconds",
+                facts={"hold_s": 2},
+            )
+        ]
+    )
+    after = _through_the_brief(
+        prior,
+        [{"operation": "change", "target_requirement_id": "r1", "facts": {"hold_s": "3"}}],
+    )
+    assert _live(after).facts["hold_s"] == "3"
+
+
+def test_a_length_changed_to_one_a_text_cannot_hold_falls_back_to_the_wording():
+    # One rule for an out-of-range typed length, wherever it arrives: it is not stored, and the
+    # creator's own words in the requirement decide (here "for about a second"), else the default.
+    added = _through_the_brief(
+        CreativeBrief(),
+        [
+            {
+                "kind": "text",
+                "scope": "global",
+                "literal": "PROVOLETA",
+                "description": "big on screen for about a second",
+                "facts": {"triggers": ["grilled cheese"], "hold_s": 400},
+            }
+        ],
+    )
+    req = _live(added)
+    assert "hold_s" not in req.facts and spoken_text_hold_s(req) == 1.0
+    no_words = _through_the_brief(
+        CreativeBrief(),
+        [
+            {
+                "kind": "text",
+                "scope": "global",
+                "literal": "PROVOLETA",
+                "description": "big on screen",
+                "facts": {"triggers": ["grilled cheese"], "hold_s": 400},
+            }
+        ],
+    )
+    assert "hold_s" not in _live(no_words).facts and spoken_text_hold_s(_live(no_words)) is None
+    changed = _through_the_brief(
+        _brief(extra_facts={"hold_s": 2.0}),
+        [{"operation": "change", "target_requirement_id": "r3", "facts": {"hold_s": 400}}],
+    )
+    assert "hold_s" not in _live(changed).facts
+    assert spoken_text_hold_s(_live(changed)) == 1.0
+
+
+def test_a_text_turned_into_a_timing_clip_does_not_keep_its_text_length():
+    from app.kria.asset_holds import hold_seconds
+
+    prior = _brief(extra_facts={"hold_s": 1.0})
+    prior.requirements[0].scope = "clip:p1"
+    after = _through_the_brief(
+        prior,
+        [
+            {
+                "operation": "change",
+                "target_requirement_id": "r3",
+                "kind": "timing",
+                "description": "show the photo",
+            }
+        ],
+    )
+    req = _live(after)
+    assert req.kind == "timing" and hold_seconds(req) is None
 
 
 def test_a_stored_brief_without_the_field_still_reads_its_wording():

@@ -107,9 +107,9 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "4545ef842cb26e898738b74d5d3b6a0cce020599de399de778ecc065f61197f8",
+    (True, True): "97902925ef181f12b4f5f7ad4a986e5df1049687e237d5e442f273e7c4d345e6",
     (True, False): "e3de37c194b88bd906568375111a33a5d8ec8bdab981a29ff6f377162710e87e",
-    (False, True): "4674c5259494d40caec94a5e83e5577edccf6bc29c4cc0935ae6abcd8edc64b6",
+    (False, True): "f048687f3fb4e5ddf5777fb58ca4c341decc4a4c2e6c1b56974a96fa29430d02",
     (False, False): "e804c3135cb2e6eae9093216bee3ee0d97159aa120c2b1eef8e34e61a3d37240",
 }
 

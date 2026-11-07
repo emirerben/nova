@@ -133,10 +133,13 @@ def with_valid_hold_fact(facts: Mapping[str, Any]) -> dict[str, Any]:
 
     The boundary for the typed hold the brief writer records (KRI-1292): "1" becomes 1.0, and a
     value that is not a length a text can hold (a word, zero, a negative, 400, NaN) is dropped
-    rather than stored, so the wording reader below gets its say."""
+    rather than stored. ``spoken_text_hold_s`` then reads the creator's wording, which still
+    states a length, and else the default applies: the same answer for a bad value wherever it
+    arrives."""
     out = dict(facts)
     if "hold_s" in out:
-        hold = _hold_in_range(_fact_seconds(out["hold_s"]) or 0.0)
+        hold = _fact_seconds(out["hold_s"])
+        hold = None if hold is None else _hold_in_range(hold)
         if hold is None:
             del out["hold_s"]
         else:
@@ -202,18 +205,20 @@ def _held_lengths(wording: str, literal: str) -> set[float]:
 def spoken_text_hold_s(req: BriefRequirement) -> float | None:
     """The seconds ``req`` asks its text to stay on screen, or None when it names none.
 
-    The typed ``hold_s`` fact the brief writer records decides (KRI-1292), even when it is out
-    of range: the creator's length then is not one a text can hold, and the default applies.
-    Only a requirement with no such number falls back to its wording, for briefs written
-    before the field existed (a stored brief is re-read on every retry and reburn): the one
-    length the wording attaches to how long the text stays ("for about a second", "for 3
-    seconds", "bir saniye boyunca"). Seconds that only time the word ("within the first 5
-    seconds"), count something ("for a second time") or sit inside the on-screen copy ("3
-    SECONDS LEFT") are not a hold; two different holds in one ask name none."""
+    A typed ``hold_s`` fact the brief writer records (KRI-1292) decides when it is a length a
+    text can hold (0.3 to 10 s). One that is not (a word, 400) is no length: the brief drops it
+    when it is written, and a requirement that still carries one reads like one without it. The
+    wording then decides, for these and for briefs stored before the field existed (a stored
+    brief is re-read on every retry and reburn): the one length the wording attaches to how long
+    the text stays ("for about a second", "for 3 seconds", "bir saniye boyunca"). Seconds that
+    only time the word ("within the first 5 seconds"), count something ("for a second time")
+    or sit inside the on-screen copy ("3 SECONDS LEFT") are not a hold; two different holds in
+    one ask name none."""
     for key in SPOKEN_TEXT_HOLD_KEYS:
-        value = _fact_seconds(req.facts.get(key))
-        if value is not None:
-            return _hold_in_range(value)
+        seconds = _fact_seconds(req.facts.get(key))
+        hold = None if seconds is None else _hold_in_range(seconds)
+        if hold is not None:
+            return hold
     lengths = _held_lengths(req.description or "", req.literal or "")
     return _hold_in_range(next(iter(lengths))) if len(lengths) == 1 else None
 
