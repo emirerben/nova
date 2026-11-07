@@ -61,8 +61,14 @@ Continuous motion must also be inspected through keyboard dismissal, sheet retur
 and status changes. The `9a2b7203` normal recording exposed an outline that drifted
 away from its control for several seconds despite aligned stills and passing UI
 checks. Its `PhaseAnimator` interpolated layout over the decorative eight-second
-cycle. The local angle-only `TimelineView` correction awaits native verification;
-do not treat the historical test counts as a passing motion acceptance result.
+cycle. At `e11db5a7`, the qualified angle-only `SwiftUI.TimelineView` correction
+passed build/doctor, all 36 state/session and nine UI cases with zero skips.
+Temporal samples from the actual recording through keyboard/sheet dismissal,
+Sending-to-Working and settlement showed the outline attached; the old recording
+remains a negative visual control. This is sampled recorded-motion inspection,
+not frame-by-frame playback. The actual excerpt is Library
+`libfile_cbed66fd87688191a6b11e1b0b23e65e`; it proves activity feedback and
+settlement, while the separate changed-title case proves preview replacement.
 
 Run these through the editor CI selection or a separately allocated bounded
 native batch after launch/doctor, retaining results and captures. The default
