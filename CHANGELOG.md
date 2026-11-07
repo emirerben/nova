@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.48.0] - 2026-11-07
+
+### Changed
+- fix(kria): approval card leads with Keep original speech when the brief keeps the take whole (KRI-971) (#2164) <!-- release-pr: 2164 -->
+
+## [0.88.47.0] - 2026-11-07
+
+### Changed
+- fix(kria): Talking draft receipts count only the talking clip, mute footage clips, say nothing-to-cut once (KRI-980, KRI-981, KRI-748) (#2162) <!-- release-pr: 2162 -->
+
+## [0.88.46.0] - 2026-11-07
+
+### Changed
+- fix(captions): preserve numeric tokens before proofreading alignment (KRI-1263) (#2174) <!-- release-pr: 2174 -->
+
 ## [0.88.45.0] - 2026-11-07
 
 ### Changed
