@@ -154,7 +154,8 @@ def test_a_cleanup_cut_keeps_the_title_on_the_cut_timeline(monkeypatch):
     assert (title.start, title.end) == (0.0, 2.0)
     # The cut removed (0.88, 1.42): an anchor past 0.88 s of output reads the
     # source 0.54 s later.
-    [(_path, anchors)] = calls
+    # The captions' whole-take face band is sampled first (KRI-632), then the title window.
+    [_captions, (_path, anchors)] = calls
     assert anchors[-1] == pytest.approx(2.0 * 11 / 12 + 0.54, abs=1e-3)
 
 
@@ -172,7 +173,8 @@ def test_a_multi_clip_talking_head_gets_the_title_placed_on_its_speaker(monkeypa
     [row] = job.assembly_plan["variants"][0]["text_elements"]
     assert row["text"] == _TITLE
     assert row["end_s"] == pytest.approx(1.5)  # a second after "Hello" ends (0.5 s)
-    assert [path for path, _anchors in calls] == ["/tmp/c1.mp4"]
+    # The captions' face band (KRI-632) and the title are both sampled on the speaker's clip.
+    assert [path for path, _anchors in calls] == ["/tmp/c1.mp4", "/tmp/c1.mp4"]
     [title] = _title_layers(job)
     assert (title.start, title.end) == (0.0, pytest.approx(1.5))
 

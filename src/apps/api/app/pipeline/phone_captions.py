@@ -120,19 +120,34 @@ _WATERMARK_GAP_PX = 12.0
 # username block. A caption that grows a line to clear the mark must not reach
 # into it when it was clear of it before.
 _PLATFORM_CAPTION_ZONE_TOP_PX = 1530.0
+# Making room never leaves a cue with more rows than this (KRI-632): a cue that
+# already wraps to more keeps its own count, but gains none. When no split into
+# this many rows clears the mark, the cue is split in time instead
+# (`_split_cue_in_time`), so a long sentence never grows toward the speaker's face.
+_CAPTION_ROW_BUDGET = 2
 # The frame budget of an ASKED caption position (`PhoneCaptionLook.frame_budget_frac`). The
 # writer places an asked-bottom block to end at 0.84 and budgets 0.86; the extra 0.02 is the
 # measured slack of the compiled line boxes.
 ASKED_CAPTION_FRAME_BUDGET_FRAC = 0.88
-# A cue may gain at most this many lines while making room; past that the
-# original layout is kept.
+# The last round of `compile_caption_layers` cannot split any more; a cue may then
+# still gain this many lines rather than keep its ink on the mark.
 _MAX_EXTRA_CAPTION_LINES = 2
+# A split keeps at least this many words on each side (the ticket's "no cue under 3 words when
+# it can merge"). A 4-5 word cue cannot be cut that way, and a third row was the filed bug, so
+# it may be cut into pieces of `_MIN_SHORT_SPLIT_WORDS` or more (2+2, 2+3), never a single
+# word; a cue of fewer words than that is never split and keeps today's re-break / lift
+# behaviour (this is also what leaves a "two words at a time" cue whole).
+_MIN_SPLIT_WORDS = 3
+_MIN_SHORT_SPLIT_WORDS = 2
+_MIN_SPLIT_CUE_WORDS = 2 * _MIN_SHORT_SPLIT_WORDS
+# How many rounds of time splits `compile_caption_layers` runs: each halves the
+# cues that still met the mark, so three rounds take a 16-word cue to 2-word pieces.
+_MAX_TIME_SPLIT_ROUNDS = 3
 # Last resort, in fractions of a line step: lift the block this far when no
 # line split clears the mark where it sits (see `_clear_of_watermark`). 1.5
 # steps is about one line plus the mark's height -- enough to lift the line
-# level with the mark clear above it. Capped there because the phone lane has
-# no face boxes and every extra pixel moves text toward the speaker; past the
-# cap the original layout is kept.
+# level with the mark clear above it. Capped there because every extra pixel
+# moves text toward the speaker; past the cap the original layout is kept.
 _LIFT_FALLBACK_STEPS = (0.25, 0.5, 0.75, 1.0, 1.25, 1.5)
 # Left-aligned captions start right of the mark instead (their left edge is
 # the problem, so a narrower line cannot help). This margin past the stroke
@@ -560,94 +575,115 @@ def compile_caption_layers(
             f"{MAX_CAPTION_LAYERS}-text-layer cap"
         )
     canvas = PipelineCanvas(width=canvas_width, height=canvas_height)
-    layers: list[PortableTextLayer] = []
-    overlays: list[dict[str, Any]] = []
-    # What each cue became: a flat index into `layers`, or the one-word group whose
-    # per-word layers sit at `layers[first:first + count]` until they are merged below.
-    entries: list[int | _SingleWordCue] = []
-    one_word_at_a_time = (
-        resolved_look.single_word
-        and style == "word"
-        and resolved_look.highlight_spoken_word is not None
-    )
-    from app.services.phone_rollout import caption_animation_renderable
+    from app.services.phone_rollout import caption_row_budget_enabled
 
-    animate = caption_animation_renderable()
-    for index, cue in enumerate(prepared):
-        overlay = _base_overlay(cue, resolved_look)
-        phases = cue.get("animation_phases") or resolved_look.default_animation_phases
-        phases = phases if animate else None
-        if phases is not None:
-            # A word-highlight line keeps its karaoke sweep: the phases move the whole line.
-            overlay["animation_phases"] = phases
-        use_karaoke = (
-            (phases is not None or resolved_look.animation_phases is None)
-            and "words" in cue
-            and (style == "word" or resolved_look.highlight_spoken_word is True)
-            # A box is painted once per karaoke word on the device, hiding earlier words.
-            and resolved_look.box_color is None
+    # Switch off (PHONE_CAPTION_ROW_BUDGET_ENABLED): no split round runs, so the compile is the
+    # one that shipped before KRI-632 -- one layer per cue, rows gained to clear the mark.
+    max_rounds = _MAX_TIME_SPLIT_ROUNDS if caption_row_budget_enabled() else 0
+    rounds = 0
+    while True:
+        layers: list[PortableTextLayer] = []
+        overlays: list[dict[str, Any]] = []
+        # What each cue became: a flat index into `layers`, or the one-word group whose
+        # per-word layers sit at `layers[first:first + count]` until they are merged below.
+        entries: list[int | _SingleWordCue] = []
+        one_word_at_a_time = (
+            resolved_look.single_word
+            and style == "word"
+            and resolved_look.highlight_spoken_word is not None
         )
-        word_timings = _relative_word_timings(cue, cue["words"]) if use_karaoke else []
-        layer_id = f"{id_prefix}-{index}"
-        if word_timings:
-            overlay["effect"] = "karaoke-line"
-            overlay["highlight_color"] = (
-                resolved_look.text_color
-                if resolved_look.highlight_spoken_word is False
-                else resolved_look.highlight_color
+        from app.services.phone_rollout import caption_animation_renderable
+
+        animate = caption_animation_renderable()
+        for index, cue in enumerate(prepared):
+            overlay = _base_overlay(cue, resolved_look)
+            phases = cue.get("animation_phases") or resolved_look.default_animation_phases
+            phases = phases if animate else None
+            if phases is not None:
+                # A word-highlight line keeps its karaoke sweep: the phases move the whole line.
+                overlay["animation_phases"] = phases
+            use_karaoke = (
+                (phases is not None or resolved_look.animation_phases is None)
+                and "words" in cue
+                and (style == "word" or resolved_look.highlight_spoken_word is True)
+                # A box is painted once per karaoke word on the device, hiding earlier words.
+                and resolved_look.box_color is None
             )
-            if resolved_look.dim_words and resolved_look.highlight_spoken_word is None:
-                # The not-yet-spoken word is dimmed; only the spoken one is drawn in the colour.
-                overlay["highlight_color"] = overlay["text_color"]
-                overlay["text_color"] = dim_color(overlay["text_color"])
-                overlay["karaoke_active_only"] = True
-            overlay["word_timings"] = word_timings
-            if one_word_at_a_time:
-                try:
-                    group = _compile_single_word_cue(
-                        overlay, word_timings, layer_id=layer_id, canvas=canvas, first=len(layers)
-                    )
-                except Exception as exc:  # noqa: BLE001 - untrusted transcript/edited cue content
-                    raise UnsupportedPhonePlan(f"unable to compile caption cue: {exc}") from exc
-                if group is not None:
-                    entries.append(group)
-                    layers.extend(group.layers)
-                    overlays.extend(group.overlays)
-                    continue
-                # A word that cannot stay on one line: this cue is today's full-line karaoke.
-        elif phases is not None:
-            # Same rule as authored text (`build_overlays_from_text_elements`): explicit
-            # phases replace the single-effect schedule.
-            overlay["effect"] = (
-                "typewriter" if "typewriter" in (phases["entrance"], phases["exit"]) else "none"
-            )
-        else:
-            overlay["effect"] = "pop-in"
-        try:
-            layer, _font = compile_text_overlay(overlay, layer_id=layer_id, canvas=canvas)
-        except Exception as exc:  # noqa: BLE001 - untrusted transcript/edited cue content
-            raise UnsupportedPhonePlan(f"unable to compile caption cue: {exc}") from exc
-        entries.append(len(layers))
-        layers.append(layer)
-        overlays.append(overlay)
-    # One-word cues were laid out word by word, so the keep-out pass treats each word as the
-    # one-word caption it would be on its own.
-    resolved = _make_room_for_watermark(layers, overlays, canvas=canvas, look=resolved_look)
-    if resolved_look.frame_budget_frac is not None:
-        resolved = _keep_cues_in_frame(
-            layers,
-            resolved,
-            overlays,
-            canvas=canvas,
-            budget=canvas.height * resolved_look.frame_budget_frac,
+            word_timings = _relative_word_timings(cue, cue["words"]) if use_karaoke else []
+            layer_id = f"{id_prefix}-{index}"
+            if word_timings:
+                overlay["effect"] = "karaoke-line"
+                overlay["highlight_color"] = (
+                    resolved_look.text_color
+                    if resolved_look.highlight_spoken_word is False
+                    else resolved_look.highlight_color
+                )
+                if resolved_look.dim_words and resolved_look.highlight_spoken_word is None:
+                    # The not-yet-spoken word is dimmed; only the spoken one is drawn in the colour.
+                    overlay["highlight_color"] = overlay["text_color"]
+                    overlay["text_color"] = dim_color(overlay["text_color"])
+                    overlay["karaoke_active_only"] = True
+                overlay["word_timings"] = word_timings
+                if one_word_at_a_time:
+                    try:
+                        group = _compile_single_word_cue(
+                            overlay,
+                            word_timings,
+                            layer_id=layer_id,
+                            canvas=canvas,
+                            first=len(layers),
+                        )
+                    except Exception as exc:  # noqa: BLE001 - untrusted transcript/edited cue content
+                        raise UnsupportedPhonePlan(f"unable to compile caption cue: {exc}") from exc
+                    if group is not None:
+                        entries.append(group)
+                        layers.extend(group.layers)
+                        overlays.extend(group.overlays)
+                        continue
+                    # A word that cannot stay on one line: this cue is today's full-line karaoke.
+            elif phases is not None:
+                # Same rule as authored text (`build_overlays_from_text_elements`): explicit
+                # phases replace the single-effect schedule.
+                overlay["effect"] = (
+                    "typewriter" if "typewriter" in (phases["entrance"], phases["exit"]) else "none"
+                )
+            else:
+                overlay["effect"] = "pop-in"
+            try:
+                layer, _font = compile_text_overlay(overlay, layer_id=layer_id, canvas=canvas)
+            except Exception as exc:  # noqa: BLE001 - untrusted transcript/edited cue content
+                raise UnsupportedPhonePlan(f"unable to compile caption cue: {exc}") from exc
+            entries.append(len(layers))
+            layers.append(layer)
+            overlays.append(overlay)
+        # One-word cues were laid out word by word, so the keep-out pass treats each word as the
+        # one-word caption it would be on its own.
+        # The last round may not ask for splits: what still meets the mark gains lines instead.
+        unresolved: list[int] | None = [] if rounds < max_rounds else None
+        resolved = _make_room_for_watermark(
+            layers, overlays, canvas=canvas, look=resolved_look, unresolved=unresolved
         )
-    if any(isinstance(entry, _SingleWordCue) for entry in entries):
-        resolved = _merge_single_word_cues(entries, resolved)
-        if len(resolved) > MAX_CAPTION_LAYERS:
-            raise UnsupportedPhonePlan(
-                f"{len(resolved)} caption layers would exceed the phone recipe's "
-                f"{MAX_CAPTION_LAYERS}-text-layer cap"
+        if unresolved:
+            split = _split_unresolved(prepared, entries, unresolved)
+            rounds = rounds + 1 if split is not None else max_rounds
+            prepared = split if split is not None else prepared
+            continue
+        if resolved_look.frame_budget_frac is not None:
+            resolved = _keep_cues_in_frame(
+                layers,
+                resolved,
+                overlays,
+                canvas=canvas,
+                budget=canvas.height * resolved_look.frame_budget_frac,
             )
+        if any(isinstance(entry, _SingleWordCue) for entry in entries):
+            resolved = _merge_single_word_cues(entries, resolved)
+            if len(resolved) > MAX_CAPTION_LAYERS:
+                raise UnsupportedPhonePlan(
+                    f"{len(resolved)} caption layers would exceed the phone recipe's "
+                    f"{MAX_CAPTION_LAYERS}-text-layer cap"
+                )
+        break
     remember_caption_bounds(resolved, canvas=canvas)
     return resolved
 
@@ -876,6 +912,7 @@ def _make_room_for_watermark(
     *,
     canvas: Any,
     look: PhoneCaptionLook,
+    unresolved: list[int] | None = None,
 ) -> list[PortableTextLayer]:
     """Re-break the cues whose ink would sit under the device watermark (KRI-548).
 
@@ -885,6 +922,11 @@ def _make_room_for_watermark(
     its cues touches the mark, every cue in the set starts just right of the
     mark instead -- one shared edge rather than captions that jump sideways
     from cue to cue. Cues that never touch the mark are returned unchanged.
+
+    A re-break never adds rows past `_CAPTION_ROW_BUDGET`. With ``unresolved`` given, the
+    index of every cue that no such re-break clears is appended to it (its layer is kept
+    as it was) so the caller can split that cue in time; without it the cue falls back to
+    lifting the block.
     """
     if not layers:
         return layers
@@ -930,6 +972,7 @@ def _make_room_for_watermark(
                 keepout=keepout,
                 typeface=typefaces[index],
                 left_edge=left_edge,
+                may_split=unresolved is not None,
                 frame_budget_px=(
                     None
                     if look.frame_budget_frac is None
@@ -938,7 +981,10 @@ def _make_room_for_watermark(
             )
         except Exception:  # noqa: BLE001 - keep today's layer on any surprise
             cleared = None
-        if cleared is not None:
+        if cleared is _SPLIT_IN_TIME:
+            assert unresolved is not None
+            unresolved.append(index)
+        elif cleared is not None:
             result[index] = cleared
     return result
 
@@ -951,11 +997,13 @@ def _clear_of_watermark(
     keepout: Box,
     typeface: Any,
     left_edge: tuple[float, float] | None = None,
+    may_split: bool = False,
     frame_budget_px: float | None = None,
-) -> PortableTextLayer | None:
+) -> Any:
     """This cue re-broken so no line's ink meets ``keepout``, or None to keep it.
 
-    Picks the fewest lines (starting from today's count, at most
+    Picks the fewest lines (starting from today's count, never past
+    `_CAPTION_ROW_BUDGET` rows while ``may_split`` is set, else at most
     `_MAX_EXTRA_CAPTION_LINES` more) for which some line split keeps every
     line inside the usual wrap width AND clear of the mark at the position it
     will actually be drawn; among those splits, the most even line widths
@@ -963,6 +1011,11 @@ def _clear_of_watermark(
     grow the block about its centre like any longer caption -- unless the cue's
     letters sat above the platform caption zone: then no line may reach into
     it, and the block grows upward instead of down.
+
+    When no re-break within the row budget clears the mark and ``may_split`` is
+    set, `_SPLIT_IN_TIME` comes back for a cue of `_MIN_SPLIT_CUE_WORDS` or more words (and no
+    authored line breaks): the caller shows it as two shorter cues rather than
+    growing it toward the speaker.
 
     Only when no split clears the mark at the natural position (a long word
     stuck on the line level with the mark: large custom sizes, wide fonts) is
@@ -1092,17 +1145,24 @@ def _clear_of_watermark(
     word_total = sum(segment(i, i + 1)[0] for i in range(len(words)))
     space = font.measureText(" ")
 
-    counts = [
-        count
-        for count in range(today_lines, today_lines + _MAX_EXTRA_CAPTION_LINES + 1)
-        if count <= len(words)
-    ]
+    # With a split available the rows stay in budget; without one (the last round) the
+    # cue may still gain lines, because ink on the mark is the worse outcome.
+    can_split = may_split and not hard_breaks and len(words) >= _MIN_SPLIT_CUE_WORDS
+    most_rows = (
+        max(today_lines, _CAPTION_ROW_BUDGET)
+        if can_split
+        else today_lines + _MAX_EXTRA_CAPTION_LINES
+    )
+    counts = [count for count in range(today_lines, most_rows + 1) if count <= len(words)]
     # Natural placements first; a lift is only the fallback when no line split
     # clears the mark where the block would naturally sit.
     placements = [(count, 0.0) for count in counts] + [
         (count, step) for step in _LIFT_FALLBACK_STEPS for count in counts
     ]
+    split_before_lift = can_split
     for count, step in placements:
+        if split_before_lift and step:
+            return _SPLIT_IN_TIME
         block, top = block_at(count)
         lift = step * block["line_step"]
         bottom = top + block["block_h"]
@@ -1170,6 +1230,81 @@ def _clear_of_watermark(
         if not _layer_touches(cleared, typeface, keepout):
             return cleared
     return None
+
+
+# What `_clear_of_watermark` returns when only a shorter cue can clear the mark.
+_SPLIT_IN_TIME: Any = object()
+_CLAUSE_END = re.compile(r"[,;:.!?\u2026]$")
+
+
+def _split_unresolved(
+    prepared: list[dict], entries: list[Any], unresolved: list[int]
+) -> list[dict] | None:
+    """``prepared`` with each cue behind an ``unresolved`` layer split in time, or None
+    when none could be (a cue whose words cannot be told apart, or no layer room left).
+
+    ``unresolved`` holds layer indices; one-word groups never ask for a split, so every
+    index is the flat layer of exactly one cue."""
+    cue_of_layer = {entry: i for i, entry in enumerate(entries) if isinstance(entry, int)}
+    room = MAX_CAPTION_LAYERS - len(prepared)
+    halves: dict[int, tuple[dict, dict]] = {}
+    for layer_index in unresolved:
+        index = cue_of_layer.get(layer_index)
+        if index is None or len(halves) >= room:
+            continue
+        pair = _split_cue_in_time(prepared[index])
+        if pair is not None:
+            halves[index] = pair
+    if not halves:
+        return None
+    out: list[dict] = []
+    for i, cue in enumerate(prepared):
+        out.extend(halves.get(i, (cue,)))
+    return out
+
+
+def _split_cue_in_time(cue: dict) -> tuple[dict, dict] | None:
+    """One cue as two consecutive cues, cut where the speaker pauses or a clause ends and
+    the halves are about as long as each other. No word, word time or cue edge moves: the
+    first half holds until the second begins (as `build_plain_cues` does for the blocks of
+    one sentence), so the caption never flickers off between them. A piece keeps 3 or more
+    words when the cue has 6 or more, else 2 or more. None for a shorter cue, or when the
+    cue's words are not its text's words."""
+    tokens = cue["text"].split()
+    count = len(tokens)
+    if count < _MIN_SPLIT_CUE_WORDS:
+        return None
+    least = _MIN_SPLIT_WORDS if count >= 2 * _MIN_SPLIT_WORDS else _MIN_SHORT_SPLIT_WORDS
+    words = cue.get("words")
+    if words is not None and len(words) != count:
+        return None
+    start, end = float(cue["start_s"]), float(cue["end_s"])
+    widths = [len(token) for token in tokens]
+    total = sum(widths) + count - 1
+
+    def cost(cut: int) -> float:
+        left = sum(widths[:cut]) + cut - 1
+        value = ((left - (total - left - 1)) / total) ** 2
+        if _CLAUSE_END.search(tokens[cut - 1]):
+            value -= 0.1
+        if words is not None:
+            gap = float(words[cut]["start_s"]) - float(words[cut - 1]["end_s"])
+            value -= 0.2 * min(max(gap, 0.0), 0.5) / 0.5
+        return value
+
+    cut = min(range(least, count - least + 1), key=cost)
+    if words is not None:
+        edge = float(words[cut]["start_s"])
+    else:
+        left = sum(widths[:cut]) + cut - 1
+        edge = start + (end - start) * left / total
+    if not start + _MIN_CUE_DURATION_S < edge < end - _MIN_CUE_DURATION_S:
+        return None
+    first = {**cue, "text": " ".join(tokens[:cut]), "end_s": edge}
+    second = {**cue, "text": " ".join(tokens[cut:]), "start_s": edge}
+    if words is not None:
+        first["words"], second["words"] = words[:cut], words[cut:]
+    return first, second
 
 
 def _keep_cues_in_frame(

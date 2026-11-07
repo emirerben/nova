@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.69.0] - 2026-11-07
+
+### Changed
+- fix(kria): Talking captions stay two rows and off the face band (KRI-632) (#2165) <!-- release-pr: 2165 -->
+
+## [0.88.68.0] - 2026-11-07
+
+### Changed
+- refactor(suggestions): one commit_readiness composition for serve and tap (KRI-1256) (#2176) <!-- release-pr: 2176 -->
+
+## [0.88.67.0] - 2026-11-07
+
+### Changed
+- feat(ios): glass AI suggestion chips with a slow turning edge light (KRI-1273) (#2181) <!-- release-pr: 2181 -->
+
+## [0.88.66.0] - 2026-11-07
+
+### Changed
+- feat(ios): clean up the talk-to-camera recording screen (KRI-1259) (#2167) <!-- release-pr: 2167 -->
+
+## [0.88.65.0] - 2026-11-07
+
+### Changed
+- feat(ios): make the composer + the one way to add media (KRI-1272) (#2180) <!-- release-pr: 2180 -->
+
 ## [0.88.64.0] - 2026-11-07
 
 ### Changed
