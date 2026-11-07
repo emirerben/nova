@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.52.0] - 2026-11-07
+
+### Changed
+- fix(ios): restore editor reconciliation and account-safe recovery (#2146) <!-- release-pr: 2146 -->
+
 ## [0.88.51.0] - 2026-11-07
 
 ### Changed
