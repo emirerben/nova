@@ -3534,10 +3534,9 @@ def _receipt(
         verification=verification,  # type: ignore[arg-type]
         stage=stage,  # type: ignore[arg-type]
         target_media_ids=target_media_ids,
-        reason=_loc(reason)[:300] if reason else None,
         inferred=list(dict.fromkeys(str(x) for x in inferred))[:24],
         inferred_labels=list(labels)[:24],
-    )
+    ).with_reason(_loc(reason) if reason else None)
 
 
 def _guess_labels(facts: PlanFacts, only: str | None = None) -> list[InferredLabel]:
@@ -5042,9 +5041,9 @@ def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> Requir
     state = _opening_state(fact, rendered=rendered)
     if state in {"made", "planned"}:
         extra = _opening_sentence(fact, state)
-        return _receipt(req, receipt.status, f"{receipt.reason or ''} {extra}".strip())
+        return _receipt(req, receipt.status, f"{receipt.full_reason or ''} {extra}".strip())
     gap = _opening_missing_sentence(fact, rendered=rendered)
-    return _receipt(req, "partial", f"{receipt.reason or ''} {gap}".strip())
+    return _receipt(req, "partial", f"{receipt.full_reason or ''} {gap}".strip())
 
 
 def _check_speaker_background_core(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -6504,6 +6503,30 @@ _TALKING_SPOKEN_TEXT_PLAN = (
 _TALKING_LIST_LABEL_PLAN = (
     "I'll show it when that part of your talk starts; if I don't hear where it starts, it "
     "won't appear"
+)
+# KRI-1235: what a draft promises the render (or the approval card's Clean up speech choice)
+# does with an ask, and says after: never a shortfall to hold the first draft over. Approval
+# readiness approves a checked partial receipt whose reason is only these, each part exact and
+# joined by "; ", in English or its Turkish twin (`approval_readiness._promised_at_render`; a
+# pinned spoken text is re-derived there, `_pinned_spoken_text_plan`). A new draft-plan reason
+# goes here or, with its reason, into NOT_RENDER_PROMISES in
+# tests/kria/test_kri1235_render_promises_approvable.py, or its feature holds its own draft.
+RENDER_PROMISE_REASONS: tuple[str, ...] = (
+    # Speech cleanup: KRI-1178, the named line KRI-821, the restarted sentence KRI-1189.
+    _CLEANUP_PLANNED,
+    _CLEANUP_AT_APPROVAL,
+    _CLEANUP_IF_OFFERED,
+    _NAMED_CUT_AT_RENDER,
+    _RESTART_CUT_AT_APPROVAL,
+    # Qendresa 13: every pause cut down to about 0.3 s.
+    _TIGHT_PLANNED,
+    _TIGHT_AT_APPROVAL,
+    _TIGHT_IF_OFFERED,
+    # Qendresa 14: the arrow beside the "comment WORD" ending.
+    _CLOSING_ARROW_PLAN,
+    # KRI-707: a text shown at the word it is said; Qendresa 19: a list label at its part.
+    _TALKING_SPOKEN_TEXT_PLAN,
+    _TALKING_LIST_LABEL_PLAN,
 )
 # KRI-793: what a phone Talking draft says about a captions ask naming a language or words
 # to spell: the writer captions everything said in the take (an off-camera voice too), and
@@ -8255,11 +8278,11 @@ def _merge_cleanup_timing(
     timing = _check_timing(req, facts)
     if timing.status == "met":
         return cleanup
-    if cleanup.status == "met" or not cleanup.reason:
-        return _receipt(req, "partial", timing.reason, verification=timing.verification)
-    if not timing.reason or timing.reason == cleanup.reason:
+    if cleanup.status == "met" or not cleanup.full_reason:
+        return _receipt(req, "partial", timing.full_reason, verification=timing.verification)
+    if not timing.full_reason or timing.full_reason == cleanup.full_reason:
         return cleanup
-    return _receipt(req, "partial", f"{cleanup.reason}; {timing.reason}")
+    return _receipt(req, "partial", f"{cleanup.full_reason}; {timing.full_reason}")
 
 
 def _caption_lines_kept(
@@ -9654,8 +9677,8 @@ _STATUS_RANK = {"met": 0, "partial": 1, "not_possible": 2}
 def combine_receipts(first: RequirementReceipt, second: RequirementReceipt) -> RequirementReceipt:
     """The weaker of two verdicts on one requirement, with both reasons (KRI-558)."""
     worst = max((first, second), key=lambda r: _STATUS_RANK[r.status])
-    reasons = [r.reason for r in (first, second) if r.reason and r.status != "met"]
-    return worst.model_copy(update={"reason": "; ".join(dict.fromkeys(reasons))[:300] or None})
+    reasons = [r.full_reason for r in (first, second) if r.full_reason and r.status != "met"]
+    return worst.with_reason("; ".join(dict.fromkeys(reasons)) or None)
 
 
 def check_text_shape(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
@@ -9714,7 +9737,7 @@ def _with_text_look(
         if shape is None:
             base = _receipt(req, "partial", _NO_CHECKER)
         elif shape.status == "met" and not base.reason:
-            base = base.model_copy(update={"reason": shape.reason})  # "Done: … (curved)"
+            base = base.with_reason(shape.full_reason)  # "Done: … (curved)"
         else:
             base = combine_receipts(base, shape)
     return _with_spoken_text_speaker(req, facts, base)
@@ -13523,16 +13546,17 @@ def _with_unclear_word(
     line = _unclear_word_line(facts.unclear_words or {})
     if line is None:
         return receipt
+    reason = receipt.full_reason
     if (facts.unclear_words or {}).get("state") == "error":
         # Never "met". When nothing else is wrong the line leads (its registered prefix keeps the
         # receipt a limit, not a "simpler version?" miss); a real miss keeps its place and verdict.
-        if receipt.status != "met" and receipt.reason and receipt.reason not in _NEUTRAL_REASONS:
-            return receipt.model_copy(update={"reason": f"{receipt.reason}; {line}"[:300]})
-        rest = receipt.reason if receipt.reason and receipt.reason not in _NEUTRAL_REASONS else ""
+        if receipt.status != "met" and reason and reason not in _NEUTRAL_REASONS:
+            return receipt.with_reason(f"{reason}; {line}")
+        rest = reason if reason and reason not in _NEUTRAL_REASONS else ""
         return _receipt(req, "partial", f"{line}; {rest}" if rest else line)
-    if receipt.reason and receipt.reason not in _NEUTRAL_REASONS:
-        sep = " " if receipt.reason.endswith(".") else "; "
-        return receipt.model_copy(update={"reason": f"{receipt.reason}{sep}{line}"[:300]})
+    if reason and reason not in _NEUTRAL_REASONS:
+        sep = " " if reason.endswith(".") else "; "
+        return receipt.with_reason(f"{reason}{sep}{line}")
     state = facts.unclear_words or {}
     met = facts.rendered_variant and state.get("state") != "not_comparable"
     return _receipt(req, "met" if met else "partial", line)

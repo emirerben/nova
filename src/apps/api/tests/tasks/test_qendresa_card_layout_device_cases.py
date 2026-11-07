@@ -2,7 +2,10 @@
 
 Not a regression test: a case builder for `scripts/ios/qendresa-card-layout-e2e.py`. Skipped
 unless `KRIA_CARD_E2E_OUT` (output dir) and `KRIA_CARD_E2E_FOOT` (footage dir with `take.mp4`,
-`words.json`, `faces.json`, `visuals/visuals.json` + files) are set.
+a 9:16 talking head such as her 720x1280 take, `words.json`, `faces.json`,
+`visuals/visuals.json` + files) are set. `KRIA_CARD_E2E_LANDSCAPE_FIT` (`fit` / `fill`) stamps
+`all_candidates["landscape_fit"]` on both cases (KRI-1238: a normal chat stamps `fit`); unset
+leaves it absent (the worker's `fill`).
 
 It drives the REAL worker (`_run_generative_job` -> `_run_phone_subtitled_job` -> free heuristic
 matcher -> grounding -> compiler -> recipe validation) twice on the same footage:
@@ -53,6 +56,7 @@ from tests.tasks.test_qendresa_caption_shape_worker import Q1_CAPTIONS, Q1_PROMP
 
 OUT = os.environ.get("KRIA_CARD_E2E_OUT")
 FOOT = os.environ.get("KRIA_CARD_E2E_FOOT")
+LANDSCAPE_FIT = os.environ.get("KRIA_CARD_E2E_LANDSCAPE_FIT")
 CANVAS_RATIO = 1080.0 / 1920.0
 PROTOCOL = 40
 OVERLAY_TRACK = "subtitled-overlays"
@@ -111,7 +115,7 @@ def test_prepare_device_cases(monkeypatch):
     rows_in = json.loads((foot / "visuals/visuals.json").read_text())
     samples = json.loads((foot / "faces.json").read_text())
     info = _probe(take)
-    assert (info["width"], info["height"]) == (1080, 1920), info
+    assert info["width"] * 16 == info["height"] * 9, info  # a 9:16 portrait take
     words = load_words(foot / "words.json")
     assert words
 
@@ -241,6 +245,8 @@ def test_prepare_device_cases(monkeypatch):
             "audio_strategy": "original_audio",
         }
         job.all_candidates["creator_client_protocol"] = PROTOCOL
+        if LANDSCAPE_FIT:
+            job.all_candidates["landscape_fit"] = LANDSCAPE_FIT
         brief = CreativeBrief(version=1, requirements=[Q1_CAPTIONS])
         job.assembly_plan["creator_brief_binding"] = BriefBinding.create(
             uuid.uuid4(), brief

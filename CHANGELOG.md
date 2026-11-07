@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.42.0] - 2026-11-07
+
+### Changed
+- test(kria): isolate approval fixture from neighboring Undo (KRI-577) (#2144) <!-- release-pr: 2144 -->
+
+## [0.88.41.0] - 2026-11-07
+
+### Changed
+- fix(ios): preserve video-range white in H.264 exports (#2143) <!-- release-pr: 2143 -->
+
+## [0.88.40.0] - 2026-11-07
+
+### Changed
+- fix(kria): preserve exact approval promises through receipt caps (KRI-1235) (#2142) <!-- release-pr: 2142 -->
+
+## [0.88.39.0] - 2026-11-06
+
+### Changed
+- fix(kria): item 15 card layout opens for a portrait take stamped "fit" (KRI-1238) (#2140) <!-- release-pr: 2140 -->
+
+## [0.88.38.0] - 2026-11-06
+
+### Changed
+- fix(render): pin qualified Unicode graphemes for native timing parity (#2141) <!-- release-pr: 2141 -->
+
 ## [0.88.37.0] - 2026-11-06
 
 ### Changed

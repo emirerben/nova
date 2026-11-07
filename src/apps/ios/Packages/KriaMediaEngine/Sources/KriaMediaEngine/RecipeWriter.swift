@@ -9,6 +9,7 @@ final class RecipeWriter: @unchecked Sendable {
     let writer: AVAssetWriter
     let video: AVAssetReaderVideoCompositionOutput
     let videoInput: AVAssetWriterInput
+    private let encodingPixels: RecipeEncodingPixels
     let audio: AVAssetReaderAudioMixOutput?
     let audioInput: AVAssetWriterInput
     let duration: Double
@@ -40,6 +41,7 @@ final class RecipeWriter: @unchecked Sendable {
             AVVideoHeightKey: preview.description.canvas.height,
             AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: bitrate, AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel]
         ])
+        encodingPixels = try RecipeEncodingPixels(width: preview.description.canvas.width, height: preview.description.canvas.height)
         let audioTracks = try await asset.loadTracks(withMediaType: .audio)
         if audioTracks.isEmpty {
             audio = nil
@@ -94,7 +96,7 @@ final class RecipeWriter: @unchecked Sendable {
                 if !videoDone && videoInput.isReadyForMoreMediaData {
                     try autoreleasepool {
                         if let sample = video.copyNextSampleBuffer() {
-                            guard videoInput.append(sample) else { throw writer.error ?? MediaEngineError.exportFailed }
+                            guard videoInput.append(try encodingPixels.convert(sample)) else { throw writer.error ?? MediaEngineError.exportFailed }
                             let value = min(0.99, max(0, CMSampleBufferGetPresentationTimeStamp(sample).seconds / duration))
                             if value - lastProgress >= 0.01 { progress?(value); lastProgress = value }
                         } else {
