@@ -728,3 +728,68 @@ def test_the_saved_lanes_field_name_matches_the_editor() -> None:
     )
 
     assert _EDITOR_LANES_FIELD == PHONE_SUBTITLED_EDITOR_LANES_FIELD
+
+
+# ---------------- 7. review #2153: the authored-timeline Save after a clip deletion (mode 10)
+# Deleting a piece of the take moves the edit to the authored timeline
+# (`stage_initial_authored_baseline`), whose Save compiles `variant["media_overlays"]` and writes
+# no saved-lanes marker. Its cards are kept by file path only, so they cannot be matched to the
+# receipt's Visuals here: none left is exact, any left gives no card verdict (fail closed).
+
+
+def _authored(job, *, drop_first_piece: bool = False):  # noqa: ANN001, ANN202
+    from app.routes import generative_jobs as gj  # noqa: PLC0415
+    from app.services.editor_empty_drafts import stage_initial_authored_baseline  # noqa: PLC0415
+
+    variant = gj._find_variant(job, "subtitled")
+    slots = gj.editor_deletion_timeline(job, variant)
+    return stage_initial_authored_baseline(
+        job, "subtitled", slots[1:] if drop_first_piece else slots
+    )
+
+
+def _authored_save(staged, **request) -> None:  # noqa: ANN001, ANN003
+    from app.routes import generative_jobs as gj  # noqa: PLC0415
+
+    gj.prepare_editor_commit(
+        staged,
+        "subtitled",
+        gj.EditorCommitRequest(base_generation="first", editor_state_version=2, **request),
+        user_id="owner",
+        plan_item_id="item",
+    )
+
+
+def test_authored_save_removing_every_card_is_never_met(monkeypatch: pytest.MonkeyPatch) -> None:
+    staged = _authored(_two_card_talking_job(monkeypatch))
+    _authored_save(staged, media_overlays=[])
+    variant = staged.assembly_plan["variants"][0]
+    assert variant["editor_timeline_mode"] == "authored"
+    assert variant["phone_overlay_receipt"]["placed"]  # the worker's record is untouched
+    for language in ("en", "tr"):
+        receipt = _final(staged, language)
+        assert receipt.status == "not_possible", receipt
+        assert "Screenshot A" in receipt.reason and "Screenshot B" in receipt.reason
+        assert "0:01" not in receipt.reason and "0:06" not in receipt.reason
+
+
+def test_authored_save_after_deleting_a_piece_never_quotes_the_old_cards(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Emir's stronger case: the first piece of the take is gone (the video is 5 s), the cards
+    stay; the receipt must not claim Screenshot B at 0:06, past the end of the video."""
+    staged = _authored(_two_card_talking_job(monkeypatch), drop_first_piece=True)
+    kept = staged.assembly_plan["variants"][0]["media_overlays"]
+    assert len(kept) == 2  # both cards are still in the edit
+    _authored_save(staged, media_overlays=kept)
+    receipt = _final(staged)
+    assert receipt.status != "met", receipt
+    assert "0:06" not in (receipt.reason or "") and "Screenshot" not in (receipt.reason or "")
+
+
+def test_an_authored_edit_before_its_save_is_not_judged_by_the_render(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    staged = _authored(_two_card_talking_job(monkeypatch), drop_first_piece=True)
+    receipt = _final(staged)
+    assert receipt.status != "met" and "Screenshot" not in (receipt.reason or ""), receipt
