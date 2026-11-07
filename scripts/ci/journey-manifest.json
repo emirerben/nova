@@ -3441,7 +3441,7 @@
     {
       "id": "editable-split-screen",
       "needs_native": true,
-      "api_tests": "tests/kria/test_split_screen.py tests/kria/test_clip_source_clock.py tests/kria/test_split_screen_persistence_postgres.py tests/agents/test_editable_split_screen_ops.py tests/agents/test_initial_split_screen.py",
+      "api_tests": "tests/kria/test_split_screen.py tests/kria/test_clip_source_clock.py tests/kria/test_split_screen_persistence_postgres.py tests/agents/test_editable_split_screen_ops.py tests/agents/test_initial_split_screen.py tests/scripts/test_split_screen_request_output.py",
       "xctests": [
         "KriaTests/EditorSaveErrorTests/testSplitScreenRefusalsExplainAvailabilityAndAtomicSaveWithoutLeakingDetails",
         "KriaTests/NativeSplitScreenTests/testSectionAdvancesClockOnceIncludingEmptyTail",
@@ -3520,7 +3520,10 @@
         "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/SplitScreen.swift",
         "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/SplitScreen",
         "src/apps/ios/Tests/KriaTests/NativeSplitScreen",
-        "src/apps/api/prompts/edit_copilot_ops/clip_audio.txt"
+        "src/apps/api/prompts/edit_copilot_ops/clip_audio.txt",
+        "scripts/verify-split-screen-request-output.py",
+        "src/apps/api/tests/scripts/test_split_screen_request_output.py",
+        "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/Fixtures/split-screen-request-output.json"
       ]
     }
   ]
