@@ -4458,9 +4458,15 @@ def _wants_whole_take(req: BriefRequirement) -> bool:
     # Title-scoped timing requirements describe a text element's hold window;
     # treating their words (for example, "whole video") as source language
     # incorrectly routes them through the whole-take checker.
-    if req.kind != "timing" or req.scope == "title" or _has_duration_target(req):
+    if req.scope == "title" or _has_duration_target(req):
         return False
     stated = _fact_flag(req, "keep_whole_take")
+    if req.kind != "timing":
+        # KRI-971: the model files "use the whole clip as it is" under any kind (it chose
+        # `style`); only the recorded fact counts there, never the words. A photo or sound
+        # timed to spoken words that also says "keep the take" is still a pop-in ask. A clip
+        # scope is not a whole-video ask.
+        return stated is True and req.scope == "global" and not _fact_triggers(req)
     if stated is not None:
         return stated
     return bool(_WHOLE_TAKE_RE.search(_req_text(req)))
@@ -13817,6 +13823,8 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         return _check_timed_cards(req, facts)
     if _wants_whole_line(req):
         return _check_whole_line(req, facts)
+    if req.kind != "timing" and _wants_whole_take(req):
+        return _check_whole_take(req, facts)
     if req.kind == "text":
         researched = None if req.literal else _check_research(req, facts)
         if researched is not None:
