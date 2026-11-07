@@ -230,6 +230,8 @@
       "KriaUITests/AddMediaTrayUITests/testTrayAtTheClipLimitReachesManageClipsAtAccessibilitySize",
       "KriaUITests/AddMediaTrayUITests/testPlusClosesTheKeyboardSoTheTrayHasRoom",
       "KriaUITests/AddMediaTrayUITests/testPlusWhileKriaIsReplyingSaysWhyInsteadOfPromptingForAFormat",
+      "KriaUITests/AddMediaTrayUITests/testClosingTheCameraFromTheAddMediaStepStaysOnAddMedia",
+      "KriaUITests/AddMediaTrayUITests/testTrayUploadThenCancellingTheFilesPickerReturnsToTheChat",
       "KriaUITests/FootageSourcesUITests/testAddMediaSheetLeadsWithRecordAndUploadAndOptionalScript",
       "KriaUITests/FootageSourcesUITests/testCameraAccessOffKeepsEveryLabelWholeAtAccessibilitySize",
       "KriaUITests/FootageSourcesUITests/testCameraAccessOffOffersOpenSettingsOnly",

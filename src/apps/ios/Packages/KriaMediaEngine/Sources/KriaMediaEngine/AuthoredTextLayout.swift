@@ -83,7 +83,8 @@ public enum AuthoredTextLayout {
     public static func compile(id: String, text: String, start: Double, end: Double,
                                style: Style, fontURL: URL, canvas: Canvas,
                                phases: TextAnimationPhases? = nil, legacyEffect: PortableTextLayer.Effect = .none,
-                               motion: TextMotionParameters? = nil, revealSchedule: [Double]? = nil) throws -> PortableTextLayer {
+                               motion: TextMotionParameters? = nil, revealSchedule: [Double]? = nil,
+                               keepsWordsWhole: Bool = false) throws -> PortableTextLayer {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.count <= 500,
               style.size.isFinite, style.size >= 8,
               style.widthFraction.isFinite, style.widthFraction >= 0.2,
@@ -113,7 +114,8 @@ public enum AuthoredTextLayout {
                 continue
             }
             if !style.wrapsLines {
-                values.append(contentsOf: AuthoredTextFit.wordRows(paragraph, attributes: attributes, width: wrapWidth))
+                values.append(contentsOf: AuthoredTextFit.authoredRows(paragraph, attributes: attributes, width: wrapWidth,
+                                                                       breaksRuns: !keepsWordsWhole && size <= AuthoredTextFit.minimumSize))
                 continue
             }
             let source = paragraph as NSString
@@ -304,7 +306,8 @@ public enum AuthoredTextLayout {
             // KRI-1192: CoreText's line breaker split a word wider than the box (a long German compound) between
             // two lines, and a highlighted word must stay one run. Keep every word whole like the cloud's karaoke
             // (`_wrap_word_indices`): greedy rows at the box width, a wider word alone on its row, shrunk only if it
-            // would leave the frame's safe width (`AuthoredTextFit`). Text whose words all fit never gets here.
+            // would leave the frame's safe width (`AuthoredTextFit`). A word wider than the floor's room overflows
+            // whole instead of breaking between clusters (`keepsWordsWhole`). Text whose words all fit never gets here.
             var rows = style
             rows.wrapsLines = false
             let probe = NativeFontIdentity.font(graphics, size: style.size, variations: style.fontVariations)
@@ -313,7 +316,7 @@ public enum AuthoredTextLayout {
                 NSAttributedString.Key(kCTKernAttributeName as String): style.letterSpacing * style.size,
             ], width: Double(canvas.width) * style.widthFraction)
             layout = try compile(id: id, text: lines.joined(separator: "\n"), start: start, end: end, style: rows,
-                                 fontURL: fontURL, canvas: canvas)
+                                 fontURL: fontURL, canvas: canvas, keepsWordsWhole: true)
         }
         // KRI-826: authored lines may have been fitted smaller than `style.size`.
         let size = layout.runs.first?.fontSize ?? style.size
@@ -358,25 +361,29 @@ public enum AuthoredTextLayout {
 }
 /// KRI-826: one fitting rule for the creator's own lines (`wrap_lines == false`), shared by the video
 /// compiler (`AuthoredTextLayout`) and the slide canvas, mirroring cloud `text_overlay_skia._authored_lines`:
-/// an explicit line break is always a hard break; a line that fits the frame's safe width (0.9 of the canvas)
-/// stays one line at the creator's size; a wider line soft-wraps at word boundaries at that width; only a single
-/// word still wider than it shrinks the whole text, never below `min(size, 24)`. Nothing is ever cut.
+/// an explicit line break is always a hard break; a line that fits the room around its anchor (at most 0.9 of the
+/// canvas) stays one line at the creator's size; a wider line soft-wraps at word boundaries at that width; only a
+/// single word still wider than it shrinks the whole text, never below `min(size, 24)`; at that floor a word that
+/// still does not fit breaks between grapheme clusters (KRI-886). Nothing is ever cut.
 public enum AuthoredTextFit {
     public static let safeWidthFraction = 0.9
     public static let minimumSize = 24.0
+    static let edgeGuardFraction = 0.03
 
     public static func safeWidth(canvasWidth: Double) -> Double { canvasWidth * safeWidthFraction }
 
-    /// The room an authored line has from its anchor to the safe margins (5% of the width each side), the same
-    /// rule as cloud `text_fit.authored_safe_width`: a centred line at x = 0.7 gets 2 x (0.95 - 0.7) of the
-    /// width; a left/right anchor gets the distance to the far margin. Never less than a tenth of the width.
+    /// The room an authored line has from its anchor to the frame edge (inset 3% of the width so shadow ink stays
+    /// off the edge), the same rule as cloud `text_fit.authored_safe_width` (KRI-885): a centred line at x = 0.7 gets
+    /// 2 x (0.97 - 0.7) of the width; a
+    /// left/right anchor gets the distance to the far edge. Capped at the safe width and never less than a tenth
+    /// of the width. A line that sits inside the frame is therefore never re-wrapped.
     public static func safeWidth(canvasWidth: Double, xFraction: Double, alignment: String) -> Double {
-        let margin = canvasWidth * (1 - safeWidthFraction) / 2
         let cx = canvasWidth * Swift.min(1, Swift.max(0, xFraction.isFinite ? xFraction : 0.5))
+        let guardWidth = canvasWidth * edgeGuardFraction
         let room: Double = switch alignment {
-        case "left": canvasWidth - margin - cx
-        case "right": cx - margin
-        default: 2 * Swift.min(cx - margin, canvasWidth - margin - cx)
+        case "left": canvasWidth - guardWidth - cx
+        case "right": cx - guardWidth
+        default: 2 * Swift.min(cx - guardWidth, canvasWidth - guardWidth - cx)
         }
         return Swift.max(canvasWidth * 0.1, Swift.min(safeWidth(canvasWidth: canvasWidth), room))
     }
@@ -400,6 +407,44 @@ public enum AuthoredTextFit {
         }
         if !current.isEmpty { rows.append(current.joined(separator: " ")) }
         return rows.isEmpty ? [""] : rows
+    }
+
+    /// Greedy rows of `run`, broken only between grapheme clusters (a Swift `Character`): never inside a ZWJ
+    /// sequence, flag, skin tone or base + combining mark. A cluster wider than `limit` stays whole on its row.
+    /// The same as cloud `text_fit.break_wide_run`.
+    static func clusterRows(_ run: String, attributes: [NSAttributedString.Key: Any], width limit: Double) -> [String] {
+        var rows: [String] = []
+        var current = ""
+        for cluster in run {
+            if !current.isEmpty && width(current + String(cluster), attributes: attributes) > limit {
+                rows.append(current)
+                current = String(cluster)
+            } else {
+                current.append(cluster)
+            }
+        }
+        if !current.isEmpty { rows.append(current) }
+        return rows.isEmpty ? [run] : rows
+    }
+
+    /// One authored paragraph as drawn rows: itself while it fits, else soft-wrapped at words; with `breaksRuns`
+    /// (the text is at its shrink floor) a word still wider than `limit` breaks between grapheme clusters.
+    static func authoredRows(_ paragraph: String, attributes: [NSAttributedString.Key: Any], width limit: Double,
+                             breaksRuns: Bool) -> [String] {
+        if paragraph.isEmpty || width(paragraph, attributes: attributes) <= limit { return [paragraph] }
+        let rows = wordRows(paragraph, attributes: attributes, width: limit)
+        guard breaksRuns else { return rows }
+        return rows.flatMap { width($0, attributes: attributes) > limit ? clusterRows($0, attributes: attributes, width: limit) : [$0] }
+    }
+
+    /// `text` with its authored rows joined by line breaks, drawn at `points` (a size `fittedSize` returned), so a
+    /// view that draws it never re-breaks a word the server export keeps whole.
+    public static func authoredText(_ text: String, points: Double, width limit: Double, minimum: Double = minimumSize,
+                                    attributes: (Double) -> [NSAttributedString.Key: Any]) -> String {
+        let attrs = attributes(points)
+        return text.components(separatedBy: "\n").flatMap {
+            authoredRows($0, attributes: attrs, width: limit, breaksRuns: points <= minimum + 0.001)
+        }.joined(separator: "\n")
     }
 
     /// The size the text draws at: `size` unless one word is wider than `safeWidth` at it.

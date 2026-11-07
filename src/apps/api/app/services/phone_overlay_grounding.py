@@ -100,6 +100,18 @@ _FALLBACK_FACE_BOX = NormalizedBox(0.28, 0.02, 0.72, 0.52)
 _FACE_CORE_KIND = "face_core"
 # Item 15: a card already laid out, protected from the cards that come after it.
 _EXTRA_CARD_KIND = "card"
+# KRI-903: an object the creator marked and asked to keep covered by nothing. No overlap at all.
+MARKED_OBJECT_KIND = "marked_object"
+
+
+def marked_object_regions(regions: Iterable[ProtectedRegion]) -> list[ProtectedRegion]:
+    """``regions`` (canvas boxes in the speaker clip's own seconds) as zero-overlap marked
+    objects for card arbitration."""
+    return [
+        ProtectedRegion(region.start_s, region.end_s, region.box, kind=MARKED_OBJECT_KIND)
+        for region in regions
+    ]
+
 
 _MAX_FACE_ANCHORS_PER_CARD = 4
 _MAX_FACE_ANCHORS_TOTAL = 12
@@ -368,6 +380,7 @@ def resolve_phone_card_geometry(
         protected_boxes.append(
             ProtectedRegion(0.0, float("inf"), _FALLBACK_FACE_BOX, kind="face_fallback")
         )
+    marked = any(region.kind == MARKED_OBJECT_KIND for region in extra_protected)
     resolved, receipts = arbitrate_media_overlays(
         overlays,
         protected_boxes=protected_boxes,
@@ -383,10 +396,11 @@ def resolve_phone_card_geometry(
                         if strict_geometry
                         else set()
                     )
+                    | ({MARKED_OBJECT_KIND} if marked else set())
                 ),
                 "hug_corners": face_box_to_canvas is not None,
             }
-            if face_box_to_canvas is not None or strict_geometry
+            if face_box_to_canvas is not None or strict_geometry or marked
             else {}
         ),
     )
@@ -540,6 +554,7 @@ def _ground_fullscreen_sequence(
     face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
     occupied: Iterable[tuple[float, float]] = (),
     fullscreen_occupied: Iterable[tuple[float, float]] = (),
+    protected_regions: Sequence[ProtectedRegion] = (),
 ) -> GroundedOverlayCards:
     """KRI-297: "use all my Visuals full screen" -- deterministic, no LLM.
 
@@ -692,6 +707,11 @@ def _ground_fullscreen_sequence(
             **(
                 {"face_box_to_canvas": face_box_to_canvas} if face_box_to_canvas is not None else {}
             ),
+            **(
+                {"extra_protected": marked_object_regions(protected_regions)}
+                if protected_regions
+                else {}
+            ),
         )
 
     cards: list[SubtitledOverlayCard] = []
@@ -781,6 +801,7 @@ def _lay_out_cards(
     job_id: str,
     face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None,
     unplaced: list[dict],
+    protected_regions: Sequence[ProtectedRegion] = (),
 ) -> tuple[dict[str, dict[str, Any]], dict[str, str], str, frozenset[str], list[str]]:
     """Qendresa item 15: lay the pip cards out wide in the TOP or BOTTOM band.
 
@@ -843,6 +864,7 @@ def _lay_out_cards(
     caption_top, caption_bottom = card_layout.caption_band or (_CAPTION_PROTECTED_TOP_FRAC, 1.0)
     caption_box = NormalizedBox(0.0, caption_top, 1.0, caption_bottom)
 
+    marked = marked_object_regions(protected_regions)
     resolved: dict[str, dict[str, Any]] = {}
     clear_ids: set[str] = set()
     placed_boxes: list[tuple[float, float, NormalizedBox]] = []
@@ -864,6 +886,7 @@ def _lay_out_cards(
                     caption_box=caption_box,
                     placed=placed_boxes,
                     complete=complete,
+                    **({"marked": marked} if marked else {}),
                 ),
                 # KRI-548: the phone's wordmark keeps its corner; a card sits beside it.
                 side_blockers=(WATERMARK_BOX,),
@@ -903,6 +926,7 @@ def _lay_out_cards(
                     else []
                 ),
                 *(ProtectedRegion(s, e, box, kind=_EXTRA_CARD_KIND) for s, e, box in placed_boxes),
+                *marked,
             ],
         )
         resolved.update(fb_resolved)
@@ -927,6 +951,7 @@ def ground_phone_subtitled_overlays(
     face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
     spoken_language: str = "",
     card_layout: CardLayoutContext | None = None,
+    protected_regions: Sequence[ProtectedRegion] = (),
 ) -> GroundedOverlayCards:
     """Match the speaker's transcript against the item's ready Visuals pool
     and resolve face-aware, caption-safe PiP card geometry (KRI-176).
@@ -941,6 +966,11 @@ def ground_phone_subtitled_overlays(
 
     ``fullscreen_occupied`` (KRI-840): the windows of full-screen reaction beats; only the
     full-frame sequence layouts read it (see ``_ground_fullscreen_sequence``).
+
+    ``protected_regions`` (KRI-903, default none = unchanged): objects the creator marked and
+    asked to keep text and cards off, as canvas boxes in the speaker clip's own seconds. A
+    picture-in-picture card allows NO overlap with one while it is on screen; a card with no
+    spot clear of it is reported ``no_safe_spot``.
 
     Fails open at every step: an LLM matcher failure falls back to the
     deterministic heuristic, and a face-sampling failure protects a
@@ -1021,6 +1051,7 @@ def ground_phone_subtitled_overlays(
             face_box_to_canvas=face_box_to_canvas,
             occupied=occupied_list,
             fullscreen_occupied=fullscreen_occupied,
+            protected_regions=protected_regions,
         )
 
     if not candidate_assets or not words:
@@ -1131,6 +1162,7 @@ def ground_phone_subtitled_overlays(
             job_id=job_id,
             face_box_to_canvas=face_box_to_canvas,
             unplaced=unplaced,
+            protected_regions=protected_regions,
         )
         resolved_by_id, arbitration_reason_by_id, face_sampling, clear_ids, geometry_order = (
             layout_result
@@ -1143,6 +1175,11 @@ def ground_phone_subtitled_overlays(
             footprints_by_id=footprints_by_id,
             **(
                 {"face_box_to_canvas": face_box_to_canvas} if face_box_to_canvas is not None else {}
+            ),
+            **(
+                {"extra_protected": marked_object_regions(protected_regions)}
+                if protected_regions
+                else {}
             ),
         )
         clear_ids = frozenset()

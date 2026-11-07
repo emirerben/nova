@@ -847,9 +847,20 @@ def choose_guided_text_y_frac(
     probe_box: NormalizedBox,
     protected_boxes: list[NormalizedBox],
     candidates: tuple[float, ...],
+    *,
+    object_boxes: Sequence[NormalizedBox] = (),
+    all_faces: bool = False,
 ) -> tuple[float, dict[str, Any]]:
     """Pick ONE static, CENTER-anchored y_frac for a guided-story text block
     that keeps it off the dominant face in its time window (KRI-116).
+
+    KRI-903 (both default off, so every existing caller is unchanged): the creator named
+    what to keep text off. ``object_boxes`` are the marked objects over the text's window
+    (canvas boxes): judged by the smaller of text and object (a cup under a wide title is
+    all of the cup) and honoured whether or not a face was seen or the face sampler worked
+    (the receipt's ``face_reason`` says why faces were not measured). ``all_faces``
+    protects every detected face, not only the dominant cluster that must show in 60 % of
+    the anchors.
 
     Mirrors ``choose_caption_y_frac``'s fail-open branches and receipt shape
     (same ``status`` values, same ``face_sampler`` embed) so both are legible
@@ -886,51 +897,71 @@ def choose_guided_text_y_frac(
         receipt.update(extra)
         return preset_y, receipt
 
-    if face_receipt.get("timed_out") and not face_receipt.get("partial"):
-        return _preset("sampler_timeout")
-    if face_receipt.get("worker_error"):
-        return _preset("sampler_error")
+    face_reason: str | None = None
     raw_decoded = face_receipt.get("decoded")
     decoded = (
         int(raw_decoded) if raw_decoded is not None else int(face_receipt.get("attempted") or 0)
     )
-    if decoded < _MIN_USABLE_ANCHORS:
-        return _preset("insufficient_anchors", decoded=decoded)
-    if not face_regions:
-        return _preset("no_face", decoded=decoded)
-    cluster = _dominant_face_cluster([region.box for region in face_regions])
-    presence = len(cluster) / decoded
-    if presence < _DOMINANT_FACE_MIN_PRESENCE:
-        return _preset(
-            "no_face",
-            decoded=decoded,
-            face_presence=round(presence, 3),
-            detections=len(face_regions),
-        )
+    presence_extra: dict[str, Any] = {}
+    cluster: list[NormalizedBox] = []
+    if face_receipt.get("timed_out") and not face_receipt.get("partial"):
+        face_reason = "sampler_timeout"
+    elif face_receipt.get("worker_error"):
+        face_reason = "sampler_error"
+    elif decoded < _MIN_USABLE_ANCHORS:
+        face_reason = "insufficient_anchors"
+        presence_extra = {"decoded": decoded}
+    elif not face_regions:
+        face_reason = "no_face"
+        presence_extra = {"decoded": decoded}
+    elif all_faces:
+        cluster = [region.box for region in face_regions]
+    else:
+        cluster = _dominant_face_cluster([region.box for region in face_regions])
+        if len(cluster) / decoded < _DOMINANT_FACE_MIN_PRESENCE:
+            face_reason = "no_face"
+            presence_extra = {
+                "decoded": decoded,
+                "face_presence": round(len(cluster) / decoded, 3),
+                "detections": len(face_regions),
+            }
+            cluster = []
+    if face_reason is not None and not object_boxes:
+        return _preset(face_reason, **presence_extra)
 
-    band = _union_box(cluster)
-    protected = [band, *protected_boxes]
+    band = _union_box(cluster) if cluster and not all_faces else None
+    presence = len(cluster) / decoded if cluster and decoded else 0.0
+    protected = [band] if band is not None else list(cluster)
+    protected.extend(protected_boxes)
 
     evaluated: list[dict[str, Any]] = []
     for index, y_frac in enumerate(ladder):
         translated = _translate_centered_box_to_y(probe_box, y_frac)
-        coverage = round(max((translated.coverage_by(area) for area in protected), default=0.0), 5)
+        face_coverage = round(
+            max((translated.coverage_by(area) for area in protected), default=0.0), 5
+        )
+        object_coverage = round(
+            max((_smaller_area_overlap(translated, box) for box in object_boxes), default=0.0), 5
+        )
+        coverage = max(face_coverage, object_coverage)
         clears_chrome = _boxes_clear_chrome([translated])
         evaluated.append({"y_frac": y_frac, "coverage": coverage, "clears_chrome": clears_chrome})
+        if object_boxes or all_faces:
+            evaluated[-1].update(face_coverage=face_coverage, object_coverage=object_coverage)
         if coverage <= _FACE_OVERLAP_MAX_COVERAGE and clears_chrome:
-            return y_frac, {
-                "status": "well_framed" if index == 0 else "moved",
-                "chosen_y_frac": y_frac,
-                "preset_y_frac": preset_y,
-                "candidate_index": index,
-                "candidates": list(ladder),
-                "coverage": coverage,
-                "face_band": band.as_dict(),
-                "face_presence": round(presence, 3),
-                "decoded": decoded,
-                "evaluated": evaluated,
-                "face_sampler": dict(face_receipt),
-            }
+            return y_frac, _guided_choice_receipt(
+                "well_framed" if index == 0 else "moved",
+                y_frac,
+                preset_y,
+                index,
+                ladder,
+                evaluated,
+                face_receipt,
+                band=band,
+                presence=presence,
+                decoded=decoded,
+                face_reason=face_reason,
+            )
 
     best = min(
         range(len(ladder)),
@@ -940,19 +971,61 @@ def choose_guided_text_y_frac(
             i,
         ),
     )
-    return ladder[best], {
-        "status": "best_effort",
-        "chosen_y_frac": ladder[best],
+    return ladder[best], _guided_choice_receipt(
+        "best_effort",
+        ladder[best],
+        preset_y,
+        best,
+        ladder,
+        evaluated,
+        face_receipt,
+        band=band,
+        presence=presence,
+        decoded=decoded,
+        face_reason=face_reason,
+    )
+
+
+def _smaller_area_overlap(text_box: NormalizedBox, object_box: NormalizedBox) -> float:
+    """Shared area over the SMALLER of the two (`object_track.object_collision`)."""
+    smaller = min(text_box.area, object_box.area)
+    return text_box.intersection_area(object_box) / smaller if smaller > 0 else 0.0
+
+
+def _guided_choice_receipt(
+    status: str,
+    chosen: float,
+    preset_y: float,
+    index: int,
+    ladder: tuple[float, ...],
+    evaluated: list[dict[str, Any]],
+    face_receipt: dict[str, Any],
+    *,
+    band: NormalizedBox | None,
+    presence: float,
+    decoded: int,
+    face_reason: str | None,
+) -> dict[str, Any]:
+    receipt: dict[str, Any] = {
+        "status": status,
+        "chosen_y_frac": chosen,
         "preset_y_frac": preset_y,
-        "candidate_index": best,
+        "candidate_index": index,
         "candidates": list(ladder),
-        "coverage": evaluated[best]["coverage"],
-        "face_band": band.as_dict(),
+        "coverage": evaluated[index]["coverage"],
         "face_presence": round(presence, 3),
         "decoded": decoded,
         "evaluated": evaluated,
         "face_sampler": dict(face_receipt),
     }
+    if band is not None:
+        receipt["face_band"] = band.as_dict()
+    if face_reason is not None:
+        receipt["face_reason"] = face_reason
+    if "object_coverage" in evaluated[index]:
+        receipt["object_coverage"] = evaluated[index]["object_coverage"]
+        receipt["face_coverage"] = evaluated[index]["face_coverage"]
+    return receipt
 
 
 def media_dimensions(path: str) -> tuple[int, int]:

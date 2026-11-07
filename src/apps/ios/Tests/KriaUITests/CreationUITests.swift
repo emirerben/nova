@@ -397,8 +397,8 @@ final class CreationUITests: XCTestCase {
     }
 
     /// The shipped composer path end to end: + opens the Record | Upload tray, Upload asks where from, and choosing
-    /// Photos opens Add media with the gallery already presented. Cancel returns to Add media; the pick is then
-    /// added from the same gallery and reaches upload.
+    /// Photos opens Add media with the gallery already presented. Cancel returns to the chat, where the + opens the
+    /// tray again; the pick is then added from the same gallery and reaches upload.
     func testComposerTrayUploadFromPhotosOpensTheGalleryAndAddsThePick() {
         let app = XCUIApplication()
         app.resetAuthorizationStatus(for: .photos)
@@ -439,10 +439,15 @@ final class CreationUITests: XCTestCase {
         tile0.tap()
         XCTAssertTrue(eventually { count.label.hasPrefix("1 of") }, count.label)
         app.buttons["gallery-cancel"].tap()
-        XCTAssertTrue(app.buttons["source-upload"].waitForExistence(timeout: 5), "Cancel lands on Add media, not back in the tray")
-        XCTAssertFalse(app.buttons["attach-upload"].exists)
+        XCTAssertTrue(app.buttons["attachment-close"].waitForNonExistence(timeout: 10), "Cancel from the tray lands in the chat, not on Add media")
+        XCTAssertFalse(app.buttons["source-upload"].exists)
+        XCTAssertFalse(app.buttons["attach-upload"].exists, "and the tray is closed")
+        XCTAssertTrue(plus.waitForExistence(timeout: 5))
+        XCTAssertTrue(plus.isHittable)
 
-        app.buttons["source-upload"].tap()
+        plus.tap()
+        XCTAssertTrue(upload.waitForExistence(timeout: 5))
+        upload.tap()
         XCTAssertTrue(photos.waitForExistence(timeout: 5))
         photos.tap()
         XCTAssertTrue(tile0.waitForExistence(timeout: 20))
