@@ -1,7 +1,7 @@
 {
- "_about": "Receipts of the Don Julio T4 shape (waiter 8.23 s speaks; cheese 12.0 s and steak 11.0 s are silent footage) from the replay in tests/kria/test_talking_receipts_kri980_981_748.py, on main a518aed8c (before) and with the fix (after). Regenerate: see the PR body.",
+ "_about": "Receipts of the Don Julio T4 shape (waiter 8.23 s speaks; cheese 12.0 s and steak 11.0 s are footage) for three footage-analysis shapes (no speech, ambient speech, not analysed yet), on main a518aed8c (before) and with the fix (after). The real T4 clip records were not on the machine that wrote this: durations come from the tickets, speech flags are fixtures. asks_simpler_version is needs_creator_choice(receipt). The cases mirror tests/kria/test_talking_receipts_kri980_981_748.py; main was run on the same fixtures with a one-off script that is not committed.",
  "before_main_a518aed8c": {
-  "cutaway_sound_lane_off/t4_speaker_8.23_two_silent_cutaways": [
+  "cutaway_sound_lane_off/t4_speaker_8.23_two_silent_cutaways (cheese/steak has_speech=False)": [
    {
     "id": "len",
     "status": "partial",
@@ -21,7 +21,13 @@
     "asks_simpler_version": false
    }
   ],
-  "cutaway_sound_lane_off/cheese_clip_may_speak": [
+  "cutaway_sound_lane_off/cheese_has_ambient_speech (cheese has_speech=True, steak False)": [
+   {
+    "id": "len",
+    "status": "partial",
+    "reason": "A Talking edit keeps your whole take, so its length follows your clip; your take is 31.2s and you asked for at most 10s",
+    "asks_simpler_version": false
+   },
    {
     "id": "r2",
     "status": "not_possible",
@@ -35,7 +41,27 @@
     "asks_simpler_version": false
    }
   ],
-  "cutaway_sound_lane_off/mute_speaker_and_whole_video": [
+  "cutaway_sound_lane_off/footage_clips_not_analysed_yet (cheese/steak have no speech record)": [
+   {
+    "id": "len",
+    "status": "partial",
+    "reason": "A Talking edit keeps your whole take, so its length follows your clip; your take is 31.2s and you asked for at most 10s",
+    "asks_simpler_version": false
+   },
+   {
+    "id": "r2",
+    "status": "not_possible",
+    "reason": "Turning clip sound on or off by clip or by seconds works on a montage made on your iPhone, not in this edit",
+    "asks_simpler_version": true
+   },
+   {
+    "id": "r3",
+    "status": "not_possible",
+    "reason": "Turning clip sound on or off by clip or by seconds works on a montage made on your iPhone, not in this edit",
+    "asks_simpler_version": true
+   }
+  ],
+  "cutaway_sound_lane_off/mute_speaker_and_whole_video (cheese/steak silent)": [
    {
     "id": "r1",
     "status": "not_possible",
@@ -57,7 +83,7 @@
     "asks_simpler_version": false
    }
   ],
-  "cutaway_sound_lane_on/t4_speaker_8.23_two_silent_cutaways": [
+  "cutaway_sound_lane_on/t4_speaker_8.23_two_silent_cutaways (cheese/steak has_speech=False)": [
    {
     "id": "len",
     "status": "partial",
@@ -77,7 +103,13 @@
     "asks_simpler_version": false
    }
   ],
-  "cutaway_sound_lane_on/cheese_clip_may_speak": [
+  "cutaway_sound_lane_on/cheese_has_ambient_speech (cheese has_speech=True, steak False)": [
+   {
+    "id": "len",
+    "status": "partial",
+    "reason": "A Talking edit keeps your whole take, so its length follows your clip; your take is 31.2s and you asked for at most 10s",
+    "asks_simpler_version": false
+   },
    {
     "id": "r2",
     "status": "met",
@@ -91,7 +123,27 @@
     "asks_simpler_version": false
    }
   ],
-  "cutaway_sound_lane_on/mute_speaker_and_whole_video": [
+  "cutaway_sound_lane_on/footage_clips_not_analysed_yet (cheese/steak have no speech record)": [
+   {
+    "id": "len",
+    "status": "partial",
+    "reason": "A Talking edit keeps your whole take, so its length follows your clip; your take is 31.2s and you asked for at most 10s",
+    "asks_simpler_version": false
+   },
+   {
+    "id": "r2",
+    "status": "met",
+    "reason": "Clip sound off: that clip",
+    "asks_simpler_version": false
+   },
+   {
+    "id": "r3",
+    "status": "met",
+    "reason": "Clip sound off: that clip",
+    "asks_simpler_version": false
+   }
+  ],
+  "cutaway_sound_lane_on/mute_speaker_and_whole_video (cheese/steak silent)": [
    {
     "id": "r1",
     "status": "met",
@@ -115,7 +167,7 @@
   ]
  },
  "after_fix": {
-  "cutaway_sound_lane_off/t4_speaker_8.23_two_silent_cutaways": [
+  "cutaway_sound_lane_off/t4_speaker_8.23_two_silent_cutaways (cheese/steak has_speech=False)": [
    {
     "id": "len",
     "status": "partial",
@@ -135,12 +187,18 @@
     "asks_simpler_version": false
    }
   ],
-  "cutaway_sound_lane_off/cheese_clip_may_speak": [
+  "cutaway_sound_lane_off/cheese_has_ambient_speech (cheese has_speech=True, steak False)": [
+   {
+    "id": "len",
+    "status": "partial",
+    "reason": "A Talking edit keeps the whole talking clip, so its length follows it; I can't tell yet which clip is the talking one and you asked for at most 10s",
+    "asks_simpler_version": false
+   },
    {
     "id": "r2",
-    "status": "not_possible",
-    "reason": "Turning clip sound on or off by clip or by seconds works on a montage made on your iPhone, not in this edit",
-    "asks_simpler_version": true
+    "status": "partial",
+    "reason": "If that clip plays as a cutaway over your voice, it plays without its own sound; I can't tell yet which clip you talk in, and that clip keeps its sound",
+    "asks_simpler_version": false
    },
    {
     "id": "r3",
@@ -149,7 +207,27 @@
     "asks_simpler_version": false
    }
   ],
-  "cutaway_sound_lane_off/mute_speaker_and_whole_video": [
+  "cutaway_sound_lane_off/footage_clips_not_analysed_yet (cheese/steak have no speech record)": [
+   {
+    "id": "len",
+    "status": "partial",
+    "reason": "A Talking edit keeps the whole talking clip, so its length follows it; I can't tell yet which clip is the talking one and you asked for at most 10s",
+    "asks_simpler_version": false
+   },
+   {
+    "id": "r2",
+    "status": "partial",
+    "reason": "If that clip plays as a cutaway over your voice, it plays without its own sound; I can't tell yet which clip you talk in, and that clip keeps its sound",
+    "asks_simpler_version": false
+   },
+   {
+    "id": "r3",
+    "status": "partial",
+    "reason": "If that clip plays as a cutaway over your voice, it plays without its own sound; I can't tell yet which clip you talk in, and that clip keeps its sound",
+    "asks_simpler_version": false
+   }
+  ],
+  "cutaway_sound_lane_off/mute_speaker_and_whole_video (cheese/steak silent)": [
    {
     "id": "r1",
     "status": "not_possible",
@@ -171,7 +249,7 @@
     "asks_simpler_version": false
    }
   ],
-  "cutaway_sound_lane_on/t4_speaker_8.23_two_silent_cutaways": [
+  "cutaway_sound_lane_on/t4_speaker_8.23_two_silent_cutaways (cheese/steak has_speech=False)": [
    {
     "id": "len",
     "status": "partial",
@@ -191,12 +269,18 @@
     "asks_simpler_version": false
    }
   ],
-  "cutaway_sound_lane_on/cheese_clip_may_speak": [
+  "cutaway_sound_lane_on/cheese_has_ambient_speech (cheese has_speech=True, steak False)": [
+   {
+    "id": "len",
+    "status": "partial",
+    "reason": "A Talking edit keeps the whole talking clip, so its length follows it; I can't tell yet which clip is the talking one and you asked for at most 10s",
+    "asks_simpler_version": false
+   },
    {
     "id": "r2",
-    "status": "not_possible",
-    "reason": "Turning clip sound on or off by clip or by seconds works on a montage made on your iPhone, not in this edit",
-    "asks_simpler_version": true
+    "status": "partial",
+    "reason": "If that clip plays as a cutaway over your voice, it plays without its own sound; I can't tell yet which clip you talk in, and that clip keeps its sound",
+    "asks_simpler_version": false
    },
    {
     "id": "r3",
@@ -205,7 +289,27 @@
     "asks_simpler_version": false
    }
   ],
-  "cutaway_sound_lane_on/mute_speaker_and_whole_video": [
+  "cutaway_sound_lane_on/footage_clips_not_analysed_yet (cheese/steak have no speech record)": [
+   {
+    "id": "len",
+    "status": "partial",
+    "reason": "A Talking edit keeps the whole talking clip, so its length follows it; I can't tell yet which clip is the talking one and you asked for at most 10s",
+    "asks_simpler_version": false
+   },
+   {
+    "id": "r2",
+    "status": "partial",
+    "reason": "If that clip plays as a cutaway over your voice, it plays without its own sound; I can't tell yet which clip you talk in, and that clip keeps its sound",
+    "asks_simpler_version": false
+   },
+   {
+    "id": "r3",
+    "status": "partial",
+    "reason": "If that clip plays as a cutaway over your voice, it plays without its own sound; I can't tell yet which clip you talk in, and that clip keeps its sound",
+    "asks_simpler_version": false
+   }
+  ],
+  "cutaway_sound_lane_on/mute_speaker_and_whole_video (cheese/steak silent)": [
    {
     "id": "r1",
     "status": "not_possible",

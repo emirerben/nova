@@ -13,6 +13,8 @@ How this could fail (written before the code):
 - the fix quotes a number when two clips may speak (a guess dressed as a fact);
 - a one-clip 31 s take loses its honest notice, or its wording changes;
 - a footage clip that may speak is promised muted (a second speaker keeps its sound);
+- a clip that may speak (ambient speech, or no speech record yet) is flatly refused with the
+  montage limit, which asks for a simpler version and renders nothing (the review of #2162);
 - "mute the speaker" / the whole video, or sound ON, is promised as met;
 - the flag-on lane (`PHONE_TALKING_CUTAWAY_SOUND_ENABLED`) claims a mute the split refuses;
 - the flag-off wording says nothing about what the cutaways do;
@@ -55,13 +57,15 @@ _VERIFIED = [
 ]
 
 
-def _clip(media_id: str, seconds: float, *, speech: bool) -> dict:
+def _clip(media_id: str, seconds: float, *, speech: bool | None) -> dict:
+    """``speech=None`` is a clip whose analysis has not said anything about speech yet."""
+    analysis = {} if speech is None else {"understanding": {"speech": {"has_speech": speech}}}
     return {
         "kind": "video",
         "media_id": media_id,
         "has_audio": True,
         "duration_s": seconds,
-        "analysis": {"understanding": {"speech": {"has_speech": speech}}},
+        "analysis": analysis,
     }
 
 
@@ -202,20 +206,52 @@ def test_t4_both_mutes_are_met_and_nothing_asks_for_a_simpler_version(
     assert not any(needs_creator_choice(r) for r in receipts.values())
 
 
+def _t4_unanalysed() -> PlanFacts:
+    return _draft(
+        _clip(WAITER, 8.23, speech=True),
+        _clip(CHEESE, 12.0, speech=None),
+        _clip(STEAK, 11.0, speech=None),
+    )
+
+
 @pytest.mark.parametrize("lane", [False, True])
-def test_a_clip_that_may_speak_is_never_promised_muted(
-    monkeypatch: pytest.MonkeyPatch, lane: bool
+@pytest.mark.parametrize("shape", ["ambient_speech", "no_speech_record"])
+def test_a_clip_that_may_speak_gets_a_conditional_receipt_not_a_refusal(
+    monkeypatch: pytest.MonkeyPatch, lane: bool, shape: str
 ) -> None:
     if lane:
         _lane_on(monkeypatch)
-    receipts = _receipts(_t4(cheese_speech=True), _mute(CHEESE, "r2"), _mute(STEAK, "r3"))
+    facts = _t4(cheese_speech=True) if shape == "ambient_speech" else _t4_unanalysed()
+    receipts = _receipts(facts, _mute(CHEESE, "r2"), _mute(STEAK, "r3"))
 
-    assert receipts["r2"].status == "not_possible"
-    assert receipts["r3"].status == "met"
+    for rid in ("r2", "r3") if shape == "no_speech_record" else ("r2",):
+        receipt = receipts[rid]
+        assert receipt.status == "partial", receipt.reason
+        assert receipt.reason.startswith(
+            "If that clip plays as a cutaway over your voice, it plays without its own sound"
+        )
+        assert "keeps its sound" in receipt.reason
+        assert MONTAGE_LIMIT not in receipt.reason
+        assert not needs_creator_choice(receipt)
+    if shape == "ambient_speech":
+        assert receipts["r3"].status == "met"
+
+
+def test_the_conditional_mute_receipt_speaks_turkish() -> None:
+    token = bind_reply_language("tr")
+    try:
+        receipt = _receipts(_t4_unanalysed(), _mute(CHEESE, "r2"))["r2"]
+    finally:
+        release_reply_language(token)
+
+    assert receipt.status == "partial"
+    assert receipt.reason.startswith("O klip sesinin üzerinde gösterilirse")
+    assert "If that clip" not in receipt.reason
+    assert not needs_creator_choice(receipt)
 
 
 @pytest.mark.parametrize("lane", [False, True])
-def test_muting_the_speaker_or_the_whole_video_stays_refused(
+def test_muting_the_one_clip_that_can_be_the_speaker_or_the_whole_video_stays_refused(
     monkeypatch: pytest.MonkeyPatch, lane: bool
 ) -> None:
     if lane:
@@ -322,8 +358,9 @@ def test_nothing_to_cut_is_said_once_in_turkish_too() -> None:
 # -- readiness reads the same clips as the draft turn ----------------------------------------
 
 
+@pytest.mark.parametrize("footage_speech", [False, None, True])
 def test_readiness_agrees_with_the_draft_on_t4(
-    prod_profile, monkeypatch: pytest.MonkeyPatch
+    prod_profile, monkeypatch: pytest.MonkeyPatch, footage_speech: bool | None
 ) -> None:
     from app.kria.approval_readiness import APPROVABLE, assess_readiness
     from app.services import creator_capabilities as capabilities
@@ -333,8 +370,8 @@ def test_readiness_agrees_with_the_draft_on_t4(
     monkeypatch.setattr(settings, "talking_multi_clip_enabled", True)
     clips = [
         _clip(WAITER, 8.23, speech=True),
-        _clip(CHEESE, 12.0, speech=False),
-        _clip(STEAK, 11.0, speech=False),
+        _clip(CHEESE, 12.0, speech=footage_speech),
+        _clip(STEAK, 11.0, speech=footage_speech),
     ]
     manifest = capabilities.resolve_creator_manifest(
         item_id="item-t4",

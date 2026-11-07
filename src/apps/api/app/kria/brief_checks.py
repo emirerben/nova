@@ -6287,6 +6287,12 @@ _TALKING_KEEPS_WHOLE_TAKE = "A Talking edit keeps your whole take, so its length
 _TALKING_KEEPS_TALKING_CLIP = (
     "A Talking edit keeps the whole talking clip, so its length follows it"
 )
+# KRI-980: the renderer mutes every footage clip, but a draft cannot tell a footage clip from a
+# second speaker when the clip's analysis heard speech or has not run yet.
+_TALKING_MUTE_IF_CUTAWAY = (
+    "If that clip plays as a cutaway over your voice, it plays without its own sound; "
+    "I can't tell yet which clip you talk in, and that clip keeps its sound"
+)
 _VOICEOVER_SETS_LENGTH = "A voiceover edit runs as long as your voiceover"
 _CANT_CHECK_TIMING = "I can't verify this timing automatically."
 _CANT_CHECK_CLEANUP = "I can't check the speech cleanup on this draft yet."
@@ -6531,6 +6537,9 @@ RENDER_PROMISE_REASONS: tuple[str, ...] = (
     # KRI-707: a text shown at the word it is said; Qendresa 19: a list label at its part.
     _TALKING_SPOKEN_TEXT_PLAN,
     _TALKING_LIST_LABEL_PLAN,
+    # KRI-980: the renderer mutes every footage clip and its roles receipt names which clips
+    # those were, so "if it plays as a cutaway, it plays silent" is what the render then says.
+    _TALKING_MUTE_IF_CUTAWAY,
 )
 # KRI-793: what a phone Talking draft says about a captions ask naming a language or words
 # to spell: the writer captions everything said in the take (an off-camera voice too), and
@@ -6655,6 +6664,10 @@ _REASON_TR: dict[str, str] = {
     ),
     _TALKING_KEEPS_TALKING_CLIP: (
         "Konuşmalı düzenleme konuşma klibini baştan sona korur, o yüzden uzunluğu onu izler"
+    ),
+    _TALKING_MUTE_IF_CUTAWAY: (
+        "O klip sesinin üzerinde gösterilirse kendi sesi olmadan oynar; hangi klipte "
+        "konuştuğunu henüz bilmiyorum, konuştuğun klibin sesi kalır"
     ),
     _VOICEOVER_SETS_LENGTH: "Seslendirmeli düzenleme seslendirmen kadar sürer",
     _CANT_CHECK_TIMING: "Bu süreyi otomatik olarak doğrulayamıyorum.",
@@ -6955,6 +6968,7 @@ _NEUTRAL_REASONS = _NEUTRAL_EN | frozenset(_REASON_TR[reason] for reason in _NEU
 _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _TALKING_KEEPS_WHOLE_TAKE,
     _TALKING_KEEPS_TALKING_CLIP,
+    _TALKING_MUTE_IF_CUTAWAY,
     _TALKING_KEEPS_QUOTED_PART,
     _VOICEOVER_SETS_LENGTH,
     _CLEANUP_PLANNED,
@@ -9143,11 +9157,15 @@ def _talking_take_seconds(facts: PlanFacts) -> tuple[float | None, float | None,
 def _talking_muted_cutaway_receipt(
     req: BriefRequirement, ask: SoundToggleAsk, facts: PlanFacts
 ) -> RequirementReceipt | None:
-    """ "Keep my audio while the stadium is shown" on a Talking edit (KRI-1150).
+    """ "Keep my audio while the stadium is shown" on a Talking edit (KRI-1150, KRI-980).
 
     A footage clip plays muted over the speaker, so an "off" ask that names exactly such a
-    clip is what the edit already does. Everything else (clip sound on, the whole video, a
-    clip that speaks, a position or a named line) returns None and keeps its plain decline.
+    clip is what the edit already does. A draft cannot tell a footage clip from a second
+    speaker while the clip's analysis heard speech or has not run: when two or more clips may
+    speak, naming one of them is answered conditionally ("if it plays as a cutaway, it plays
+    silent"), never "met". The one clip that can be the speaker is not muted. Everything else
+    (clip sound on, the whole video, a position or a named line) returns None and keeps its
+    plain decline.
     """
     from app.pipeline.phone_talking_cutaway_sound import _media_match  # noqa: PLC0415
 
@@ -9161,16 +9179,22 @@ def _talking_muted_cutaway_receipt(
     ):
         return None
     footage = _talking_footage_clips(facts)
-    if _media_match(target.media_ref, footage) is None:
-        return None
-    return _receipt(
-        req,
-        "met",
-        say(
-            en="That clip plays without its own sound, so your voice keeps playing over it",
-            tr="O klip kendi sesi olmadan oynuyor, sesin üzerinde çalmaya devam ediyor",
-        ),
+    if _media_match(target.media_ref, footage) is not None:
+        return _receipt(
+            req,
+            "met",
+            say(
+                en="That clip plays without its own sound, so your voice keeps playing over it",
+                tr="O klip kendi sesi olmadan oynuyor, sesin üzerinde çalmaya devam ediyor",
+            ),
+        )
+    drafting = facts.talking_footage_ids is None and not (
+        facts.editor or facts.rendered_output or facts.rendered_variant
     )
+    speakers = _talking_draft_split(facts)[1]
+    if drafting and len(speakers) > 1 and _media_match(target.media_ref, speakers) is not None:
+        return _receipt(req, "partial", _loc(_TALKING_MUTE_IF_CUTAWAY))
+    return None
 
 
 def _draft_talking_cutaway_sound(
