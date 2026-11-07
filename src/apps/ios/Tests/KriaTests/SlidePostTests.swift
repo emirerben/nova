@@ -5,13 +5,13 @@ import XCTest
     private let itemID = "11111111-1111-1111-1111-111111111111"
     private var defaults: UserDefaults!
     private var suite: String!
-    override func setUp() {
-        super.setUp(); suite = "SlidePostTests.\(UUID())"; defaults = UserDefaults(suiteName: suite)
+    override func setUp() async throws {
+        try await super.setUp(); suite = "SlidePostTests.\(UUID())"; defaults = UserDefaults(suiteName: suite)
     }
-    override func tearDown() {
+    override func tearDown() async throws {
         NativeEditorURLProtocol.handler = nil
         SlidePostTestSubmissionStorage.reset(defaults: defaults); defaults.removePersistentDomain(forName: suite); defaults = nil
-        super.tearDown()
+        try await super.tearDown()
     }
     private func fixture(version: Int = 1, rendered: Bool = true) -> SlidePostState {
         let refs = (1...2).map { SlidePostSlide(id: "slide-\($0)", assetID: "asset-\($0)", kind: $0 == 2 ? "video" : "image") }
@@ -758,6 +758,31 @@ import XCTest
 }
 
 private actor ControlledThoughtProposalClient: KriaAPIClient {
+    func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot { throw APIError.unsupported }
+    func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { throw APIError.unsupported }
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?, automaticRepairAttempts: Int) async throws { throw APIError.unsupported }
+    func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> ProjectUploadReservation { throw APIError.unsupported }
+    func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int) async throws -> TurnAccepted { throw APIError.unsupported }
+    func projects() async throws -> [ProjectSummary] { throw APIError.unsupported }
+    func project(threadID: UUID) async throws -> CreationThread { throw APIError.unsupported }
+    func library() async throws -> [ProjectSummary] { throw APIError.unsupported }
+    func createThread(message: String?) async throws -> CreationThread { throw APIError.unsupported }
+    func exchangeMobileToken(_ credential: AuthCredential, provider: String) async throws -> MobileSession { throw APIError.unsupported }
+    func refreshMobileSession(_ refreshToken: String) async throws -> MobileSession { throw APIError.unsupported }
+    func revokeMobileSession(_ refreshToken: String) async throws { throw APIError.unsupported }
+    func reviewerSignIn(email: String, password: String) async throws -> MobileSession { throw APIError.unsupported }
+    func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread { throw APIError.unsupported }
+    func threadDelta(threadID: UUID, afterSequence: Int) async throws -> ThreadDelta { throw APIError.unsupported }
+    func draft(threadID: UUID) async throws -> DraftSnapshot { throw APIError.unsupported }
+    func writeDraft(threadID: UUID, snapshot: [String: JSONValue], expectedRevision: Int, etag: String) async throws -> DraftSnapshot { throw APIError.unsupported }
+    func playbackURL(jobID: UUID) async throws -> URL { throw APIError.unsupported }
+    func editRecipe(jobID: UUID, variantID: String?) async throws -> EditRecipe { throw APIError.unsupported }
+    func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose?) async throws -> UploadReservation { throw APIError.unsupported }
+    func cancelUpload(reservationID: UUID) async throws { throw APIError.unsupported }
+    func addClip(jobID: UUID, gcsPath: String) async throws -> AddClipResult { throw APIError.unsupported }
+    func uploadFile(to reservation: UploadReservation, fileURL: URL) async throws { throw APIError.unsupported }
+
     let proposal: SlidePostProposal
     private var finished = false
     private var continuation: CheckedContinuation<SlidePostProposal, Never>?
