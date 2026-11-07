@@ -326,6 +326,50 @@ pytest tests/evals/test_suggestion_chips_evals.py tests/evals/test_suggestion_ag
   (budget, call cap, timeout, refusal, truncation, provider error, empty ranking) comes from its
   real cause and makes exactly one paid attempt.
 
+### Live run of the suggestion agent (`test_live_thread`, KRI-1254)
+
+Ten anonymized thread inputs (`tests/fixtures/agent_evals/suggestion_agent_threads/*.json`: five
+first-prompt, five ready, English and Turkish, photos, a 12-clip pile, a noisy-audio clip, typed
+requests; transcripts and measured signals are keyed by clip ordinal) go through the REAL task body
+`kria_suggester._run_agent`, the real prompt and strict schema, and the real serve join. In
+`--eval-mode=live` the model is the production `ModelDispatcher` on `KRIA_SUGGESTER_MODEL`
+(OpenAI, so `OPENAI_API_KEY`, not the Gemini key), and the reservation is the real ledger. The task's
+`RunContext` is swapped for the conftest attribution (`live_eval`, the run id, the approved cap, the
+acknowledgement), so the run books under the `suggestions` capability and
+`AI_OPENAI_SUGGESTIONS_BUDGET_USD` must be set for it, and so must the provider-wide
+`AI_OPENAI_MONTHLY_BUDGET_USD` (the ledger checks both; each defaults to 0 = no spend; the file
+refuses to start when either is below the batch worst case). The conftest gate refuses a run without all
+four flags or over $2; the file also refuses a batch whose worst case exceeds `--max-cost-usd`
+before the first call. Without `--eval-mode=live` the same ten threads run against a zero-cost
+stand-in model and `test_live_thread` skips.
+
+```bash
+cd src/apps/api
+NOVA_EVAL_MODE=live AI_COST_CONTROL_ENABLED=true AI_USAGE_ENVIRONMENT=development \
+AI_OPENAI_MONTHLY_BUDGET_USD=2 AI_OPENAI_SUGGESTIONS_BUDGET_USD=2 \
+pytest tests/evals/test_suggestion_agent_evals.py --eval-mode=live --usage-purpose=live_eval \
+  --test-run-id=suggestion-agent-<date> --max-cost-usd=2 --approve-reservation
+```
+
+The run writes `.suggestion-agent-live/<run id>/report.json` (git-ignored): per-thread picks, served
+cards, drop reasons, cost, latency and the raw answer, plus the summary below. A run that ends in
+`provider_error`, `timeout` or `budget` fails (no usable paid call); `refusal`, `truncated`,
+`schema_error`, `empty_ranking` and `no_usable_picks` are measured outcomes and are reported.
+
+Reading the numbers:
+
+- `cost_usd_*` is the ledger-settled cost of each run; `estimated_cost_usd_total` is the worst-case
+  preflight. Monthly budget = cost per run x runs per day (the KRI-1249 funnel) x 30, with 2x headroom.
+- `witness_pass_share` is the task's own `n_out / n_in` (a pick the engine or registry accepts).
+  `ready_cards_per_pick` is stricter: picks that became a proven v2 card in a finished edit. Hook
+  picks still drop as `no_action` (stub builder), which pulls that second number down by design.
+
+Recorded runs (fill from `report.json`; none recorded yet):
+
+| Date | Run id | Model | Prompt | Cost / run (mean, max) | p50 / p95 latency | witness_pass_share | ready_cards_per_pick |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| | | | | | | | |
+
 ### Telemetry (contract section 8), asserted with `structlog.testing.capture_logs`
 
 `suggestion_chips.shown` (once per final `set_id`; the pending set does not emit),
@@ -354,9 +398,9 @@ flag-on cohort, not a tap rate.
    preference, founder agrees on 10. UNMEASURED.
 4. **Agent-picked vs deterministic order A/B** by `wording` in real taps (needs the flag on for a
    cohort).
-5. **Live replay of `nova.chat.suggestion_agent`** (gpt-6.1-sol, about 10 real threads, approved
-   development-ledger run, cap $2, `AI_OPENAI_SUGGESTIONS_BUDGET_USD` set for the run) to record
-   real outputs, cost per run, latency and the share of picks that pass their witness.
+5. **Live replay of `nova.chat.suggestion_agent`** (KRI-1254). The code is in: see
+   "Live run of the suggestion agent" below. The paid run itself is an Ops step and its numbers go
+   in that section.
 6. **`opener_clip` cassette** proving filename-to-hero resolution through the planner; only then
    may `CLIP_ORDINAL_PROVEN` flip.
 
