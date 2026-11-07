@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -60,10 +60,11 @@ from app.pipeline.phone_subtitled_lanes import (
     SubtitledSoundEffect,
     sfx_path_is_playable,
 )
-from app.pipeline.render_geometry import MediaFootprint, NormalizedBox
+from app.pipeline.render_geometry import MediaFootprint, NormalizedBox, ProtectedRegion
 from app.services.phone_overlay_grounding import (
     _label_for_asset,
     _load_ready_pool_assets,
+    marked_object_regions,
     resolve_phone_card_geometry,
 )
 from app.services.sfx_catalog import SfxEntry, resolve_described_effect
@@ -592,6 +593,7 @@ def ground_phone_reaction_beats(
     allow_fullscreen: bool = False,
     fullscreen_hold_s_default: float | None = None,
     face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
+    protected_regions: Sequence[ProtectedRegion] = (),
 ) -> GroundedReactionBeats:
     """Ground creator-authored reaction beats + closing media against the
     clip's raw Whisper words into phone Talking-lane cards/sounds (KRI-178).
@@ -618,6 +620,9 @@ def ground_phone_reaction_beats(
     sampled faces' eyes-nose-mouth core through a face-filled speaker crop
     before cards are placed; a card may then cover hair or background, never
     the core (`phone_overlay_grounding.resolve_phone_card_geometry`).
+
+    ``protected_regions`` (KRI-903, default none = unchanged): objects the creator marked, as
+    canvas boxes in the speaker clip's own seconds; a corner card allows no overlap with one.
 
     Fails open at every stage: a broken face sampler leaves no face regions
     protected (`face_sampling == "failed"`), a bad DB row is skipped, and any
@@ -1002,6 +1007,11 @@ def ground_phone_reaction_beats(
             footprints_by_id=footprints_by_id,
             **(
                 {"face_box_to_canvas": face_box_to_canvas} if face_box_to_canvas is not None else {}
+            ),
+            **(
+                {"extra_protected": marked_object_regions(protected_regions)}
+                if protected_regions
+                else {}
             ),
         )
     else:

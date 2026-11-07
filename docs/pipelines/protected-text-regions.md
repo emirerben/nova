@@ -94,6 +94,36 @@ text's whole time on screen.
 
 Without a `keep_text_off` fact or a mark nothing runs and the render is unchanged.
 
+## Beyond the first speaker's text (KRI-903)
+
+- **Every speaker clip.** On a multi-speaker Talking edit `_phone_protected_plan` resolves a
+  plan per clip (its own mark, cut and crop; `ProtectedPlan.speakers`) and
+  `choose_caption_look(subjects=...)` measures each caption line against the clip playing
+  under it. A clip nobody marked reads `other_source` (the receipt row is never clearer than
+  the weakest clip, `merge_target_rows`). The closing line over the last speaker is placed
+  against that clip's plan. A title, spoken-word or list-label row shown at any moment while a
+  later speaker plays (it starts there or runs onto it) was only placed against the first clip,
+  so its placement is `unverified` (`_past_first_speaker` checks the row's end, not only its
+  start). The restyle re-measure above judges a row against the plan of each clip it plays
+  over (`speaker_pieces`), each on that clip's own clock.
+- **Faces for captions** are sampled inside every caption line (`caption_window_faces`: at
+  least two samples per line, plus the take's six spread samples), and each line also checks
+  a band over its own samples, so a head moving inside a line is covered across it. A sampler
+  that could not confirm the frame still protects every face it did detect, with the fallback
+  box beside them (receipt `faces: fallback`).
+- **Cards and reaction beats.** The worker hands the marked object's canvas boxes, on the
+  speaker clip's own clock (`source_clock_object_regions`), to `ground_phone_subtitled_overlays`
+  and `ground_phone_reaction_beats` (`protected_regions`). A picture-in-picture card allows no
+  overlap with one; a card with no clear spot is `no_safe_spot`. Full-screen cutaways cover
+  the whole frame by design and are not checked.
+- **Guided-story per-moment text** (`phone_guided_text_placement.place_guided_text`): the
+  title, chapter and closing rows keep off every face and off each mark followed through the
+  moments of the clip it was drawn on (`choose_guided_text_y_frac(object_boxes=, all_faces=)`).
+  The variant carries the same `protected_text_regions` receipt; a text this pass does not
+  place (narration captions, pinned text, the text-style policy, the placement flag off) is
+  `unverified`, an object with no mark is `no_selection`. The ask is still only offered
+  (`marks_route`) on the Talking route.
+
 ## Verify
 
 `make verify-protected-text` (also `tests/pipeline/test_protected_object_text_e2e.py`):
@@ -107,13 +137,11 @@ real tracker + real Skia ink measured every 0.1 s; writes `.protected-verify/rep
 
 - On-device re-placement after an editor crop / trim / speed change.
 - A web mark card (the web never gets the question; its object asks read `no_selection`).
-- Cloud (non-phone) caption placement and guided-story per-moment text still protect faces
-  only.
+- Cloud (non-phone) caption placement still protects faces only.
 - Automatic object detection (no mark) is not attempted.
 - After the render the text is not re-placed: an edit only makes the receipt `stale` (see
   below), and the review says the text was not re-checked. Tracked boxes are not stored, so
   re-measuring needs a re-render.
-- Only the first speaker clip of a multi-speaker Talking edit is protected and measured.
 - A mark is never removed by a later "text on the plate is fine" instruction.
 
 ## Edits after the render
