@@ -1394,7 +1394,12 @@ enum KriaClientProtocolContract {
     /// them in the editor. The server offers `editor_capabilities.background_focus` only to this protocol (and only with
     /// `backgroundFocus` verified) and answers 426 `client_update_required` (`background_focus`) to an older build polling or
     /// saving a recipe that already carries them.
-    static let version = 42
+    /// 44 (KRI-1264): decodes a placed picture card's `visual_placement.editor_style` (a Talking card's zoom and
+    /// animation; older builds fail the whole recipe on the key) and opens Zoom and Animation on a Talking card while
+    /// `editor_capabilities.media_overlay_style` holds. The server offers that capability only to this protocol (and
+    /// only with `cardStyle` verified) and answers 426 `client_update_required` (`card_style`) to an older build
+    /// polling a recipe that carries a styled card. 43 is the split-screen build (KRI-1231).
+    static let version = 44
     static let header = "X-Kria-Client-Protocol"
 }
 
