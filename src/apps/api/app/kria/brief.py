@@ -1769,14 +1769,7 @@ def load_latest_brief_sync(db: Any, thread_id: uuid.UUID) -> CreativeBrief | Non
     return _brief_from_row(row)
 
 
-def load_brief_history_sync(db: Any, thread_id: uuid.UUID) -> list[CreativeBrief]:
-    """Every stored brief version of a thread, oldest first. A row that no longer parses is
-    left out (the newest is still read strictly by `load_latest_brief_sync`)."""
-    rows = db.execute(
-        select(CreativeBriefVersion)
-        .where(CreativeBriefVersion.thread_id == thread_id)
-        .order_by(CreativeBriefVersion.version)
-    ).scalars()
+def _briefs_from_rows(rows: Iterable[Any]) -> list[CreativeBrief]:
     history: list[CreativeBrief] = []
     for row in rows:
         try:
@@ -1786,6 +1779,25 @@ def load_brief_history_sync(db: Any, thread_id: uuid.UUID) -> list[CreativeBrief
         if brief is not None:
             history.append(brief)
     return history
+
+
+def _brief_history_stmt(thread_id: uuid.UUID):  # noqa: ANN202
+    return (
+        select(CreativeBriefVersion)
+        .where(CreativeBriefVersion.thread_id == thread_id)
+        .order_by(CreativeBriefVersion.version)
+    )
+
+
+def load_brief_history_sync(db: Any, thread_id: uuid.UUID) -> list[CreativeBrief]:
+    """Every stored brief version of a thread, oldest first. A row that no longer parses is
+    left out (the newest is still read strictly by `load_latest_brief_sync`)."""
+    return _briefs_from_rows(db.execute(_brief_history_stmt(thread_id)).scalars())
+
+
+async def load_brief_history(db: Any, thread_id: uuid.UUID) -> list[CreativeBrief]:
+    """`load_brief_history_sync` on an async session."""
+    return _briefs_from_rows((await db.execute(_brief_history_stmt(thread_id))).scalars())
 
 
 def _creator_turn_text_sync(db: Any, thread_id: uuid.UUID, turn_id: uuid.UUID) -> str | None:

@@ -28,10 +28,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import select
 
 from app.config import settings
 from app.database import sync_session
-from app.models import PlanItem, SpeechCleanupAnalysis
+from app.models import CreationThreadEvent, CreatorAgentTurn, PlanItem, SpeechCleanupAnalysis
 from app.services.client_protocol import bind_sending_build, unbind_sending_build
 from tests.e2e_suggestions import threads
 from tests.e2e_suggestions.driver import Phone
@@ -261,7 +262,14 @@ def phone_talking(world, monkeypatch, key, facts=None):  # noqa: ANN001, ANN201
     return seeded, Phone(seeded, world, prefs(key), language=scn.language), media_id
 
 
-def mark_the_mug(seeded: h.Seeded, media_id: str) -> None:
+def mark_the_mug(seeded: h.Seeded, media_id: str, *, cancelled: bool = False) -> None:
+    """The mark the submit path stores: stamped with the clip's generation, as the server does.
+    ``cancelled``: the creator then cancelled the turn that carried it (it binds nothing)."""
+    from app.kria.protected_targets import clip_generations  # noqa: PLC0415
+
+    with sync_session() as db:
+        item = db.get(PlanItem, seeded.item_id)
+        generation = clip_generations(item.clip_assignments)[media_id]
     append(
         seeded,
         (
@@ -275,11 +283,30 @@ def mark_the_mug(seeded: h.Seeded, media_id: str) -> None:
                     "media_id": media_id,
                     "source_t_s": 1.0,
                     "box": [0.3, 0.55, 0.7, 0.75],
+                    "generation": generation,
                 },
             },
         ),
         ("assistant", "assistant_review", "Noted.", {"turn_value": "review"}),
     )
+    if cancelled:
+        with sync_session() as db:
+            event_id = db.execute(
+                select(CreationThreadEvent.id).where(
+                    CreationThreadEvent.thread_id == seeded.thread_id,
+                    CreationThreadEvent.content == "Here is the mug",
+                )
+            ).scalar_one()
+            db.add(
+                CreatorAgentTurn(
+                    thread_id=seeded.thread_id,
+                    source_event_id=event_id,
+                    client_event_id="mug-mark-cancelled",
+                    request_digest="d",
+                    status="cancelled",
+                )
+            )
+            db.commit()
 
 
 async def tap_as(phone: Phone, protocol: int | None, card, out):  # noqa: ANN001, ANN201
@@ -294,6 +321,7 @@ CASES = [
     # (name, facts, marked, protocol, phone take, mark question expected)
     ("object-unmarked", OBJECT, False, APP, True, True),
     ("object-marked", OBJECT, True, APP, True, False),
+    ("object-mark-on-cancelled-turn", OBJECT, "cancelled", APP, True, True),
     ("face-only", FACE, False, APP, True, False),
     ("no-ask", None, False, APP, True, False),
     ("old-build", OBJECT, False, OLD_APP, True, False),
@@ -335,7 +363,7 @@ async def test_s4_the_get_withholds_the_restating_cards_exactly_when_the_tap_ask
                 ),
             )
     if marked:
-        mark_the_mug(seeded, media_id)
+        mark_the_mug(seeded, media_id, cancelled=marked == "cancelled")
     talking_world.refreshes.clear()
 
     # the tap's own verdict, on a twin: serve it (the worker answers), tap the filler card.

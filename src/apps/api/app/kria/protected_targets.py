@@ -19,7 +19,7 @@ protects every detected face (the face sampler), not only the dominant one.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -174,6 +174,39 @@ def fold_protected_regions(
         marks.pop(key, None)
         marks[key] = mark.model_dump(mode="json")
     return list(marks.values())
+
+
+def standing_user_events(thread_id: Any, *, through_sequence: int | None = None):  # noqa: ANN201
+    """The ``(role, payload)`` rows marks are folded from: the creator's own events, minus
+    those of a turn the creator cancelled (a cancelled turn binds nothing, KRI-904)."""
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.models import CreationThreadEvent, CreatorAgentTurn  # noqa: PLC0415
+
+    cancelled = select(CreatorAgentTurn.source_event_id).where(
+        CreatorAgentTurn.thread_id == thread_id, CreatorAgentTurn.status == "cancelled"
+    )
+    stmt = select(CreationThreadEvent.role, CreationThreadEvent.payload).where(
+        CreationThreadEvent.thread_id == thread_id,
+        CreationThreadEvent.role == "user",
+        CreationThreadEvent.id.not_in(cancelled),
+    )
+    if through_sequence is not None:
+        stmt = stmt.where(CreationThreadEvent.sequence <= through_sequence)
+    return stmt.order_by(CreationThreadEvent.sequence)
+
+
+def standing_protected_regions(
+    rows: Sequence[tuple[str, Any]], history: Iterable[CreativeBrief]
+) -> list[dict]:
+    """The marks that protect now: ``rows`` from `standing_user_events`, minus those whose
+    keep-off ask the brief ``history`` (oldest first) later withdrew. The one fold the
+    approval pin, the readiness, the mark gate and the serve all read, so they never part."""
+    marks = fold_protected_regions(rows)
+    if not marks:
+        return marks
+    released = released_object_labels(history)
+    return fold_protected_regions(rows, released=released) if released else marks
 
 
 def binding_protected_regions(
@@ -512,6 +545,8 @@ __all__ = [
     "speaker_candidates",
     "unmarked_object_targets",
     "fold_protected_regions",
+    "standing_protected_regions",
+    "standing_user_events",
     "protected_targets",
     "released_object_labels",
     "selection_for",

@@ -190,15 +190,17 @@ def _readiness_problem(
 ) -> str | None:
     """``assess_readiness`` on the inputs the commit hands it for a restate (strategy draft:
     no editor payload, no collection story, no prepared research)."""
-    from sqlalchemy import select  # noqa: PLC0415
-
     from app.kria.approval_readiness import APPROVABLE, assess_readiness  # noqa: PLC0415
+    from app.kria.brief import load_brief_history_sync  # noqa: PLC0415
     from app.kria.order_replacement_receipts import compiled_order_preflight_sync  # noqa: PLC0415
     from app.kria.order_replacement_sources import (  # noqa: PLC0415
         load_brief_order_source_context_sync,
     )
-    from app.kria.protected_targets import fold_protected_regions, marks_route  # noqa: PLC0415
-    from app.models import CreationThreadEvent  # noqa: PLC0415
+    from app.kria.protected_targets import (  # noqa: PLC0415
+        marks_route,
+        standing_protected_regions,
+        standing_user_events,
+    )
     from app.services.phone_montage_preflight import readiness_plan_blockers  # noqa: PLC0415
 
     creator_id = getattr(thread, "creator_id", None)
@@ -214,12 +216,9 @@ def _readiness_problem(
         clip_paths=getattr(item, "clip_gcs_paths", None) or (),
         voiceover_path=getattr(item, "voiceover_gcs_path", None),
     )
-    regions = fold_protected_regions(
-        session.execute(
-            select(CreationThreadEvent.role, CreationThreadEvent.payload)
-            .where(CreationThreadEvent.thread_id == thread.id, CreationThreadEvent.role == "user")
-            .order_by(CreationThreadEvent.sequence)
-        ).all()
+    regions = standing_protected_regions(
+        session.execute(standing_user_events(thread.id)).all(),
+        load_brief_history_sync(session, thread.id),
     )
     report = assess_readiness(
         brief,

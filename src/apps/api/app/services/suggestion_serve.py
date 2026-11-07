@@ -770,18 +770,17 @@ async def _mark_needed(db: Any, thread: Any, ctx: SuggestionContext, item: Any) 
     the same brief, the same marks (the creator's own events), the same clips and the same plan. The
     app build is the GET's own (``ctx.client_protocol``): the phone that reads the card taps it.
     """
-    from sqlalchemy import select  # noqa: PLC0415
-
-    from app.kria.brief import load_latest_brief  # noqa: PLC0415
+    from app.kria.brief import load_brief_history, load_latest_brief  # noqa: PLC0415
     from app.kria.protected_targets import (  # noqa: PLC0415
         clip_generations,
-        fold_protected_regions,
         marks_route,
         missing_object_marks,
         rendered_speaker_media_id,
         speaker_candidates,
+        standing_protected_regions,
+        standing_user_events,
     )
-    from app.models import CreationThreadEvent, Job  # noqa: PLC0415
+    from app.models import Job  # noqa: PLC0415
     from app.services.suggestions import pinned  # noqa: PLC0415
 
     creator_id = getattr(thread, "creator_id", None)
@@ -803,13 +802,8 @@ async def _mark_needed(db: Any, thread: Any, ctx: SuggestionContext, item: Any) 
     ):
         return False
     brief = await load_latest_brief(db, thread.id)
-    rows = (
-        await db.execute(
-            select(CreationThreadEvent.role, CreationThreadEvent.payload)
-            .where(CreationThreadEvent.thread_id == thread.id, CreationThreadEvent.role == "user")
-            .order_by(CreationThreadEvent.sequence)
-        )
-    ).all()
+    rows = (await db.execute(standing_user_events(thread.id))).all()
+    marks = standing_protected_regions(rows, await load_brief_history(db, thread.id))
     assignments = getattr(item, "clip_assignments", None) or []
     job_id = getattr(item, "current_job_id", None)
     job = await db.get(Job, job_id) if job_id else None
@@ -817,7 +811,7 @@ async def _mark_needed(db: Any, thread: Any, ctx: SuggestionContext, item: Any) 
     return bool(
         missing_object_marks(
             brief,
-            fold_protected_regions([(role, payload) for role, payload in rows]),
+            marks,
             clip_generations(assignments),
             render_clips=speaker_candidates(
                 assignments, rendered_speaker=rendered_speaker_media_id(variants)

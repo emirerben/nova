@@ -418,28 +418,14 @@ def _protected_regions_sync(db, *, thread_id: uuid.UUID, through_sequence: int) 
     withdrew ("text on the plate is fine") no longer protects."""
     from app.kria.brief import load_brief_history_sync  # noqa: PLC0415
     from app.kria.protected_targets import (  # noqa: PLC0415
-        fold_protected_regions,
-        released_object_labels,
+        standing_protected_regions,
+        standing_user_events,
     )
 
-    cancelled = select(CreatorAgentTurn.source_event_id).where(
-        CreatorAgentTurn.thread_id == thread_id, CreatorAgentTurn.status == "cancelled"
-    )
-    rows = db.execute(
-        select(CreationThreadEvent.role, CreationThreadEvent.payload)
-        .where(
-            CreationThreadEvent.thread_id == thread_id,
-            CreationThreadEvent.role == "user",
-            CreationThreadEvent.sequence <= through_sequence,
-            CreationThreadEvent.id.not_in(cancelled),
-        )
-        .order_by(CreationThreadEvent.sequence)
-    ).all()
-    marks = fold_protected_regions(rows)
-    if not marks:
-        return marks
-    released = released_object_labels(load_brief_history_sync(db, thread_id))
-    return fold_protected_regions(rows, released=released) if released else marks
+    rows = db.execute(standing_user_events(thread_id, through_sequence=through_sequence)).all()
+    if not rows:
+        return []
+    return standing_protected_regions(rows, load_brief_history_sync(db, thread_id))
 
 
 @dataclass(frozen=True)
