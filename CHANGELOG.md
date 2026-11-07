@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.61.0] - 2026-11-07
+
+### Changed
+- fix(kria): one failure line, silent export repairs, real chat titles (KRI-1262) (#2170) <!-- release-pr: 2170 -->
+
 ## [0.88.60.0] - 2026-11-07
 
 ### Changed
