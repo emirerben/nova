@@ -1,0 +1,182 @@
+{
+ "fixture_id": "talking_keep_whole",
+ "route": "talking_head",
+ "schema_version": 1,
+ "source": {
+  "kind": "reconstructed",
+  "what": "Brief r1 recorded in prod thread 867D2F93 (KRI-971, Don Julio lunch T1: \"Use the whole clip as it is, don't trim anything.\"), a single 8.2 s Talking take. The prod evidence folder is not on this machine, so the clip analysis and strategy are reconstructed from the talking_head fixture.",
+  "recorded": [
+   "brief r1 (kind style, facts.keep_whole_take true) as quoted in KRI-971"
+  ],
+  "reconstructed": [
+   "clip transcript, segments and duration (8.2 s per the ticket)",
+   "strategy (subtitled, original_audio)",
+   "the approval card is assembled offline from the real pure functions the draft turn calls"
+  ],
+  "redacted": [
+   "all ids and paths"
+  ]
+ },
+ "message": "Use the whole clip as it is, don't trim anything.",
+ "messages": [
+  "Use the whole clip as it is, don't trim anything."
+ ],
+ "client_protocol": 22,
+ "replay_inputs": {
+  "text_elements": []
+ },
+ "planner_summary": "I'll use your whole clip as it is, with captions.",
+ "brief": {
+  "version": 1,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "style",
+    "facts": {
+     "keep_whole_take": true
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Use the whole clip as it is, don't trim anything",
+    "source_turn_id": "synthetic-turn"
+   }
+  ]
+ },
+ "strategy": {
+  "pacing": "balanced",
+  "direction": "native",
+  "rationale": "Keeps the creator's own take whole with its original audio.",
+  "edit_format": "subtitled",
+  "caption_style": "auto",
+  "audio_strategy": "original_audio",
+  "render_program": "native",
+  "story_structure": [
+   "Play the whole take as it is"
+  ],
+  "selected_media_ids": [
+   "analysis-proxy-talking_head-01"
+  ],
+  "video_reuse_policy": "once",
+  "optional_treatments": []
+ },
+ "clips": [
+  {
+   "id": "analysis-proxy-talking_head-01",
+   "kind": "video",
+   "duration_s": 8.2,
+   "has_audio": true,
+   "source_filename": "clip-01.mp4",
+   "analysis": {
+    "width": 568,
+    "aspect": 1.775,
+    "brands": [],
+    "height": 320,
+    "source": "clip_metadata",
+    "pix_fmt": "yuv420p",
+    "subject": "man talking to camera at a restaurant table",
+    "exposure": {
+     "frames": 24,
+     "version": 1,
+     "mean_luma": 119.5,
+     "near_black_share": 0.0
+    },
+    "duration_s": 8.2,
+    "transcript": "So I ordered the provoleta and honestly, uh, I was not ready for how good it is. Have you ever had it?",
+    "description": "man talks to camera about a provoleta starter",
+    "video_codec": "h264",
+    "best_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 8.2,
+      "energy": 6.0,
+      "description": "man talks to camera about a dish"
+     }
+    ],
+    "display_width": 568,
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "table",
+      "plate of cheese"
+     ],
+     "brands": [],
+     "people": {
+      "note": "a man speaking to camera",
+      "count": 1,
+      "speaks_to_camera": true
+     },
+     "speech": {
+      "language": "en",
+      "segments": [
+       {
+        "text": "so i ordered the provoleta and honestly uh i was not ready for how good it is",
+        "start_s": 0.0,
+        "end_s": 5.9
+       },
+       {
+        "text": "have you ever had it",
+        "start_s": 6.5,
+        "end_s": 8.2
+       }
+      ],
+      "to_camera": true,
+      "has_speech": true,
+      "transcript": "So I ordered the provoleta and honestly, uh, I was not ready for how good it is. Have you ever had it?"
+     },
+     "actions": [
+      "man gestures towards building",
+      "man talks to camera",
+      "camera pans across square"
+     ],
+     "setting": "city square in front of a historical building",
+     "subject": "man speaking in front of historical building",
+     "summary": "A man stands in a city square in front of a historic building, explaining in Turkish and English that Argentina declared its independence in this building in 1810. He also points out the current government building across the square.",
+     "activity": "explaining historical facts",
+     "audio_type": "dialogue",
+     "content_type": "talking_head",
+     "on_screen_text": "",
+     "visual_quality": "sharp and steady",
+     "notable_moments": [
+      {
+       "end_s": 3.7,
+       "start_s": 0.0,
+       "description": "man points to building and speaks"
+      },
+      {
+       "end_s": 15.3,
+       "start_s": 8.7,
+       "description": "man asks 'why and when' about independence"
+      },
+      {
+       "end_s": 31.9,
+       "start_s": 25.1,
+       "description": "man states 1810 independence year"
+      },
+      {
+       "end_s": 47.0,
+       "start_s": 39.7,
+       "description": "man explains building's historical role"
+      }
+     ],
+     "transcript": "So I ordered the provoleta and honestly, uh, I was not ready for how good it is. Have you ever had it?"
+    },
+    "display_height": 320,
+    "on_screen_text": "building. Okay, I'll translate it to Turkish. Yeah. So, what was your name again, sorry? Maximo. Maximo. Uh, Argentina'nın bağımsızlığını bu binada eee kazanıldığını ilan ediyor. Neden peki? Why, why Maximo? Why and when? Why and when what? Uh, you gained independence. 1810. 1810. The year 1810. means Yes. 215 years ago. 250 sene önce 1810, 1810. Um, and why specifically at this building? Because ",
+    "analysis_version": 8,
+    "rotation_degrees": 0
+   }
+  }
+ ],
+ "checks": {
+  "fields": [],
+  "asks": [
+   "r1"
+  ],
+  "not_graded": {
+   "direction": "native, the schema default",
+   "pacing": "balanced, the planner's default; the creator stated none",
+   "story_structure": "planner prose, not a route-table field"
+  }
+ }
+}

@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.46.0] - 2026-11-07
+
+### Changed
+- fix(captions): preserve numeric tokens before proofreading alignment (KRI-1263) (#2174) <!-- release-pr: 2174 -->
+
+## [0.88.45.0] - 2026-11-07
+
+### Changed
+- feat(ios): quiet the chat chrome (KRI-1260) (#2156) <!-- release-pr: 2156 -->
+
+## [0.88.44.0] - 2026-11-07
+
+### Changed
+- fix(kria): "Make it without these" leaves out only what its card named, and says so (KRI-1236) (#2149) <!-- release-pr: 2149 -->
+
+## [0.88.43.0] - 2026-11-07
+
+### Changed
+- fix(captions): judge each proofread word on its own so good spelling fixes land (KRI-1263) (#2157) <!-- release-pr: 2157 -->
+
 ## [0.88.42.0] - 2026-11-07
 
 ### Changed

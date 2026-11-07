@@ -4702,9 +4702,15 @@ def _wants_whole_take(req: BriefRequirement) -> bool:
     # Title-scoped timing requirements describe a text element's hold window;
     # treating their words (for example, "whole video") as source language
     # incorrectly routes them through the whole-take checker.
-    if req.kind != "timing" or req.scope == "title" or _has_duration_target(req):
+    if req.scope == "title" or _has_duration_target(req):
         return False
     stated = _fact_flag(req, "keep_whole_take")
+    if req.kind != "timing":
+        # KRI-971: the model files "use the whole clip as it is" under any kind (it chose
+        # `style`); only the recorded fact counts there, never the words. A photo or sound
+        # timed to spoken words that also says "keep the take" is still a pop-in ask. A clip
+        # scope is not a whole-video ask.
+        return stated is True and req.scope == "global" and not _fact_triggers(req)
     if stated is not None:
         return stated
     return bool(_WHOLE_TAKE_RE.search(_req_text(req)))
@@ -6527,6 +6533,16 @@ NO_TITLE_REASON = _NO_TITLE  # stored on a blocked render's receipts (see `rende
 
 _CANT_CONFIRM_LENGTH = "I can't confirm this draft's length yet."
 _TALKING_KEEPS_WHOLE_TAKE = "A Talking edit keeps your whole take, so its length follows your clip"
+# KRI-981: with several clips only the talking one(s) set the length; the others play over it.
+_TALKING_KEEPS_TALKING_CLIP = (
+    "A Talking edit keeps the whole talking clip, so its length follows it"
+)
+# KRI-980: the renderer mutes every footage clip, but a draft cannot tell a footage clip from a
+# second speaker when the clip's analysis heard speech or has not run yet.
+_TALKING_MUTE_IF_CUTAWAY = (
+    "If that clip plays as a cutaway over your voice, it plays without its own sound; "
+    "I can't tell yet which clip you talk in, and that clip keeps its sound"
+)
 _VOICEOVER_SETS_LENGTH = "A voiceover edit runs as long as your voiceover"
 _CANT_CHECK_TIMING = "I can't verify this timing automatically."
 _CANT_CHECK_CLEANUP = "I can't check the speech cleanup on this draft yet."
@@ -6781,6 +6797,9 @@ RENDER_PROMISE_REASONS: tuple[str, ...] = (
     _TALKING_LIST_LABEL_PLAN,
     # KRI-1237: the phone Talking card matcher shows the creator's Visuals on their words.
     _TALKING_CARDS_PLAN,
+    # KRI-980: the renderer mutes every footage clip and its roles receipt names which clips
+    # those were, so "if it plays as a cutaway, it plays silent" is what the render then says.
+    _TALKING_MUTE_IF_CUTAWAY,
 )
 # KRI-793: what a phone Talking draft says about a captions ask naming a language or words
 # to spell: the writer captions everything said in the take (an off-camera voice too), and
@@ -6903,6 +6922,13 @@ _REASON_TR: dict[str, str] = {
     _TALKING_KEEPS_QUOTED_PART: (
         "Konuşmalı düzenleme çekiminin yalnızca istediğin kısmını korur, o yüzden uzunluğu o "
         "kısmı izler"
+    ),
+    _TALKING_KEEPS_TALKING_CLIP: (
+        "Konuşmalı düzenleme konuşma klibini baştan sona korur, o yüzden uzunluğu onu izler"
+    ),
+    _TALKING_MUTE_IF_CUTAWAY: (
+        "O klip sesinin üzerinde gösterilirse kendi sesi olmadan oynar; hangi klipte "
+        "konuştuğunu henüz bilmiyorum, konuştuğun klibin sesi kalır"
     ),
     _VOICEOVER_SETS_LENGTH: "Seslendirmeli düzenleme seslendirmen kadar sürer",
     _CANT_CHECK_TIMING: "Bu süreyi otomatik olarak doğrulayamıyorum.",
@@ -7206,6 +7232,8 @@ _NEUTRAL_REASONS = _NEUTRAL_EN | frozenset(_REASON_TR[reason] for reason in _NEU
 # simpler plan to choose, and never blocks an approved render.
 _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _TALKING_KEEPS_WHOLE_TAKE,
+    _TALKING_KEEPS_TALKING_CLIP,
+    _TALKING_MUTE_IF_CUTAWAY,
     _TALKING_KEEPS_QUOTED_PART,
     _VOICEOVER_SETS_LENGTH,
     _CLEANUP_PLANNED,
@@ -8643,7 +8671,10 @@ def speech_cleanup_review_note(
     counts = _cleanup_counts(variant)
     retakes = counts[2] if counts else 0
     if outcome == "no_change":
-        sentences = [_loc(_CLEANUP_NOTHING_TO_CUT) + "."]
+        # KRI-748: a linked brief's own receipt already opens with this sentence.
+        sentences = (
+            [] if _loc(_CLEANUP_NOTHING_TO_CUT) in text else [_loc(_CLEANUP_NOTHING_TO_CUT) + "."]
+        )
     elif counts is None:
         sentences = [_loc(_CLEANUP_DONE) + "."]
     else:
@@ -8700,7 +8731,7 @@ def speech_cleanup_review_note(
                 ),
             )
         )
-    return " ".join(sentences)
+    return " ".join(sentences) or None
 
 
 def _merge_cleanup_timing(
@@ -9246,6 +9277,16 @@ def _sound_toggle_needs_phone_montage() -> str:
     )
 
 
+def _talking_cutaway_sound_not_here() -> str:
+    """KRI-980: a multi-clip Talking edit's "turn a clip's sound on" while the lane is off."""
+    return say(
+        en="In a Talking edit the clips shown over your voice play without their own sound. "
+        + _sound_toggle_needs_phone_montage(),
+        tr="Konuşmalı düzenlemede sesinin üzerinde gösterilen klipler kendi sesi olmadan "
+        "oynar. " + _sound_toggle_needs_phone_montage(),
+    )
+
+
 def _toggle_where(target: SoundTarget) -> tuple[str, str]:
     """Where a part of an on/off ask applies, in plain words (EN, TR)."""
     en: list[str] = []
@@ -9462,6 +9503,16 @@ def _check_sound_toggle(
         if muted is not None:
             return muted
     if facts.voiceover_edit or facts.phone_narrated or facts.phone_talking:
+        if (
+            facts.phone_talking
+            and not (facts.voiceover_edit or facts.phone_narrated)
+            and ask.state == "on"
+            and not (facts.editor or facts.rendered_output or facts.rendered_variant)
+            and len(_talking_draft_split(facts)[2]) > 1
+        ):
+            # KRI-980: with several clips the others play over the voice without their own
+            # sound, which is what the creator should hear before being told it can't change.
+            return _receipt(req, "not_possible", _talking_cutaway_sound_not_here())
         return _receipt(req, "not_possible", _sound_toggle_needs_phone_montage())
     if facts.editor or facts.rendered_output or facts.rendered_variant:
         return _receipt(req, "partial", _NO_CHECKER)
@@ -9472,36 +9523,89 @@ def _check_sound_toggle(
     return _receipt(req, "partial", _NO_CHECKER)
 
 
-def _talking_footage_clips(facts: PlanFacts) -> tuple[str, ...]:
-    """The clips a phone Talking edit plays as muted cutaways over the speaker's voice.
+def _talking_draft_split(
+    facts: PlanFacts,
+) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, float | None]]:
+    """``(footage, possible speakers, seconds by clip)`` of a Talking draft's video clips.
 
-    A finished render names them (its roles receipt). A draft knows only the clips no speaker
-    candidate can be (`protected_targets.speaker_candidates`: a clip that has no sound or
-    whose analysis heard no speech); a clip that might speak is never promised muted.
+    The render picks the speaker from each clip's Whisper words (`classify_talking_clips`); a
+    draft only has the clip analysis, so a clip no speaker candidate can be
+    (`protected_targets.speaker_candidates`: no sound, or its analysis heard no speech) is
+    footage, and every other clip may speak. One clip is its own speaker. The single place a
+    draft's length (KRI-981) and clip-sound (KRI-980) receipts read the split from.
     """
-    if facts.talking_footage_ids is not None:
-        return facts.talking_footage_ids
     from app.kria.protected_targets import speaker_candidates  # noqa: PLC0415
 
     snapshot = facts.media_snapshot if isinstance(facts.media_snapshot, Mapping) else {}
     rows = [
         row
         for row in snapshot.get("clip_assignments") or ()
-        if isinstance(row, Mapping) and row.get("kind", "video") == "video"
+        if isinstance(row, Mapping) and row.get("kind", "video") == "video" and row.get("media_id")
     ]
+    seconds: dict[str, float | None] = {}
+    for row in rows:
+        duration = row.get("duration_s")
+        seconds.setdefault(
+            str(row["media_id"]),
+            float(duration)
+            if isinstance(duration, int | float) and not isinstance(duration, bool)
+            else None,
+        )
+    ids = list(seconds)
+    if len(ids) < 2:
+        return (), tuple(ids), seconds
     candidates = set(speaker_candidates(rows))
-    ids = list(dict.fromkeys(str(row["media_id"]) for row in rows if row.get("media_id")))
-    return tuple(m for m in ids if m not in candidates) if len(ids) > 1 else ()
+    return (
+        tuple(m for m in ids if m not in candidates),
+        tuple(m for m in ids if m in candidates),
+        seconds,
+    )
+
+
+def _talking_footage_clips(facts: PlanFacts) -> tuple[str, ...]:
+    """The clips a phone Talking edit plays as muted cutaways over the speaker's voice.
+
+    A finished render names them (its roles receipt). A draft knows only the clips no speaker
+    candidate can be (`_talking_draft_split`); a clip that might speak is never promised muted.
+    """
+    if facts.talking_footage_ids is not None:
+        return facts.talking_footage_ids
+    return _talking_draft_split(facts)[0]
+
+
+def _talking_take_seconds(facts: PlanFacts) -> tuple[float | None, float | None, bool]:
+    """``(take, at most, several clips)``: how long a Talking draft's take is (KRI-981).
+
+    Only the talking clips set the length (they play back to back); footage clips are
+    cutaways inside it. ``take`` is exact only when one clip can be the talking one; with
+    several candidates ``at most`` (all of them) is all a draft can know. ``None`` = unknown.
+    """
+    _footage, speakers, seconds = _talking_draft_split(facts)
+    many = len(seconds) > 1 or (facts.video_clip_count or 0) > 1
+    if len(seconds) < 2:
+        # One clip (or no clip rows to split): the selected clips' length stands, unless
+        # several clips are known to be selected, which makes it only an upper bound.
+        known = facts.take_duration_s
+        return (None, known, True) if many else (known, known, False)
+    lengths = [seconds[m] for m in speakers]
+    if any(x is None for x in lengths):
+        return None, None, True
+    total = float(sum(lengths))  # type: ignore[arg-type]
+    return (total if len(speakers) == 1 else None), total, True
 
 
 def _talking_muted_cutaway_receipt(
     req: BriefRequirement, ask: SoundToggleAsk, facts: PlanFacts
 ) -> RequirementReceipt | None:
-    """ "Keep my audio while the stadium is shown" on a Talking edit (KRI-1150).
+    """ "Keep my audio while the stadium is shown" on a Talking edit (KRI-1150, KRI-980).
 
     A footage clip plays muted over the speaker, so an "off" ask that names exactly such a
-    clip is what the edit already does. Everything else (clip sound on, the whole video, a
-    clip that speaks, a position or a named line) returns None and keeps its plain decline.
+    clip is what the edit already does. A draft cannot tell a footage clip from a second
+    speaker while the clip's analysis heard speech or has not run: when two or more clips may
+    speak, naming one of them is answered conditionally ("if it plays as a cutaway, it plays
+    silent"), never "met". The one clip that can be the speaker is not muted. Everything else
+    (clip sound on, the whole video, a position or a named line) returns None and keeps its
+    plain decline.
     """
     from app.pipeline.phone_talking_cutaway_sound import _media_match  # noqa: PLC0415
 
@@ -9515,16 +9619,22 @@ def _talking_muted_cutaway_receipt(
     ):
         return None
     footage = _talking_footage_clips(facts)
-    if _media_match(target.media_ref, footage) is None:
-        return None
-    return _receipt(
-        req,
-        "met",
-        say(
-            en="That clip plays without its own sound, so your voice keeps playing over it",
-            tr="O klip kendi sesi olmadan oynuyor, sesin üzerinde çalmaya devam ediyor",
-        ),
+    if _media_match(target.media_ref, footage) is not None:
+        return _receipt(
+            req,
+            "met",
+            say(
+                en="That clip plays without its own sound, so your voice keeps playing over it",
+                tr="O klip kendi sesi olmadan oynuyor, sesin üzerinde çalmaya devam ediyor",
+            ),
+        )
+    drafting = facts.talking_footage_ids is None and not (
+        facts.editor or facts.rendered_output or facts.rendered_variant
     )
+    speakers = _talking_draft_split(facts)[1]
+    if drafting and len(speakers) > 1 and _media_match(target.media_ref, speakers) is not None:
+        return _receipt(req, "partial", _loc(_TALKING_MUTE_IF_CUTAWAY))
+    return None
 
 
 def _draft_talking_cutaway_sound(
@@ -9554,7 +9664,8 @@ def _draft_talking_cutaway_sound(
     if row["status"] != "built":
         return _receipt(req, "not_possible", _toggle_missed(ask, row))
     if ask.state == "off":
-        return _receipt(req, "met", _toggle_summary(ask))
+        # KRI-980: "silent" is true only of a clip that cannot be a second speaker.
+        return _talking_muted_cutaway_receipt(req, ask, facts)
     return _receipt(req, "met", _talking_cutaway_sound_draft())
 
 
@@ -14251,6 +14362,8 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         return _check_timed_cards(req, facts)
     if _wants_whole_line(req):
         return _check_whole_line(req, facts)
+    if req.kind != "timing" and _wants_whole_take(req):
+        return _check_whole_take(req, facts)
     if req.kind == "text":
         researched = None if req.literal else _check_research(req, facts)
         if researched is not None:
@@ -14678,22 +14791,40 @@ def _talking_honest_receipt(
         return receipt
     if _has_duration_target(req):
         target = float(req.facts["duration_s"])
-        take = facts.take_duration_s
+        # KRI-981: with several clips only the talking one sets the length; the rest are
+        # cutaways inside it, so their seconds are never part of the take.
+        take, at_most, several = _talking_take_seconds(facts)
         # KRI-790: with quoted start / end lines the part they keep sets the length, not the
         # whole take; a line the draft cannot place leaves only the take's length to say.
         window = facts.take_window
         kept = window.kept_s if window is not None else None
         prefix = _TALKING_KEEPS_QUOTED_PART if window is not None else _TALKING_KEEPS_WHOLE_TAKE
+        if window is None and several:
+            prefix = _TALKING_KEEPS_TALKING_CLIP
         if kept is not None:
             if kept <= target + 0.5:
                 return receipt
             en_tail = f"that part is about {_round_s(kept)}s"
             tr_tail = f"o kısım yaklaşık {_round_s(kept)} saniye"
-        else:
-            if take is None or take <= target + 0.5:
+        elif take is not None:
+            if take <= target + 0.5:
                 return receipt
-            en_tail = f"your take is {_round_s(take)}s"
-            tr_tail = f"çekimin {_round_s(take)} saniye"
+            en_tail = (
+                f"the talking clip is {_round_s(take)}s"
+                if several
+                else f"your take is {_round_s(take)}s"
+            )
+            tr_tail = (
+                f"konuşma klibi {_round_s(take)} saniye"
+                if several
+                else f"çekimin {_round_s(take)} saniye"
+            )
+        else:
+            if at_most is None or at_most <= target + 0.5:
+                return receipt
+            # Several clips may speak before the render hears them: no number is quoted.
+            en_tail = "I can't tell yet which clip is the talking one"
+            tr_tail = "hangi klibin konuşma klibi olduğunu henüz bilmiyorum"
         # KRI-847: a ceiling is worded as one ("at most 10s"), never as an exact length.
         ceiling = duration_bound(req.facts) == "at_most"
         asked_en = f"at most {_round_s(target)}s" if ceiling else f"{_round_s(target)}s"
