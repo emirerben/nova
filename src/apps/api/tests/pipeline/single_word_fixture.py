@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from app.pipeline import phone_captions
+from app.config import settings
 from app.pipeline.phone_captions import PhoneCaptionLook
 from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
 from tests.pipeline.test_phone_subtitled_plan import _binding
@@ -20,11 +20,13 @@ from tests.pipeline.test_phone_subtitled_plan import _binding
 
 @pytest.fixture
 def origin_main_caption_rows(monkeypatch):
-    """Compile captions the way origin/main did before KRI-632: a cue the Kria mark meets may
-    gain lines, it is never split in time. The goldens below were generated from origin/main
-    and must hold on macOS and Linux; whether a borderline cue splits depends on the font
-    engine's advances, so the digests are pinned with the split pass off."""
-    monkeypatch.setattr(phone_captions, "_MAX_TIME_SPLIT_ROUNDS", 0)
+    """Compile captions the way origin/main did before KRI-632, through the production kill
+    switch (PHONE_CAPTION_ROW_BUDGET_ENABLED=false): a cue the Kria mark meets gains rows, it
+    is never split in time. The goldens below were generated from origin/main, so this is
+    the byte-identical-when-off contract; the switched-on path (borderline cues split, which
+    depends on the font engine's advances) is covered by invariants in
+    `test_phone_caption_row_budget.py`, not by digests."""
+    monkeypatch.setattr(settings, "phone_caption_row_budget_enabled", False)
 
 
 TALK_SECONDS = 190.0

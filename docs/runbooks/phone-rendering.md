@@ -4057,7 +4057,9 @@ A Talking caption is at most two rows. Cues are sized by `captions.PHONE_CUE_BUD
 characters, 3 s). The Kria-mark re-wrap (`phone_captions._clear_of_watermark`, KRI-548) counts
 against the same two rows: when no two-row layout clears the mark, the cue is split in time at a
 pause or clause end (`_split_cue_in_time`: same words, same word times, the first piece holds until
-the second starts; up to three rounds) instead of growing a third row. Layer ids are
+the second starts; up to three rounds) instead of growing a third row. A piece keeps 3 or more
+words when the cue has 6 or more (2 or more for a 4-5 word cue, whose third row was the filed
+bug); a cue of 3 words or fewer is never split. Layer ids are
 `caption-<index>` over the final list, so a split moves the ids after it. Only when splitting cannot
 help (a cue that will not split, three rounds spent) does a cue gain lines again, because ink on the
 mark is worse.
@@ -4070,7 +4072,23 @@ ladder) and saves it as `caption_editor_style.position_y_frac`. The decision is 
 unconfirmed sampler (no clip, error, too few frames) protects the upper fallback face only, so the
 captions stay where they were. The block still grows about its centre (the saved y is a centre, the
 editor depends on that), so one- and two-row cues differ by half a row at the top edge.
-Guards: `tests/pipeline/test_phone_caption_face_band.py`, `tests/pipeline/test_phone_captions.py`.
+A spot the creator placed is never moved for the band (KRI-1177: their spot wins over a face):
+`phone_text_styling.caption_spot_is_asked` is true for a position on the brief's caption ask, a
+saved caption or all-text position, or one named this turn; the receipt is then
+`caption_face_band_placement: {status: creator_spot_kept}` and, on the protected-ask path, faces
+limit the captions only when the creator named a face (as before KRI-632).
+
+Rollback: `PHONE_CAPTION_ROW_BUDGET_ENABLED=false` (default `true`; `fly secrets set
+PHONE_CAPTION_ROW_BUDGET_ENABLED=false -a nova-video`, api + worker, then restart). Off means no
+time splits (one layer per cue, ids `caption-0..n-1`, rows gained to clear the mark as before), no
+face-band sampling pass and the pre-KRI-632 face rule on the protected-ask path; the compile is
+byte-identical to origin/main (the off-state goldens run with the switch off). The switch on
+(default) changes the layer count and ids for any cue the mark forces past two rows, and adds one
+whole-take face sample per Talking render that has no protected-text ask (about what the opening
+and closing titles already cost), so a revert is not needed to turn it off.
+Guards: `tests/pipeline/test_phone_caption_face_band.py` (face band, creator spot, switch),
+`tests/pipeline/test_phone_caption_row_budget.py` (production path, switch on vs off),
+`tests/pipeline/test_phone_captions.py`.
 
 ## Caption shape on phone Talking edits (Qendresa item 12)
 

@@ -766,6 +766,13 @@ def caption_animation_renderable() -> bool:
     )
 
 
+def caption_row_budget_enabled() -> bool:
+    """Does the phone caption lane keep cues to two rows and off the face band (KRI-632)?
+
+    False: no time splits (layer count and ids as before), no face-band pass."""
+    return bool(settings.phone_caption_row_budget_enabled)
+
+
 def caption_animation_supported(*, require_client: bool | None = None) -> bool:
     """May a creator author caption animation now (``editor_capabilities.caption_animation``)?"""
     return caption_animation_renderable() and caption_animation_client_supported(

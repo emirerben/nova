@@ -128,8 +128,14 @@ _CAPTION_ROW_BUDGET = 2
 # The last round of `compile_caption_layers` cannot split any more; a cue may then
 # still gain this many lines rather than keep its ink on the mark.
 _MAX_EXTRA_CAPTION_LINES = 2
-# A split keeps at least this many words on each side when the cue has enough of them.
+# A split keeps at least this many words on each side (the ticket's "no cue under 3 words when
+# it can merge"). A 4-5 word cue cannot be cut that way, and a third row was the filed bug, so
+# it may be cut into pieces of `_MIN_SHORT_SPLIT_WORDS` or more (2+2, 2+3), never a single
+# word; a cue of fewer words than that is never split and keeps today's re-break / lift
+# behaviour (this is also what leaves a "two words at a time" cue whole).
 _MIN_SPLIT_WORDS = 3
+_MIN_SHORT_SPLIT_WORDS = 2
+_MIN_SPLIT_CUE_WORDS = 2 * _MIN_SHORT_SPLIT_WORDS
 # How many rounds of time splits `compile_caption_layers` runs: each halves the
 # cues that still met the mark, so three rounds take a 16-word cue to 2-word pieces.
 _MAX_TIME_SPLIT_ROUNDS = 3
@@ -546,6 +552,11 @@ def compile_caption_layers(
             f"{MAX_CAPTION_LAYERS}-text-layer cap"
         )
     canvas = PipelineCanvas(width=canvas_width, height=canvas_height)
+    from app.services.phone_rollout import caption_row_budget_enabled
+
+    # Switch off (PHONE_CAPTION_ROW_BUDGET_ENABLED): no split round runs, so the compile is the
+    # one that shipped before KRI-632 -- one layer per cue, rows gained to clear the mark.
+    max_rounds = _MAX_TIME_SPLIT_ROUNDS if caption_row_budget_enabled() else 0
     rounds = 0
     while True:
         layers: list[PortableTextLayer] = []
@@ -625,13 +636,13 @@ def compile_caption_layers(
         # One-word cues were laid out word by word, so the keep-out pass treats each word as the
         # one-word caption it would be on its own.
         # The last round may not ask for splits: what still meets the mark gains lines instead.
-        unresolved: list[int] | None = [] if rounds < _MAX_TIME_SPLIT_ROUNDS else None
+        unresolved: list[int] | None = [] if rounds < max_rounds else None
         resolved = _make_room_for_watermark(
             layers, overlays, canvas=canvas, look=resolved_look, unresolved=unresolved
         )
         if unresolved:
             split = _split_unresolved(prepared, entries, unresolved)
-            rounds = rounds + 1 if split is not None else _MAX_TIME_SPLIT_ROUNDS
+            rounds = rounds + 1 if split is not None else max_rounds
             prepared = split if split is not None else prepared
             continue
         if any(isinstance(entry, _SingleWordCue) for entry in entries):
@@ -965,7 +976,7 @@ def _clear_of_watermark(
     it, and the block grows upward instead of down.
 
     When no re-break within the row budget clears the mark and ``may_split`` is
-    set, `_SPLIT_IN_TIME` comes back for a cue of two or more words (and no
+    set, `_SPLIT_IN_TIME` comes back for a cue of `_MIN_SPLIT_CUE_WORDS` or more words (and no
     authored line breaks): the caller shows it as two shorter cues rather than
     growing it toward the speaker.
 
@@ -1099,9 +1110,10 @@ def _clear_of_watermark(
 
     # With a split available the rows stay in budget; without one (the last round) the
     # cue may still gain lines, because ink on the mark is the worse outcome.
+    can_split = may_split and not hard_breaks and len(words) >= _MIN_SPLIT_CUE_WORDS
     most_rows = (
         max(today_lines, _CAPTION_ROW_BUDGET)
-        if may_split
+        if can_split
         else today_lines + _MAX_EXTRA_CAPTION_LINES
     )
     counts = [count for count in range(today_lines, most_rows + 1) if count <= len(words)]
@@ -1110,7 +1122,7 @@ def _clear_of_watermark(
     placements = [(count, 0.0) for count in counts] + [
         (count, step) for step in _LIFT_FALLBACK_STEPS for count in counts
     ]
-    split_before_lift = may_split and not hard_breaks and len(words) >= 2
+    split_before_lift = can_split
     for count, step in placements:
         if split_before_lift and step:
             return _SPLIT_IN_TIME
@@ -1211,12 +1223,14 @@ def _split_cue_in_time(cue: dict) -> tuple[dict, dict] | None:
     """One cue as two consecutive cues, cut where the speaker pauses or a clause ends and
     the halves are about as long as each other. No word, word time or cue edge moves: the
     first half holds until the second begins (as `build_plain_cues` does for the blocks of
-    one sentence), so the caption never flickers off between them. None for a single word,
-    or when the cue's words are not its text's words."""
+    one sentence), so the caption never flickers off between them. A piece keeps 3 or more
+    words when the cue has 6 or more, else 2 or more. None for a shorter cue, or when the
+    cue's words are not its text's words."""
     tokens = cue["text"].split()
     count = len(tokens)
-    if count < 2:
+    if count < _MIN_SPLIT_CUE_WORDS:
         return None
+    least = _MIN_SPLIT_WORDS if count >= 2 * _MIN_SPLIT_WORDS else _MIN_SHORT_SPLIT_WORDS
     words = cue.get("words")
     if words is not None and len(words) != count:
         return None
@@ -1227,8 +1241,6 @@ def _split_cue_in_time(cue: dict) -> tuple[dict, dict] | None:
     def cost(cut: int) -> float:
         left = sum(widths[:cut]) + cut - 1
         value = ((left - (total - left - 1)) / total) ** 2
-        if count >= 2 * _MIN_SPLIT_WORDS and min(cut, count - cut) < _MIN_SPLIT_WORDS:
-            value += 1.0  # a 1-2 word tail reads as an orphan, as in `captions.py`
         if _CLAUSE_END.search(tokens[cut - 1]):
             value -= 0.1
         if words is not None:
@@ -1236,7 +1248,7 @@ def _split_cue_in_time(cue: dict) -> tuple[dict, dict] | None:
             value -= 0.2 * min(max(gap, 0.0), 0.5) / 0.5
         return value
 
-    cut = min(range(1, count), key=cost)
+    cut = min(range(least, count - least + 1), key=cost)
     if words is not None:
         edge = float(words[cut]["start_s"])
     else:

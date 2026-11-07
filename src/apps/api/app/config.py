@@ -905,6 +905,14 @@ class Settings(BaseSettings):
     # Apply: `fly secrets set CAPTION_ANIMATION_ENABLED=false` (api + worker) + restart.
     caption_animation_enabled: bool = True
     caption_animation_min_client_protocol: int = 24
+    # KRI-632: Talking/phone captions stay at most two rows per cue. A cue the Kria mark would
+    # push past two rows is shown as two consecutive pieces (`phone_captions._split_cue_in_time`,
+    # new `caption-<n>` ids), and a face band pass keeps the whole caption block off the
+    # speaker's face unless the creator placed the captions. Default TRUE. False: no splits,
+    # no face-band pass, protected-ask captions limit to faces only when one was named; the
+    # compile is byte-identical to before. Apply: `fly secrets set
+    # PHONE_CAPTION_ROW_BUDGET_ENABLED=false` (api + worker) + restart.
+    phone_caption_row_budget_enabled: bool = True
     # Prompt fidelity (animation): "with animations" / "animated text" reaches the rendered text.
     # Default TRUE. brief_view reads an animation ask at any text scope, an unnamed ask gets one
     # tasteful entrance (`animation_ask.DEFAULT_TEXT_ENTRANCE`), the creation text pass applies

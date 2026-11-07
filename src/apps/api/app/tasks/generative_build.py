@@ -143,6 +143,7 @@ from app.services.job_phases import (
 from app.services.job_storage_paths import JOB_POSTER_PATH_PREFIX, owned_job_output_path
 from app.services.music_genre import asked_genres, genre_shortlist
 from app.services.phone_text_styling import (
+    caption_spot_is_asked,
     current_phone_text_policy,
     generation_caption_cues,
     generation_style_fields,
@@ -13115,6 +13116,7 @@ def _phone_protected_plan(
     )
     from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.services.phone_rollout import caption_row_budget_enabled  # noqa: PLC0415
 
     canvas = canvas if canvas is not None else _STORY_CANVAS
 
@@ -13164,8 +13166,15 @@ def _phone_protected_plan(
                 canvas=canvas,
                 objects=plan.objects,
                 # KRI-632: the speaker's face (band) is a limit for the captions too, so a
-                # block never crosses the chin; every face when the creator named one.
-                faces=faces,
+                # block never crosses the chin, unless the creator placed the captions
+                # (KRI-1177: their spot wins over a face) or the switch is off. Every face
+                # when the creator named one.
+                faces=(
+                    faces
+                    if plan.protect_all_faces
+                    or (caption_row_budget_enabled() and not caption_spot_is_asked())
+                    else []
+                ),
                 keep_segments=kept,
                 display_width=display_width,
                 display_height=display_height,
@@ -13200,11 +13209,14 @@ def _phone_face_band_caption_look(
     from app.pipeline.phone_protected_text import choose_caption_look  # noqa: PLC0415
     from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.services.phone_rollout import caption_row_budget_enabled  # noqa: PLC0415
 
     canvas = canvas if canvas is not None else _STORY_CANVAS
     kept = [(float(a), float(b)) for a, b in keep_segments if float(b) > float(a)]
-    if not kept or not cues:
+    if not kept or not cues or not caption_row_budget_enabled():
         return None, None
+    if caption_spot_is_asked():
+        return None, {"status": "creator_spot_kept"}
     try:
         display_width, display_height = display_dims(binding.original)
         scale = fit_transform(display_width, display_height, canvas, landscape_fit).scale
