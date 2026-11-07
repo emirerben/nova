@@ -56,3 +56,53 @@ def test_other_shapes_untouched():
     assert not brief_mutes_whole_video(_brief("Mute my sound", scope="clip:abc123"))
     assert not brief_mutes_whole_video(_brief("Mute my sound", kind="style"))
     assert not brief_mutes_whole_video(_brief("Mute my sound", facts={}))
+
+
+def _req(rid, **kw) -> BriefRequirement:
+    return BriefRequirement(id=rid, kind="audio", scope="global", description=kw.pop("d"), **kw)
+
+
+def test_targeted_source_muted_is_not_a_whole_video_mute():
+    for extra in (
+        {"sound_from_s": 2, "sound_to_s": 4},
+        {"sound_media": "abc123"},
+        {"sound_clip": "last"},
+        {"sound_line": "hello"},
+        {"sound_except": [{"sound_clip": "last"}]},
+    ):
+        brief = CreativeBrief(
+            requirements=[
+                _req("r1", d="Mute my sound", facts={"audio_intent": "source_muted", **extra})
+            ]
+        )
+        assert not brief_mutes_whole_video(brief), extra
+
+
+def test_later_correction_wins_in_brief_order():
+    mute = _req("r7", d="Mute my sound", facts={"audio_intent": "source_muted"})
+    on = _req("r99", d="Turn my sound back on", facts={"clip_sound": "on"})
+    off = _req("r99", d="Mute my sound", facts={"clip_sound": "off"})
+    muted_first = brief_sound_toggle_asks(CreativeBrief(requirements=[mute, on]))
+    assert [(a.requirement_id, a.state) for a in muted_first] == [("r7", "off"), ("r99", "on")]
+    on_first = brief_sound_toggle_asks(
+        CreativeBrief(requirements=[_req("r1", d="Sound on", facts={"clip_sound": "on"}), mute])
+    )
+    assert [(a.requirement_id, a.state) for a in on_first] == [("r1", "on"), ("r7", "off")]
+    assert (
+        brief_sound_toggle_asks(CreativeBrief(requirements=[mute, off]))[-1].requirement_id == "r99"
+    )
+
+
+def test_receipt_routes_through_sound_toggle_on_montage_only():
+    from app.kria.brief_checks import PlanFacts, check_requirement
+
+    text = "Mute my sound, I'll add a song on TikTok"
+    typed = _req("r4", d=text, facts={"audio_intent": "source_muted"})
+    twin = _req("r4", d=text, facts={"clip_sound": "off"})
+    facts = PlanFacts(phone_montage=True)
+    got, want = check_requirement(typed, facts), check_requirement(twin, facts)
+    assert (got.status, got.reason) == (want.status, want.reason)
+    assert got.status == "met"
+    # A voiceover edit keeps the bed reader: it never says "Clip sound off".
+    voiceover = check_requirement(typed, PlanFacts(voiceover_edit=True))
+    assert voiceover.reason != want.reason

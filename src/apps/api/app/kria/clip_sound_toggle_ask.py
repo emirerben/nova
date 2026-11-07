@@ -221,7 +221,19 @@ def requirement_source_mute(req: BriefRequirement) -> SoundToggleAsk | None:
         return None
     if _typed_audio_intent(req) != SOURCE_MUTED_INTENT:
         return None
-    if req.facts.get(CLIP_SOUND_FACT) is not None:
+    if req.facts.get(CLIP_SOUND_FACT) is not None or any(
+        req.facts.get(key) is not None
+        for key in (
+            SOUND_CLIP_FACT,
+            SOUND_MEDIA_FACT,
+            SOUND_FROM_FACT,
+            SOUND_TO_FACT,
+            SOUND_LINE_FACT,
+            SOUND_EXCEPT_FACT,
+        )
+    ):
+        # A row that names where (or an exception) is the `clip_sound` reader's, never a
+        # whole-video mute.
         return None
     text = _req_text(req)
     if (
@@ -241,14 +253,13 @@ def brief_sound_toggle_asks(brief: CreativeBrief | None) -> tuple[SoundToggleAsk
     """
     if brief is None:
         return ()
-    asks = list(sound_toggle_asks(brief.live()))
-    seen = {ask.requirement_id for ask in asks}
-    asks.extend(
+    # One pass in brief order: a later creator correction (``clip_sound: on``) must follow an
+    # earlier ``source_muted`` mute, and the reverse.
+    return tuple(
         ask
         for req in brief.live()
-        if req.id not in seen and (ask := requirement_source_mute(req)) is not None
+        if (ask := requirement_sound_toggle(req) or requirement_source_mute(req)) is not None
     )
-    return tuple(asks)
 
 
 def mutes_whole_video(asks: Iterable[SoundToggleAsk]) -> bool:
