@@ -1541,6 +1541,7 @@
         "src/apps/api/tests/fixtures/kria_replay/render_entries.json",
         "src/apps/api/tests/fixtures/kria_replay/voiceover_montage/",
         "src/apps/api/tests/fixtures/kria_replay/talking_head/",
+        "src/apps/api/tests/fixtures/kria_replay/talking_keep_whole/",
         "src/apps/api/tests/fixtures/kria_replay/narrated/",
         "src/apps/api/tests/fixtures/kria_replay/lipsync_song/",
         "src/apps/api/tests/fixtures/kria_replay/speech_excerpt/",
