@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.52.0] - 2026-11-07
+
+### Changed
+- fix(ios): restore editor reconciliation and account-safe recovery (#2146) <!-- release-pr: 2146 -->
+
+## [0.88.51.0] - 2026-11-07
+
+### Changed
+- fix(captions): a caption asked at the bottom ends at 0.84, not 0.70 (KRI-1266) (#2151) <!-- release-pr: 2151 -->
+
+## [0.88.50.0] - 2026-11-07
+
+### Changed
+- fix(kria): Talking cards ask is a render promise, then judged on the card receipt (KRI-1237) (#2153) <!-- release-pr: 2153 -->
+
+## [0.88.49.0] - 2026-11-07
+
+### Changed
+- fix(api): creator labels anchor to their own quote and stack instead of failing (KRI-884, KRI-888) (#2166) <!-- release-pr: 2166 -->
+
 ## [0.88.48.0] - 2026-11-07
 
 ### Changed

@@ -132,7 +132,7 @@ import UIKit
         var coordinators: [DeviceRenderCoordinator] = []
         let sessions = DeviceRenderSessions(fetch: { _, _ in
             await gate.clean()
-            return .init(phase: "awaiting_device", request: request)
+            return .init(phase: "awaiting_device", request: request, baseGeneration: "a")
         }, factory: { _, _ in
             let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: RetryExport(), sources: RetrySources(), publisher: RetryPublisher())
             coordinators.append(coordinator); started.fulfill(); return coordinator
