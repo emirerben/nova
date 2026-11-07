@@ -143,13 +143,20 @@ def _real_lyric_row():
 
 
 def test_template_lyric_row_takes_the_lyric_preference_not_the_title_one():
-    from app.pipeline.phone_text_style import text_role
-    from app.schemas.phone_text_style import effective_text_rule
-
+    """Runs the real style pass: the lyric preference colours the row, the title one does not."""
     row = _real_lyric_row()
     assert row["role"] == "lyric_line" and row["source_params"]["source"] == "lyric_seed"
-    preferences = {"lyric": {"color": "#FFFF00"}, "title": {"color": "#FF0000"}}
-    assert effective_text_rule(preferences, {}, text_role(row))["color"] == "#FFFF00"
+    (resolved,) = resolve_phone_text_style(
+        [row], preferences={"lyric": {"color": "#FFFF00"}, "title": {"color": "#FF0000"}}
+    )
+    assert resolved["color"] == "#FFFF00"
+    assert resolved["source_params"]["phone_text_style_version"] == 1
+
+
+def test_template_lyric_row_resolves_with_no_saved_preference():
+    """The style pass measures a lyric row (the burn path drops lyric lines by default)."""
+    (resolved,) = resolve_phone_text_style([_real_lyric_row()])
+    assert resolved["size_px"] and 0 <= resolved["y_frac"] <= 1
 
 
 @pytest.mark.parametrize(
@@ -192,3 +199,25 @@ def test_rows_without_a_shadow_stay_without_one(own):
     assert resolve_phone_text_style([row])[0]["shadow_enabled"] is False
     missing = {k: v for k, v in title().items() if k != "shadow_enabled"}
     assert resolve_phone_text_style([missing])[0]["shadow_enabled"] is False
+
+
+# Only a title keeps the shadow its writer authored (KRI-1050). Every other role is still
+# restyled to the account default, so pins, labels, captions and lyrics do not change size or
+# spot because a writer asked for a shadow the app never advertised for them.
+AUTHORED_SHADOW_ROWS = {
+    "pinned": {"id": "guided-pinned-0", "x_frac": 0.92, "y_frac": 0.12, "alignment": "right"},
+    "pin_prefix": {"id": "pin-1", "x_frac": 0.92, "y_frac": 0.12, "alignment": "right"},
+    "guided_label": {"id": "guided-label-1"},
+    "speech_montage_label": {"id": "clip-label-0"},
+    "caption": {"id": "caption-0"},
+    "song_caption": {"id": "song-caption-0"},
+}
+
+
+@pytest.mark.parametrize("name", sorted(AUTHORED_SHADOW_ROWS))
+def test_non_title_rows_do_not_keep_an_authored_shadow(name):
+    row = {**title("Day 1"), "size_px": 60, **AUTHORED_SHADOW_ROWS[name]}
+    assert row["shadow_enabled"] is True
+    (resolved,) = resolve_phone_text_style([row])
+    assert resolved["shadow_enabled"] is False
+    assert resolved["size_px"] == 60

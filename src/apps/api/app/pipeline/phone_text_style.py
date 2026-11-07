@@ -242,7 +242,11 @@ def measure_box(
 
     element = TextElement.model_validate({k: v for k, v in row.items() if k != "phone_text_style"})
     overlays = build_overlays_from_text_elements(
-        [element], video_duration_s=float(element.end_s), independent_box_alignment=True
+        [element],
+        video_duration_s=float(element.end_s),
+        independent_box_alignment=True,
+        # The caller handed us this row to measure; a template lyric row is dropped by default.
+        include_lyric_line=True,
     )
     boxes = []
     budget = _MEASUREMENTS.get()
@@ -1143,7 +1147,10 @@ def resolve_phone_text_style(
             }
             row["font_family"] = family
             row["stroke_width"] = wanted.get("stroke_width", DEFAULT_STROKE_WIDTH)
-            own_shadow = row.get("shadow_enabled")
+            # Only a title keeps the shadow its writer authored (KRI-1050: a guided title over
+            # bright footage). Pins, labels, captions and lyrics still take the account default,
+            # so their size and spot do not move because a writer asked for a shadow.
+            own_shadow = row.get("shadow_enabled") if role == "title" else None
             row["shadow_enabled"] = wanted.get(
                 "shadow_enabled",
                 own_shadow if isinstance(own_shadow, bool) else DEFAULT_SHADOW_ENABLED,

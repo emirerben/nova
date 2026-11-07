@@ -70,8 +70,7 @@ def test_phone_font_preferences_preserve_connected_heading_layout(corner, sizes)
     assert [row["size_px"] for row in rows] == sizes
     assert [row["text"] for row in rows] == COPY
     assert len({(row["x_frac"], row["alignment"]) for row in rows}) == 1
-    assert all(row["font_family"] == "Inter" for row in rows)
-    assert [row["shadow_enabled"] for row in rows] == [row["shadow_enabled"] for row in original]
+    assert all(row["font_family"] == "Inter" and not row["shadow_enabled"] for row in rows)
     bounds = [_bounds(row) for row in rows]
     assert bounds[1][0] - bounds[0][1] == pytest.approx(24, abs=0.2)
     assert bounds[2][0] - bounds[1][1] == pytest.approx(8, abs=0.2)
