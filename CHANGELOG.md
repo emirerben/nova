@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.72.0] - 2026-11-07
+
+### Changed
+- fix(kria): a word-by-word sentence always has its own bar (KRI-1057, KRI-1058) (#2171) <!-- release-pr: 2171 -->
+
 ## [0.88.71.0] - 2026-11-07
 
 ### Changed
