@@ -1781,6 +1781,7 @@
         "src/apps/api/tests/fixtures/agent_evals/suggestion_agent/unknown_target_beyond_the_target_cap_still_voids.json",
         "src/apps/api/tests/fixtures/agent_evals/suggestion_agent/whole_video_handle_on_a_clip_kind.json",
         "src/apps/api/tests/fixtures/agent_evals/suggestion_agent/why_over_the_cap_is_truncated.json",
+        "src/apps/api/tests/fixtures/agent_evals/suggestion_agent_threads/",
         "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/contract_example_first_prompt.json",
         "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/contract_example_pending.json",
         "src/apps/api/tests/fixtures/agent_evals/suggestion_chips/contract_example_ready.json",
