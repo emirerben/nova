@@ -15,7 +15,7 @@ final class PlacedCardStyleTests: XCTestCase {
     private struct Frame {
         let bytes: [UInt8], width: Int, height: Int
         func pixel(_ x: Int, _ y: Int) -> [Int] { (0..<3).map { Int(bytes[(y * width + x) * 4 + $0]) } }
-        func isCard(_ x: Int, _ y: Int) -> Bool { let p = pixel(x, y); return p[1] > 100 || p[0] > 150 }
+        func isCard(_ x: Int, _ y: Int) -> Bool { let p = pixel(x, y); return p[1] > 100 || p[0] > 100 }
         /// The card's pixel box: the green photo plus its red corner marker, against the dark base.
         func cardBox() -> (minX: Int, maxX: Int, minY: Int, maxY: Int)? {
             var box: (Int, Int, Int, Int)?
@@ -24,11 +24,12 @@ final class PlacedCardStyleTests: XCTestCase {
             } }
             return box.map { (minX: $0.0, maxX: $0.1, minY: $0.2, maxY: $0.3) }
         }
+        /// The red marker's centre. A card fading in during its entrance blends the marker towards the dark base.
         func redCentroid() -> (x: Double, y: Double)? {
             var sx = 0.0, sy = 0.0, n = 0.0
             for y in 0..<height { for x in 0..<width {
                 let p = pixel(x, y)
-                if p[0] > 150 && p[1] < 90 && p[2] < 90 { sx += Double(x); sy += Double(y); n += 1 }
+                if p[0] > 100 && p[0] > p[1] + 60 && p[2] < 90 { sx += Double(x); sy += Double(y); n += 1 }
             } }
             return n == 0 ? nil : (sx / n, sy / n)
         }
