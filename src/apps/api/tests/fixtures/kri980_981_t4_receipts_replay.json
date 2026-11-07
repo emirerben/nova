@@ -1,0 +1,231 @@
+{
+ "_about": "Receipts of the Don Julio T4 shape (waiter 8.23 s speaks; cheese 12.0 s and steak 11.0 s are silent footage) from the replay in tests/kria/test_talking_receipts_kri980_981_748.py, on main a518aed8c (before) and with the fix (after). Regenerate: see the PR body.",
+ "before_main_a518aed8c": {
+  "cutaway_sound_lane_off/t4_speaker_8.23_two_silent_cutaways": [
+   {
+    "id": "len",
+    "status": "partial",
+    "reason": "A Talking edit keeps your whole take, so its length follows your clip; your take is 31.2s and you asked for at most 10s",
+    "asks_simpler_version": false
+   },
+   {
+    "id": "r2",
+    "status": "met",
+    "reason": "That clip plays without its own sound, so your voice keeps playing over it",
+    "asks_simpler_version": false
+   },
+   {
+    "id": "r3",
+    "status": "met",
+    "reason": "That clip plays without its own sound, so your voice keeps playing over it",
+    "asks_simpler_version": false
+   }
+  ],
+  "cutaway_sound_lane_off/cheese_clip_may_speak": [
+   {
+    "id": "r2",
+    "status": "not_possible",
+    "reason": "Turning clip sound on or off by clip or by seconds works on a montage made on your iPhone, not in this edit",
+    "asks_simpler_version": true
+   },
+   {
+    "id": "r3",
+    "status": "met",
+    "reason": "That clip plays without its own sound, so your voice keeps playing over it",
+    "asks_simpler_version": false
+   }
+  ],
+  "cutaway_sound_lane_off/mute_speaker_and_whole_video": [
+   {
+    "id": "r1",
+    "status": "not_possible",
+    "reason": "Turning clip sound on or off by clip or by seconds works on a montage made on your iPhone, not in this edit",
+    "asks_simpler_version": true
+   },
+   {
+    "id": "r2",
+    "status": "not_possible",
+    "reason": "Turning clip sound on or off by clip or by seconds works on a montage made on your iPhone, not in this edit",
+    "asks_simpler_version": true
+   }
+  ],
+  "cutaway_sound_lane_off/one_clip_31s_take": [
+   {
+    "id": "len",
+    "status": "partial",
+    "reason": "A Talking edit keeps your whole take, so its length follows your clip; your take is 31.2s and you asked for at most 10s",
+    "asks_simpler_version": false
+   }
+  ],
+  "cutaway_sound_lane_on/t4_speaker_8.23_two_silent_cutaways": [
+   {
+    "id": "len",
+    "status": "partial",
+    "reason": "A Talking edit keeps your whole take, so its length follows your clip; your take is 31.2s and you asked for at most 10s",
+    "asks_simpler_version": false
+   },
+   {
+    "id": "r2",
+    "status": "met",
+    "reason": "Clip sound off: that clip",
+    "asks_simpler_version": false
+   },
+   {
+    "id": "r3",
+    "status": "met",
+    "reason": "Clip sound off: that clip",
+    "asks_simpler_version": false
+   }
+  ],
+  "cutaway_sound_lane_on/cheese_clip_may_speak": [
+   {
+    "id": "r2",
+    "status": "met",
+    "reason": "Clip sound off: that clip",
+    "asks_simpler_version": false
+   },
+   {
+    "id": "r3",
+    "status": "met",
+    "reason": "Clip sound off: that clip",
+    "asks_simpler_version": false
+   }
+  ],
+  "cutaway_sound_lane_on/mute_speaker_and_whole_video": [
+   {
+    "id": "r1",
+    "status": "met",
+    "reason": "Clip sound off: that clip",
+    "asks_simpler_version": false
+   },
+   {
+    "id": "r2",
+    "status": "not_possible",
+    "reason": "Turning clip sound on or off by clip or by seconds works on a montage made on your iPhone, not in this edit",
+    "asks_simpler_version": true
+   }
+  ],
+  "cutaway_sound_lane_on/one_clip_31s_take": [
+   {
+    "id": "len",
+    "status": "partial",
+    "reason": "A Talking edit keeps your whole take, so its length follows your clip; your take is 31.2s and you asked for at most 10s",
+    "asks_simpler_version": false
+   }
+  ]
+ },
+ "after_fix": {
+  "cutaway_sound_lane_off/t4_speaker_8.23_two_silent_cutaways": [
+   {
+    "id": "len",
+    "status": "partial",
+    "reason": "I'll check the full video length, including its ending, after export.",
+    "asks_simpler_version": false
+   },
+   {
+    "id": "r2",
+    "status": "met",
+    "reason": "That clip plays without its own sound, so your voice keeps playing over it",
+    "asks_simpler_version": false
+   },
+   {
+    "id": "r3",
+    "status": "met",
+    "reason": "That clip plays without its own sound, so your voice keeps playing over it",
+    "asks_simpler_version": false
+   }
+  ],
+  "cutaway_sound_lane_off/cheese_clip_may_speak": [
+   {
+    "id": "r2",
+    "status": "not_possible",
+    "reason": "Turning clip sound on or off by clip or by seconds works on a montage made on your iPhone, not in this edit",
+    "asks_simpler_version": true
+   },
+   {
+    "id": "r3",
+    "status": "met",
+    "reason": "That clip plays without its own sound, so your voice keeps playing over it",
+    "asks_simpler_version": false
+   }
+  ],
+  "cutaway_sound_lane_off/mute_speaker_and_whole_video": [
+   {
+    "id": "r1",
+    "status": "not_possible",
+    "reason": "Turning clip sound on or off by clip or by seconds works on a montage made on your iPhone, not in this edit",
+    "asks_simpler_version": true
+   },
+   {
+    "id": "r2",
+    "status": "not_possible",
+    "reason": "Turning clip sound on or off by clip or by seconds works on a montage made on your iPhone, not in this edit",
+    "asks_simpler_version": true
+   }
+  ],
+  "cutaway_sound_lane_off/one_clip_31s_take": [
+   {
+    "id": "len",
+    "status": "partial",
+    "reason": "A Talking edit keeps your whole take, so its length follows your clip; your take is 31.2s and you asked for at most 10s",
+    "asks_simpler_version": false
+   }
+  ],
+  "cutaway_sound_lane_on/t4_speaker_8.23_two_silent_cutaways": [
+   {
+    "id": "len",
+    "status": "partial",
+    "reason": "I'll check the full video length, including its ending, after export.",
+    "asks_simpler_version": false
+   },
+   {
+    "id": "r2",
+    "status": "met",
+    "reason": "That clip plays without its own sound, so your voice keeps playing over it",
+    "asks_simpler_version": false
+   },
+   {
+    "id": "r3",
+    "status": "met",
+    "reason": "That clip plays without its own sound, so your voice keeps playing over it",
+    "asks_simpler_version": false
+   }
+  ],
+  "cutaway_sound_lane_on/cheese_clip_may_speak": [
+   {
+    "id": "r2",
+    "status": "not_possible",
+    "reason": "Turning clip sound on or off by clip or by seconds works on a montage made on your iPhone, not in this edit",
+    "asks_simpler_version": true
+   },
+   {
+    "id": "r3",
+    "status": "met",
+    "reason": "That clip plays without its own sound, so your voice keeps playing over it",
+    "asks_simpler_version": false
+   }
+  ],
+  "cutaway_sound_lane_on/mute_speaker_and_whole_video": [
+   {
+    "id": "r1",
+    "status": "not_possible",
+    "reason": "Turning clip sound on or off by clip or by seconds works on a montage made on your iPhone, not in this edit",
+    "asks_simpler_version": true
+   },
+   {
+    "id": "r2",
+    "status": "not_possible",
+    "reason": "Turning clip sound on or off by clip or by seconds works on a montage made on your iPhone, not in this edit",
+    "asks_simpler_version": true
+   }
+  ],
+  "cutaway_sound_lane_on/one_clip_31s_take": [
+   {
+    "id": "len",
+    "status": "partial",
+    "reason": "A Talking edit keeps your whole take, so its length follows your clip; your take is 31.2s and you asked for at most 10s",
+    "asks_simpler_version": false
+   }
+  ]
+ }
+}
