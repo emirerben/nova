@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.76.0] - 2026-11-07
+
+### Fixed
+- fix(ios): Talk to Camera records from the bottom microphone, removing the frame-rate buzz (KRI-1182) (#2184) <!-- release-pr: 2184 -->
+
 ## [0.88.75.0] - 2026-11-07
 
 ### Changed
