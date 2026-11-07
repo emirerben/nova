@@ -100,15 +100,20 @@ import XCTest
         XCTAssertTrue(app.buttons["chat-attach"].isEnabled, "reopening Add media on a ready video still works")
     }
 
-    /// Add media on a ready video: the composer plus, Record, then closing the camera lands on the clip list.
+    /// Add media on a ready video: the composer plus, Add script, record without a script, then close the camera. The
+    /// camera was opened from the Add media step, so closing it lands on the clip list.
     private func openAddMedia(_ app: XCUIApplication) {
         let attach = app.buttons["chat-attach"]
         XCTAssertTrue(attach.waitForExistence(timeout: 20))
         attach.tap()
-        app.buttons["attach-record"].tap()
+        app.buttons["attach-script"].tap()
+        let noScript = app.buttons["teleprompter-no-script"]
+        XCTAssertTrue(noScript.waitForExistence(timeout: 20))
+        noScript.tap()
         let close = app.buttons["teleprompter-close"]
         XCTAssertTrue(close.waitForExistence(timeout: 20))
         close.tap()
+        XCTAssertTrue(app.buttons["attachment-close"].waitForExistence(timeout: 10))
     }
 
     private func openRerecordCamera(_ app: XCUIApplication) {

@@ -189,9 +189,9 @@ import XCTest
         XCTAssertTrue(app.buttons["teleprompter-retake"].isEnabled)
         capture(app, "Failed native proxy intake retains take")
         app.buttons["teleprompter-close"].tap()
-        app.buttons["teleprompter-open"].tap()
-        app.buttons["teleprompter-no-script"].tap()
-        XCTAssertTrue(app.buttons["teleprompter-use-take"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["attachment-close"].waitForNonExistence(timeout: 10), "closing a tray-opened camera lands in the chat")
+        openCameraFromTray(app)
+        XCTAssertTrue(app.buttons["teleprompter-use-take"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["teleprompter-use-take"].isEnabled)
         capture(app, "Previous take restored after failed intake")
     }

@@ -48,6 +48,10 @@ struct FootagePickerView: View {
     let controls: FootagePickerControls
     /// Set by a host (a chat tile, the camera's Upload) to start one source as soon as this view is on screen.
     let launchSource: Binding<FootageSourceKind?>
+    /// Runs when a source the host launched ends with nothing chosen: its gallery, Files or Saved uploads was cancelled.
+    /// Sources the creator starts from this view's own tiles never report it.
+    let onLaunchedSourceCancelled: (() -> Void)?
+    @State private var hostLaunched = false
     @State private var showsSources = false
     @State private var savedUploadsToPhotos = false
     @ObservedObject private var uploads: BackgroundUploadCoordinator
@@ -82,10 +86,12 @@ struct FootagePickerView: View {
         titleOverride: String? = nil,
         libraryEnabled: Bool = false,
         controls: FootagePickerControls = .tiles(),
-        launchSource: Binding<FootageSourceKind?> = .constant(nil)
+        launchSource: Binding<FootageSourceKind?> = .constant(nil),
+        onLaunchedSourceCancelled: (() -> Void)? = nil
     ) {
         self.controls = controls
         self.launchSource = launchSource
+        self.onLaunchedSourceCancelled = onLaunchedSourceCancelled
         self.libraryEnabled = libraryEnabled
         self.titleOverride = titleOverride
         self.onPickerFilled = onPickerFilled
@@ -256,18 +262,23 @@ struct FootagePickerView: View {
             didChooseNewFootage: $photosPickerHasNewFootage,
             onSelectionCompleted: onSelectionCompleted,
             onRecord: recordAction,
-            onSwitch: { start($0) }
+            onSwitch: { start($0) },
+            onCancelled: launchedSourceCancelled,
+            emptyCloseCancels: role == .clip
         ))
         .onChange(of: photoItems) { _, items in reconcile(items) }
         .fileImporter(
             isPresented: $showingFileImporter,
             allowedContentTypes: role.isAudio ? [.audio] : role == .visual ? visualContentTypes : [.movie],
             allowsMultipleSelection: role.isAudio && onAudioFileSelected != nil ? false : selectionCapacity.remaining > 1,
-            onCompletion: importFiles
+            onCompletion: importFiles,
+            onCancellation: launchedSourceCancelled
         )
         .sheet(isPresented: $showingSavedUploads, onDismiss: {
+            let chose = savedUploadsAdded || savedUploadsToPhotos
             if savedUploadsAdded { savedUploadsAdded = false; onSelectionCompleted?() }
             if savedUploadsToPhotos { savedUploadsToPhotos = false; start(.photos) }
+            if !chose { launchedSourceCancelled() }
         }) {
             SavedUploadsView(projectID: projectID, itemID: itemID, role: role, destination: destination,
                              capacity: selectionCapacity.remaining, uploads: uploads, onAdded: {
@@ -311,7 +322,7 @@ struct FootagePickerView: View {
                 KriaSourceOption.upload(
                     caption: role == .voiceover ? "Use an audio file" : role == .song ? "From Files" : "Use existing \(role == .visual ? "media" : "video")",
                     isEnabled: !blocked || (selectionCapacity.preselected > 0 && !role.isAudio),
-                    action: { if uploadsDirectly { beginImport(source: .files) } else { openSources() } }),
+                    action: { hostLaunched = false; if uploadsDirectly { beginImport(source: .files) } else { openSources() } }),
                 third
             ].compactMap { $0 }
             KriaSourceRow(options: options,
@@ -333,7 +344,14 @@ struct FootagePickerView: View {
     private func startLaunchedSource() {
         guard let kind = launchSource.wrappedValue else { return }
         launchSource.wrappedValue = nil
+        hostLaunched = true
         start(kind)
+    }
+
+    private func launchedSourceCancelled() {
+        guard hostLaunched else { return }
+        hostLaunched = false
+        onLaunchedSourceCancelled?()
     }
 
     private func start(_ kind: FootageSourceKind) {
@@ -584,7 +602,13 @@ private struct FootagePhotosPicker: ViewModifier {
     /// The gallery's Record cell and its Saved uploads / Files switches. Each closes the gallery first, then runs.
     var onRecord: (() -> Void)?
     var onSwitch: ((FootageSourceKind) -> Void)?
+    /// Runs once the picker has closed with nothing chosen and no switch to another source pending.
+    var onCancelled: (() -> Void)?
+    /// Whether closing without a new pick (Done with nothing added, a swipe down) counts as a cancel. Only clips report
+    /// what they chose, so only they can tell.
+    var emptyCloseCancels = false
     @State private var closedByFilling = false
+    @State private var sawSystemSelection = false
     @State private var cancelled = false
     @State private var afterDismiss: (() -> Void)?
 
@@ -599,14 +623,17 @@ private struct FootagePhotosPicker: ViewModifier {
             content.sheet(isPresented: $isPresented, onDismiss: {
                 // After the dismissal, not with it: the host closing its own sheet while this one is
                 // still on screen would tear both down mid-animation.
+                var endedEmpty = emptyCloseCancels && !didChooseNewFootage
                 if cancelled {
                     // Cancel put the selection back; nothing new was chosen, so the host must not move on.
                     cancelled = false; closedByFilling = false; didChooseNewFootage = false
+                    endedEmpty = true
                 } else {
                     if closedByFilling { closedByFilling = false; onFilled?() }
                     completeSelectionIfNeeded()
                 }
                 if let next = afterDismiss { afterDismiss = nil; next() }
+                else if endedEmpty { onCancelled?() }
             }) {
                 LibraryPhotosPickerSheet(
                     heading: heading, offersSaved: offersSaved, selection: $selection, limit: limit, filter: filter, kinds: kinds,
@@ -620,8 +647,15 @@ private struct FootagePhotosPicker: ViewModifier {
             }
         } else {
             content.photosPicker(isPresented: $isPresented, selection: $selection, maxSelectionCount: limit, matching: filter)
+                .onChange(of: selection) { _, items in if !items.isEmpty { sawSystemSelection = true } }
                 .onChange(of: isPresented) { _, presented in
-                    if !presented { completeSelectionIfNeeded() }
+                    if presented { sawSystemSelection = false; return }
+                    completeSelectionIfNeeded()
+                    // The system picker hands its choice back after it closes, so wait for it before calling this a cancel.
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(600))
+                        if !sawSystemSelection { onCancelled?() }
+                    }
                 }
         }
     }

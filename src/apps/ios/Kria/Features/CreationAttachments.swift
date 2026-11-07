@@ -17,6 +17,16 @@ enum AttachmentLaunch: Equatable {
     case source(FootageSourceKind)
 }
 
+/// Which surface asked Add media to open a camera or a picker, and so where that presentation lands when it ends with
+/// nothing taken or chosen.
+enum AttachmentOrigin: Equatable {
+    /// The Add media step itself, the footage stage's tiles, or a tray row whose screen is the destination (script,
+    /// voiceover, song, overlays): the creator ends up on the Add media step they came from.
+    case addMedia
+    /// The composer's + tray, Record or Upload: the creator ends up back in the chat.
+    case composerTray
+}
+
 struct AttachmentSheet: View {
     let projectID: UUID
     let maximumClipCount: Int
@@ -30,6 +40,8 @@ struct AttachmentSheet: View {
     /// script to read while recording. Nil = the sheet as before.
     var voiceoverScript: VoiceoverScript? = nil
     var launch: AttachmentLaunch? = nil
+    /// Who asked for `launch`. Consumed by the first camera or picker it opens.
+    var origin: AttachmentOrigin = .addMedia
     /// Re-record from the ready video: the sheet is only a host. It opens the teleprompter at once, swaps this clip for
     /// the new take, and closes with it. Nil = the sheet as before.
     var rerecordTarget: RerecordTarget? = nil
@@ -81,6 +93,10 @@ struct AttachmentSheet: View {
     @State private var pickerLaunch: FootageSourceKind?
     @State private var voiceoverPickerLaunch: FootageSourceKind?
     @State private var launched = false
+    /// `origin` until the presentation it launched ends; `.addMedia` after, so the sheet's own tiles keep their behavior.
+    @State private var launchOrigin: AttachmentOrigin = .addMedia
+    /// A take the camera handed to intake, so closing the camera afterwards is not a cancel.
+    @State private var cameraKeptTake = false
     /// KRI-580: the "Where in the song did you film?" sheet, and whether the server said the feature is off.
     @State private var showsSongRange = false
     @State private var songRangeUnavailable = false
@@ -96,10 +112,13 @@ struct AttachmentSheet: View {
         capabilitiesLoaded: Bool = true,
         voiceoverScript: VoiceoverScript? = nil,
         launch: AttachmentLaunch? = nil,
+        origin: AttachmentOrigin = .addMedia,
         rerecordTarget: RerecordTarget? = nil,
         refresh: @escaping () async -> Void
     ) {
         self.launch = launch
+        self.origin = origin
+        _launchOrigin = State(initialValue: origin)
         self.rerecordTarget = rerecordTarget
         self.projectID = projectID
         self.maximumClipCount = maximumClipCount
@@ -295,14 +314,17 @@ struct AttachmentSheet: View {
             }
             .fullScreenCover(isPresented: $showsTeleprompter, onDismiss: {
                 Task { await refresh() }
-                if rerecordTarget != nil { dismiss() }
+                let backToChat = launchOrigin == .composerTray && !cameraKeptTake
+                launchOrigin = .addMedia
+                cameraKeptTake = false
+                if rerecordTarget != nil || backToChat { dismiss() }
             }) {
                 if let accountID = auth.localStorageIdentity {
                     TeleprompterScreen(accountID: accountID, projectID: projectID,
                         admissionMessage: teleprompterAdmission,
                         replacementNotice: replacementNotice,
-                        intake: useCameraTake,
-                        intakeState: cameraTakeState,
+                        intake: { take, url in noteKept(await useCameraTake(take, url)) },
+                        intakeState: { take in await cameraTakeState(take).map(noteKept) },
                         speakerBackgroundEnabled: speakerBackgroundAvailable,
                         backgroundIntake: useCameraBackground,
                         backgroundStatement: stateSpeakerBackground,
@@ -439,7 +461,7 @@ struct AttachmentSheet: View {
             AttachmentHeading(title: "Add footage", subtitle: FootageStageCopy.attachmentSubtitle(talking: isTalkingToCamera, maximumClipCount: maximumClipCount))
             FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximumClipCount, attachedClipCount: existing(for: .clip), attachedMediaIDs: attachedMediaIDs(for: .clip), role: .clip, itemID: itemID, limit: capabilities?.media?["clips"], destination: uploadDestination(for: .clip), onPickerFilled: nil, onSelectionCompleted: advanceAfterFootageSelection, showsHeading: false, libraryEnabled: capabilities?.mediaLibrary == true,
                               controls: .tiles(record: auth.localStorageIdentity == nil ? nil : { openCamera(withScript: false) }),
-                              launchSource: $pickerLaunch)
+                              launchSource: $pickerLaunch, onLaunchedSourceCancelled: launchedPickerCancelled)
                 .id(AttachmentStep.footage)
             if isTalkingToCamera, auth.localStorageIdentity != nil {
                 Button { showsScriptEntry = true } label: {
@@ -513,6 +535,11 @@ struct AttachmentSheet: View {
 
     private var isTalkingToCamera: Bool {
         (format ?? thread.map { CreationFormat(thread: $0) }) == .talkingToCamera
+    }
+
+    private func noteKept(_ result: TeleprompterIntakeResult) -> TeleprompterIntakeResult {
+        if result == .queued || result == .attached { cameraKeptTake = true }
+        return result
     }
 
     private func useCameraTake(_ take: TeleprompterTakeManifest, _ url: URL) async -> TeleprompterIntakeResult {
@@ -739,7 +766,7 @@ struct AttachmentSheet: View {
                                     ? KriaSourceOption(id: "generate", symbol: "sparkles", title: "Generate", caption: "Make with AI", identifier: "generate-image") {
                                         openOverlaySet()
                                     } : nil),
-                                  launchSource: $pickerLaunch)
+                                  launchSource: $pickerLaunch, onLaunchedSourceCancelled: launchedPickerCancelled)
                     .id(AttachmentStep.overlays)
                 if let summary = VisualPreparationSummary(assets: pool?.assets ?? [], uploading: uploadingVisualCount, online: network.isOnline, slowIDs: preparation.slowIDs, surface: .addMediaSheet, nounOverride: usesVisualPoolOnly ? SlideMediaCopy.preparingNoun : nil) {
                     VisualPreparationSummaryView(summary: summary)
@@ -916,7 +943,13 @@ struct AttachmentSheet: View {
     /// A pick the composer's + started ends back in the chat; from the sheet's own picker it moves on to the next step.
     private func advanceAfterFootageSelection() {
         guard step == .footage else { return }
-        if case .source = launch { requestDismiss() } else { advance() }
+        if launchOrigin == .composerTray { launchOrigin = .addMedia; requestDismiss() } else { advance() }
+    }
+    /// A picker the composer's + started was cancelled: back to the chat, not the Add media step behind it.
+    private func launchedPickerCancelled() {
+        guard launchOrigin == .composerTray else { return }
+        launchOrigin = .addMedia
+        requestDismiss()
     }
     private func advance() { guard stepIndex + 1 < steps.count else { requestDismiss(); return }; let next = steps[stepIndex + 1]; step = next; role = next.role }
     private func goBack() { guard !recorder.isRecording, stepIndex > 0 else { return }; let previous = steps[stepIndex - 1]; step = previous; role = previous.role }
