@@ -422,13 +422,15 @@
       "KriaUITests/SpeakerFrameDirectManipulationUITests/testTapDragAndPinchMoveAndResizeTheSpeaker",
       "KriaUITests/SpeakerFrameDirectManipulationUITests/testOneDragIsOneUndoStep",
       "KriaUITests/SpeakerFrameDirectManipulationUITests/testDragAndPinchPastTheLimitsSaveAFrameInRange",
-      "KriaUITests/SpeakerFrameDirectManipulationUITests/testFullFrameSpeakerIsNotSelectable"
+      "KriaUITests/SpeakerFrameDirectManipulationUITests/testFullFrameSpeakerIsNotSelectable",
+      "KriaUITests/NativeEditorPlaybackAdmissionUITests/testPlayingTitleUpdateSettlesThroughTheRealSurfaceAndCompositor"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
       "KriaUITests/CreationUITests/testCreationWithAttachedFootageReachesConfirmationAndReadyForBothRuntimes",
       "KriaUITests/EditorUITests/testNativeEditorBackButtonReturnsToPreviousSurface",
-      "KriaUITests/EditorUITests/testNativeEditorFixturePlaysAndAdvancesTheClock"
+      "KriaUITests/EditorUITests/testNativeEditorFixturePlaysAndAdvancesTheClock",
+      "KriaUITests/NativeEditorPlaybackAdmissionUITests/testPlayingTitleUpdateSettlesThroughTheRealSurfaceAndCompositor"
     ]
   },
   "sources": {
@@ -612,6 +614,8 @@
     "src/apps/ios/Kria/Core/FootagePlacement.swift": "creation",
     "src/apps/ios/Kria/Core/SteerNow.swift": "creation",
     "src/apps/ios/Kria/Features/WaitingMessageBar.swift": "creation",
-    "src/apps/ios/Tests/KriaUITests/SteerNowUITests.swift": "creation"
+    "src/apps/ios/Tests/KriaUITests/SteerNowUITests.swift": "creation",
+    "src/apps/ios/Kria/Features/NativeEditorPlaybackAdmissionFixture.swift": "editor",
+    "src/apps/ios/Tests/KriaUITests/NativeEditorPlaybackAdmissionUITests.swift": "editor"
   }
 }

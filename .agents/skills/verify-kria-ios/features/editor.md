@@ -43,9 +43,14 @@ At `9a2b7203`, the corrected full-picture/top-notice overlay and overlap checks
 passed. Actual OLD, retained, NEW, deselected manual-note and Undo screenshots were
 inspected: the picture keeps its scale and the notice remains readable.
 
-`NativeEditorPreviewWorkSessionTests/testPlayingInPlaceTitleUpdateSettlesThroughTheRealPlayerSurfaceAndCompositor`
-mounts the production preview in a real test-host window. It checks advancing
-playback and revision admission without invoking readiness callbacks manually.
+`NativeEditorPlaybackAdmissionUITests/testPlayingTitleUpdateSettlesThroughTheRealSurfaceAndCompositor`
+launches and activates the DEBUG playback fixture before mounting the production
+preview. The in-app sequence checks advancing playback and revision admission
+without invoking readiness callbacks manually. It is mapped to both editor and
+smoke CI groups. This replaces the unit-host version, which passed locally but
+failed in hosted CI before playback because no foreground `UIWindowScene` existed.
+The replacement has source/parse review only; its foreground diagnostics and
+playback assertions still require an allocated native run and hosted verification.
 `NativeEditorSessionTests/testRetainedPreviewStopsOnSourceFailureAndRetriesWithoutLosingTheUnsavedTrim`
 checks failure/retry status and authored-state preservation; the deferred-conflict
 case checks export refusal after the candidate composition is ready but its
