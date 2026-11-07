@@ -234,6 +234,35 @@ extension PlanBlock {
     }
 }
 
+/// Where the feed is in its life: the plan is still being decided, the plan is complete and the video is being
+/// made, or the workspace has the finished video. Derived, never sent: the server has no event for it.
+enum PlanFeedPhase: Equatable, Sendable {
+    case planning, rendering, ready
+}
+
+extension PlanBlockFeedState {
+    /// `rendering` once every section is decided and the workspace has no finished video yet.
+    func phase(workspaceReady: Bool) -> PlanFeedPhase {
+        guard isComplete else { return .planning }
+        return workspaceReady ? .ready : .rendering
+    }
+
+    /// One section closer to `self` from what the screen already shows, in display order. A burst of
+    /// `plan_block` events lands in one reduce, so the feed walks these steps (about 80 ms apart) and every
+    /// section enters on its own. `isVisible` is false for a step that only adds a waiting chip, which needs no
+    /// pause. A new job, or nothing on screen yet, jumps straight to `self`.
+    func step(after shown: PlanBlockFeedState) -> (feed: PlanBlockFeedState, isVisible: Bool) {
+        guard !shown.isEmpty, shown.jobID == jobID else { return (self, true) }
+        let pending = blocks.filter { shown.blocksBySection[$0.section] != $0 }
+        guard let first = pending.first else { return (self, false) }
+        guard pending.count > 1 else { return (self, first.state != .waiting) }
+        var next = self
+        for block in pending.dropFirst() { next.blocksBySection[block.section] = shown.blocksBySection[block.section] }
+        next.newestDecided = first.state == .decided ? first.section : shown.newestDecided
+        return (next, first.state != .waiting)
+    }
+}
+
 /// Where the iPhone's own build of the video has got to. On an iPhone account the server only plans (the
 /// cloud decisions arrive at once); the video is built on the device, so the feed paces itself to these real
 /// stages instead of showing every section decided up front. Mapped from `DeviceRenderPhase` and the

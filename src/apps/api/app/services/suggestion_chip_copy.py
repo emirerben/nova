@@ -101,6 +101,7 @@ _LEXICON_SRC: dict[str, dict[str, tuple[str, ...]]] = {
     "en": {
         "default_edit": (
             "cut",
+            "decid",
             "edit",
             "draft",
             "version",
@@ -163,6 +164,7 @@ _LEXICON_SRC: dict[str, dict[str, tuple[str, ...]]] = {
     "tr": {
         "default_edit": (
             "kes",
+            "karar",
             "düzenle",
             "versiyon",
             "taslak",

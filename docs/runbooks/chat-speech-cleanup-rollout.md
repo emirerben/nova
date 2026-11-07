@@ -69,6 +69,29 @@ and evidence: `docs/reviews/qendresa-13-tight-pauses.md`.
 2. `fly secrets set TIGHT_PAUSE_CUT_ENABLED=true --app nova-video`, restart api and worker.
 3. Kill switch: the same secret `=false` + restart; renders already pinned keep their cuts.
 
+## Long pauses by default
+
+`SPEECH_CLEANUP_LONG_PAUSES_ENABLED` (default off; off is byte-identical). Whisper-1 word stamps
+are contiguous and stretch over pauses, so cleanup's pause rule (word gap >= 0.6 s plus silence
+agreement) sees a gap of 0 and keeps the pause. Evidence: Emir's camera take (prod job c39a3210,
+one Turkish clip, 82.7 s, "Clean up speech") kept 11 pauses of 0.6-1.6 s while the plan cut 10.
+With the flag on, a consented single-clip phone Talking render also runs the tight-pause cutter
+(`tight_pause_cut.py`, same protections: quiet-floor rule, noisy takes untouched, voice guard,
+keep-segment caps) in long mode, `min_pause_s=0.6`: only Kria silence spans of 0.6 s or more
+are cut, from their audio edges. Replay on that take: 10 of the 11 leftover pauses cut (longest
+kept pause 1.61 s to 0.58 s; the 11th, 0.62 s, sits under a protected word stamp and stays), no
+word cut. Shorter natural pauses stay.
+
+The receipt is `variant["long_pauses"]` (`mode: "long"`, `limit_s: 0.6`); `tight_pauses` is
+reserved for a creator ask and a tight ask keeps the tight path. The public cleanup counts include
+the extra cuts. No iPhone change: the phone applies the server's cut ranges.
+
+1. `fly secrets set SPEECH_CLEANUP_LONG_PAUSES_ENABLED=true --app nova-video`, restart api and
+   worker (needs `SILENCE_CUT_ENABLED`).
+2. Check a fresh Talking render on a consented take: `long_pauses.status` is `applied` and
+   `pauses_over_limit` is 0; a noisy-room take reports `no_change`.
+3. Kill switch: the same secret `=false` + restart; renders already pinned keep their cuts.
+
 ## Gates and sequence
 
 Deploy migration, API, web, Beat, and the dedicated `speech_analysis` Fly process

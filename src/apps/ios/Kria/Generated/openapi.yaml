@@ -2011,11 +2011,6 @@
             "title": "Text Bend",
             "type": "boolean"
           },
-          "upload_place_hint": {
-            "default": false,
-            "title": "Upload Place Hint",
-            "type": "boolean"
-          },
           "visuals_enabled": {
             "default": false,
             "title": "Visuals Enabled",
@@ -15517,6 +15512,11 @@
             "default": false,
             "title": "Contain",
             "type": "boolean"
+          },
+          "editor_style": {
+            "$ref": "#/components/schemas/VisualEditorStyle",
+            "default": null,
+            "nullable": true
           },
           "fade_in": {
             "default": false,

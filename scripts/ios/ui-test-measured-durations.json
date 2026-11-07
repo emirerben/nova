@@ -42,7 +42,7 @@
   "KriaUITests/CreationUITests/testReceiptChipsAndGuessedNamesStartACorrection": 47.1,
   "KriaUITests/CreationUITests/testReviewPlanFlagsUpdatesAndUndoesASectionFromTheFeedCTA": 100.5,
   "KriaUITests/CreationUITests/testReviewPlanManualEditsOfTitleCaptionsAndMixFlagTheirSections": 92.1,
-  "KriaUITests/CreationUITests/testReviewPlanOpensFromTheProjectAndKeepAsIsSendsNothing": 71.9,
+  "KriaUITests/CreationUITests/testFinishedVideoHasNoReviewRowOrRenderNotes": 71.9,
   "KriaUITests/CreationUITests/testReviewPlanUndoAllPutsEverythingBack": 77.1,
   "KriaUITests/CreationUITests/testSlowDirectionAndPreJobFailureNeverReturnToUploading": 33.9,
   "KriaUITests/CreationUITests/testStaleFootageConflictShowsServerReasonAndRefreshesTheDirection": 30.2,
