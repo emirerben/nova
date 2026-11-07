@@ -265,6 +265,11 @@ class ClipIntent(BaseModel):
     source_kind: Literal["video", "image"] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    # KRI-884: the creator's own sentence this intent came from. Printed words are taken
+    # from here when the same words appear twice; None on intents stored before.
+    source_quote: str | None = Field(
+        default=None, max_length=600, exclude_if=lambda value: value is None
+    )
 
     def accepts_source_kind(self, kind: str) -> bool:
         return self.source_kind is None or self.source_kind == kind
@@ -529,7 +534,7 @@ def _is_subsequence(needle: list[str], haystack: list[str]) -> bool:
     return all(any(item == other for other in remaining) for item in needle)
 
 
-def creator_literal_span(haystack: str, phrase: str) -> str | None:
+def creator_literal_span(haystack: str, phrase: str, *, near: str | None = None) -> str | None:
     """The creator's own bytes for ``phrase``, taken from ``haystack`` (KRI-826).
 
     ``_contains_phrase`` matches words only: it ignores case, accents, punctuation and
@@ -543,6 +548,10 @@ def creator_literal_span(haystack: str, phrase: str) -> str | None:
     symbol the creator never wrote ("!", "🔥") grounds nothing; a "+" the model wrote
     as "and" is a different word list and never matches. A symbol the model dropped
     is printed anyway, since the creator wrote it.
+
+    ``near`` is the creator's own sentence the intent quoted (KRI-884): when the words
+    appear more than once, the match inside it (else the one nearest it) wins over the
+    first. Without it, or when it is not in ``haystack``, the first match wins.
     """
     phrase = (phrase or "").strip().strip(_OUTER_QUOTES).strip()
     needle = _word_list(phrase)
@@ -560,6 +569,7 @@ def creator_literal_span(haystack: str, phrase: str) -> str | None:
     trailing = _symbols(phrase[phrase_words[-1].end() :])
     wanted = _symbols(phrase)
     span = len(needle)
+    found: list[tuple[int, int]] = []
     for i in range(len(words) - span + 1):
         if [w for _s, _e, w in words[i : i + span]] != needle:
             continue
@@ -568,10 +578,54 @@ def creator_literal_span(haystack: str, phrase: str) -> str | None:
         end = _extend(haystack, end, trailing, step=1)
         if start is None or end is None:
             continue
-        text = haystack[start:end]
-        if _is_subsequence(wanted, _symbols(text)):
-            return text
-    return None
+        if _is_subsequence(wanted, _symbols(haystack[start:end])):
+            found.append((start, end))
+    if not found:
+        return None
+    anchor = _quote_range(haystack, near)
+    if anchor is not None:
+        lo, hi = anchor
+        start, end = min(found, key=lambda m: max(lo - m[1], m[0] - hi, 0))
+    else:
+        start, end = found[0]
+    return haystack[start:end]
+
+
+def _folded(text: str) -> tuple[str, list[int]]:
+    """``text`` as the planner fence compares it, with each kept character's source offset.
+
+    Typed quotes, dashes and apostrophes unify, NFKC applies, variation selectors drop and
+    every run of whitespace is one space. The planner accepts a ``source_quote`` on this
+    form, so the quote has to be found on it too.
+    """
+    chars: list[str] = []
+    origin: list[int] = []
+    for at, char in enumerate(text):
+        if 0xFE00 <= ord(char) <= 0xFE0F:
+            continue
+        for piece in unicodedata.normalize("NFKC", char).translate(_APOSTROPHES):
+            if piece.isspace() or unicodedata.category(piece) == "Cc":
+                if chars and chars[-1] == " ":
+                    continue
+                piece = " "
+            chars.append(piece)
+            origin.append(at)
+    while chars and chars[-1] == " ":
+        chars.pop()
+        origin.pop()
+    return "".join(chars), origin
+
+
+def _quote_range(haystack: str, quote: str | None) -> tuple[int, int] | None:
+    """Where the intent's quote sits in the request; None when it can't be found."""
+    folded_quote = _folded((quote or "").strip())[0].strip()
+    if not folded_quote:
+        return None
+    folded, origin = _folded(haystack)
+    at = folded.find(folded_quote)
+    if at < 0:
+        return None
+    return origin[at], origin[at + len(folded_quote) - 1] + 1
 
 
 def _extend(text: str, at: int, symbols: list[str], *, step: int) -> int | None:
@@ -625,11 +679,11 @@ def _same_but_case(a: str, b: str) -> bool:
 _TURKISH_CASE_PAIRS = ({"ı", "I"}, {"i", "İ"})
 
 
-def creator_span(haystack: str, phrase: str) -> str | None:
+def creator_span(haystack: str, phrase: str, *, near: str | None = None) -> str | None:
     """The creator's span for ``phrase`` when it is their words (`_contains_phrase`)."""
     if not _contains_phrase(haystack or "", phrase or ""):
         return None
-    return creator_literal_span(haystack, phrase)
+    return creator_literal_span(haystack, phrase, near=near)
 
 
 def _tokens(text: str) -> set[str]:
@@ -982,13 +1036,16 @@ def ground_label(
     vision_answer: str | None = None,
     vision_confidence: float | None = None,
     intent_id: str = "",
+    source_quote: str | None = None,
 ) -> GroundedLabel | None:
     """Apply the on-screen text fence. Returns None when the label must not render.
 
     KRI-826: the creator's own words print as THEY wrote them (``creator_span``), bounded
     only by the label bar. Everything else keeps the short-tag taste rules.
     """
-    span = creator_span(creator_request or "", value if isinstance(value, str) else "")
+    span = creator_span(
+        creator_request or "", value if isinstance(value, str) else "", near=source_quote
+    )
     if span is not None:
         # The planner's stored value keeps its casing when only case or spacing differs
         # (same rule as ``ground_caption``): a regen from persisted intents re-grounds
@@ -1111,6 +1168,7 @@ def ground_caption(
     vision_confidence: float | None = None,
     intent_id: str = "",
     creator_copy: bool = False,
+    source_quote: str | None = None,
 ) -> GroundedCaption | None:
     """Apply the on-screen text fence to an intent-level caption phrase.
 
@@ -1126,7 +1184,9 @@ def ground_caption(
     """
     if creator_copy:
         # KRI-826: the creator's span, never the planner's copy of their words.
-        span = creator_span(creator_request or "", value if isinstance(value, str) else "")
+        span = creator_span(
+            creator_request or "", value if isinstance(value, str) else "", near=source_quote
+        )
         copy = clean_creator_caption_text(span)
         if copy is not None:
             return GroundedCaption(
@@ -1143,7 +1203,7 @@ def ground_caption(
     if candidate is None:
         return None
     span = (
-        creator_literal_span(creator_request, candidate)
+        creator_literal_span(creator_request, candidate, near=source_quote)
         if _contains_phrase(creator_request or "", candidate)
         else None
     )

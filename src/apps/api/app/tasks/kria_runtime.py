@@ -11,7 +11,7 @@ import dataclasses
 import threading
 import time
 import uuid
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -161,6 +161,7 @@ from app.services.choice_questions import (
     count_asks,
     match_open_choice,
     open_conflicts,
+    simpler_version_answer,
     simpler_version_ask,
     simpler_version_question,
     tag_event,
@@ -1404,17 +1405,28 @@ def _creative_copy_problem_sync(
 SimplerConsent = Literal["named", "unnamed"]
 # `KriaTurnPlan.response` max_length: the held-draft reply must fit it whole.
 _MAX_TURN_RESPONSE_CHARS = 1200
-# A "leaves out" sentence longer than this is not shown (and not recorded): the offer then
-# consents to nothing by name, and the draft says "in the simpler version", not "as agreed".
-_MAX_LEAVES_OUT_CHARS = 600
+# KRI-1236: the "leaves out" sentence names every ask the tap drops, or there is no card. Prod
+# thread b931bc4e (Qendresa Q1, 2026-11-06): eight held asks made a 607-char sentence, so under
+# the old 600-char cap the card named nothing and the tap consented to a list never shown. 900
+# keeps the held reply's tail (draft state, this sentence, the question) inside
+# `_MAX_TURN_RESPONSE_CHARS` with room for the receipt lines above it.
+_MAX_LEAVES_OUT_CHARS = 900
 
 
 def _simpler_version_offer(
-    brief: CreativeBrief | None, requirement_ids: Sequence[str]
-) -> tuple[str, dict[str, Any]]:
+    brief: CreativeBrief | None,
+    requirement_ids: Sequence[str],
+    *,
+    arrow_only_ids: Collection[str] = frozenset(),
+) -> tuple[str, dict[str, Any] | None]:
     """KRI-968: the sentence naming what the simpler version leaves out, and the question
     that records exactly those ids (brief order, the order the sentence names them in) and
-    the brief revision it named them at. ``("", plain question)`` when nothing can be named.
+    the brief revision it named them at. ``("", plain question)`` when nothing can be named;
+    ``("", None)`` (no card) when the list is too long to name whole (KRI-1236).
+
+    ``arrow_only_ids`` are endings the simpler version keeps without their arrow (KRI-1236):
+    the sentence names just the arrow, and the question records that scope
+    (``_OMISSION_FACETS_KEY``) so a tap consents to it and nothing wider.
     """
     question = simpler_version_question()
     if brief is None:
@@ -1423,13 +1435,14 @@ def _simpler_version_offer(
     named = [req for req in brief.live() if req.id in wanted]
     if not named:
         return "", question
-    listed = "; ".join(req.text() for req in named)
+    kept = {req.id for req in named if req.id in arrow_only_ids}
+    listed = "; ".join(_arrow_label(req) if req.id in kept else req.text() for req in named)
     sentence = say(
         en=f"The simpler version leaves out: {listed}.",
         tr=f"Daha basit sürümde çıkarılacak: {listed}.",
     )
     if len(sentence) > _MAX_LEAVES_OUT_CHARS:
-        return "", question
+        return "", None
     named_ids = [req.id for req in named]
     for option in question["options"]:
         if option["key"] == "simpler_version":
@@ -1441,7 +1454,14 @@ def _simpler_version_offer(
         *(req_id for req_id in dict.fromkeys(requirement_ids) if req_id not in named_ids),
     ]
     question["brief_version"] = brief.version
+    if kept:
+        question[_OMISSION_FACETS_KEY] = _omission_facets(kept)
     return sentence, question
+
+
+def _omission_facets(arrow_only_ids: Collection[str]) -> dict[str, list[str]]:
+    """The scope of each partial omission: ``{id: ["closing_arrow"]}`` (KRI-1236)."""
+    return {req_id: [_ARROW_FACET] for req_id in sorted(arrow_only_ids)}
 
 
 def _fit_reply(
@@ -1465,17 +1485,80 @@ def _fit_reply(
     return f"{body}\n{tail}"
 
 
-def _left_out_line(req: BriefRequirement, *, agreed: bool) -> str:
+def _left_out_line(req: BriefRequirement, *, agreed: bool, label: str | None = None) -> str:
     """One requirement the simpler version left out. "As agreed" only when the answered
-    offer named it (KRI-968); an older offer that named nothing says what happened."""
+    offer named it (KRI-968); an older offer that named nothing says what happened.
+    ``label`` names the part left out of an ask that stays (KRI-1236: an ending's arrow)."""
+    what = label or req.text()
     if agreed:
         return say(
-            en=f"- Left out as agreed: {req.text()}",
-            tr=f"- Kararlaştırdığımız gibi çıkarıldı: {req.text()}",
+            en=f"- Left out as agreed: {what}",
+            tr=f"- Kararlaştırdığımız gibi çıkarıldı: {what}",
         )
     return say(
-        en=f"- Left out in the simpler version: {req.text()}",
-        tr=f"- Daha basit sürümde çıkarıldı: {req.text()}",
+        en=f"- Left out in the simpler version: {what}",
+        tr=f"- Daha basit sürümde çıkarıldı: {what}",
+    )
+
+
+# KRI-1236: an ending the simpler version keeps without its arrow. The draft's coverage maps
+# each such id to the facets left out, so the after-render review can say so (the ask stays
+# live, so the superseded-ids rule of `_left_out_lines` never lists it).
+_OMISSION_FACETS_KEY = "omitted_facets"
+_ARROW_FACET = "closing_arrow"
+
+
+def _arrow_only_ids(
+    brief: CreativeBrief | None,
+    unmet_ids: Sequence[str],
+    rows: Sequence[Mapping[str, Any]],
+) -> frozenset[str]:
+    """Unmet endings whose only shortfall is the missing arrow (KRI-1236).
+
+    The arrow checker speaks only once the ending's words were found (`_closing_arrow_reason`),
+    so "The arrow isn't in the video yet" as the whole reason means the words are in the draft.
+    Prod thread b931bc4e (Qendresa Q1): "Make it without these" removed r10, "End with comment
+    REPO and an arrow", so the words went with the arrow.
+    """
+    from app.kria.brief_checks import _CLOSING_ARROW_MISSING, _REASON_TR  # noqa: PLC0415
+    from app.pipeline.phone_cta_text import requirement_asks_arrow  # noqa: PLC0415
+
+    if brief is None:
+        return frozenset()
+    missing = {_CLOSING_ARROW_MISSING, _REASON_TR.get(_CLOSING_ARROW_MISSING) or ""} - {""}
+    reasons = {str(row.get("requirement_id")): row.get("reason") for row in rows}
+    wanted = set(unmet_ids)
+    return frozenset(
+        req.id
+        for req in brief.live()
+        if req.id in wanted
+        and req.literal
+        and reasons.get(req.id) in missing
+        and requirement_asks_arrow(req)
+    )
+
+
+def _arrow_label(req: BriefRequirement) -> str:
+    """What the simpler version leaves out of a kept ending (KRI-1236)."""
+    return say(
+        en=f'the arrow next to your ending ("{req.literal}")',
+        tr=f'kapanış yazının yanındaki ok ("{req.literal}")',
+    )
+
+
+def _without_arrow_update(req: BriefRequirement, version: int) -> BriefUpdate:
+    """The kept ending, its words and facts unchanged, with the arrow left out (KRI-1236)."""
+    from app.pipeline.phone_cta_text import ARROW_LEFT_OUT_FACT  # noqa: PLC0415
+
+    return BriefUpdate(
+        operation="change",
+        target_requirement_id=req.id,
+        expected_version=version,
+        kind=req.kind,
+        scope=req.scope,
+        literal=req.literal,
+        description=req.description,
+        facts={**req.facts, ARROW_LEFT_OUT_FACT: True},
     )
 
 
@@ -1501,13 +1584,24 @@ def _left_out_lines(brief: CreativeBrief, coverage: Mapping[str, Any]) -> list[s
     Only ids the approved brief really superseded: an id live again (restored later) or
     unknown to the brief says nothing.
     """
+    from app.pipeline.phone_cta_text import requirement_asks_arrow  # noqa: PLC0415
+
     agreed = {str(req_id) for req_id in coverage.get("agreed_omission_ids") or ()}
     by_id = {req.id: req for req in brief.requirements}
+    facets = coverage.get(_OMISSION_FACETS_KEY)
+    facets = facets if isinstance(facets, Mapping) else {}
     lines = []
     for req_id in coverage.get("accepted_omission_ids") or ():
         req = by_id.get(str(req_id))
         if req is not None and not req.live:
             lines.append(_left_out_line(req, agreed=req.id in agreed))
+        elif (
+            req is not None
+            and _ARROW_FACET in (facets.get(req.id) or ())
+            and not requirement_asks_arrow(req)
+        ):
+            # KRI-1236: the ending stays; only its arrow was left out (and not asked again).
+            lines.append(_left_out_line(req, agreed=req.id in agreed, label=_arrow_label(req)))
     return list(dict.fromkeys(lines))
 
 
@@ -1547,6 +1641,69 @@ def _offered_brief_revision(
     )
 
 
+def _without_tap_removals(planned: PlannedKriaTurn, snapshot: Mapping[str, Any]) -> PlannedKriaTurn:
+    """KRI-1236: a "Make it without these" answer states nothing but the tap.
+
+    Prod thread b931bc4e (Qendresa Q1, 2026-11-06): on each tap the Main Creator wrote its own
+    ``remove`` for every ask it read into "these" (r1 and r4-r9, then r10), and the turn
+    persisted them as the creator's removals. A remove cancels the server's named consent, so
+    the tight pauses, the five labels and the "comment REPO" ending were dropped although the
+    card could only leave out the cards, and nothing ever said "left out". What the tap leaves
+    out is the card's list, applied by the server (`_simpler_version_consent`); every other
+    update stays, so a restatement (KRI-1113) or a new ask still decides the consent.
+    """
+    removals = [u.target_requirement_id for u in planned.brief_updates if u.operation == "remove"]
+    if not removals:
+        return planned
+    try:
+        thread_id = uuid.UUID(str(snapshot.get("thread_id")))
+    except ValueError:
+        return planned
+    through = snapshot.get("source_sequence")
+    with sync_session() as db:
+        query = select(
+            CreationThreadEvent.role,
+            CreationThreadEvent.payload,
+            CreationThreadEvent.event_type,
+            CreationThreadEvent.content,
+        ).where(CreationThreadEvent.thread_id == thread_id)
+        if isinstance(through, int):
+            query = query.where(CreationThreadEvent.sequence <= through)
+        events = [
+            tag_event(*row) for row in db.execute(query.order_by(CreationThreadEvent.sequence))
+        ]
+        if simpler_version_answer(events) is None:
+            return planned
+        latest = load_latest_brief_sync(db, thread_id)
+    log.info(
+        "kria_simpler_tap_removals_dropped",
+        thread_id=str(thread_id),
+        requirement_ids=removals,
+    )
+    coverage = planned.brief_coverage
+    if isinstance(coverage, Mapping) and latest is not None:
+        live_ids = [req.id for req in latest.live()]
+        restored = set(removals)
+
+        def _with_restored(ids: list[Any]) -> list[Any]:
+            wanted = {*ids, *restored}
+            return [i for i in live_ids if i in wanted] + [i for i in ids if i not in live_ids]
+
+        coverage = {
+            **coverage,
+            **{
+                key: _with_restored(coverage[key])
+                for key in ("applicable_ids", "unresolved_ids")
+                if isinstance(coverage.get(key), list)
+            },
+        }
+    return replace(
+        planned,
+        brief_updates=tuple(u for u in planned.brief_updates if u.operation != "remove"),
+        brief_coverage=coverage,
+    )
+
+
 def _simpler_version_consent(
     db,  # noqa: ANN001 - SQLAlchemy sync Session
     thread_id: uuid.UUID,
@@ -1554,10 +1711,15 @@ def _simpler_version_consent(
     *,
     brief: CreativeBrief | None,
     source_event: CreationThreadEvent | None,
+    arrow_only_ids: Collection[str] = frozenset(),
 ) -> SimplerConsent | None:
     """Explicit acceptance of these exact omissions at the offered brief revision.
 
-    ``"named"``: the offer's reply named exactly these requirements as left out (KRI-968).
+    ``"named"``: the offer's reply named exactly these requirements as left out (KRI-968),
+    each with the same scope it has now (KRI-1236): an offer that left out only an ending's
+    arrow never consents to dropping the ending once its words fall short too, and an offer
+    that named the whole ending is not reapplied as an arrow-only omission. A changed scope is
+    offered again.
     ``"unnamed"``: a legacy offer (no list) that blocked exactly these; it is still honoured,
     but nothing may say the creator agreed to a list they were never shown.
 
@@ -1591,10 +1753,12 @@ def _simpler_version_consent(
         if isinstance(named, list):
             # KRI-968: consent covers exactly what the reply named, at that revision. A
             # changed set (a new miss, a different draft) is offered again, never dropped.
-            if set(requirement_ids) != {
-                str(req_id) for req_id in named
-            } or not _offered_brief_revision(
-                question.get("brief_version"), brief, named, source_event
+            if (
+                set(requirement_ids) != {str(req_id) for req_id in named}
+                or not _offered_brief_revision(
+                    question.get("brief_version"), brief, named, source_event
+                )
+                or (question.get(_OMISSION_FACETS_KEY) or {}) != _omission_facets(arrow_only_ids)
             ):
                 return None
             consent: SimplerConsent = "named"
@@ -2978,6 +3142,13 @@ def _complete_draft_turn(
             or brief is None
             or any(req.id not in unmet_ids for req in brief.live())
         )
+        # KRI-1236: an ending held only because its arrow is missing keeps its words in the
+        # simpler version; the card names, and the tap leaves out, just the arrow.
+        arrow_only_ids = _arrow_only_ids(
+            brief,
+            unmet_ids,
+            readiness_report["requirements"] if readiness_report else requirement_receipts,
+        )
         automatic_omission = (
             bool(automatic_omission_ids)
             and set(automatic_omission_ids) == set(unmet_ids)
@@ -3000,6 +3171,7 @@ def _complete_draft_turn(
                 unmet_ids,
                 brief=brief,
                 source_event=db.get(CreationThreadEvent, turn.source_event_id),
+                arrow_only_ids=arrow_only_ids,
             )
             if (
                 bool(unmet_ids)
@@ -3020,6 +3192,10 @@ def _complete_draft_turn(
         simpler_version_chosen = simpler_consent is not None
         # KRI-968: only an offer that named these requirements lets a reply say "as agreed".
         agreed_omission_ids = list(unmet_ids) if simpler_consent == "named" else []
+        # What the creator was told before any omission: a hold after the tap rolls it back.
+        receipts_before_omission = requirement_receipts
+        # KRI-1236: the endings the simpler version keeps, without their arrow.
+        kept_arrow_ids = arrow_only_ids if simpler_version_chosen else frozenset()
         if simpler_version_chosen or automatic_omission:
             omitted = [req for req in brief.live() if req.id in unmet_ids]
             omission_reasons = {
@@ -3050,6 +3226,8 @@ def _complete_draft_turn(
                     },
                 )
                 if req.id in retained_automatic_ids
+                else _without_arrow_update(req, brief.version)
+                if req.id in kept_arrow_ids
                 else BriefUpdate(
                     operation="remove",
                     target_requirement_id=req.id,
@@ -3083,18 +3261,19 @@ def _complete_draft_turn(
                 r for r in requirement_receipts if r["requirement_id"] not in unmet_ids
             ]
             live_by_id = {req.id: req for req in brief.live()}
+            retained_ids = retained_automatic_ids | kept_arrow_ids
             checked = [
                 live_by_id.get(req.id, req)
                 for req in checked
-                if req.id not in unmet_ids or req.id in retained_automatic_ids
+                if req.id not in unmet_ids or req.id in retained_ids
             ]
-            if retained_automatic_ids:
-                # Recheck the retained title under its effective requirement,
-                # rather than retaining its old brightness failure or dropping it.
+            if retained_ids:
+                # Recheck the retained title (or ending) under its effective requirement,
+                # rather than retaining its old brightness / arrow failure or dropping it.
                 requirement_receipts.extend(
                     receipt.model_dump(mode="json")
                     for receipt in build_receipts(
-                        [req for req in checked if req.id in retained_automatic_ids],
+                        [req for req in checked if req.id in retained_ids],
                         facts,
                         include_unchecked=True,
                         strict_order=True,
@@ -3143,6 +3322,8 @@ def _complete_draft_turn(
             omission_labels = {
                 req.id: say(en="the footage brightness change", tr="çekimin parlaklık değişikliği")
                 if req.id in retained_automatic_ids
+                else _arrow_label(req)
+                if req.id in kept_arrow_ids
                 else req.text()
                 for req in omitted
             }
@@ -3158,7 +3339,9 @@ def _complete_draft_turn(
                     ),
                 )
                 if automatic_omission
-                else _left_out_line(req, agreed=req.id in agreed_omission_ids)
+                else _left_out_line(
+                    req, agreed=req.id in agreed_omission_ids, label=omission_labels[req.id]
+                )
                 for req in omitted
             )
             kept = (
@@ -3247,8 +3430,16 @@ def _complete_draft_turn(
                 )
             )
             policy_problem = (readiness_report or {}).get("policy_problem")
+            if simpler_version_chosen and readiness_report is not None:
+                # KRI-1236: the omission the creator took surfaced another blocker. The draft
+                # and the omission are rolled back above, so say what still blocks (never
+                # "Here's the simpler version") and offer no new card: it would name asks at a
+                # brief revision this reply never writes.
+                reply_text = readiness_reply(brief, readiness_report)
+                requirement_receipts = receipts_before_omission
             can_offer_simpler = (
                 simpler_keeps_an_ask
+                and not simpler_version_chosen
                 and (not readiness_required or bool(unmet_ids) and not policy_problem)
                 # "Make it without these" would consent to omissions at a brief version this
                 # refusal never writes, and answering it would not apply the tapped card.
@@ -3257,8 +3448,12 @@ def _complete_draft_turn(
             # KRI-968: name what the simpler version leaves out before the creator picks it,
             # and record those ids on the question so a tap consents to exactly them.
             leaves_out, simpler_question = (
-                _simpler_version_offer(brief, unmet_ids) if can_offer_simpler else ("", None)
+                _simpler_version_offer(brief, unmet_ids, arrow_only_ids=arrow_only_ids)
+                if can_offer_simpler
+                else ("", None)
             )
+            # KRI-1236: a list too long to name whole gets no card, never an unnamed one.
+            can_offer_simpler = can_offer_simpler and simpler_question is not None
             ask = (
                 simpler_version_ask()
                 if can_offer_simpler
@@ -3470,11 +3665,16 @@ def _complete_draft_turn(
             if simpler_version_chosen:
                 coverage["accepted_omission_ids"] = unmet_ids
                 coverage["agreed_omission_ids"] = agreed_omission_ids
+                if kept_arrow_ids:
+                    # KRI-1236: kept endings whose arrow was left out (`_left_out_lines`).
+                    coverage[_OMISSION_FACETS_KEY] = {
+                        req_id: [_ARROW_FACET] for req_id in sorted(kept_arrow_ids)
+                    }
                 coverage["applicable_ids"] = [req.id for req in brief.live()]
                 coverage["retrieved_ids"] = [
                     req_id
                     for req_id in coverage.get("retrieved_ids", [])
-                    if req_id not in unmet_ids
+                    if req_id not in unmet_ids or req_id in kept_arrow_ids
                 ]
             if automatic_omission:
                 fully_omitted_ids = set(automatic_omission_ids) - retained_automatic_ids
@@ -5038,6 +5238,8 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     )
                 )
                 planned = _useful_plan(planned, user_message=user_message)
+                # KRI-1236: the tap's omissions are the card's list, applied by the server.
+                planned = _without_tap_removals(planned, snapshot)
                 # KRI-881: research a typed research ask before the approval card, outside
                 # every lock; "checking sources" continues the turn when it needs more time.
                 from app.kria import research_preview  # noqa: PLC0415

@@ -412,8 +412,16 @@ def _overlap_area(a, b) -> float:
     return max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
 
 
-def _in_frame(swept) -> bool:
-    return swept[0] >= 0.05 and swept[2] <= 0.84 and swept[1] >= 0.095 and swept[3] <= 0.79
+# A caption block asked "at the bottom" ends here (canvas fraction): it sits where the unasked
+# default caption does (centre 0.80), just under the watermark. The compiler lifts it clear of
+# the watermark if a tall block would reach it.
+CAPTION_BOTTOM_EDGE = 0.84
+_CAPTION_FRAME_BOTTOM = 0.86
+
+
+def _in_frame(swept, *, caption: bool = False) -> bool:
+    bottom = _CAPTION_FRAME_BOTTOM if caption else 0.79
+    return swept[0] >= 0.05 and swept[2] <= 0.84 and swept[1] >= 0.095 and swept[3] <= bottom
 
 
 def record_text_fit_relaxed(
@@ -616,7 +624,7 @@ def _lay_out_stacks(rows, rules, obstacles_for, canvas, wanted_for):
                 ),
             ]
             hit = [o for o in obstacles if _overlap(box, o.box)]
-            in_frame = _in_frame(box)
+            in_frame = _in_frame(box, caption=text_role(row) == "caption")
             if not in_frame or hit:
                 strained.append((row, reason, obstacles, [o.kind for o in hit], in_frame))
         fitted.extend(members)
@@ -765,6 +773,9 @@ def _place(
     if pinned_position:
         positions = ["authored"]
     fixed = pinned_position or position_fixed or lane_fixed
+    # Only a caption position the creator asked for this turn goes to the real bottom; an
+    # unasked or saved caption keeps clear above the wordmark (the obstacle fit relies on it).
+    bottom_edge = CAPTION_BOTTOM_EDGE if role == "caption" and position_fixed else 0.70
 
     def spots(strategy: _FitStrategy) -> list[str]:
         if fixed:
@@ -788,6 +799,7 @@ def _place(
                 canvas=canvas,
                 block_rows=block_rows,
                 anchors=LABEL_ANCHORS,
+                bottom_edge=bottom_edge,
             ):
                 return row
     except _ProbeBudgetSpent:
@@ -802,6 +814,7 @@ def _place(
         canvas=canvas,
         block_rows=block_rows,
         anchors=LABEL_ANCHORS,
+        bottom_edge=bottom_edge,
     )
     asked = original.get("position") if pinned_position else wanted.get("position")
     record_text_fit_relaxed(
@@ -873,6 +886,7 @@ def _candidates(
     block_rows,
     anchors: dict,
     probe: bool,
+    bottom_edge: float = 0.70,
 ):
     """Yield each anchor, offset and size `strategy` allows, `row` mutated to that placement.
 
@@ -921,7 +935,9 @@ def _candidates(
         else:
             x, y, alignment = anchors[position]
         if position in {"bottom_left", "bottom", "bottom_right"}:
-            y = 0.70 - offset  # above the actual wordmark, stacking within the corner
+            # Stacking within the corner; `bottom_edge` is 0.70 (clear above the wordmark) unless
+            # `_place` was given an asked caption spot.
+            y = bottom_edge - offset
             if role == "pinned":
                 y = max(0.12, y - max(0.0, 0.86 - float(original.get("y_frac") or 0.86)))
         elif position.startswith("top"):
@@ -972,7 +988,8 @@ def _candidates(
             except _fit_errors():
                 continue
             order += 1
-            candidate = _Candidate(swept, height, _in_frame(swept), order)
+            in_frame = _in_frame(swept, caption=bottom_edge != 0.70)
+            candidate = _Candidate(swept, height, in_frame, order)
             yield candidate
             if not probe and candidate.in_frame:
                 break

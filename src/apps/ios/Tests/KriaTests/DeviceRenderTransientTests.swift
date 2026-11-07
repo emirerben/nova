@@ -479,14 +479,30 @@ private final class Phone: @unchecked Sendable {
     }
 
     func testUnrepresentableRetryHintsUseSlowFiniteWait() async {
-        for hint in [Double.infinity, Double.nan, Double.greatestFiniteMagnitude] {
+        for hint in [Double.greatestFiniteMagnitude] {
             let job = UUID(), clock = Clock()
             let server = Server([.failure(APIError.requestFailed(status: 429, detail: .init("wait", retryAfter: hint)))])
-            let sessions = sessions(server, clock: clock)
+            let fixedNow = Date()
+            let sessions = sessions(server, clock: clock, now: { fixedNow })
             let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
             await sessions.reconcile(key, capabilities: enabled)
             let parked = await eventually { await clock.pending == 1 }; XCTAssertTrue(parked)
             let delay = await clock.delays.last; XCTAssertEqual(delay, .seconds(300))
+            await sessions.stopAll(); await clock.fire()
+        }
+    }
+
+    func testNonfiniteRetryHintsAreSanitizedBeforeNormalBackoff() async {
+        for hint in [Double.infinity, Double.nan] {
+            let detail = RequestFailureDetail("wait", retryAfter: hint)
+            XCTAssertNil(detail.retryAfter)
+            let job = UUID(), clock = Clock(), fixedNow = Date()
+            let server = Server([.failure(APIError.requestFailed(status: 429, detail: detail))])
+            let sessions = sessions(server, clock: clock, now: { fixedNow })
+            let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+            await sessions.reconcile(key, capabilities: enabled)
+            let parked = await eventually { await clock.pending == 1 }; XCTAssertTrue(parked)
+            let delay = await clock.delays.last; XCTAssertEqual(delay, .seconds(2))
             await sessions.stopAll(); await clock.fire()
         }
     }
@@ -608,7 +624,12 @@ private final class Phone: @unchecked Sendable {
             if change == "shutdown" { await sessions.stopAll() }
             if change == "owner" { owner = "replacement" }
             await clock.fire()
-            for _ in 0..<30 { await Task.yield() }
+            if ["identity", "generation"].contains(change) {
+                let settled = await eventually { sessions.presentations[key]?.phase == .synced }
+                XCTAssertTrue(settled, "Superseded publication must finish cancellation before assertions")
+            } else {
+                for _ in 0..<30 { await Task.yield() }
+            }
             let reads = await server.reads, exports = await exporter.calls, uploads = await publisher.uploads
             XCTAssertEqual(reads, before + (["identity", "generation"].contains(change) ? 1 : 0))
             if ["identity", "generation"].contains(change) {

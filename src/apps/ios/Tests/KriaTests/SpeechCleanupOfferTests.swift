@@ -139,6 +139,29 @@ final class SpeechCleanupOfferTests: XCTestCase {
         XCTAssertEqual(tightPauses(#""pause_style": true"#), false)
     }
 
+    private func keepOriginalRecommended(_ field: String, inAnalysis: Bool = false) -> Bool? {
+        let top = inAnalysis ? "" : field
+        let inner = inAnalysis ? field : ""
+        let (offer, _) = SpeechCleanupOffer.resolve(cleanup("""
+        {"applicable": true, "requires_choice": true\(top.isEmpty ? "" : ", " + top),
+         "analysis": {"id": "a1", "status": "ready", "candidate_count": 3\(inner.isEmpty ? "" : ", " + inner)}}
+        """))
+        guard case let .choice(stats) = offer else { return nil }
+        return stats.keepOriginalRecommended
+    }
+
+    func testKeepOriginalRecommendationReadFromTopLevelOnly() {
+        XCTAssertEqual(keepOriginalRecommended(#""recommended_choice": "keep_original""#), true)
+        XCTAssertEqual(keepOriginalRecommended(#""recommended_choice": "keep_original""#, inAnalysis: true), false)
+    }
+
+    func testOtherOrMissingRecommendationsKeepTodaysButtons() {
+        XCTAssertEqual(keepOriginalRecommended(""), false)
+        XCTAssertEqual(keepOriginalRecommended(#""recommended_choice": "clean""#), false)
+        XCTAssertEqual(keepOriginalRecommended(#""recommended_choice": true"#), false)
+        XCTAssertEqual(keepOriginalRecommended(#""recommended_choice": null"#), false)
+    }
+
     func testStatsDefaultToNotTightPauses() {
         XCTAssertFalse(SpeechCleanupStats().tightPauses)
         XCTAssertTrue(SpeechCleanupStats(tightPauses: true).tightPauses)

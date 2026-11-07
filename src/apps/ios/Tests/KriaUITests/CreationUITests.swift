@@ -1991,7 +1991,8 @@ final class CreationUITests: XCTestCase {
         XCTAssertEqual(app.descendants(matching: .any)["suggestion-chip-0"].label, "Let Kria cut the first version")
         XCTAssertLessThan(defaultEdit.frame.minX, hook.frame.minX + 1, "Chip #1 stays first")
         for chip in [defaultEdit, hook, app.buttons["Add captions"], app.buttons["Add sound effects"]] {
-            XCTAssertGreaterThanOrEqual(chip.frame.height, 44)
+            // The chips scroll with the transcript, so a fractional y can round a 44 pt chip to 43.99999.
+            XCTAssertGreaterThanOrEqual(chip.frame.height, 43.5)
         }
         // A chip is a real send, not a fill of the composer: the message is the chip's `message`, not its label.
         defaultEdit.tap()
@@ -2017,6 +2018,57 @@ final class CreationUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Use suggestion: Make it warmer"].exists)
         captions.tap()
         XCTAssertTrue(app.staticTexts["You: Add captions"].waitForExistence(timeout: 10))
+    }
+
+    /// KRI-1260: the first-prompt chips end the transcript. With the keyboard up they used to sit pinned above the
+    /// composer and cover the page; now scrolling the transcript up carries them off screen.
+    func testFirstPromptChipsScrollAwayWithTheTranscriptWhileTheKeyboardIsOpen() {
+        let app = XCUIApplication()
+        // A large text size makes the transcript taller than the space the keyboard leaves, so it can scroll.
+        app.launchArguments = ["-ui-testing-chat", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXL"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["KRIA_SUGGESTION_CHIPS"] = "1"
+        app.launchEnvironment["KRIA_SUGGESTION_CHIPS_PENDING"] = "0"
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+
+        let chip = app.buttons["Let Kria cut the first version"]
+        XCTAssertTrue(chip.waitForExistence(timeout: 10))
+        let composer = app.textFields["Message Kria"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10), "the keyboard is open")
+        keepScreenshot(app, "First-prompt chips at the end of the transcript, keyboard open")
+
+        let transcript = app.scrollViews["Conversation history"].exists ? app.scrollViews["Conversation history"] : app.scrollViews.firstMatch
+        for _ in 0..<6 where chip.exists && chip.isHittable { transcript.swipeDown() }
+        XCTAssertTrue(eventually { !(chip.exists && chip.isHittable) }, "scrolling the transcript up carries the chips off screen")
+        XCTAssertTrue(app.keyboards.firstMatch.exists || app.textFields["Message Kria"].exists)
+        keepScreenshot(app, "Transcript scrolled up, chips gone, keyboard open")
+    }
+
+    /// KRI-1260: the lead chip carries no "Recommended" tag, so at the default text size it is one line (a capsule, not a
+    /// two-line stack). The largest text size is kept as a screenshot: a long label may wrap there by design.
+    func testLeadSuggestionChipIsOneLineAtTheDefaultTextSize() {
+        for (size, name) in [("UICTContentSizeCategoryL", "default"), ("UICTContentSizeCategoryAccessibilityXXXL", "largest")] {
+            let app = XCUIApplication()
+            app.launchArguments = ["-ui-testing-chat", "-UIPreferredContentSizeCategoryName", size]
+            app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+            app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+            app.launchEnvironment["KRIA_SUGGESTION_CHIPS"] = "1"
+            app.launchEnvironment["KRIA_SUGGESTION_CHIPS_PENDING"] = "0"
+            app.launch()
+            createFreshChat(in: app)
+            app.buttons["format-montage"].tap()
+            let chip = app.buttons["Let Kria cut the first version"]
+            XCTAssertTrue(chip.waitForExistence(timeout: 10), name)
+            XCTAssertFalse(app.staticTexts["Recommended"].exists, "no Recommended tag on a chip (\(name))")
+            if name == "default" { XCTAssertLessThan(chip.frame.height, 60, "the lead chip is one line at the default size") }
+            keepScreenshot(app, "Lead suggestion chip, \(name) text size (height \(Int(chip.frame.height)))")
+            app.terminate()
+        }
     }
 
     /// KRI-756 wire check on the runtime-v2 turn path: a chip tap carries `suggestion {set_id, chip_id}` and the exact
