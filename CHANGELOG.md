@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.42.0] - 2026-11-07
+
+### Changed
+- test(kria): isolate approval fixture from neighboring Undo (KRI-577) (#2144) <!-- release-pr: 2144 -->
+
 ## [0.88.41.0] - 2026-11-07
 
 ### Changed
