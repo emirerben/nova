@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
 from app.schemas.order_replacement import OrderReplacementProposal
@@ -206,6 +206,23 @@ class RequirementReceipt(_KriaModel):
     reason: str | None = Field(default=None, max_length=300)
     inferred: list[str] = Field(default_factory=list, max_length=24)
     inferred_labels: list[InferredLabel] = Field(default_factory=list, max_length=24)
+
+    # Server-only comparison evidence. The capped public sentence is display copy, not an
+    # identity: long spoken triggers can hide both their suffix and their selected time.
+    _full_reason: str | None = PrivateAttr(default=None)
+
+    @property
+    def full_reason(self) -> str | None:
+        """Complete local evidence, or legacy display copy; reject a stale reason update."""
+        if self._full_reason is None:
+            return self.reason
+        return self._full_reason if self.reason == self._full_reason[:300] else None
+
+    def with_reason(self, reason: str | None) -> RequirementReceipt:
+        """Replace both comparison evidence and its bounded public projection together."""
+        updated = self.model_copy(update={"reason": reason[:300] if reason else None})
+        updated._full_reason = reason or None
+        return updated
 
 
 class CreativeBriefRequirementOut(_KriaModel):

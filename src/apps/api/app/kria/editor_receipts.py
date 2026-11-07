@@ -769,8 +769,8 @@ def bind_editor_receipts(
         if is_judged(req, base) and base.verification == "checked":
             # A value check decided it. Say what changed alongside a hit, keep a miss.
             if base.status == "met" and matched:
-                phrase = "; ".join(_phrases(matched, live, 2))[:300]
-                base = base.model_copy(update={"reason": phrase})
+                phrase = "; ".join(_phrases(matched, live, 2))
+                base = base.with_reason(phrase)
             out.append(base)
             continue
         out.append(_bind_by_diff(base, shape, verdicts, matched, declined, live))
@@ -824,9 +824,8 @@ def _bind_by_diff(
                 "status": "partial",
                 "verification": "unchecked",
                 "stage": "applied",
-                "reason": "; ".join(_phrases(uncertain_changes, live, 3))[:300],
             }
-        )
+        ).with_reason("; ".join(_phrases(uncertain_changes, live, 3)))
     if not shape.cued:
         # No word or fact named a dimension: say what the turn changed, never "Done".
         if matched and declined is None:
@@ -838,21 +837,19 @@ def _bind_by_diff(
                     "status": "partial",
                     "verification": "unchecked",
                     "stage": "applied",
-                    "reason": changed[:300],
                 }
-            )
+            ).with_reason(changed)
         return base.model_copy(
             update={
                 "status": "not_possible",
                 "verification": "checked",
                 "stage": "applied",
-                "reason": (declined or nothing)[:300],
             }
-        )
+        ).with_reason(declined or nothing)
     update: dict[str, object] = {"verification": "checked", "stage": "applied"}
     if verdicts and not any(v.missed() for v in verdicts) and declined is None:
         phrase = "; ".join(_phrases(matched, live, 2))
-        return base.model_copy(update={**update, "status": "met", "reason": phrase[:300] or None})
+        return base.model_copy(update={**update, "status": "met"}).with_reason(phrase or None)
     done = [v for v in verdicts if v.matched and not (v.wrong or v.short)]
     notes: list[str] = []
     if done:
@@ -866,7 +863,7 @@ def _bind_by_diff(
         notes.append(nothing)
     partial = bool(done) or any(v.wrong or v.short for v in verdicts)
     status = "partial" if partial else "not_possible"
-    return base.model_copy(update={**update, "status": status, "reason": "; ".join(notes)[:300]})
+    return base.model_copy(update={**update, "status": status}).with_reason("; ".join(notes))
 
 
 # ------------------------------------------------------------------------------ reply
