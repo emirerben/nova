@@ -613,8 +613,6 @@ struct FootageStage: View {
     /// Ready photos and videos in the PlanItemAsset Visuals pool.
     var visualCount = 0
 
-    @Environment(\.dynamicTypeSize) private var typeSize
-
     private var readiness: FootageReadiness {
         FootageReadiness(attachedCount: mediaCount, pendingCount: uploads.count + preparingCount)
     }
@@ -690,18 +688,10 @@ struct FootageStage: View {
                     }
                 }
             } else if hasMedia {
-                let addMore = Text("Add more").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
-                if typeSize.isAccessibilitySize {
-                    VStack(alignment: .leading, spacing: 8) {
-                        addMore
-                        KriaSourceRow(options: sourceOptions, layout: .compact)
-                    }
-                } else {
-                    HStack(spacing: 12) {
-                        addMore
-                        KriaSourceRow(options: sourceOptions, layout: .compact)
-                    }
-                }
+                // The composer's + is the one way to add more: Record, Upload, script and the rest live in its tray.
+                Text(format.usesVisualPool ? "Add more photos or videos with the + button." : "Add more clips with the + button.")
+                    .kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                    .accessibilityIdentifier("footage-add-more-hint")
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     // A failure notice never sits under the butter lead tile.
@@ -1481,7 +1471,12 @@ struct ChatComposer: View {
                     .accessibilityIdentifier("chat-dictation-notice")
             }
             HStack(alignment: .bottom, spacing: 4) {
-                Button { if attachMenu != nil { showsTray.toggle() } else { attach() } } label: {
+                Button {
+                    guard attachMenu != nil else { attach(); return }
+                    // The tray needs the room the keyboard takes, and every row leaves the chat anyway.
+                    if !showsTray { isFocused.wrappedValue = false }
+                    showsTray.toggle()
+                } label: {
                     if attachMenu != nil {
                         Image(systemName: showsTray ? "xmark" : "plus").font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(showsTray ? KriaColor.ink : KriaColor.paper)
@@ -1492,7 +1487,7 @@ struct ChatComposer: View {
                 }
                 .disabled(attachMenu == nil && !canAttach)
                 .accessibilityLabel(showsTray ? "Close attach menu" : "Attach footage")
-                .accessibilityHint(canAttach ? "" : "Choose a video format first")
+                .accessibilityHint(attachMenu?.disabledReason ?? (canAttach ? "" : "Choose a video format first"))
                 .accessibilityIdentifier("chat-attach")
                 TextField(dictation?.isListening == true && text.isEmpty ? "Listening…" : placeholder, text: $text, axis: .vertical)
                     .font(KriaFont.body(15)).lineLimit(1...4)

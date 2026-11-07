@@ -452,8 +452,9 @@ final class CreationUITests: XCTestCase {
         let done = app.buttons["photos-picker-done"]
         XCTAssertTrue(done.isEnabled)
         done.tap()
-        // The offline fixture has no upload reservations: a pick READ from Photos surfaces that decode error.
-        let reachedUpload = app.staticTexts["The data couldn\u{2019}t be read because it isn\u{2019}t in the correct format."]
+        // A pick the composer's + started returns to the chat, where the offline fixture's read failure is reported.
+        XCTAssertTrue(app.buttons["attachment-close"].waitForNonExistence(timeout: 10), "the pick ends back in the chat")
+        let reachedUpload = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'couldn\u{2019}t be read'")).firstMatch
         XCTAssertTrue(reachedUpload.waitForExistence(timeout: 25), app.debugDescription)
     }
 
