@@ -366,13 +366,13 @@ public enum AuthoredTextLayout {
 public enum AuthoredTextFit {
     public static let safeWidthFraction = 0.9
     public static let minimumSize = 24.0
-    static let edgeGuardFraction = 0.01
+    static let edgeGuardFraction = 0.03
 
     public static func safeWidth(canvasWidth: Double) -> Double { canvasWidth * safeWidthFraction }
 
-    /// The room an authored line has from its anchor to the frame edge (inset 1% of the width so edge ink is not
-    /// clipped), the same rule as cloud `text_fit.authored_safe_width` (KRI-885): a centred line at x = 0.7 gets
-    /// 2 x (0.99 - 0.7) of the width; a
+    /// The room an authored line has from its anchor to the frame edge (inset 3% of the width so shadow ink stays
+    /// off the edge), the same rule as cloud `text_fit.authored_safe_width` (KRI-885): a centred line at x = 0.7 gets
+    /// 2 x (0.97 - 0.7) of the width; a
     /// left/right anchor gets the distance to the far edge. Capped at the safe width and never less than a tenth
     /// of the width. A line that sits inside the frame is therefore never re-wrapped.
     public static func safeWidth(canvasWidth: Double, xFraction: Double, alignment: String) -> Double {

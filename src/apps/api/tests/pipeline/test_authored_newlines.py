@@ -317,7 +317,7 @@ def test_server_slide_export_keeps_long_turkish_emoji_text_inside_the_frame(
     rgba = np.array(Image.open(out)).astype(int)
     assert rgba.shape[:2] == (1350, 1080)
     xs = np.nonzero(rgba[..., 3] > 40)[1]
-    margin = 0.05 * 1080 if x_frac is None else 0.01 * 1080  # off-centre: room to the frame edge
+    margin = 0.05 * 1080 if x_frac is None else 0.03 * 1080  # off-centre: room to the frame edge
     assert xs.min() >= margin - 6 and xs.max() <= 1080 - margin + 6, (xs.min(), xs.max())
     if pillow._emoji_font() is not None:
         opaque = rgba[rgba[..., 3] > 200]

@@ -74,7 +74,7 @@ def _size_for_width(text, low, high):
 def _x_with_frame_room(width, anchor, slack=4):
     """Anchor x (fraction) at which ``width`` just fits between the anchor and the frame edge."""
     room = width + slack
-    guard = 0.01 * W
+    guard = 0.03 * W
     cx = {"center": W - guard - room / 2, "left": W - guard - room, "right": room + guard}[anchor]
     return cx / W
 

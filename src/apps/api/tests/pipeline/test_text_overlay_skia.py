@@ -3899,10 +3899,10 @@ def test_authored_safe_width_matches_ios():
 
     cases = [
         (0.5, "center", 972),
-        (0.7, "center", 626.4),
-        (0.3, "left", 745.2),
-        (0.8, "right", 853.2),
-        (0.15, "center", 302.4),
+        (0.7, "center", 583.2),
+        (0.3, "left", 723.6),
+        (0.8, "right", 831.6),
+        (0.15, "center", 259.2),
         (0.99, "center", 108),
     ]
     for x, anchor, expected in cases:

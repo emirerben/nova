@@ -68,8 +68,8 @@ final class AuthoredTextFitTests: XCTestCase {
     /// is re-wrapped although it sits inside the frame because the room stopped at the 5% safe margins.
     /// The widths are cloud `text_fit.authored_safe_width` values (`test_authored_safe_width_matches_ios`).
     func testOffCentreAuthoredTextGetsTheRoomToTheFrameEdge() {
-        let cases: [(Double, String, Double)] = [(0.5, "center", 972), (0.7, "center", 626.4), (0.3, "left", 745.2),
-                                                 (0.8, "right", 853.2), (0.15, "center", 302.4), (0.99, "center", 108)]
+        let cases: [(Double, String, Double)] = [(0.5, "center", 972), (0.7, "center", 583.2), (0.3, "left", 723.6),
+                                                 (0.8, "right", 831.6), (0.15, "center", 259.2), (0.99, "center", 108)]
         for (x, alignment, expected) in cases {
             XCTAssertEqual(AuthoredTextFit.safeWidth(canvasWidth: 1080, xFraction: x, alignment: alignment),
                            expected, accuracy: 0.001, "\(x) \(alignment)")

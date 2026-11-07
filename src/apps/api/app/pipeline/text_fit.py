@@ -37,9 +37,9 @@ _FALLBACK_LINE_CHARS = 28
 # Pillow/libass, the phone compile, iOS `AuthoredTextFit.safeWidth`) uses this rule.
 AUTHORED_SAFE_WIDTH_FRAC = 0.9
 AUTHORED_MIN_WIDTH_FRAC = 0.1
-# KRI-885: an authored line may use the room up to this inset from each frame edge, so
-# outline and shadow ink at the very edge is not clipped.
-AUTHORED_EDGE_GUARD_FRAC = 0.01
+# KRI-885: an authored line may use the room up to this inset from each frame edge, so its
+# shadow and outline ink stay off the edge (the overlay verifier fails ink within 6 px of it).
+AUTHORED_EDGE_GUARD_FRAC = 0.03
 
 
 def authored_safe_width(canvas_width: float, x_frac: float | None, anchor: str | None) -> float:
@@ -47,7 +47,7 @@ def authored_safe_width(canvas_width: float, x_frac: float | None, anchor: str |
 
     The line is placed relative to ``x_frac`` (its centre, or its left/right edge for a
     "left"/"right" anchor), so its room is the distance from that point to the frame
-    edge (inset by 1% of the width): a centred line at x=0.7 has 2 x (0.99 - 0.7) of the
+    edge (inset by 3% of the width): a centred line at x=0.7 has 2 x (0.97 - 0.7) of the
     width. Measuring to the frame edge, not to the 5% safe margins, means a legacy line the
     creator placed off-centre that still sits inside the frame is never re-wrapped on a
     re-render; the room is capped at the safe width (0.9 of the canvas) and a point dragged
