@@ -15518,6 +15518,11 @@
             "title": "Contain",
             "type": "boolean"
           },
+          "editor_style": {
+            "$ref": "#/components/schemas/VisualEditorStyle",
+            "default": null,
+            "nullable": true
+          },
           "fade_in": {
             "default": false,
             "title": "Fade In",
