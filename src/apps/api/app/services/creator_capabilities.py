@@ -2246,20 +2246,6 @@ def compile_strategy_to_plan(
         and phone_capability.available
         and phone_subtitled_closing_title_supported()
     )
-    # KRI-526: the strategy parses up to 12 lines / 400 characters so an over-limit ask lands
-    # here and becomes a question about the pins (strategy_policy), not a schema failure.
-    if len(strategy.pinned_texts or ()) > MAX_CREATOR_PINNED_TEXTS:
-        raise CreatorStrategyError(
-            "pinned_texts_too_many: more corner lines than fit",
-            code="unsupported_treatment",
-            edit_format=strategy.edit_format,
-        )
-    if any(not pin.fits_a_corner for pin in strategy.pinned_texts or ()):
-        raise CreatorStrategyError(
-            "pinned_texts_too_long: a corner line is longer than one line",
-            code="unsupported_treatment",
-            edit_format=strategy.edit_format,
-        )
     # A recorded voiceover makes the item's program "native", which no cloud renderer draws
     # pins for; the phone montage-family voiceover writer does (KRI-527), so a phone cohort
     # keeps its pins there.
@@ -2278,6 +2264,23 @@ def compile_strategy_to_plan(
         # recorded-voiceover montage - KRI-527). A subtitled talking edit has no free text lane.
         raise CreatorStrategyError(
             f"pinned_texts is not supported by the {strategy.edit_format} renderer",
+            code="unsupported_treatment",
+            edit_format=strategy.edit_format,
+        )
+    # KRI-1302: the count/length questions come AFTER the renderer check above. A Talking edit
+    # has no pin lane at all, so asking which of five lines to keep offered a choice that
+    # was refused on the next turn.
+    # KRI-526: the strategy parses up to 12 lines / 400 characters so an over-limit ask lands
+    # here and becomes a question about the pins (strategy_policy), not a schema failure.
+    if len(strategy.pinned_texts or ()) > MAX_CREATOR_PINNED_TEXTS:
+        raise CreatorStrategyError(
+            "pinned_texts_too_many: more corner lines than fit",
+            code="unsupported_treatment",
+            edit_format=strategy.edit_format,
+        )
+    if any(not pin.fits_a_corner for pin in strategy.pinned_texts or ()):
+        raise CreatorStrategyError(
+            "pinned_texts_too_long: a corner line is longer than one line",
             code="unsupported_treatment",
             edit_format=strategy.edit_format,
         )
