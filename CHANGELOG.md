@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.56.0] - 2026-11-07
+
+### Changed
+- fix(kria): spoken-word text on the right word, asked hold, inside the letterboxed picture (KRI-972, KRI-747, KRI-1018) (#2160) <!-- release-pr: 2160 -->
+
 ## [0.88.55.0] - 2026-11-07
 
 ### Fixed
