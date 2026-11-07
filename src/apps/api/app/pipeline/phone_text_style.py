@@ -107,7 +107,12 @@ def text_role(row: dict) -> str:
     source = row.get("source_params") or {}
     if "pinned" in key or key.startswith("pin-") or row.get("role") == "pinned_text":
         return "pinned"
-    if "lyric" in key or key.startswith("song-caption-") or source.get("source") == "song_caption":
+    if (
+        "lyric" in key
+        or key.startswith(("song-caption-", "lyr-"))
+        or row.get("role") == "lyric_line"
+        or source.get("source") in {"song_caption", "lyric_seed"}
+    ):
         return "lyric"
     if "caption" in key or source.get("source") == "caption_cue":
         return "caption"
@@ -1138,7 +1143,11 @@ def resolve_phone_text_style(
             }
             row["font_family"] = family
             row["stroke_width"] = wanted.get("stroke_width", DEFAULT_STROKE_WIDTH)
-            row["shadow_enabled"] = wanted.get("shadow_enabled", DEFAULT_SHADOW_ENABLED)
+            own_shadow = row.get("shadow_enabled")
+            row["shadow_enabled"] = wanted.get(
+                "shadow_enabled",
+                own_shadow if isinstance(own_shadow, bool) else DEFAULT_SHADOW_ENABLED,
+            )
             if "color" in wanted:
                 row["color"] = wanted["color"]
             source_fields = (row.get("source_params") or {}).get("creator_style_fields") or []

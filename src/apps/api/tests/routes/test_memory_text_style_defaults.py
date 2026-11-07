@@ -96,7 +96,7 @@ def test_every_role_the_app_can_save_has_defaults():
 @pytest.mark.parametrize("role", sorted(ROW_IDS))
 def test_unsaved_role_renders_what_the_endpoint_says(role):
     advertised = text_style_defaults()["roles"][role]
-    row = _row(role)
+    row = _row(role, shadow_enabled=False)
     assert text_role(row) == role
 
     (resolved,) = resolve_phone_text_style([row], preferences={}, requested={})
@@ -132,7 +132,7 @@ def test_label_usual_spot_is_where_a_default_label_stays():
 def test_cascade_falls_to_next_spot_when_first_is_taken(role):
     advertised = text_style_defaults()["roles"][role]
     first, second = advertised["placement_order"][:2]
-    row = _row(role, text="Short")
+    row = _row(role, text="Short", shadow_enabled=False)
     anchors = text_style_defaults()["position_anchors"]
     taken = (0, anchors[first]["y"] - 0.08, 1, anchors[first]["y"] + 0.08)
 

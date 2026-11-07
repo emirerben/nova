@@ -40,7 +40,6 @@ def test_default_resolves_without_rewriting_input_or_copy():
     assert result[0]["text"] == before[0]["text"]
     assert result[0]["start_s"] == 0 and result[0]["end_s"] == 3
     assert result[0]["stroke_width"] == 0
-    assert result[0]["shadow_enabled"] is False
     assert result[0]["alignment"] == "left"
     assert result[0]["max_width_frac"] <= 0.68
 
@@ -82,7 +81,10 @@ def test_required_font_with_missing_glyphs_requests_clarification():
 
 
 def test_off_effects_survive_styled_input_and_role_overrides():
-    rows = [title(), {**title("Pinned corner"), "id": "guided-pinned-0"}]
+    rows = [
+        {**title(), "shadow_enabled": False},
+        {**title("Pinned corner"), "id": "guided-pinned-0", "shadow_enabled": False},
+    ]
     result = resolve_phone_text_style(
         rows, preferences={"title": {"shadow_enabled": True}, "all_text": {"stroke_width": 0}}
     )
@@ -114,3 +116,79 @@ def test_preference_rejects_unknown_fonts_and_overlapping_font_sets():
         TextStyleRule(font_family="Unknown font")
     with pytest.raises(ValueError):
         TextStyleRule(favorite_fonts=["Inter"], excluded_fonts=["Inter"])
+
+
+def _real_lyric_row():
+    from app.pipeline.lyric_injector import build_lyric_seed_elements
+
+    cache = {
+        "source": "lrclib_synced+whisper",
+        "lines": [
+            {
+                "text": "Hello world",
+                "start_s": 0.5,
+                "end_s": 1.5,
+                "words": [
+                    {"text": "Hello", "start_s": 0.5, "end_s": 1.0},
+                    {"text": "world", "start_s": 1.0, "end_s": 1.5},
+                ],
+            },
+            {"text": "Goodbye now", "start_s": 2.0, "end_s": 3.0, "words": []},
+            {"text": "One more", "start_s": 3.5, "end_s": 4.5, "words": []},
+            {"text": "Last line", "start_s": 5.0, "end_s": 6.0, "words": []},
+        ],
+    }
+    rows = build_lyric_seed_elements(cache, 0.0, 10.0, {"enabled": True})
+    return next(row for row in rows if row["id"] == "lyr-L3")
+
+
+def test_template_lyric_row_takes_the_lyric_preference_not_the_title_one():
+    from app.pipeline.phone_text_style import text_role
+    from app.schemas.phone_text_style import effective_text_rule
+
+    row = _real_lyric_row()
+    assert row["role"] == "lyric_line" and row["source_params"]["source"] == "lyric_seed"
+    preferences = {"lyric": {"color": "#FFFF00"}, "title": {"color": "#FF0000"}}
+    assert effective_text_rule(preferences, {}, text_role(row))["color"] == "#FFFF00"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"id": "x1"},
+        {"id": "x1", "role": "generative_intro", "source_params": {"source": "lyric_seed"}},
+        {"id": "x1", "role": "lyric_line", "source_params": {}},
+        {"id": "lyr-L3", "role": "generative_intro", "source_params": {}},
+    ],
+)
+def test_each_lyric_signal_alone_classifies_as_lyric(overrides):
+    from app.pipeline.phone_text_style import text_role
+
+    base = {"id": "x1", "role": "generative_intro", "source_params": {}}
+    row = {**base, **overrides}
+    expected = "title" if overrides == {"id": "x1"} else "lyric"
+    assert text_role(row) == expected
+
+
+def test_guided_plan_shadow_survives_when_nothing_asks_for_a_different_one():
+    result = resolve_phone_text_style([title()])
+    assert result[0]["shadow_enabled"] is True
+
+
+def test_explicit_shadow_off_still_beats_the_rows_own_shadow():
+    off_by_preference = resolve_phone_text_style(
+        [title()], preferences={"title": {"shadow_enabled": False}}
+    )
+    off_by_request = resolve_phone_text_style(
+        [title()], requested={"all_text": {"shadow_enabled": False}}
+    )
+    assert off_by_preference[0]["shadow_enabled"] is False
+    assert off_by_request[0]["shadow_enabled"] is False
+
+
+@pytest.mark.parametrize("own", [None, False])
+def test_rows_without_a_shadow_stay_without_one(own):
+    row = {**title(), "shadow_enabled": own}
+    assert resolve_phone_text_style([row])[0]["shadow_enabled"] is False
+    missing = {k: v for k, v in title().items() if k != "shadow_enabled"}
+    assert resolve_phone_text_style([missing])[0]["shadow_enabled"] is False
