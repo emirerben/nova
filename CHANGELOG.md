@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.74.0] - 2026-11-07
+
+### Changed
+- feat(kria): keep text off marked objects and faces for guided text, cards, every speaker and caption windows (KRI-903) (#2173) <!-- release-pr: 2173 -->
+
 ## [0.88.73.0] - 2026-11-07
 
 ### Changed
