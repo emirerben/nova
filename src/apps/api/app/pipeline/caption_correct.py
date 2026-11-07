@@ -234,7 +234,8 @@ def _has_numeric_content(text: str) -> bool:
     """Include fractions/numerals and compatibility forms such as ㎟ -> mm2."""
 
     return any(ch.isnumeric() for ch in text) or any(
-        ch.isnumeric() for ch in unicodedata.normalize("NFKD", text)
+        ch.isnumeric()
+        for ch in unicodedata.normalize("NFKD", text)  # single-fold: numeric probe
     )
 
 
