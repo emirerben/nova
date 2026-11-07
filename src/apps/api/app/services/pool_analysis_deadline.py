@@ -42,11 +42,12 @@ _CLAIM_WINDOW = {"image": timedelta(minutes=10), "video": timedelta(minutes=30)}
 # Large enough for 14 videos queued behind a busy lane (30 + 40 + 13 x 13 min
 # = 239 min); a lost message on a quiet lane still ends after base + occupant.
 _CLAIM_WINDOW_CAP = timedelta(hours=4)
-# The ONLY consumer of visuals-analysis is the unified `worker` process in
-# fly.toml (`--concurrency=1`), one slot shared with renders, Drive imports and
-# footage/speech analysis (KRI-1240's dedicated `visuals` group was reverted
-# for cost, #2183). tests/test_pool_asset_fly_contract.py pins this to the
-# summed --concurrency of every fly.toml process that drains the queue.
+# Budget only the consumer that is always there: the unified `worker` process
+# in fly.toml (`--concurrency=1`), one slot shared with renders, Drive imports
+# and footage/speech analysis. A dedicated Visuals group (KRI-1240; #2183
+# removes it for cost) can be draining, restarting or gone, and extra
+# consumers only finish work sooner. tests/test_pool_asset_fly_contract.py pins this to the
+# worker's --concurrency.
 _QUEUE_CONCURRENCY = 1
 # One analysis ahead holds the lane for at most its run window plus the
 # soft-to-hard limit gap (`_AUTOPLACE_TASK_LIMITS` 240/300 s): a retry may

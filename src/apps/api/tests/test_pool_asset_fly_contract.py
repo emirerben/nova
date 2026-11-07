@@ -50,11 +50,12 @@ def test_visuals_queue_is_consumed_before_any_dispatch_can_switch_to_it() -> Non
     assert Settings.model_fields["visuals_analysis_queue"].default == ""
 
 
-# --- #2183 (KRI-1240 revert): the Visuals deadline must describe the real lane.
+# --- The Visuals deadline must describe the lane that is always there.
 # Failure modes this pins (written before the change):
-#   L1 _QUEUE_CONCURRENCY claims more parallel slots than fly.toml runs, so a
-#      healthy burst that is only waiting in line times out (the 2026-11-02..
-#      11-07 state: constant 2, one concurrency=1 consumer).
+#   L1 _QUEUE_CONCURRENCY claims more parallel slots than the always-present
+#      consumer runs, so a healthy burst that is only waiting in line times out
+#      while a dedicated group is draining, restarting or removed (the
+#      2026-11-02..11-07 state: constant 2, one concurrency=1 consumer).
 #   L2 one queued analysis ahead is budgeted shorter than it can hold the slot.
 #   L3 the lane's one in-progress non-analysis task is longer than budgeted.
 
@@ -76,12 +77,16 @@ def _worker_queues() -> set[str]:
     return set(command.split("-Q ", 1)[1].split()[0].split(","))
 
 
-def test_visuals_deadline_concurrency_matches_fly_toml_consumers() -> None:
+def test_visuals_deadline_budgets_only_the_always_present_worker_lane() -> None:
+    """A dedicated Visuals group can be draining, restarting or removed (KRI-1240,
+    #2183), so the deadline budgets the unified worker's slots alone: the
+    consumer that is always there. Extra consumers only finish work sooner."""
     from app.services import pool_analysis_deadline as bound
 
     consumers = _visuals_consumers()
-    assert consumers == {"worker": 1}
-    assert bound._QUEUE_CONCURRENCY == sum(consumers.values())
+    assert "worker" in consumers
+    assert bound._QUEUE_CONCURRENCY == consumers["worker"]
+    assert bound._QUEUE_CONCURRENCY <= sum(consumers.values())
 
 
 def test_visuals_queue_slot_covers_a_whole_attempt_chain() -> None:
