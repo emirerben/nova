@@ -2959,6 +2959,49 @@ final class NativeEditorSessionTests: XCTestCase {
         }
     }
 
+    func testPromptRefreshRecoveryRetainsOwnerAcrossTimerAndForegroundWake() async throws {
+        let owners: [(String?, String?)] = [("original", "replacement"), ("original", nil),
+                                            ("original", "original"), (nil, nil)]
+        for foreground in [true, false] {
+            for (initialOwner, nextOwner) in owners {
+                let job = UUID()
+                let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+                    draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 1,
+                    snapshotHash: "h", etag: "e", baseJobID: job.uuidString,
+                    baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+                    authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
+                fake.mediaLibraryOwner = initialOwner
+                let session = NativeEditorSession()
+                await session.load(api: fake, threadID: UUID())
+                XCTAssertEqual(session.loadState, .loaded)
+                session.refreshRetryDelays = [foreground ? .seconds(30) : .seconds(1)]
+                fake.draftError = .requestFailed(status: 500)
+                await session.synchronizePromptRevision()
+                let reads = fake.draftCallCount
+                let before = session.document
+                let refresh = session.refreshSync
+                fake.draftError = nil
+                fake.authoritativeVariant = Self.variant(duration: 3, generation: "g2")
+                fake.mediaLibraryOwner = nextOwner
+                if foreground { await session.resumeRefreshSync() }
+                if initialOwner == nextOwner {
+                    let recovered = await waitUntil(timeout: .seconds(3)) { fake.draftCallCount > reads }
+                    XCTAssertTrue(recovered, "same-owner recovery remains live")
+                    let applied = await waitUntil(timeout: .seconds(3)) { session.document.revision.baseGeneration == "g2" }
+                    XCTAssertTrue(applied)
+                    XCTAssertEqual(fake.draftCallCount, reads + 1)
+                } else {
+                    if !foreground { try await Task.sleep(for: .milliseconds(1200)) }
+                    XCTAssertEqual(fake.draftCallCount, reads, "old-owner recovery must not start a new-account read")
+                    XCTAssertEqual(session.document, before)
+                    XCTAssertEqual(session.refreshSync, refresh)
+                }
+                XCTAssertEqual(fake.commitCount, 0)
+                session.setObserversVisible(false)
+            }
+        }
+    }
+
     private func exercisePromptRefreshOwner(stage: String, nextOwner: String?, fails: Bool = false) async throws {
         let legacy = stage.hasPrefix("legacy")
         let thread = UUID(), job = UUID()
