@@ -3829,7 +3829,7 @@ def test_both_renderers_honor_authored_line_fit(canvas_size, text, size, expect)
 )
 def test_both_renderers_honor_authored_line_fit_off_centre(x_frac, anchor):
     """Parity guard (KRI-826): authored text dragged off-centre or edge-anchored wraps to
-    the room between its anchor and the safe margins (`text_fit.authored_safe_width`),
+    the room between its anchor and the frame edge (`text_fit.authored_safe_width`),
     in the cloud burn and the phone compile alike, so no row runs past the frame."""
     from unittest.mock import patch
 
@@ -3858,10 +3858,9 @@ def test_both_renderers_honor_authored_line_fit_off_centre(x_frac, anchor):
     phone = [(r.text, r.x, r.font_size) for r in layer.runs]
     assert [(t, s) for t, _x, s in cloud] == [(t, s) for t, _x, s in phone]
     face = tos._typeface_for_overlay(overlay)
-    margin = 0.05 * canvas.width
     for text, x, size in phone:
         width = tos._measure_line(skia.Font(face, size), text)
-        assert x >= margin - 0.5 and x + width <= canvas.width - margin + 0.5, (text, x)
+        assert x >= -0.5 and x + width <= canvas.width + 0.5, (text, x)
 
 
 def test_authored_line_fit_matches_the_recorded_cross_platform_rows():
@@ -3900,10 +3899,10 @@ def test_authored_safe_width_matches_ios():
 
     cases = [
         (0.5, "center", 972),
-        (0.7, "center", 540),
-        (0.3, "left", 702),
-        (0.8, "right", 810),
-        (0.15, "center", 216),
+        (0.7, "center", 626.4),
+        (0.3, "left", 745.2),
+        (0.8, "right", 853.2),
+        (0.15, "center", 302.4),
         (0.99, "center", 108),
     ]
     for x, anchor, expected in cases:

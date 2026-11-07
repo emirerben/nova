@@ -80,6 +80,7 @@ from app.pipeline.handwriting_strokes import (
 from app.pipeline.text_animation_math import handwriting_progress as _handwriting_progress
 from app.pipeline.text_animation_math import handwriting_settle_s as _handwriting_settle_s
 from app.pipeline.text_animation_math import motion_cubic_bezier as _motion_cubic_bezier
+from app.pipeline.text_fit import break_wide_run
 from app.pipeline.text_motion_v2 import (
     V2_HOLDABLE_TEXT_EFFECTS,
     authored_motion_time_s,
@@ -1430,10 +1431,27 @@ def _authored_rows(
     *,
     shape_text: bool = False,
 ) -> list[str]:
-    """One authored line as drawn rows: itself while it fits, else soft-wrapped (KRI-826)."""
-    if not line or _measure_line(font, line, spacing_px, shape_text=shape_text) <= max_width:
+    """One authored line as drawn rows: itself while it fits, else soft-wrapped (KRI-826).
+
+    At the shrink floor a word still wider than ``max_width`` (emoji chain, CJK, URL) is
+    broken between grapheme clusters instead of overflowing (KRI-886).
+    """
+
+    def measure(row: str) -> float:
+        return _measure_line(font, row, spacing_px, shape_text=shape_text)
+
+    if not line or measure(line) <= max_width:
         return [line]
-    return _wrap_text_to_lines(line, font, max_width, spacing_px, shape_text=shape_text)
+    rows = _wrap_text_to_lines(line, font, max_width, spacing_px, shape_text=shape_text)
+    if font.getSize() > _MIN_FONT_SIZE:
+        return rows
+    return [
+        piece
+        for row in rows
+        for piece in (
+            break_wide_run(row, measure, max_width) if measure(row) > max_width else [row]
+        )
+    ]
 
 
 def _authored_lines(
@@ -1455,7 +1473,9 @@ def _authored_lines(
     * an authored line that fits ``max_width`` stays one line at the creator's size;
     * a wider line soft-wraps at word boundaries at ``max_width``;
     * only a single word still wider than ``max_width`` shrinks the whole text, never
-      below ``min(size, _MIN_FONT_SIZE)``. Nothing is ever cut.
+      below ``min(size, _MIN_FONT_SIZE)``; at that floor it breaks between grapheme
+      clusters (KRI-886), and a cluster that still cannot fit is kept whole and logged
+      as ``authored_text_overflow``. Nothing is ever cut.
 
     ``max_width`` is required, so no call site can forget the fit.
     """
@@ -1481,6 +1501,8 @@ def _authored_lines(
     while widest > max_width and size > floor:
         size = max(floor, min(size - 1, int(size * 0.9)))
         font, lines, widest = layout(size)
+    if widest > max_width:
+        log.warning("authored_text_overflow", widest_px=round(widest, 1), max_width_px=max_width)
     return font, size, lines
 
 

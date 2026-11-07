@@ -33,6 +33,7 @@ from app.pipeline.text_animation_math import (
     HANDWRITING_NOMINAL_SETTLE_S as _HANDWRITING_NOMINAL_SETTLE_S,
 )
 from app.pipeline.text_animation_math import handwriting_progress as _handwriting_progress
+from app.pipeline.text_fit import break_wide_run
 from app.pipeline.text_wrap import balanced_word_wrap_indices
 
 log = structlog.get_logger()
@@ -2803,7 +2804,8 @@ def _authored_rows_pillow(
     The creator's line breaks are hard breaks; a line that fits ``max_width`` stays
     one row at the creator's size; a wider line soft-wraps at word boundaries; only a
     single word still wider than ``max_width`` shrinks the whole text, never below
-    ``min(size, 24)``. ``resolve_font(px)`` returns the face at ``px`` (or None).
+    ``min(size, 24)``, where it breaks between grapheme clusters. ``resolve_font(px)``
+    returns the face at ``px`` (or None).
     """
     raw = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
 
@@ -2811,19 +2813,24 @@ def _authored_rows_pillow(
         box = draw.textbbox((0, 0), line, font=font)
         return box[2] - box[0]
 
-    def layout(font) -> tuple[list[str], int]:
+    def layout(font, px: int) -> tuple[list[str], int]:
         rows: list[str] = []
         for line in raw:
             if not line or width(font, line) <= max_width:
                 rows.append(line)
-            else:
-                rows.extend(_wrap_text_to_lines(line, font, int(max_width), draw))
+                continue
+            for row in _wrap_text_to_lines(line, font, int(max_width), draw):
+                # KRI-886: at the floor a still-too-wide run breaks between grapheme clusters.
+                if px <= 24 and width(font, row) > max_width:
+                    rows.extend(break_wide_run(row, lambda r: width(font, r), max_width))
+                else:
+                    rows.append(row)
         return rows, max((width(font, row) for row in rows if row), default=0)
 
     font = resolve_font(size)
     if font is None:
         return None, size, raw
-    rows, widest = layout(font)
+    rows, widest = layout(font, size)
     floor = min(size, 24)
     while widest > max_width and size > floor:
         smaller = max(floor, min(size - 1, int(size * 0.9)))
@@ -2831,7 +2838,7 @@ def _authored_rows_pillow(
         if candidate is None:
             break
         font, size = candidate, smaller
-        rows, widest = layout(font)
+        rows, widest = layout(font, size)
     return font, size, rows
 
 
