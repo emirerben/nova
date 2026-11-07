@@ -83,8 +83,9 @@ piece replaces the last), cumulative (the sentence builds up and holds, "mode":"
 agent_choice: then use replace unless the request asks the earlier words to stay on screen, and
 say which in the reply. A title or whole-video sequence is already the opening title bar: split
 THAT bar, never add another text for it. When the brief also has a title text with other
-wording, that title keeps the opening bar and the sequence's exact words sit in their own bar
-(the first clip's, or the clip a clip-scoped sequence names): split the bar holding them.
+wording, or a second sequence, that title keeps the opening bar and each sequence's exact words
+sit in their own bar (on a clip, or the clip a clip-scoped sequence names): split the bar
+holding them.
 Give every piece at least 0.25 s: when the bar is
 shorter than 0.25 s per piece, first lengthen it with set_texts_timing (about 0.45 s per word
 reads well; never past total_duration_s). Preserve the combined wording and choose
@@ -148,7 +149,7 @@ class CreationTextComposer(EditCopilotAgent):
     # task's soft limit is 1740 s and this runs before any FFmpeg work.
     spec = replace(
         EditCopilotAgent.spec,
-        prompt_version="v18-sequence-own-bar",
+        prompt_version="v19-sequence-own-bar",
         timeout_s=180.0,
         fallback_models=(_FAST_COMPOSER_MODEL,),
     )

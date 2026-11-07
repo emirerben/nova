@@ -273,9 +273,10 @@ class BriefView:
     # "hh_mm" or "hour" (just the hour, no minutes) for those filming-time labels.
     time_format: str = "hh_mm"
     title_literal: str | None = None
-    # KRI-1057: a sentence shown piece by piece beside a DIFFERENT title text. The title keeps
-    # the opening bar, so the sentence is seeded as the first clip's bar for the text pass to split.
-    sequence_literal: str | None = None
+    # KRI-1057: sentences shown piece by piece beside a DIFFERENT title text, or a second one.
+    # The opening bar holds one wording, so each other sentence is seeded as the bar of the first
+    # clip the plan left unlabelled, for the text pass to split. They ask for no clip text.
+    sequence_literals: tuple[str, ...] = ()
     global_literal: str | None = None
     # Qendresa case 9: every live ``text/global`` literal (the brief's whole-video / pinned
     # text) as ``(text, facts.position, ending)``: position raw (normalized where it is used),
@@ -338,7 +339,7 @@ def brief_view(brief: Any) -> BriefView:
     hour_only = False
     clip_literals: dict[str, str] = {}
     title_literal: str | None = None
-    title_sequence_literal: str | None = None
+    title_sequences: list[str] = []
     global_literal: str | None = None
     global_literals: list[tuple[str, object, bool]] = []
     title_asked = False
@@ -424,7 +425,7 @@ def brief_view(brief: Any) -> BriefView:
             # nothing to split, so every such render failed as `creation_text_failed`. The
             # literal is the exact wording: never decorated with a route like a `global`
             # text, and a `title` text literal keeps the bar (settled after the loop).
-            title_sequence_literal = title_sequence_literal or _nfc(req.literal)
+            title_sequences.append(_nfc(req.literal))
         elif is_text_sequence(req) and req.literal and req.scope.startswith("clip:"):
             # KRI-1058: a clip's sequence has its bar like a clip's text literal; the text
             # pass only splits it instead of having to add the text first.
@@ -447,13 +448,14 @@ def brief_view(brief: Any) -> BriefView:
             raw = (req.facts or {}).get("duration_s")
             if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw > 0:
                 target = float(raw)
-    sequence_literal: str | None = None
-    if title_sequence_literal:
-        if title_literal and fold_text(title_literal) != fold_text(title_sequence_literal):
-            wants_text = True
-            sequence_literal = title_sequence_literal
-        else:
-            title_literal = title_literal or title_sequence_literal
+    if title_sequences and not title_literal:
+        title_literal = title_sequences.pop(0)
+    sequence_literals: list[str] = []
+    seen_words = {fold_text(title_literal or "")}
+    for sentence in title_sequences:
+        if fold_text(sentence) not in seen_words:
+            seen_words.add(fold_text(sentence))
+            sequence_literals.append(sentence)
     return BriefView(
         version=int(getattr(brief, "version", 0) or 0) or None,
         wants_per_clip_text=wants_text,
@@ -466,7 +468,7 @@ def brief_view(brief: Any) -> BriefView:
         per_clip_text_is_time=wants_time,
         time_format="hour" if hour_only else "hh_mm",
         title_literal=title_literal,
-        sequence_literal=sequence_literal,
+        sequence_literals=tuple(sequence_literals),
         global_literal=global_literal,
         global_literals=tuple(global_literals),
         title_asked=title_asked or bool(title_literal),
@@ -2279,13 +2281,12 @@ def plan_unified_montage(
     hour_zone, hour_basis = display_timezone(
         [clip.facts for clip in ordered] if view.per_clip_text_is_time else []
     )
+    pending_sequences = list(view.sequence_literals)
     for index, clip in enumerate(ordered):
         chosen: tuple[str, str, str | None, bool] | None = None  # text, provenance, kind, inferred
         group_id: str | None = None
         if clip.ref_id in view.clip_literals:
             chosen = (view.clip_literals[clip.ref_id], "creator", None, False)
-        elif index == 0 and view.sequence_literal:
-            chosen = (view.sequence_literal, "creator", None, False)
         elif clip.ref_id in described:
             chosen = (described[clip.ref_id], "creator", None, False)
             shared = described_titles.get(clip.ref_id)
@@ -2333,6 +2334,8 @@ def plan_unified_montage(
                 chosen = (start_fact[:MAX_LABEL_CHARS], "brief", "start", False)
             elif index == len(ordered) - 1 and end_fact and len(ordered) > 1:
                 chosen = (end_fact[:MAX_LABEL_CHARS], "brief", "end", False)
+        if chosen is None and pending_sequences:
+            chosen = (pending_sequences.pop(0), "creator", None, False)
         if chosen is None:
             if labels_requested and not described and not intent_labels:
                 dropped.append(clip.media_id)
