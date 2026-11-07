@@ -1686,7 +1686,9 @@ extension ChatDraftStagingTests {
 
         var ready = Self.variant(generation: "gNew"); ready["output_url"] = .string("https://example.com/job-b.mp4")
         fake.editorVariantsByJob[jobB] = [ready]
-        let switched = await settle { playing() == "job-b.mp4" }
+        let switched = await settle {
+            playing() == "job-b.mp4" && session.loadState == .loaded && session.refreshSync == .idle
+        }
         XCTAssertTrue(switched, "the watch adopts the new job on its own once it is ready")
         XCTAssertEqual(session.refreshSync, .idle)
         XCTAssertEqual(session.loadState, .loaded)
