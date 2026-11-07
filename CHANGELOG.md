@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.57.0] - 2026-11-07
+
+### Changed
+- fix(chat): turn on captions reaches hidden lyrics on lip-sync/song videos (KRI-1001) (#2158) <!-- release-pr: 2158 -->
+
 ## [0.88.56.0] - 2026-11-07
 
 ### Changed
