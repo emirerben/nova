@@ -1,0 +1,310 @@
+{
+  "comment": "KRI-1264: the card clip a Talking compile writes for a card with a zoom and an entrance animation. The angle stays on transform.rotation_degrees (KRI-1141); zoom and animation ride on visual_placement.editor_style. tests/routes/test_overlay_card_style.py pins the Python side, PlacedCardStyleTests the Swift side.",
+  "cases": [
+    {
+      "name": "plain",
+      "rotation_deg": 0.0,
+      "zoom": 1.0,
+      "entrance": "none",
+      "x_frac": 0.5,
+      "clip": {
+        "id": "subtitled-overlay-card-1",
+        "source_asset_id": "visual-photo-1",
+        "source_start": 0.0,
+        "source_duration": 2.0,
+        "timeline_start": 1.0,
+        "rate": 1.0,
+        "transform": {
+          "scale": 1.0,
+          "rotation_degrees": 0.0,
+          "position_x": 0.0,
+          "position_y": 0.0
+        },
+        "transition": null,
+        "text": null,
+        "visual_placement": {
+          "order": 1,
+          "contain": false,
+          "focal_x": 0.5,
+          "focal_y": 0.5,
+          "zoom": 1.0,
+          "pre_crop": false,
+          "motion": "none",
+          "width_fraction": 0.35,
+          "x_fraction": 0.5,
+          "y_fraction": 0.4,
+          "window_start": 1.0,
+          "window_end": 3.0,
+          "fade_in": false,
+          "fade_out": false
+        },
+        "volume": 0.0
+      }
+    },
+    {
+      "name": "zoom_2",
+      "rotation_deg": 0.0,
+      "zoom": 2.0,
+      "entrance": "none",
+      "x_frac": 0.5,
+      "clip": {
+        "id": "subtitled-overlay-card-1",
+        "source_asset_id": "visual-photo-1",
+        "source_start": 0.0,
+        "source_duration": 2.0,
+        "timeline_start": 1.0,
+        "rate": 1.0,
+        "transform": {
+          "scale": 1.0,
+          "rotation_degrees": 0.0,
+          "position_x": 0.0,
+          "position_y": 0.0
+        },
+        "transition": null,
+        "text": null,
+        "visual_placement": {
+          "order": 1,
+          "contain": false,
+          "focal_x": 0.5,
+          "focal_y": 0.5,
+          "zoom": 1.0,
+          "pre_crop": false,
+          "motion": "none",
+          "width_fraction": 0.35,
+          "x_fraction": 0.5,
+          "y_fraction": 0.4,
+          "window_start": 1.0,
+          "window_end": 3.0,
+          "fade_in": false,
+          "fade_out": false,
+          "editor_style": {
+            "version": 1,
+            "rotation_deg": 0.0,
+            "fit_mode": "cover",
+            "zoom": 2.0,
+            "animation": {
+              "version": 1,
+              "entrance": "none",
+              "exit": "none",
+              "loop": "none",
+              "speed": 1.0
+            }
+          }
+        },
+        "volume": 0.0
+      }
+    },
+    {
+      "name": "zoom_2_pop",
+      "rotation_deg": 0.0,
+      "zoom": 2.0,
+      "entrance": "pop",
+      "x_frac": 0.5,
+      "clip": {
+        "id": "subtitled-overlay-card-1",
+        "source_asset_id": "visual-photo-1",
+        "source_start": 0.0,
+        "source_duration": 2.0,
+        "timeline_start": 1.0,
+        "rate": 1.0,
+        "transform": {
+          "scale": 1.0,
+          "rotation_degrees": 0.0,
+          "position_x": 0.0,
+          "position_y": 0.0
+        },
+        "transition": null,
+        "text": null,
+        "visual_placement": {
+          "order": 1,
+          "contain": false,
+          "focal_x": 0.5,
+          "focal_y": 0.5,
+          "zoom": 1.0,
+          "pre_crop": false,
+          "motion": "none",
+          "width_fraction": 0.35,
+          "x_fraction": 0.5,
+          "y_fraction": 0.4,
+          "window_start": 1.0,
+          "window_end": 3.0,
+          "fade_in": false,
+          "fade_out": false,
+          "editor_style": {
+            "version": 1,
+            "rotation_deg": 0.0,
+            "fit_mode": "cover",
+            "zoom": 2.0,
+            "animation": {
+              "version": 1,
+              "entrance": "pop",
+              "exit": "none",
+              "loop": "none",
+              "speed": 1.0
+            }
+          }
+        },
+        "volume": 0.0
+      }
+    },
+    {
+      "name": "zoom_4",
+      "rotation_deg": 0.0,
+      "zoom": 4.0,
+      "entrance": "none",
+      "x_frac": 0.5,
+      "clip": {
+        "id": "subtitled-overlay-card-1",
+        "source_asset_id": "visual-photo-1",
+        "source_start": 0.0,
+        "source_duration": 2.0,
+        "timeline_start": 1.0,
+        "rate": 1.0,
+        "transform": {
+          "scale": 1.0,
+          "rotation_degrees": 0.0,
+          "position_x": 0.0,
+          "position_y": 0.0
+        },
+        "transition": null,
+        "text": null,
+        "visual_placement": {
+          "order": 1,
+          "contain": false,
+          "focal_x": 0.5,
+          "focal_y": 0.5,
+          "zoom": 1.0,
+          "pre_crop": false,
+          "motion": "none",
+          "width_fraction": 0.35,
+          "x_fraction": 0.5,
+          "y_fraction": 0.4,
+          "window_start": 1.0,
+          "window_end": 3.0,
+          "fade_in": false,
+          "fade_out": false,
+          "editor_style": {
+            "version": 1,
+            "rotation_deg": 0.0,
+            "fit_mode": "cover",
+            "zoom": 4.0,
+            "animation": {
+              "version": 1,
+              "entrance": "none",
+              "exit": "none",
+              "loop": "none",
+              "speed": 1.0
+            }
+          }
+        },
+        "volume": 0.0
+      }
+    },
+    {
+      "name": "zoom_2_pop_tilt_30",
+      "rotation_deg": 30.0,
+      "zoom": 2.0,
+      "entrance": "pop",
+      "x_frac": 0.5,
+      "clip": {
+        "id": "subtitled-overlay-card-1",
+        "source_asset_id": "visual-photo-1",
+        "source_start": 0.0,
+        "source_duration": 2.0,
+        "timeline_start": 1.0,
+        "rate": 1.0,
+        "transform": {
+          "scale": 1.0,
+          "rotation_degrees": 30.0,
+          "position_x": 0.0,
+          "position_y": 0.0
+        },
+        "transition": null,
+        "text": null,
+        "visual_placement": {
+          "order": 1,
+          "contain": false,
+          "focal_x": 0.5,
+          "focal_y": 0.5,
+          "zoom": 1.0,
+          "pre_crop": false,
+          "motion": "none",
+          "width_fraction": 0.35,
+          "x_fraction": 0.5,
+          "y_fraction": 0.4,
+          "window_start": 1.0,
+          "window_end": 3.0,
+          "fade_in": false,
+          "fade_out": false,
+          "editor_style": {
+            "version": 1,
+            "rotation_deg": 0.0,
+            "fit_mode": "cover",
+            "zoom": 2.0,
+            "animation": {
+              "version": 1,
+              "entrance": "pop",
+              "exit": "none",
+              "loop": "none",
+              "speed": 1.0
+            }
+          }
+        },
+        "volume": 0.0
+      }
+    },
+    {
+      "name": "edge_zoom_2",
+      "rotation_deg": 0.0,
+      "zoom": 2.0,
+      "entrance": "none",
+      "x_frac": 0.95,
+      "clip": {
+        "id": "subtitled-overlay-card-1",
+        "source_asset_id": "visual-photo-1",
+        "source_start": 0.0,
+        "source_duration": 2.0,
+        "timeline_start": 1.0,
+        "rate": 1.0,
+        "transform": {
+          "scale": 1.0,
+          "rotation_degrees": 0.0,
+          "position_x": 0.0,
+          "position_y": 0.0
+        },
+        "transition": null,
+        "text": null,
+        "visual_placement": {
+          "order": 1,
+          "contain": false,
+          "focal_x": 0.5,
+          "focal_y": 0.5,
+          "zoom": 1.0,
+          "pre_crop": false,
+          "motion": "none",
+          "width_fraction": 0.35,
+          "x_fraction": 0.95,
+          "y_fraction": 0.4,
+          "window_start": 1.0,
+          "window_end": 3.0,
+          "fade_in": false,
+          "fade_out": false,
+          "editor_style": {
+            "version": 1,
+            "rotation_deg": 0.0,
+            "fit_mode": "cover",
+            "zoom": 2.0,
+            "animation": {
+              "version": 1,
+              "entrance": "none",
+              "exit": "none",
+              "loop": "none",
+              "speed": 1.0
+            }
+          }
+        },
+        "volume": 0.0
+      }
+    }
+  ]
+}
