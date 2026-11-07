@@ -94,6 +94,7 @@ MARK_CASES = [
     # name, brief facts, marked, build protocol, is the restating card served?
     ("object-unmarked", OBJECT, False, APP, False),
     ("object-marked", OBJECT, True, APP, True),
+    ("object-mark-on-cancelled-turn", OBJECT, "cancelled", APP, False),
     ("face-only", FACE, False, APP, True),
     ("old-build", OBJECT, False, OLD_APP, True),
 ]
@@ -102,7 +103,7 @@ MARK_CASES = [
 def phone_at(world, monkeypatch, key, facts, *, marked, protocol):  # noqa: ANN001, ANN201
     seeded, phone, media_id = phone_talking(world, monkeypatch, key, facts)
     if marked:
-        mark_the_mug(seeded, media_id)
+        mark_the_mug(seeded, media_id, cancelled=marked == "cancelled")
     world.refreshes.clear()
     phone.protocol = protocol
     return phone
