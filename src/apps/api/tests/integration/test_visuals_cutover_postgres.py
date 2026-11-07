@@ -16,6 +16,9 @@ Failure modes, written before the runbook and these tests:
       not name it for recovery
   C5  reconcile mislabels a finished, re-tried, deleted or still-queued attempt, so the
       operator chases a non-problem or skips a real one
+  C7  an attempt dispatched AND claimed during the stop window, killed, and timed out by the
+      reaper before the stops end is missing from every in-flight snapshot (Emir's adversarial
+      control on #2183): the capture must be by dispatch time, not by state
   C6  the runbook SQL drifts from what these tests run (the runbook is the source)
 """
 
@@ -104,6 +107,20 @@ def _inventory(owner) -> dict[str, str]:  # noqa: ANN001
     }
 
 
+def _interval(owner, t_start: datetime) -> dict[str, str]:  # noqa: ANN001
+    sql = _runbook_sql("interval").replace("<T_start>", t_start.isoformat())
+    with sync_session() as db:
+        rows = db.execute(text(sql)).mappings().all()
+    return {
+        str(r["id"]): r["analysis_attempt_token"] for r in rows if r["user_id"] == owner.user_id
+    }
+
+
+def _capture(inventory: dict[str, str], interval: dict[str, str]) -> dict[str, str]:
+    """The runbook's VALUES list: the inventory's token wins for its ids."""
+    return {**interval, **inventory}
+
+
 def _reconcile(pairs: dict[str, str]) -> dict[str, str]:
     values = ", ".join(f"('{aid}'::uuid, '{token}')" for aid, token in pairs.items())
     sql = re.sub(r"VALUES <[^>]*>\)", f"VALUES {values})", _runbook_sql("reconcile"))
@@ -172,14 +189,15 @@ async def test_old_budget_cohort_drains_before_capacity_is_removed(env, owner, m
 
 
 async def test_reconcile_names_every_inventoried_attempt_outcome(env, owner):
-    # C4/C5: inventory before the stop, then: one finishes, one is claimed and
-    # killed by the stop, one is killed and the creator retries, one is deleted,
-    # one is still waiting on the worker. 20 min later the runbook query must
-    # name each correctly.
+    # C4/C5: inventory at T_start, then: one finishes, one is claimed and killed
+    # by the stop, one is killed and the creator retries, one is deleted, one is
+    # still waiting on the worker. 20 min later the runbook queries must name
+    # each correctly.
     names = ("done", "stranded", "retried", "deleted", "waiting")
     ids = {name: _add_asset(owner, name=f"{name}.jpg") for name in names}
     for aid in ids.values():
         await _queue(owner, aid)
+    t_start = datetime.now(UTC)
     inventory = _inventory(owner)
     assert set(inventory) == set(ids.values())
 
@@ -195,12 +213,14 @@ async def test_reconcile_names_every_inventoried_attempt_outcome(env, owner):
         db.execute(delete(PlanItemAsset).where(PlanItemAsset.id == uuid.UUID(ids["deleted"])))
         db.commit()
 
+    later = timedelta(minutes=20)
     for name in ("done", "stranded", "retried", "waiting"):
-        _age(ids[name], timedelta(minutes=20))
+        _age(ids[name], later)
+    t_start -= later  # the same clock moved for T_start
     maintenance.reconcile_stale_pool_assets()
     await _reanalyze(owner, ids["retried"])
 
-    outcomes = _reconcile(inventory)
+    outcomes = _reconcile(_capture(inventory, _interval(owner, t_start)))
     assert outcomes == {
         ids["done"]: "done",
         ids["stranded"]: "needs_retry",
@@ -209,3 +229,32 @@ async def test_reconcile_names_every_inventoried_attempt_outcome(env, owner):
         ids["waiting"]: "still_in_flight",
     }
     assert _row(ids["waiting"]).status == "queued"  # lane-sized: 20 min is inside its bound
+
+
+async def test_attempt_dispatched_and_killed_inside_the_stop_window_is_still_reconciled(env, owner):
+    # C7 (Emir's adversarial control): the inventory at T_start is empty; a photo
+    # is dispatched and claimed while the machines are stopping, the stop kills
+    # it, seven minutes pass and the real reaper times it out. An in-flight
+    # snapshot taken after the stops no longer sees it; the interval does.
+    t_start = datetime.now(UTC)
+    assert _inventory(owner) == {}
+
+    late = _add_asset(owner, name="dispatched-during-stops.jpg")
+    await _queue(owner, late)
+    token = _row(late).analysis_attempt_token
+
+    def killed(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise HardKill()
+
+    with pytest.raises(HardKill):
+        _run_task(late, token, killed)
+    seven = timedelta(minutes=7)
+    _age(late, seven)
+    t_start -= seven
+    maintenance.reconcile_stale_pool_assets()
+    assert (_row(late).status, _row(late).error_code) == ("failed", bound.TIMED_OUT_CODE)
+
+    assert _inventory(owner) == {}  # red: a second in-flight snapshot misses it
+    captured = _capture({}, _interval(owner, t_start))
+    assert set(captured) == {late}
+    assert _reconcile(captured) == {late: "needs_retry"}

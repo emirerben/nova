@@ -58,9 +58,10 @@ ORDER BY analysis_last_dispatched_at;
 Do not stop anything while it returns rows: those attempts need the dedicated capacity to finish
 inside their old deadlines.
 
-### 2. Inventory 1: every attempt in flight before the first stop
+### 2. Record `T_start`, then inventory every attempt in flight
 
-Save the full output (ids **and** tokens):
+Write down the current UTC time as `T_start`. Then save the full output of this query (ids **and**
+tokens) as **the inventory**:
 
 ```sql
 -- cutover:inventory
@@ -103,16 +104,29 @@ The signal contract, stated once:
 A clean log proves the worker drained; it does not prove every attempt succeeded. That is what
 step 4 checks.
 
-Then repeat **Inventory 2** (the step 2 query) right after the **last** machine is stopped, and
-save it too. The union of both inventories covers every attempt a visuals machine could have
-claimed: one queued before the first stop, or one dispatched during the stops and still in flight
-after them. An attempt dispatched and finished during the stops is not in either, and it needs
-nothing.
+A second in-flight snapshot after the stops is **not** enough: an attempt dispatched and
+claimed during the stop window, killed, and timed out by the reaper before the snapshot is already
+`failed`. The sequential stops can last longer than the 6-min photo claim deadline. So step 4
+captures the whole window by dispatch time instead of by state.
 
 ### 4. Reconcile every inventoried attempt, 20 min after the last stop
 
-20 min = the 12-min video claim deadline plus one 5-min reaper sweep plus slack. Put every
-`(id, analysis_attempt_token)` pair from both inventories into the `VALUES` list:
+20 min = the 12-min video claim deadline plus one 5-min reaper sweep plus slack. First list every
+attempt dispatched since `T_start`, whatever its state now (a Retry re-dispatches, so it shows up
+here too):
+
+```sql
+-- cutover:interval
+SELECT id, plan_item_id, user_id, kind, status, error_code, analysis_attempt_token, analysis_last_dispatched_at
+FROM plan_item_assets
+WHERE analysis_last_dispatched_at >= TIMESTAMPTZ '<T_start>'
+ORDER BY analysis_last_dispatched_at;
+```
+
+Together, the inventory (in flight at `T_start`) and the interval (dispatched since) cover every
+attempt a visuals machine could have claimed during the cutover. Put every
+`(id, analysis_attempt_token)` pair into the `VALUES` list: the inventory's token for its ids, and
+the interval's current token for ids that are only in the interval:
 
 ```sql
 -- cutover:reconcile
@@ -158,7 +172,7 @@ only `api`, `worker` and `light`. Then lift the merge freeze.
 
 ## Guards
 
-`tests/integration/test_visuals_cutover_postgres.py` runs the three queries above, verbatim from this
+`tests/integration/test_visuals_cutover_postgres.py` runs the four queries above, verbatim from this
 file, against real PostgreSQL with the real upload route, task body and reaper:
 
 - an old-budget queued burst times out if capacity shrinks before the cohort ends (red);
@@ -166,4 +180,7 @@ file, against real PostgreSQL with the real upload route, task body and reaper:
   only then does a lane-sized burst on the single worker also end `ready` (control);
 - reconcile classifies a hard-killed claim (`needs_retry`), a finished attempt (`done`), a
   re-tried one (`new_attempt`), a deleted one (`removed`) and a still-queued one
-  (`still_in_flight`).
+  (`still_in_flight`);
+- an attempt dispatched AND claimed during the stops, killed, and timed out by the reaper before
+  the stops end is missed by any in-flight snapshot but caught by the interval query
+  (`needs_retry`).
