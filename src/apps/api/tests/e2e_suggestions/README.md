@@ -71,6 +71,7 @@ set, and after Undo: the draft, the approval, the brief and the item settings ar
 | `test_r6_scenarios.py` | M (the mark gate, four states, both languages), R (approval readiness with a 6 s / 8 s / 20 s length ask, pinned plan or not, the east-run brief), B (a busy ring write: chips alone, then every card; held cards survive), D (duplicates and a stated length, before and after the serve), U (a taken-back tap is an offer again, brief on and off) |
 | `test_r7_serve_proof.py` | A: the hook after its own Undo (brief on/off x triggers on/off, both languages) is not served, and everything served executes. B: every other kind undone without the brief is an offer again and every served card executes. C: with the editor triggers off, a card the creator's word has since ruled out (a stated length, a title requirement, a captions / music / sound-effects / transition ask) is not served |
 | `test_r7_flag_off_brief_asks.py` | F1/F2: with pinned taps off, `brief_asks` and the real GET read the brief exactly as origin/main does (a verbatim copy of main's rule is the oracle) |
+| `test_r8_mute_render.py` | R1-R3: a tapped mute card's dispatched brief binding, through the real phone montage writer: the clip's cuts are silent, the rest keep their sound, the receipt is met (and not met without the mute). Writes `.dev/phone-render-verify/mute-card-render.json` |
 | `scenes.py` | the state helpers: `route_save`, `decide`, `lapse_approval`, `sweep_expired_approvals`, `agent_reads_video` |
 
 ## States, not just footage
