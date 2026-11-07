@@ -46,6 +46,7 @@ word, the closing tag) fades in unless the creator asked for another entrance;
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
@@ -621,6 +622,122 @@ def _face_boxes(
         return [_FALLBACK_FACE_BOX], receipt
     receipt["faces"] = "none"
     return [], receipt
+
+
+# KRI-903: caption lines are short and faces move, so faces are sampled inside every line,
+# not at six spots across the take. A line gets one sample per this many seconds (at least
+# two), up to the cap on the whole take.
+_CAPTION_FACE_STEP_S = 0.75
+_CAPTION_FACE_MIN_PER_WINDOW = 2
+_CAPTION_FACE_MAX_PER_WINDOW = 4
+_CAPTION_FACE_MAX_ANCHORS = 60
+
+
+def caption_window_faces(
+    clip_path: str | None,
+    *,
+    windows: Sequence[tuple[float, float]],
+    keep_segments: Sequence[tuple[float, float]],
+    display_width: float,
+    display_height: float,
+    canvas: _Canvas,
+    scale: float,
+    sample: FaceSampler,
+    position_x: float = 0.0,
+) -> tuple[list[NormalizedBox], list[ProtectedRegion], dict[str, Any]]:
+    """Every face the speaker clip shows during each caption window (cut-timeline seconds),
+    on the canvas, for a creator who named a face to keep text off (KRI-903).
+
+    Returns ``(boxes, bands, receipt)``: every sampled face box, and one band per window
+    (the union of the faces seen at that window's samples, so a head moving inside a line is
+    covered across it, not only where it was sampled). Fail-safe like `_face_boxes`: a
+    sampler that did not confirm the frame (no clip, error, timeout, too few decoded frames)
+    protects the conservative fallback face beside any face it did detect
+    (``receipt["faces"] == "fallback"``)."""
+    per_window: list[list[float]] = []
+    for start_s, end_s in windows:
+        span = max(float(end_s) - float(start_s), 0.0)
+        count = min(
+            _CAPTION_FACE_MAX_PER_WINDOW,
+            max(_CAPTION_FACE_MIN_PER_WINDOW, math.ceil(span / _CAPTION_FACE_STEP_S)),
+        )
+        per_window.append([float(start_s) + span * (n + 0.5) / count for n in range(count)])
+    if sum(len(times) for times in per_window) > _CAPTION_FACE_MAX_ANCHORS:
+        # Too many lines to give each several samples: one per line, then every k-th line.
+        per_window = [[times[len(times) // 2]] for times in per_window]
+        stride = math.ceil(len(per_window) / _CAPTION_FACE_MAX_ANCHORS)
+        per_window = [
+            times if index % stride == 0 else [] for index, times in enumerate(per_window)
+        ]
+    # The take's six spread samples stay too (what `_face_boxes` always took): short lines
+    # alone could leave the sampler under its decoded-frames floor, and a face between two
+    # lines is still a face.
+    timeline_s = sum(max(0.0, float(end) - float(start)) for start, end in keep_segments)
+    spread = [timeline_s * (n + 0.5) / _FACE_ANCHORS for n in range(_FACE_ANCHORS)]
+    plans = [(-1, at_s) for at_s in spread]
+    plans += [(index, at_s) for index, times in enumerate(per_window) for at_s in times]
+    anchored: dict[float, int] = {}
+    for index, at_s in plans:
+        source_at = _output_to_source_s(at_s, keep_segments)
+        if source_at is not None:
+            anchored[round(source_at, 3)] = index
+    receipt: dict[str, Any] = {
+        "face_sampling": "skipped",
+        "anchors": len(anchored),
+        "windows": len(windows),
+    }
+    if clip_path is None or not anchored:
+        receipt["faces"] = "fallback"
+        return [_FALLBACK_FACE_BOX], [], receipt
+    anchors = sorted(anchored)
+    try:
+        regions, sampled = sample(
+            clip_path,
+            anchors,
+            max_samples=len(anchors),
+            timeout_s=_FACE_TIMEOUT_BASE_S + _FACE_TIMEOUT_PER_ANCHOR_S * len(anchors),
+            count_decoded=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - fail safe: protect the fallback face
+        receipt.update(face_sampling="failed", error=str(exc)[:200], faces="fallback")
+        return [_FALLBACK_FACE_BOX], [], receipt
+    decoded = int(sampled.get("decoded") or 0)
+    receipt.update(face_sampling="ok", decoded=decoded, detected=len(regions))
+    confirmed = (
+        not sampled.get("worker_error")
+        and not (sampled.get("timed_out") and not sampled.get("partial"))
+        and decoded >= _MIN_DECODED_ANCHORS
+    )
+    boxes: list[NormalizedBox] = []
+    by_window: dict[int, list[NormalizedBox]] = {}
+    for region in regions:
+        mapped = source_box_to_canvas(
+            region.box,
+            display_width=display_width,
+            display_height=display_height,
+            canvas=canvas,
+            scale=scale,
+            position_x=position_x,
+        )
+        if mapped is None:
+            continue
+        target = max(region.start_s, region.end_s - 0.5)
+        nearest = min(anchors, key=lambda a: abs(a - target))
+        boxes.append(mapped)
+        if anchored[nearest] >= 0:
+            by_window.setdefault(anchored[nearest], []).append(mapped)
+    bands = [
+        ProtectedRegion(
+            float(windows[index][0]), float(windows[index][1]), _union_box(found), "face"
+        )
+        for index, found in sorted(by_window.items())
+    ]
+    if not confirmed:
+        # What the sampler did see stays protected, with the conservative box beside it.
+        receipt["faces"] = "fallback"
+        return [*boxes, _FALLBACK_FACE_BOX], bands, receipt
+    receipt["faces"] = "detected" if boxes else "none"
+    return boxes, bands, receipt
 
 
 def frame_face_box(box: NormalizedBox, frame: tuple[float, float, float]) -> NormalizedBox:
