@@ -23,7 +23,6 @@ struct NativeEditorAddClipSheet: View {
     @State private var showsCamera = false
     @State private var choosingSource = false
     @State private var addedByRecording = false
-    @State private var uploadAfterCamera = false
     @State private var launched = false
 
     var body: some View {
@@ -73,7 +72,6 @@ struct NativeEditorAddClipSheet: View {
         .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.movie, .image], onCompletion: importFile)
         .fullScreenCover(isPresented: $showsCamera, onDismiss: {
             if addedByRecording { dismiss() }
-            else if uploadAfterCamera { uploadAfterCamera = false; choosingSource = true }
         }) {
             if let accountID = model.localAccountID {
                 TeleprompterScreen(accountID: accountID, projectID: session.creationThreadID ?? UUID(),
@@ -85,8 +83,7 @@ struct NativeEditorAddClipSheet: View {
                                        addedByRecording = true
                                        return .attached
                                    },
-                                   intakeState: { _ in nil },
-                                   onUpload: { uploadAfterCamera = true })
+                                   intakeState: { _ in nil })
             }
         }
         .task {
