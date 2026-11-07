@@ -38,7 +38,7 @@ from app.kria.brief import (
     removed_target_ids,
     render_brief_request,
 )
-from app.kria.brief_binding import MAX_REQUEST_CHARS, BriefBindingRequestTooLongError
+from app.kria.brief_binding import BriefBindingRequestTooLongError
 from app.kria.brief_binding import snapshot_media as _draft_media
 from app.kria.brief_checks import (
     NARRATED_ALIGNMENT_FIELD,
@@ -106,7 +106,7 @@ from app.kria.reply_language import (
     say,
     thread_reply_language,
 )
-from app.kria.request_budget import creator_request_text_sync
+from app.kria.request_budget import creator_request_text_sync, request_over_budget
 from app.kria.route_disclosure import (
     UNIFIED_MONTAGE,
     Disclosure,
@@ -200,6 +200,19 @@ from app.services.phone_speaker_background import (
 )
 from app.services.pin_withdrawal import pin_block_coverage, unrepeated_reply
 from app.services.song_order import model_text
+from app.services.suggestions.commit_readiness import (
+    MARK_NEEDED,
+    REQUIREMENTS_NOT_READY,
+    CommitReadinessInputs,
+    choice_blocked_sync,
+    choice_gate_open,
+    commit_readiness,
+    gate_settings,
+    load_missing_marks_sync,
+    load_protected_regions_sync,
+    mark_gate_open,
+    on_marks_route,
+)
 from app.services.thought_summaries import (
     ThoughtSummaryPublisher,
     bind_thought_publisher,
@@ -318,7 +331,7 @@ def _text_timing_conflict_plan(exc: TextTimingConflict) -> KriaTurnPlan:
 def _full_creator_request_sync(db, *, thread_id: uuid.UUID, through_sequence: int) -> str | None:  # noqa: ANN001
     """Pin every creator instruction visible to the approved source turn."""
     request = creator_request_text_sync(db, thread_id=thread_id, through_sequence=through_sequence)
-    return request if len(request) <= MAX_REQUEST_CHARS else None
+    return None if request_over_budget(request, tap_message="", brief=None) else request
 
 
 def _marks_route_sync(  # noqa: ANN001
@@ -332,17 +345,13 @@ def _marks_route_sync(  # noqa: ANN001
     """KRI-901: this act turn came from an app that shows the mark card AND its draft renders
     on the phone Talking writer (`protected_targets.marks_route`). The gate and approval
     readiness both read this one answer, so neither asks for nor promises a mark elsewhere."""
-    from app.kria.protected_targets import marks_route  # noqa: PLC0415
-
     source = db.get(CreationThreadEvent, turn.source_event_id)
     payload = getattr(source, "payload", None)
-    return marks_route(
+    return on_marks_route(
         client_marks=isinstance(payload, dict) and payload.get("marks_protected_regions") is True,
         creator_id=thread.creator_id,
         strategy=document.strategy,
-        edit_format=getattr(item, "edit_format", None) or document.edit_format,
-        clip_paths=getattr(item, "clip_gcs_paths", None) or (),
-        voiceover_path=getattr(item, "voiceover_gcs_path", None),
+        item=item,
     )
 
 
@@ -366,38 +375,35 @@ def _protected_region_gate_sync(  # noqa: ANN001
     """
     from app.kria.protected_targets import (  # noqa: PLC0415
         build_protected_region_question,
-        clip_generations,
         mark_request_text,
-        missing_object_marks,
-        rendered_speaker_media_id,
-        speaker_candidates,
     )
 
-    if not render_requested or not marks_route:
-        return None
-    if not settings.brief_binding_for(thread.creator_id):
+    readiness, binding_on, choice_questions_on = gate_settings(thread.creator_id)
+    if not mark_gate_open(
+        binding_on=binding_on, render_requested=render_requested, marks_route=marks_route
+    ):
         return None
     source = db.get(CreationThreadEvent, turn.source_event_id)
     if source is None:
         return None
     if brief is None:
         brief = load_latest_brief_sync(db, thread.id)
-    clip_assignments = getattr(item, "clip_assignments", None) or []
-    generations = clip_generations(clip_assignments)
-    # The mark counts only on a clip the writer may put the text on; once a render of this
-    # item spoke from a clip, that clip is one of them, so a mark on another clip is asked
-    # for again instead of being promised and read back as ``other_source``.
-    job = getattr(item, "current_job", None)
-    variants = ((getattr(job, "assembly_plan", None) or {}).get("variants")) or []
-    missing = missing_object_marks(
-        brief,
-        _protected_regions_sync(db, thread_id=thread.id, through_sequence=int(source.sequence)),
-        generations,
-        render_clips=speaker_candidates(
-            clip_assignments, rendered_speaker=rendered_speaker_media_id(variants)
-        ),
+    missing = load_missing_marks_sync(
+        db,
+        thread_id=thread.id,
+        item=item,
+        brief=brief,
+        through_sequence=int(source.sequence),
     )
-    if not missing:
+    verdict = commit_readiness(
+        CommitReadinessInputs(
+            render_requested=render_requested, marks_route=marks_route, missing_marks=bool(missing)
+        ),
+        readiness=readiness,
+        binding_on=binding_on,
+        choice_questions_on=choice_questions_on,
+    )
+    if verdict != MARK_NEEDED:
         return None
     target, clips = missing[0]
     question = build_protected_region_question(
@@ -410,23 +416,6 @@ def _protected_region_gate_sync(  # noqa: ANN001
         protected_region_question=question,
     )
     return plan, question
-
-
-def _protected_regions_sync(db, *, thread_id: uuid.UUID, through_sequence: int) -> list[dict]:  # noqa: ANN001
-    """KRI-827: the creator's marks of what to keep text off, from their own turns only."""
-    from app.kria.protected_targets import fold_protected_regions  # noqa: PLC0415
-
-    return fold_protected_regions(
-        db.execute(
-            select(CreationThreadEvent.role, CreationThreadEvent.payload)
-            .where(
-                CreationThreadEvent.thread_id == thread_id,
-                CreationThreadEvent.role == "user",
-                CreationThreadEvent.sequence <= through_sequence,
-            )
-            .order_by(CreationThreadEvent.sequence)
-        ).all()
-    )
 
 
 @dataclass(frozen=True)
@@ -3007,7 +2996,7 @@ def _complete_draft_turn(
             )
             # KRI-901: the marks this approval would pin, so a marked object is executable.
             _readiness_marks = (
-                _protected_regions_sync(
+                load_protected_regions_sync(
                     db, thread_id=thread.id, through_sequence=int(_readiness_source.sequence)
                 )
                 if _readiness_source is not None
@@ -3398,12 +3387,20 @@ def _complete_draft_turn(
                 pinned_refusal=_pin_refusal_for(planned, _PIN_MARK_NEEDED),
             )
             return replace(completed, response_only=True)
+        _omitted = simpler_version_chosen or automatic_omission
+        _, _binding_on, _choice_questions_on = gate_settings(thread.creator_id)
         if (
-            settings.brief_binding_for(thread.creator_id)
-            and (
-                (unmet_ids and not (simpler_version_chosen or automatic_omission))
-                or (readiness_report is not None and not readiness_report["ready"])
+            commit_readiness(
+                CommitReadinessInputs(
+                    readiness_ready=None if readiness_report is None else readiness_report["ready"],
+                    readiness_unmet=() if _omitted else unmet_ids,
+                    receipts_unmet=() if _omitted else unmet_ids,
+                ),
+                readiness=readiness_required,
+                binding_on=_binding_on,
+                choice_questions_on=_choice_questions_on,
             )
+            == REQUIREMENTS_NOT_READY
             # KRI-558: an editor draft that really changed something is kept, and its
             # Partly / Couldn't lines say what is missing. Only an edit that changed
             # nothing falls back to the "different approach?" question.
@@ -3547,50 +3544,30 @@ def _complete_draft_turn(
                 }
             )
             snapshot, snapshot_hash = canonical_snapshot(document)
-        choice_gate = (
-            (
-                settings.kria_choice_questions_enabled
-                or settings.brief_binding_for(thread.creator_id)
-            )
-            and apply_intent.tool_name == "draft.apply_strategy"
-            and bool(document.strategy)
+        choice_gate = apply_intent.tool_name == "draft.apply_strategy" and choice_gate_open(
+            binding_on=_binding_on,
+            choice_questions_on=_choice_questions_on,
+            has_strategy=bool(document.strategy),
         )
         if choice_gate:
             from app.kria.brief_binding import snapshot_media as _snapshot_media  # noqa: PLC0415
 
-            binding_on = settings.brief_binding_for(thread.creator_id)
             gate_brief = brief
-            if gate_brief is None and binding_on:
+            if gate_brief is None and _binding_on:
                 gate_brief = load_latest_brief_sync(db, thread.id)
                 if settings.kria_choice_questions_enabled:
                     gate_brief = answered_brief(gate_brief, document.strategy)
-            blocked = _unresolved_choice_plan(
-                document.strategy,
-                gate_brief if binding_on else None,
-                planned.media_snapshot
+            blocked = choice_blocked_sync(
+                db,
+                thread_id=thread.id,
+                strategy=document.strategy,
+                brief=gate_brief,
+                media=planned.media_snapshot
                 if planned.media_snapshot is not None
                 else _snapshot_media(item),
-                contract_brief=gate_brief if binding_on else None,
-                events=[
-                    tag_event(role, payload, event_type, content)
-                    for role, payload, event_type, content in db.execute(
-                        select(
-                            CreationThreadEvent.role,
-                            CreationThreadEvent.payload,
-                            CreationThreadEvent.event_type,
-                            CreationThreadEvent.content,
-                        )
-                        .where(
-                            CreationThreadEvent.thread_id == thread.id,
-                            CreationThreadEvent.role.in_({"user", "assistant"}),
-                        )
-                        .order_by(CreationThreadEvent.sequence)
-                    ).all()
-                ],
                 has_draft=head is not None,
-                creator_id=thread.creator_id if binding_on else None,
+                creator_id=thread.creator_id,
                 client_protocol=client_protocol,
-                allow_choices=settings.kria_choice_questions_enabled,
             )
             if blocked is not None:
                 _refuse_repair_reply(planned)
@@ -3719,7 +3696,7 @@ def _complete_draft_turn(
                             else None
                         ),
                         protected_regions=(
-                            _protected_regions_sync(
+                            load_protected_regions_sync(
                                 db,
                                 thread_id=thread.id,
                                 through_sequence=int(source_event.sequence),

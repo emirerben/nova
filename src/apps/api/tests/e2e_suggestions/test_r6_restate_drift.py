@@ -17,6 +17,11 @@ on an account that is not on readiness at all.
       and off approval readiness, both restating cards, the card is served IFF its tap executes.
       The truth is the tap of the same card with the strip switched off. A card served over a
       refusal is a dead tap; a card withheld over a tap that works is a lost offer.
+      The mark gate rides the same matrix (``MARK_CELLS``): the serve's ``_mark_needed`` and the
+      tap's ``_protected_region_gate_sync`` both answer through ``commit_readiness``, so a live
+      ``keep_text_off`` object with no mark, an app build that cannot show the mark card, a
+      face-only ask and a marked object are each a cell, on an account on and off readiness.
+
   D2  The demonstrated case: a readiness account whose head draft pinned its length plan, and a
       brief with an ordinary length ask the footage can make (6 s of an 8 s take). The filler card
       is served and the tap runs. The same account whose head pinned no plan is NOT served the card
@@ -43,6 +48,14 @@ from app.kria.brief import BriefUpdate
 from app.services import suggestion_serve
 from tests.e2e_suggestions import threads
 from tests.e2e_suggestions.test_r5_serve_common import build, executes, keep_mute_card, kinds_of
+from tests.e2e_suggestions.test_r5_serve_strip import (
+    APP,
+    FACE,
+    OBJECT,
+    OLD_APP,
+    mark_the_mug,
+    phone_talking,
+)
 from tests.e2e_suggestions.threads import SIGNALS, TALKING
 from tests.tasks import kria_pinned_kinds_harness as k
 from tests.tasks.test_kria_pinned_r5_readiness import plan_names_its_clips, readiness_on
@@ -225,6 +238,59 @@ MATRIX = [
 async def test_d1_serve_and_tap_never_part(talking_world, monkeypatch, column, name, kind):
     row = await one_row(talking_world, monkeypatch, name, kind, column)
     assert verdict(name, kind, column, row) is None, verdict(name, kind, column, row)
+
+
+MARK_CELLS = [
+    # name, brief facts, marked, build protocol, does the tap ask "Mark the plate"?
+    ("object-unmarked", OBJECT, False, APP, True),
+    ("object-marked", OBJECT, True, APP, False),
+    ("face-only", FACE, False, APP, False),
+    ("old-build", OBJECT, False, OLD_APP, False),
+    ("no-build", OBJECT, False, None, False),
+    ("no-ask", None, False, APP, False),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("readiness", [False, True], ids=["plain", "readiness"])
+@pytest.mark.parametrize(
+    ("name", "facts", "marked", "protocol", "asks"), MARK_CELLS, ids=[c[0] for c in MARK_CELLS]
+)
+async def test_d1_mark_needed_cells_serve_and_tap_never_part(
+    talking_world, monkeypatch, name, facts, marked, protocol, asks, readiness
+):
+    """``suggestion_serve._mark_needed`` and the tap's mark gate answer through one
+    ``commit_readiness``: a card is never served over a tap that asks for a mark, and never
+    withheld over a tap that works. ``asks`` pins that each cell really exercises the gate."""
+    if readiness:
+        readiness_on(monkeypatch)
+
+    async def nothing_stripped_but_switches(db, thread, ctx, kinds, cards=None):  # noqa: ANN001, ANN202
+        return {x: "kind_off" for x in kinds if suggestion_serve._kind_off(x)}
+
+    def phone_for():  # noqa: ANN202
+        seeded, phone, media_id = phone_talking(talking_world, monkeypatch, KEY, facts)
+        if marked:
+            mark_the_mug(seeded, media_id)
+        if readiness:
+            plan_names_its_clips(seeded)
+        talking_world.refreshes.clear()
+        phone.protocol = protocol
+        return phone
+
+    served = "filler_words" in kinds_of(await phone_for().serve())
+    with monkeypatch.context() as m:
+        m.setattr(suggestion_serve, "dead_card_kinds", nothing_stripped_but_switches)
+        phone = phone_for()
+        everything = await phone.serve()
+        card = next((c for c in everything.suggestions if c.kind == "filler_words"), None)
+        assert card is not None, "the unfiltered set holds no filler card"
+        tap = await phone.tap(card, everything)
+    asked = (tap.refused or {}).get("reason") == "mark_needed"
+    row = Row(served, True, executes(tap), str((tap.refused or {}).get("reason") or tap.reply[:60]))
+    assert verdict(name, "filler_words", "readiness" if readiness else "plain", row) is None, row
+    assert asked == asks, f"the tap asked for a mark: {asked}, the cell expects {asks}"
+    assert not (served and asked), "served a card whose tap asks for a mark"
 
 
 @pytest.mark.asyncio

@@ -19,6 +19,7 @@ the phone. The `Action` stays server-side; a tap pins `{set_id, chip_id}`.
 | `services/suggestions/kinds/*.py` | ONE module per kind; the explicit list is `kinds/__init__.py` |
 | `services/suggestions/pinned.py` | the ring reads a tap resolves against, the lane allow-lists, the registry rebuild, the restate base |
 | `services/suggestions/brief_asks.py` | "did the creator already say something about this lane?" for the five ported editor kinds (KRI-129) |
+| `services/suggestions/commit_readiness.py` | the commit's gates composed once, pure (`commit_readiness`: mark, requirements, choice) plus the loaders for their facts; the serve and the tap both call it |
 | `services/suggestions/restate_judgment.py` | the one question the serve and a restating tap ask: would the commit approve this draft? (`restate_problem`, `plan_media`) |
 | `services/suggestion_serve.py` | the GET's read path: freeze, ring write, and the strip of cards the tap would refuse |
 | `services/clip_signals/` | per-clip measured signals, stored at `analysis["signals"]` next to `analysis["understanding"]` |

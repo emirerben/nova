@@ -6,8 +6,9 @@ draft and refuses, writing nothing, when it is not ready: the requirement receip
 approval-readiness account, ``assess_readiness``), the choice gate. A card served over a refusal is
 a dead tap, so the GET asks the same questions before it serves the card.
 
-``restate_problem`` is that question. It calls the commit's own functions on the commit's own
-inputs and holds the composition in ONE place the serve reads; ``plan_media`` is the one piece the
+``restate_problem`` is that question. It reads the commit's own facts on the commit's own inputs and
+combines them with ``commit_readiness`` (``services/suggestions/commit_readiness.py``), the one
+composition the tap calls too; ``plan_media`` is the one piece the
 planner (the tap) and the serve both call, so the plan is judged on the same media in both. Where
 a fact cannot be rebuilt exactly the answer is a reason, never "fine": a card the server cannot
 prove is not offered. ``tests/e2e_suggestions/test_r6_restate_drift.py`` runs both on the same
@@ -23,12 +24,26 @@ pinned on other footage, leaves the length plan out, and a requirement that need
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 from pydantic import ValidationError
 
 from app.config import settings
+from app.services.suggestions.commit_readiness import (
+    CHOICE_NEEDED,
+    REQUIREMENTS_NOT_READY,
+    CommitReadinessInputs,
+    choice_blocked_sync,
+    client_marks,
+    commit_readiness,
+    gate_settings,
+    load_protected_regions_sync,
+    on_marks_route,
+)
+
+__all__ = ["CHOICE_NEEDED", "REQUIREMENTS_NOT_READY"]
 
 # What the live planner adds to the media (``planner._enrich_best_parts_snapshot``); a test pins
 # that it adds these keys and no others.
@@ -40,8 +55,6 @@ PLAN_MEDIA_KEYS = (
     "still_hold_conflict",
 )
 
-REQUIREMENTS_NOT_READY = "requirements_not_ready"
-CHOICE_NEEDED = "choice_needed"
 BRIEF_UNAVAILABLE = "brief_unavailable"
 NO_CARD = "no_card"
 NO_PERSONA = "no_persona"
@@ -94,8 +107,8 @@ async def restate_problem(
     if problem is not None:
         return problem
     if readiness:
-        reason = await db.run_sync(
-            lambda session: _readiness_problem(
+        ready, unmet = await db.run_sync(
+            lambda session: _readiness_facts(
                 session,
                 thread=thread,
                 item=item,
@@ -106,20 +119,35 @@ async def restate_problem(
                 client_protocol=ctx.client_protocol,
             )
         )
+        inputs = CommitReadinessInputs(readiness_ready=ready, readiness_unmet=unmet)
     else:
-        reason = await _receipts_problem(db, thread, ctx, item, base, prior, card)
+        problem, unmet = await _receipts_facts(db, thread, ctx, item, base, prior, card)
+        if problem is not None:
+            return problem
+        inputs = CommitReadinessInputs(receipts_unmet=unmet)
+    _, binding_on, choice_questions_on = gate_settings(creator_id)
+    levers = {
+        "readiness": readiness,
+        "binding_on": binding_on,
+        "choice_questions_on": choice_questions_on,
+    }
+    reason = commit_readiness(inputs, **levers)
     if reason is not None:
         return reason
-    return await db.run_sync(
-        lambda session: _choice_problem(
+    blocked = await db.run_sync(
+        lambda session: choice_blocked_sync(
             session,
-            thread=thread,
-            brief=brief,
+            thread_id=thread.id,
             strategy=strategy,
+            brief=brief,
             media=media,
             has_draft=base.head_hash is not None,
+            creator_id=creator_id,
             client_protocol=ctx.client_protocol,
         )
+    )
+    return commit_readiness(
+        replace(inputs, has_strategy=bool(strategy), choice_blocked=blocked is not None), **levers
     )
 
 
@@ -177,7 +205,7 @@ async def _readiness_stand(
     return dict(planned.plan.intents[0].arguments["strategy"]), planned.readiness_manifest
 
 
-def _readiness_problem(
+def _readiness_facts(
     session: Any,
     *,
     thread: Any,
@@ -187,47 +215,31 @@ def _readiness_problem(
     media: Mapping[str, Any],
     manifest: Any,
     client_protocol: int | None,
-) -> str | None:
+) -> tuple[bool, tuple[str, ...]]:
     """``assess_readiness`` on the inputs the commit hands it for a restate (strategy draft:
-    no editor payload, no collection story, no prepared research)."""
-    from sqlalchemy import select  # noqa: PLC0415
-
+    no editor payload, no collection story, no prepared research): ``(ready, unmet ids)``."""
     from app.kria.approval_readiness import APPROVABLE, assess_readiness  # noqa: PLC0415
     from app.kria.order_replacement_receipts import compiled_order_preflight_sync  # noqa: PLC0415
     from app.kria.order_replacement_sources import (  # noqa: PLC0415
         load_brief_order_source_context_sync,
     )
-    from app.kria.protected_targets import fold_protected_regions, marks_route  # noqa: PLC0415
-    from app.models import CreationThreadEvent  # noqa: PLC0415
     from app.services.phone_montage_preflight import readiness_plan_blockers  # noqa: PLC0415
 
     creator_id = getattr(thread, "creator_id", None)
-    client_marks = (
-        client_protocol is not None
-        and client_protocol >= settings.protected_region_mark_min_client_protocol
-    )
-    on_marks_route = marks_route(
-        client_marks=client_marks,
+    on_route = on_marks_route(
+        client_marks=client_marks(client_protocol),
         creator_id=creator_id,
         strategy=strategy,
-        edit_format=getattr(item, "edit_format", None) or strategy.get("edit_format"),
-        clip_paths=getattr(item, "clip_gcs_paths", None) or (),
-        voiceover_path=getattr(item, "voiceover_gcs_path", None),
+        item=item,
     )
-    regions = fold_protected_regions(
-        session.execute(
-            select(CreationThreadEvent.role, CreationThreadEvent.payload)
-            .where(CreationThreadEvent.thread_id == thread.id, CreationThreadEvent.role == "user")
-            .order_by(CreationThreadEvent.sequence)
-        ).all()
-    )
+    regions = load_protected_regions_sync(session, thread_id=thread.id)
     report = assess_readiness(
         brief,
         strategy,
         media=dict(media),
         manifest=manifest,
         protected_regions=regions,
-        protected_marks=on_marks_route,
+        protected_marks=on_route,
         creator_id=creator_id,
         order_execution=compiled_order_preflight_sync(
             session,
@@ -251,18 +263,22 @@ def _readiness_problem(
             client_protocol=client_protocol,
         ),
     )
-    unmet = [row for row in report["requirements"] if row["disposition"] not in APPROVABLE]
-    return REQUIREMENTS_NOT_READY if unmet or not report["ready"] else None
+    unmet = tuple(
+        str(row["requirement_id"])
+        for row in report["requirements"]
+        if row["disposition"] not in APPROVABLE
+    )
+    return bool(report["ready"]), unmet
 
 
-async def _receipts_problem(
+async def _receipts_facts(
     db: Any, thread: Any, ctx: Any, item: Any, base: Any, brief: Any, card: Any
-) -> str | None:
+) -> tuple[str | None, tuple[str, ...]]:
     """An account off approval readiness: the draft check's receipts for the requirements the
     card did not write (``plan_facts_from_strategy`` -> ``build_receipts`` ->
     ``needs_creator_choice``). It reads only the plan and the brief; facts that need the phone's
     montage preflight or the research step stay unknown, and an unknown fact is an unchecked
-    receipt, which never holds a draft."""
+    receipt, which never holds a draft. ``(problem, unmet ids)``."""
     from app.kria.brief_checks import (  # noqa: PLC0415
         build_receipts,
         needs_creator_choice,
@@ -276,13 +292,13 @@ async def _receipts_problem(
 
     creator_id = getattr(thread, "creator_id", None)
     if brief is None or not brief.live():
-        return None
+        return None, ()
     if settings.kria_choice_questions_enabled:
         brief = answered_brief(brief, base.strategy)
     plan = await db.get(ContentPlan, item.content_plan_id)
     persona = await db.get(Persona, plan.persona_id) if plan is not None else None
     if persona is None:
-        return NO_PERSONA
+        return NO_PERSONA, ()
     manifest, _media = await resolve_item_creator_context(
         db, item, persona=persona, runs_guided_voiceover=False
     )
@@ -309,58 +325,4 @@ async def _receipts_problem(
     )
     bound = settings.brief_binding_for(creator_id)
     receipts = build_receipts(checked, facts, include_unchecked=bound, strict_order=bound)
-    unmet = [r.requirement_id for r in receipts if needs_creator_choice(r)]
-    return REQUIREMENTS_NOT_READY if unmet else None
-
-
-def _choice_problem(
-    session: Any,
-    *,
-    thread: Any,
-    brief: Any,
-    strategy: Mapping[str, Any],
-    media: Mapping[str, Any],
-    has_draft: bool,
-    client_protocol: int | None,
-) -> str | None:
-    """The commit's choice gate (``_unresolved_choice_plan``) over the same strategy, brief,
-    media and thread events: an open question the creator has not answered refuses the tap."""
-    from sqlalchemy import select  # noqa: PLC0415
-
-    from app.models import CreationThreadEvent  # noqa: PLC0415
-    from app.services.choice_questions import tag_event  # noqa: PLC0415
-    from app.tasks.kria_runtime import _unresolved_choice_plan  # noqa: PLC0415
-
-    creator_id = getattr(thread, "creator_id", None)
-    binding_on = settings.brief_binding_for(creator_id)
-    if not (settings.kria_choice_questions_enabled or binding_on) or not strategy:
-        return None
-    events: Sequence[Any] = [
-        tag_event(role, payload, event_type, content)
-        for role, payload, event_type, content in session.execute(
-            select(
-                CreationThreadEvent.role,
-                CreationThreadEvent.payload,
-                CreationThreadEvent.event_type,
-                CreationThreadEvent.content,
-            )
-            .where(
-                CreationThreadEvent.thread_id == thread.id,
-                CreationThreadEvent.role.in_({"user", "assistant"}),
-            )
-            .order_by(CreationThreadEvent.sequence)
-        ).all()
-    ]
-    gate_brief = brief if binding_on else None
-    blocked = _unresolved_choice_plan(
-        strategy,
-        gate_brief,
-        media,
-        contract_brief=gate_brief,
-        events=events,
-        has_draft=has_draft,
-        creator_id=creator_id if binding_on else None,
-        client_protocol=client_protocol,
-        allow_choices=settings.kria_choice_questions_enabled,
-    )
-    return None if blocked is None else CHOICE_NEEDED
+    return None, tuple(r.requirement_id for r in receipts if needs_creator_choice(r))
