@@ -18,3 +18,21 @@ Measured with `resolve_phone_text_style` on the portrait canvas (box top/bottom,
 
 Open: very long text in `bottom_left` still falls to a lifted rung (box 0.54-0.72);
 the unasked face-avoidance path (`choose_caption_y_frac`) was not changed or measured.
+
+## Review follow-up: final compiled geometry (P2)
+
+Through the real writer + compiler (`tests/pipeline/test_caption_bottom_frame.py`), a long
+(118 chars) large (96 px) asked bottom_left caption ended at 1.017 of the height (off the
+frame) and bottom / bottom_right at 0.948: the watermark pass re-breaks the cue and grows it.
+Fix: an asked caption position carries `PhoneCaptionLook.frame_budget_frac` (0.88); the
+watermark rewrap never grows the block past it, and a cue the pass leaves alone is lifted
+(never shrunk) to fit. Unasked captions have no budget and compile exactly as before.
+
+| case (asked) | final ink bottom before | after |
+| --- | --- | --- |
+| bottom_left, long, large | 1.017 | 0.879 |
+| bottom / bottom_right, long, large | 0.948 | 0.880 |
+| any, short | 0.840 | 0.840 |
+
+Size is kept (96 px) in every case. Red control: with the compiler change stashed, 3 of the
+15 new cases fail.

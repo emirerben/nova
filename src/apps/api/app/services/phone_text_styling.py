@@ -372,7 +372,7 @@ def generation_resolved_rows(role: str) -> list[dict]:
 def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
     from dataclasses import replace
 
-    from app.pipeline.phone_captions import PhoneCaptionLook
+    from app.pipeline.phone_captions import ASKED_CAPTION_FRAME_BUDGET_FRAC, PhoneCaptionLook
     from app.pipeline.phone_text_style import drawable_family
 
     policy = _POLICY.get()
@@ -560,6 +560,9 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
                 position_y_frac=row["y_frac"],
                 text_anchor=row["alignment"],
                 max_width_frac=row["max_width_frac"],
+                # An asked spot is held inside the frame by the compiler (KRI-1266); an unasked
+                # caption compiles exactly as before.
+                frame_budget_frac=ASKED_CAPTION_FRAME_BUDGET_FRAC if spot_asked else None,
             )
             if "color" not in rule:
                 # Green 5: kept so a background that arrives later re-picks the colour.
