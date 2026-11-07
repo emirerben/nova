@@ -828,28 +828,34 @@ struct NativeVideoPreview: View {
                             if !session.isShowingPreviousPreview { onEmptyTap?() }
                         }
                     if let previous = session.previousPreviewPresentation {
-                        VStack(spacing: 8) {
-                            Group {
-                                if let frame = previous.frame {
-                                    Image(uiImage: frame).resizable()
-                                } else {
-                                    NativeEditorPlayerSurface(player: previous.player)
-                                }
-                            }
-                                .aspectRatio(previous.aspectRatio, contentMode: .fit)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            Text(previous.status.message)
-                                .font(KriaFont.body(12)).foregroundStyle(.white)
-                                .multilineTextAlignment(.center)
-                                .accessibilityIdentifier("native-editor-previous-preview-status")
-                            if previous.status != .updating {
-                                Button("Retry preview") { Task { await session.retryPreview() } }
-                                    .foregroundStyle(.white).frame(minHeight: 44)
-                                    .accessibilityIdentifier("native-editor-previous-preview-retry")
+                        Group {
+                            if let frame = previous.frame {
+                                Image(uiImage: frame).resizable()
+                            } else {
+                                NativeEditorPlayerSurface(player: previous.player)
                             }
                         }
-                        .padding(.bottom, 8)
+                        .aspectRatio(previous.aspectRatio, contentMode: .fit)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(.black)
+                        .overlay(alignment: .top) {
+                            VStack(spacing: 4) {
+                                Text(previous.status.message)
+                                    .font(KriaFont.body(12)).foregroundStyle(.white)
+                                    .multilineTextAlignment(.center)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .accessibilityIdentifier("native-editor-previous-preview-status")
+                                if previous.status != .updating {
+                                    Button("Retry preview") { Task { await session.retryPreview() } }
+                                        .foregroundStyle(.white).frame(minHeight: 44)
+                                        .accessibilityIdentifier("native-editor-previous-preview-retry")
+                                }
+                            }
+                            .padding(8)
+                            .frame(maxWidth: .infinity)
+                            .background(.black, in: RoundedRectangle(cornerRadius: 8))
+                            .padding(8)
+                        }
                         .accessibilityElement(children: .contain)
                     }
                     if !session.isShowingPreviousPreview, let frame = session.scrubPreviewFrame {

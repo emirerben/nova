@@ -3020,11 +3020,34 @@ final class NativeEditorSessionTests: XCTestCase {
                 sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false),
                 revisionNumber: nil, revisionHash: nil, expectedDuration: nil))
         var previewSource: NativeTimelineSource?
+        var importedAssetID: String?
+        let retainedSlotID = UUID().uuidString
+        func retainingSourceIdentity(_ variant: [String: JSONValue]) -> [String: JSONValue] {
+            guard retainsPreview else { return variant }
+            guard let importedAssetID,
+                  var timeline = variant["user_timeline"]?.objectValue,
+                  var slots = timeline["slots"]?.arrayValue, slots.count == 1,
+                  var slot = slots[0].objectValue else {
+                XCTFail("The retained fixture requires its imported source and one canonical slot")
+                return variant
+            }
+            slot["slot_id"] = .string(retainedSlotID)
+            slot["id"] = .string(retainedSlotID)
+            slot["asset_id"] = .string(importedAssetID)
+            slots[0] = .object(slot)
+            timeline["slots"] = .array(slots)
+            var result = variant
+            result["user_timeline"] = .object(timeline)
+            return result
+        }
         if retainsPreview {
             let sourceProject = BackgroundUploadCoordinator.projectDirectory(projectID)
             addTeardownBlock { try? FileManager.default.removeItem(at: sourceProject.root) }
             let footage = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
             let asset = try await AssetImportCoordinator(project: sourceProject).importAsset(from: footage)
+            // MediaAsset.id is String; the importer defaults to a UUID string.
+            _ = try XCTUnwrap(UUID(uuidString: asset.id))
+            importedAssetID = asset.id
             try SourceAssetStore(project: sourceProject).bind(mediaID: "source", original: asset)
             let fingerprint = try XCTUnwrap(asset.fingerprint)
             let descriptor = OriginalMediaDescriptor(sha256: fingerprint.hex, byteCount: fingerprint.byteCount,
@@ -3037,6 +3060,7 @@ final class NativeEditorSessionTests: XCTestCase {
             fake.sourcePoolResult = NativeEditorSourcePool(
                 clips: [.init(clipIndex: 0, nativeSource: previewSource)], baseGeneration: generation)
         }
+        fake.authoritativeVariant = retainingSourceIdentity(initialVariant)
         pinPreviewSources("g1")
         let project = ProjectSummary(id: projectID, title: "Legacy", status: .ready, updatedAt: .now,
             posterURL: nil, outputVariantID: "initial", runtimeVersion: 1,
@@ -3049,13 +3073,16 @@ final class NativeEditorSessionTests: XCTestCase {
                 session.pausePlayback()
             }
         }
+        func previewDiagnostics() -> String {
+            "generation=\(session.document.revision.baseGeneration); conflict=\(String(describing: session.mergeConflictMessage)); sourceState=\(session.sourcePreviewState); sourcePoolCalls=\(fake.sourcePoolCallCount)"
+        }
         func awaitPreparedPreview() async throws {
             let ready = await waitUntil {
                 session.sourcePreviewState == .ready
                     && session.admissiblePreviewDisplayTicket != nil
                     && session.player?.currentItem?.status == .readyToPlay
             }
-            XCTAssertTrue(ready, "The real local-source preview must settle before admission")
+            XCTAssertTrue(ready, "The real local-source preview must settle before admission: \(previewDiagnostics())")
             XCTAssertEqual(session.sourcePreviewState, .ready)
             guard ready else { throw APIError.invalidResponse }
         }
@@ -3072,7 +3099,7 @@ final class NativeEditorSessionTests: XCTestCase {
                 "id": .string("remote-text"), "text": .string("Original"),
                 "start_s": .number(0), "end_s": .number(textEnd),
             ])])
-            return value
+            return retainingSourceIdentity(value)
         }
         let saved = renderedVariant(duration: 1.5, generation: "g2")
         fake.authoritativeVariant = saved
@@ -3174,14 +3201,25 @@ final class NativeEditorSessionTests: XCTestCase {
             }
             XCTAssertTrue(session.isShowingPreviousPreview)
             if testsRetainedFailure {
+                let sourceCallsBeforeFailure = fake.sourcePoolCallCount
                 fake.sourcePoolError = .requestFailed(status: 503)
                 fake.authoritativeVariant = renderedVariant(duration: 1.4, generation: "g4")
                 await session.synchronizePromptRevision()
+                let adopted = session.document.revision.baseGeneration == "g4"
+                let merged = session.mergeConflictMessage == nil
+                XCTAssertTrue(adopted, "The failure must belong to adopted g4: \(previewDiagnostics())")
+                XCTAssertTrue(merged, "A merge conflict must not substitute for the source failure: \(previewDiagnostics())")
+                guard adopted, merged else { throw APIError.invalidResponse }
+                let requested = await waitUntil(timeout: .seconds(5)) {
+                    fake.sourcePoolCallCount > sourceCallsBeforeFailure
+                }
+                XCTAssertTrue(requested, "The real g4 source request must run: \(previewDiagnostics())")
+                guard requested else { throw APIError.invalidResponse }
                 let failed = await waitUntil {
                     if case .failed = session.sourcePreviewState { return true }
                     return false
                 }
-                XCTAssertTrue(failed, "The real source-pool failure must reach a terminal preview state")
+                XCTAssertTrue(failed, "The real source-pool failure must reach a terminal preview state: \(previewDiagnostics())")
                 guard failed else { throw APIError.invalidResponse }
                 XCTAssertFalse(session.isPreparingCurrentPreview)
                 XCTAssertEqual(session.previousPreviewPresentation?.status, .failed)

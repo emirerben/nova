@@ -37,7 +37,9 @@ uses an opt-in same-target generation change. The next generation is still
 rendering; a current native source preview does not claim encoded-render
 completion. Inspect the captured old, retained, current and manual/Undo pictures.
 Accessible text and a ready layer alone do not prove their displayed pixels.
-This case and the latest source corrections await native execution.
+This case passed at `017f2a5e`, but its actual pictures exposed a retained-picture
+layout defect: the notice shrank the picture and sat behind the activity control.
+The corrected full-picture/top-notice overlay and overlap checks await rerun.
 
 `NativeEditorPreviewWorkSessionTests/testPlayingInPlaceTitleUpdateSettlesThroughTheRealPlayerSurfaceAndCompositor`
 mounts the production preview in a real test-host window. It checks advancing
@@ -45,7 +47,11 @@ playback and revision admission without invoking readiness callbacks manually.
 `NativeEditorSessionTests/testRetainedPreviewStopsOnSourceFailureAndRetriesWithoutLosingTheUnsavedTrim`
 checks failure/retry status and authored-state preservation; the deferred-conflict
 case checks export refusal after the candidate composition is ready but its
-previous picture is still presented. These new controls are not yet executed.
+previous picture is still presented. Playing admission and the deferred-conflict
+export control passed at `017f2a5e`. The failure/retry fixture timed out; stable
+source identities and request/adoption prerequisites now await rerun. Improve's
+Done action must be selected by its actual visible label because the sheet's
+container identifier masks the child identifier in the exported hierarchy.
 
 Run these through the editor CI selection or a separately allocated bounded
 native batch after launch/doctor, retaining results and captures. The default

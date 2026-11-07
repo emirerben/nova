@@ -40,7 +40,14 @@ final class CreationUITests: XCTestCase {
         let opened = sheet.waitForExistence(timeout: 5)
         XCTAssertTrue(opened)
         guard opened else { return }
-        app.buttons["improve-sheet-done"].tap()
+        let doneButtons = app.buttons.matching(NSPredicate(format: "label == %@", "Done"))
+        let hasDone = doneButtons.firstMatch.waitForExistence(timeout: 5)
+        XCTAssertTrue(hasDone)
+        guard hasDone, let done = doneButtons.allElementsBoundByIndex.first(where: { $0.isHittable }) else {
+            XCTFail("The Improve sheet must show a reachable Done button")
+            return
+        }
+        done.tap()
         let dismissed = sheet.waitForNonExistence(timeout: 5)
         XCTAssertTrue(dismissed)
         guard dismissed, waitForEditorIdle(control: activity) else { return }
@@ -107,6 +114,8 @@ final class CreationUITests: XCTestCase {
         let playback = app.buttons["native-editor-play-pause"]
         if playback.label == "Pause preview" { playback.tap() }
         XCTAssertEqual(playback.label, "Play preview")
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        let initialPreviewFrame = preview.frame
         let oldTitle = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Text: OLD LISBON TITLE")).firstMatch
         XCTAssertTrue(oldTitle.waitForExistence(timeout: 5))
         attach(app, "Handoff paused - old native title")
@@ -116,10 +125,13 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(retained)
         guard retained else { return }
         XCTAssertEqual(notice.label, "Updating preview — showing the previous version.")
+        XCTAssertEqual(preview.frame.width, initialPreviewFrame.width, accuracy: 1)
+        XCTAssertEqual(preview.frame.height, initialPreviewFrame.height, accuracy: 1)
+        XCTAssertTrue(preview.frame.contains(notice.frame), "The previous-version notice must remain inside its preview")
+        XCTAssertFalse(notice.frame.intersects(control.frame), "The activity control must not obscure the previous-version notice")
         XCTAssertFalse(oldTitle.exists, "Previous-picture canvas objects must not remain accessible")
         let newTitle = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Text: NEW LISBON TITLE")).firstMatch
         XCTAssertFalse(newTitle.exists, "The new document must not expose hit targets over the previous picture")
-        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
         preview.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
         XCTAssertFalse(app.scrollViews["native-editor-text-inspector-scroll"].exists,
                        "Tapping the retained title must not open an inspector for the new document")
@@ -171,6 +183,13 @@ final class CreationUITests: XCTestCase {
         done.tap()
         let manual = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Text: MANUAL NOTE")).firstMatch
         XCTAssertTrue(manual.waitForExistence(timeout: 5))
+        let deselects = app.buttons.matching(NSPredicate(format: "label == %@", "Deselect"))
+        XCTAssertTrue(deselects.firstMatch.waitForExistence(timeout: 5))
+        guard let deselect = deselects.allElementsBoundByIndex.first(where: { $0.isHittable }) else {
+            XCTFail("The manual text selection must offer a reachable Deselect action")
+            return
+        }
+        deselect.tap()
         guard waitForCurrentNativePreview() else { return }
         attach(app, "Handoff - manual note inspect pixels")
         let undo = app.buttons["native-editor-undo"]
