@@ -92,10 +92,25 @@ struct FormatReselectStage: View {
     }
 }
 
+/// Whether Record and Upload can add another clip. Counted from the clips attached plus the ones still uploading,
+/// so an upload in flight fills the last slot too.
+enum AttachRoom: Equatable {
+    case open
+    /// The edit holds its most clips. `recordReplaces` is a one-take Talk edit whose camera swaps the take.
+    case full(count: Int, recordReplaces: Bool)
+
+    static func resolve(used: Int, maximum: Int, recordReplaces: Bool) -> AttachRoom {
+        used >= maximum ? .full(count: maximum, recordReplaces: recordReplaces) : .open
+    }
+}
+
 /// What the composer's + offers. A nil closure hides its row; `disabledReason` dims everything and says why.
 struct ChatAttachMenu {
     var disabledReason: String?
     var offersSaved = false
+    /// Slide posts take photos as well as videos.
+    var takesPhotos = false
+    var room: AttachRoom = .open
     var record: (() -> Void)?
     var upload: (FootageSourceKind) -> Void
     var addScript: (() -> Void)?
@@ -103,6 +118,11 @@ struct ChatAttachMenu {
     /// Only where the server offers them for this format.
     var addSong: (() -> Void)?
     var addOverlays: (() -> Void)?
+    /// Opens Add media on its clip list. Offered with the limit notice, where a clip can be removed.
+    var manageClips: (() -> Void)?
+
+    fileprivate var existingNoun: String { takesPhotos ? "photos and videos" : "video" }
+    fileprivate var sourcesNoun: String { takesPhotos ? "photos and videos" : "videos" }
 }
 
 /// The floating tray over the composer (Paper S3.05): Record, Upload, then optional script and voiceover. Upload
@@ -115,6 +135,11 @@ struct ChatAttachTray: View {
     @Environment(\.dynamicTypeSize) private var typeSize
 
     private var enabled: Bool { menu.disabledReason == nil }
+    private var recordEnabled: Bool {
+        guard case let .full(_, recordReplaces) = menu.room else { return true }
+        return recordReplaces
+    }
+    private var uploadEnabled: Bool { menu.room == .open }
 
     var body: some View {
         Group {
@@ -148,14 +173,14 @@ struct ChatAttachTray: View {
                     Text("Upload from").kriaType(.button).foregroundStyle(KriaColor.ink).accessibilityAddTraits(.isHeader)
                     Spacer()
                 }
-                UploadSourceRows(noun: "videos", offersSaved: menu.offersSaved) { kind in close(); menu.upload(kind) }
+                UploadSourceRows(noun: menu.sourcesNoun, offersSaved: menu.offersSaved) { kind in close(); menu.upload(kind) }
             } else {
                 if let record = menu.record {
-                    row("video.fill", "Record", "Film now", id: "attach-record") { close(); record() }
+                    row("video.fill", "Record", recordEnabled && menu.room != .open ? "Replaces your take" : "Film now", id: "attach-record", isEnabled: recordEnabled) { close(); record() }
                 }
-                row("photo.on.rectangle", "Upload", "Use existing video", id: "attach-upload") { choosingSource = true }
+                row("photo.on.rectangle", "Upload", "Use existing \(menu.existingNoun)", id: "attach-upload", isEnabled: uploadEnabled) { choosingSource = true }
                 if let addScript = menu.addScript {
-                    row("text.alignleft", "Add script", "Shows while you record", id: "attach-script") { close(); addScript() }
+                    row("text.alignleft", "Add script", "Shows while you record", id: "attach-script", isEnabled: recordEnabled) { close(); addScript() }
                 }
                 if let addVoiceover = menu.addVoiceover {
                     row("mic.fill", "Add voiceover", "Record, upload or AI voice", id: "attach-voiceover") { close(); addVoiceover() }
@@ -166,6 +191,16 @@ struct ChatAttachTray: View {
                 if let addOverlays = menu.addOverlays {
                     row("square.on.square", "Add overlays", "Photos and clips for context", id: "attach-overlays") { close(); addOverlays() }
                 }
+                if enabled, case let .full(count, _) = menu.room {
+                    // At the most clips there is nothing to add: say so, and offer where a clip can be removed.
+                    Text("You’ve added \(FootageStageCopy.count(count, "clip")), the most for this format.")
+                        .kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 4).padding(.top, 4)
+                        .accessibilityIdentifier("attach-tray-full")
+                    if let manageClips = menu.manageClips {
+                        row("square.stack", "Manage clips", "Remove one to add another", id: "attach-manage") { close(); manageClips() }
+                    }
+                }
                 if let reason = menu.disabledReason {
                     Text(reason).kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
                         .frame(maxWidth: .infinity).padding(.top, 4).accessibilityIdentifier("attach-tray-reason")
@@ -174,8 +209,9 @@ struct ChatAttachTray: View {
         }
     }
 
-    private func row(_ symbol: String, _ title: String, _ detail: String, id: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private func row(_ symbol: String, _ title: String, _ detail: String, id: String, isEnabled: Bool = true, action: @escaping () -> Void) -> some View {
+        let live = enabled && isEnabled
+        return Button(action: action) {
             HStack(spacing: 12) {
                 Image(systemName: symbol).font(.system(size: 18)).foregroundStyle(KriaColor.ink)
                     .frame(width: 40, height: 40).background(KriaColor.fill, in: Circle())
@@ -187,7 +223,7 @@ struct ChatAttachTray: View {
             }
             .padding(.horizontal, 4).frame(minHeight: 56).contentShape(Rectangle())
         }
-        .buttonStyle(.plain).disabled(!enabled).opacity(enabled ? 1 : 0.4)
+        .buttonStyle(.plain).disabled(!live).opacity(live ? 1 : 0.4)
         .accessibilityLabel("\(title), \(detail)").accessibilityIdentifier(id)
     }
 }

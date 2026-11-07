@@ -95,7 +95,7 @@ import XCTest
 
     func testFlagOffHidesReRecord() {
         let app = launch(mode: "no-replace")
-        XCTAssertTrue(app.staticTexts["Your first cut is ready"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 20))
         XCTAssertFalse(app.buttons["ready-rerecord"].exists, "a server that does not offer replace shows no action")
         XCTAssertTrue(app.buttons["chat-attach"].isEnabled, "reopening Add media on a ready video still works")
     }

@@ -91,6 +91,7 @@ from app.services.phone_editor_sources import (
 from app.services.phone_rollout import (
     SINGLE_WORD_CAPTIONS_STAMP,
     background_focus_client_supported,
+    card_style_supported,
     card_tilt_supported,
     freehand_drawing_client_supported,
     freeze_frame_client_supported,
@@ -1417,21 +1418,30 @@ def _persist_lane_state(
         row.pop(SFX_DUCK_RECEIPT_FIELD, None)
 
 
-def _require_card_tilt_supported(previous: Any, lanes: Any) -> None:
-    """KRI-1141: refuse a NEW or CHANGED card angle while the tilt gates are closed.
+def _require_card_edits_supported(previous: Any, lanes: Any) -> None:
+    """Refuse a NEW or CHANGED card angle (KRI-1141) or zoom/animation (KRI-1264) while its
+    gates are closed.
 
-    Keeping a stored angle and straightening one are always allowed (a Save that does not touch
-    the tilt of a card the edit already holds must not fail because the kill switch was flipped
-    afterwards).
+    Keeping a stored value and resetting one are always allowed (a Save that does not touch a
+    card's tilt or style must not fail because a gate was closed afterwards).
     """
-    held = {card.id: card.rotation_deg for card in (previous.overlays if previous else [])}
-    changed = [
+    held = {card.id: card for card in (previous.overlays if previous else [])}
+    tilted = [
         card
         for card in lanes.overlays
-        if card.rotation_deg != 0 and card.rotation_deg != held.get(card.id, 0.0)
+        if card.rotation_deg != 0
+        and card.rotation_deg != getattr(held.get(card.id), "rotation_deg", 0.0)
     ]
-    if changed and not card_tilt_supported():
+    if tilted and not card_tilt_supported():
         raise ValueError("tilting a picture isn't available on this edit yet")
+    styled = [
+        card
+        for card in lanes.overlays
+        if (style := card.placement_style()) is not None
+        and style != (held[card.id].placement_style() if card.id in held else None)
+    ]
+    if styled and not card_style_supported():
+        raise ValueError("zooming or animating a picture isn't available on this edit yet")
 
 
 def _compile_subtitled_editor_commit(
@@ -1495,7 +1505,7 @@ def _compile_subtitled_editor_commit(
         background=_background_lane(prep.get("speaker_background_override"), visuals),
     )
 
-    _require_card_tilt_supported(previous_lanes, lanes)
+    _require_card_edits_supported(previous_lanes, lanes)
 
     caption_cues = prep.get("caption_cues_override")
     caption_cues_overridden = caption_cues is not None
@@ -1800,7 +1810,7 @@ def _commit_voiceover_lanes(
         media_overlays=prep.get("media_overlays_override"),
         visuals=visuals,
     )
-    _require_card_tilt_supported(previous_lanes, lanes)
+    _require_card_edits_supported(previous_lanes, lanes)
     recipe = replace_editor_lanes(
         recipe, lanes=lanes, visuals=visuals, video_track_id=video_track_id
     )

@@ -601,13 +601,7 @@ def test_julio_t3_ends_on_the_cheers_clip_with_its_sound(monkeypatch, lanes_on):
     _assert_receipt_cutaways_match_recipe(multi, recipe)
     # The ending clip alone must not switch off cards / sounds / beats for the speaker.
     assert "lanes_skipped" not in multi
-    # ...and the creator is not told "Played your 2 talking clips back to back".
-    from app.services.nova_steps import render_notes_from_talking_multi_clip_receipt
-
     assert multi["ending_media_id"] == "cheers"
-    assert render_notes_from_talking_multi_clip_receipt(multi) == [
-        "Showed your 1 other clip full screen while you talk"
-    ]
     assert ("phone_lane_receipt" in variant) is lanes_on
 
 

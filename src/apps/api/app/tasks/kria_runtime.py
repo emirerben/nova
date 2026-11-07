@@ -60,6 +60,7 @@ from app.kria.brief_checks import (
     plan_facts_from_phone_variant,
     plan_facts_from_rendered_montage,
     plan_facts_from_strategy,
+    reply_and_lead_from_receipts,
     reply_from_receipts,
     requirements_to_check_at_draft,
     speech_cleanup_review_note,
@@ -171,7 +172,10 @@ from app.services.client_protocol import (
     bind_sending_build,
     unbind_sending_build,
 )
-from app.services.creation_thread_titles import conversation_revision_matches_sync
+from app.services.creation_thread_titles import (
+    conversation_revision_matches_sync,
+    release_deferred_title,
+)
 from app.services.creative_copy_gate import CREATIVE_COPY_PENDING, creative_copy_problem
 from app.services.creator_label_reply import LabelTextReply, label_text_reply
 from app.services.device_render import DEVICE_RENDER_FIELD, device_status
@@ -1149,8 +1153,9 @@ def _state_event_fields(state_id: str | None, trace: dict[str, Any]) -> dict[str
 def _receipt_lead_fields(
     lead: str | None, also_changed: Sequence[str], receipts: Sequence[Any]
 ) -> dict[str, Any]:
-    """KRI-739: the lead line + unclaimed changes shown above the receipt rows. Only an editor turn
-    that bound receipts has them; every other event stays byte-identical."""
+    """KRI-739: the lead line + unclaimed changes shown above the receipt rows. An editor turn that
+    bound receipts has them, and so does a reply that listed receipts instead of the model's
+    summary (KRI-1262); every other event stays byte-identical."""
     if not lead or not receipts:
         return {}
     return {"reply_lead": lead, **({"also_changed": list(also_changed)} if also_changed else {})}
@@ -2523,6 +2528,10 @@ def _complete_draft_turn(
         # above the receipt rows; `reply_text` keeps the full prose for older clients and the web.
         reply_lead: str | None = None
         also_changed: list[str] = []
+        # KRI-1262: a draft reply that listed receipts instead of the model's summary has a lead
+        # too. It rides the event only while the reply is still exactly that text; a later
+        # notice or a replaced reply (readiness, a simpler version) carries words the lead lacks.
+        receipt_reply: tuple[str, str] | None = None
         effective_brief_updates = planned.brief_updates
         readiness_required = render_intent is not None and settings.approval_readiness_for(
             thread.creator_id
@@ -2934,7 +2943,7 @@ def _complete_draft_turn(
                         # checker can judge yet goes under "have a look", never silence.
                         if not editor_turn and not readiness_required and not facts.phone_talking:
                             receipts = [r for r in receipts if r.verification != "unchecked"]
-                        reply_text = reply_from_receipts(
+                        reply_text, receipt_lead_line = reply_and_lead_from_receipts(
                             CreativeBrief(version=brief.version, requirements=answered),
                             receipts,
                             summary=arguments.summary,
@@ -2946,6 +2955,7 @@ def _complete_draft_turn(
                             and not editor_turn
                             and decoupled_from_readiness(),
                         )
+                        receipt_reply = (reply_text, receipt_lead_line)
                     requirement_receipts = [r.model_dump(mode="json") for r in receipts]
                 elif editor_turn:
                     phrases = describe_diff(
@@ -3857,6 +3867,10 @@ def _complete_draft_turn(
                 )
             reply_text = f"{reply_text}\n{repair_note}"
             draft_execution.result = {**(draft_execution.result or {}), **repair_receipt}
+        if receipt_reply is not None and reply_lead is None and reply_text == receipt_reply[0]:
+            reply_lead = receipt_reply[1] or None
+        # KRI-1262: a chat that opened with the stock "Suggest an edit." is named from this plan.
+        release_deferred_title(thread, arguments.summary)
 
         if render_intent is None:
             event = _append_sync_event(
