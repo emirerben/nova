@@ -2589,8 +2589,9 @@ final class CreationUITests: XCTestCase {
     /// The feed finishes, a card's Change opens the sheet. The card's section arrives flagged, so it is un-flagged
     /// again and the sheet starts idle. Returns once every card is on screen.
     private func openReviewFromFeed(_ app: XCUIApplication) {
-        XCTAssertTrue(app.staticTexts["plan-feed.title"].waitForExistence(timeout: 100))
-        XCTAssertTrue(eventually(timeout: 100) { self.planBlockValue(app, "post_caption").hasPrefix("decided") })
+        let status = app.staticTexts["plan-feed.title"]
+        XCTAssertTrue(status.waitForExistence(timeout: 100))
+        XCTAssertTrue(eventually(timeout: 100) { status.label == "Making your video" }, "every section decided")
         app.buttons["plan-feed.block.look"].tap()
         let change = element(app, "plan-feed.change.look")
         XCTAssertTrue(change.waitForExistence(timeout: 10), "an opened card offers Change")

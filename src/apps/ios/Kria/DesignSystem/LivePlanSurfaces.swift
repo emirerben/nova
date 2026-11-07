@@ -405,10 +405,11 @@ struct KriaShimmerText: View {
                         .frame(width: max(proxy.size.width * 0.65, 16))
                         .offset(x: shimmerOffset * proxy.size.width)
                     }
-                    .mask(Text(text).font(font))
+                    .mask(Text(text).font(font).accessibilityHidden(true))
                     .accessibilityHidden(true)
                 }
             }
+            .accessibilityElement(children: .combine)
             .task(id: animates) { await shimmer() }
     }
 
