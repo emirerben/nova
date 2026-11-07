@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.75.0] - 2026-11-07
+
+### Changed
+- fix(kria): withdraw protected-region marks, ignore cancelled turns, refuse marks before upload (KRI-904) (#2169) <!-- release-pr: 2169 -->
+
 ## [0.88.74.0] - 2026-11-07
 
 ### Changed
