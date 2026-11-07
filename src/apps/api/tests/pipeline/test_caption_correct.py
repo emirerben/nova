@@ -4,6 +4,8 @@ import json
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 import app.pipeline.caption_correct as cc
 
 _CUES = [
@@ -518,6 +520,81 @@ def test_kri1263_numbers_never_change(monkeypatch) -> None:
         ["we have 11 dogs", "meet at 6 pm", "it cost fifteen dollars"],
     )
     assert [c["text"] for c in out] == ["we have 10 dogs", "meet at 5 pm", "it cost 15 dollars"]
+
+
+@pytest.mark.parametrize(
+    ("spoken_number", "proposed_number"),
+    [
+        ("1.5", "15"),
+        ("15", "1.5"),
+        (".5", "5"),
+        ("1,5", "15"),
+        ("1,000", "1000"),
+        ("1.000,5", "10005"),
+        ("-5", "5"),
+        ("−5", "5"),
+        ("+5", "-5"),
+        ("1e-5", "1e5"),
+        ("1/2", "12"),
+        ("1:30", "130"),
+        ("5%", "5"),
+        ("$5", "5"),
+        ("(5)", "5"),
+        ("10²", "102"),
+        ("1.5,", "15."),
+        ("1.5", "1.5,"),
+        ("14", "¼"),
+        ("12", "½"),
+        ("13", "⅓"),
+        ("¼", "14"),
+        ("¼", "½"),
+        ("$¼", "$½"),
+        ("Ⅳ", "Ⅵ"),
+        ("xⅣ", "xⅥ"),
+        ("四", "五"),
+        ("x四", "x五"),
+        ("㎟", "mm2"),
+        ("mm2", "㎟"),
+        ("㎟", "㎠"),
+        ("x㎟", "x㎠"),
+        ("㋀", "1月"),
+        ("㍙", "1点"),
+        ("1日", "㏠"),
+        ("⼀", "一"),
+        ("①", "1"),
+        ("½kg", "½ kg"),
+        ("½ kg", "½kg"),
+        ("Ⅳkg", "Ⅳ kg"),
+        ("Ⅳ kg", "Ⅳkg"),
+        ("㎟x", "㎟ x"),
+        ("㎟ x", "㎟x"),
+    ],
+)
+def test_kri1263_numeric_tokens_keep_their_exact_spoken_form(
+    monkeypatch, spoken_number: str, proposed_number: str
+) -> None:
+    # Numeric punctuation can carry value, sign, units or locale. Do not guess
+    # which parts the proofreader may remove, even for a trailing comma.
+    spoken = f"it cost {spoken_number} dollars"
+    [after] = _correct(monkeypatch, [spoken], [f"it cost {proposed_number} dollars"])
+    assert after == _spoken(spoken)
+
+
+def test_kri1263_refused_numeric_edit_keeps_other_spelling_and_punctuation(monkeypatch) -> None:
+    spoken = "well it cost -1.5 dolars again today"
+    [after] = _correct(monkeypatch, [spoken], ["Well, it cost 15 dollars again today."])
+    assert after["text"] == "Well, it cost -1.5 dollars again today."
+    assert _spans(after) == _spans(_spoken(spoken))
+    _assert_timeline_intact(_spoken(spoken), after)
+
+
+@pytest.mark.parametrize("number", ["1.5", "½", "Ⅳ", "㎡"])
+def test_kri1263_unchanged_number_allows_surrounding_punctuation(monkeypatch, number) -> None:
+    spoken = f"well it cost {number} dollars today"
+    proposed = f"Well, it cost {number} dollars today."
+    [after] = _correct(monkeypatch, [spoken], [proposed])
+    assert after["text"] == proposed
+    assert _spans(after) == _spans(_spoken(spoken))
 
 
 def test_kri1263_emoji_are_kept_and_never_swapped(monkeypatch) -> None:

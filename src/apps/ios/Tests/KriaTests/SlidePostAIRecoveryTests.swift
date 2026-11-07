@@ -143,15 +143,54 @@ enum SlidePostAIStubTransport {
             submissionScope: { _, id in .init(owner: owner, environment: "https://api.test", itemID: id) }, submissionNow: { now })
         await session.refresh(api: api, itemID: itemID)
         _ = await session.chatEdit(api: api, itemID: itemID, message: "caption")
+        let originalScope = SlidePostSubmissionScope(owner: owner, environment: "https://api.test", itemID: itemID)
+        let journal = SlidePostSubmissionJournal(root: root).aiJournal()
+        let original = try XCTUnwrap(journal.load(scope: originalScope, projectID: projectID, kind: .chatEdit))
         owner = "replacement"; now = now.addingTimeInterval(3)
         await session.retryChat(api: api, itemID: itemID, bubble: try XCTUnwrap(session.chat.last))
         let counts = await api.counts()
         XCTAssertEqual(counts.reads, 0)
+        XCTAssertNil(session.draft)
+        XCTAssertNil(session.state)
+        XCTAssertNil(session.proposal)
+        XCTAssertTrue(session.chat.isEmpty)
+        let retained = try XCTUnwrap(journal.load(scope: originalScope, projectID: projectID, kind: .chatEdit))
+        XCTAssertEqual(retained.operationID, original.operationID)
+        XCTAssertFalse(retained.delivered)
+        await session.refresh(api: api, itemID: itemID)
         XCTAssertEqual(session.draft?.caption, "original")
+        let replacementCounts = await api.counts()
+        XCTAssertEqual(replacementCounts.reads, 0)
+        XCTAssertEqual(replacementCounts.posts, 1)
     }
 }
 
 private actor AIRecoveryAPI: KriaAPIClient {
+    func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot { throw APIError.unsupported }
+    func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { throw APIError.unsupported }
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?, automaticRepairAttempts: Int) async throws { throw APIError.unsupported }
+    func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> ProjectUploadReservation { throw APIError.unsupported }
+    func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int) async throws -> TurnAccepted { throw APIError.unsupported }
+    func projects() async throws -> [ProjectSummary] { throw APIError.unsupported }
+    func project(threadID: UUID) async throws -> CreationThread { throw APIError.unsupported }
+    func library() async throws -> [ProjectSummary] { throw APIError.unsupported }
+    func createThread(message: String?) async throws -> CreationThread { throw APIError.unsupported }
+    func exchangeMobileToken(_ credential: AuthCredential, provider: String) async throws -> MobileSession { throw APIError.unsupported }
+    func refreshMobileSession(_ refreshToken: String) async throws -> MobileSession { throw APIError.unsupported }
+    func revokeMobileSession(_ refreshToken: String) async throws { throw APIError.unsupported }
+    func reviewerSignIn(email: String, password: String) async throws -> MobileSession { throw APIError.unsupported }
+    func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread { throw APIError.unsupported }
+    func threadDelta(threadID: UUID, afterSequence: Int) async throws -> ThreadDelta { throw APIError.unsupported }
+    func draft(threadID: UUID) async throws -> DraftSnapshot { throw APIError.unsupported }
+    func writeDraft(threadID: UUID, snapshot: [String: JSONValue], expectedRevision: Int, etag: String) async throws -> DraftSnapshot { throw APIError.unsupported }
+    func playbackURL(jobID: UUID) async throws -> URL { throw APIError.unsupported }
+    func editRecipe(jobID: UUID, variantID: String?) async throws -> EditRecipe { throw APIError.unsupported }
+    func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose?) async throws -> UploadReservation { throw APIError.unsupported }
+    func cancelUpload(reservationID: UUID) async throws { throw APIError.unsupported }
+    func addClip(jobID: UUID, gcsPath: String) async throws -> AddClipResult { throw APIError.unsupported }
+    func uploadFile(to reservation: UploadReservation, fileURL: URL) async throws { throw APIError.unsupported }
+
     var state: SlidePostState
     private var successful = false
     private var fault: String?
@@ -166,6 +205,9 @@ private actor AIRecoveryAPI: KriaAPIClient {
     private var pauseSave = false
     private var readGate: CheckedContinuation<Void, Never>?
     private var saveGate: CheckedContinuation<Void, Never>?
+    private var postEntered: XCTestExpectation?
+    private var readEntered: XCTestExpectation?
+    private var saveEntered: XCTestExpectation?
     private var saves: [SlidePostSaveRequest] = []
     private var receipt: SlidePostAIReceipt?
     private var posts = 0
@@ -179,7 +221,12 @@ private actor AIRecoveryAPI: KriaAPIClient {
     func slidePost(itemID: String, expectedOwner: String?) async throws -> SlidePostState { state }
     func submitSlidePostAI(itemID: String, body: SlidePostAIRequest, expectedOwner: String) async throws -> SlidePostAIReceipt {
         posts += 1
-        if pausePost { await withCheckedContinuation { postGate = $0 } }
+        if pausePost {
+            await withCheckedContinuation {
+                postGate = $0
+                postEntered?.fulfill()
+            }
+        }
         var draft = state.draft!
         if case let .object(input) = body.input, let sent = input["draft"], sent != .null {
             draft = try JSONDecoder().decode(SlidePostDraft.self, from: JSONEncoder().encode(sent))
@@ -200,7 +247,12 @@ private actor AIRecoveryAPI: KriaAPIClient {
         reads += 1
         if let readError { throw readError }
         guard let receipt, receipt.clientRequestID == requestID else { throw APIError.requestFailed(status: 404, detail: .init("missing")) }
-        if pauseRead { await withCheckedContinuation { readGate = $0 } }
+        if pauseRead {
+            await withCheckedContinuation {
+                readGate = $0
+                readEntered?.fulfill()
+            }
+        }
         if let lateReadError { throw lateReadError }
         var result = receipt.result
         if fault == "baseline", case var .object(fields)? = result { fields["base_version"] = .number(999); result = .object(fields) }
@@ -211,26 +263,39 @@ private actor AIRecoveryAPI: KriaAPIClient {
             status: receiptStatus, result: receiptStatus == .completed ? result : nil, deliveryVersion: receiptDeliveryVersion)
     }
     func setLateReadError(_ error: Error?) { lateReadError = error }
-    func suspendPosts() { pausePost = true }
+    func suspendPosts() {
+        postEntered = XCTestExpectation(description: "AI POST continuation installed")
+        pausePost = true
+    }
     func waitForPostSuspension() async -> Bool {
-        for _ in 0..<1000 { if postGate != nil { return true }; await Task.yield() }
-        return false
+        guard let postEntered else { return false }
+        let result = await XCTWaiter.fulfillment(of: [postEntered], timeout: 5)
+        return result == .completed && postGate != nil
     }
     func releasePost() { pausePost = false; postGate?.resume(); postGate = nil }
-    func suspendReads() { pauseRead = true }
-    func suspendSaves() { pauseSave = true }
+    func suspendReads() {
+        readEntered = XCTestExpectation(description: "AI receipt continuation installed")
+        pauseRead = true
+    }
+    func suspendSaves() {
+        saveEntered = XCTestExpectation(description: "Draft save continuation installed")
+        pauseSave = true
+    }
     func waitForSuspension(save: Bool = false) async -> Bool {
-        for _ in 0..<1000 {
-            if save ? saveGate != nil : readGate != nil { return true }
-            await Task.yield()
-        }
-        return false
+        guard let entered = save ? saveEntered : readEntered else { return false }
+        let result = await XCTWaiter.fulfillment(of: [entered], timeout: 5)
+        return result == .completed && (save ? saveGate != nil : readGate != nil)
     }
     func releaseRead() { pauseRead = false; readGate?.resume(); readGate = nil }
     func releaseSave() { pauseSave = false; saveGate?.resume(); saveGate = nil }
     func saveSlidePost(itemID: String, request: SlidePostSaveRequest) async throws -> SlidePostDraft {
         saves.append(request)
-        if pauseSave { await withCheckedContinuation { saveGate = $0 } }
+        if pauseSave {
+            await withCheckedContinuation {
+                saveGate = $0
+                saveEntered?.fulfill()
+            }
+        }
         var draft = state.draft!
         draft.version = request.expectedVersion + 1; draft.slides = request.slides
         draft.caption = request.caption; draft.coverIndex = request.coverIndex; draft.platformProfile = request.platformProfile
@@ -274,12 +339,17 @@ private final class AIWriteFault: @unchecked Sendable {
     var owner = "owner"
     var environment = "https://api.test"
     let fault = AIWriteFault()
+    var nextScopeRead: XCTestExpectation?
     init(state: SlidePostState) { let suite = "slide-ai-harness-\(UUID())"; self.suite = suite; self.state = state; defaults = UserDefaults(suiteName: suite)!; api = AIRecoveryAPI(state: state) }
     var scope: SlidePostSubmissionScope { .init(owner: owner, environment: environment, itemID: state.itemID) }
     var journal: SlidePostAIJournal { SlidePostSubmissionJournal(root: root, io: fault.io).aiJournal() }
     func session() -> SlidePostSession {
         SlidePostSession(defaults: defaults, submissionJournal: .init(root: root, io: fault.io),
-            submissionScope: { [unowned self] _, id in .init(owner: owner, environment: environment, itemID: id) }, submissionNow: { [unowned self] in now })
+            submissionScope: { [unowned self] _, id in
+                let entered = nextScopeRead; nextScopeRead = nil
+                entered?.fulfill()
+                return .init(owner: owner, environment: environment, itemID: id)
+            }, submissionNow: { [unowned self] in now })
     }
     func advance(_ seconds: TimeInterval = 3) { now = now.addingTimeInterval(seconds) }
     func clean() { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
@@ -474,8 +544,11 @@ extension SlidePostAISessionRecoveryTests {
         let suspended = await h.api.waitForSuspension(); XCTAssertTrue(suspended)
         var replacement = h.state; replacement.aiProjectID = UUID()
         await h.api.setState(replacement)
+        let replacementStarted = XCTestExpectation(description: "Replacement project refresh started")
+        h.nextScopeRead = replacementStarted
         let changed = Task { await value.refresh(api: h.api, itemID: itemID, projectID: replacement.aiProjectID) }
-        await Task.yield()
+        let started = await XCTWaiter.fulfillment(of: [replacementStarted], timeout: 5)
+        XCTAssertEqual(started, .completed)
         await h.api.releaseRead(); await check.value; await changed.value
         XCTAssertEqual(value.draft?.caption, "original")
         XCTAssertTrue(value.chat.isEmpty)
@@ -691,8 +764,12 @@ extension SlidePostAISessionRecoveryTests {
             let next = SlidePostState(itemID: nextID, title: "new context", draft: h.state.draft,
                 assets: h.state.assets, aiRequestRecoveryVersion: 1, aiProjectID: projectID, aiRequestDeliveryVersion: 1)
             await h.api.setState(next)
+            let replacementStarted = XCTestExpectation(description: "Replacement account or item refresh started")
+            h.nextScopeRead = replacementStarted
             let changed = Task { await value.refresh(api: h.api, itemID: nextID) }
-            await Task.yield()
+            let started = await XCTWaiter.fulfillment(of: [replacementStarted], timeout: 5)
+            XCTAssertEqual(started, .completed)
+            XCTAssertNil(value.state)
             await h.api.releaseRead(); await check.value; await changed.value
             XCTAssertEqual(value.state?.itemID, nextID)
             XCTAssertEqual(value.draft?.caption, "original")
