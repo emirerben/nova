@@ -234,7 +234,7 @@ def _word_key(text: str) -> str:
     """The letters of a word for comparison: case, accents and punctuation folded away."""
 
     key = _WORD_RE.sub("", _fold(text))
-    return key or text.casefold()
+    return key or text
 
 
 def _edit_distance(left: str, right: str) -> int:
