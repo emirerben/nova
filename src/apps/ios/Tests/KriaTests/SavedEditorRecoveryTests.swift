@@ -215,6 +215,14 @@ final class SavedEditorRecoveryTests: XCTestCase {
         var second = try XCTUnwrap(rows[0].objectValue)
         second["slot_id"] = .string("second-clip"); second["in_s"] = .number(1)
         rows.append(.object(second)); v["user_timeline"] = .object(["slots": .array(rows)])
+        if independentWording {
+            // This title belongs to the first clip. A later clip's trim must
+            // preserve both its interval and its existing binding metadata.
+            var text = try XCTUnwrap(v["text_elements"]?.arrayValue)
+            var title = try XCTUnwrap(text[0].objectValue)
+            title["segment_id"] = .string("saved-clip")
+            text[0] = .object(title); v["text_elements"] = .array(text)
+        }
         let saved = snapshot(variant: v)
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
         v["editor_draft"] = try JSONDecoder().decode(JSONValue.self, from: encoder.encode(saved))
@@ -866,15 +874,44 @@ final class SavedEditorRecoveryTests: XCTestCase {
 
     func testTimelineSaveAutomaticallyRebasesIndependentNewGenerationWording() async throws {
         let (session, fake, _) = try await conflictingRetryFixture(independentWording: true)
-        session.transactDocument(section: .timeline) { $0.clips[0].durationS = 1.5 }
+        let textBefore = try XCTUnwrap(session.document.snapshot(for: .text))
+        XCTAssertEqual(session.document.textElements.first?.raw["segment_id"], .string("saved-clip"))
+        XCTAssertEqual(session.document.clips[1].id, "second-clip")
+        session.transactDocument(section: .timeline) { $0.clips[1].durationS = 1.5 }
+        XCTAssertEqual(session.document.snapshot(for: .text), textBefore,
+            "the independent trim must not change text timing, binding, or any other text field")
         await session.save()
         XCTAssertNil(session.mergeConflictMessage)
         XCTAssertEqual(fake.commitCount, 2, "independent authoritative wording may merge and retry the original save")
         XCTAssertEqual(fake.lastRequest?.baseGeneration, "newer-generation")
-        XCTAssertEqual(fake.lastRequest?.timelineSlots?.first?.objectValue?["duration_s"], .number(1.5))
+        XCTAssertEqual(fake.lastRequest?.timelineSlots?.last?.objectValue?["slot_id"], .string("second-clip"))
+        XCTAssertEqual(fake.lastRequest?.timelineSlots?.last?.objectValue?["duration_s"], .number(1.5))
         XCTAssertEqual(session.document.clips.map(\.id), ["saved-clip", "second-clip"])
-        XCTAssertEqual(session.document.clips.first?.durationS, 1.5)
+        XCTAssertEqual(session.document.clips.first?.durationS, 2)
+        XCTAssertEqual(session.document.clips.last?.durationS, 1.5)
         XCTAssertEqual(session.document.textElements.first?.text, "Newer independent wording")
+        XCTAssertEqual(session.document.textElements.first?.startS, 0)
+        XCTAssertEqual(session.document.textElements.first?.endS, 2)
+        XCTAssertEqual(session.document.textElements.first?.raw["segment_id"], .string("saved-clip"))
+    }
+
+    func testTimelineSaveRequiresChoiceWhenTrimRetimesTheNewerWording() async throws {
+        let (session, fake, _) = try await conflictingRetryFixture(independentWording: true)
+        let textBefore = try XCTUnwrap(session.document.snapshot(for: .text))
+        session.transactDocument(section: .timeline) { $0.clips[0].durationS = 1.5 }
+        XCTAssertNotEqual(session.document.snapshot(for: .text), textBefore)
+        XCTAssertEqual(session.document.textElements.first?.endS, 1.5,
+            "the title follows its explicitly bound first clip")
+        let beforeSave = session.document
+        await session.save()
+        XCTAssertNotNil(session.mergeConflictMessage)
+        XCTAssertEqual(fake.commitCount, 1, "a connected timing and wording conflict cannot automatically resubmit")
+        XCTAssertEqual(fake.lastRequest?.baseGeneration, "saved-generation")
+        XCTAssertEqual(session.document, beforeSave)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        await session.save()
+        XCTAssertEqual(fake.commitCount, 1, "repeating Save cannot bypass the unresolved choice")
+        XCTAssertEqual(session.document, beforeSave)
     }
 
     func testFailedProjectLoadsSavedLanesWithoutRenderAndReconcilesOwnDirtyEdits() async throws {
