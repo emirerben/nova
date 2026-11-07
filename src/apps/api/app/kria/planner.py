@@ -88,7 +88,7 @@ from app.kria.brief import (
     start_fresh_updates,
     wants_clip_descriptions,
 )
-from app.kria.brief_checks import spoken_text_literals, whole_line_quotes
+from app.kria.brief_checks import ask_text, spoken_text_literals, whole_line_quotes
 from app.kria.brief_route import loose_text
 from app.kria.clip_exclusions import (
     carry_forward_exclusions,
@@ -3894,7 +3894,11 @@ async def _change_request_turn(db: AsyncSession, thread_id: uuid.UUID) -> Planne
         return None
     held = {str(req_id) for req_id in question.get(SIMPLER_OMITTED_IDS_KEY) or ()}
     brief = await load_latest_brief(db, thread_id) if held else None
-    listed = "; ".join(req.text() for req in brief.live() if req.id in held) if brief else ""
+    listed = (
+        "; ".join(ask_text(req).rstrip(".") for req in brief.live() if req.id in held)
+        if brief
+        else ""
+    )
     response = (
         say(
             en=f"Nothing is made yet. Tell me what to do differently for: {listed}.",
