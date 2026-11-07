@@ -242,7 +242,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     @Published private(set) var refreshSync: NativeEditorRefreshSync = .idle
     /// Waits between background refresh retries; the last one repeats. Internal so tests can shorten it.
     var refreshRetryDelays: [Duration] = [.seconds(1), .seconds(3), .seconds(9), .seconds(27), .seconds(60)]
-    private var refreshRetryTask: Task<Void, Never>?
+    private(set) var refreshRetryTask: Task<Void, Never>?
     private var refreshFailureStreak = 0
     /// The project lost this edit target, or the chat runtime is off: further draft reads cannot succeed.
     private var promptSyncStopped = false

@@ -2977,6 +2977,7 @@ final class NativeEditorSessionTests: XCTestCase {
                 session.refreshRetryDelays = [foreground ? .seconds(30) : .seconds(1)]
                 fake.draftError = .requestFailed(status: 500)
                 await session.synchronizePromptRevision()
+                let retry = try XCTUnwrap(session.refreshRetryTask)
                 let reads = fake.draftCallCount
                 let before = session.document
                 let refresh = session.refreshSync
@@ -2991,12 +2992,13 @@ final class NativeEditorSessionTests: XCTestCase {
                     XCTAssertTrue(applied)
                     XCTAssertEqual(fake.draftCallCount, reads + 1)
                 } else {
-                    if !foreground { try await Task.sleep(for: .milliseconds(1200)) }
+                    if !foreground { await retry.value }
                     XCTAssertEqual(fake.draftCallCount, reads, "old-owner recovery must not start a new-account read")
                     XCTAssertEqual(session.document, before)
                     XCTAssertEqual(session.refreshSync, refresh)
                 }
                 XCTAssertEqual(fake.commitCount, 0)
+                retry.cancel()
                 session.setObserversVisible(false)
             }
         }
