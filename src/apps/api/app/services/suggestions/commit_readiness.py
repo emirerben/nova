@@ -150,20 +150,20 @@ def on_marks_route(
 def load_protected_regions_sync(
     session: Any, *, thread_id: Any, through_sequence: int | None = None
 ) -> list[dict]:
-    """The creator's marks of what to keep text off (KRI-827), from their own turns only."""
-    from sqlalchemy import select  # noqa: PLC0415
+    """The creator's marks of what to keep text off (KRI-827), from their own turns only.
 
-    from app.kria.protected_targets import fold_protected_regions  # noqa: PLC0415
-    from app.models import CreationThreadEvent  # noqa: PLC0415
+    KRI-904: a turn the creator cancelled binds nothing, and a mark whose ask the brief
+    withdrew ("text on the plate is fine") no longer protects."""
+    from app.kria.brief import load_brief_history_sync  # noqa: PLC0415
+    from app.kria.protected_targets import (  # noqa: PLC0415
+        standing_protected_regions,
+        standing_user_events,
+    )
 
-    query = select(CreationThreadEvent.role, CreationThreadEvent.payload).where(
-        CreationThreadEvent.thread_id == thread_id, CreationThreadEvent.role == "user"
-    )
-    if through_sequence is not None:
-        query = query.where(CreationThreadEvent.sequence <= through_sequence)
-    return fold_protected_regions(
-        session.execute(query.order_by(CreationThreadEvent.sequence)).all()
-    )
+    rows = session.execute(standing_user_events(thread_id, through_sequence=through_sequence)).all()
+    if not rows:
+        return []
+    return standing_protected_regions(rows, load_brief_history_sync(session, thread_id))
 
 
 def load_missing_marks_sync(

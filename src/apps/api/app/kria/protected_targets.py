@@ -19,7 +19,7 @@ protects every detected face (the face sampler), not only the dominant one.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -119,9 +119,43 @@ class ProtectedRegionSelection(BaseModel):
         return self
 
 
-def fold_protected_regions(events: Iterable[tuple[str, Any]]) -> list[dict]:
+def released_object_labels(history: Iterable[CreativeBrief]) -> frozenset[str]:
+    """Folded labels of objects the creator asked to keep text off at some point, in any
+    brief version (oldest first, the newest last), that the newest brief no longer asks
+    for: removed, or dropped by a changed ask ("text on the plate is fine"). Their marks
+    stop protecting. An object no fact ever named is never released (drawing the box was the
+    ask), and neither is one the server itself waived."""
+    from app.kria.brief import SERVER_REMOVAL, SUPERSEDED_BY_FACT  # noqa: PLC0415
+
+    briefs = list(history)
+    if not briefs:
+        return frozenset()
+    newest = briefs[-1]
+
+    def named(reqs: Iterable[Any]) -> set[str]:
+        return {
+            fold_text(label)
+            for req in reqs
+            for kind, label in _fact_entries(req.facts.get(KEEP_TEXT_OFF_KEY))
+            if kind == "object"
+        }
+
+    ever = named(req for brief in briefs for req in brief.requirements)
+    kept = named(newest.live())
+    waived = named(
+        req
+        for req in newest.requirements
+        if not req.live and req.facts.get(SUPERSEDED_BY_FACT) == SERVER_REMOVAL
+    )
+    return frozenset(ever - kept - waived)
+
+
+def fold_protected_regions(
+    events: Iterable[tuple[str, Any]], *, released: frozenset[str] = frozenset()
+) -> list[dict]:
     """The creator's marks replayed from the thread: user turns only (a model or assistant
-    event can never author one), last mark per (label, media) wins."""
+    event can never author one), last mark per (label, media) wins. A mark whose folded
+    label is in ``released`` (`released_object_labels`) was withdrawn and is dropped."""
     marks: dict[tuple[str, str], dict] = {}
     for role, payload in events:
         if role != "user" or not isinstance(payload, Mapping):
@@ -133,11 +167,46 @@ def fold_protected_regions(events: Iterable[tuple[str, Any]]) -> list[dict]:
             mark = ProtectedRegionSelection.model_validate(dict(raw))
         except ValueError:
             continue
+        if fold_text(mark.label) in released:
+            continue
         key = (fold_text(mark.label), mark.media_id)
         # Re-marking moves the key to the end, so list order is the creator's mark order.
         marks.pop(key, None)
         marks[key] = mark.model_dump(mode="json")
     return list(marks.values())
+
+
+def standing_user_events(thread_id: Any, *, through_sequence: int | None = None):  # noqa: ANN201
+    """The ``(role, payload)`` rows marks are folded from: the creator's own events, minus
+    those of a turn the creator cancelled (a cancelled turn binds nothing, KRI-904)."""
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.models import CreationThreadEvent, CreatorAgentTurn  # noqa: PLC0415
+
+    cancelled = select(CreatorAgentTurn.source_event_id).where(
+        CreatorAgentTurn.thread_id == thread_id, CreatorAgentTurn.status == "cancelled"
+    )
+    stmt = select(CreationThreadEvent.role, CreationThreadEvent.payload).where(
+        CreationThreadEvent.thread_id == thread_id,
+        CreationThreadEvent.role == "user",
+        CreationThreadEvent.id.not_in(cancelled),
+    )
+    if through_sequence is not None:
+        stmt = stmt.where(CreationThreadEvent.sequence <= through_sequence)
+    return stmt.order_by(CreationThreadEvent.sequence)
+
+
+def standing_protected_regions(
+    rows: Sequence[tuple[str, Any]], history: Iterable[CreativeBrief]
+) -> list[dict]:
+    """The marks that protect now: ``rows`` from `standing_user_events`, minus those whose
+    keep-off ask the brief ``history`` (oldest first) later withdrew. The one fold the
+    approval pin, the readiness, the mark gate and the serve all read, so they never part."""
+    marks = fold_protected_regions(rows)
+    if not marks:
+        return marks
+    released = released_object_labels(history)
+    return fold_protected_regions(rows, released=released) if released else marks
 
 
 def binding_protected_regions(
@@ -182,7 +251,9 @@ def _mark_is_current(mark: ProtectedRegionSelection, generations: Mapping[str, s
     if mark.media_id not in generations:
         return False
     current = generations[mark.media_id]
-    return mark.generation is None or current is None or str(current) == mark.generation
+    # A clip with a generation never matches a mark stamped without one: the render reads
+    # that as invalidated, so the gate asks for the mark again instead of passing it.
+    return current is None or str(current) == mark.generation
 
 
 def clip_generations(clip_assignments: Iterable[Any]) -> dict[str, str | None]:
@@ -474,7 +545,10 @@ __all__ = [
     "speaker_candidates",
     "unmarked_object_targets",
     "fold_protected_regions",
+    "standing_protected_regions",
+    "standing_user_events",
     "protected_targets",
+    "released_object_labels",
     "selection_for",
     "protected_text_after_editor_save",
     "protected_text_fingerprint",
