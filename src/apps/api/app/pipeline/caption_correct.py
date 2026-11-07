@@ -231,7 +231,12 @@ class _Retimed(NamedTuple):
 
 
 def _word_key(text: str) -> str:
-    """The letters of a word for comparison: case, accents and punctuation folded away."""
+    """Fold spelling, but keep digit-bearing tokens exact before alignment."""
+
+    # Punctuation can change a number's value, sign or units ("1.5" != "15").
+    # Folding it away would send an unsafe edit through the unguarded equal path.
+    if any(ch.isdigit() for ch in text):
+        return text
 
     key = _WORD_RE.sub("", _fold(text))
     return key or text
