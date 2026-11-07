@@ -30,7 +30,7 @@ from typing import Any
 from app.agents._schemas.text_animation_phases import TEXT_ANIMATION_VOCAB, edge_alias_pattern
 from app.config import settings
 from app.kria.brief import BriefRequirement
-from app.kria.brief_checks import MAX_REPLY_CHARS, TextStyleRow, is_judged
+from app.kria.brief_checks import MAX_REPLY_CHARS, TextStyleRow, is_judged, outcome_lead
 from app.kria.contracts import RequirementReceipt
 from app.kria.reply_language import say
 from app.kria.style_asks import (
@@ -933,30 +933,13 @@ def receipt_lead(
     """
     if not receipts:
         return ""
-    total = len(receipts)
-    failed = sum(r.status == "not_possible" for r in receipts)
-    completed = sum(r.status == "met" and r.verification == "checked" for r in receipts)
-    if failed == total:
-        lead = say(
-            en="I couldn't do that." if total == 1 else "I couldn't do those.",
-            tr="Bunu yapamadım." if total == 1 else "Bunları yapamadım.",
-        )
-    elif failed and completed:
-        lead = say(
-            en=f"I did {completed} of your {total} asks.",
-            tr=f"{total} isteğinden {completed} tanesini yaptım.",
-        )
-    elif failed:
-        lead = say(
-            en="Here’s what changed and what I couldn’t do.",
-            tr="İşte değişenler ve yapamadıklarım.",
-        )
-    elif any(r.status == "partial" and r.verification == "checked" for r in receipts):
-        lead = say(en="Partly done.", tr="Kısmen yapıldı.")
-    elif any(r.verification == "unchecked" for r in receipts):
-        lead = say(en="Here’s what changed.", tr="İşte değişiklikler.")
-    else:
-        lead = say(en="Done.", tr="Yapıldı.")
+    lead = outcome_lead(
+        total=len(receipts),
+        failed=sum(r.status == "not_possible" for r in receipts),
+        completed=sum(r.status == "met" and r.verification == "checked" for r in receipts),
+        partial=any(r.status == "partial" and r.verification == "checked" for r in receipts),
+        unchecked=any(r.verification == "unchecked" for r in receipts),
+    )
     parts = [lead, *notices, (notes or "").strip()]
     text = " ".join(part for part in parts if part)
     return text if len(text) <= MAX_REPLY_CHARS else text[: MAX_REPLY_CHARS - 1].rstrip() + "…"

@@ -1018,24 +1018,25 @@ def test_flag_off_the_brief_sections_are_the_bytes_they_were_before_the_opening(
     # leaves these bytes unchanged. Re-freeze deliberately when the shared brief section changes
     # underneath item 16. Re-frozen for the says-done group E rewording (#2131: caption count /
     # one captions requirement / "all my pauses" / unnamed mistakes / one-moment holds / typed
-    # ending); the flag-off section was 14ad8c6e… before it.
+    # ending); the flag-off section was 14ad8c6e… before it. Re-frozen again for #2164 (the
+    # keep-the-take-whole line also records speech_cleanup false).
     assert brief_prompt_section() is _BRIEF_PROMPT_SECTION
     assert digest(brief_prompt_section()) == (
-        "001bd937bb08cea812fa52d0379a1af9ea6a81108011c563c60a543d4fdfe206"
+        "5d020e50a866f3d40d112f942f2b2364363e057af9c35b0b587d1d4b920594d8"
     )
     assert digest(brief_prompt_section(True)) == (
-        "e4ff46099102d441e877d9f55d8f810625c9a9ad32e1af79ded325f240fa20fb"
+        "e212a447096d62a2f5126a17a96d6521bfeabdcaf69ea8e5486dada28b734cd9"
     )
     assert digest(_narrow_brief_section(False)) == (
-        "cd6f085855e93c80412d19821fe58d021a1e67e4938073a779adaa37e0a5f892"
+        "cf65cdd123d476c25eebce0f6db508084122328a7d3945dec82be03520292961"
     )
     assert digest(_narrow_brief_section(True)) == (
-        "5a809b8de16c41b9ab7e9c228090ac3a4bbe887e7457b84d62b79cf66d9afc3d"
+        "38cb1ddb7ae94bc39ce23844ffacb13a7f1559169e463597af90d9e8f2f064f3"
     )
     # and the whole extractor prompt, byte for byte (captured from that same tree)
     for insert_open, expected in (
-        (False, "272624dc94494efbb27b71e7ab6982ab1156227d32dbbd86531b92272bac0471"),
-        (True, "c2df22186588af07bb9a882fe0bc58e8c20ca0120274cb48fc55a06e00e3c83e"),
+        (False, "db92cf32636380b4fdd80ca67d55fbe0745c593d446483a7143d80dde23bb3fd"),
+        (True, "bf306d8829712ed2258592a9794791f1fccfb9994cc1a0d85af04ef9675481d6"),
     ):
         rendered = BriefExtractorAgent(None).render_prompt(
             BriefExtractionInput(

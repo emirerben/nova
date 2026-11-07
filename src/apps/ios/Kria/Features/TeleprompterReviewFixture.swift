@@ -1,6 +1,7 @@
 #if DEBUG
 @preconcurrency import AVFoundation
 import Foundation
+import SwiftUI
 import UIKit
 
 /// Real playable files test review, recovery and native proxy intake. They are
@@ -55,6 +56,20 @@ import UIKit
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString)-fixture-background.png")
         guard let data = image.pngData(), (try? data.write(to: url)) != nil else { return nil }
         return url
+    }
+}
+
+/// A simulator has no camera picture. `KRIA_TELEPROMPTER_SCENE_FIXTURE=light|dark` stands a flat scene behind the
+/// controls, so their state can be read over a bright and a dark picture.
+enum TeleprompterSceneFixture {
+    static var gradient: LinearGradient? {
+        let process = ProcessInfo.processInfo
+        guard process.arguments.contains("-ui-testing-chat") else { return nil }
+        switch process.environment["KRIA_TELEPROMPTER_SCENE_FIXTURE"] {
+        case "light": return LinearGradient(colors: [Color(white: 0.98), Color(red: 0.86, green: 0.92, blue: 1)], startPoint: .top, endPoint: .bottom)
+        case "dark": return LinearGradient(colors: [Color(white: 0.04), Color(red: 0.05, green: 0.07, blue: 0.12)], startPoint: .top, endPoint: .bottom)
+        default: return nil
+        }
     }
 }
 #endif

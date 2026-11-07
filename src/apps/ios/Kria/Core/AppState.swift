@@ -288,11 +288,7 @@ enum WorkspaceDestination: Equatable, Sendable {
         self.api = api
         self.editorOperations = editorOperations
         let sessionUploads = uploadSessionConfiguration.map { BackgroundUploadCoordinator(api: api, defaultsKey: "kria.rerecord-ui-fixture.uploads", sessionConfiguration: $0) }
-        #if DEBUG
-        self.uploads = ChatUITestTransport.placeHintUploads(api: api) ?? sessionUploads ?? BackgroundUploadCoordinator(api: api)
-        #else
         self.uploads = sessionUploads ?? BackgroundUploadCoordinator(api: api)
-        #endif
         self.deviceRenders = DeviceRenderSessions(api: api, ownerIdentity: renderOwner)
         self.cache = cache
         Perf.begin("cache.load")

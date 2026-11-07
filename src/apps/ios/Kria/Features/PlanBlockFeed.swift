@@ -6,9 +6,10 @@ import UIKit
 ///
 /// It shows each decision (title, clips, captions, music, sound effects, overlays, look, post caption) as the
 /// render pipeline makes it: decided sections are 60pt glass rows, the newest decided one is expanded with its
-/// structured content, a section being decided is a butter card with a spinner pill, and the rest wait as
-/// "Still to decide" chips. A glass bottom panel carries the progress and Stop; once every section is decided
-/// the panel offers the ink + butter "Review your video" CTA (when the server speaks contract v2).
+/// structured content, a section being decided is a softly pulsing butter card with a spinner pill, and the rest
+/// wait as "Still to decide" chips. Each section enters on its own (about 80 ms apart when a burst arrives). A
+/// glass bottom panel carries the progress and Stop; once every section is decided it reads "Making your video"
+/// with an indeterminate track (or the device's real build progress), so the feed never sits still.
 ///
 /// Surface rules: glass only on leaf surfaces (`KriaGlassBackground`, three branches: Reduce Transparency ->
 /// solid paper, iOS 26 -> Liquid Glass, else material), never an identifier on or above a glass view, Inter only,
@@ -21,21 +22,33 @@ struct PlanBlockFeed: View {
     /// A quiet one-liner (for example "This render can't be stopped any more").
     var stopMessage: String?
     var stop: () -> Void = {}
-    /// Opens the Review view (contract v2). nil = the server does not speak v2: no CTA, and the feed keeps its
-    /// own "Review plan" expand-all toggle. The section is the card whose Change was tapped (nil = the CTA).
-    var openReview: ((PlanSectionID?) -> Void)?
+    /// Opens the Review view (contract v2) on the card whose Change was tapped. nil = the server does not speak
+    /// v2: Change is inert and the feed keeps its own "Review plan" expand-all toggle.
+    var openReview: ((PlanSectionID) -> Void)?
+    /// Planning until the server's plan is complete, then rendering. Computed by the host from the server's feed,
+    /// because an iPhone build paces `feed` to the device and would never read as complete while it builds.
+    var phase: PlanFeedPhase = .planning
+    /// Where this iPhone's own build has got to, when the render runs on the device. nil = cloud render.
+    var buildStage: DeviceBuildStage?
 
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var expansionOverride: [PlanSectionID: Bool] = [:]
     @State private var reviewingAll = false
     @State private var announced: Set<PlanSectionID> = []
     @State private var announcedSeeded = false
+    @State private var shown = PlanBlockFeedState.empty
 
     private var reduceMotion: Bool { KriaMotion.isReduced(systemReduceMotion) }
     private var reviewAvailable: Bool { openReview != nil }
 
-    private var waitingBlocks: [PlanBlock] { feed.blocks.filter { $0.state == .waiting } }
-    private var activeBlocks: [PlanBlock] { feed.blocks.filter { $0.state != .waiting } }
+    private static let revealInterval = Duration.milliseconds(80)
+
+    /// What is on screen: `feed` revealed one section at a time. Everything below reads this, not `feed`.
+    private var display: PlanBlockFeedState { shown.isEmpty ? feed : shown }
+    private var waitingBlocks: [PlanBlock] { display.blocks.filter { $0.state == .waiting } }
+    private var activeBlocks: [PlanBlock] { display.blocks.filter { $0.state != .waiting } }
+    /// "Making your video" only once the last section has entered.
+    private var effectivePhase: PlanFeedPhase { display == feed ? phase : .planning }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -55,7 +68,7 @@ struct PlanBlockFeed: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(alignment: .top) { KriaButterWash().padding(.horizontal, -24).padding(.vertical, -40) }
-        .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.42, dampingFraction: 0.86), value: feed)
+        .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.42, dampingFraction: 0.86), value: display)
         .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.36, dampingFraction: 0.88), value: expansionOverride)
         .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.36, dampingFraction: 0.88), value: reviewingAll)
         // The identified "plan-feed" element is a plain marker leaf behind the content, not a container around
@@ -65,28 +78,42 @@ struct PlanBlockFeed: View {
             Color.clear
                 .accessibilityElement()
                 .accessibilityLabel("Live plan")
-                .accessibilityValue(feed.blocks.map { "\($0.section.rawValue)=\($0.state == .decided ? "decided" : $0.state == .deciding ? "deciding" : "waiting")" }.joined(separator: ","))
+                .accessibilityValue(display.blocks.map { "\($0.section.rawValue)=\($0.state == .decided ? "decided" : $0.state == .deciding ? "deciding" : "waiting")" }.joined(separator: ","))
                 .accessibilityIdentifier("plan-feed")
                 .allowsHitTesting(false)
         }
         .onAppear { seedAnnouncements() }
-        .onChange(of: feed) { _, _ in announceNewlyDecided() }
+        .onChange(of: display) { _, _ in announceNewlyDecided() }
+        .task(id: feed) { await reveal() }
+    }
+
+    /// Walks `shown` to `feed` one section at a time. A feed already on screen (re-opened chat) or a new job
+    /// jumps straight there; `task(id:)` restarts the walk from wherever it stopped when `feed` changes again.
+    private func reveal() async {
+        while shown != feed {
+            let (next, isVisible) = feed.step(after: shown)
+            shown = next
+            guard next != feed, isVisible else { continue }
+            do { try await Task.sleep(for: Self.revealInterval) } catch { return }
+        }
     }
 
     // MARK: Header
 
     private var header: some View {
         VStack(spacing: 2) {
-            Text(feed.isComplete ? "Your plan is ready" : "Planning your video")
-                .font(KriaFont.body(17).weight(.semibold))
-                .foregroundStyle(KriaColor.ink)
-                .accessibilityIdentifier("plan-feed.header")
-                .accessibilityAddTraits(.isHeader)
-            Text(feed.isComplete
-                 ? (reviewAvailable ? "Tap a row for details, or change it" : "Tap a row for details")
-                 : "Blocks appear as Kria decides them")
-                .font(KriaFont.body(13))
-                .foregroundStyle(KriaColor.mutedInk)
+            KriaShimmerText(
+                effectivePhase == .planning ? "Planning your video" : "Your plan is ready",
+                font: KriaFont.body(17).weight(.semibold), color: KriaColor.ink,
+                isShimmering: effectivePhase == .planning
+            )
+            .accessibilityIdentifier("plan-feed.header")
+            .accessibilityAddTraits(.isHeader)
+            if effectivePhase != .planning {
+                Text(reviewAvailable ? "Tap a row for details, or change it" : "Tap a row for details")
+                    .font(KriaFont.body(13))
+                    .foregroundStyle(KriaColor.mutedInk)
+            }
         }
         .frame(maxWidth: .infinity)
         .multilineTextAlignment(.center)
@@ -99,7 +126,7 @@ struct PlanBlockFeed: View {
         guard block.state == .decided else { return false }
         if let override = expansionOverride[block.section] { return override }
         if reviewingAll { return true }
-        return block.section == feed.newestDecided && !block.skipped
+        return block.section == display.newestDecided && !block.skipped
     }
 
     @ViewBuilder private func card(_ block: PlanBlock) -> some View {
@@ -221,6 +248,7 @@ struct PlanBlockFeed: View {
         .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("plan-feed.block.\(block.section.rawValue)")
         .kriaButterCard(cornerRadius: 28)
+        .kriaSoftPulse()
     }
 
     private func accessibilityValue(_ block: PlanBlock, expanded: Bool) -> String {
@@ -264,21 +292,17 @@ struct PlanBlockFeed: View {
 
     // MARK: Bottom panel
 
-    private var statusText: String {
-        let counts = "\(feed.decidedCount) of \(feed.totalCount) decided"
-        return feed.isComplete ? "Plan ready · \(counts)" : "Planning · \(counts)"
-    }
+    private var countsText: String { "\(display.decidedCount) of \(display.totalCount) decided" }
 
-    /// Glass panel: status line, Stop, progress, and (once everything is decided) the Review CTA. Planning shows
-    /// no Create button: Create already happened.
+    /// Glass panel: status line, Stop, progress, and (on an older server) the expand-all toggle. Planning shows no
+    /// Create button: Create already happened.
     private var bottomPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 Image(systemName: "sparkle")
                     .font(.system(size: 15, weight: .semibold)).foregroundStyle(KriaColor.ink)
                     .accessibilityHidden(true)
-                Text(statusText)
-                    .font(KriaFont.body(15).weight(.semibold)).foregroundStyle(KriaColor.ink)
+                statusLine
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("plan-feed.title")
                     .accessibilityAddTraits(.isHeader)
@@ -296,43 +320,64 @@ struct PlanBlockFeed: View {
                     .accessibilityIdentifier("plan-feed-stop")
                 }
             }
-            KriaProgressTrack(progress: feed.progress)
-                .accessibilityElement()
-                .accessibilityLabel("Planning progress")
-                .accessibilityValue("\(feed.decidedCount) of \(feed.totalCount) decided")
-                .accessibilityIdentifier("plan-feed.progress")
-            if feed.isComplete && !feed.isCancelled { completionAction }
+            progressTrack
+            if effectivePhase != .planning && !display.isCancelled && !reviewAvailable { completionAction }
         }
         .padding(.horizontal, 18).padding(.vertical, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .kriaGlassPanel(cornerRadius: 32)
     }
 
-    @ViewBuilder private var completionAction: some View {
-        if let openReview {
-            Button { openReview(nil) } label: { Text("Review your video") }
-                .buttonStyle(KriaInkCTAButtonStyle())
-                .accessibilityIdentifier("plan-feed-review-cta")
-        } else {
-            // Older server: no Review view, so the feed keeps its own expand-all toggle.
-            Button {
-                reviewingAll.toggle()
-                if reviewingAll { expansionOverride = [:] }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: reviewingAll ? "chevron.up" : "list.bullet.rectangle")
-                        .font(.system(size: 13, weight: .semibold))
-                    Text(reviewingAll ? "Collapse plan" : "Review plan")
-                        .font(KriaFont.body(15).weight(.semibold))
-                }
-                .foregroundStyle(KriaColor.ink)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .background(KriaColor.butter, in: Capsule())
-                .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("plan-feed.review")
+    @ViewBuilder private var statusLine: some View {
+        let font = KriaFont.body(15).weight(.semibold)
+        switch effectivePhase {
+        case .planning: Text("Planning · \(countsText)").font(font).foregroundStyle(KriaColor.ink)
+        case .rendering: KriaShimmerText("Making your video", font: font, color: KriaColor.ink)
+        case .ready: Text("Plan ready · \(countsText)").font(font).foregroundStyle(KriaColor.ink)
         }
+    }
+
+    /// The device's real export progress while it composes; otherwise indeterminate while the video is made.
+    private var renderFraction: Double? {
+        if case .rendering(let fraction)? = buildStage { return fraction }
+        return nil
+    }
+
+    @ViewBuilder private var progressTrack: some View {
+        if effectivePhase == .rendering {
+            KriaProgressTrack(progress: renderFraction)
+                .accessibilityElement()
+                .accessibilityLabel("Making your video")
+                .accessibilityValue(renderFraction.map { "\(Int(($0 * 100).rounded())) percent" } ?? "in progress")
+                .accessibilityIdentifier("plan-feed.progress")
+        } else {
+            KriaProgressTrack(progress: display.progress)
+                .accessibilityElement()
+                .accessibilityLabel("Planning progress")
+                .accessibilityValue(countsText)
+                .accessibilityIdentifier("plan-feed.progress")
+        }
+    }
+
+    /// Older server: no Review view, so the feed keeps its own expand-all toggle.
+    private var completionAction: some View {
+        Button {
+            reviewingAll.toggle()
+            if reviewingAll { expansionOverride = [:] }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: reviewingAll ? "chevron.up" : "list.bullet.rectangle")
+                    .font(.system(size: 13, weight: .semibold))
+                Text(reviewingAll ? "Collapse plan" : "Review plan")
+                    .font(KriaFont.body(15).weight(.semibold))
+            }
+            .foregroundStyle(KriaColor.ink)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(KriaColor.butter, in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("plan-feed.review")
     }
 
     // MARK: VoiceOver
@@ -340,11 +385,11 @@ struct PlanBlockFeed: View {
     private func seedAnnouncements() {
         guard !announcedSeeded else { return }
         announcedSeeded = true
-        announced = Set(feed.blocks.filter { $0.state == .decided }.map(\.section))
+        announced = Set(display.blocks.filter { $0.state == .decided }.map(\.section))
     }
 
     private func announceNewlyDecided() {
-        for block in feed.blocks where block.state == .decided && !announced.contains(block.section) {
+        for block in display.blocks where block.state == .decided && !announced.contains(block.section) {
             announced.insert(block.section)
             let spoken = block.skipped ? "\(block.section.label) not used" : "\(block.section.label) decided. \(block.displaySummary)"
             UIAccessibility.post(notification: .announcement, argument: spoken)

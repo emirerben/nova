@@ -27,6 +27,7 @@ import unicodedata
 import uuid
 from typing import Any
 
+from app.kria.spoken_text_ask import SPOKEN_TEXT_ELEMENT_PREFIX
 from app.schemas.guided_edit_revision import MAX_GUIDED_EDITOR_TEXT_ELEMENTS
 from app.services.kria_editor_ops import (
     _ALLOWED_FONTS,
@@ -342,7 +343,9 @@ def classify(bars: list[dict[str, Any]]) -> dict[str, str]:
             or bar["role"] == "title"
             or (
                 bar["role"] == "generative_intro"
-                and not str(bar["id"]).startswith(("kria-", "guided-pinned-"))
+                and not str(bar["id"]).startswith(
+                    ("kria-", "guided-pinned-", SPOKEN_TEXT_ELEMENT_PREFIX)
+                )
                 and bar["start_s"] is not None
                 and bar["start_s"] <= 0.5
             )
@@ -356,7 +359,10 @@ def classify(bars: list[dict[str, Any]]) -> dict[str, str]:
             and not bar.get("caption")
             and bar["role"] in (None, "title", "generative_intro", "generative_sequence")
             and (
-                bar["role"] == "title" or not str(bar["id"]).startswith(("kria-", "guided-pinned-"))
+                bar["role"] == "title"
+                or not str(bar["id"]).startswith(
+                    ("kria-", "guided-pinned-", SPOKEN_TEXT_ELEMENT_PREFIX)
+                )
             )
             and bar["start_s"] is not None
             and bar["start_s"] <= 0.5

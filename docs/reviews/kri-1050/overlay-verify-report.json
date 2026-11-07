@@ -1,0 +1,5527 @@
+{
+  "overall": "PASS",
+  "render_mode": "draw_frame",
+  "ocr_available": false,
+  "counts": {
+    "PASS": 157,
+    "FAIL": 0,
+    "WARN": 0,
+    "SKIPPED": 0
+  },
+  "overlays": [
+    {
+      "slot_index": 0,
+      "overlay_index": 0,
+      "text": "It's not just luck",
+      "effect": "pop-in",
+      "text_anchor": "left",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        34,
+        859,
+        960,
+        1031
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot00_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": null,
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "style_default",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 1,
+      "overlay_index": 0,
+      "text": "the hard way",
+      "effect": "none",
+      "text_anchor": "right",
+      "text_color": "#F4D03F",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        468,
+        906,
+        1050,
+        1048
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot01_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": null,
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "style_default",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 2,
+      "overlay_index": 0,
+      "text": "CREATE WITH\nYOUR OWN STYLE",
+      "effect": "none",
+      "text_anchor": "center",
+      "text_color": "#30352C",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        88,
+        797,
+        988,
+        1128
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot02_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 3,
+      "overlay_index": 0,
+      "text": "CREATE WITH\nYOUR OWN STYLE",
+      "effect": "none",
+      "text_anchor": "center",
+      "text_color": "#30352C",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        93,
+        798,
+        984,
+        1125
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot03_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 4,
+      "overlay_index": 0,
+      "text": "CREATE WITH\nYOUR OWN STYLE",
+      "effect": "none",
+      "text_anchor": "center",
+      "text_color": "#30352C",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        110,
+        802,
+        968,
+        1117
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot04_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 5,
+      "overlay_index": 0,
+      "text": "CREATE WITH\nYOUR OWN STYLE",
+      "effect": "none",
+      "text_anchor": "center",
+      "text_color": "#30352C",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        95,
+        799,
+        994,
+        1128
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot05_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 6,
+      "overlay_index": 0,
+      "text": "CREATE WITH\nYOUR OWN STYLE",
+      "effect": "none",
+      "text_anchor": "center",
+      "text_color": "#30352C",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        92,
+        797,
+        988,
+        1123
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot06_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 7,
+      "overlay_index": 0,
+      "text": "what's your",
+      "effect": "fade-in",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        46,
+        791,
+        375,
+        896
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot07_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display Regular",
+        "requested_font_style": "display",
+        "name": "Playfair Display Regular",
+        "file": "PlayfairDisplay-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 7,
+      "overlay_index": 1,
+      "text": "favorite",
+      "effect": "fade-in",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        320,
+        728,
+        923,
+        910
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot07_ov01.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display",
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 7,
+      "overlay_index": 2,
+      "text": "place?",
+      "effect": "fade-in",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        523,
+        877,
+        818,
+        1015
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot07_ov02.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display",
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 8,
+      "overlay_index": 0,
+      "text": "Lutfen",
+      "effect": "fade-in",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        314,
+        618,
+        508,
+        711
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot08_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display Regular",
+        "requested_font_style": "display",
+        "name": "Playfair Display Regular",
+        "file": "PlayfairDisplay-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 8,
+      "overlay_index": 1,
+      "text": "Lutfen",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        314,
+        618,
+        508,
+        711
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot08_ov01.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display Regular",
+        "requested_font_style": "display",
+        "name": "Playfair Display Regular",
+        "file": "PlayfairDisplay-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 8,
+      "overlay_index": 2,
+      "text": "calis",
+      "effect": "fade-in",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        450,
+        560,
+        791,
+        728
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot08_ov02.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display",
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 8,
+      "overlay_index": 3,
+      "text": "calis",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        450,
+        560,
+        791,
+        728
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot08_ov03.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display",
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 8,
+      "overlay_index": 4,
+      "text": "haydi",
+      "effect": "fade-in",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        387,
+        738,
+        790,
+        930
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot08_ov04.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display",
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 8,
+      "overlay_index": 5,
+      "text": "haydi",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        387,
+        738,
+        790,
+        930
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot08_ov05.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display",
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 8,
+      "overlay_index": 6,
+      "text": "inaniyorum",
+      "effect": "fade-in",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        219,
+        916,
+        1025,
+        1107
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot08_ov06.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display",
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 8,
+      "overlay_index": 7,
+      "text": "inaniyorum",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        219,
+        916,
+        1025,
+        1107
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot08_ov07.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display",
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 8,
+      "overlay_index": 8,
+      "text": "haydi",
+      "effect": "fade-in",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        549,
+        1049,
+        790,
+        1177
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot08_ov08.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display",
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 8,
+      "overlay_index": 9,
+      "text": "haydi",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        549,
+        1049,
+        790,
+        1177
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot08_ov09.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display",
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 9,
+      "overlay_index": 0,
+      "text": "YOUR TEXT\nIN MOTION",
+      "effect": "none",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        252,
+        851,
+        828,
+        1118
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot09_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 10,
+      "overlay_index": 0,
+      "text": "YOUR TEXT\nIN MOTION",
+      "effect": "none",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        265,
+        839,
+        804,
+        1111
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot10_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 11,
+      "overlay_index": 0,
+      "text": "YOUR TEXT\nIN MOTION",
+      "effect": "none",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        244,
+        838,
+        837,
+        1095
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot11_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 12,
+      "overlay_index": 0,
+      "text": "YOUR TEXT\nIN MOTION",
+      "effect": "none",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        414,
+        927,
+        667,
+        1037
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot12_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 13,
+      "overlay_index": 0,
+      "text": "YOUR TEXT\nIN MOTION",
+      "effect": "none",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        252,
+        769,
+        786,
+        1126
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot13_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 14,
+      "overlay_index": 0,
+      "text": "YOUR TEXT\nIN MOTION",
+      "effect": "none",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        252,
+        838,
+        828,
+        1100
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot14_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 15,
+      "overlay_index": 0,
+      "text": "TOKYO",
+      "effect": "font-cycle",
+      "text_anchor": "center",
+      "text_color": "#F4D03F",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        299,
+        747,
+        779,
+        893
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot15_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": null,
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "font_cycle_settle",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 16,
+      "overlay_index": 0,
+      "text": "Paris \u00b7 Cycling",
+      "effect": "static",
+      "text_anchor": "right",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        650,
+        1616,
+        956,
+        1706
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot16_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 16,
+      "overlay_index": 1,
+      "text": "Santorini coastal village at sunset \u00b7 Walking along the waterfront promenade",
+      "effect": "static",
+      "text_anchor": "right",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        139,
+        1592,
+        956,
+        1731
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot16_ov01.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 16,
+      "overlay_index": 2,
+      "text": "Saint Petersburg historic waterfront and riverside walkway \u00b7 Walking the old waterfront promenade with friends at sunset",
+      "effect": "static",
+      "text_anchor": "right",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        196,
+        1541,
+        956,
+        1774
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot16_ov02.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 17,
+      "overlay_index": 0,
+      "text": "GLOW",
+      "effect": "none",
+      "text_anchor": "center",
+      "text_color": "#FFD24A",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        299,
+        874,
+        780,
+        1061
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot17_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": null,
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "style_default",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 18,
+      "overlay_index": 0,
+      "text": "The 5 legends of Barcelona",
+      "effect": "fade-in",
+      "text_anchor": "center",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        104,
+        527,
+        977,
+        791
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot18_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Fraunces",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 19,
+      "overlay_index": 0,
+      "text": "RAUNO'S FIELD NOTES\nNUMBER TWO \u2014 SUMMER",
+      "effect": "handwriting",
+      "text_anchor": "right",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        250,
+        484,
+        1013,
+        1248
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot19_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Nova Handwriting Strokes",
+        "file": "handwriting-strokes.json",
+        "source": "authored_centerline",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 20,
+      "overlay_index": 0,
+      "text": "FIELD NOTES",
+      "effect": "handwriting",
+      "text_anchor": "left",
+      "text_color": "#FF484C",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        65,
+        517,
+        824,
+        707
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot20_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Patrick Hand",
+        "requested_font_style": "display",
+        "name": "Nova Handwriting Strokes",
+        "file": "handwriting-strokes.json",
+        "source": "authored_centerline",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 21,
+      "overlay_index": 0,
+      "text": "WHITE 48",
+      "effect": "none",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        396,
+        920,
+        684,
+        1015
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot21_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 21,
+      "overlay_index": 1,
+      "text": "YELLOW 48",
+      "effect": "none",
+      "text_anchor": "center",
+      "text_color": "#FFD24A",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        376,
+        921,
+        707,
+        1015
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot21_ov01.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 21,
+      "overlay_index": 2,
+      "text": "WHITE 60",
+      "effect": "none",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        377,
+        921,
+        704,
+        1022
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot21_ov02.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display Regular",
+        "requested_font_style": "display",
+        "name": "Playfair Display Regular",
+        "file": "PlayfairDisplay-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 21,
+      "overlay_index": 3,
+      "text": "YELLOW 60",
+      "effect": "none",
+      "text_anchor": "center",
+      "text_color": "#FFD24A",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        354,
+        921,
+        727,
+        1022
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot21_ov03.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display Regular",
+        "requested_font_style": "display",
+        "name": "Playfair Display Regular",
+        "file": "PlayfairDisplay-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 21,
+      "overlay_index": 4,
+      "text": "WHITE 88",
+      "effect": "none",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        300,
+        904,
+        779,
+        1031
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot21_ov04.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 21,
+      "overlay_index": 5,
+      "text": "YELLOW 88",
+      "effect": "none",
+      "text_anchor": "center",
+      "text_color": "#FFD24A",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        261,
+        905,
+        820,
+        1031
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot21_ov05.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 21,
+      "overlay_index": 6,
+      "text": "WHITE 128",
+      "effect": "none",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        185,
+        899,
+        893,
+        1052
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot21_ov06.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display",
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 21,
+      "overlay_index": 7,
+      "text": "YELLOW 128",
+      "effect": "none",
+      "text_anchor": "center",
+      "text_color": "#FFD24A",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        134,
+        899,
+        944,
+        1052
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot21_ov07.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display",
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 22,
+      "overlay_index": 0,
+      "text": "KEEP THE FONT\nREVEAL THE INK",
+      "effect": "ink-reveal",
+      "text_anchor": "right",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        340,
+        494,
+        1009,
+        1221
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot22_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 23,
+      "overlay_index": 0,
+      "text": "FIELD NOTES",
+      "effect": "ink-reveal",
+      "text_anchor": "left",
+      "text_color": "#FF484C",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        63,
+        520,
+        777,
+        707
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot23_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Patrick Hand",
+        "requested_font_style": "display",
+        "name": "Patrick Hand",
+        "file": "PatrickHand-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 24,
+      "overlay_index": 0,
+      "text": "every single day",
+      "effect": "karaoke-line",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        161,
+        903,
+        918,
+        1052
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot24_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": null,
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "style_default",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 25,
+      "overlay_index": 0,
+      "text": "Bu g\u00fczel vatan, \u00e7a\u011fda\u015f imkanlar ve ba\u015f\u0131ms\u0131zl\u0131k i\u00e7in, yani her \u015feyimiz i\u00e7in sana ve seninle m\u00fccadele veren T\u00fcrk halk\u0131na te\u015fekk\u00fcrler Atam. 29 Ekim Cumhuriyet Bayram\u0131m\u0131z kutlu olsun",
+      "effect": "static",
+      "text_anchor": "left",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        65,
+        1012,
+        785,
+        1344
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot25_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 25,
+      "overlay_index": 1,
+      "text": "Bu g\u00fczel vatan, \u00e7a\u011fda\u015f imkanlar ve ba\u015f\u0131ms\u0131zl\u0131k i\u00e7in, yani her \u015feyimiz i\u00e7in sana ve seninle m\u00fccadele veren T\u00fcrk halk\u0131na te\u015fekk\u00fcrler Atam. 29 Ekim Cumhuriyet Bayram\u0131m\u0131z kutlu olsun",
+      "effect": "static",
+      "text_anchor": "left",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        64,
+        1009,
+        872,
+        1335
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot25_ov01.png",
+      "resolved_typeface": {
+        "requested_font_family": "Montserrat",
+        "requested_font_style": "display",
+        "name": "Montserrat",
+        "file": "Montserrat-ExtraBold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 25,
+      "overlay_index": 2,
+      "text": "Bu g\u00fczel vatan, \u00e7a\u011fda\u015f imkanlar ve ba\u015f\u0131ms\u0131zl\u0131k i\u00e7in, yani her \u015feyimiz i\u00e7in sana ve seninle m\u00fccadele veren T\u00fcrk halk\u0131na te\u015fekk\u00fcrler Atam. 29 Ekim Cumhuriyet Bayram\u0131m\u0131z kutlu olsun",
+      "effect": "static",
+      "text_anchor": "left",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        65,
+        1068,
+        880,
+        1343
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot25_ov02.png",
+      "resolved_typeface": {
+        "requested_font_family": "Montserrat Bold",
+        "requested_font_style": "display",
+        "name": "Montserrat Bold",
+        "file": "Montserrat-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 25,
+      "overlay_index": 3,
+      "text": "Bu g\u00fczel vatan, \u00e7a\u011fda\u015f imkanlar ve ba\u015f\u0131ms\u0131zl\u0131k i\u00e7in, yani her \u015feyimiz i\u00e7in sana ve seninle m\u00fccadele veren T\u00fcrk halk\u0131na te\u015fekk\u00fcrler Atam. 29 Ekim Cumhuriyet Bayram\u0131m\u0131z kutlu olsun",
+      "effect": "static",
+      "text_anchor": "left",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        78,
+        1047,
+        889,
+        1345
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot25_ov03.png",
+      "resolved_typeface": {
+        "requested_font_family": "Pacifico",
+        "requested_font_style": "display",
+        "name": "Pacifico",
+        "file": "Pacifico-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 25,
+      "overlay_index": 4,
+      "text": "Bu g\u00fczel vatan, \u00e7a\u011fda\u015f imkanlar ve ba\u015f\u0131ms\u0131zl\u0131k i\u00e7in, yani her \u015feyimiz i\u00e7in sana ve seninle m\u00fccadele veren T\u00fcrk halk\u0131na te\u015fekk\u00fcrler Atam. 29 Ekim Cumhuriyet Bayram\u0131m\u0131z kutlu olsun",
+      "effect": "static",
+      "text_anchor": "left",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        65,
+        1027,
+        868,
+        1342
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot25_ov04.png",
+      "resolved_typeface": {
+        "requested_font_family": "Poppins Bold",
+        "requested_font_style": "display",
+        "name": "Poppins Bold",
+        "file": "Poppins-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 25,
+      "overlay_index": 5,
+      "text": "Bu g\u00fczel vatan, \u00e7a\u011fda\u015f imkanlar ve ba\u015f\u0131ms\u0131zl\u0131k i\u00e7in, yani her \u015feyimiz i\u00e7in sana ve seninle m\u00fccadele veren T\u00fcrk halk\u0131na te\u015fekk\u00fcrler Atam. 29 Ekim Cumhuriyet Bayram\u0131m\u0131z kutlu olsun",
+      "effect": "static",
+      "text_anchor": "left",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        65,
+        1101,
+        885,
+        1343
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot25_ov05.png",
+      "resolved_typeface": {
+        "requested_font_family": "Unbounded",
+        "requested_font_style": "display",
+        "name": "Unbounded",
+        "file": "Unbounded-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 25,
+      "overlay_index": 6,
+      "text": "Bu g\u00fczel vatan,\n\u00e7a\u011fda\u015f imkanlar ve ba\u011f\u0131ms\u0131zl\u0131k i\u00e7in,\nher \u015feyimiz i\u00e7in sana te\u015fekk\u00fcrler Atam.\n29 Ekim Cumhuriyet Bayram\u0131m\u0131z kutlu olsun",
+      "effect": "static",
+      "text_anchor": "left",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        66,
+        1150,
+        879,
+        1344
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot25_ov06.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 26,
+      "overlay_index": 0,
+      "text": "\u039f\u03b9 \u03b1\u03c1\u03c7\u03b1\u03af\u03bf\u03b9 \u03c0\u03bf\u03bb\u03b9\u03c4\u03b9\u03c3\u03bc\u03bf\u03af \u03ba\u03b1\u03b9 \u03c6\u03c5\u03bb\u03ad\u03c2 \u03b1\u03c1\u03c7\u03af\u03b6\u03bf\u03c5\u03bd \u03bd\u03b1 \u03c4\u03b1 \u03ba\u03c1\u03b1\u03c4\u03ac\u03bd\u03b5 \u03b3\u03b9\u03b1 \u03b5\u03cd\u03ba\u03bf\u03bb\u03b7 \u03c0\u03c1\u03cc\u03c3\u03b2\u03b1\u03c3\u03b7 \u03c3\u03c4\u03bf \u03b3\u03ac\u03bb\u03b1, \u03c4\u03bf \u03bc\u03b1\u03bb\u03bb\u03af, \u03c4\u03bf \u03ba\u03c1\u03ad\u03b1\u03c2 \u03ba\u03b1\u03b9 \u03c4\u03bf \u03b4\u03ad\u03c1\u03bc\u03b1.",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        58,
+        40,
+        1022,
+        751
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot26_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "TikTok Sans Bold",
+        "requested_font_style": "display",
+        "name": "TikTok Sans Bold",
+        "file": "TikTokSans-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 26,
+      "overlay_index": 1,
+      "text": "\u039f\u03b9 \u03b1\u03c1\u03c7\u03b1\u03af\u03bf\u03b9 \u03c0\u03bf\u03bb\u03b9\u03c4\u03b9\u03c3\u03bc\u03bf\u03af \u03ba\u03b1\u03b9 \u03c6\u03c5\u03bb\u03ad\u03c2 \u03b1\u03c1\u03c7\u03af\u03b6\u03bf\u03c5\u03bd \u03bd\u03b1 \u03c4\u03b1 \u03ba\u03c1\u03b1\u03c4\u03ac\u03bd\u03b5 \u03b3\u03b9\u03b1 \u03b5\u03cd\u03ba\u03bf\u03bb\u03b7 \u03c0\u03c1\u03cc\u03c3\u03b2\u03b1\u03c3\u03b7 \u03c3\u03c4\u03bf \u03b3\u03ac\u03bb\u03b1, \u03c4\u03bf \u03bc\u03b1\u03bb\u03bb\u03af, \u03c4\u03bf \u03ba\u03c1\u03ad\u03b1\u03c2 \u03ba\u03b1\u03b9 \u03c4\u03bf \u03b4\u03ad\u03c1\u03bc\u03b1.",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)",
+        "glyph fallback 'Montserrat Bold' -> 'TikTok Sans Bold' (font lacks characters of this text)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        58,
+        40,
+        1022,
+        751
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot26_ov01.png",
+      "resolved_typeface": {
+        "requested_font_family": "Montserrat Bold",
+        "requested_font_style": "display",
+        "name": "TikTok Sans Bold",
+        "file": "TikTokSans-Bold.ttf",
+        "source": "glyph_fallback",
+        "fallback": false,
+        "glyph_fallback": true
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 26,
+      "overlay_index": 2,
+      "text": "\ud64d\ucf69\uc758 \uc2a4\uce74\uc774\ub77c\uc778\uc744 \uc774\ub8e8\ub294 \ube4c\ub529 \ud589\ub82c\uc740 \ube45\ud1a0\ub9ac\uc544 \ud56d\uad6c\uc758 \uc218\uba74\uc5d0 \uc120\uba85\ud788 \ube44\uce58\ub294 \ubaa8\uc2b5 \ub54c\ubb38\uc5d0 \ubc18\uc9dd\uc774\ub294 \ub9c9\ub300\uadf8\ub798\ud504\uc5d0 \ube44\uc720\ub41c\ub2e4.",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)",
+        "glyph fallback 'TikTok Sans Bold' -> 'Noto Sans KR Bold' (font lacks characters of this text)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        30,
+        648,
+        1047,
+        1293
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot26_ov02.png",
+      "resolved_typeface": {
+        "requested_font_family": "TikTok Sans Bold",
+        "requested_font_style": "display",
+        "name": "Noto Sans KR Bold",
+        "file": "NotoSansKR-Bold.ttf",
+        "source": "glyph_fallback",
+        "fallback": false,
+        "glyph_fallback": true
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 26,
+      "overlay_index": 3,
+      "text": "\u0625\u0646 \u0639\u0631\u0636 \u0627\u0644\u0635\u0648\u062a \u0648\u0627\u0644\u0636\u0648\u0621 \u0627\u0644\u0647\u0631\u0645\u064a \u0648\u0627\u062d\u062f \u0645\u0646 \u0623\u0645\u062a\u0639 \u0627\u0644\u0623\u0634\u064a\u0627\u0621 \u0627\u0644\u0645\u0648\u062c\u0648\u062f\u0629 \u0628\u0627\u0644\u0645\u0646\u0637\u0642\u0629 \u0644\u0644\u0623\u0637\u0641\u0627\u0644.",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)",
+        "glyph fallback 'TikTok Sans Bold' -> 'Noto Sans Arabic Bold' (font lacks characters of this text)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        38,
+        717,
+        1041,
+        1226
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot26_ov03.png",
+      "resolved_typeface": {
+        "requested_font_family": "TikTok Sans Bold",
+        "requested_font_style": "display",
+        "name": "Noto Sans Arabic Bold",
+        "file": "NotoSansArabic-Bold.ttf",
+        "source": "glyph_fallback",
+        "fallback": false,
+        "glyph_fallback": true
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 26,
+      "overlay_index": 4,
+      "text": "\u0625\u0646 \u0639\u0631\u0636 \u0627\u0644\u0635\u0648\u062a \u0648\u0627\u0644\u0636\u0648\u0621 \u0627\u0644\u0647\u0631\u0645\u064a \u0648\u0627\u062d\u062f",
+      "effect": "karaoke-line",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)",
+        "glyph fallback 'TikTok Sans Bold' -> 'Noto Sans Arabic Bold' (font lacks characters of this text)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        186,
+        1388,
+        896,
+        1726
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot26_ov04.png",
+      "resolved_typeface": {
+        "requested_font_family": "TikTok Sans Bold",
+        "requested_font_style": "display",
+        "name": "Noto Sans Arabic Bold",
+        "file": "NotoSansArabic-Bold.ttf",
+        "source": "glyph_fallback",
+        "fallback": false,
+        "glyph_fallback": true
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 26,
+      "overlay_index": 5,
+      "text": "U njemu se navodi da je naju pe\u010datljivije mesto za glavni predmet na preseku linija koje vertikuli horizontalno dele sliku na tre\u0107inu. U zagradi vidi primer.",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        37,
+        584,
+        1043,
+        1362
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot26_ov05.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter Tight",
+        "requested_font_style": "display",
+        "name": "Inter Tight",
+        "file": "InterTight-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 27,
+      "overlay_index": 0,
+      "text": "come with me to my favorite restaurant and ice cream place in lisbon",
+      "effect": "typewriter",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        86,
+        98,
+        992,
+        528
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot27_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 27,
+      "overlay_index": 1,
+      "text": "Name",
+      "effect": "static",
+      "text_anchor": "left",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        61,
+        1490,
+        277,
+        1589
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot27_ov01.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 27,
+      "overlay_index": 2,
+      "text": "Name",
+      "effect": "static",
+      "text_anchor": "right",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        802,
+        1455,
+        1019,
+        1554
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot27_ov02.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 28,
+      "overlay_index": 0,
+      "text": "Free to do in Lisbon",
+      "effect": "static",
+      "text_anchor": "left",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        63,
+        1569,
+        633,
+        1664
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot28_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Fraunces",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 28,
+      "overlay_index": 1,
+      "text": "Part 1",
+      "effect": "static",
+      "text_anchor": "left",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        63,
+        1642,
+        269,
+        1737
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot28_ov01.png",
+      "resolved_typeface": {
+        "requested_font_family": "Fraunces",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 28,
+      "overlay_index": 2,
+      "text": "Miradouro de Santa Catarina",
+      "effect": "static",
+      "text_anchor": "left",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        62,
+        221,
+        887,
+        316
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot28_ov02.png",
+      "resolved_typeface": {
+        "requested_font_family": "Fraunces",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 29,
+      "overlay_index": 0,
+      "text": "Part 1",
+      "effect": "static",
+      "text_anchor": "left",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        63,
+        189,
+        269,
+        284
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot29_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Fraunces",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 29,
+      "overlay_index": 1,
+      "text": "Part 2",
+      "effect": "static",
+      "text_anchor": "left",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        63,
+        189,
+        280,
+        284
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot29_ov01.png",
+      "resolved_typeface": {
+        "requested_font_family": "Fraunces",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 29,
+      "overlay_index": 2,
+      "text": "Day one in Lisbon",
+      "effect": "static",
+      "text_anchor": "right",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        499,
+        1610,
+        1020,
+        1715
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot29_ov02.png",
+      "resolved_typeface": {
+        "requested_font_family": "Fraunces",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 29,
+      "overlay_index": 3,
+      "text": "Lisbon",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        343,
+        288,
+        741,
+        424
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot29_ov03.png",
+      "resolved_typeface": {
+        "requested_font_family": "Fraunces",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 30,
+      "overlay_index": 0,
+      "text": "chimichurri & salsa criolla",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        111,
+        1451,
+        968,
+        1555
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot30_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Fraunces",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 30,
+      "overlay_index": 1,
+      "text": "Sagrada Fam\u00edlia & Park G\u00fcell",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        71,
+        1451,
+        1009,
+        1568
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot30_ov01.png",
+      "resolved_typeface": {
+        "requested_font_family": "Fraunces",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 30,
+      "overlay_index": 2,
+      "text": "chimichurri & salsa criolla",
+      "effect": "static",
+      "text_anchor": "left",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        60,
+        1451,
+        917,
+        1555
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot30_ov02.png",
+      "resolved_typeface": {
+        "requested_font_family": "Fraunces",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 30,
+      "overlay_index": 3,
+      "text": "Sagrada Fam\u00edlia & Park G\u00fcell",
+      "effect": "static",
+      "text_anchor": "left",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        61,
+        1451,
+        998,
+        1568
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot30_ov03.png",
+      "resolved_typeface": {
+        "requested_font_family": "Fraunces",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 30,
+      "overlay_index": 4,
+      "text": "chimichurri & salsa criolla",
+      "effect": "static",
+      "text_anchor": "right",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        162,
+        1451,
+        1019,
+        1555
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot30_ov04.png",
+      "resolved_typeface": {
+        "requested_font_family": "Fraunces",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 30,
+      "overlay_index": 5,
+      "text": "Sagrada Fam\u00edlia & Park G\u00fcell",
+      "effect": "static",
+      "text_anchor": "right",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        82,
+        1451,
+        1020,
+        1568
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot30_ov05.png",
+      "resolved_typeface": {
+        "requested_font_family": "Fraunces",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 31,
+      "overlay_index": 0,
+      "text": "chimichurri + salsa criolla",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        124,
+        1454,
+        956,
+        1554
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot31_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Fraunces",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 31,
+      "overlay_index": 1,
+      "text": "Julio\u2019s \ud83d\udd25 asado",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        287,
+        1450,
+        793,
+        1560
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot31_ov01.png",
+      "resolved_typeface": {
+        "requested_font_family": "Fraunces",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 31,
+      "overlay_index": 2,
+      "text": "chimichurri +\nsalsa criolla",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        309,
+        1413,
+        766,
+        1595
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot31_ov02.png",
+      "resolved_typeface": {
+        "requested_font_family": "Fraunces",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 31,
+      "overlay_index": 3,
+      "text": "Kad\u0131k\u00f6y\u2019de \u00e7ay \u2615\ufe0f ve simit \ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        97,
+        1445,
+        989,
+        1566
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot31_ov03.png",
+      "resolved_typeface": {
+        "requested_font_family": "Fraunces",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 31,
+      "overlay_index": 4,
+      "text": "Parque Nacional Tierra del Fuego",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFF8F0",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        116,
+        1413,
+        967,
+        1609
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot31_ov04.png",
+      "resolved_typeface": {
+        "requested_font_family": "Fraunces",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 32,
+      "overlay_index": 0,
+      "text": "Bug\u00fcn \u0130stanbul\u2019da \u0131l\u0131k bir ak\u015fam \ud83c\udf05 \u015fimdi Kad\u0131k\u00f6y\u2019de \u00e7ay i\u00e7iyoruz \u2615\ufe0f \ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67 50% {off}: a\\b",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        47,
+        748,
+        1033,
+        1180
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot32_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 32,
+      "overlay_index": 1,
+      "text": "Bug\u00fcn \u0130stanbul\u2019da \u0131l\u0131k bir ak\u015fam \ud83c\udf05 \u015fimdi Kad\u0131k\u00f6y\u2019de \u00e7ay i\u00e7iyoruz \u2615\ufe0f \ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67 50% {off}: a\\b",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        59,
+        421,
+        1025,
+        1123
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot32_ov01.png",
+      "resolved_typeface": {
+        "requested_font_family": "Fraunces",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 32,
+      "overlay_index": 2,
+      "text": "K\u0131sa sat\u0131r\n\nikinci sat\u0131r \u2615\ufe0f",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        289,
+        812,
+        792,
+        1121
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot32_ov02.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 32,
+      "overlay_index": 3,
+      "text": "Bug\u00fcn \u0130stanbul\u2019da \u0131l\u0131k bir ak\u015fam \ud83c\udf05 \u015fimdi Kad\u0131k\u00f6y\u2019de \u00e7ay i\u00e7iyoruz \u2615\ufe0f \ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67 50% {off}: a\\b",
+      "effect": "static",
+      "text_anchor": "left",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        29,
+        748,
+        1015,
+        1180
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot32_ov03.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 32,
+      "overlay_index": 4,
+      "text": "Bug\u00fcn \u0130stanbul\u2019da \u0131l\u0131k bir ak\u015fam \ud83c\udf05 \u015fimdi Kad\u0131k\u00f6y\u2019de \u00e7ay i\u00e7iyoruz \u2615\ufe0f \ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67 50% {off}: a\\b",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        464,
+        610,
+        1048,
+        1330
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot32_ov04.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 32,
+      "overlay_index": 5,
+      "text": "Bug\u00fcn \u0130stanbul\u2019da \u0131l\u0131k bir ak\u015fam \ud83c\udf05 \u015fimdi Kad\u0131k\u00f6y\u2019de \u00e7ay i\u00e7iyoruz \u2615\ufe0f \ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67 50% {off}: a\\b",
+      "effect": "static",
+      "text_anchor": "left",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        299,
+        698,
+        982,
+        1230
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot32_ov05.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 33,
+      "overlay_index": 0,
+      "text": "Bug\u00fcn \u0130stanbul\u2019da \u0131l\u0131k bir ak\u015fam \ud83c\udf05 \u015fimdi Kad\u0131k\u00f6y\u2019de \u00e7ay i\u00e7iyoruz \u2615\ufe0f \ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67 50% {off}: a\\b \ud83c\udff3\ufe0f\u200d\ud83c\udf08",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        57,
+        259,
+        1023,
+        897
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot33_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 33,
+      "overlay_index": 1,
+      "text": "Bug\u00fcn \u0130stanbul\u2019da \u0131l\u0131k bir ak\u015fam \ud83c\udf05 \u015fimdi Kad\u0131k\u00f6y\u2019de \u00e7ay i\u00e7iyoruz \u2615\ufe0f \ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67 50% {off}: a\\b",
+      "effect": "static",
+      "text_anchor": "right",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        76,
+        926,
+        1055,
+        1780
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot33_ov01.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display",
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 33,
+      "overlay_index": 2,
+      "text": "Supercalifragilisticexpialidocious",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        74,
+        917,
+        1006,
+        1026
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot33_ov02.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 34,
+      "overlay_index": 0,
+      "text": "and this is where we stopped for coffee before the long walk up",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        79,
+        1451,
+        1001,
+        1721
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot34_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter-Bold",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 34,
+      "overlay_index": 1,
+      "text": "Three days in Lisbon",
+      "effect": "fade-in",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        90,
+        233,
+        990,
+        370
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot34_ov01.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter-Bold",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 34,
+      "overlay_index": 2,
+      "text": "quiet mornings by the river",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        133,
+        1109,
+        946,
+        1221
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot34_ov02.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter-Regular",
+        "requested_font_style": "display",
+        "name": "Inter Regular",
+        "file": "Inter-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 34,
+      "overlay_index": 3,
+      "text": "The best pastel de nata",
+      "effect": "fade-in",
+      "text_anchor": "center",
+      "text_color": "#FFD24A",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        53,
+        522,
+        1024,
+        664
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot34_ov03.png",
+      "resolved_typeface": {
+        "requested_font_family": "PlayfairDisplay-Bold",
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 34,
+      "overlay_index": 4,
+      "text": "slow travel, softer days",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#F5F5DC",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        145,
+        816,
+        935,
+        940
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot34_ov04.png",
+      "resolved_typeface": {
+        "requested_font_family": "PlayfairDisplay-Regular",
+        "requested_font_style": "display",
+        "name": "Playfair Display Regular",
+        "file": "PlayfairDisplay-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 35,
+      "overlay_index": 0,
+      "text": "combination of hard work and patience",
+      "effect": "none",
+      "text_anchor": "left",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        29,
+        782,
+        930,
+        1321
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot35_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": null,
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "style_default",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 36,
+      "overlay_index": 0,
+      "text": "Cacio e pepe in 10 minutes",
+      "effect": "fade-in",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        100,
+        132,
+        979,
+        466
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot36_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": null,
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "style_default",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 36,
+      "overlay_index": 1,
+      "text": "\u00c7\u0131lb\u0131r: the Turkish eggs everyone gets wrong",
+      "effect": "fade-in",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        63,
+        125,
+        1016,
+        603
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot36_ov01.png",
+      "resolved_typeface": {
+        "requested_font_family": null,
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "style_default",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 36,
+      "overlay_index": 2,
+      "text": "Everything I ate in 48 hours in Barcelona, ranked from worst to best ever",
+      "effect": "fade-in",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        33,
+        120,
+        1047,
+        473
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot36_ov02.png",
+      "resolved_typeface": {
+        "requested_font_family": null,
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "style_default",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 36,
+      "overlay_index": 3,
+      "text": "Wait until you see what this tiny Kyoto caf\u00e9 does with matcha, sesame and yuzu!!",
+      "effect": "fade-in",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        33,
+        123,
+        1047,
+        483
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot36_ov03.png",
+      "resolved_typeface": {
+        "requested_font_family": null,
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "style_default",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 37,
+      "overlay_index": 0,
+      "text": "\u0645\u0631\u062d\u0628\u0627 \u0628\u0627\u0644\u0639\u0627\u0644\u0645",
+      "effect": "smooth-type",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)",
+        "glyph fallback 'Inter' -> 'Noto Sans Arabic Bold' (font lacks characters of this text)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        256,
+        764,
+        820,
+        927
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot37_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Noto Sans Arabic Bold",
+        "file": "NotoSansArabic-Bold.ttf",
+        "source": "glyph_fallback",
+        "fallback": false,
+        "glyph_fallback": true
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 38,
+      "overlay_index": 0,
+      "text": "CREATE WITH\nCONFIDENCE \ud83d\udc69\u200d\ud83d\udcbb",
+      "effect": "smooth-type",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        55,
+        684,
+        1020,
+        993
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot38_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 39,
+      "overlay_index": 0,
+      "text": "GOAL OF THE\nTOURNAMENT",
+      "effect": "staggered-slice",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        70,
+        684,
+        1010,
+        979
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot39_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 0,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        63,
+        750,
+        1016,
+        988
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter Regular",
+        "requested_font_style": "display",
+        "name": "Inter Regular",
+        "file": "Inter-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 1,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        58,
+        750,
+        1021,
+        988
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov01.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter Medium",
+        "requested_font_style": "display",
+        "name": "Inter Medium",
+        "file": "Inter-Medium.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 2,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        77,
+        748,
+        1003,
+        996
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov02.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display",
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 3,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        92,
+        749,
+        987,
+        995
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov03.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display Regular",
+        "requested_font_style": "display",
+        "name": "Playfair Display Regular",
+        "file": "PlayfairDisplay-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 4,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        115,
+        753,
+        969,
+        996
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov04.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display Italic",
+        "requested_font_style": "display",
+        "name": "Playfair Display Italic",
+        "file": "PlayfairDisplay-Italic-VF.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 5,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        87,
+        763,
+        992,
+        990
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov05.png",
+      "resolved_typeface": {
+        "requested_font_family": "Montserrat",
+        "requested_font_style": "display",
+        "name": "Montserrat",
+        "file": "Montserrat-ExtraBold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 6,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        74,
+        752,
+        1005,
+        990
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov06.png",
+      "resolved_typeface": {
+        "requested_font_family": "Space Grotesk",
+        "requested_font_style": "display",
+        "name": "Space Grotesk",
+        "file": "SpaceGrotesk-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 7,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        87,
+        749,
+        993,
+        994
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov07.png",
+      "resolved_typeface": {
+        "requested_font_family": "DM Sans",
+        "requested_font_style": "display",
+        "name": "DM Sans",
+        "file": "DMSans-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 8,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        118,
+        763,
+        959,
+        988
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov08.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 9,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        78,
+        750,
+        1001,
+        989
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov09.png",
+      "resolved_typeface": {
+        "requested_font_family": "Inter Tight",
+        "requested_font_style": "display",
+        "name": "Inter Tight",
+        "file": "InterTight-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 10,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        136,
+        801,
+        942,
+        938
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov10.png",
+      "resolved_typeface": {
+        "requested_font_family": "Instrument Serif",
+        "requested_font_style": "display",
+        "name": "Instrument Serif",
+        "file": "InstrumentSerif-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 11,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        74,
+        732,
+        1004,
+        1004
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov11.png",
+      "resolved_typeface": {
+        "requested_font_family": "Bodoni Moda",
+        "requested_font_style": "display",
+        "name": "Bodoni Moda",
+        "file": "BodoniModa-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 12,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        107,
+        763,
+        971,
+        991
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov12.png",
+      "resolved_typeface": {
+        "requested_font_family": "Fraunces",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 13,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        161,
+        756,
+        913,
+        1002
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov13.png",
+      "resolved_typeface": {
+        "requested_font_family": "Space Mono",
+        "requested_font_style": "display",
+        "name": "Space Mono",
+        "file": "SpaceMono-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 14,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        115,
+        756,
+        965,
+        991
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov14.png",
+      "resolved_typeface": {
+        "requested_font_family": "Outfit",
+        "requested_font_style": "display",
+        "name": "Outfit",
+        "file": "Outfit-VF.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 15,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)",
+        "glyph fallback 'Permanent Marker' -> 'Patrick Hand' (font lacks characters of this text)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        112,
+        809,
+        969,
+        947
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov15.png",
+      "resolved_typeface": {
+        "requested_font_family": "Permanent Marker",
+        "requested_font_style": "display",
+        "name": "Patrick Hand",
+        "file": "PatrickHand-Regular.ttf",
+        "source": "glyph_fallback",
+        "fallback": false,
+        "glyph_fallback": true
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 16,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        108,
+        721,
+        982,
+        1019
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov16.png",
+      "resolved_typeface": {
+        "requested_font_family": "Pacifico",
+        "requested_font_style": "display",
+        "name": "Pacifico",
+        "file": "Pacifico-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 17,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        124,
+        806,
+        955,
+        936
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov17.png",
+      "resolved_typeface": {
+        "requested_font_family": "Caveat Brush",
+        "requested_font_style": "display",
+        "name": "Caveat Brush",
+        "file": "CaveatBrush-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 18,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        92,
+        808,
+        989,
+        955
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov18.png",
+      "resolved_typeface": {
+        "requested_font_family": "Shadows Into Light",
+        "requested_font_style": "display",
+        "name": "Shadows Into Light",
+        "file": "ShadowsIntoLight-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 19,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        109,
+        730,
+        977,
+        996
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov19.png",
+      "resolved_typeface": {
+        "requested_font_family": "Kalam",
+        "requested_font_style": "display",
+        "name": "Kalam",
+        "file": "Kalam-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 20,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        66,
+        807,
+        1014,
+        950
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov20.png",
+      "resolved_typeface": {
+        "requested_font_family": "Indie Flower",
+        "requested_font_style": "display",
+        "name": "Indie Flower",
+        "file": "IndieFlower-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 21,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        95,
+        745,
+        982,
+        992
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov21.png",
+      "resolved_typeface": {
+        "requested_font_family": "Architects Daughter",
+        "requested_font_style": "display",
+        "name": "Architects Daughter",
+        "file": "ArchitectsDaughter-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 22,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        164,
+        802,
+        916,
+        930
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov22.png",
+      "resolved_typeface": {
+        "requested_font_family": "Bebas Neue",
+        "requested_font_style": "display",
+        "name": "Bebas Neue",
+        "file": "BebasNeue-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 23,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        81,
+        795,
+        999,
+        951
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov23.png",
+      "resolved_typeface": {
+        "requested_font_family": "Anton",
+        "requested_font_style": "display",
+        "name": "Anton",
+        "file": "Anton-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 24,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        90,
+        751,
+        985,
+        1001
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov24.png",
+      "resolved_typeface": {
+        "requested_font_family": "Poppins Black",
+        "requested_font_style": "display",
+        "name": "Poppins Black",
+        "file": "Poppins-Black.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 25,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        69,
+        743,
+        1011,
+        992
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov25.png",
+      "resolved_typeface": {
+        "requested_font_family": "Nunito ExtraBold",
+        "requested_font_style": "display",
+        "name": "Nunito ExtraBold",
+        "file": "Nunito-ExtraBold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 26,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        53,
+        735,
+        1025,
+        1007
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov26.png",
+      "resolved_typeface": {
+        "requested_font_family": "Bowlby One SC",
+        "requested_font_style": "display",
+        "name": "Bowlby One SC",
+        "file": "BowlbyOneSC-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 27,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        121,
+        794,
+        973,
+        935
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov27.png",
+      "resolved_typeface": {
+        "requested_font_family": "Bangers",
+        "requested_font_style": "display",
+        "name": "Bangers",
+        "file": "Bangers-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 28,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        69,
+        749,
+        1010,
+        993
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov28.png",
+      "resolved_typeface": {
+        "requested_font_family": "TikTok Sans",
+        "requested_font_style": "display",
+        "name": "TikTok Sans",
+        "file": "TikTokSans-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 29,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        116,
+        758,
+        960,
+        994
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov29.png",
+      "resolved_typeface": {
+        "requested_font_family": "TikTok Sans Bold",
+        "requested_font_style": "display",
+        "name": "TikTok Sans Bold",
+        "file": "TikTokSans-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 30,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        120,
+        766,
+        958,
+        989
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov30.png",
+      "resolved_typeface": {
+        "requested_font_family": "Montserrat Regular",
+        "requested_font_style": "display",
+        "name": "Montserrat Regular",
+        "file": "Montserrat-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 31,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        96,
+        764,
+        983,
+        990
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov31.png",
+      "resolved_typeface": {
+        "requested_font_family": "Montserrat Bold",
+        "requested_font_style": "display",
+        "name": "Montserrat Bold",
+        "file": "Montserrat-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 32,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        57,
+        746,
+        1022,
+        999
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov32.png",
+      "resolved_typeface": {
+        "requested_font_family": "Poppins Regular",
+        "requested_font_style": "display",
+        "name": "Poppins Regular",
+        "file": "Poppins-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 33,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        103,
+        753,
+        972,
+        1001
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov33.png",
+      "resolved_typeface": {
+        "requested_font_family": "Poppins Bold",
+        "requested_font_style": "display",
+        "name": "Poppins Bold",
+        "file": "Poppins-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 34,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        98,
+        749,
+        979,
+        995
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov34.png",
+      "resolved_typeface": {
+        "requested_font_family": "DM Serif Display",
+        "requested_font_style": "display",
+        "name": "DM Serif Display",
+        "file": "DMSerifDisplay-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 35,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        80,
+        753,
+        997,
+        990
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov35.png",
+      "resolved_typeface": {
+        "requested_font_family": "Gloock",
+        "requested_font_style": "display",
+        "name": "Gloock",
+        "file": "Gloock-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 36,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        135,
+        756,
+        944,
+        990
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov36.png",
+      "resolved_typeface": {
+        "requested_font_family": "Cormorant Garamond",
+        "requested_font_style": "display",
+        "name": "Cormorant Garamond",
+        "file": "CormorantGaramond-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 37,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        105,
+        755,
+        976,
+        985
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov37.png",
+      "resolved_typeface": {
+        "requested_font_family": "Bricolage Grotesque",
+        "requested_font_style": "display",
+        "name": "Bricolage Grotesque",
+        "file": "BricolageGrotesque-ExtraBold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 38,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        88,
+        749,
+        991,
+        991
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov38.png",
+      "resolved_typeface": {
+        "requested_font_family": "Hanken Grotesk",
+        "requested_font_style": "display",
+        "name": "Hanken Grotesk",
+        "file": "HankenGrotesk-ExtraBold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 39,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        72,
+        768,
+        1006,
+        982
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov39.png",
+      "resolved_typeface": {
+        "requested_font_family": "Archivo Black",
+        "requested_font_style": "display",
+        "name": "Archivo Black",
+        "file": "ArchivoBlack-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 40,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        115,
+        800,
+        965,
+        940
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov40.png",
+      "resolved_typeface": {
+        "requested_font_family": "Big Shoulders Display",
+        "requested_font_style": "display",
+        "name": "Big Shoulders Display",
+        "file": "BigShouldersDisplay-ExtraBold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 41,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        84,
+        760,
+        996,
+        991
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov41.png",
+      "resolved_typeface": {
+        "requested_font_family": "Syne",
+        "requested_font_style": "display",
+        "name": "Syne",
+        "file": "Syne-ExtraBold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 42,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        168,
+        759,
+        912,
+        994
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov42.png",
+      "resolved_typeface": {
+        "requested_font_family": "Unbounded",
+        "requested_font_style": "display",
+        "name": "Unbounded",
+        "file": "Unbounded-Bold.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 43,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        80,
+        789,
+        1003,
+        941
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov43.png",
+      "resolved_typeface": {
+        "requested_font_family": "Great Vibes",
+        "requested_font_style": "display",
+        "name": "Great Vibes",
+        "file": "GreatVibes-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 44,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)",
+        "glyph fallback 'Satisfy' -> 'Pacifico' (font lacks characters of this text)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        108,
+        721,
+        982,
+        1019
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov44.png",
+      "resolved_typeface": {
+        "requested_font_family": "Satisfy",
+        "requested_font_style": "display",
+        "name": "Pacifico",
+        "file": "Pacifico-Regular.ttf",
+        "source": "glyph_fallback",
+        "fallback": false,
+        "glyph_fallback": true
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 45,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        112,
+        809,
+        969,
+        947
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov45.png",
+      "resolved_typeface": {
+        "requested_font_family": "Patrick Hand",
+        "requested_font_style": "display",
+        "name": "Patrick Hand",
+        "file": "PatrickHand-Regular.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 46,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        63,
+        810,
+        1015,
+        944
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov46.png",
+      "resolved_typeface": {
+        "requested_font_family": "EB Garamond",
+        "requested_font_style": "display",
+        "name": "EB Garamond",
+        "file": "EBGaramond-VF.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 47,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        79,
+        748,
+        1001,
+        996
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov47.png",
+      "resolved_typeface": {
+        "requested_font_family": "Plus Jakarta Sans",
+        "requested_font_style": "display",
+        "name": "Plus Jakarta Sans",
+        "file": "PlusJakartaSans-VF.ttf",
+        "source": "font_family",
+        "fallback": false,
+        "glyph_fallback": false
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 48,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)",
+        "glyph fallback 'Rascal' -> 'Patrick Hand' (font lacks characters of this text)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        112,
+        809,
+        969,
+        947
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov48.png",
+      "resolved_typeface": {
+        "requested_font_family": "Rascal",
+        "requested_font_style": "display",
+        "name": "Patrick Hand",
+        "file": "PatrickHand-Regular.ttf",
+        "source": "glyph_fallback",
+        "fallback": false,
+        "glyph_fallback": true
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 49,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)",
+        "glyph fallback 'Big Curls' -> 'Great Vibes' (font lacks characters of this text)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        80,
+        789,
+        1003,
+        941
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov49.png",
+      "resolved_typeface": {
+        "requested_font_family": "Big Curls",
+        "requested_font_style": "display",
+        "name": "Great Vibes",
+        "file": "GreatVibes-Regular.ttf",
+        "source": "glyph_fallback",
+        "fallback": false,
+        "glyph_fallback": true
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 50,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)",
+        "glyph fallback 'ZT Bros Oskon 90s' -> 'Instrument Serif' (font lacks characters of this text)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        136,
+        801,
+        942,
+        938
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov50.png",
+      "resolved_typeface": {
+        "requested_font_family": "ZT Bros Oskon 90s",
+        "requested_font_style": "display",
+        "name": "Instrument Serif",
+        "file": "InstrumentSerif-Regular.ttf",
+        "source": "glyph_fallback",
+        "fallback": false,
+        "glyph_fallback": true
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 51,
+      "text": "G\u00fcne\u015f \u0131\u015f\u0131\u011f\u0131, \u00e7ok g\u00fczel! \u0130\u015e\u011e \u00c7\u00d6\u00dc",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)",
+        "glyph fallback 'Alte Haas Grotesk' -> 'Inter' (font lacks characters of this text)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        118,
+        763,
+        959,
+        988
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov51.png",
+      "resolved_typeface": {
+        "requested_font_family": "Alte Haas Grotesk",
+        "requested_font_style": "display",
+        "name": "Inter",
+        "file": "Inter-Bold.ttf",
+        "source": "glyph_fallback",
+        "fallback": false,
+        "glyph_fallback": true
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 52,
+      "text": "\u00c7ok g\u00fczel, g\u00f6zl\u00fck",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)",
+        "glyph fallback 'Big Curls' -> 'Great Vibes' (font lacks characters of this text)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        316,
+        801,
+        770,
+        936
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov52.png",
+      "resolved_typeface": {
+        "requested_font_family": "Big Curls",
+        "requested_font_style": "display",
+        "name": "Great Vibes",
+        "file": "GreatVibes-Regular.ttf",
+        "source": "glyph_fallback",
+        "fallback": false,
+        "glyph_fallback": true
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 53,
+      "text": "Sadece 99\u20ba indirim",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)",
+        "glyph fallback 'Playfair Display' -> 'Fraunces' (font lacks characters of this text)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        155,
+        814,
+        926,
+        926
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov53.png",
+      "resolved_typeface": {
+        "requested_font_family": "Playfair Display",
+        "requested_font_style": "display",
+        "name": "Fraunces",
+        "file": "Fraunces-Bold.ttf",
+        "source": "glyph_fallback",
+        "fallback": false,
+        "glyph_fallback": true
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 40,
+      "overlay_index": 54,
+      "text": "bi\u0307r g\u00fcn i\u0307stanbul",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "PASS",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)",
+        "glyph fallback 'Poppins Bold' -> 'Space Grotesk' (font lacks characters of this text)"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        245,
+        819,
+        835,
+        938
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot40_ov54.png",
+      "resolved_typeface": {
+        "requested_font_family": "Poppins Bold",
+        "requested_font_style": "display",
+        "name": "Space Grotesk",
+        "file": "SpaceGrotesk-Bold.ttf",
+        "source": "glyph_fallback",
+        "fallback": false,
+        "glyph_fallback": true
+      },
+      "expected_failure": null,
+      "expectation_matched": false
+    },
+    {
+      "slot_index": 41,
+      "overlay_index": 0,
+      "text": "font fallback must be loud",
+      "effect": "static",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "verdict": "PASS",
+      "clipping": "FAIL",
+      "content": "SKIPPED",
+      "reasons": [
+        "text fully inside frame",
+        "content OCR not run (render-only stage)",
+        "requested font_family 'Definitely Not A Real Nova Font' resolved to 'Playfair Display' fallback",
+        "expected failure matched: FAIL"
+      ],
+      "ocr_text": null,
+      "similarity": null,
+      "bbox": [
+        54,
+        734,
+        1029,
+        1014
+      ],
+      "frame_path": "/Users/emirerben/Projects/nova-phone-text-style/.overlay-verify/frames/slot41_ov00.png",
+      "resolved_typeface": {
+        "requested_font_family": "Definitely Not A Real Nova Font",
+        "requested_font_style": "display",
+        "name": "Playfair Display",
+        "file": "PlayfairDisplay-Bold.ttf",
+        "source": "style_default",
+        "fallback": true,
+        "glyph_fallback": false
+      },
+      "expected_failure": {
+        "verdict": "FAIL",
+        "reason_contains": "fallback"
+      },
+      "expectation_matched": true
+    }
+  ]
+}

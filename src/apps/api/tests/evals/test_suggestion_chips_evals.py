@@ -396,7 +396,7 @@ NEGATIVE_CONTROLS = [
         "fp_silent_broll_music",
         _bad(
             "first_prompt",
-            _chip("default_edit", "Let Kria cut the first version", "Suggest an edit."),
+            _chip("default_edit", "Let Kria decide", "Suggest an edit."),
             _chip("hook", "Add a hook to the opening", "Add a hook that matches the video", rank=2),
             _chip("hook", "Add a hook to the opening", "Add a hook that matches the video", rank=2),
         ),

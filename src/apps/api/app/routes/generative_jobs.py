@@ -7744,6 +7744,10 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         # KRI-1141: present only when ON (same reason as `text_bend`); the editor opens the
         # rotate gesture and the Rotation slider for a card, and nothing else of `editor_style`.
         capabilities["media_overlay_tilt"] = True
+    if _media_overlay_style_capability(variant, capabilities):
+        # KRI-1264: present only when ON; the editor opens Zoom and Animation for an on-top card,
+        # while `visual_editor_style` (fit, and any style on a full-screen card) stays closed.
+        capabilities["media_overlay_style"] = True
     from app.services.client_protocol import CAPTION_STYLE_SCOPE_PROTOCOL, current_client_protocol
 
     protocol = current_client_protocol()
@@ -7792,6 +7796,24 @@ def _media_overlay_tilt_capability(variant: dict, capabilities: dict) -> bool:
         is_phone_subtitled_editor_variant(variant)
         and capabilities.get("overlays") is True
         and card_tilt_supported()
+    )
+
+
+def _media_overlay_style_capability(variant: dict, capabilities: dict) -> bool:
+    """KRI-1264: may the app zoom and animate a picture card (``media_overlay_style``)?
+
+    The same Talking card lane as the tilt (its Save recompiles each card's zoom and animation into
+    the placement), behind the ``cardStyle`` token and the requesting build's protocol.
+    """
+    from app.services.phone_rollout import card_style_supported  # noqa: PLC0415
+    from app.services.phone_subtitled_editor import (  # noqa: PLC0415
+        is_phone_subtitled_editor_variant,
+    )
+
+    return bool(
+        is_phone_subtitled_editor_variant(variant)
+        and capabilities.get("overlays") is True
+        and card_style_supported()
     )
 
 

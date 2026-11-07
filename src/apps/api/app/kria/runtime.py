@@ -86,6 +86,7 @@ from app.services.clip_selection import ClipSelectionIn, latest_open_clip_questi
 from app.services.creation_thread_titles import (
     conversation_revision_matches,
     prepare_message_title,
+    start_title_generation,
 )
 from app.services.creative_copy_decisions import latest_open_creative_question
 from app.services.creative_copy_gate import CREATIVE_COPY_PENDING, creative_copy_problem
@@ -1432,6 +1433,9 @@ async def read_delta(
             "Use either after_sequence or before_sequence, not both.",
             recovery="manual",
         )
+    if isinstance(db, AsyncSession) and (thread.state or {}).get("title_generation") == "pending":
+        # KRI-1262: a deferred chat is released by the worker, so a poll is what starts its title.
+        start_title_generation(thread.id)
     statement = select(CreationThreadEvent).where(CreationThreadEvent.thread_id == thread.id)
     if before_sequence is not None:
         statement = statement.where(CreationThreadEvent.sequence < before_sequence).order_by(
@@ -2867,6 +2871,11 @@ async def _mint_prepared_execution(
     approval.prepared_execution_id = row.id
 
 
+def _automatic_repair_limit() -> int:
+    """Automatic export repairs an approval grants (0 or 2); the server decides (KRI-1262)."""
+    return 2 if settings.phone_actual_export_verification_enabled else 0
+
+
 def _optional_uuid(value: object) -> uuid.UUID | None:
     try:
         return uuid.UUID(str(value)) if value else None
@@ -2973,7 +2982,7 @@ async def decide_approval(
     needs_plan_item_lock = (
         is_strategy_approval
         or deny_restore_pending
-        or (decision == "approve" and body.automatic_repair_attempts > 0)
+        or (decision == "approve" and _automatic_repair_limit() > 0)
         or (decision == "deny" and await _staged_tap_writes_item(db, approval_ref))
     )
     plan_item = (
@@ -3466,11 +3475,9 @@ async def decide_approval(
         # A card's tap that staged this render is taken back with it: the denial is final.
         await _withdraw_staged_tap(db, approval=approval, item=plan_item, thread=thread)
 
-    if decision == "approve" and body.automatic_repair_attempts:
-        if execution is None:
-            raise RuntimeFailure(
-                409, "approval_target_missing", "The render for this approval is unavailable."
-            )
+    if decision == "approve" and _automatic_repair_limit() > 0 and execution is not None:
+        # KRI-1262: the grant follows the server's limit, never the client's field (an older
+        # build sends 0 here; a newer one no longer shows the choice).
         from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
 
         grant_item = plan_item or await db.get(PlanItem, session.plan_item_id)
@@ -3478,7 +3485,7 @@ async def decide_approval(
             **(execution.result or {}),
             "automatic_repair_grant": {
                 "version": 1,
-                "max_attempts": 2,
+                "max_attempts": _automatic_repair_limit(),
                 "used": 0,
                 "approved_at": now.isoformat(),
                 "expires_at": (now + timedelta(minutes=30)).isoformat(),
@@ -3572,7 +3579,7 @@ async def read_approval(
         if isinstance(result, dict) and isinstance(result.get("render_retry"), dict):
             retry_of_execution_id = result["render_retry"].get("source_execution_id")
     return ApprovalSnapshotOut(
-        automatic_repair_limit=(2 if settings.phone_actual_export_verification_enabled else 0),
+        automatic_repair_limit=_automatic_repair_limit(),
         approval_id=str(approval.id),
         turn_id=str(approval.turn_id),
         draft_id=str(approval.draft_id) if approval.draft_id else None,

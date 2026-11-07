@@ -1391,6 +1391,45 @@ def card_tilt_supported(*, require_client: bool | None = None) -> bool:
     )
 
 
+def recipe_has_styled_card(recipe: Any) -> bool:
+    """Does any placed picture card of this recipe carry a zoom or an animation (KRI-1264)?"""
+    return any(
+        getattr(getattr(clip, "visual_placement", None), "editor_style", None) is not None
+        for track in getattr(recipe, "tracks", None) or []
+        for clip in track.clips
+    )
+
+
+def card_style_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode a placed card's ``visual_placement.editor_style``?
+
+    At least ``media_card_style_min_client_protocol`` (44); an older build fails the whole recipe
+    on the key. ``require_client`` as in `clip_tilt_client_supported`.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.media_card_style_min_client_protocol
+
+
+def card_style_supported(*, require_client: bool | None = None) -> bool:
+    """May a Talking edit's picture card be given a new zoom or animation right now?
+
+    The ``cardStyle`` rollout token (added after a physical-iPhone check) plus the card build gate.
+    """
+    return bool(
+        "cardStyle" in set(settings.phone_render_verified_features)
+        and card_style_client_supported(require_client=require_client)
+    )
+
+
 # Variant field an HTTP editor Save writes when it compiled one-word captions for a build
 # that declared the protocol (`single_word_captions_enabled`): a later compile with no
 # request (a worker applying a chat edit) has no app build to ask, so it trusts this.
