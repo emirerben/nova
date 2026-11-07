@@ -110,10 +110,13 @@ TEXTS = {req.id: req.text() for req in BRIEF_V1.requirements}
 CARDS = TEXTS["r4"]
 ENDING = TEXTS["r10"]
 HELD_FOR_CHOICE = ["r1", "r5", "r6", "r7", "r8", "r9", "r10"]
+WORDS_MISSING = "That exact text isn't in this draft."
+ARROW = 'the arrow next to your ending ("comment REPO")'
 # The facts `_closing_arrow_reason` reads, for a draft on a route that cannot draw the arrow.
 _NO_ARROW_ROUTE = SimpleNamespace(closing_arrow=False, rendered_variant=False, phone_talking=False)
 ALL_IDS = [req.id for req in BRIEF_V1.requirements]
 NOT_READY = "approval_requirements_not_ready"
+_REAL_ASSESS = approval_readiness.assess_readiness
 
 
 @pytest.fixture(autouse=True)
@@ -147,6 +150,7 @@ def _replay_readiness(
     promises_approvable: bool,
     after_removal: dict[str, str] | None = None,
     arrow_missing: bool = False,
+    ending_words_missing: bool = False,
 ) -> None:
     """Approval readiness with prod's event-7 verdict for every live Q1 ask.
 
@@ -157,7 +161,7 @@ def _replay_readiness(
     words are found and the real arrow check decides, "The arrow isn't in the video yet" while
     the ask still wants one.
     """
-    real = approval_readiness.assess_readiness
+    real = _REAL_ASSESS
 
     def assess(brief, strategy, **kwargs):  # noqa: ANN001, ANN202
         report = real(brief, strategy, **kwargs)
@@ -175,6 +179,9 @@ def _replay_readiness(
                 if arrow_missing and req_id == "r10":
                     reason = brief_checks._closing_arrow_reason(live[req_id], _NO_ARROW_ROUTE)
                     disposition = "executable" if reason is None else "needs_choice"
+                if ending_words_missing and req_id == "r10":
+                    # The words are no longer in the draft (the text checker's own sentence).
+                    disposition, reason = "needs_choice", WORDS_MISSING
                 row = {
                     **row,
                     "disposition": disposition,
@@ -622,6 +629,92 @@ async def test_a_typed_removal_is_not_mistaken_for_the_tap(monkeypatch) -> None:
     } == {r: "creator" for r in labels}
     # The cards are still held and offered by name.
     assert reply.payload["choice_question"]["omitted_requirement_ids"] == ["r4"]
+
+
+# == F5 (review): an arrow-only card never consents to dropping the ending's words ===========
+
+
+@pytest.mark.asyncio
+async def test_an_arrow_only_card_never_drops_the_ending_once_its_words_fall_short(
+    monkeypatch,
+) -> None:
+    """The card left out only the arrow; by the tap the ending's words are missing too. The tap
+    no longer matches what the card offered, so nothing is dropped and a new card names the
+    whole ending (emirerben/nova#2149 review: consent bound to the offered scope)."""
+    _replay_readiness(monkeypatch, promises_approvable=True, arrow_missing=True)
+    user_id, thread_id = _seed()
+    held = await _turn(monkeypatch, user_id, thread_id, PROMPT, _planned(*_prompt_updates()))
+    question = held.payload["choice_question"]
+    assert question["omitted_facets"] == {"r10": ["closing_arrow"]}
+    assert f"The simpler version leaves out: {CARDS}; {ARROW}." in held.content
+
+    _replay_readiness(monkeypatch, promises_approvable=True, ending_words_missing=True)
+    reply = await _turn(
+        monkeypatch, user_id, thread_id, TAP, _planned(), tap_on=question["question_id"]
+    )
+    assert reply.event_type == "assistant_response", reply.content
+    brief = _brief(thread_id)
+    assert [req.id for req in brief.live()] == ALL_IDS
+    ending = next(req for req in brief.live() if req.id == "r10")
+    assert ending.literal == "comment REPO"
+    assert "arrow_left_out" not in ending.facts
+    again = reply.payload["choice_question"]
+    assert again["omitted_requirement_ids"] == ["r4", "r10"]
+    assert "omitted_facets" not in again
+    assert f"The simpler version leaves out: {CARDS}; {ENDING}." in reply.content
+
+
+class _Rows:
+    def __init__(self, rows: list[tuple[str, dict[str, Any]]]) -> None:
+        self._rows = rows
+
+    def all(self) -> list[tuple[str, dict[str, Any]]]:
+        return self._rows
+
+
+class _Db:
+    """The thread's assistant events, newest first, as `_simpler_version_consent` reads them."""
+
+    def __init__(self, rows: list[tuple[str, dict[str, Any]]]) -> None:
+        self._rows = rows
+
+    def execute(self, _statement: object) -> _Rows:
+        return _Rows(self._rows)
+
+
+@pytest.mark.parametrize("arrow_only", [True, False])
+def test_consent_holds_only_for_the_scope_the_card_offered(arrow_only: bool) -> None:
+    """The real offer and consent helpers: a card's scope (whole ask or arrow only) must still
+    be the scope at the tap, in both directions."""
+    offered = {"r10"} if arrow_only else set()
+    sentence, question = kria_runtime._simpler_version_offer(
+        BRIEF_V1, ["r4", "r10"], arrow_only_ids=offered
+    )
+    assert (ARROW in sentence) is arrow_only
+    assert (ENDING in sentence) is not arrow_only
+    offer = {"brief_coverage": {"reason": NOT_READY}, "choice_question": question}
+    tap = SimpleNamespace(
+        payload={
+            "choice_selection": {
+                "question_id": question["question_id"],
+                "option_key": "simpler_version",
+            }
+        },
+        content=TAP,
+    )
+
+    def consent(now: set[str]) -> str | None:
+        return kria_runtime._simpler_version_consent(
+            _Db([("assistant_response", offer)]),
+            uuid.uuid4(),
+            ["r4", "r10"],
+            brief=BRIEF_V1,
+            source_event=tap,
+            arrow_only_ids=now,
+        )
+
+    assert consent(offered) == "named"
+    assert consent({"r10"} - offered) is None
 
 
 # == F10: the omission surfaces a new blocker ==================================================

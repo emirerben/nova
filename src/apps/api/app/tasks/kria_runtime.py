@@ -11,7 +11,7 @@ import dataclasses
 import threading
 import time
 import uuid
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -1417,13 +1417,16 @@ def _simpler_version_offer(
     brief: CreativeBrief | None,
     requirement_ids: Sequence[str],
     *,
-    labels: Mapping[str, str] | None = None,
+    arrow_only_ids: Collection[str] = frozenset(),
 ) -> tuple[str, dict[str, Any] | None]:
     """KRI-968: the sentence naming what the simpler version leaves out, and the question
     that records exactly those ids (brief order, the order the sentence names them in) and
     the brief revision it named them at. ``("", plain question)`` when nothing can be named;
-    ``("", None)`` (no card) when the list is too long to name whole (KRI-1236). ``labels``
-    names what is left out of an ask the simpler version keeps (an ending's arrow).
+    ``("", None)`` (no card) when the list is too long to name whole (KRI-1236).
+
+    ``arrow_only_ids`` are endings the simpler version keeps without their arrow (KRI-1236):
+    the sentence names just the arrow, and the question records that scope
+    (``_OMISSION_FACETS_KEY``) so a tap consents to it and nothing wider.
     """
     question = simpler_version_question()
     if brief is None:
@@ -1432,7 +1435,8 @@ def _simpler_version_offer(
     named = [req for req in brief.live() if req.id in wanted]
     if not named:
         return "", question
-    listed = "; ".join((labels or {}).get(req.id) or req.text() for req in named)
+    kept = {req.id for req in named if req.id in arrow_only_ids}
+    listed = "; ".join(_arrow_label(req) if req.id in kept else req.text() for req in named)
     sentence = say(
         en=f"The simpler version leaves out: {listed}.",
         tr=f"Daha basit sürümde çıkarılacak: {listed}.",
@@ -1450,7 +1454,14 @@ def _simpler_version_offer(
         *(req_id for req_id in dict.fromkeys(requirement_ids) if req_id not in named_ids),
     ]
     question["brief_version"] = brief.version
+    if kept:
+        question[_OMISSION_FACETS_KEY] = _omission_facets(kept)
     return sentence, question
+
+
+def _omission_facets(arrow_only_ids: Collection[str]) -> dict[str, list[str]]:
+    """The scope of each partial omission: ``{id: ["closing_arrow"]}`` (KRI-1236)."""
+    return {req_id: [_ARROW_FACET] for req_id in sorted(arrow_only_ids)}
 
 
 def _fit_reply(
@@ -1700,10 +1711,15 @@ def _simpler_version_consent(
     *,
     brief: CreativeBrief | None,
     source_event: CreationThreadEvent | None,
+    arrow_only_ids: Collection[str] = frozenset(),
 ) -> SimplerConsent | None:
     """Explicit acceptance of these exact omissions at the offered brief revision.
 
-    ``"named"``: the offer's reply named exactly these requirements as left out (KRI-968).
+    ``"named"``: the offer's reply named exactly these requirements as left out (KRI-968),
+    each with the same scope it has now (KRI-1236): an offer that left out only an ending's
+    arrow never consents to dropping the ending once its words fall short too, and an offer
+    that named the whole ending is not reapplied as an arrow-only omission. A changed scope is
+    offered again.
     ``"unnamed"``: a legacy offer (no list) that blocked exactly these; it is still honoured,
     but nothing may say the creator agreed to a list they were never shown.
 
@@ -1737,10 +1753,12 @@ def _simpler_version_consent(
         if isinstance(named, list):
             # KRI-968: consent covers exactly what the reply named, at that revision. A
             # changed set (a new miss, a different draft) is offered again, never dropped.
-            if set(requirement_ids) != {
-                str(req_id) for req_id in named
-            } or not _offered_brief_revision(
-                question.get("brief_version"), brief, named, source_event
+            if (
+                set(requirement_ids) != {str(req_id) for req_id in named}
+                or not _offered_brief_revision(
+                    question.get("brief_version"), brief, named, source_event
+                )
+                or (question.get(_OMISSION_FACETS_KEY) or {}) != _omission_facets(arrow_only_ids)
             ):
                 return None
             consent: SimplerConsent = "named"
@@ -3153,6 +3171,7 @@ def _complete_draft_turn(
                 unmet_ids,
                 brief=brief,
                 source_event=db.get(CreationThreadEvent, turn.source_event_id),
+                arrow_only_ids=arrow_only_ids,
             )
             if (
                 bool(unmet_ids)
@@ -3429,17 +3448,7 @@ def _complete_draft_turn(
             # KRI-968: name what the simpler version leaves out before the creator picks it,
             # and record those ids on the question so a tap consents to exactly them.
             leaves_out, simpler_question = (
-                _simpler_version_offer(
-                    brief,
-                    unmet_ids,
-                    labels={
-                        req.id: _arrow_label(req)
-                        for req in brief.live()
-                        if req.id in arrow_only_ids
-                    }
-                    if brief is not None
-                    else None,
-                )
+                _simpler_version_offer(brief, unmet_ids, arrow_only_ids=arrow_only_ids)
                 if can_offer_simpler
                 else ("", None)
             )
