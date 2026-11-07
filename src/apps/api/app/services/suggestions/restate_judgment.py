@@ -35,12 +35,13 @@ from app.services.suggestions.commit_readiness import (
     CHOICE_NEEDED,
     REQUIREMENTS_NOT_READY,
     CommitReadinessInputs,
+    assess_readiness_sync,
     choice_blocked_sync,
     client_marks,
     commit_readiness,
     gate_settings,
-    load_protected_regions_sync,
     on_marks_route,
+    unmet_requirement_ids,
 )
 
 __all__ = ["CHOICE_NEEDED", "REQUIREMENTS_NOT_READY"]
@@ -218,57 +219,25 @@ def _readiness_facts(
 ) -> tuple[bool, tuple[str, ...]]:
     """``assess_readiness`` on the inputs the commit hands it for a restate (strategy draft:
     no editor payload, no collection story, no prepared research): ``(ready, unmet ids)``."""
-    from app.kria.approval_readiness import APPROVABLE, assess_readiness  # noqa: PLC0415
-    from app.kria.order_replacement_receipts import compiled_order_preflight_sync  # noqa: PLC0415
-    from app.kria.order_replacement_sources import (  # noqa: PLC0415
-        load_brief_order_source_context_sync,
-    )
-    from app.services.phone_montage_preflight import readiness_plan_blockers  # noqa: PLC0415
-
     creator_id = getattr(thread, "creator_id", None)
-    on_route = on_marks_route(
-        client_marks=client_marks(client_protocol),
-        creator_id=creator_id,
-        strategy=strategy,
+    report = assess_readiness_sync(
+        session,
+        thread_id=thread.id,
         item=item,
-    )
-    regions = load_protected_regions_sync(session, thread_id=thread.id)
-    report = assess_readiness(
-        brief,
-        strategy,
-        media=dict(media),
+        brief=brief,
+        strategy=strategy,
+        media=media,
         manifest=manifest,
-        protected_regions=regions,
-        protected_marks=on_route,
         creator_id=creator_id,
-        order_execution=compiled_order_preflight_sync(
-            session,
-            item=item,
+        client_protocol=client_protocol,
+        marks_route=on_marks_route(
+            client_marks=client_marks(client_protocol),
             creator_id=creator_id,
-            brief=brief,
             strategy=strategy,
-            media_snapshot=media,
-            client_protocol=client_protocol,
-        ),
-        order_source_context=load_brief_order_source_context_sync(
-            session, brief=brief, item_id=item.id, creator_id=creator_id
-        ),
-        plan_blockers=readiness_plan_blockers(
-            session,
-            creator_id=creator_id,
             item=item,
-            brief=brief,
-            strategy=strategy,
-            media_snapshot=media,
-            client_protocol=client_protocol,
         ),
     )
-    unmet = tuple(
-        str(row["requirement_id"])
-        for row in report["requirements"]
-        if row["disposition"] not in APPROVABLE
-    )
-    return bool(report["ready"]), unmet
+    return bool(report["ready"]), unmet_requirement_ids(report)
 
 
 async def _receipts_facts(

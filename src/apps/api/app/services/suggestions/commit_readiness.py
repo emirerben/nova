@@ -124,16 +124,24 @@ def client_marks(client_protocol: int | None) -> bool:
 
 
 def on_marks_route(
-    *, client_marks: bool, creator_id: Any, strategy: Mapping[str, Any] | None, item: Any
+    *,
+    client_marks: bool,
+    creator_id: Any,
+    strategy: Mapping[str, Any] | None,
+    item: Any,
+    fallback_format: str | None = None,
 ) -> bool:
-    """``protected_targets.marks_route`` over the item's own format and clips."""
+    """``protected_targets.marks_route`` over the item's own format and clips. The format is the
+    item's, else ``fallback_format`` (the tap's draft document), else the strategy's own."""
     from app.kria.protected_targets import marks_route  # noqa: PLC0415
 
     return marks_route(
         client_marks=client_marks,
         creator_id=creator_id,
         strategy=strategy,
-        edit_format=getattr(item, "edit_format", None) or (strategy or {}).get("edit_format"),
+        edit_format=getattr(item, "edit_format", None)
+        or fallback_format
+        or (strategy or {}).get("edit_format"),
         clip_paths=getattr(item, "clip_gcs_paths", None) or (),
         voiceover_path=getattr(item, "voiceover_gcs_path", None),
     )
@@ -190,6 +198,117 @@ def load_missing_marks_sync(
         render_clips=speaker_candidates(
             assignments, rendered_speaker=rendered_speaker_media_id(variants)
         ),
+    )
+
+
+def plan_blockers_sync(
+    session: Any,
+    *,
+    creator_id: Any,
+    item: Any,
+    brief: Any,
+    strategy: Mapping[str, Any] | None,
+    media: Mapping[str, Any],
+    client_protocol: int | None,
+) -> list[Any]:
+    """A speed ask the phone montage plan can't place, said before the card."""
+    from app.services.phone_montage_preflight import readiness_plan_blockers  # noqa: PLC0415
+
+    return readiness_plan_blockers(
+        session,
+        creator_id=creator_id,
+        item=item,
+        brief=brief,
+        strategy=strategy,
+        media_snapshot=media,
+        client_protocol=client_protocol,
+    )
+
+
+def assess_readiness_sync(
+    session: Any,
+    *,
+    thread_id: Any,
+    item: Any,
+    brief: Any,
+    strategy: Mapping[str, Any] | None,
+    media: Mapping[str, Any],
+    manifest: Any,
+    creator_id: Any,
+    client_protocol: int | None,
+    marks_route: bool,
+    protected_regions: Sequence[Mapping[str, Any]] | None = None,
+    plan_blockers: Sequence[Any] | None = None,
+    editor_payload: Any = None,
+    editor_text_diff: Any = None,
+    creator_request: str | None = None,
+    prepared_collection_story: Any = None,
+    prepared_research: Any = None,
+) -> dict[str, Any]:
+    """``assess_readiness`` over the facts both callers read the same way: the creator's marks,
+    the compiled order preflight, the order sources and the phone plan's blockers.
+
+    What the callers really differ in stays an argument: the tap hands the draft's editor
+    payload, the request it pins, the collection story and the prepared research; the serve's
+    strategy draft has none of them. ``protected_regions`` / ``plan_blockers`` left ``None`` are
+    loaded here (the whole thread; the plan's own blockers); a caller that has read them at its
+    own event cutoff passes them."""
+    from app.kria.approval_readiness import assess_readiness  # noqa: PLC0415
+    from app.kria.order_replacement_receipts import compiled_order_preflight_sync  # noqa: PLC0415
+    from app.kria.order_replacement_sources import (  # noqa: PLC0415
+        load_brief_order_source_context_sync,
+    )
+
+    if protected_regions is None:
+        protected_regions = load_protected_regions_sync(session, thread_id=thread_id)
+    if plan_blockers is None:
+        plan_blockers = plan_blockers_sync(
+            session,
+            creator_id=creator_id,
+            item=item,
+            brief=brief,
+            strategy=strategy,
+            media=media,
+            client_protocol=client_protocol,
+        )
+    strategy = strategy or {}
+    return assess_readiness(
+        brief,
+        strategy,
+        media=dict(media),
+        manifest=manifest,
+        editor_payload=editor_payload,
+        editor_text_diff=editor_text_diff,
+        creator_request=creator_request,
+        protected_regions=list(protected_regions),
+        protected_marks=marks_route,
+        prepared_collection_story=prepared_collection_story,
+        creator_id=creator_id,
+        prepared_research=prepared_research,
+        order_execution=compiled_order_preflight_sync(
+            session,
+            item=item,
+            creator_id=creator_id,
+            brief=brief,
+            strategy=strategy,
+            media_snapshot=media,
+            client_protocol=client_protocol,
+        ),
+        order_source_context=load_brief_order_source_context_sync(
+            session, brief=brief, item_id=item.id, creator_id=creator_id
+        ),
+        plan_blockers=list(plan_blockers),
+    )
+
+
+def unmet_requirement_ids(report: Mapping[str, Any]) -> tuple[str, ...]:
+    """The report's requirements outside ``APPROVABLE``: what ``commit_readiness`` reads."""
+    from app.kria.approval_readiness import APPROVABLE  # noqa: PLC0415
+
+    return tuple(
+        str(row["requirement_id"])
+        for row in report["requirements"]
+        if row["disposition"] not in APPROVABLE
     )
 
 

@@ -82,7 +82,6 @@ from app.kria.intent_review_repair import (
     verify_intent_repair,
 )
 from app.kria.language import is_paraphrase_only
-from app.kria.order_replacement_receipts import compiled_order_preflight_sync
 from app.kria.paid_call_scope import turn_run_epoch
 from app.kria.planner import (
     PlannedKriaTurn,
@@ -204,6 +203,7 @@ from app.services.suggestions.commit_readiness import (
     MARK_NEEDED,
     REQUIREMENTS_NOT_READY,
     CommitReadinessInputs,
+    assess_readiness_sync,
     choice_blocked_sync,
     choice_gate_open,
     commit_readiness,
@@ -212,6 +212,7 @@ from app.services.suggestions.commit_readiness import (
     load_protected_regions_sync,
     mark_gate_open,
     on_marks_route,
+    plan_blockers_sync,
 )
 from app.services.thought_summaries import (
     ThoughtSummaryPublisher,
@@ -352,6 +353,7 @@ def _marks_route_sync(  # noqa: ANN001
         creator_id=thread.creator_id,
         strategy=document.strategy,
         item=item,
+        fallback_format=document.edit_format,
     )
 
 
@@ -2973,15 +2975,8 @@ def _complete_draft_turn(
                 {**receipt, "brief_version": brief.version} for receipt in requirement_receipts
             ]
         if readiness_required:
-            from app.kria.approval_readiness import (  # noqa: PLC0415
-                APPROVABLE,
-                assess_readiness,
-                readiness_reply,
-            )
+            from app.kria.approval_readiness import APPROVABLE, readiness_reply  # noqa: PLC0415
             from app.kria.brief_binding import snapshot_media as _readiness_media  # noqa: PLC0415
-            from app.services.phone_montage_preflight import (  # noqa: PLC0415
-                readiness_plan_blockers,
-            )
 
             if brief is None:
                 brief = load_latest_brief_sync(db, thread.id)
@@ -3011,51 +3006,42 @@ def _complete_draft_turn(
             )
             # Leverkusen M2 run 3: a speed ask the phone montage plan can't place is said
             # before the card here too (readiness skipped the KRI-775 plan above).
+            _readiness_media_snapshot = (
+                planned.media_snapshot
+                if planned.media_snapshot is not None
+                else _readiness_media(item)
+            )
             _readiness_blockers = (
-                readiness_plan_blockers(
+                plan_blockers_sync(
                     db,
                     creator_id=thread.creator_id,
                     item=item,
                     brief=brief,
                     strategy=document.strategy,
-                    media_snapshot=planned.media_snapshot
-                    if planned.media_snapshot is not None
-                    else _readiness_media(item),
+                    media=_readiness_media_snapshot,
                     client_protocol=client_protocol,
                 )
                 if document.editor_payload is None
                 else []
             )
-            readiness_report = assess_readiness(
-                brief,
-                document.strategy or {},
-                media=planned.media_snapshot
-                if planned.media_snapshot is not None
-                else _readiness_media(item),
+            readiness_report = assess_readiness_sync(
+                db,
+                thread_id=thread.id,
+                item=item,
+                brief=brief,
+                strategy=document.strategy,
+                media=_readiness_media_snapshot,
                 manifest=planned.readiness_manifest,
+                creator_id=thread.creator_id,
+                client_protocol=client_protocol,
+                marks_route=_marks_route,
+                protected_regions=_readiness_marks,
+                plan_blockers=_readiness_blockers,
                 editor_payload=document.editor_payload,
                 editor_text_diff=document.editor_text_diff,
                 creator_request=_readiness_request,
-                protected_regions=_readiness_marks,
-                protected_marks=_marks_route,
                 prepared_collection_story=document.prepared_collection_story,
-                creator_id=thread.creator_id,
                 prepared_research=_readiness_research,
-                order_execution=compiled_order_preflight_sync(
-                    db,
-                    item=item,
-                    creator_id=thread.creator_id,
-                    brief=brief,
-                    strategy=document.strategy or {},
-                    media_snapshot=planned.media_snapshot
-                    if planned.media_snapshot is not None
-                    else _readiness_media(item),
-                    client_protocol=client_protocol,
-                ),
-                order_source_context=_order_source_context_sync(
-                    db, brief=brief, item_id=item.id, creator_id=thread.creator_id
-                ),
-                plan_blockers=_readiness_blockers,
             )
             policy_reasons = _policy_text_reasons(brief, planned.policy_omitted_texts)
             readiness_report["requirements"] = [
@@ -3269,34 +3255,22 @@ def _complete_draft_turn(
                     )
                 )
             if readiness_required:
-                readiness_report = assess_readiness(
-                    brief,
-                    document.strategy or {},
-                    media=planned.media_snapshot
-                    if planned.media_snapshot is not None
-                    else _readiness_media(item),
+                readiness_report = assess_readiness_sync(
+                    db,
+                    thread_id=thread.id,
+                    item=item,
+                    brief=brief,
+                    strategy=document.strategy,
+                    media=_readiness_media_snapshot,
                     manifest=planned.readiness_manifest,
-                    creator_request=_readiness_request,
-                    protected_regions=_readiness_marks,
-                    protected_marks=_marks_route,
-                    prepared_collection_story=document.prepared_collection_story,
                     creator_id=thread.creator_id,
-                    prepared_research=_readiness_research,
-                    order_execution=compiled_order_preflight_sync(
-                        db,
-                        item=item,
-                        creator_id=thread.creator_id,
-                        brief=brief,
-                        strategy=document.strategy or {},
-                        media_snapshot=planned.media_snapshot
-                        if planned.media_snapshot is not None
-                        else _readiness_media(item),
-                        client_protocol=client_protocol,
-                    ),
-                    order_source_context=_order_source_context_sync(
-                        db, brief=brief, item_id=item.id, creator_id=thread.creator_id
-                    ),
+                    client_protocol=client_protocol,
+                    marks_route=_marks_route,
+                    protected_regions=_readiness_marks,
                     plan_blockers=_readiness_blockers,
+                    creator_request=_readiness_request,
+                    prepared_collection_story=document.prepared_collection_story,
+                    prepared_research=_readiness_research,
                 )
             requirement_receipts = [
                 {**receipt, "brief_version": brief.version} for receipt in requirement_receipts

@@ -44,6 +44,7 @@ from dataclasses import dataclass, replace
 
 import pytest
 
+from app.config import settings
 from app.kria.brief import BriefUpdate
 from app.services import suggestion_serve
 from tests.e2e_suggestions import threads
@@ -238,6 +239,44 @@ MATRIX = [
 async def test_d1_serve_and_tap_never_part(talking_world, monkeypatch, column, name, kind):
     row = await one_row(talking_world, monkeypatch, name, kind, column)
     assert verdict(name, kind, column, row) is None, verdict(name, kind, column, row)
+
+
+BINDING_OFF_SHAPES = (
+    "none",
+    "length_20s_too_long",
+    "title_the_plan_lacks",
+    "volume_turkish",
+    "east_run_recorded_brief",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("name", "kind"), [(n, k_) for n in BINDING_OFF_SHAPES for k_ in KINDS], ids=lambda v: str(v)
+)
+async def test_d1_an_account_with_binding_off_serve_and_tap_never_part(
+    talking_world, monkeypatch, name, kind
+):
+    """The requirements gate is a binding gate: the tap lets an unmet requirement through when the
+    brief is not bound at approval, so the serve must not withhold the card over it."""
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", False)
+    row = await one_row(talking_world, monkeypatch, name, kind, "plain")
+    assert verdict(name, kind, "binding_off", row) is None, verdict(name, kind, "binding_off", row)
+    if name in ("title_the_plan_lacks", "east_run_recorded_brief") and kind == "filler_words":
+        assert row.served and row.executes, f"an unbound brief holds nothing back: {row}"
+
+
+def test_d6_the_readiness_report_has_one_composition():
+    """``assess_readiness`` is called from ``assess_readiness_sync`` alone: the serve's restate and
+    both of the tap's drafts read the same marks, order preflight, sources and blockers."""
+    import inspect
+
+    from app.services.suggestions import restate_judgment
+    from app.tasks import kria_runtime
+
+    for module in (suggestion_serve, restate_judgment, kria_runtime):
+        assert "assess_readiness(" not in inspect.getsource(module), module.__name__
+        assert "compiled_order_preflight_sync(" not in inspect.getsource(module), module.__name__
 
 
 MARK_CELLS = [
