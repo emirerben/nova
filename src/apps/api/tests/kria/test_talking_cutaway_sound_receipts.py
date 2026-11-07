@@ -106,14 +106,19 @@ def test_the_talk_clips_own_sound_stays_honestly_unmet() -> None:
     assert NOT_ON_TALKING in receipt.reason
 
 
-def test_a_clip_that_may_speak_is_not_promised_muted() -> None:
+def test_a_clip_that_may_speak_gets_a_conditional_nonblocking_mute_receipt() -> None:
     clips = copy.deepcopy(THREAD["clip_assignments"])
     clips[-1]["analysis"]["understanding"]["speech"]["has_speech"] = True
 
     receipt = check_requirement(_req("r4"), _draft(clips))
 
-    assert receipt.status == "not_possible"
-    assert NOT_ON_TALKING in receipt.reason
+    assert receipt.status == "partial"
+    assert receipt.reason.startswith(
+        "If that clip plays as a cutaway over your voice, it plays without its own sound"
+    )
+    assert "which clip you talk in, and that clip keeps its sound" in receipt.reason
+    assert NOT_ON_TALKING not in receipt.reason
+    assert not needs_creator_choice(receipt)
 
 
 def test_muting_the_whole_video_is_not_what_a_talking_edit_does() -> None:

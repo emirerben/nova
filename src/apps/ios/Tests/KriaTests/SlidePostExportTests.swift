@@ -31,10 +31,11 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
     override func setUp() { super.setUp(); suite = "SlidePostExportTests.\(UUID())"; defaults = UserDefaults(suiteName: suite) }
     override func tearDown() { SlidePostRetryAfterURLProtocol.handler = nil; NativeEditorURLProtocol.handler = nil; defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: journalRoot); super.tearDown() }
 
-    private func makeSession(readRetrySleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }, readNow: @escaping () -> ContinuousClock.Instant = { .now }, submissionNow: @escaping () -> Date = Date.init) -> SlidePostSession {
+    private func makeSession(readRetrySleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }, readNow: @escaping () -> ContinuousClock.Instant = { .now }, submissionNow: @escaping () -> Date = Date.init, onScopeRead: @escaping () -> Void = {}) -> SlidePostSession {
         SlidePostSession(defaults: defaults, readRetrySleep: readRetrySleep, readNow: readNow,
             submissionJournal: .init(root: journalRoot), submissionScope: { _, id in
-                .init(owner: "test-owner", environment: "https://native-editor.test", itemID: id)
+                onScopeRead()
+                return .init(owner: "test-owner", environment: "https://native-editor.test", itemID: id)
             }, submissionNow: submissionNow, transportOwner: { _ in nil })
     }
 
@@ -458,7 +459,8 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
         let api = NativeEditorTestSupport.api()
         let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
-        let lagging = unrenderedState()
+        let lagging = server.state
+        XCTAssertEqual(session.exportObservationJobID, lagging.jobID)
         var reads = 0
         NativeEditorURLProtocol.handler = { request in
             if request.httpMethod == "GET" {
@@ -586,9 +588,11 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
         var rendering = unrenderedState()
         rendering.renderStatus = "rendering"
         let session = await session(rendering)
-        let server = FakeServer(unrenderedState())
+        let server = FakeServer(rendering)
         server.generated = true
-        let lagging = unrenderedState()
+        var lagging = server.state
+        lagging.renderStatus = "not_rendered"
+        XCTAssertEqual(session.exportObservationJobID, lagging.jobID)
         var reads = 0
         NativeEditorURLProtocol.handler = { request in
             if request.httpMethod == "GET" {
@@ -609,7 +613,8 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
         let api = NativeEditorTestSupport.api()
         let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
-        let lagging = unrenderedState()
+        let lagging = server.state
+        XCTAssertEqual(session.exportObservationJobID, lagging.jobID)
         var reads = 0
         NativeEditorURLProtocol.handler = { request in
             if request.httpMethod == "GET" {
@@ -656,7 +661,8 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
         let api = NativeEditorTestSupport.api()
         let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
-        let lagging = unrenderedState()
+        let lagging = server.state
+        XCTAssertEqual(session.exportObservationJobID, lagging.jobID)
         NativeEditorURLProtocol.handler = { request in
             if request.httpMethod == "GET", !request.url!.path.contains("/generation-requests/") { return (200, try JSONEncoder().encode(lagging)) }
             return try server.handle(request)
@@ -750,11 +756,14 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
         let api = NativeEditorTestSupport.api()
         let session = makeSession()
         await session.refresh(api: api, itemID: itemID)
-        let lagging = unrenderedState()
+        let lagging = server.state
+        XCTAssertEqual(session.exportObservationJobID, lagging.jobID)
         var reads = 0
         NativeEditorURLProtocol.handler = { request in
             if request.httpMethod == "POST" {
-                _ = try server.handle(request) // The server committed before the response was lost.
+                let committed = try server.handle(request)
+                XCTAssertTrue([200, 202].contains(committed.0), "The fixture must commit before losing its response")
+                guard [200, 202].contains(committed.0) else { return committed }
                 throw URLError(.networkConnectionLost)
             }
             reads += 1
@@ -906,10 +915,12 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
         let origin = ContinuousClock.now
         var now = origin
         let sleeping = expectation(description: "First refresh reached retry wait")
+        let superseding = expectation(description: "Superseding refresh entered the session")
+        var onScopeRead: (() -> Void)?
         var resume: CheckedContinuation<Void, Never>?
         let session = makeSession(readRetrySleep: { _ in
             await withCheckedContinuation { resume = $0; sleeping.fulfill() }
-        }, readNow: { now })
+        }, readNow: { now }, onScopeRead: { onScopeRead?() })
         let api = retryAfterAPI()
         let ready = try JSONEncoder().encode(state())
         var reads = 0
@@ -923,10 +934,13 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
         let first = Task { await session.refresh(api: api, itemID: itemID) }
         await fulfillment(of: [sleeping], timeout: 2)
         now = origin.advanced(by: .seconds(3))
-        await session.refresh(api: api, itemID: itemID)
+        onScopeRead = { onScopeRead = nil; superseding.fulfill() }
+        let second = Task { await session.refresh(api: api, itemID: itemID) }
+        await fulfillment(of: [superseding], timeout: 2)
         XCTAssertEqual(reads, 1)
         resume?.resume()
         await first.value
+        await second.value
         now = origin.advanced(by: .seconds(9))
         await session.refresh(api: api, itemID: itemID)
         XCTAssertEqual(reads, 1)
@@ -936,12 +950,14 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
         XCTAssertNil(session.error)
     }
 
-    func testLateShorterHintCannotShortenAnotherRefreshDeadline() async throws {
+    func testLateSupersededHintAndRenewedDeadlinePaceSerializedRefreshes() async throws {
         let origin = ContinuousClock.now
         var now = origin
         let firstStarted = expectation(description: "First GET in flight")
+        let superseding = expectation(description: "Superseding refresh entered the session")
+        var onScopeRead: (() -> Void)?
         var firstTransport: SlidePostRetryAfterURLProtocol?
-        let session = makeSession(readRetrySleep: { _ in XCTFail("No bounded retry is eligible") }, readNow: { now })
+        let session = makeSession(readRetrySleep: { _ in XCTFail("No bounded retry is eligible") }, readNow: { now }, onScopeRead: { onScopeRead?() })
         let api = retryAfterAPI()
         let ready = try JSONEncoder().encode(state())
         var reads = 0
@@ -955,13 +971,23 @@ final class SlidePostRetryAfterURLProtocol: URLProtocol, @unchecked Sendable {
         }
         let first = Task { await session.refresh(api: api, itemID: itemID) }
         await fulfillment(of: [firstStarted], timeout: 2)
-        await session.refresh(api: api, itemID: itemID)
+        onScopeRead = { onScopeRead = nil; superseding.fulfill() }
+        let second = Task { await session.refresh(api: api, itemID: itemID) }
+        await fulfillment(of: [superseding], timeout: 2)
+        XCTAssertEqual(reads, 1, "A queued refresh cannot overlap the suspended GET")
         firstTransport?.respond(status: 429, retryAfter: 10)
         await first.value
-        now = origin.advanced(by: .seconds(11))
+        await second.value
+        now = origin.advanced(by: .seconds(9))
+        await session.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(reads, 1, "Even a superseded response retains its Retry-After deadline")
+        now = origin.advanced(by: .seconds(10))
         await session.refresh(api: api, itemID: itemID)
         XCTAssertEqual(reads, 2)
-        now = origin.advanced(by: .seconds(60))
+        now = origin.advanced(by: .seconds(69))
+        await session.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(reads, 2, "The next response establishes its full renewed deadline")
+        now = origin.advanced(by: .seconds(70))
         await session.refresh(api: api, itemID: itemID)
         XCTAssertEqual(reads, 3)
         XCTAssertNil(session.error)
@@ -1010,7 +1036,8 @@ extension SlidePostExportTests {
     func testAuthorizedExportObservesBeyondFastBudgetAndWritesPhotosOnce() async {
         var pending = unrenderedState(); pending.renderStatus = "rendering"
         let value = await session(pending)
-        let ready = state()
+        var ready = state(); ready.jobID = pending.jobID
+        XCTAssertEqual(value.exportObservationJobID, ready.jobID)
         var reads = 0; var mutations = 0; var writes = 0; var slowWaits = 0
         NativeEditorURLProtocol.handler = { request in
             if request.httpMethod != "GET" { mutations += 1 }
@@ -1027,7 +1054,9 @@ extension SlidePostExportTests {
 
     func testExportDismissDuringSlowReadNeverWritesPhotos() async {
         var pending = unrenderedState(); pending.renderStatus = "rendering"
-        let value = await session(pending); let ready = state()
+        let value = await session(pending)
+        var ready = state(); ready.jobID = pending.jobID
+        XCTAssertEqual(value.exportObservationJobID, ready.jobID)
         var writes = 0; var mutations = 0
         NativeEditorURLProtocol.handler = { request in
             if request.httpMethod != "GET" { mutations += 1 }
@@ -1063,8 +1092,9 @@ extension SlidePostExportTests {
     }
 
     func testFinalExportRevalidationRetriesOnlyGETBeforeOnePhotosWrite() async {
-        let value = await session(state()); var reads = 0; var writes = 0; var mutations = 0
         let ready = state()
+        let value = await session(ready); var reads = 0; var writes = 0; var mutations = 0
+        XCTAssertEqual(value.exportObservationJobID, ready.jobID)
         NativeEditorURLProtocol.handler = { request in
             if request.httpMethod != "GET" { mutations += 1 }
             reads += 1

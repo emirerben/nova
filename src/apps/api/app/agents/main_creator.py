@@ -1034,8 +1034,9 @@ Merope" => a text requirement, literal "MEROPE", facts {"triggers": ["Merope"], 
 "she"}; a photo or video shown full screen ("tam ekran", "full screen") or as a small card
 ("in the corner") => add "display_mode": "fullscreen" or "pip" to those same facts, nothing when
 the creator says neither; two photos shown differently in one message => ONE requirement per
-photo, each with its own display_mode; keep a take whole, uncut =>
-{"keep_whole_take": true}; end on a
+photo, each with its own display_mode; keep a take whole, uncut ("use the whole clip as it is",
+"don't trim anything", "keep everything") => {"keep_whole_take": true} plus
+"speech_cleanup": false when the take has speech; end on a
 particular shot, photo or badge => {"closing": "<the creator's words for it>"}; remove pauses or
 filler sounds from the speech => {"speech_cleanup": true}, keep them => {"speech_cleanup": false},
 every pause gone or a tight, fast pace, not only the long ones ("cut out all my pauses so it's
