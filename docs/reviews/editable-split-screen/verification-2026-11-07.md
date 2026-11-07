@@ -129,3 +129,20 @@ Evidence is in `.dev/split-screen/ci-corrections-f5f9d67e3.{log,receipt.json}`, 
 Native timeline/compositor code and engine tests remain identical to `d1f38b70b`; the native differences are two Save recovery messages, their catalog entries and one decoder regression. That regression and its neighboring catalog class are **unrun**: the prepared `native-ci-save-corrections-command.sh` selects 12 units and requires a new serial-lane allocation. Hosted native compilation on the earlier head failed in unchanged `SlidePostChatEditTests.swift:16` (`sending 'self.defaults' risks causing data races`), also present on main `a518aed8c`. This is a separate shared compile-repair dependency, not a passing native result.
 
 The formal artifacts and pins remain unchanged. The scoped source check now exits 1 for `Core/Services.swift` and `routes/generative_jobs.py`; the former changes only error copy, the latter moves admission checks and narrows the trusted split-origin song exception. Their mapped persistence/hydration bodies are unchanged, but correspondence still requires review before repinning. The new compiler/scope history boundary is additional source behavior outside that bounded map. `.dev/split-screen/ci-correction-formal-handoff.json` records precise semantics for the shared coordinator. The prior aggregate's 36 drifts, physical-device acceptance, and complete request-to-native-output wrong-content journey remain open. This is a draft correction, not merge, deployment or rollout acceptance.
+
+## Suggestion snapshot golden correction
+
+At pushed `9876f925fc0670360b515ceb6c2d67940c08f841`, the separate Agent eval workflow passed 4,036 tests with 82 skips and two expected failures. Journey-offline and API shard 0 passed. API shard 1 passed 23,512 tests and failed only the flag-off suggestion wire golden. Hosted native validation failed before executing tests in the unchanged main `SlidePostChatEditTests.swift:16` data-race diagnostic. Its shared repair remains in unmerged PR #2146.
+
+The golden failure reproduced against this task's isolated Postgres database. Its only differing JSON path was `wire.digest.snapshot_hash`. The editor snapshot now includes the ready replacement-source catalog used by ordinary and split-panel source replacement. Removing only `replacement_source_pool` from the captured real snapshot reproduces the former hash `b11ce8f48d3cd41f461401aa2245d78e`; the complete snapshot hashes to `9f5f4898db8a735a2d1b7ef85d3a35ba`. Every card, media/input digest and other field is unchanged. Independent review confirmed that the full snapshot must remain hashed so pinned actions rebuild or refuse on a stale base.
+
+The correction changes that single golden value. It changes no production code, assertion, prompt version, model or coverage pin. At base `9876f925f` plus this fixture edit, the following replay command passed **263 tests, zero failures or skips**, with 25 warnings, in 138.84 seconds:
+
+```bash
+cd src/apps/api
+.venv/bin/python -m pytest tests/services/test_suggestion_serve_wiring_postgres.py tests/services/test_suggestion_chips_postgres.py tests/tasks/test_kria_pinned_suggestion.py tests/evals/test_suggestion_freshness.py tests/evals/test_suggestion_freshness_postgres.py tests/agents/test_editable_split_screen_ops.py --eval-mode=replay -q --tb=short
+```
+
+The command used the existing isolated test database with required Postgres coverage enabled. It includes stale-base rebuilding, changed-index targeting, no-longer-applicable refusal and imported replacement-source receipts. Local evidence is `suggestion-wire-9876-red-db.log`, `suggestion-snapshot-9876.json`, `suggestion-wire-9876-actual.json`, `suggestion-wire-golden-correction-green.log` and `suggestion-wire-golden-correction-receipt.json` under `.dev/split-screen/`.
+
+The allocated 12-unit native batch did not start. Fresh preflight at 07:15:20 UTC found four external native builds, including PID 98614 using the allocated iPhone 17 destination. No process was interrupted and this task owns no native runner. These tests and the other acceptance gates above remain pending.
