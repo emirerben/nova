@@ -68,6 +68,15 @@ SECTION_OPS: dict[str, frozenset[str]] = {
             "reorder_clip",
             "remove_clip",
             "split_clip",
+            "duplicate_clip",
+            "replace_clip_source",
+            "create_split_screen",
+            "update_split_screen",
+            "assign_split_panel",
+            "swap_split_panels",
+            "remove_split_screen",
+            "move_split_clip",
+            "move_split_screen",
             "add_unused_sources",
             "set_media_duration",
             "stack_images",
@@ -188,6 +197,7 @@ SECTION_FAMILIES: dict[str, frozenset[str]] = {
 FIELD_SECTIONS: dict[str, tuple[str, ...]] = {
     "title": ("title",),
     "timeline_slots": ("clips",),
+    "split_screen_sections": ("clips",),
     "caption_cues": ("captions",),
     "lyrics": ("captions",),
     "music_track_id": ("music",),
@@ -211,7 +221,7 @@ FIELD_SECTIONS: dict[str, tuple[str, ...]] = {
 # Documentation of the contract table (4.3, last column); the code above is its inverse.
 SECTION_COMMIT_FIELDS: dict[str, tuple[str, ...]] = {
     "title": ("title", "text_elements"),
-    "clips": ("timeline_slots", "text_elements"),
+    "clips": ("timeline_slots", "split_screen_sections", "text_elements"),
     "captions": ("caption_cues", "caption_meta.enabled", "text_elements", "lyrics"),
     "music": (
         "music_track_id",
@@ -786,6 +796,117 @@ def repair_note(report: RepairReport, already_left_alone: list[str]) -> str:
     return say(en=f"I left {phrase} alone.", tr=f"{phrase.capitalize()} bölümüne dokunmadım.")
 
 
+_TIMING_KEYS = frozenset({"start_s", "end_s", "start", "end", "at_s"})
+
+
+def _timing_identity(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _timing_identity(v) for k, v in value.items() if k not in _TIMING_KEYS}
+    if isinstance(value, list):
+        return [_timing_identity(v) for v in value]
+    return value
+
+
+def _rebase_timing(current: Any, old: Any, new: Any) -> Any:
+    """Apply an internal auto-rebase delta without copying wording/style/source edits."""
+    out = copy.deepcopy(current)
+    if isinstance(old, dict) and isinstance(new, dict) and isinstance(out, dict):
+        omitted_windows = {
+            key for key in ("windows", "full_screen_windows") if key in old and key not in new
+        }
+        old, new = copy.deepcopy(old), copy.deepcopy(new)
+        for key in ("windows", "full_screen_windows"):
+            if key in old or key in new:
+                old.setdefault(key, [])
+                new.setdefault(key, [])
+                out.setdefault(key, [])
+        for key in old.keys() & new.keys():
+            if old[key] == new[key]:
+                continue
+            if key in _TIMING_KEYS:
+                out[key] = copy.deepcopy(new[key])
+            elif key in out:
+                out[key] = _rebase_timing(out[key], old[key], new[key])
+        for key in omitted_windows:
+            if not out.get(key):
+                out.pop(key, None)
+    elif isinstance(old, list) and isinstance(new, list) and isinstance(out, list):
+
+        def find(rows: list, row: Any, occurrence: int) -> int | None:
+            matches = [
+                i
+                for i, item in enumerate(rows)
+                if (
+                    isinstance(row, dict)
+                    and row.get("id") is not None
+                    and isinstance(item, dict)
+                    and item.get("id") == row["id"]
+                )
+                or _timing_identity(item) == _timing_identity(row)
+            ]
+            return matches[occurrence] if occurrence < len(matches) else None
+
+        removed = set()
+        for index, row in enumerate(old):
+            occurrence = sum(_timing_identity(v) == _timing_identity(row) for v in old[:index])
+            ni = find(new, row, occurrence)
+            ci = find(out, row, occurrence)
+            if ci is None:
+                continue
+            if ni is None:
+                removed.add(ci)
+            else:
+                out[ci] = _rebase_timing(out[ci], row, new[ni])
+        out = [row for index, row in enumerate(out) if index not in removed]
+        # Reverse rebasing restores entries removed because their time window collapsed.
+        for index, row in enumerate(new):
+            occurrence = sum(_timing_identity(v) == _timing_identity(row) for v in new[:index])
+            if (
+                _timing_identity(current) == _timing_identity(old)
+                and find(old, row, occurrence) is None
+                and find(out, row, occurrence) is None
+            ):
+                out.insert(min(index, len(out)), copy.deepcopy(row))
+    return out
+
+
+def _retain_current_timing(restored: Any, current: Any) -> Any:
+    """A wording/style Undo does not replay its historical timeline coordinates."""
+    out = copy.deepcopy(restored)
+    if isinstance(out, dict) and isinstance(current, dict):
+        # A style restore must retain whether the timing owner currently has windows.
+        # DTO serialization omits collapsed lists, so intersection alone loses them.
+        for key in ("windows", "full_screen_windows"):
+            if key not in current:
+                out.pop(key, None)
+            elif key not in out:
+                out[key] = copy.deepcopy(current[key])
+        for key in out.keys() & current.keys():
+            if key in _TIMING_KEYS:
+                out[key] = copy.deepcopy(current[key])
+            else:
+                out[key] = _retain_current_timing(out[key], current[key])
+    elif isinstance(out, list) and isinstance(current, list):
+        for index, row in enumerate(out):
+            matches = [
+                value
+                for value in current
+                if (
+                    isinstance(row, dict)
+                    and row.get("id") is not None
+                    and isinstance(value, dict)
+                    and value.get("id") == row["id"]
+                )
+                or _timing_identity(value) == _timing_identity(row)
+            ]
+            occurrence = sum(
+                _timing_identity(value) == _timing_identity(row) for value in restored[:index]
+            )
+            if occurrence < len(matches):
+                out[index] = _retain_current_timing(row, matches[occurrence])
+    return out
+
+
 def repair_compiled(
     compiled: Any,
     scope: list[str],
@@ -800,6 +921,11 @@ def repair_compiled(
         return compiled, RepairReport()
     data = payload.model_dump(mode="json", exclude_none=True)
     repaired, report = repair_payload(data, compiled.before, scope, clip_bar_ids=clip_bar_ids)
+    dependencies = getattr(compiled, "timeline_rebase", {}) if "clips" in scope else {}
+    for lane, (old, new) in dependencies.items():
+        base = repaired.get(lane, compiled.before.get(lane))
+        if base is not None:
+            repaired[lane] = _rebase_timing(base, old, new)
     if not report:
         return compiled, report
     gone = set(report.reverted_bars)
@@ -821,7 +947,11 @@ def repair_compiled(
             payload=EditorCommitRequest.model_validate(repaired),
             changes=changes,
             text_diff=[d for d in compiled.text_diff if str(d.get("id")) not in gone],
-            before={k: v for k, v in compiled.before.items() if k not in report.reverted_fields}
+            before={
+                k: v
+                for k, v in compiled.before.items()
+                if k not in report.reverted_fields or k in dependencies
+            }
             if report.reverted_fields
             else compiled.before,
         ),
@@ -841,6 +971,7 @@ def build_restore_record(
     *,
     turn_id: str,
     base_job_id: str | None,
+    timeline_rebase: dict[str, tuple[Any, Any]] | None = None,
     clip_bar_ids: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Per-section pre-update values of every lane the (repaired) update changed.
@@ -852,6 +983,13 @@ def build_restore_record(
 
     def put(section: str, lane: str, spec: Any) -> None:
         sections.setdefault(section, {})[lane] = spec
+
+    dependencies = (timeline_rebase or {}) if "clips" in scope else {}
+    original_before = before
+    before = copy.deepcopy(before)
+    for lane, (old, new) in dependencies.items():
+        if lane in before:
+            before[lane] = _rebase_timing(before[lane], old, new)
 
     for lane in lanes_in(data):
         if lane == "text_elements":
@@ -886,8 +1024,18 @@ def build_restore_record(
         elif lane == "mix":
             if isinstance(before.get("mix"), dict):
                 put("music", "mix", {"value": before["mix"]})
+        elif lane == "split_screen_sections":
+            # The legacy no-sections spelling must undo creation with an explicit clear.
+            put("clips", lane, {"value": before.get(lane) or []})
         elif lane in before and lane in FIELD_SECTIONS:
             put(FIELD_SECTIONS[lane][0], lane, {"value": before[lane]})
+    for lane, (old, new) in dependencies.items():
+        if lane in data and lane in original_before:
+            sections.setdefault("clips", {}).setdefault(lane, {})["timing"] = [new, old]
+    for owner, lanes in sections.items():
+        if owner != "clips":
+            for lane in dependencies.keys() & lanes.keys():
+                lanes[lane]["preserve_timing"] = True
     return {"v": 1, "turn_id": turn_id, "base_job_id": base_job_id, "sections": sections}
 
 
@@ -907,6 +1055,13 @@ def restore_section(
     lanes: dict[str, Any] = {}
     toggle: dict[str, Any] = {}
     for lane, spec in spec_by_lane.items():
+        if set(spec) == {"timing"}:
+            old, new = spec["timing"]
+            current = head_payload.get(lane)
+            if current is not None:
+                lanes[lane] = _rebase_timing(current, old, new)
+                toggle[lane] = {"timing": [new, old]}
+            continue
         if lane in ("text_elements", "caption_cues"):
             current = head_payload.get(lane)
             if "rows" in spec and isinstance(current, list):
@@ -933,7 +1088,18 @@ def restore_section(
             toggle[lane] = {"value": {k: current[k] for k in spec["value"] if k in current}}
         else:
             lanes[lane] = spec["value"]
-            toggle[lane] = {"value": head_payload.get(lane)}
+            current = head_payload.get(lane)
+            if lane == "split_screen_sections":
+                # Durable unstack omits empty definitions; redo must explicitly clear them.
+                current = current or []
+            toggle[lane] = {"value": current}
+        if spec.get("preserve_timing") and lane in lanes:
+            lanes[lane] = _retain_current_timing(lanes[lane], head_payload.get(lane))
+            toggle.setdefault(lane, {})["preserve_timing"] = True
+        if "timing" in spec and lane in lanes:
+            old, new = spec["timing"]
+            lanes[lane] = _rebase_timing(lanes[lane], old, new)
+            toggle.setdefault(lane, {})["timing"] = [new, old]
     toggle_record = {
         "v": 1,
         "turn_id": record.get("turn_id"),
