@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.43.0] - 2026-11-07
+
+### Changed
+- fix(captions): judge each proofread word on its own so good spelling fixes land (KRI-1263) (#2157) <!-- release-pr: 2157 -->
+
 ## [0.88.42.0] - 2026-11-07
 
 ### Changed
