@@ -6,7 +6,8 @@ facts: {keep_whole_take: true}}``. A build below protocol 44 ignores
 ``speech_cleanup.recommended_choice`` and leads with "Clean up speech and create", which sends an
 explicit ``clean``. The thread read now offers that build no choice, so its card shows the plain
 "Create this video" (analysis id, no choice), and the approval answers keep_original from that
-approval's own pinned brief.
+approval's own pinned brief. That is the only change: the read only ever removes a question, and
+the approval only answers the question the read removed.
 
 Real Postgres, real turn/approval/claim code, real thread read (`_response`) and the real
 dispatch step that records the decision (`_speech_cleanup_dispatch_snapshot`). Faked: the
@@ -19,21 +20,27 @@ Failure modes, written before the code:
 2. A protocol-44 build loses the choice or its "Keep original speech" lead.
 3. The web card (no protocol header) changes.
 4. The old build's plain button dead-ends on 409 speech_cleanup_choice_required (KRI-292).
-5. The server answers "clean", or overrides an explicit tap.
+5. The server answers "clean", or overrides a choice submitted on this approval.
 6. A polled thread read records a decision.
 7. A clip-scoped "keep this clip whole" answers for the whole take.
-8. A later "clean up my pauses" after a kept take is answered by the old keep, so the card
-   never asks again.
-9. A later "keep the whole clip" after a recorded clean is still cut.
+8. A decision recorded at an earlier card is asked again on a later approval. "Clean up my
+   pauses", switched off at the card, then "make the captions yellow": a native card shows Clean
+   preselected and one tap cuts the take the creator kept.
+9. A clean the creator tapped against a keep-whole brief is asked again on a later approval, or
+   swapped for keep_original without a tap.
 10. A retried approval, or a re-run of the dispatch claim, records a different answer.
 11. The audit says the creator answered the cleanup question at the card.
+12. A render-retry card differs from the stored projection: it offers "Keep original speech and
+    create" over a retry that ignores the choice, or hides a question the stored card asks.
+13. Protocol 43, the last build without the card, is asked; protocol 44 is not asked; or a
+    plain approve from a build that was shown the question is answered for it.
 """
 
 from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select, text
@@ -47,6 +54,7 @@ from app.database import engine as async_engine
 from app.kria.api_schemas import ApprovalDecisionBody, SubmitTurnBody
 from app.kria.brief import BriefUpdate
 from app.kria.planner import PlannedKriaTurn, adapt_creator_action
+from app.kria.render_retry import RETRY_FIELD
 from app.kria.runtime import RuntimeFailure, approval_fingerprint, decide_approval, submit_turn
 from app.models import (
     ContentPlan,
@@ -54,6 +62,7 @@ from app.models import (
     CreatorAgentApproval,
     CreatorAgentExecution,
     CreatorAgentSession,
+    CreatorAgentTurn,
     CreatorPreparedExecution,
     Job,
     Persona,
@@ -76,8 +85,10 @@ except OperationalError:
     pytest.skip("nova_test Postgres not reachable", allow_module_level=True)
 
 INCIDENT_BUILD = 22  # the client protocol recorded in the KRI-971 replay fixture
+LAST_OLD_BUILD = 43
 CARD_BUILD = 44
 WEB = None
+NATIVE_BUILDS = (INCIDENT_BUILD, LAST_OLD_BUILD, CARD_BUILD)
 TAKE_S = 8.2
 MESSAGE = "Use the whole clip as it is, don't trim anything."
 
@@ -169,6 +180,11 @@ def _seed_talking_take() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
     return user_id, thread_id, item_id
 
 
+def _thread_revision(thread_id: uuid.UUID) -> int:
+    with sync_session() as db:
+        return int(db.get(CreationThread, thread_id).revision)
+
+
 async def _await_approval(
     monkeypatch: pytest.MonkeyPatch,
     user_id: uuid.UUID,
@@ -176,6 +192,7 @@ async def _await_approval(
     brief_updates: tuple[BriefUpdate, ...],
     *,
     revision: int,
+    message: str = MESSAGE,
 ) -> tuple[uuid.UUID, ApprovalDecisionBody]:
     plan = adapt_creator_action(
         ProposeStrategy(
@@ -210,7 +227,7 @@ async def _await_approval(
             thread_id=thread_id,
             creator_id=user_id,
             body=SubmitTurnBody(
-                message=MESSAGE,
+                message=message,
                 client_event_id=f"keep-{uuid.uuid4().hex}",
                 expected_thread_revision=revision,
             ),
@@ -237,17 +254,25 @@ async def _approve(
     thread_id: uuid.UUID,
     approval_id: uuid.UUID,
     pins: ApprovalDecisionBody,
+    *,
+    build: int | None,
     **cleanup: object,
 ) -> None:
-    async with AsyncSessionLocal() as db:
-        await decide_approval(
-            db,
-            thread_id=thread_id,
-            approval_id=approval_id,
-            creator_id=user_id,
-            decision="approve",
-            body=pins.model_copy(update=cleanup),
-        )
+    """The approve POST from the build at protocol ``build`` (`X-Kria-Client-Protocol`)."""
+    clear_request_context()
+    set_client_protocol(build)
+    try:
+        async with AsyncSessionLocal() as db:
+            await decide_approval(
+                db,
+                thread_id=thread_id,
+                approval_id=approval_id,
+                creator_id=user_id,
+                decision="approve",
+                body=pins.model_copy(update=cleanup),
+            )
+    finally:
+        clear_request_context()
 
 
 async def _checked_take(
@@ -256,13 +281,11 @@ async def _checked_take(
     item_id: uuid.UUID,
     approval_id: uuid.UUID,
     pins: ApprovalDecisionBody,
-    *,
-    recorded: str | None = None,
 ) -> uuid.UUID:
     """The first approve schedules the speech check (409, approval stays pending); the check
-    then finishes with the incident's 0.785 s of findings, optionally on an earlier decision."""
+    then finishes with the incident's 0.785 s of findings."""
     with pytest.raises(RuntimeFailure) as first:
-        await _approve(user_id, thread_id, approval_id, pins)
+        await _approve(user_id, thread_id, approval_id, pins, build=INCIDENT_BUILD)
     assert first.value.code == "speech_cleanup_analysis_changed"
     with sync_session() as db:
         row = db.execute(
@@ -278,9 +301,6 @@ async def _checked_take(
         row.estimated_removed_ms = 785
         row.analysis_payload = {"language": "en"}
         row.completed_at = datetime.now(UTC)
-        if recorded is not None:
-            row.decision = recorded
-            row.decision_at = datetime.now(UTC)
         db.commit()
         return row.id
 
@@ -297,6 +317,13 @@ async def _card(thread_id: uuid.UUID, protocol: int | None) -> dict:
         clear_request_context()
     assert projected.speech_cleanup is not None
     return projected.speech_cleanup
+
+
+async def _asks(thread_id: uuid.UUID) -> dict[int | None, bool]:
+    """``requires_choice`` per reading build, the web included."""
+    return {
+        build: (await _card(thread_id, build))["requires_choice"] for build in (*NATIVE_BUILDS, WEB)
+    }
 
 
 def _recorded(analysis_id: uuid.UUID) -> tuple[str | None, object]:
@@ -353,33 +380,71 @@ def _dispatch_recording_decision(
     return dispatched
 
 
+async def _first_render(
+    monkeypatch: pytest.MonkeyPatch,
+    brief_updates: tuple[BriefUpdate, ...],
+    *,
+    tapped: str,
+) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
+    """A first approval answered with ``tapped`` on a protocol-44 card, rendered: the dispatch
+    records the creator's answer on the analysis."""
+    user_id, thread_id, item_id = _seed_talking_take()
+    approval_id, pins = await _await_approval(
+        monkeypatch, user_id, thread_id, brief_updates, revision=2
+    )
+    analysis_id = await _checked_take(user_id, thread_id, item_id, approval_id, pins)
+    assert (await _card(thread_id, CARD_BUILD))["requires_choice"] is True
+    await _approve(
+        user_id,
+        thread_id,
+        approval_id,
+        pins,
+        build=CARD_BUILD,
+        speech_cleanup_analysis_id=analysis_id,
+        speech_cleanup_choice=tapped,
+    )
+    dispatched = _dispatch_recording_decision(monkeypatch, user_id, item_id)
+    await asyncio.to_thread(execute_kria_approval.run, str(approval_id))
+    assert [choice for choice, *_ in dispatched] == [tapped]
+    assert _recorded(analysis_id)[0] == tapped
+    with sync_session() as db:
+        # The faked render never finishes; the turn closes the way the ready observer closes it.
+        turn = db.get(CreatorAgentTurn, db.get(CreatorAgentApproval, approval_id).turn_id)
+        assert turn.status == "observing"
+        turn.status, turn.completed_at = "completed", datetime.now(UTC)
+        db.commit()
+    return user_id, thread_id, item_id, analysis_id, approval_id
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("earlier", [None, "clean"], ids=["first-render", "after-a-clean"])
 async def test_old_build_plain_create_keeps_the_whole_take(
-    monkeypatch: pytest.MonkeyPatch, earlier: str | None
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Modes 1-4, 6, 9-11: the incident request on the incident's build keeps all 8.2 s."""
+    """Modes 1-4, 6, 10, 11: the incident request on the incident's build keeps all 8.2 s."""
     user_id, thread_id, item_id = _seed_talking_take()
     try:
         approval_id, pins = await _await_approval(
             monkeypatch, user_id, thread_id, (_keep_whole(),), revision=2
         )
-        analysis_id = await _checked_take(
-            user_id, thread_id, item_id, approval_id, pins, recorded=earlier
-        )
+        analysis_id = await _checked_take(user_id, thread_id, item_id, approval_id, pins)
 
         old = await _card(thread_id, INCIDENT_BUILD)
         new = await _card(thread_id, CARD_BUILD)
         web = await _card(thread_id, WEB)
         assert old["requires_choice"] is False, "the old card must not lead with Clean up"
         assert new["requires_choice"] is True and new["recommended_choice"] == "keep_original"
-        assert web["requires_choice"] is (earlier is None), "the web card is unchanged"
-        assert _recorded(analysis_id)[0] == earlier, "a thread read never records a decision"
+        assert web["requires_choice"] is True, "the web card is unchanged"
+        assert _recorded(analysis_id) == (None, None), "a thread read never records a decision"
         assert _stash(approval_id) is None
 
         # The old build's plain "Create this video": the analysis id, no choice.
         await _approve(
-            user_id, thread_id, approval_id, pins, speech_cleanup_analysis_id=analysis_id
+            user_id,
+            thread_id,
+            approval_id,
+            pins,
+            build=INCIDENT_BUILD,
+            speech_cleanup_analysis_id=analysis_id,
         )
         assert _stash(approval_id) == {
             "analysis_id": str(analysis_id),
@@ -388,7 +453,12 @@ async def test_old_build_plain_create_keeps_the_whole_take(
         }
         with pytest.raises(RuntimeFailure) as again:
             await _approve(
-                user_id, thread_id, approval_id, pins, speech_cleanup_analysis_id=analysis_id
+                user_id,
+                thread_id,
+                approval_id,
+                pins,
+                build=INCIDENT_BUILD,
+                speech_cleanup_analysis_id=analysis_id,
             )
         assert again.value.code == "thread_revision_stale"
         assert _stash(approval_id)["choice"] == "keep_original"
@@ -412,6 +482,53 @@ async def test_old_build_plain_create_keeps_the_whole_take(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("build", [LAST_OLD_BUILD, CARD_BUILD])
+async def test_the_keep_card_protocol_is_the_boundary(
+    monkeypatch: pytest.MonkeyPatch, build: int
+) -> None:
+    """Mode 13: 43 is offered no choice and its plain create keeps; 44 is asked, and a plain
+    approve from it is refused as before rather than answered for the creator."""
+    user_id, thread_id, item_id = _seed_talking_take()
+    try:
+        approval_id, pins = await _await_approval(
+            monkeypatch, user_id, thread_id, (_keep_whole(),), revision=2
+        )
+        analysis_id = await _checked_take(user_id, thread_id, item_id, approval_id, pins)
+        card_build = build >= CARD_BUILD
+        assert (await _card(thread_id, build))["requires_choice"] is card_build
+
+        if card_build:
+            with pytest.raises(RuntimeFailure) as refused:
+                await _approve(
+                    user_id,
+                    thread_id,
+                    approval_id,
+                    pins,
+                    build=build,
+                    speech_cleanup_analysis_id=analysis_id,
+                )
+            assert refused.value.code == "speech_cleanup_choice_required"
+            assert _stash(approval_id) is None
+        else:
+            await _approve(
+                user_id,
+                thread_id,
+                approval_id,
+                pins,
+                build=build,
+                speech_cleanup_analysis_id=analysis_id,
+            )
+            assert _stash(approval_id) == {
+                "analysis_id": str(analysis_id),
+                "choice": "keep_original",
+                "origin": "brief",
+            }
+        assert _recorded(analysis_id) == (None, None)
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_clip_scoped_keep_is_not_an_answer_for_the_whole_take(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -426,7 +543,12 @@ async def test_clip_scoped_keep_is_not_an_answer_for_the_whole_take(
         assert (await _card(thread_id, INCIDENT_BUILD))["requires_choice"] is True
         with pytest.raises(RuntimeFailure) as refused:
             await _approve(
-                user_id, thread_id, approval_id, pins, speech_cleanup_analysis_id=analysis_id
+                user_id,
+                thread_id,
+                approval_id,
+                pins,
+                build=INCIDENT_BUILD,
+                speech_cleanup_analysis_id=analysis_id,
             )
         assert refused.value.code == "speech_cleanup_choice_required"
         assert _recorded(analysis_id) == (None, None)
@@ -439,7 +561,8 @@ async def test_clip_scoped_keep_is_not_an_answer_for_the_whole_take(
 async def test_explicit_clean_tap_on_a_keep_whole_brief_is_honoured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Mode 5: the server never overrides a tap; "Clean up speech and create" still cleans."""
+    """Mode 5: a choice submitted on this approval wins, even from the build whose plain create
+    the brief answers."""
     user_id, thread_id, item_id = _seed_talking_take()
     try:
         approval_id, pins = await _await_approval(
@@ -451,6 +574,7 @@ async def test_explicit_clean_tap_on_a_keep_whole_brief_is_honoured(
             thread_id,
             approval_id,
             pins,
+            build=INCIDENT_BUILD,
             speech_cleanup_analysis_id=analysis_id,
             speech_cleanup_choice="clean",
         )
@@ -460,34 +584,142 @@ async def test_explicit_clean_tap_on_a_keep_whole_brief_is_honoured(
 
 
 @pytest.mark.asyncio
-async def test_cleanup_ask_after_a_kept_take_asks_again(
+@pytest.mark.parametrize(
+    ("brief_updates", "tapped", "approving_build"),
+    [
+        ((_clean_up(),), "keep_original", CARD_BUILD),
+        ((_keep_whole(),), "clean", INCIDENT_BUILD),
+    ],
+    ids=["cleanup-ask-switched-off", "clean-tapped-on-a-keep-brief"],
+)
+async def test_a_recorded_answer_is_not_asked_again_on_a_later_approval(
     monkeypatch: pytest.MonkeyPatch,
+    brief_updates: tuple[BriefUpdate, ...],
+    tapped: str,
+    approving_build: int,
 ) -> None:
-    """Mode 8: "clean up my pauses" after the take was kept whole puts the question back on
-    every build, and the creator's tap cleans."""
-    user_id, thread_id, item_id = _seed_talking_take()
+    """Modes 8 and 9: the brief's requirement stays live after the creator answered the card
+    against it. The follow-up approval ("make the captions yellow") asks nobody, and its plain
+    create renders the recorded answer, not the brief's."""
+    user_id, thread_id, item_id, analysis_id, _first = await _first_render(
+        monkeypatch, brief_updates, tapped=tapped
+    )
     try:
         approval_id, pins = await _await_approval(
-            monkeypatch, user_id, thread_id, (_keep_whole(), _clean_up()), revision=2
+            monkeypatch,
+            user_id,
+            thread_id,
+            (),
+            revision=_thread_revision(thread_id),
+            message="Make the captions yellow",
         )
-        analysis_id = await _checked_take(
-            user_id, thread_id, item_id, approval_id, pins, recorded="keep_original"
-        )
-
-        for build in (INCIDENT_BUILD, CARD_BUILD):
-            card = await _card(thread_id, build)
-            assert card["requires_choice"] is True, build
-            assert "recommended_choice" not in card
-        assert (await _card(thread_id, WEB))["requires_choice"] is False, "web unchanged"
+        assert await _asks(thread_id) == {build: False for build in (*NATIVE_BUILDS, WEB)}
 
         await _approve(
             user_id,
             thread_id,
             approval_id,
             pins,
+            build=approving_build,
             speech_cleanup_analysis_id=analysis_id,
-            speech_cleanup_choice="clean",
         )
-        assert _stash(approval_id) == {"analysis_id": str(analysis_id), "choice": "clean"}
+        assert _stash(approval_id) == {"analysis_id": str(analysis_id), "choice": tapped}
+        dispatched = _dispatch_recording_decision(monkeypatch, user_id, item_id)
+        await asyncio.to_thread(execute_kria_approval.run, str(approval_id))
+        assert [choice for choice, *_ in dispatched] == [tapped]
+        assert _recorded(analysis_id)[0] == tapped
+    finally:
+        await async_engine.dispose()
+
+
+def _pending_render_retry(source_approval_id: uuid.UUID) -> None:
+    """The retry approval `prepare_render_retry` writes after the render failed: the same strategy
+    draft, a new render execution carrying ``render_retry``."""
+    with sync_session() as db:
+        source_approval = db.get(CreatorAgentApproval, source_approval_id)
+        source = db.get(CreatorAgentExecution, uuid.UUID(source_approval.execution_ids[0]))
+        now = datetime.now(UTC)
+        execution = CreatorAgentExecution(
+            session_id=source.session_id,
+            turn_id=source.turn_id,
+            idempotency_key=f"render-retry:{source.id}",
+            request_digest=source.request_digest,
+            expected_revision=source.expected_revision,
+            tool_name="render.request",
+            tool_version=1,
+            risk="approval_required",
+            dependency_group=1,
+            group_order=1,
+            target_thread_id=source.target_thread_id,
+            target_draft_id=source.target_draft_id,
+            target_draft_revision=source.target_draft_revision,
+            target_job_id=source.target_job_id,
+            target_ownership_epoch=source.target_ownership_epoch,
+            status="awaiting_approval",
+            started_at=now,
+            awaiting_approval_at=now,
+            result={RETRY_FIELD: {"source_execution_id": str(source.id)}},
+        )
+        db.add(execution)
+        db.flush()
+        db.add(
+            CreatorAgentApproval(
+                creator_id=source_approval.creator_id,
+                thread_id=source_approval.thread_id,
+                session_id=source_approval.session_id,
+                turn_id=source_approval.turn_id,
+                draft_id=source_approval.draft_id,
+                draft_revision=source_approval.draft_revision,
+                target_job_id=source.target_job_id,
+                target_ownership_epoch=source_approval.target_ownership_epoch,
+                execution_ids=[str(execution.id)],
+                consequence_summary=(
+                    "Retry this exact approved edit. Keep its clips, text, timing and audio "
+                    "unchanged."
+                ),
+                status="pending",
+                expires_at=now + timedelta(minutes=30),
+            )
+        )
+        db.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("pending", "recorded"),
+    [("render-retry", "clean"), ("render-retry", None), ("outside-the-cohort", None)],
+    ids=["retry-over-a-recorded-clean", "retry-unanswered", "follow-up-outside-the-cohort"],
+)
+async def test_a_card_the_approval_does_not_gate_is_the_stored_projection(
+    monkeypatch: pytest.MonkeyPatch, pending: str, recorded: str | None
+) -> None:
+    """Mode 12: a render retry re-renders the approved edit and ignores any cleanup choice, and
+    an approval outside the enforce cohort is not gated at all. Neither plain create is answered
+    from the brief, so their card is the stored projection on every build: "Retry approved edit"
+    over a recorded clean, and the stored question when the current check is unanswered."""
+    user_id, thread_id, _item_id, analysis_id, approval_id = await _first_render(
+        monkeypatch, (_keep_whole(),), tapped="clean"
+    )
+    try:
+        if recorded is None:
+            with sync_session() as db:
+                row = db.get(SpeechCleanupAnalysis, analysis_id)
+                row.decision, row.decision_at = None, None
+                db.commit()
+        if pending == "render-retry":
+            _pending_render_retry(approval_id)
+        else:
+            monkeypatch.setattr(settings, "speech_cleanup_preflight_rollout_percent", 0)
+            await _await_approval(
+                monkeypatch,
+                user_id,
+                thread_id,
+                (),
+                revision=_thread_revision(thread_id),
+                message="Make the captions yellow",
+            )
+
+        stored = recorded is None
+        assert await _asks(thread_id) == {build: stored for build in (*NATIVE_BUILDS, WEB)}
     finally:
         await async_engine.dispose()
