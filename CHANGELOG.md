@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.65.0] - 2026-11-07
+
+### Changed
+- feat(ios): make the composer + the one way to add media (KRI-1272) (#2180) <!-- release-pr: 2180 -->
+
 ## [0.88.64.0] - 2026-11-07
 
 ### Changed
