@@ -284,14 +284,15 @@ import XCTest
         var benchEnvironment = ["KRIA_TALK_BENCH": "1", "KRIA_TALK_BENCH_BACKGROUND": background,
                                 "KRIA_TALK_BENCH_CINEMATIC": cinematicWanted ? "1" : "0"]
         if let old = environment["KRIA_TALK_BENCH_LIVE_OLD"], !old.isEmpty { benchEnvironment["KRIA_TALK_BENCH_LIVE_OLD"] = old }
+        if let mic = environment["KRIA_TALK_BENCH_MIC"], !mic.isEmpty { benchEnvironment["KRIA_TALK_BENCH_MIC"] = mic }
         let app = launchTalking(bench: benchEnvironment, speakerBackground: background != "none")
         defer { removeUIInterruptionMonitor(removePermissionMonitor) }
 
-        app.buttons["teleprompter-open"].tap()
+        openScriptFromTray(app)
         let script = app.textViews["teleprompter-script-editor"]
         XCTAssertTrue(script.waitForExistence(timeout: 8))
         paste("I am recording this on an iPhone. I will keep talking for the bench so the preview has a moving subject.", into: script, app: app)
-        app.buttons["teleprompter-open-camera"].tap()
+        app.buttons["teleprompter-use-script"].tap()
         let record = app.buttons["teleprompter-record"]
         guard triggerPermissionPrompts(in: app, untilEnabled: record), waitUntilEnabled(record, timeout: 20) else {
             XCTFail("A physical iPhone with granted camera and microphone permission should enable Record.")
