@@ -378,7 +378,6 @@ async def test_each_unproven_request_is_held_simplified_or_left_to_check_after_r
     receipts = (response.payload or {}).get("requirement_receipts") or []
     assert {r["requirement_id"] for r in receipts} >= {"r1", "r2", "r3"}
     assert not [r for r in receipts if r["status"] == "met"], receipts
-    assert next(r for r in receipts if r["requirement_id"] == "r3")["status"] == "not_possible"
     with sync_session() as db:
         assert (
             db.get(PlanItem, db.get(CreationThread, thread_id).active_plan_item_id).current_job_id

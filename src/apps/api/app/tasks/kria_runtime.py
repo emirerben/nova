@@ -540,8 +540,8 @@ def _held_receipts(
 ) -> list[dict[str, Any]] | None:
     """KRI-1308: a held draft made nothing, so no ask may read "Done".
 
-    The receipts judged the speculative draft the hold rolled back. A blocked ask says it
-    could not be made (its readiness reason); any other ask that read "met" is waiting, not
+    The receipts judged the speculative draft the hold rolled back. A blocked ask shows its
+    readiness reason; any other is waiting. Both read partial and unchecked, never
     done. Receipts that were never "met" keep their own words."""
     if receipts is None or readiness_report is None or readiness_report.get("ready"):
         return receipts
@@ -554,32 +554,24 @@ def _held_receipts(
     }
     held: list[dict[str, Any]] = []
     for receipt in receipts:
-        row = rows.get(str(receipt.get("requirement_id")))
-        if row is not None and row.get("disposition") not in APPROVABLE:
-            held.append(
-                {
-                    **receipt,
-                    "status": "not_possible",
-                    "verification": "checked",
-                    "stage": "understood",
-                    "reason": str(row.get("reason") or receipt.get("reason") or "")[:300] or None,
-                }
-            )
-        elif receipt.get("status") == "met":
-            held.append(
-                {
-                    **receipt,
-                    "status": "partial",
-                    "verification": "unchecked",
-                    "stage": "understood",
-                    "reason": say(
-                        en="Not made yet: the draft is on hold.",
-                        tr="Henüz yapılmadı: taslak beklemede.",
-                    ),
-                }
-            )
-        else:
+        if receipt.get("status") != "met":
             held.append(receipt)
+            continue
+        row = rows.get(str(receipt.get("requirement_id")))
+        blocked = row is not None and row.get("disposition") not in APPROVABLE
+        held.append(
+            {
+                **receipt,
+                "status": "partial",
+                "verification": "unchecked",
+                "stage": "understood",
+                "reason": (str(row.get("reason") or "")[:300] if blocked else "")
+                or say(
+                    en="Not made yet: the draft is on hold.",
+                    tr="Henüz yapılmadı: taslak beklemede.",
+                ),
+            }
+        )
     return held
 
 
