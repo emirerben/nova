@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.59.0] - 2026-11-07
+
+### Changed
+- feat(ios): drawings selectable on canvas, stacked-tap cycling, 44pt grab zones for editor overlays (KRI-1265) (#2150) <!-- release-pr: 2150 -->
+
 ## [0.88.58.0] - 2026-11-07
 
 ### Changed
