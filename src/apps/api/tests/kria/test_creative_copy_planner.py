@@ -392,3 +392,77 @@ async def test_kri682_assistant_quote_is_not_creator_wording(monkeypatch):
         monkeypatch=monkeypatch,
     )
     assert _asks_wording(result)
+
+
+# KRI-1286: Qendresa asked for `End with 'comment REPO' and an arrow`; Kria asked her to
+# confirm "comment REPO ⬇️" (words she gave exactly) and then showed two arrows.
+# Ways this goes wrong: the emoji stays on a ground-exact ending; the emoji is dropped when
+# she never asked for an arrow (then the words are Kria's and still need approval); the
+# strip eats a different wording (must still ask).
+async def _closing_turn(
+    closing: str, *, request: str, evidence: str | None, monkeypatch
+) -> tuple[PlannedKriaTurn | None, str | None]:
+    from app.agents._schemas.creator_agent import CreatorRenderIntentEvidence
+    from app.agents.main_creator import MainCreatorOutput
+
+    seen: dict[str, str | None] = {"closing": None}
+
+    def past_gate(*args, **kwargs):
+        strategy = next(a for a in (*args, *kwargs.values()) if hasattr(a, "closing_title"))
+        seen["closing"] = strategy.closing_title
+        raise _PastCopyGate
+
+    monkeypatch.setattr(planner, "check_strategy_for_runtime_v2", past_gate)
+    output = MainCreatorOutput(
+        action=ProposeStrategy(
+            kind="propose_strategy",
+            strategy=CreativeStrategy(closing_title=closing),
+            summary="Ending",
+            render_intent_evidence=CreatorRenderIntentEvidence(closing_title=evidence),
+        )
+    )
+    try:
+        result = await planner._plan_creator_action(
+            None,
+            thread_id=uuid4(),
+            item_id=uuid4(),
+            creator_id=uuid4(),
+            user_message=request,
+            manifest=SimpleNamespace(manifest_hash="a" * 64, context_hash="b" * 64, media=()),
+            inputs=_quoted_title_inputs([{"role": "user", "content": request}]),
+            output=output,
+        )
+    except _PastCopyGate:
+        result = None
+    return result, seen["closing"]
+
+
+_CTA_REQUEST = "End with 'comment REPO' and an arrow for the last 3 seconds"
+
+
+@pytest.mark.asyncio
+async def test_kri1286_exact_quoted_ending_with_arrow_ask_is_not_re_asked(monkeypatch):
+    result, closing = await _closing_turn(
+        "comment REPO ⬇️", request=_CTA_REQUEST, evidence=None, monkeypatch=monkeypatch
+    )
+    assert not _asks_wording(result)
+    assert closing == "comment REPO"
+
+
+@pytest.mark.asyncio
+async def test_kri1286_emoji_stays_asked_when_no_arrow_was_requested(monkeypatch):
+    result, _ = await _closing_turn(
+        "comment REPO ⬇️",
+        request="End with 'comment REPO' for the last 3 seconds",
+        evidence=None,
+        monkeypatch=monkeypatch,
+    )
+    assert _asks_wording(result)
+
+
+@pytest.mark.asyncio
+async def test_kri1286_different_wording_is_still_asked(monkeypatch):
+    result, _ = await _closing_turn(
+        "comment CODE ⬇️", request=_CTA_REQUEST, evidence=None, monkeypatch=monkeypatch
+    )
+    assert _asks_wording(result)
