@@ -183,7 +183,7 @@ import XCTest
         await session.retryChat(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, bubble: failure)
         XCTAssertEqual(captured.chatBodies.count, 1, "a missing receipt must not authorize another AI request")
         XCTAssertEqual(session.draft, before)
-        XCTAssertNotNil(session.aiRecoveryMessage)
+        XCTAssertEqual(session.chat.last?.text, "Checking the original AI request. Your draft is safe; this check will not start another AI call.")
         XCTAssertEqual(session.chat.last?.retryText, "sort them")
         XCTAssertTrue(captured.putBodies.isEmpty)
     }
