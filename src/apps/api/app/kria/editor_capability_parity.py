@@ -256,8 +256,10 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     "generated_overlay_approval": _g(
         "agent_unsupported",
         "applyOverlayProposal",
-        reason="Generated overlays require explicit native preview approval; chat cannot "
-        "spend on or accept a generated asset through this flow.",
+        reason="A generated image enters the edit only after the creator's native preview "
+        "approval. Chat starts one at most: the generated_overlay suggestion card spends on the "
+        "creator's consent and the phone reviews the result, but no chat op accepts or places it "
+        "(a phone Save refuses a photo the edit did not pin).",
     ),
     "overlay_planning_and_queries": _g(
         "not_an_edit",

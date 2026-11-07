@@ -2187,6 +2187,53 @@ final class CreationUITests: XCTestCase {
         app.terminate()
     }
 
+    /// KRI-1253, the card that spends. Declining the price sends nothing and keeps the card; agreeing sends the pinned tap
+    /// once, the card is spent and its image row takes over ("making", then "ready"), and Review hands the image to the
+    /// same overlay review "Add media" uses, where it waits for the creator's Use.
+    func testGeneratedImageCardAsksFirstThenMakesOneImageAndHandsItToReview() {
+        let nonce = "g" + UUID().uuidString.prefix(6)
+        let app = launchSuggestionCards("generated", nonce: nonce, extra: ["KRIA_GENERATED_MEDIA": "1"], arguments: ["-reset-chat-drafts"])
+        let card = app.buttons["suggestion-card-0"]
+        XCTAssertTrue(card.waitForExistence(timeout: 30), "the finished video offers the paid card")
+        XCTAssertTrue(card.label.contains("Costs $0.04"), "the price is on the card before any tap")
+
+        // Consent declined: nothing leaves the phone and the card stays.
+        card.tap()
+        let sheet = app.buttons["suggestion-spend-confirm"]
+        XCTAssertTrue(sheet.waitForExistence(timeout: 5), "a paid card asks before it sends")
+        let terms = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Nothing goes in your video until you say so")).firstMatch
+        XCTAssertTrue(terms.exists, "the sheet says what is not done until the creator agrees")
+        XCTAssertTrue(terms.label.contains("$0.04"), "the sheet repeats the price")
+        keepScreenshot(app, "Cost consent sheet")
+        app.buttons["suggestion-spend-cancel"].tap()
+        XCTAssertTrue(eventually(timeout: 5) { !sheet.exists }, "Not now closes the sheet")
+        XCTAssertTrue(card.exists, "declining leaves the card where it was")
+        XCTAssertFalse(app.staticTexts["You: Add a generated image overlay \(nonce)"].exists, "declining sends nothing")
+        XCTAssertFalse(app.descendants(matching: .any)["suggestion-card-generated"].exists, "declining starts no image")
+
+        // Consent given: one tap goes out, the image row replaces the card.
+        card.tap()
+        XCTAssertTrue(app.buttons["suggestion-spend-confirm"].waitForExistence(timeout: 5))
+        app.buttons["suggestion-spend-confirm"].tap()
+        let status = app.staticTexts["suggestion-card-generated-status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 20), "the image row appears once the tap is accepted")
+        XCTAssertTrue(eventually(timeout: 20) { status.label == "Your image is ready" }, "the image settles to ready")
+        XCTAssertFalse(app.buttons["suggestion-card-0"].exists, "a spent card leaves the set")
+        keepScreenshot(app, "Generated image row, ready")
+
+        // Review: the same screen Add media uses for an image made there.
+        let review = app.buttons["suggestion-card-generated-review"]
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
+        review.tap()
+        let use = app.buttons["generated-media-use"]
+        XCTAssertTrue(use.waitForExistence(timeout: 30), "the overlay review opens with the made image")
+        XCTAssertTrue(app.descendants(matching: .any)["overlay-row-1"].firstMatch.exists, "one made overlay, not a new request")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: use)], timeout: 15), .completed,
+                       "Use is enabled: the image is ready for the creator's yes")
+        keepScreenshot(app, "Generated image handed to the overlay review")
+        app.terminate()
+    }
+
     /// Long Turkish text with the dotted and dotless i at the largest accessibility text size: the exact hook text is
     /// shown whole (never clipped to a line), and both targets stay tappable.
     func testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize() {

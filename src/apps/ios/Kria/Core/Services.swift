@@ -1394,7 +1394,11 @@ enum KriaClientProtocolContract {
     /// them in the editor. The server offers `editor_capabilities.background_focus` only to this protocol (and only with
     /// `backgroundFocus` verified) and answers 426 `client_update_required` (`background_focus`) to an older build polling or
     /// saving a recipe that already carries them.
-    static let version = 42
+    ///
+    /// 43 (KRI-1253): asks the creator before it sends a suggestion card whose action is `async_generate` (a card that spends:
+    /// it quotes `cost_usd`, the creator confirms in a sheet, and only then does the tap go out). The server offers the
+    /// `generated_overlay` card only to this protocol, because an older build would spend on one touch.
+    static let version = 43
     static let header = "X-Kria-Client-Protocol"
 }
 
