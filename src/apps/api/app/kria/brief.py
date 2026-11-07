@@ -56,6 +56,7 @@ from app.kria.order_replacement import OrderReplacementProof
 from app.kria.removed_messages import is_removed, removed_turn_ids_sync
 from app.kria.reply_language import detect_chat_language
 from app.kria.select_asks import withdrawn_photo_asks
+from app.kria.spoken_text_ask import with_valid_hold_fact
 from app.kria.text_shape_ask import TEXT_SHAPE_FACT, with_text_shape
 from app.models import CreationThreadEvent, CreativeBriefVersion, CreatorAgentTurn
 from app.schemas.clip_intents import asks_clip_description
@@ -296,6 +297,12 @@ class BriefUpdate(_BriefModel):
             intent = normalize_style_intent(value["style_intent"])
             return {**facts, "style_intent": intent} if intent else facts
         return value
+
+    @model_validator(mode="after")
+    def _text_hold(self) -> BriefUpdate:
+        if self.kind == "text" and "hold_s" in self.facts:
+            self.facts = with_valid_hold_fact(self.facts)
+        return self
 
     @model_validator(mode="after")
     def _needs_content(self) -> BriefUpdate:

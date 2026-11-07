@@ -537,6 +537,18 @@ def test_a_widened_trigger_no_answer_was_about_is_left_alone():
         ("big on screen", "X", {"hold_s": 1.5}, 1.5),
         ("big on screen", "X", {"hold_s": 400}, None),
         ("within the first 5 seconds", "X", {"hold_s": 1.5}, 1.5),
+        # KRI-1292: the typed hold decides; the wording is only for briefs that predate it.
+        ("for 1 second, no, 2 seconds", "X", {"hold_s": 2.0}, 2.0),
+        ("within the first 5 seconds when he says cheese", "X", {"hold_s": 1.0}, 1.0),
+        ("peynir dediğinde ekranda dursun", "X", {"hold_s": 1}, 1.0),
+        ("big on screen for a second", "X", {"hold_s": 3}, 3.0),
+        ("big on screen for a second", "X", {"hold_s": 400}, None),
+        ("big on screen", "X", {"hold_s": "1.5"}, 1.5),
+        ("big on screen", "X", {"hold_s": 0}, None),
+        ("big on screen", "X", {"hold_s": -2}, None),
+        ("big on screen", "X", {"hold_s": float("nan")}, None),
+        ("big on screen for 2 seconds", "X", {"hold_s": True}, 2.0),
+        ("big on screen for 2 seconds", "X", {"hold_s": "a second"}, 2.0),
     ],
 )
 def test_the_hold_is_the_creators_own_length_or_nothing(description, literal, facts, expected):
@@ -544,6 +556,63 @@ def test_the_hold_is_the_creators_own_length_or_nothing(description, literal, fa
     assert spoken_text_hold_s(req) == expected
     ask = requirement_spoken_text(req)
     assert ask is not None and ask.hold_s == expected
+
+
+@pytest.mark.parametrize(
+    ("hold_s", "stored"),
+    [
+        (1.0, 1.0),
+        (2, 2.0),
+        ("1.5", 1.5),
+        ("1,5", 1.5),
+        (0.1, None),
+        (0, None),
+        (-1, None),
+        (400, None),
+        ("a second", None),
+        (True, None),
+        (None, None),
+        (float("inf"), None),
+    ],
+)
+def test_the_model_written_hold_is_a_length_or_not_stored(hold_s, stored):
+    from app.kria.brief import parse_brief_updates
+
+    [update] = parse_brief_updates(
+        [
+            {
+                "kind": "text",
+                "scope": "global",
+                "literal": "PROVOLETA",
+                "description": "big on screen for about a second",
+                "facts": {"triggers": ["grilled cheese"], "hold_s": hold_s},
+            }
+        ]
+    )
+    assert update.facts.get("hold_s") == stored
+    assert update.facts["triggers"] == ["grilled cheese"]
+
+
+def test_a_photo_hold_is_not_a_text_hold():
+    from app.kria.brief import parse_brief_updates
+
+    [update] = parse_brief_updates(
+        [
+            {
+                "kind": "timing",
+                "scope": "clip:p1",
+                "description": "keep the photo for 2 seconds",
+                "facts": {"hold_s": "2"},
+            }
+        ]
+    )
+    assert update.facts["hold_s"] == "2"
+
+
+def test_a_stored_brief_without_the_field_still_reads_its_wording():
+    # A brief persisted before KRI-1292 is re-read on every retry and reburn.
+    req = _brief(description="put it big on screen for about a second").requirements[0]
+    assert "hold_s" not in req.facts and spoken_text_hold_s(req) == 1.0
 
 
 def test_a_take_that_ends_before_the_hold_clips_it_without_failing_the_receipt(monkeypatch):

@@ -1031,8 +1031,15 @@ sticker, sound or on-screen text timed to spoken words ("show the medal photo wh
 the creator wrote them, never translated, plus "speaker" (the creator's words for who) only when
 someone other than the creator says them: "Show MEROPE in big letters the first time she says
 Merope" => a text requirement, literal "MEROPE", facts {"triggers": ["Merope"], "speaker":
-"she"}; a photo or video shown full screen ("tam ekran", "full screen") or as a small card
-("in the corner") => add "display_mode": "fullscreen" or "pip" to those same facts, nothing when
+"she"}; how long a text at a spoken word stays => "hold_s", the seconds as a number from their
+own words ("put PROVOLETA big on screen for about a second" when he says "grilled cheese" =>
+{"triggers": ["grilled cheese"], "hold_s": 1.0}; "bir saniye boyunca" => 1.0), the last length
+they state when they correct themselves ("for 1 second, no, 2 seconds" => 2.0), and a change of
+the length sets the new `hold_s` in that same update; no `hold_s` when they name no length ("for
+a moment", "a bit longer") or the seconds time the word, not the text ("within the first 5
+seconds", "a second after he says it", "for a second time"); a photo or video shown full screen
+("tam ekran", "full screen") or as a small card ("in the corner") => add "display_mode":
+"fullscreen" or "pip" to those same facts, nothing when
 the creator says neither; two photos shown differently in one message => ONE requirement per
 photo, each with its own display_mode; keep a take whole, uncut ("use the whole clip as it is",
 "don't trim anything", "keep everything") => {"keep_whole_take": true} plus
