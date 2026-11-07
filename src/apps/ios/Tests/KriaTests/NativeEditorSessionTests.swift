@@ -2968,9 +2968,22 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertEqual(session.saveState, .idle)
         XCTAssertEqual(fake.draftCallCount, 0)
+        let rebased = session.document
         session.undo()
-        XCTAssertFalse(session.hasUnsavedChanges, "one Undo drops the replayed edit, leaving the newest version")
+        XCTAssertEqual(session.document, local, "Undo restores the complete pre-application local document")
+        XCTAssertTrue(session.isReviewingPreviousMerge)
+        XCTAssertNotNil(session.mergeConflictMessage)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertNil(session.exportEditorState())
+        XCTAssertFalse(session.canDownloadCurrentVideo)
+        await session.save()
+        XCTAssertEqual(fake.commitCount, 0, "reviewing old authority cannot submit a Save")
+        session.redo()
+        XCTAssertEqual(session.document, rebased)
+        XCTAssertFalse(session.isReviewingPreviousMerge)
         XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertEqual(fake.draftCallCount, 0, "history never calls the runtime-v2 draft route")
     }
 
     /// S2-f: a legacy thread between jobs (no usable selection yet) is a normal moment. The sync
