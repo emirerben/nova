@@ -3437,6 +3437,25 @@
         "src/apps/api/tests/kria/test_planner_boundary_replay.py",
         "src/apps/api/tests/fixtures/kria_replay/planner_boundary/"
       ]
+    },
+    {
+      "id": "kri-1264-overlay-card-style",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_overlay_card_style.py tests/routes/test_overlay_card_tilt.py tests/routes/test_overlay_card_tilt_chat.py",
+      "xctests": [
+        "KriaTests/NativeOverlayCardStyleTests/testTwoTimesZoomAndAPopAreSavedAsTheCardsEditorStyle",
+        "KriaTests/NativeOverlayCardStyleTests/testZoomOneAndNoAnimationLeaveTheCardExactlyAsLoaded",
+        "KriaTests/NativeOverlayCardStyleTests/testThePreviewPlacesTheZoomedPoppedCardWithItsStyle"
+      ],
+      "paths": [
+        "src/apps/api/app/kria/portable_visual.py",
+        "src/apps/api/tests/routes/test_overlay_card_style.py",
+        "src/apps/api/tests/routes/test_card_style_device_cases.py",
+        "tests/fixtures/card-style-parity/v1.json",
+        "src/apps/ios/Tests/KriaTests/NativeOverlayCardStyleTests.swift",
+        "src/apps/ios/Tests/KriaTests/DeviceTalkingCardStyleRenderE2ETests.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/PlacedCardStyleTests.swift"
+      ]
     }
   ]
 }
