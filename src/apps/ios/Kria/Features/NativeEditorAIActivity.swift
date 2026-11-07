@@ -63,9 +63,12 @@ struct NativeEditorAIHalo: View {
     var body: some View {
         Group {
             if animates {
-                PhaseAnimator([0.0, 360.0]) { angle in
-                    edge(angle: angle)
-                } animation: { _ in .linear(duration: 8) }
+                TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+                    let seconds = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 8)
+                    edge(angle: seconds / 8 * 360)
+                        // Keyboard and sheet layout must move the outline with its control.
+                        .transaction { $0.animation = nil }
+                }
             } else {
                 Capsule().strokeBorder(KriaColor.zinc, lineWidth: 1.5)
             }

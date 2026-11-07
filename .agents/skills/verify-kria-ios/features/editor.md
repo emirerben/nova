@@ -57,6 +57,13 @@ passed with zero skips at that revision. Improve's
 Done action must be selected by its actual visible label because the sheet's
 container identifier masks the child identifier in the exported hierarchy.
 
+Continuous motion must also be inspected through keyboard dismissal, sheet return
+and status changes. The `9a2b7203` normal recording exposed an outline that drifted
+away from its control for several seconds despite aligned stills and passing UI
+checks. Its `PhaseAnimator` interpolated layout over the decorative eight-second
+cycle. The local angle-only `TimelineView` correction awaits native verification;
+do not treat the historical test counts as a passing motion acceptance result.
+
 Run these through the editor CI selection or a separately allocated bounded
 native batch after launch/doctor, retaining results and captures. The default
 `drive editor` still runs only the caption journey named above. Playing generation
