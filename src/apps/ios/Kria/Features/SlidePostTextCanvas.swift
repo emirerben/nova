@@ -320,7 +320,7 @@ struct SlidePostTextLayerView: View {
         // KRI-826: the creator's own lines (`wrap_lines == false`) keep their breaks but stay inside the frame:
         // a line wider than 0.9 x W wraps at that width, and only a single over-wide word shrinks the text
         // (`AuthoredTextFit`, the rule the server render and the video compiler apply).
-        // The room is measured from the text's anchor to the safe margins (`AuthoredTextFit.safeWidth`), and
+        // The room is measured from the text's anchor to the frame edge (`AuthoredTextFit.safeWidth`), and
         // the shrink floor is the export's 24px scaled to this preview.
         let anchor = SlidePostTextLayout.anchor(for: element)
         let safeWidth = CGFloat(AuthoredTextFit.safeWidth(canvasWidth: Double(size.width), xFraction: Double(anchor.x),
@@ -330,6 +330,12 @@ struct SlidePostTextLayerView: View {
             minimum: AuthoredTextFit.minimumSize * Double(scale)) { points in
                 NativeFontCatalog.shared.ctFont(element.fontFamily, size: CGFloat(points)).map { [NSAttributedString.Key(kCTFontAttributeName as String): $0] } ?? [:]
             })
+        // KRI-886: the rows the export draws, so the system line breaker never splits a word mid-word here
+        // while the saved image keeps it whole (or the reverse).
+        let text = element.wrapsLines ? element.text : AuthoredTextFit.authoredText(
+            element.text, points: Double(points), width: Double(safeWidth), minimum: AuthoredTextFit.minimumSize * Double(scale)) { points in
+                NativeFontCatalog.shared.ctFont(element.fontFamily, size: CGFloat(points)).map { [NSAttributedString.Key(kCTFontAttributeName as String): $0] } ?? [:]
+            }
         let font = NativeFontCatalog.shared.ctFont(element.fontFamily, size: points).map(Font.init) ?? KriaFont.body(points).weight(.bold)
         let selected = accessibility?.selectedID == element.id
         let alignment: TextAlignment = element.alignment == "left" ? .leading : (element.alignment == "right" ? .trailing : .center)
@@ -339,11 +345,11 @@ struct SlidePostTextLayerView: View {
         let offsetX = element.alignment == "left" ? anchor.x : (element.alignment == "right" ? anchor.x - 1 : anchor.x - 0.5)
         // The block rotates about its anchor, which sits at the box's leading edge / centre / trailing edge.
         let pivotX: CGFloat = element.alignment == "left" ? 0 : (element.alignment == "right" ? 1 : 0.5)
-        let makeText: (Color) -> Text = { Text(element.text).font(font).foregroundStyle($0) }
+        let makeText: (Color) -> Text = { Text(text).font(font).foregroundStyle($0) }
         let wrapWidth: CGFloat = element.wrapsLines ? size.width * CGFloat(element.maxWidthFrac ?? SlidePostTextElement.defaultWidthFrac) : safeWidth
         // KRI-646: a bent text is laid out with CoreText (SwiftUI `Text` cannot follow a curve).
         let bent: SlidePostBentLayout? = NativeFontCatalog.shared.ctFont(element.fontFamily, size: points).flatMap {
-            SlidePostBentLayout.make(text: element.text, font: $0, maxWidth: wrapWidth, alignment: element.alignment,
+            SlidePostBentLayout.make(text: text, font: $0, maxWidth: wrapWidth, alignment: element.alignment,
                                      lineSpacing: 1, bend: element.bend, padding: stroke + 2)
         }
         return textBlock(bent, makeText: makeText, color: Color(slideHex: element.color), alignment: alignment, stroke: stroke, shadow: element.shadowEnabled, scale: scale)
