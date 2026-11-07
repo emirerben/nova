@@ -1732,9 +1732,13 @@ def test_talking_captions_clear_the_device_watermark(monkeypatch, style):
     )
 
     assert _ink_on_watermark(recipe) == []
-    (layer,) = recipe.text_layers
-    assert (layer.start, layer.end) == (0.5, 3.0)
-    assert " ".join(run.text for run in layer.runs) == text
+    # KRI-632: the mark never makes a cue taller than two rows; this one is shown as two
+    # consecutive pieces over the same window instead.
+    layers = recipe.text_layers
+    assert (layers[0].start, layers[-1].end) == (0.5, 3.0)
+    assert all(a.end == b.start for a, b in zip(layers, layers[1:], strict=False))
+    assert " ".join(run.text for layer in layers for run in layer.runs) == text
+    assert all(len({run.baseline_y for run in layer.runs}) <= 2 for layer in layers)
     monkeypatch.setattr(
         settings, "phone_render_verified_features", list(recipe.required_capabilities)
     )

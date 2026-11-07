@@ -600,6 +600,21 @@ def _line_texts(layer) -> list[str]:
     return [" ".join(lines[baseline]) for baseline in sorted(lines)]
 
 
+def _shown_for(layers, cue: dict) -> list:
+    """The layers showing ``cue``: a cue that cannot clear the mark within the row budget is
+    shown as consecutive pieces (KRI-632), never as a taller block."""
+    return [layer for layer in layers if cue["start_s"] <= layer.start < cue["end_s"]]
+
+
+def _assert_shows_whole_cue(layers, cue: dict) -> None:
+    """Every word in order, over the cue's own window, in unbroken consecutive pieces."""
+    pieces = _shown_for(layers, cue)
+    assert pieces, cue["text"]
+    assert " ".join(" ".join(_line_texts(piece)) for piece in pieces) == cue["text"]
+    assert (pieces[0].start, pieces[-1].end) == (cue["start_s"], cue["end_s"])
+    assert all(a.end == b.start for a, b in zip(pieces, pieces[1:], strict=False))
+
+
 @pytest.mark.parametrize(
     "mark",
     [
@@ -652,39 +667,43 @@ def test_prod_kadikoy_captions_no_longer_run_under_the_mark(monkeypatch, text, s
 
     assert _ink_pixels_under_the_mark(before) > 0  # the prod bug, reproduced
     assert _ink_pixels_under_the_mark(after) == 0
-    old, new = before[0], after[0]
-    # Same words, timing, size and anchor -- only the line breaks moved.
-    assert " ".join(_line_texts(new)) == " ".join(_line_texts(old)) == text
-    assert (new.start, new.end, new.effect) == (old.start, old.end, old.effect)
-    assert (new.anchor_x, new.anchor_y) == (old.anchor_x, old.anchor_y)
-    assert {run.font_size for run in new.runs} == {78.0}
+    old = before[0]
+    # Same words, window, size and anchor. The cue is shown as consecutive pieces of at
+    # most two rows (KRI-632) instead of a third row growing toward the speaker.
+    _assert_shows_whole_cue(after, cues[0])
+    assert len(after) > 1
+    assert all(len(_line_texts(piece)) <= 2 for piece in after)
+    for piece in after:
+        assert piece.effect == old.effect
+        assert (piece.anchor_x, piece.anchor_y) == (old.anchor_x, old.anchor_y)
+        assert {run.font_size for run in piece.runs} == {78.0}
     if style == "word":
-        assert new.karaoke.starts == old.karaoke.starts
+        spoken = [piece.start + start for piece in after for start in piece.karaoke.starts]
+        assert spoken == pytest.approx(
+            [old.start + start for start in old.karaoke.starts], abs=0.002
+        )
     # Every line level with the mark is short enough to start right of it.
     from app.pipeline import text_overlay_skia as cloud
 
     typeface = cloud._resolve_typeface_for_overlay({"font_family": CAPTION_FONT_FAMILY}).typeface
     _left, top, right, bottom = watermark_keepout_rect(1080, 1920)
-    level_with_mark = 0
-    for run in new.runs:
-        ink = caption_ink_box(run, typeface)
-        if ink[1] < bottom and ink[3] > top:
-            assert ink[0] >= right
-            level_with_mark += 1
-    assert level_with_mark
+    for piece in after:
+        for run in piece.runs:
+            ink = caption_ink_box(run, typeface)
+            if ink[1] < bottom and ink[3] > top:
+                assert ink[0] >= right
 
 
 def test_prod_kadikoy_line_breaks():
     # The exact split depends on Skia's glyph metrics, which differ slightly between
-    # macOS and Linux (local "İlk durak / Moda'da, deniz kenarında / …", CI "İlk durak
-    # Moda'da, / deniz kenarında / …"). Pin what matters: both prod cues gain one line,
-    # keep every word in order, and leave no ink under the mark.
-    cues = [_KADIKOY_ILK, _KADIKOY_UCUNCU]
-    layers = compile_caption_layers(_cues(cues), canvas_width=1080, canvas_height=1920)
-    for layer, text in zip(layers, cues, strict=True):
-        lines = _line_texts(layer)
-        assert len(lines) == 3, lines
-        assert " ".join(lines).split() == text.split()
+    # macOS and Linux. Pin what matters: both prod cues keep every word in order, no
+    # piece grows past two rows (KRI-632: a cue that cannot clear the mark in two rows is
+    # split in time, it used to gain a third), and no ink is left under the mark.
+    cues = _cues([_KADIKOY_ILK, _KADIKOY_UCUNCU])
+    layers = compile_caption_layers(cues, canvas_width=1080, canvas_height=1920)
+    for cue in cues:
+        _assert_shows_whole_cue(layers, cue)
+    assert all(len(_line_texts(layer)) <= 2 for layer in layers)
     assert _ink_pixels_under_the_mark(layers) == 0
 
 
@@ -702,10 +721,10 @@ def test_wide_captions_never_ink_the_mark_wherever_the_caption_sits(anchor, styl
             style=style,
             look=_look(y_frac, anchor),
         )
-        for layer, cue in zip(layers, cues, strict=True):
+        for layer in layers:
             assert _ink_pixels_under_the_mark([layer]) == 0, (y_frac, layer.id)
-            assert " ".join(_line_texts(layer)) == cue["text"]
-            assert (layer.start, layer.end) == (cue["start_s"], cue["end_s"])
+        for cue in cues:
+            _assert_shows_whole_cue(layers, cue)
 
 
 @pytest.mark.parametrize("size", [36, 120, 160])
@@ -763,8 +782,11 @@ def test_only_the_cues_on_the_mark_change(monkeypatch):
 
     touched = [_ink_pixels_under_the_mark([layer]) > 0 for layer in before]
     assert any(touched) and not all(touched)
-    for was_touching, old, new in zip(touched, before, after, strict=True):
-        assert (new != old) is was_touching, old.id
+    for was_touching, old, cue in zip(touched, before, cues, strict=True):
+        pieces = _shown_for(after, cue)
+        # A split shifts the ids of the cues after it; the layer itself is what must not move.
+        unchanged = len(pieces) == 1 and pieces[0].model_copy(update={"id": old.id}) == old
+        assert (not unchanged) is was_touching, old.id
 
 
 def test_left_aligned_captions_share_one_edge_right_of_the_mark():
@@ -795,10 +817,13 @@ def test_a_caption_clear_of_the_platform_zone_never_grows_into_it(monkeypatch):
         kwargs = {"canvas_width": 1080, "canvas_height": 1920, "look": look}
         before = _compile_without_making_room(monkeypatch, cues, **kwargs)
         after = compile_caption_layers(cues, **kwargs)
-        for old, new in zip(before, after, strict=True):
-            if new != old and ink_bottom(old) <= 1530:
+        for old, cue in zip(before, cues, strict=True):
+            pieces = _shown_for(after, cue)
+            if pieces == [old.model_copy(update={"id": pieces[0].id})] or ink_bottom(old) > 1530:
+                continue
+            for new in pieces:
                 assert ink_bottom(new) <= 1530, (look.position_y_frac, old.id)
-                checked += 1
+            checked += 1
     assert checked > 0
 
 
@@ -822,16 +847,19 @@ _KADIKOY_PROD_CUES = [
 ]
 
 
-def test_the_default_look_never_moves_a_caption_only_rebreaks_it(monkeypatch):
+def test_the_default_look_never_moves_a_caption_only_rebreaks_or_splits_it(monkeypatch):
     cues = _cues(_KADIKOY_PROD_CUES)
     before = _compile_without_making_room(monkeypatch, cues, canvas_width=1080, canvas_height=1920)
     after = compile_caption_layers(cues, canvas_width=1080, canvas_height=1920)
 
     assert _ink_pixels_under_the_mark(before) > 0
     assert _ink_pixels_under_the_mark(after) == 0
-    for old, new in zip(before, after, strict=True):
-        assert (new.anchor_x, new.anchor_y) == (old.anchor_x, old.anchor_y)
-        assert len(_line_texts(new)) <= len(_line_texts(old)) + 1
+    for old, cue in zip(before, cues, strict=True):
+        for new in _shown_for(after, cue):
+            assert (new.anchor_x, new.anchor_y) == (old.anchor_x, old.anchor_y)
+            # KRI-632: a cue never gains a row past two (it is split in time instead).
+            assert len(_line_texts(new)) <= max(len(_line_texts(old)), 2)
+        _assert_shows_whole_cue(after, cue)
 
 
 @pytest.mark.parametrize("font", ["Montserrat Bold", "Syne", "Inter", "Fraunces"])

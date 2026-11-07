@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.69.0] - 2026-11-07
+
+### Changed
+- fix(kria): Talking captions stay two rows and off the face band (KRI-632) (#2165) <!-- release-pr: 2165 -->
+
+## [0.88.68.0] - 2026-11-07
+
+### Changed
+- refactor(suggestions): one commit_readiness composition for serve and tap (KRI-1256) (#2176) <!-- release-pr: 2176 -->
+
 ## [0.88.67.0] - 2026-11-07
 
 ### Changed
