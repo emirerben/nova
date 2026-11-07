@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.54.0] - 2026-11-07
+
+### Changed
+- fix(phone-text): lyric rows take the Lyric preference; keep the plan's shadow (KRI-1095, KRI-1050) (#2168) <!-- release-pr: 2168 -->
+
 ## [0.88.53.0] - 2026-11-07
 
 ### Changed
