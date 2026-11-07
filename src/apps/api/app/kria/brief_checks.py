@@ -3291,7 +3291,8 @@ def _grounded_card_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
     lanes the cards on screen are the saved ones: a receipt card is shown only while a saved card
     still shows its Visual, at that card's time (the lanes are on the finished video's clock, Range
     included); one the creator took out is "removed in the editor". Saved lanes that cannot be read
-    give no card verdict at all (fail closed), never the render's.
+    give no card verdict at all (fail closed), never the render's; so does an authored timeline
+    (after a deletion) that still holds cards. A second past the end of the video is never quoted.
     """
     receipt = variant.get("phone_overlay_receipt")
     if (
@@ -3300,7 +3301,16 @@ def _grounded_card_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
         or receipt.get("matcher") in _NOT_WORD_MATCHED_CARDS
     ):
         return {}
-    saved = _saved_card_starts(variant)
+    if variant.get("editor_timeline_mode") == "authored":
+        # After a deletion the authored timeline compiles `variant["media_overlays"]` and writes no
+        # saved-lanes marker. Its cards are kept by file path only, so they cannot be matched to
+        # the receipt's Visuals here: none left is exact (every card was taken out), any left
+        # gives no card verdict (fail closed), never the render's cards or times.
+        if variant.get("media_overlays"):
+            return {}
+        saved: dict[str, float] | bool | None = {}
+    else:
+        saved = _saved_card_starts(variant)
     if saved is False:
         return {}
     to_finished = _take_to_finished_clock(variant) if saved is None else None
@@ -3340,6 +3350,14 @@ def _grounded_card_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
             for key, start in saved.items()
             if key not in seen
         )
+    end = _finite_number(variant.get("duration_s"))
+    if end is not None:
+        cards = [
+            dataclasses.replace(card, at_s=None)
+            if card.at_s is not None and card.at_s > end
+            else card
+            for card in cards
+        ]
     return {"grounded_cards": tuple(cards)}
 
 

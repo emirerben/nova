@@ -793,3 +793,13 @@ def test_an_authored_edit_before_its_save_is_not_judged_by_the_render(
     staged = _authored(_two_card_talking_job(monkeypatch), drop_first_piece=True)
     receipt = _final(staged)
     assert receipt.status != "met" and "Screenshot" not in (receipt.reason or ""), receipt
+
+
+def test_a_second_past_the_end_of_the_video_is_never_quoted() -> None:
+    """Belt and braces for every path: a card time beyond the variant's length stays unsaid."""
+    variant = copy.deepcopy(VARIANT)
+    variant["duration_s"] = 10.0
+    reason = _receipt(CARDS, plan_facts_from_phone_variant(variant)).reason or ""
+    assert "0:05 Screenshot 1 spec-kit" in reason, reason
+    assert "0:11" not in reason and "0:33" not in reason, reason
+    assert "Screenshot 5 gamestudio" in reason, reason
