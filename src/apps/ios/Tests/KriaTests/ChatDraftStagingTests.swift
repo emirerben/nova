@@ -730,6 +730,94 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertFalse(session.needsReload(for: project(jobB, revision: 26)))
     }
 
+    func testExplicitChatMusicRemovalClearsCanonicalAndLegacyRepresentations() async throws {
+        let (session, _) = await loaded(Self.bootstrapSnapshot())
+        let original = session.document.encodeSnapshot()
+        let legacy: JSONValue = .object(["track_id": .string(Self.musicID), "start_s": .number(1)])
+        let opaque: JSONValue = .object(["future": .array([.null, .string("preserve")])])
+        for shape in ["canonical-window", "legacy-alias", "legacy-alias-with-canonical-nulls"] {
+            var input = original
+            var payload = try XCTUnwrap(input["editor_payload"]?.objectValue)
+            var sections = try XCTUnwrap(payload["sections"]?.objectValue)
+            sections["future_section"] = opaque
+            if shape != "canonical-window" {
+                sections["music"] = legacy
+                sections["music_track_id"] = shape == "legacy-alias" ? nil : .null
+                sections["music_window"] = shape == "legacy-alias" ? nil : .null
+            }
+            payload["sections"] = .object(sections)
+            input["editor_payload"] = .object(payload)
+            let noRemoval = DraftSnapshot(draftID: "keep", itemID: "item", variantKey: "initial",
+                draftRevision: 3, snapshotHash: "h", etag: "e", baseJobID: Self.jobID,
+                baseGenerationID: "g1", snapshot: ["kind": .string("editor"), "editor_payload": .object([
+                    "base_generation": .string("g1"), "remove_music": .bool(false),
+                ])], canUndo: true, createdAt: .now)
+            XCTAssertNil(noRemoval.stagedChatEdit(over: input, variant: Self.variant(), appliedRevision: nil),
+                "Without explicit removal, preserve the existing representation: \(shape)")
+            let removal = DraftSnapshot(draftID: "remove", itemID: "item", variantKey: "initial",
+                draftRevision: 3, snapshotHash: "h", etag: "e", baseJobID: Self.jobID,
+                baseGenerationID: "g1", snapshot: ["kind": .string("editor"), "editor_payload": .object([
+                    "base_generation": .string("g1"), "remove_music": .bool(true),
+                ])], canUndo: true, createdAt: .now)
+            let staged = try XCTUnwrap(removal.stagedChatEdit(over: input, variant: Self.variant(), appliedRevision: nil), shape)
+            XCTAssertEqual(staged.sections, [.music], shape)
+            let result = try XCTUnwrap(staged.snapshot["editor_payload"]?.objectValue?["sections"]?.objectValue)
+            XCTAssertNil(result["music"], shape)
+            XCTAssertEqual(result["music_track_id"], .null, shape)
+            XCTAssertEqual(result["music_window"], .null, shape)
+            let musicKeys = Set(["music", "music_track_id", "music_window"])
+            XCTAssertEqual(result.filter { !musicKeys.contains($0.key) }, sections.filter { !musicKeys.contains($0.key) }, shape)
+        }
+    }
+
+    func testFlatChatMusicRemovalRemainsCanonicalThroughManualTrimAndNewGenerationMerge() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        var original = session.document.encodeSnapshot()
+        let opaque: JSONValue = .object(["future": .array([.null, .string("preserve"), .number(7)])])
+        original["future_root"] = opaque
+        var payload = try XCTUnwrap(original["editor_payload"]?.objectValue)
+        payload["future_payload"] = opaque
+        var sections = try XCTUnwrap(payload["sections"]?.objectValue)
+        sections["future_section"] = opaque
+        payload["sections"] = .object(sections)
+        original["editor_payload"] = .object(payload)
+        let base = EditorDocument(snapshot: original)
+        let staged = try XCTUnwrap(Self.chatSnapshot(shape: .flatOnly).stagedChatEdit(
+            over: original, variant: Self.variant(), appliedRevision: nil))
+        let stagedPayload = try XCTUnwrap(staged.snapshot["editor_payload"]?.objectValue)
+        let stagedSections = try XCTUnwrap(stagedPayload["sections"]?.objectValue)
+        XCTAssertEqual(stagedSections["music_track_id"], .null)
+        XCTAssertEqual(stagedSections["music_window"], .null)
+        // The removal instruction owns only its authored lanes, including when
+        // the server sends no nested sections and the base has a music window.
+        XCTAssertEqual(staged.snapshot.filter { $0.key != "editor_payload" }, original.filter { $0.key != "editor_payload" })
+        XCTAssertEqual(stagedPayload.filter { $0.key != "sections" }, payload.filter { $0.key != "sections" })
+        let touched = Set(["timeline_slots", "text_elements", "mix", "music_track_id", "music_window"])
+        XCTAssertEqual(stagedSections.filter { !touched.contains($0.key) }, sections.filter { !touched.contains($0.key) })
+
+        var local = EditorDocument(snapshot: staged.snapshot)
+        let clipIndex = try XCTUnwrap(local.clips.firstIndex { $0.id == "s1" })
+        local.clips[clipIndex].durationS = 1.1
+        var remote = base
+        remote.revision.baseGeneration = "gNew"
+        let result = NativeEditorMerge.documents(base: base, local: local, remote: remote,
+            baseSong: nil, remoteSong: nil)
+        guard case .resolved(let merged) = result else {
+            return XCTFail("Canonical chat music removal plus a local trim must survive strict typed merge validation")
+        }
+        XCTAssertNil(merged.music)
+        XCTAssertEqual(merged.snapshot(for: .music), .object(["music_track_id": .null, "music_window": .null]))
+        XCTAssertEqual(merged.clips.first { $0.id == "s1" }?.durationS, 1.1)
+        XCTAssertEqual(merged.textElements, local.textElements)
+        XCTAssertEqual(merged.textElements.first?.text, "changed")
+        XCTAssertEqual(merged.revision.baseGeneration, "gNew")
+        let mergedRaw = merged.encodeSnapshot()
+        XCTAssertEqual(mergedRaw["future_root"], opaque)
+        XCTAssertEqual(mergedRaw["editor_payload"]?.objectValue?["future_payload"], opaque)
+        XCTAssertEqual(mergedRaw["editor_payload"]?.objectValue?["sections"]?.objectValue?["future_section"], opaque)
+        XCTAssertEqual(fake.commitCount, 0)
+    }
+
     private func replanFixture(manualEdit: Bool) async throws -> (NativeEditorSession, EditorCommitSpy, ProjectSummary, UUID) {
         let jobA = UUID(uuidString: Self.jobID)!, jobB = UUID(), threadID = UUID()
         func project(_ job: UUID, revision: Int) -> ProjectSummary {

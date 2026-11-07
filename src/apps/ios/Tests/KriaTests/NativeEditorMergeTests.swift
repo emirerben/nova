@@ -287,6 +287,29 @@ final class NativeEditorMergeTests: XCTestCase {
         XCTAssertEqual(NativeEditorMerge.merge(base: base, local: local, remote: remote, preference: .remote).state?.userSong, remote.userSong)
     }
 
+    func testMusicRemovalMustClearItsWindowBeforeTypedMergeValidation() {
+        let track = "8c9c1e0e-2d62-4a44-8d0c-2f4d3a0a9b11"
+        let window: JSONValue = .object(["start_s": .number(1), "alignment": .string("preserve_cuts")])
+        func document(track: JSONValue, window: JSONValue) -> EditorDocument {
+            EditorDocument(snapshot: ["editor_payload": .object(["sections": .object([
+                "music_track_id": track, "music_window": window,
+            ])])])
+        }
+        let base = document(track: .string(track), window: window)
+        let inconsistent = document(track: .null, window: window)
+        let rejected = NativeEditorMerge.documents(base: base, local: inconsistent, remote: base,
+            baseSong: nil, remoteSong: nil)
+        guard case .unsupported = rejected else {
+            return XCTFail("strict validation must reject a window silently disappearing from the selected state")
+        }
+        let removed = document(track: .null, window: .null)
+        let accepted = NativeEditorMerge.documents(base: base, local: removed, remote: base,
+            baseSong: nil, remoteSong: nil)
+        guard case .resolved(let merged) = accepted else { return XCTFail("canonical explicit removal must merge") }
+        XCTAssertNil(merged.music)
+        XCTAssertEqual(merged.snapshot(for: .music), .object(["music_track_id": .null, "music_window": .null]))
+    }
+
     func testExplicitEmptyAndRemoteUnknownSectionArePreserved() {
         let base = state(["text_elements": .array([.object(["id": .string("a")])]), "future": .string("old")])
         var local = base, remote = base
