@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.53.0] - 2026-11-07
+
+### Changed
+- fix(api): get main's API suite green (Turkish fold guard exemption, brief digest re-freeze) (#2178) <!-- release-pr: 2178 -->
+
 ## [0.88.52.0] - 2026-11-07
 
 ### Changed
