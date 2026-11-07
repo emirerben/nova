@@ -24,6 +24,7 @@ struct BrandPreviewHost: View {
                 ))))
             case "consent": AIConsentView(accept: {}, decline: {})
             case "account": NavigationStack { AccountView() }
+            case "ai-chips": KriaDesignGallery(page: .aiChips)
             case "gallery": NavigationStack { GalleryView() }
             case "gallery-posters":
                 // Drive the real poster component without network timing, so

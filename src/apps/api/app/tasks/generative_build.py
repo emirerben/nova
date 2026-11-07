@@ -9855,6 +9855,7 @@ def _run_phone_subtitled_job(
             cut_plan: CutPlan | None = None
             speech_cleanup_outcome_context: dict[str, Any] | None = None
             tight_pauses_report: dict[str, Any] | None = None
+            long_pauses_report: dict[str, Any] | None = None
             if cleanup_required:
                 try:
                     speech_cleanup_snapshot = hydrate_job_speech_cleanup_snapshot(
@@ -9889,6 +9890,16 @@ def _run_phone_subtitled_job(
                         clip_path=clip_path,
                         duration_s=float(probe.duration_s),
                     )
+                    if tight_pauses_report is None:
+                        # Emir's camera take: the cleanup default also cuts pauses the word
+                        # stamps swallow (>= 0.6 s). Never when the creator asked for tight.
+                        cut_plan, long_pauses_report = _phone_long_pause_cut(
+                            snapshot,
+                            cut_plan,
+                            speech_cleanup_snapshot.source_words(),
+                            clip_path=clip_path,
+                            duration_s=float(probe.duration_s),
+                        )
                     if cut_plan is not consented_plan:
                         # The public receipt reads only these two counts: report what was cut.
                         speech_cleanup_outcome_context["output_removal_count"] = (
@@ -12290,6 +12301,8 @@ def _run_phone_subtitled_job(
             )
         if tight_pauses_report is not None:
             new_entry["tight_pauses"] = tight_pauses_report
+        if long_pauses_report is not None:
+            new_entry["long_pauses"] = long_pauses_report
         if cut_plan is not None and not opening_cut_only:
             # The source `_speech_cleanup_outcome_context` the device-export completion route
             # (`app.routes.device_render._device_speech_cleanup_outcome`) reads to publish the
@@ -12691,6 +12704,62 @@ def _phone_tight_pause_cut(
         }
     try:
         record_pipeline_event("phone", "tight_pauses", receipt)
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return new_plan, receipt
+
+
+def _phone_long_pause_cut(
+    snapshot: dict,
+    cut_plan: CutPlan,
+    words: Sequence[Any],
+    *,
+    clip_path: str,
+    duration_s: float,
+) -> tuple[CutPlan, dict[str, Any] | None]:
+    """Cut pauses of ``MAX_PAUSE_S`` or more that whisper's contiguous word stamps hide.
+
+    The cleanup default for a consented single-clip phone Talking render, behind
+    ``SPEECH_CLEANUP_LONG_PAUSES_ENABLED``. Same cutter and protections as tight pauses, but
+    only Kria silence spans of 0.6 s or more are cut, and the receipt lands under
+    ``variant["long_pauses"]`` (never ``tight_pauses``, which means the creator asked). Flag off,
+    or a brief that asks for tight pauses (that path owns them): ``(cut_plan, None)`` with the
+    SAME plan object. Never raises: a failure keeps the consented plan."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.tight_pause_ask import brief_tight_pauses  # noqa: PLC0415
+    from app.pipeline.silence_cut import MAX_PAUSE_S  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    if not settings.speech_cleanup_long_pauses_enabled:
+        return cut_plan, None
+    raw_binding = snapshot.get("creator_brief_binding")
+    if raw_binding:
+        try:
+            if brief_tight_pauses(BriefBinding.model_validate(raw_binding).resolve()):
+                return cut_plan, None
+        except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no tight ask"
+            log.warning("phone_long_pauses.binding_unreadable", error=str(exc)[:200])
+    try:
+        from app.pipeline.tight_pause_cut import apply_tight_pauses  # noqa: PLC0415
+
+        new_plan, report = apply_tight_pauses(
+            cut_plan, clip_path, list(words), duration_s, min_pause_s=MAX_PAUSE_S
+        )
+        receipt = report.to_variant()
+    except Exception as exc:  # noqa: BLE001 - the consented plan stands
+        log.warning("phone_long_pauses.failed", error=str(exc)[:200])
+        new_plan = cut_plan
+        receipt = {
+            "version": 1,
+            "mode": "long",
+            "status": "unavailable",
+            "limit_s": MAX_PAUSE_S,
+            "added_cuts": 0,
+            "added_removed_ms": 0,
+            "reason": "failed",
+        }
+    try:
+        record_pipeline_event("phone", "long_pauses", receipt)
     except Exception:  # noqa: BLE001 - observability only
         pass
     return new_plan, receipt

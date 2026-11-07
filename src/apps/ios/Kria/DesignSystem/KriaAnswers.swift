@@ -14,11 +14,14 @@ struct KriaAnswerChip: View {
     var caption: String?
     var state: KriaAnswerState = .idle
     var typeMyOwn = false
+    /// KRI-1273: an AI suggestion (glass with a turning light) instead of the gray answer chip.
+    var isSuggestion = false
+    var isLead = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) { content }
-            .buttonStyle(KriaAnswerChipStyle(state: state))
+            .buttonStyle(KriaAnswerChipStyle(state: state, isSuggestion: isSuggestion, isLead: isLead))
             .disabled(state == .sending)
             .accessibilityLabel(accessibilityTitle)
             .accessibilityAddTraits(state == .selected ? .isSelected : [])
@@ -61,19 +64,26 @@ struct KriaAnswerChip: View {
 
 private struct KriaAnswerChipStyle: ButtonStyle {
     let state: KriaAnswerState
+    let isSuggestion: Bool
+    let isLead: Bool
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .padding(.horizontal, 18).padding(.vertical, 8)
             .frame(minHeight: 44)
-            .background(fill(pressed: configuration.isPressed), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .background { background(pressed: configuration.isPressed) }
             .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             .opacity(isEnabled || state == .sending ? 1 : 0.4)
     }
 
-    private func fill(pressed: Bool) -> Color {
-        state == .selected ? KriaColor.ink : (pressed ? KriaColor.fillPressed : KriaColor.fill)
+    @ViewBuilder private func background(pressed: Bool) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        if isSuggestion, state != .selected {
+            KriaAIChipBackground(isLead: isLead, pressed: pressed)
+        } else {
+            shape.fill(state == .selected ? KriaColor.ink : (pressed ? KriaColor.fillPressed : KriaColor.fill))
+        }
     }
 }
 
