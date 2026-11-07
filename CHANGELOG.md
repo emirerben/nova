@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.68.0] - 2026-11-07
+
+### Changed
+- refactor(suggestions): one commit_readiness composition for serve and tap (KRI-1256) (#2176) <!-- release-pr: 2176 -->
+
 ## [0.88.67.0] - 2026-11-07
 
 ### Changed
