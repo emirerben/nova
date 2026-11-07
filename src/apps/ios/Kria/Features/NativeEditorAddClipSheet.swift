@@ -51,7 +51,18 @@ struct NativeEditorAddClipSheet: View {
             } else {
                 KriaSourceRow(options: [
                     model.localAccountID == nil ? nil : .record(caption: "Film now", identifier: "native-editor-add-clip-record", isEnabled: !session.isAddingClip) { showsCamera = true },
-                    .upload(caption: "Use a photo or video", identifier: "native-editor-add-clip-upload", isEnabled: !session.isAddingClip) { choosingSource = true }
+                    .upload(caption: "Use a photo or video", identifier: "native-editor-add-clip-upload", isEnabled: !session.isAddingClip) {
+                        #if DEBUG
+                        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-import"), let replacingSlotID {
+                            guard let url = Bundle.main.url(forResource: "istanbul", withExtension: "mp4") else { return }
+                            dismiss()
+                            // Substitute only the picker result. Production intake creates the placement.
+                            Task { await session.addClip(fileURL: url, replacingSlotID: replacingSlotID) }
+                            return
+                        }
+                        #endif
+                        choosingSource = true
+                    }
                 ].compactMap { $0 })
             }
             // Normally invisible: the sheet closes as soon as a file is chosen. Kept for the moment

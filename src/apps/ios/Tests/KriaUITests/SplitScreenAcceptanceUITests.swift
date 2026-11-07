@@ -62,11 +62,102 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
                        "Seeking across the boundary must not change persisted media or layout")
     }
 
-    private func launch(reset: Bool) -> XCUIApplication {
+    // Failure modes: canvas layers become panel-local; seek mutates timing/ownership;
+    // preview serves the old side of the cut; Save/reopen drops a layer definition.
+    // Known input colors/positions are the pixel oracle, not the compiler's own output.
+    func testGlobalLayersStayOnCanvasWhileScrubbingAcrossSplitBoundary() throws {
+        let app = launch(reset: true, globalLayers: true)
+        XCTAssertTrue(clip(1, in: app).waitForExistence(timeout: 30))
+        clip(1, in: app).tap()
+        app.buttons["native-editor-adjust"].tap()
+        reveal(app.buttons["native-editor-split-create-2"], in: app).tap()
+        app.buttons["native-editor-inspector-done"].tap()
+        let baseline = try sections(app)
+        try checkGlobalBoundary(app, baseline: baseline)
+        let save = app.buttons["native-editor-save"]
+        XCTAssertTrue(save.isEnabled)
+        save.tap()
+        expectation(for: NSPredicate(format: "label == %@ AND isEnabled == false", "Saved"), evaluatedWith: save)
+        waitForExpectations(timeout: 10)
+        app.terminate()
+        let reopened = launch(reset: false, globalLayers: true)
+        XCTAssertTrue(clip(1, in: reopened).waitForExistence(timeout: 30))
+        let persisted = try sections(reopened)
+        for key in ["timeline_slots", "split_screen_sections", "text_elements", "visual_blocks", "drawings"] {
+            XCTAssertEqual(try canonical(baseline[key]), try canonical(persisted[key]), key)
+        }
+        try checkGlobalBoundary(reopened, baseline: persisted)
+        XCTAssertFalse(reopened.buttons["native-editor-save"].isEnabled)
+    }
+
+    private func checkGlobalBoundary(_ app: XCUIApplication, baseline: [String: Any]) throws {
+        selectClip(3, in: app) // Serial full-screen clip starts at 4 seconds.
+        let serial = clip(3, in: app)
+        let pixelsPerSecond = serial.frame.width / 2
+        let timeline = app.descendants(matching: .any)["native-editor-timeline-content"].firstMatch
+        func scrub(_ seconds: Double) {
+            // Short ruler drag exercises the real scroll/scrub path, never a DEBUG seek setter.
+            let start = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.03))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(
+                CGVector(dx: -seconds * pixelsPerSecond, dy: 0)), withVelocity: 100, thenHoldForDuration: 0.2)
+        }
+        func time() throws -> Double {
+            let raw = try XCTUnwrap(app.descendants(matching: .any)["native-editor-current-time"].firstMatch.value as? String)
+            let parts = raw.split(separator: ":").compactMap { Double($0) }
+            XCTAssertEqual(parts.count, 2)
+            return (parts.first ?? 0) * 60 + (parts.last ?? 0)
+        }
+        scrub(-0.5)
+        XCTAssertLessThan(try time(), 4)
+        assertGlobalPixels(app, redBackground: true)
+        attach(app, name: "Global layers before split boundary")
+        scrub(1)
+        XCTAssertGreaterThan(try time(), 4)
+        XCTAssertLessThan(try time(), 6)
+        assertGlobalPixels(app, redBackground: false)
+        attach(app, name: "Global layers after split boundary")
+        XCTAssertEqual(try canonical(baseline), try canonical(sections(app)),
+                       "Seeking must leave the complete document unchanged")
+    }
+
+    private func assertGlobalPixels(_ app: XCUIApplication, redBackground: Bool) {
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        let predicate = NSPredicate { _, _ in
+            guard let image = app.screenshot().image.cgImage else { return false }
+            let frame = preview.frame
+            let scale = CGFloat(image.width) / app.frame.width
+            func count(_ box: CGRect, matching: (UInt8, UInt8, UInt8) -> Bool) -> Int {
+                let rect = CGRect(x: (frame.minX + box.minX * frame.width) * scale,
+                    y: (frame.minY + box.minY * frame.height) * scale,
+                    width: box.width * frame.width * scale, height: box.height * frame.height * scale)
+                guard let crop = image.cropping(to: rect) else { return 0 }
+                var bytes = [UInt8](repeating: 0, count: crop.width * crop.height * 4)
+                guard let context = CGContext(data: &bytes, width: crop.width, height: crop.height,
+                    bitsPerComponent: 8, bytesPerRow: crop.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return 0 }
+                context.draw(crop, in: CGRect(x: 0, y: 0, width: crop.width, height: crop.height))
+                return stride(from: 0, to: bytes.count, by: 4).filter {
+                    matching(bytes[$0], bytes[$0 + 1], bytes[$0 + 2])
+                }.count
+            }
+            let green = count(CGRect(x: 0.15, y: 0.47, width: 0.1, height: 0.06)) { $0 < 50 && $1 > 200 && $2 < 50 }
+            let magenta = count(CGRect(x: 0.73, y: 0.48, width: 0.14, height: 0.04)) { $0 > 200 && $1 < 50 && $2 > 200 }
+            let text = count(CGRect(x: 0.25, y: 0.15, width: 0.5, height: 0.1)) { $0 > 220 && $1 > 220 && $2 > 220 }
+            let background = count(CGRect(x: 0.45, y: 0.65, width: 0.1, height: 0.05)) {
+                redBackground ? ($0 > 200 && $1 < 50 && $2 < 50) : ($0 < 50 && $1 < 50 && $2 > 200)
+            }
+            return green > 30 && magenta > 30 && text > 30 && background > 30
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: 15), .completed,
+                       "Global text, green overlay and magenta drawing keep independently authored canvas positions")
+    }
+
+    private func launch(reset: Bool, globalLayers: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-split-screen",
             "-ui-testing-editor-split-persistence", "-ui-testing-editor-document-snapshot",
             "-ui-testing-editor-live-preview", "-ui-testing-editor-color-cuts"]
+        if globalLayers { app.launchArguments.append("-ui-testing-editor-split-global-layers") }
         if reset { app.launchArguments.append("-ui-testing-editor-split-persistence-reset") }
         app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
         app.launch()

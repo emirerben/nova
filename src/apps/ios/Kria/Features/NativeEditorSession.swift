@@ -3400,8 +3400,15 @@ struct NativeEditorTemporaryVideo: Sendable {
             let (fifthAsset, fifthOriginal) = try await original(fifthURL, mediaID: "gameday-istanbul-source-4")
             var clips: [JSONValue] = []
             for index in 0...4 {
-                let mediaID = index == 4 ? "gameday-istanbul-source-4" : "gameday-source-\(index)"
-                try store.bind(mediaID: mediaID, original: index == 4 ? fifthAsset : asset)
+                let mediaID = index == 4
+                    ? (ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-import")
+                       ? NativeEditorUITestCommitTransport.splitImportMediaID : "gameday-istanbul-source-4")
+                    : "gameday-source-\(index)"
+                // The real enqueue path must own the imported source binding. Prebinding
+                // this ID would conflict with its newly imported asset UUID.
+                if index != 4 || !ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-import") {
+                    try store.bind(mediaID: mediaID, original: index == 4 ? fifthAsset : asset)
+                }
                 clips.append(.object(["clip_index": .number(Double(index)), "native_source": .object([
                     "media_id": .string(mediaID), "original": index == 4 ? fifthOriginal : originalValue, "local_required": .bool(true)])]))
             }
@@ -3417,7 +3424,11 @@ struct NativeEditorTemporaryVideo: Sendable {
             UserDefaults.standard.set(try JSONEncoder().encode(recipeStatus), forKey: NativeEditorUITestFixtures.gamedayRecipeKey)
             cleanDocument = document
             gamedayFixtureSaved = UserDefaults.standard.data(forKey: NativeEditorUITestFixtures.gamedaySavedKey) != nil
-            mediaUploads = BackgroundUploadCoordinator(api: api!, defaultsKey: "gameday-fixture-placement", sessionConfiguration: .ephemeral)
+            mediaUploads = BackgroundUploadCoordinator(api: api!,
+                defaultsKey: ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-import")
+                    ? NativeEditorUITestCommitTransport.splitImportRecoveryKey : "gameday-fixture-placement",
+                sessionConfiguration: ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-import")
+                    ? NativeEditorUITestCommitTransport.uploadConfiguration() : .ephemeral)
             if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays"),
                let api, let itemID, let sourceResolver, !document.visualBlocks.isEmpty {
                 let library = try await api.visuals(itemID: itemID)
@@ -3534,6 +3545,19 @@ struct NativeEditorTemporaryVideo: Sendable {
                 deviceNarrationResolutionGeneration = narrationOwnerGeneration(document)
                 // Resolve the admitted photo through the ordinary verified disk-cache path on selection.
                 resolvedSources?.removeValue(forKey: 1)
+            }
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-global-layers") {
+                let greenURL = FileManager.default.temporaryDirectory.appendingPathComponent("boundary-green.png")
+                let image = UIGraphicsImageRenderer(size: CGSize(width: 96, height: 96)).image { context in
+                    UIColor.green.setFill()
+                    context.fill(CGRect(x: 0, y: 0, width: 96, height: 96))
+                }
+                try image.pngData()!.write(to: greenURL)
+                let greenFingerprint = try SHA256Fingerprinter().fingerprint(file: greenURL)
+                authoredVisualSources["visual:boundary-green:boundary-green"] = ResolvedEditorSource(
+                    clipIndex: -1, mediaID: "boundary-green",
+                    asset: MediaAsset(id: "boundary-green", relativePath: greenURL.lastPathComponent,
+                        fingerprint: greenFingerprint), url: greenURL)
             }
             if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-caption-visuals") {
                 let source = ResolvedEditorSource(clipIndex: -1, mediaID: "fixture", asset: MediaAsset(id: "fixture", relativePath: url.lastPathComponent, fingerprint: fingerprint, duration: 4), url: url)

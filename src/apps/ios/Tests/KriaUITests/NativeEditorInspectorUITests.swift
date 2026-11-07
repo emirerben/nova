@@ -49,12 +49,17 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(control.isEnabled)
     }
 
-    private func launchTwoPanelAcceptance() throws -> (XCUIApplication, SplitTimelineSnapshot) {
+    private func launchTwoPanelAcceptance(extraArguments: [String] = []) throws -> (XCUIApplication, SplitTimelineSnapshot) {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-split-screen",
-            "-ui-testing-editor-live-preview", "-ui-testing-editor-document-snapshot"]
+            "-ui-testing-editor-live-preview", "-ui-testing-editor-document-snapshot"] + extraArguments
         app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
         app.launch()
+        if extraArguments.contains("-ui-testing-editor-split-import") {
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "current=true"),
+                object: app.staticTexts["gameday-fixture-state"])
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 30), .completed)
+        }
         let first = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
         XCTAssertTrue(first.waitForExistence(timeout: 30))
         first.tap()
@@ -71,6 +76,187 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(snapshot.rows[0]["split_panel_index"] as? Int, 0)
         XCTAssertEqual(snapshot.rows[1]["split_panel_index"] as? Int, 1)
         return (app, snapshot)
+    }
+
+    private func splitTimelineZoom(_ app: XCUIApplication) throws -> Double {
+        let timeline = app.descendants(matching: .any)["native-editor-timeline-content"].firstMatch
+        let value = try XCTUnwrap(timeline.value as? String)
+        let percentage = try XCTUnwrap(value.components(separatedBy: "Zoom ").last?.components(separatedBy: " percent").first)
+        return try XCTUnwrap(Double(percentage))
+    }
+
+    func testSplitSectionLongPressDragMovesEveryPanelAndUndoesOnce() throws {
+        let (app, original) = try launchTwoPanelAcceptance()
+        selectTimelineClip(2, in: app)
+        let member = app.descendants(matching: .any)["native-editor-clip-2"].firstMatch
+        let zoomBefore = try splitTimelineZoom(app)
+        member.pinch(withScale: 0.5, velocity: -1)
+        XCTAssertLessThan(try splitTimelineZoom(app), zoomBefore)
+        let zoomed = try splitSnapshot(app)
+        XCTAssertEqual(NSArray(array: zoomed.rows), NSArray(array: original.rows), "Expose the drag without editing footage")
+        XCTAssertEqual(NSArray(array: zoomed.sections), NSArray(array: original.sections))
+        selectTimelineClip(2, in: app)
+        let tail = app.descendants(matching: .any)["native-editor-clip-3"].firstMatch
+        XCTAssertTrue(tail.waitForExistence(timeout: 3))
+        let targetX = tail.frame.midX + tail.frame.width * 0.25
+        XCTAssertLessThan(targetX, app.frame.maxX - 16, "The serial neighbor must be onscreen before the actual drag")
+        XCTAssertGreaterThan(targetX, member.frame.midX + member.frame.width * 0.5)
+        let start = member.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.6, thenDragTo: start.withOffset(CGVector(dx: targetX - member.frame.midX, dy: 0)),
+            withVelocity: 100, thenHoldForDuration: 0.2)
+        let moved = try splitSnapshot(app)
+        XCTAssertEqual(moved.rows.compactMap { $0["slot_id"] as? String },
+            [original.rows[2], original.rows[0], original.rows[1]].compactMap { $0["slot_id"] as? String },
+            "Dragging any member must move the entire section as one unit")
+        try assertSplitPeers(original, unchangedIn: moved, excluding: [])
+        selectTimelineClip(3, in: app)
+        let movedMember = app.descendants(matching: .any)["native-editor-clip-3"].firstMatch
+        let leadingNeighbor = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        XCTAssertTrue(leadingNeighbor.waitForExistence(timeout: 3))
+        let reverseTargetX = leadingNeighbor.frame.midX - leadingNeighbor.frame.width * 0.25
+        XCTAssertGreaterThan(reverseTargetX, app.frame.minX + 16)
+        let reverseStart = movedMember.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        reverseStart.press(forDuration: 0.6, thenDragTo: reverseStart.withOffset(
+            CGVector(dx: reverseTargetX - movedMember.frame.midX, dy: 0)),
+            withVelocity: 100, thenHoldForDuration: 0.2)
+        let reversed = try splitSnapshot(app)
+        XCTAssertEqual(NSArray(array: reversed.rows), NSArray(array: original.rows),
+            "A long section must also cross a shorter neighbor in the reverse direction")
+        try assertSplitPeers(original, unchangedIn: reversed, excluding: [])
+        for expected in [moved, original] {
+            let undo = app.buttons["native-editor-undo"]
+            XCTAssertTrue(undo.isEnabled)
+            undo.tap()
+            let restored = try splitSnapshot(app)
+            XCTAssertEqual(NSArray(array: restored.rows), NSArray(array: expected.rows), "Each section drag is one undo step")
+            XCTAssertEqual(NSArray(array: restored.sections), NSArray(array: expected.sections))
+            XCTAssertEqual(NSDictionary(dictionary: restored.mix), NSDictionary(dictionary: expected.mix))
+        }
+    }
+
+    func testSplitPanelHandleExtensionClampsAtSectionAndMinimumWithoutMovingPeers() throws {
+        let (app, original) = try launchTwoPanelAcceptance()
+        let editedID = try XCTUnwrap(original.rows[0]["slot_id"] as? String)
+        XCTAssertEqual(original.rows[0]["duration_s"] as? Double, 4)
+        XCTAssertEqual(original.rows[0]["source_duration_s"] as? Double, 20)
+        selectTimelineClip(1, in: app)
+        let member = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        let zoomBefore = try splitTimelineZoom(app)
+        member.pinch(withScale: 0.5, velocity: -1)
+        XCTAssertLessThan(try splitTimelineZoom(app), zoomBefore)
+        let zoomed = try splitSnapshot(app)
+        XCTAssertEqual(NSArray(array: zoomed.rows), NSArray(array: original.rows), "Zoom must leave the source clock unchanged")
+        XCTAssertEqual(NSArray(array: zoomed.sections), NSArray(array: original.sections))
+        selectTimelineClip(1, in: app)
+        let originalWidth = member.frame.width
+        let trailing = app.descendants(matching: .any)["native-editor-trim-trailing"].firstMatch
+        XCTAssertTrue(trailing.waitForExistence(timeout: 3))
+        XCTAssertTrue(trailing.isHittable)
+        dragHandle(trailing, by: -originalWidth * 0.65)
+        let shortened = try splitSnapshot(app)
+        let shortRow = try shortened.row(editedID)
+        XCTAssertGreaterThan(try XCTUnwrap(shortRow["duration_s"] as? Double), 0.1)
+        XCTAssertLessThan(try XCTUnwrap(shortRow["duration_s"] as? Double), 2)
+        XCTAssertEqual(shortRow["in_s"] as? Double, original.rows[0]["in_s"] as? Double)
+        try assertSplitPeers(original, unchangedIn: shortened, excluding: [editedID])
+
+        // Source has20s, but this panel can extend only to its4s section boundary.
+        selectTimelineClip(1, in: app)
+        XCTAssertTrue(trailing.isHittable)
+        let extensionDistance = originalWidth
+        XCTAssertLessThan(trailing.frame.midX + extensionDistance, app.frame.maxX - 12)
+        dragHandle(trailing, by: extensionDistance)
+        let extended = try splitSnapshot(app)
+        XCTAssertEqual(NSDictionary(dictionary: try extended.row(editedID)), NSDictionary(dictionary: original.rows[0]),
+            "Overshooting extension clamps exactly to the section while preserving every source/edit field")
+        try assertSplitPeers(original, unchangedIn: extended, excluding: [editedID])
+
+        selectTimelineClip(1, in: app)
+        XCTAssertTrue(trailing.isHittable)
+        XCTAssertGreaterThan(trailing.frame.midX - originalWidth * 1.1, app.frame.minX + 12)
+        dragHandle(trailing, by: -originalWidth * 1.1)
+        let minimum = try splitSnapshot(app)
+        let minimumRow = try minimum.row(editedID)
+        XCTAssertEqual(try XCTUnwrap(minimumRow["duration_s"] as? Double), 0.1, accuracy: 0.001)
+        var expectedMinimum = original.rows[0]
+        expectedMinimum["duration_s"] = minimumRow["duration_s"]
+        XCTAssertEqual(NSDictionary(dictionary: minimumRow), NSDictionary(dictionary: expectedMinimum),
+            "Minimum clamp changes only panel duration")
+        try assertSplitPeers(original, unchangedIn: minimum, excluding: [editedID])
+        for expected in [extended, shortened, original] {
+            let undo = app.buttons["native-editor-undo"]
+            XCTAssertTrue(undo.isEnabled)
+            undo.tap()
+            let restored = try splitSnapshot(app)
+            XCTAssertEqual(NSArray(array: restored.rows), NSArray(array: expected.rows), "Each handle gesture owns one undo step")
+            XCTAssertEqual(NSArray(array: restored.sections), NSArray(array: expected.sections))
+            XCTAssertEqual(NSDictionary(dictionary: restored.mix), NSDictionary(dictionary: expected.mix))
+        }
+    }
+
+    func testDelayedPanelImportKeepsCapturedOwnerUndoAndReopen() throws {
+        let flags = ["-ui-testing-editor-gameday-add", "-ui-testing-editor-split-import",
+                     "-ui-testing-editor-split-persistence", "-ui-testing-editor-split-persistence-reset"]
+        let (app, before) = try launchTwoPanelAcceptance(extraArguments: flags)
+        let targetID = try XCTUnwrap(before.rows[1]["slot_id"] as? String)
+        selectTimelineClip(2, in: app)
+        app.buttons["native-editor-adjust"].tap()
+        let importButton = app.buttons["native-editor-split-import"]
+        revealSplitControl(importButton, in: app)
+        importButton.tap()
+        let upload = app.buttons["native-editor-add-clip-upload"]
+        XCTAssertTrue(upload.waitForExistence(timeout: 5))
+        upload.tap()
+        XCTAssertTrue(upload.waitForNonExistence(timeout: 5))
+        app.buttons["native-editor-inspector-done"].tap()
+        selectTimelineClip(1, in: app)
+        let pending = try splitSnapshot(app)
+        XCTAssertEqual(NSArray(array: pending.rows), NSArray(array: before.rows), "Selection must change before registration completes")
+        try assertSplitPeers(before, unchangedIn: pending, excluding: [])
+        let release = app.buttons["split-import-release"]
+        let registered = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: release)
+        XCTAssertEqual(XCTWaiter.wait(for: [registered], timeout: 90), .completed, "Real proxy preparation, reservation and PUT must reach registration")
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-clip-1"].firstMatch.isSelected)
+        let stillPending = try splitSnapshot(app)
+        XCTAssertEqual(NSArray(array: stillPending.rows), NSArray(array: before.rows))
+        release.tap()
+        let probe = app.descendants(matching: .any)["native-editor-test-document"].firstMatch
+        let completed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", "editor_source_placement_id"), object: probe)
+        XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 40), .completed)
+        let imported = try splitSnapshot(app)
+        XCTAssertEqual(imported.rows.count, before.rows.count, "Panel import must replace rather than append")
+        let target = try imported.row(targetID)
+        XCTAssertEqual(target["clip_index"] as? Int, 4)
+        XCTAssertFalse(try XCTUnwrap(target["editor_source_placement_id"] as? String).isEmpty)
+        for key in ["slot_id", "split_section_id", "split_panel_index", "split_offset_s", "duration_s"] {
+            XCTAssertEqual(NSDictionary(dictionary: [key: try XCTUnwrap(target[key])]),
+                           NSDictionary(dictionary: [key: try XCTUnwrap(before.rows[1][key])]))
+        }
+        try assertSplitPeers(before, unchangedIn: imported, excluding: [targetID])
+        app.buttons["native-editor-undo"].tap()
+        let undone = try splitSnapshot(app)
+        XCTAssertEqual(NSArray(array: undone.rows), NSArray(array: before.rows))
+        try assertSplitPeers(before, unchangedIn: undone, excluding: [])
+        app.buttons["native-editor-redo"].tap()
+        let redone = try splitSnapshot(app)
+        XCTAssertEqual(NSArray(array: redone.rows), NSArray(array: imported.rows))
+        try assertSplitPeers(imported, unchangedIn: redone, excluding: [])
+        let save = app.buttons["native-editor-save"]
+        XCTAssertTrue(save.isEnabled)
+        save.tap()
+        let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@ AND isEnabled == false", "Saved"), object: save)
+        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 15), .completed)
+        app.terminate()
+        app.launchArguments.removeAll { $0 == "-ui-testing-editor-split-persistence-reset" }
+        app.launch()
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "current=true"),
+            object: app.staticTexts["gameday-fixture-state"])
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 30), .completed)
+        let reopened = try splitSnapshot(app)
+        XCTAssertEqual(NSArray(array: reopened.rows), NSArray(array: imported.rows))
+        try assertSplitPeers(imported, unchangedIn: reopened, excluding: [])
+        XCTAssertFalse(app.buttons["native-editor-save"].isEnabled)
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-preview-fallback"].exists)
     }
 
     func testSplitPanelTrimCutDuplicateAndUndoKeepPeersExact() throws {

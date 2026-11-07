@@ -2784,16 +2784,16 @@ struct NativeMiniStrip: View {
 
     // MARK: - Clip reorder (long press, then drag)
 
-    /// The lifted block's raw travel is clamped so the block stays inside the video; the returned centre time is
-    /// the auto-scroll pin marker (it stops changing once the block meets either end).
+    /// Keep the lifted block inside the video, but choose its destination from the requested centre.
+    /// The scroll pin follows that centre to the timeline edge so unequal widths cannot stop it early.
     private func applyClipReorder(raw: TimeInterval) -> TimeInterval? {
         guard var drag = clipReorder, drag.windows.indices.contains(drag.from) else { return nil }
         let origin = drag.windows[drag.from]
         let lower = (drag.windows.first?.start ?? origin.start) - origin.start
         let upper = (drag.windows.last?.end ?? origin.end) - origin.end
         drag.travel = min(max(raw, lower), max(lower, upper))
-        let center = (origin.start + origin.end) / 2 + drag.travel
-        let target = NativeEditorInteraction.clipReorderTarget(windows: drag.windows, from: drag.from, liftedCenter: center)
+        let requestedCenter = (origin.start + origin.end) / 2 + raw
+        let target = NativeEditorInteraction.clipReorderTarget(windows: drag.windows, from: drag.from, liftedCenter: requestedCenter)
         if target != drag.target {
             drag.target = target
             if !session.document.splitScreenSections.isEmpty, let targetID = drag.units[target].clipIDs.first {
@@ -2807,7 +2807,7 @@ struct NativeMiniStrip: View {
             reorderTickHaptic.selectionChanged()
         }
         clipReorder = drag
-        return center
+        return min(max(requestedCenter, drag.windows.first?.start ?? origin.start), drag.windows.last?.end ?? origin.end)
     }
 
     private func beginClipReorder(_ clip: EditorClip, index: Int, viewportGlobalRange: ClosedRange<CGFloat>) {
