@@ -102,7 +102,7 @@ def spoken_word_occurrences(
     stream = _token_stream(_word_dicts(words))
     heard: dict[float, tuple[str, float, float]] = {}
     for trigger in triggers:
-        for start, end in _match_trigger(stream, trigger, None, "every").windows:
+        for start, end in _match_trigger(stream, trigger, None, "every", joined=True).windows:
             heard.setdefault(round(float(start), 3), (trigger, float(start), float(end)))
     return [heard[key] for key in sorted(heard)]
 
@@ -121,7 +121,7 @@ def find_spoken_word(
     stream = _token_stream(_word_dicts(words))
     heard: tuple[str, float, float] | None = None
     for trigger in triggers:
-        windows = _match_trigger(stream, trigger, None, "first").windows
+        windows = _match_trigger(stream, trigger, None, "first", joined=True).windows
         if windows and (heard is None or windows[0][0] < heard[1]):
             heard = (trigger, float(windows[0][0]), float(windows[0][1]))
     return heard
@@ -268,7 +268,7 @@ def find_spoken_word_matches(
     )
     heard: list[tuple[str, float, float]] = []
     for trigger in triggers:
-        windows = _match_trigger(stream, _long_form(trigger), None, "every").windows
+        windows = _match_trigger(stream, _long_form(trigger), None, "every", joined=True).windows
         heard.extend((trigger, float(start_s), float(end_s)) for start_s, end_s in windows)
     # Different trigger spellings may resolve to the same spoken interval.  It
     # is one moment, not an ambiguous pair of moments.

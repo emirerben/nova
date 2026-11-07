@@ -335,7 +335,9 @@ def _named_phrase_windows(words: list[dict], phrase: str) -> list[_Heard]:
     return out
 
 
-def _phrase_windows(stream: list[_Token], words: list[dict] | None, phrase: str) -> list[_Heard]:
+def _phrase_windows(
+    stream: list[_Token], words: list[dict] | None, phrase: str, *, joined: bool = False
+) -> list[_Heard]:
     """Every spoken occurrence of ``phrase``, in time order: the exact folded-token matches;
     only when there are none, the creator-named phrase matcher's hearings (KRI-961, when the
     caller passes the raw ``words``). A phrase heard exactly is never also placed on a
@@ -346,10 +348,12 @@ def _phrase_windows(stream: list[_Token], words: list[dict] | None, phrase: str)
     starts = _find_all([t.text for t in stream], tokens)
     if starts:
         return [(stream[i].start_s, stream[i + len(tokens) - 1].end_s, None) for i in starts]
-    # KRI-1281: "SpecKit", "Spec-kit" and "Spec Kit" are one word spelled three ways.
-    joined = _joined_spelling_windows(stream, tokens)
-    if joined or words is None:
-        return joined
+    # KRI-1281: for a creator's on-screen text, "SpecKit", "Spec-kit" and "Spec Kit" are one
+    # word spelled three ways. Opt-in: the background-follows-talk matcher deliberately keeps
+    # "Mero pe" from hearing "Merope".
+    spaced = _joined_spelling_windows(stream, tokens) if joined else []
+    if spaced or words is None:
+        return spaced
     return _named_phrase_windows(words, phrase)
 
 
@@ -398,6 +402,7 @@ def _match_trigger(
     occurrence: str,
     *,
     words: list[dict] | None = None,
+    joined: bool = False,
 ) -> _MatchResult:
     """Find qualifying spoken occurrences of ``trigger`` in ``stream``.
 
@@ -412,13 +417,13 @@ def _match_trigger(
     (`_named_phrase_windows`). Without it the match stays exact.
     """
 
-    hits = _phrase_windows(stream, words, trigger)
+    hits = _phrase_windows(stream, words, trigger, joined=joined)
     if not hits:
         return _MatchResult(reason="never_heard")
 
     after_end_s: float | None = None
     if after:
-        after_hits = _phrase_windows(stream, words, after)
+        after_hits = _phrase_windows(stream, words, after, joined=joined)
         if not after_hits:
             return _MatchResult(reason="after_not_heard")
         after_end_s = after_hits[0][1]
