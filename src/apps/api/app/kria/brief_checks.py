@@ -14476,7 +14476,32 @@ def reply_from_receipts(
     outcomes: Sequence[Mapping[str, Any]] = (),
     declines_after_summary: bool = False,
 ) -> str:
-    """Compose the creator-facing reply from receipts only.
+    """The creator-facing reply text alone; see ``reply_and_lead_from_receipts``."""
+    return reply_and_lead_from_receipts(
+        brief,
+        receipts,
+        summary=summary,
+        notices=notices,
+        outcomes=outcomes,
+        declines_after_summary=declines_after_summary,
+    )[0]
+
+
+def reply_and_lead_from_receipts(
+    brief: CreativeBrief,
+    receipts: list[RequirementReceipt],
+    *,
+    summary: str | None = None,
+    notices: Sequence[str] = (),
+    outcomes: Sequence[Mapping[str, Any]] = (),
+    declines_after_summary: bool = False,
+) -> tuple[str, str]:
+    """Compose the creator-facing reply from receipts only, and its one-line lead.
+
+    The lead is the one-liner an editor turn gets (`kria.editor_receipts.receipt_lead`), so the
+    chat shows it above the receipt rows instead of repeating them in prose (KRI-1262). It is
+    empty exactly when the model's own summary is kept (every judged ask met and nothing left
+    to look at): that summary is the reply and there is no failure to say twice.
 
     The model's free-text summary is kept only when every judged requirement is
     met; otherwise the reply is exactly what was checked, so it cannot overclaim.
@@ -14514,6 +14539,7 @@ def reply_from_receipts(
     ]
     lines: list[str] = []
     guesses: list[str] = []
+    lead = ""
     # KRI-282: what the render did for each requested group / label / chapter text,
     # read from the finished plan, listed whether or not the brief ledger judged it.
     failed = False
@@ -14558,6 +14584,7 @@ def reply_from_receipts(
         text = "\n".join(part for part in (body, header, "\n".join(look_lines)) if part)
         if notices:
             text += "\n" + " ".join(notices)
+        lead = _reply_lead(judged, outcomes, notices, look_only=not (failed or misses))
     elif failed or misses:
         text = (
             say(
@@ -14568,6 +14595,7 @@ def reply_from_receipts(
         )
         if notices:
             text += "\n" + " ".join(notices)
+        lead = _reply_lead(judged, outcomes, notices)
     else:
         text = "\n".join(part for part in ((summary or "").strip(), body) if part)
     if len(text) > MAX_REPLY_CHARS and judged and not (outcomes or guesses or unchecked):
@@ -14591,7 +14619,68 @@ def reply_from_receipts(
             text = prefix + "\n".join(compact) + suffix + "\n…"
     if len(text) > MAX_REPLY_CHARS:
         text = text[: MAX_REPLY_CHARS - 1].rstrip() + "…"
-    return text
+    return text, lead
+
+
+def outcome_lead(*, total: int, failed: int, completed: int, partial: bool, unchecked: bool) -> str:
+    """The one line that says how a set of asks went, whatever the rows below it hold.
+
+    Shared by an editor turn (`kria.editor_receipts.receipt_lead`) and a draft or render reply
+    (`reply_and_lead_from_receipts`) so the two read the same.
+    """
+    if failed == total:
+        return say(
+            en="I couldn't do that." if total == 1 else "I couldn't do those.",
+            tr="Bunu yapamadım." if total == 1 else "Bunları yapamadım.",
+        )
+    if failed and completed:
+        return say(
+            en=f"I did {completed} of your {total} asks.",
+            tr=f"{total} isteğinden {completed} tanesini yaptım.",
+        )
+    if failed:
+        return say(
+            en="Here’s what changed and what I couldn’t do.",
+            tr="İşte değişenler ve yapamadıklarım.",
+        )
+    if partial:
+        return say(en="Partly done.", tr="Kısmen yapıldı.")
+    if unchecked:
+        return say(en="Here’s what changed.", tr="İşte değişiklikler.")
+    return say(en="Done.", tr="Yapıldı.")
+
+
+def _reply_lead(
+    judged: Sequence[RequirementReceipt],
+    outcomes: Sequence[Mapping[str, Any]],
+    notices: Sequence[str],
+    *,
+    look_only: bool = False,
+) -> str:
+    """The lead of a reply that replaced the model's summary (KRI-1262).
+
+    ``look_only``: nothing failed, and the only open items are asks no checker could judge
+    yet, which the reply lists under "Have a look at these in the video".
+    """
+    rows = [
+        str(row.get("status") or "")
+        for row in outcomes
+        if str(row.get("status") or "") in _LABEL and row.get("name")
+    ]
+    statuses = [r.status for r in judged] + rows
+    failed = statuses.count("not_possible")
+    if look_only:
+        lead = say(en="Have a look at these in the video.", tr="Bunlara videoda bir göz at.")
+    else:
+        lead = outcome_lead(
+            total=len(statuses),
+            failed=failed,
+            completed=statuses.count("met"),
+            partial="partial" in statuses,
+            unchecked=False,
+        )
+    text = " ".join(part for part in (lead, *notices) if part)
+    return text if len(text) <= MAX_REPLY_CHARS else text[: MAX_REPLY_CHARS - 1].rstrip() + "…"
 
 
 __all__ = [
@@ -14619,6 +14708,8 @@ __all__ = [
     "defers_to_narrated_render",
     "defers_to_unified_montage",
     "requirements_to_check_at_draft",
+    "outcome_lead",
+    "reply_and_lead_from_receipts",
     "PlanFacts",
     "build_receipts",
     "check_requirement",
