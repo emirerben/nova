@@ -973,7 +973,8 @@ def _candidates(
             except _fit_errors():
                 continue
             order += 1
-            candidate = _Candidate(swept, height, _in_frame(swept, caption=role == "caption"), order)
+            in_frame = _in_frame(swept, caption=role == "caption")
+            candidate = _Candidate(swept, height, in_frame, order)
             yield candidate
             if not probe and candidate.in_frame:
                 break
