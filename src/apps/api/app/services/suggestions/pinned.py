@@ -40,6 +40,7 @@ from app.services.suggestions import registry
 from app.services.suggestions.context import NO_TARGET, SuggestionContext, Target, snapshot_digest
 from app.services.suggestions.models import (
     Action,
+    AsyncGenerateAction,
     BriefUpdateAction,
     CopyDecisionAction,
     EditorOpsAction,
@@ -85,6 +86,12 @@ TARGET_UNAVAILABLE = "target_unavailable"
 NO_STRATEGY = "no_strategy"
 UNSAVED_EDITS = "unsaved_edits"
 SETTING_REFUSED = "setting_refused"
+# A spending tap (``async_generate``). Not transient: the card leaves the set and a later set may
+# offer it again, because the operation behind a tap is keyed on the card and would only answer
+# the same failure.
+GENERATION_UNAVAILABLE = "generation_unavailable"
+GENERATION_FAILED = "generation_failed"
+BUDGET_UNAVAILABLE = "budget_unavailable"
 # A refusal that says nothing about the card itself: the creator can tap it again later (a render
 # in flight, hand edits not saved yet). It is recorded but never marks the card refused.
 TRANSIENT_REASONS = frozenset({TARGET_UNAVAILABLE, UNSAVED_EDITS})
@@ -912,8 +919,16 @@ def restates_strategy(action: Action) -> bool:
     return isinstance(action, (BriefUpdateAction, ItemSettingAction))
 
 
+def spends(action: Action) -> bool:
+    """A tap that makes paid media and edits nothing: the tap spends, the creator reviews."""
+    return isinstance(action, AsyncGenerateAction)
+
+
 __all__ = [
+    "BUDGET_UNAVAILABLE",
     "COPY_OP_ALLOW",
+    "GENERATION_FAILED",
+    "GENERATION_UNAVAILABLE",
     "PIN_KEY",
     "PINNED_OP_ALLOW",
     "StoredCard",
@@ -940,6 +955,7 @@ __all__ = [
     "restate_base",
     "restate_updates",
     "restates_strategy",
+    "spends",
     "resolve_pin",
     "save_unread",
     "ring_suggestions",

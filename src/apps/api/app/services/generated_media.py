@@ -6,6 +6,7 @@ import hashlib
 import json
 import tempfile
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
@@ -123,6 +124,23 @@ def generated_media_enabled(capability: str) -> bool:
             if capability == "narration"
             else settings.generated_images_enabled and settings.ai_openai_image_budget_usd > 0
         )
+    )
+
+
+def native_generation_client(user_id, native_client, client_protocol) -> bool:
+    return bool(
+        native_client
+        and client_protocol is not None
+        and client_protocol >= settings.kria_minimum_client_protocol
+        and (settings.phone_rendering_for(user_id) or settings.ios_native_device_only_enabled)
+    )
+
+
+def generated_images_available(user_id, client_protocol) -> bool:
+    return bool(
+        native_generation_client(user_id, True, client_protocol)
+        and generated_media_enabled("image")
+        and "visualBlocks" in settings.phone_render_verified_features
     )
 
 
@@ -455,6 +473,55 @@ def execute_generated_media(
         db.commit()
         return operation
     return retry_generated_storage(db, operation.id, owner_id=owner_id, item_id=item_id)
+
+
+@dataclass(frozen=True)
+class CardGeneration:
+    """What one tapped suggestion card made: the operation, or why there is none."""
+
+    state: str
+    operation_id: uuid.UUID | None = None
+    failure_code: str | None = None
+
+
+def generate_image_for_card(*, owner_id, item_id, prompt: str, event_id: uuid.UUID):
+    """One image for a tapped suggestion card. Sync and slow: call it off the event loop.
+
+    ``event_id`` is derived from the card, so a second tap (a retry, a duplicate send) finds the
+    first operation instead of paying again. Never raises: a refusal is a ``failed`` result.
+    """
+    from app.database import sync_session
+
+    body = GeneratedMediaRequest(
+        client_event_id=event_id,
+        capability="image",
+        prompt=prompt,
+        editable_title=prompt[:60],
+    )
+    ctx = RunContext(creator_id=str(owner_id), plan_item_id=str(item_id), request_id=str(event_id))
+    try:
+        with sync_session() as db:
+            operation = execute_generated_media(
+                db, owner_id=owner_id, item_id=item_id, body=body, ctx=ctx
+            )
+            return CardGeneration(operation.state, operation.id, operation.failure_code)
+    except Exception as exc:
+        log.warning("card_generation_failed", item_id=str(item_id), error_class=type(exc).__name__)
+    with sync_session() as db:
+        operation = db.scalar(
+            select(GeneratedMediaOperation).where(
+                GeneratedMediaOperation.user_id == owner_id,
+                GeneratedMediaOperation.plan_item_id == item_id,
+                GeneratedMediaOperation.client_event_id == str(event_id),
+            )
+        )
+    if operation is not None and operation.state != "failed":
+        return CardGeneration(operation.state, operation.id, operation.failure_code)
+    return CardGeneration(
+        "failed",
+        operation.id if operation is not None else None,
+        (operation.failure_code if operation is not None else None) or "generation_failed",
+    )
 
 
 def accept_generated_media(db, operation_id, *, owner_id, item_id, body: GeneratedMediaAccept):

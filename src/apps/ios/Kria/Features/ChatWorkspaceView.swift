@@ -665,6 +665,8 @@ private struct CreationWorkspaceView: View {
     /// AI suggestion blocks: what each card is doing on this phone (sending, handled, stale) and the refresh nudge
     /// that the editor Save and a stale tap give the poll.
     @StateObject private var suggestionLedger = SuggestionCardLedger()
+    /// The image a paid card is making after its tap, found by the id both sides derive (`GeneratedCardEvent`).
+    @StateObject private var generatedCards = GeneratedCardTracker()
 
     init(project: ProjectSummary, openProjects: @escaping () -> Void, openAccount: @escaping () -> Void) {
         self.project = project
@@ -2069,6 +2071,10 @@ private struct CreationWorkspaceView: View {
             if let brief { briefRequirements.merge(brief.requirementsByID) { _, new in new } }
             briefSettled = true
         }
+        .task(id: fullThread?.activePlanItemID) {
+            guard let itemID = fullThread?.activePlanItemID else { return }
+            generatedCards.resume(itemID: itemID, accountID: auth.localStorageIdentity, api: model.api)
+        }
         #if DEBUG
         // KRI-211 fixtures: `1` = one file that couldn't be read; `record` = an upload that failed on
         // the way and still has its record (Retry). Neither may block Send.
@@ -2581,14 +2587,34 @@ private struct CreationWorkspaceView: View {
     /// none (then the chips stay in charge). The same value feeds the ready stage and the editor's Improve sheet.
     private var readyCardsPresentation: SuggestionCardsPresentation? {
         guard SuggestionChipsPolicy.isEnabled(capabilities), suggestionSurface == .ready,
-              suggestionSetKey == suggestionScopeKey,
-              case .cards(let cards) = SuggestionReadyContent.resolve(set: suggestionSet) else { return nil }
+              suggestionSetKey == suggestionScopeKey else { return nil }
+        // A spent paid card leaves the set at once, but its image does not: the row outlives the set it came from.
+        var served: [SuggestionCard] = []
+        if case .cards(let found) = SuggestionReadyContent.resolve(set: suggestionSet) {
+            served = found
+        } else if generatedCards.result == nil {
+            return nil
+        }
         return SuggestionCardsPresentation(
-            cards: suggestionLedger.visible(cards),
+            cards: suggestionLedger.visible(served),
             tap: { sendSuggestionCard($0) }, dismiss: { dismissSuggestionCard($0) },
             refresh: { suggestionLedger.requestRefresh() },
-            sendingID: cards.first { suggestionLedger.phase(of: $0.id) == .sending }?.id
+            sendingID: served.first { suggestionLedger.phase(of: $0.id) == .sending }?.id,
+            generated: generatedCards.result,
+            reviewGenerated: { reviewGeneratedCard() },
+            dismissGenerated: { generatedCards.dismiss() }
         )
+    }
+
+    /// Hands the finished image to the overlay review, the same screen "Add media" uses for an image made there, so the
+    /// creator sees it before it goes anywhere and accepts it in the one place that does that.
+    private func reviewGeneratedCard() {
+        guard let accountID = auth.localStorageIdentity, let itemID = fullThread?.activePlanItemID,
+              let title = generatedCards.result?.title else { return }
+        let subject = (fullThread?.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard generatedCards.stageForReview(prompt: subject.isEmpty ? title : subject, accountID: accountID, itemID: itemID) else { return }
+        generatedCards.dismiss()
+        openAttachments(launch: .generatedOverlays)
     }
 
     /// The chips to draw for one surface; empty unless the chat is on that surface right now.
@@ -2632,6 +2658,10 @@ private struct CreationWorkspaceView: View {
         Task {
             await send(message: card.prompt, suggestion: tap, keepsDraft: true) { _ in
                 suggestionLedger.finish(card, accepted: true)
+                // The tap spends on the server; this only watches for the image it makes.
+                if card.needsSpendConsent, let itemID = fullThread?.activePlanItemID {
+                    generatedCards.begin(card: card, setID: setID, itemID: itemID, accountID: auth.localStorageIdentity, title: card.title, api: model.api)
+                }
             }
             // Nothing reached the server (offline, rejected, blocked): the card is tappable again.
             suggestionLedger.finish(card, accepted: false)

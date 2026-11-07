@@ -573,6 +573,14 @@ def planned_pin_refusal(plan: KriaTurnPlan) -> dict[str, Any] | None:
     return _pin_refusal_signal(record, str(record.get("reason") or ""))
 
 
+def planned_pin_spend(plan: KriaTurnPlan) -> dict[str, Any] | None:
+    """The record a spending tap left on its plan (``outcome: "generated"``), else None."""
+    record = (plan.diagnostics or {}).get("suggestion_pin")
+    if not isinstance(record, dict) or record.get("outcome") != "generated":
+        return None
+    return dict(record)
+
+
 def _pinned_tap_no_longer_fits(
     turn_id: uuid.UUID,
     *,
@@ -720,7 +728,12 @@ def _complete_response_turn(
     brief_delegated: bool = False,
     brief_delegation_read_ids: tuple[str, ...] = (),
     pinned_refusal: dict[str, Any] | None = None,
+    pinned_spend: dict[str, Any] | None = None,
 ) -> _Completion:
+    if pinned_spend is not None:
+        plan = plan.model_copy(
+            update={"diagnostics": {**(plan.diagnostics or {}), "suggestion_pin": pinned_spend}}
+        )
     if pinned_refusal is not None:
         # The one place every refusal of a tap is recorded, whichever gate or error ended it: on
         # the assistant event (below) and on the plan, which a replayed submit reads back.
@@ -770,6 +783,19 @@ def _complete_response_turn(
                     str(pinned_refusal.get("id") or ""),
                     turn.id,
                 )
+            ):
+                thread.state = marked
+        if pinned_spend is not None:
+            # In the same transaction as the reply: the card is spent once the image exists (or
+            # is on its way), so a repeat tap or a later set never offers it again. Undo has
+            # nothing to take back: the tap changed no draft.
+            from app.services.suggestions import pinned as _pinned  # noqa: PLC0415
+
+            if marked := _pinned.mark_consumed(
+                thread.state,
+                str(pinned_spend.get("set_id") or ""),
+                str(pinned_spend.get("id") or ""),
+                turn.id,
             ):
                 thread.state = marked
         persisted_brief = None
@@ -846,7 +872,11 @@ def _complete_response_turn(
                     else {}
                 ),
                 # A refused tap, typed: the phone reads this instead of matching the reply text.
-                **({"suggestion_pin": pinned_refusal} if pinned_refusal is not None else {}),
+                **(
+                    {"suggestion_pin": pinned_refusal or pinned_spend}
+                    if pinned_refusal is not None or pinned_spend is not None
+                    else {}
+                ),
             },
         )
         turn.plan_json = plan.model_dump(mode="json")
@@ -5315,6 +5345,9 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     brief_expected_version=planned.brief_expected_version,
                     pinned_refusal=(
                         planned_pin_refusal(planned.plan) if pinned_tap is not None else None
+                    ),
+                    pinned_spend=(
+                        planned_pin_spend(planned.plan) if pinned_tap is not None else None
                     ),
                 )
             else:

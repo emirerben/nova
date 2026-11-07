@@ -246,6 +246,7 @@
       "KriaUITests/CreationUITests/testSuggestionCardsInChatAndTheEditorImproveSheetShareOneSet",
       "KriaUITests/CreationUITests/testDeclinedSuggestionCardRepliesNoLongerFitsThenTheRefreshedSet",
       "KriaUITests/CreationUITests/testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize",
+      "KriaUITests/CreationUITests/testGeneratedImageCardAsksFirstThenMakesOneImageAndHandsItToReview",
       "KriaUITests/UploadPlaceHintUITests/testLandscapeRecordingNextToTalkingTakeShowsHintAndMovesToOverlays",
       "KriaUITests/UploadPlaceHintUITests/testPortraitScreenRecordingByNameShowsHint",
       "KriaUITests/UploadPlaceHintUITests/testSingleTalkingTakeShowsNoHint",

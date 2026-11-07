@@ -1675,7 +1675,9 @@
         "KriaUITests/CreationUITests/testLeadSuggestionChipIsOneLineAtTheDefaultTextSize",
         "KriaUITests/CreationUITests/testSuggestionCardsInChatAndTheEditorImproveSheetShareOneSet",
         "KriaUITests/CreationUITests/testDeclinedSuggestionCardRepliesNoLongerFitsThenTheRefreshedSet",
-        "KriaUITests/CreationUITests/testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize"
+        "KriaUITests/CreationUITests/testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize",
+        "KriaUITests/CreationUITests/testGeneratedImageCardAsksFirstThenMakesOneImageAndHandsItToReview",
+        "KriaTests/GeneratedCardTests/testEventIDMatchesTheServersDerivation"
       ],
       "paths": [
         "src/apps/api/app/agents/_registry.py",
@@ -1690,6 +1692,7 @@
         "src/apps/api/app/services/suggestion_store.py",
         "src/apps/api/app/services/suggestions/brief_asks.py",
         "src/apps/api/app/services/suggestions/kinds/filler_words.py",
+        "src/apps/api/app/services/suggestions/kinds/generated_overlay.py",
         "src/apps/api/app/services/suggestions/kinds/hook.py",
         "src/apps/api/app/services/suggestions/kinds/music_level.py",
         "src/apps/api/app/services/suggestions/picks.py",
@@ -1718,6 +1721,7 @@
         "src/apps/api/tests/evals/test_suggestion_gates_hook_copy.py",
         "src/apps/api/tests/evals/test_suggestion_kind_dupes.py",
         "src/apps/api/tests/evals/test_suggestion_kind_filler.py",
+        "src/apps/api/tests/evals/test_suggestion_kind_generated_overlay.py",
         "src/apps/api/tests/evals/test_suggestion_kind_hook.py",
         "src/apps/api/tests/evals/test_suggestion_kind_mute.py",
         "src/apps/api/tests/fixtures/agent_evals/README.md",

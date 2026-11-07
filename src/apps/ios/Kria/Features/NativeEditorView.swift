@@ -40,6 +40,7 @@ struct NativeEditorView: View {
     @State private var showsImprove = false
     /// A card was tapped in the Improve sheet: once it has closed, the conversation opens so the creator sees the message land.
     @State private var opensConversationAfterImprove = false
+    @State private var reviewsGeneratedAfterImprove = false
     /// KRI-589: Draw mode. `appendingTo` is the drawing "Draw more" adds to; nil starts a new drawing.
     @State private var drawMode: DrawMode?
     @StateObject private var sketch = NativeDrawingSketch()
@@ -220,6 +221,12 @@ struct NativeEditorView: View {
                 if let file { session.showDeviceOutput(file) }
             }
             .sheet(isPresented: $showsImprove, onDismiss: {
+                if reviewsGeneratedAfterImprove {
+                    // The chat owns the review sheet; it opens once this one is gone.
+                    reviewsGeneratedAfterImprove = false
+                    improve?.reviewGenerated()
+                    return
+                }
                 guard opensConversationAfterImprove else { return }
                 opensConversationAfterImprove = false
                 showsConversation = true
@@ -234,7 +241,13 @@ struct NativeEditorView: View {
                                 showsImprove = false
                                 return true
                             },
-                            dismiss: improve.dismiss, refresh: improve.refresh, sendingID: improve.sendingID
+                            dismiss: improve.dismiss, refresh: improve.refresh, sendingID: improve.sendingID,
+                            generated: improve.generated,
+                            reviewGenerated: {
+                                reviewsGeneratedAfterImprove = true
+                                showsImprove = false
+                            },
+                            dismissGenerated: improve.dismissGenerated
                         ),
                         close: { showsImprove = false }
                     )
