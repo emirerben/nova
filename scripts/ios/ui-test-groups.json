@@ -3,6 +3,9 @@
     "creation": [
       "KriaUITests/CreationUITests/testDelayedNewChatAcceptsTypingBeforeItsServerIdentityExists",
       "KriaUITests/SlidePostUITests/testLooksAppearOnThePhotoBeforeSavingWhenDeviceCapabilityIsEnabled",
+      "KriaUITests/CreationUITests/testEditorAIActivityUsesTheLiveRequestAcrossRepeatedPromptsAndBackgrounding",
+      "KriaUITests/CreationUITests/testEditorAIActivityStopsOnRejectedPromptAndKeepsTheDraft",
+      "KriaUITests/CreationUITests/testEditorAIHaloWorkingAndOpaqueAccessibilitySurfaces",
       "KriaUITests/CreationUITests/testChatBubblesPreserveShapeAndWrappingAtAccessibilityTextSize",
       "KriaUITests/CreationUITests/testLongPressCopiesPromptsAndRepliesWithoutBlockingOptionTaps",
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
@@ -265,7 +268,12 @@
       "KriaUITests/TalkRerecordUITests/testRefusedSwapKeepsTheOldTakeAndStartsNoPlan",
       "KriaUITests/TalkRerecordUITests/testBusyServerOffersRetryThenSwapsWithTheSameTake",
       "KriaUITests/TalkRerecordUITests/testFullSlotOffersReplaceInsteadOfRefusing",
-      "KriaUITests/TalkRerecordUITests/testFlagOffHidesReRecord"
+      "KriaUITests/TalkRerecordUITests/testFlagOffHidesReRecord",
+      "KriaUITests/CreationUITests/testEditorAIActivityCompletingLifecycleCapture",
+      "KriaUITests/CreationUITests/testEditorAIActivityCompletingReducedMotionCapture",
+      "KriaUITests/CreationUITests/testEditorAIActivityCompletingOpaqueCapture",
+      "KriaUITests/CreationUITests/testImproveAndAIActivityStaySeparateDuringPreviewPreparation",
+      "KriaUITests/CreationUITests/testChangedEditorPreviewRetainsOldPictureAndBlocksExportThenSupportsManualUndo"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",

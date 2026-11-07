@@ -1488,6 +1488,11 @@ final class CreationChatFixture: @unchecked Sendable {
             }
             // `KRIA_CHAT_THOUGHTS=hold` never finishes the turn, so a UI test can inspect the live (streaming) thought.
             if tick >= 6, ProcessInfo.processInfo.environment["KRIA_CHAT_THOUGHTS"] != "hold" {
+                if PerfFixture.editorChangedHandoff, PerfFixture.seededIndex(of: id) != nil {
+                    // Publish the changed authoritative API state before its correlated terminal events.
+                    PerfFixture.completeEditorHandoff(threadID: id)
+                    thread["job"] = ["id": id, "status": "rendering", "variants": [PerfFixture.handoffVariant(threadID: id)]]
+                }
                 append("assistant_response", text: "Review the Lisbon title edit before saving.", payload: ["turn_id": turnID])
                 append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
                 editorTurnTicks[id] = nil

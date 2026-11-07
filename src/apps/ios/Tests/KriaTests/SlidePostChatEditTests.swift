@@ -8,13 +8,14 @@ import XCTest
     private var defaults: UserDefaults!
     private var suite: String!
     private var now = Date()
-    override func setUp() {
-        super.setUp(); suite = "SlidePostChatEditTests.\(UUID())"; defaults = UserDefaults(suiteName: suite)
+    override func setUp() async throws {
+        try await super.setUp()
+        suite = "SlidePostChatEditTests.\(UUID())"; defaults = UserDefaults(suiteName: suite)
     }
-    override func tearDown() {
+    override func tearDown() async throws {
         NativeEditorURLProtocol.handler = nil
         SlidePostTestSubmissionStorage.reset(defaults: defaults); defaults.removePersistentDomain(forName: suite); defaults = nil
-        super.tearDown()
+        try await super.tearDown()
     }
 
     private func state(version: Int = 1) -> SlidePostState {

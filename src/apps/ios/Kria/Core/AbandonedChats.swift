@@ -12,6 +12,19 @@ final class ChatDraftStore: ObservableObject {
 
     init(defaults: UserDefaults = .standard) { self.defaults = defaults }
 
+    #if DEBUG
+    /// Explicit fixture resets run before any draft store is created. Other chats keep their drafts and receipts.
+    static func resetFixtureThreads(_ ids: [UUID], defaults: UserDefaults = .standard) {
+        guard !ids.isEmpty else { return }
+        var drafts = defaults.dictionary(forKey: key) ?? [:]
+        for id in ids {
+            drafts.removeValue(forKey: id.uuidString)
+            defaults.removeObject(forKey: "kria.chat-submission.\(id.uuidString)")
+        }
+        defaults.set(drafts, forKey: key)
+    }
+    #endif
+
     func draft(for id: UUID) -> String { all[id.uuidString] ?? "" }
     func isSubmitting(for id: UUID) -> Bool { attempts[id] != nil }
     func resolution(for id: UUID) -> ChatSubmissionResolution? { resolutions[id] }

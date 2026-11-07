@@ -11,6 +11,7 @@ struct NativeEditorView: View {
     private let conversationCloseID: UUID?
     /// AI suggestion blocks for this edit, read from the chat that owns the set. Nil = nothing to improve (or no chat).
     private let improve: SuggestionCardsPresentation?
+    private let conversationActivity: NativeEditorAIActivity?
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -85,6 +86,7 @@ struct NativeEditorView: View {
         sharedSession: NativeEditorSession? = nil,
         conversationAcceptedID: UUID? = nil,
         conversationCloseID: UUID? = nil,
+        conversationActivity: NativeEditorAIActivity? = nil,
         conversation: (() -> AnyView)? = nil,
         improve: SuggestionCardsPresentation? = nil,
         onBack: @escaping () -> Void
@@ -96,6 +98,7 @@ struct NativeEditorView: View {
         self.conversationAcceptedID = conversationAcceptedID
         self.conversationCloseID = conversationCloseID
         self.improve = improve
+        self.conversationActivity = conversationActivity
         _session = StateObject(
             wrappedValue: sharedSession ?? initialDraft.map {
                 NativeEditorSession(
@@ -361,8 +364,10 @@ struct NativeEditorView: View {
             .onReceive(NetworkReachability.shared.$isOnline.removeDuplicates()) { online in
                 if online { Task { await session.resumeRefreshSync() } }
             }
+            .onAppear { session.beginPreviewPresentation() }
             .onDisappear {
                 session.setObserversVisible(false)
+                session.endPreviewPresentation()
                 finishPanelEditing()
                 session.suspendEditorImports()
                 session.pausePlayback()
@@ -472,22 +477,29 @@ struct NativeEditorView: View {
                 .overlay {
                     // KRI-589: the finger canvas in Draw mode, else the selected drawing's move / scale / rotate layer.
                     // After the preview's identifier: a parent's identifier masks its children's.
-                    if drawMode != nil {
+                    if !session.isShowingPreviousPreview, drawMode != nil {
                         NativeDrawingCanvas(sketch: sketch)
-                    } else if let selection = session.selection, selection.kind == .drawing {
+                    } else if !session.isShowingPreviousPreview, let selection = session.selection, selection.kind == .drawing {
                         NativeDrawingTransformLayer(session: session, id: selection.id)
                     }
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 5)
-                .overlay(alignment: .bottomTrailing) {
-                    if conversation != nil, session.pendingText == nil, !lineEditing {
-                        KriaAIButton(identifier: "native-editor-conversation") { showsConversation = true }
-                    }
-                }
-                .overlay(alignment: .bottomLeading) {
-                    if let improve, session.pendingText == nil, !lineEditing {
-                        ImproveEntryButton(count: improve.cards.count) { showsImprove = true }
+                .overlay(alignment: .bottom) {
+                    if session.pendingText == nil, !lineEditing {
+                        HStack(alignment: .bottom, spacing: 0) {
+                            if let improve {
+                                ImproveEntryButton(count: improve.cards.count) { showsImprove = true }
+                                    .layoutPriority(1)
+                            }
+                            Spacer(minLength: 8)
+                            if conversation != nil {
+                                KriaAIButton(
+                                    identifier: "native-editor-conversation", activity: aiStatus,
+                                    animatesActivity: scenePhase == .active && !showsConversation && !showsImprove && !previewFullscreen
+                                ) { showsConversation = true }
+                            }
+                        }
                     }
                 }
                 // The centered preview leaves horizontal editor margins on
@@ -1030,6 +1042,17 @@ struct NativeEditorView: View {
     private var deviceLocalFile: URL? {
         guard let key = session.deviceRenderKey else { return nil }
         return model.deviceRenders.presentations[key]?.localFile
+    }
+
+    private var aiStatus: NativeEditorAIStatus? {
+        let render = session.deviceRenderKey.flatMap { key in
+            key.projectID == project.id ? model.deviceRenders.presentations[key] : nil
+        }
+        return NativeEditorAIStatus.current(
+            projectID: project.id, conversation: conversationActivity,
+            refresh: session.refreshSync, preview: session.sourcePreviewState,
+            previewIsUpdating: session.isPreparingCurrentPreview, render: render
+        )
     }
 
     private func loadEditor() async {

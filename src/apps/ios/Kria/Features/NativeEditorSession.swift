@@ -1135,10 +1135,10 @@ struct NativeEditorTemporaryVideo: Sendable {
     private weak var mediaUploads: BackgroundUploadCoordinator?
     private var pendingPlacementIDs: Set<UUID> = []
     private var editorImportsActive = true
-    private var threadID: UUID?
+    private var threadID: UUID? { didSet { if oldValue != threadID { resetPreviewHandoffForTargetChange() } } }
     /// The creation thread this edit belongs to (from open-in-editor for a gallery video).
     var creationThreadID: UUID? { threadID }
-    private var itemID: String?
+    private var itemID: String? { didSet { if oldValue != itemID { resetPreviewHandoffForTargetChange() } } }
     var visualItemID: String? { itemID }
     @Published private(set) var visualLibrary: [CreationVisual] = []
     @Published private(set) var visualLibraryLimit = 20
@@ -1176,8 +1176,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// a lower number here made edits created with 21+ clips unable to add more.
     static let maxTimelineClips = 50
     private var authoredVisualSources: [String: ResolvedEditorSource] = [:]
-    private var variantKey: String?
-    private var jobID: UUID?
+    private var variantKey: String? { didSet { if oldValue != variantKey { resetPreviewHandoffForTargetChange() } } }
+    private var jobID: UUID? { didSet { if oldValue != jobID { resetPreviewHandoffForTargetChange() } } }
     private var previewRefreshTask: Task<Void, Never>?
     private var pendingPreviewGeneration: String?
     private var changedSections: Set<EditorSection> = []
@@ -1299,6 +1299,175 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var editorLoadEpoch: UInt64 = 0
     var editorLifetimeID: UInt64 { editorLoadEpoch }
     private var activeSaveAttemptID: UUID?
+    private struct AdmittedPreview {
+        let ticket: NativeEditorPreviewWork
+        let player: AVPlayer
+        let item: AVPlayerItem
+        let aspectRatio: Double
+        // Keeps the composition's providers alive without mutating it during handoff.
+        let composition: LivePreviewComposition?
+        var stillFrame: UIImage?
+        var stillTime: TimeInterval?
+    }
+    private struct InPlacePreviewFrame {
+        let ticket: NativeEditorPreviewWork
+        let player: AVPlayer
+        let item: AVPlayerItem
+        let composition: AVVideoComposition
+        var layerReady = false
+        var frameProduced = false
+    }
+    @Published private var previewWork = NativeEditorPreviewWorkTracker()
+    @Published private var previousPreviewStatus: NativeEditorPreviousPreviewStatus?
+    @Published private var previewPresentationActive = false
+    @Published private(set) var previewDisplayTicket: NativeEditorPreviewWork?
+    private var admittedPreview: AdmittedPreview?
+    private var retainedPreview: AdmittedPreview?
+    private var inPlacePreviewFrame: InPlacePreviewFrame?
+    private var playbackControlEpoch: UInt64 = 0
+    private var previewResumeIntent: (owner: NativeEditorPreviewOwner, epoch: UInt64)?
+
+    private var previewOwner: NativeEditorPreviewOwner {
+        NativeEditorPreviewOwner(projectID: projectID, lifetime: editorLifetimeID, itemID: itemID,
+                                 jobID: jobID, variant: variantKey, threadID: threadID)
+    }
+    private var currentPreviewWork: NativeEditorPreviewWork {
+        NativeEditorPreviewWork(owner: previewOwner, generation: document.revision.baseGeneration,
+                                sequence: sourcePreviewSequence, documentRevision: document.revision.number)
+    }
+    var isPreparingCurrentPreview: Bool {
+        previewPresentationActive && previewWork.isPending(currentPreviewWork)
+    }
+    var previousPreviewPresentation: (player: AVPlayer, aspectRatio: Double, frame: UIImage?, time: TimeInterval?, status: NativeEditorPreviousPreviewStatus)? {
+        guard previewPresentationActive, let retainedPreview, let previousPreviewStatus,
+              NativeEditorPreviewAdmission.canRetain(shown: retainedPreview.ticket, current: previewOwner,
+                                                    readyFrameShown: retainedPreview.item.status == .readyToPlay),
+              retainedPreview.player.currentItem === retainedPreview.item else { return nil }
+        return (retainedPreview.player, retainedPreview.aspectRatio, retainedPreview.stillFrame,
+                retainedPreview.stillTime, previousPreviewStatus)
+    }
+    var isShowingPreviousPreview: Bool { previousPreviewPresentation != nil }
+
+    func beginPreviewPresentation() {
+        previewPresentationActive = true
+        if loadState == .loaded, sourcePreviewState == .ready, sourcePreviewSettled, canDisplayCurrentPlayer {
+            previewDisplayTicket = currentPreviewWork
+        }
+    }
+    func endPreviewPresentation() {
+        previewPresentationActive = false
+        clearPreviewAdmission()
+    }
+    private func resetPreviewHandoffForTargetChange() {
+        previewWork.reset()
+        clearPreviewAdmission()
+    }
+    private func clearPreviewAdmission() {
+        invalidatePreviewResumeIntent()
+        sourcePreview?.cancelPendingPlaybackFrame()
+        inPlacePreviewFrame = nil
+        retirePreviousPreview()
+        admittedPreview = nil
+        previewDisplayTicket = nil
+    }
+    private func retirePreviousPreview() {
+        if let retainedPreview, retainedPreview.player !== player {
+            retainedPreview.player.pause()
+            retainedPreview.player.replaceCurrentItem(with: nil)
+        }
+        retainedPreview = nil
+        previousPreviewStatus = nil
+    }
+    private func retainAdmittedPreview() {
+        guard retainedPreview == nil, sourcePreviewSettled, let admittedPreview,
+              admittedPreview.ticket == currentPreviewWork,
+              NativeEditorPreviewAdmission.canRetain(shown: admittedPreview.ticket, current: previewOwner,
+                                                    readyFrameShown: admittedPreview.item.status == .readyToPlay),
+              admittedPreview.player.currentItem === admittedPreview.item else { return }
+        var retained = admittedPreview
+        if scrubFramePlayerItem === admittedPreview.item,
+           scrubFrameComposition === admittedPreview.item.videoComposition {
+            retained.stillFrame = scrubPreviewFrame
+            retained.stillTime = scrubPreviewTime
+        }
+        retainedPreview = retained
+    }
+    private func beginPreviewWork() -> NativeEditorPreviewWork {
+        sourcePreview?.cancelPendingPlaybackFrame()
+        inPlacePreviewFrame = nil
+        let ticket = currentPreviewWork
+        previewWork.begin(ticket)
+        if retainedPreview != nil { previousPreviewStatus = .updating }
+        return ticket
+    }
+    private func abandonPreviewWork(_ ticket: NativeEditorPreviewWork) {
+        guard previewWork.end(ticket) else { return }
+        sourcePreview?.cancelPendingPlaybackFrame()
+        inPlacePreviewFrame = nil
+        previewResumeIntent = nil
+        if retainedPreview != nil { previousPreviewStatus = .cancelled }
+    }
+    var admissiblePreviewDisplayTicket: NativeEditorPreviewWork? {
+        guard loadState == .loaded, sourcePreviewState == .ready, sourcePreviewSettled else { return nil }
+        return previewDisplayTicket
+    }
+    func previewFrameWasShown(player shownPlayer: AVPlayer, ticket: NativeEditorPreviewWork?) {
+        if var pending = inPlacePreviewFrame, pending.ticket == ticket {
+            guard pending.player === shownPlayer else { return }
+            pending.layerReady = true
+            inPlacePreviewFrame = pending
+            finishInPlaceFrameIfReady()
+            return
+        }
+        admitPreviewFrame(player: shownPlayer, ticket: ticket)
+    }
+    @discardableResult private func admitPreviewFrame(player shownPlayer: AVPlayer, ticket: NativeEditorPreviewWork?) -> Bool {
+        guard previewPresentationActive, let ticket, ticket == currentPreviewWork,
+              previewDisplayTicket == ticket, player === shownPlayer, canDisplayCurrentPlayer,
+              loadState == .loaded, sourcePreviewState == .ready, sourcePreviewSettled,
+              let item = shownPlayer.currentItem, item.status == .readyToPlay else { return false }
+        admittedPreview = AdmittedPreview(ticket: ticket, player: shownPlayer, item: item,
+                                         aspectRatio: Double(previewAspectRatio), composition: sourcePreview)
+        previewWork.end(ticket)
+        previewResumeIntent = nil
+        retirePreviousPreview()
+        return true
+    }
+    private func acceptInPlaceFrame(_ ticket: NativeEditorPreviewWork, item: AVPlayerItem,
+                                    composition: AVVideoComposition, isStill: Bool = false) {
+        guard var pending = inPlacePreviewFrame, pending.ticket == ticket,
+              ticket == currentPreviewWork, player === pending.player, item === pending.item,
+              pending.player.currentItem === item, composition === pending.composition,
+              item.videoComposition === composition else { return }
+        pending.frameProduced = true
+        if isStill { pending.layerReady = true } // The published image is itself the ready presentation.
+        inPlacePreviewFrame = pending
+        finishInPlaceFrameIfReady()
+    }
+    private func finishInPlaceFrameIfReady() {
+        guard let pending = inPlacePreviewFrame, pending.frameProduced, pending.layerReady,
+              pending.ticket == currentPreviewWork, pending.item.videoComposition === pending.composition else { return }
+        if admitPreviewFrame(player: pending.player, ticket: pending.ticket) { inPlacePreviewFrame = nil }
+    }
+    private func playbackFrameWasComposed(_ ticket: NativeEditorPreviewWork) {
+        guard let pending = inPlacePreviewFrame, pending.ticket == ticket, ticket == currentPreviewWork else { return }
+        if isPlaying {
+            acceptInPlaceFrame(ticket, item: pending.item, composition: pending.composition)
+        } else if scrubFrameTask == nil {
+            // A pause won the race with the playback receipt. Publish the current paused image first.
+            _ = requestScrubFrame(at: currentTime)
+        }
+    }
+    private func invalidatePreviewResumeIntent() {
+        playbackControlEpoch &+= 1
+        previewResumeIntent = nil
+    }
+    private func preservePreviewResumeIntent() {
+        if retainedPreview != nil, isPlaying { previewResumeIntent = (previewOwner, playbackControlEpoch) }
+    }
+    private var shouldResumeRetainedPreview: Bool {
+        previewResumeIntent?.owner == previewOwner && previewResumeIntent?.epoch == playbackControlEpoch
+    }
     private var editorOperationIdentity: EditorOperationIdentity {
         EditorOperationIdentity(loadEpoch: editorLoadEpoch, itemID: itemID, jobID: jobID,
                                 variantKey: variantKey, threadID: threadID)
@@ -1308,6 +1477,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         resetLatestJobDrain()
         pendingLoadObservation = nil
         saveHistory = nil
+        previewWork.reset()
+        clearPreviewAdmission()
         resetBackgroundRefresh()
         previewRefreshTask?.cancel(); previewRefreshTask = nil; pendingPreviewGeneration = nil
         sourcePreviewTask?.cancel(); sourcePreviewQuietRetryTask?.cancel()
@@ -1400,6 +1571,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     var canDownloadCurrentVideo: Bool {
+        guard !isShowingPreviousPreview else { return false }
         guard document.editorState != "empty" else { return false }
         if savedEditDeviceRenderFile() != nil { return true }
         let displayedVideoIsCurrent: Bool
@@ -1421,6 +1593,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// conditions ``canDownloadCurrentVideo`` checks, explained. `nil` exactly
     /// when export is available.
     var exportBlockReason: String? {
+        if isShowingPreviousPreview { return "The preview shows the previous version. Check the preview update before exporting." }
         guard !canDownloadCurrentVideo else { return nil }
         if document.editorState == "empty" { return "Add a clip before exporting." }
         if isSaving { return "Saving your changes…" }
@@ -1440,6 +1613,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func videoDownloadRoute(deviceLocalFile: URL?) throws -> NativeEditorVideoDownloadRoute {
+        guard !isShowingPreviousPreview else { throw NativeEditorVideoDownloadError.unavailable }
         let rendered = finishedRenderRoute(deviceLocalFile: deviceLocalFile)
         if let rendered, case .localFile = rendered { return rendered }
         if let own = savedEditDeviceRenderFile() { return .localFile(own) }
@@ -1518,6 +1692,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// throws through to the caller rather than falling back to the last
     /// cloud render. The user must always get what the preview shows.
     func exportDisplayedSourcePreview(progress: (@Sendable (Double) -> Void)? = nil) async throws -> NativeEditorTemporaryVideo {
+        guard !isShowingPreviousPreview else { throw NativeEditorVideoDownloadError.unavailable }
         guard sourcePreviewState == .ready, sourcePreviewSettled,
               let sourcePreview,
               player?.currentItem === sourcePreview.preview.playerItem else {
@@ -2300,6 +2475,11 @@ struct NativeEditorTemporaryVideo: Sendable {
             guard cleanDocument == baseline else { syncNeedsRetry = true; return }
             if sameTarget { refreshEditingPermissions(from: variant, document: nextDocument) }
             guard !sameTarget || nextDocument != cleanDocument || staged != nil else { return }
+            let retentionSequence = sourcePreviewSequence
+            if sameTarget { retainAdmittedPreview() }
+            defer {
+                if sourcePreviewSequence == retentionSequence { retirePreviousPreview() }
+            }
             // Only the previous chat draft is unsaved: the newer cumulative
             // head replaces it wholesale instead of conflicting with it.
             // Editor-state turn: the draft says which submitted state it was built on,
@@ -3007,6 +3187,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// The thread now points at a different render job: the old job's player,
     /// source composition and device-render identity must not keep showing.
     private func discardPlaybackForNewJob() {
+        previewWork.reset()
+        clearPreviewAdmission()
         sourcePreviewTask?.cancel()
         previewRefreshTask?.cancel(); pendingPreviewGeneration = nil
         promptRefreshSequence &+= 1
@@ -3447,6 +3629,12 @@ struct NativeEditorTemporaryVideo: Sendable {
                                       failure: Error = NativeEditorRenderError.missingVideoTrack) async {
         sourcePreviewSequence += 1
         let sequence = sourcePreviewSequence
+        let workTicket = beginPreviewWork()
+        defer {
+            if previewDisplayTicket != workTicket || sourcePreviewSettledSequence != sequence || sourcePreviewState.isFailure {
+                abandonPreviewWork(workTicket)
+            }
+        }
         sourcePreviewState = .preparing
         do {
             if forceFailure { throw failure }
@@ -3454,6 +3642,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 loadState = .loaded
                 try await Task.sleep(for: .milliseconds(600))
             }
+            guard workTicket == currentPreviewWork, !Task.isCancelled else { return }
             guard let fonts = Bundle.main.url(forResource: "fonts", withExtension: nil) else {
                 throw NativeEditorRenderError.missingFont("bundled fonts")
             }
@@ -3493,6 +3682,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             }
             await rebuildSourcePreview(sequence: sequence)
         } catch {
+            guard workTicket == currentPreviewWork, !Task.isCancelled else { return }
             #if DEBUG
             NativePreviewDiagnostics.failure("preview-failure", error: error)
             #endif
@@ -3614,9 +3804,16 @@ struct NativeEditorTemporaryVideo: Sendable {
         sourcePreviewTask?.cancel()
         sourcePreviewSequence += 1
         let sequence = sourcePreviewSequence
+        let workTicket = beginPreviewWork()
+        defer {
+            if previewDisplayTicket != workTicket || sourcePreviewSettledSequence != sequence || sourcePreviewState.isFailure {
+                abandonPreviewWork(workTicket)
+            }
+        }
         let generation = document.revision.baseGeneration
         sourcePreviewGeneration = generation
         sourcePreviewState = .preparing
+        preservePreviewResumeIntent()
         player?.pause()
         isPlaying = false
         resolvedSources = nil
@@ -3798,6 +3995,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         textInteractionSequence += 1
         textInteractionFrame = nil
         cancelScrubFrames()
+        preservePreviewResumeIntent()
         player?.pause()
         isPlaying = false
         sourcePreviewState = .preparing
@@ -4126,6 +4324,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         guard resolvedSources != nil, sourceCompiler != nil else { return }
         sourcePreviewTask?.cancel()
         sourcePreviewSequence += 1
+        _ = beginPreviewWork()
         guard !isTimingGestureActive, !isDirectManipulating, !isSongStartDragActive else {
             sourcePreviewUpdateDeferred = true
             return
@@ -4153,6 +4352,11 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     private func rebuildSourcePreview(sequence: Int) async {
         guard let compiler = sourceCompiler, var sources = resolvedSources else { return }
+        let workTicket = currentPreviewWork
+        guard workTicket.sequence == sequence, !Task.isCancelled else { return }
+        if !previewWork.isPending(workTicket) { previewWork.begin(workTicket) }
+        var awaitingFrame = false
+        defer { if !awaitingFrame { abandonPreviewWork(workTicket) } }
         let baseline = document
         let pending = pendingText
         var snapshot = baseline
@@ -4171,7 +4375,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             if !needed.isSubset(of: Set(sources.keys)), let pool = sourcePool, let resolver = sourceResolver {
                 sourcePreviewState = .preparing
                 sources = try await resolver.resolve(pool, generation: baseline.revision.baseGeneration, requiredIndices: needed)
-                guard sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline else { return }
+                guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline else { return }
                 resolvedSources = sources
             }
             #if DEBUG
@@ -4193,7 +4397,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             NativePreviewDiagnostics.record("prepare-media")
             #endif
             let media = try await preparePreviewMedia(document: snapshot, sequence: sequence)
-            guard sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
+            guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
             #if DEBUG
             sourcePreviewCompileCount += 1
             NativePreviewDiagnostics.record("compile", fields: [
@@ -4236,14 +4440,17 @@ struct NativeEditorTemporaryVideo: Sendable {
             // while the user keeps watching the stale cloud render (KRI-110).
             NativePreviewDiagnostics.note("preview-rebuild", fields: [
                 "documentChanged": previewBuiltDocument.map { $0 != baseline ? "1" : "0" } ?? "first"])
-            if let preview = sourcePreview, player?.currentItem === preview.preview.playerItem,
-               updatePreviewInPlace(preview, program: program) {
+            if retainedPreview == nil, let preview = sourcePreview, player?.currentItem === preview.preview.playerItem,
+               updatePreviewInPlace(preview, program: program, ticket: workTicket) {
                 liveSongVolumeActive = liveVolume
                 previewBuiltDocument = baseline
                 applyLiveSongVolume()
                 sourcePreviewState = .ready
                 sourcePreviewSettledSequence = sequence
-                if !isPlaying { seek(to: currentTime) }
+                previewDisplayTicket = workTicket
+                awaitingFrame = true
+                previewWork.waitForFrame(workTicket)
+                if !isPlaying { positionPreview(to: currentTime) }
                 prepareInteractionLayers()
                 startPendingPlaybackIfPossible()
                 return
@@ -4252,24 +4459,43 @@ struct NativeEditorTemporaryVideo: Sendable {
             NativePreviewDiagnostics.record("composition-start")
             #endif
             let preview = try await LivePreviewComposition(recipe: program.recipe, assetURLs: program.assetURLs, branding: .standard)
-            guard sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
+            guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else { return }
             // The finished render is playing: ready the live item on its own player first, so the swap below is not
             // a pause, a detach, a seek and a resume in front of the creator's eyes.
             var warmed: (player: AVPlayer, time: TimeInterval)?
-            if isPlaying, player != nil, player === finishedRenderPlayer {
+            if retainedPreview != nil || (isPlaying && player != nil && player === finishedRenderPlayer) {
                 let target = currentTime
                 if let candidate = await Self.prerolledPlayer(for: preview.preview.playerItem, at: target) { warmed = (candidate, target) }
-                guard sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else {
+                guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else {
                     warmed?.player.replaceCurrentItem(with: nil)
                     return
                 }
             }
+            if retainedPreview != nil, warmed == nil {
+                try Task.checkCancellation()
+                throw NativeEditorPreviewHandoffError.candidateNotReady
+            }
+            if retainedPreview != nil, let candidate = warmed,
+               abs(currentTime - candidate.time) > Self.warmHandoffMaxDrift {
+                let target = currentTime
+                guard await candidate.player.seek(to: CMTime(seconds: max(0, target), preferredTimescale: 600),
+                                                  toleranceBefore: .zero, toleranceAfter: .zero) else {
+                    candidate.player.replaceCurrentItem(with: nil)
+                    throw NativeEditorPreviewHandoffError.candidateNotReady
+                }
+                guard workTicket == currentPreviewWork, !Task.isCancelled,
+                      document == baseline, pendingText == pending else {
+                    candidate.player.replaceCurrentItem(with: nil)
+                    return
+                }
+                warmed = (candidate.player, target)
+            }
             let latestTime = currentTime
-            let resumePlayback = isPlaying
+            let resumePlayback = isPlaying || shouldResumeRetainedPreview
             var adopted: AVPlayer?
             if let warmed {
                 // The creator paused or scrubbed while it warmed, or it took long enough to be far behind: the plain path.
-                if resumePlayback, abs(latestTime - warmed.time) <= Self.warmHandoffMaxDrift { adopted = warmed.player }
+                if retainedPreview != nil || (resumePlayback && abs(latestTime - warmed.time) <= Self.warmHandoffMaxDrift) { adopted = warmed.player }
                 else { warmed.player.replaceCurrentItem(with: nil) }
                 NativePreviewDiagnostics.note("live-handoff", fields: [
                     "prerolled": "1", "adopted": adopted == nil ? "0" : "1",
@@ -4283,6 +4509,9 @@ struct NativeEditorTemporaryVideo: Sendable {
             applyLiveSongVolume()
             sourcePreviewState = .ready
             sourcePreviewSettledSequence = sequence
+            previewDisplayTicket = workTicket
+            awaitingFrame = true
+            previewWork.waitForFrame(workTicket)
             if resumePlayback {
                 // An adopted player already sits at `warmed.time`, decoded and prerolled; seeking it again would undo that.
                 if adopted == nil {
@@ -4291,7 +4520,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                 activatePreviewAudio()
                 player?.play()
             } else {
-                seek(to: latestTime)
+                positionPreview(to: latestTime)
             }
             prepareInteractionLayers()
             startPendingPlaybackIfPossible()
@@ -4299,12 +4528,14 @@ struct NativeEditorTemporaryVideo: Sendable {
             NativePreviewDiagnostics.record("preview-ready")
             #endif
         } catch {
-            guard sequence == sourcePreviewSequence, !Task.isCancelled else { return }
+            guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled else { return }
             player?.pause()
             isPlaying = false
             #if DEBUG
             NativePreviewDiagnostics.failure("preview-failure", error: error)
             #endif
+            previewWork.end(workTicket)
+            if retainedPreview != nil { previousPreviewStatus = error is CancellationError ? .cancelled : .failed }
             failSourcePreview(error)
             sourcePreviewSettledSequence = sequence
             // failSourcePreview -> restoreFinishedRenderFallback -> installPlayer
@@ -4312,16 +4543,22 @@ struct NativeEditorTemporaryVideo: Sendable {
             // (finished-render) length by an in-progress auto-scroll or trim
             // has nothing to re-clamp it once the widened scrub bound above
             // narrows back — the transport would sit past the actual end.
-            if currentTime > playbackDuration { seek(to: playbackDuration) }
+            if currentTime > playbackDuration { positionPreview(to: playbackDuration) }
         }
     }
 
     /// Any refusal (an audio edit since KRI-241, timing, sources) takes the full
     /// rebuild. DEBUG builds log the refusal, so an edit that should have stayed
     /// in place, such as a caption keystroke, shows up in the diagnostics file.
-    private func updatePreviewInPlace(_ preview: LivePreviewComposition, program: NativeEditorRenderProgram) -> Bool {
+    private func updatePreviewInPlace(_ preview: LivePreviewComposition, program: NativeEditorRenderProgram,
+                                      ticket: NativeEditorPreviewWork) -> Bool {
         do {
-            try preview.updateText(recipe: program.recipe, assetURLs: program.assetURLs)
+            let callback: @Sendable (Double) -> Void = { [weak self] _ in
+                Task { @MainActor [weak self] in self?.playbackFrameWasComposed(ticket) }
+            }
+            try preview.updateText(recipe: program.recipe, assetURLs: program.assetURLs, onPlaybackFrame: callback)
+            guard let player, let item = player.currentItem, let composition = item.videoComposition else { return false }
+            inPlacePreviewFrame = InPlacePreviewFrame(ticket: ticket, player: player, item: item, composition: composition)
             NativePreviewDiagnostics.note("preview-updated-in-place")
             return true
         } catch {
@@ -4375,6 +4612,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func togglePlayback() {
+        invalidatePreviewResumeIntent()
         guard document.editorState != "empty" else { return }
         guard canDisplayCurrentPlayer, let player else {
             // While the editable preview is still building there is nothing to play yet. Remember the tap
@@ -4390,6 +4628,19 @@ struct NativeEditorTemporaryVideo: Sendable {
         if isPlaying {
             pausePlayback()
             return
+        }
+        if let pending = inPlacePreviewFrame {
+            do {
+                guard let sourcePreview else { throw NativeEditorPreviewHandoffError.candidateNotReady }
+                let ticket = pending.ticket
+                try sourcePreview.observeNextPlaybackFrame { [weak self] _ in
+                    Task { @MainActor [weak self] in self?.playbackFrameWasComposed(ticket) }
+                }
+            } catch {
+                pendingPlayRequest = true
+                failSourcePreview(error)
+                return
+            }
         }
         // Scrubbing renders stills independently of AVPlayer. Only that handoff
         // (or replay) needs a seek; ordinary resume keeps the decoded surface.
@@ -4433,6 +4684,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func pausePlayback() {
+        invalidatePreviewResumeIntent()
         pendingPlayRequest = false
         player?.pause()
         isPlaying = false
@@ -4468,6 +4720,11 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var seekRecoveryTask: Task<Void, Never>?
 
     func seek(to time: TimeInterval) {
+        invalidatePreviewResumeIntent()
+        positionPreview(to: time)
+    }
+
+    private func positionPreview(to time: TimeInterval) {
         // A timeline gesture owns the clock. Continuing playback can advance
         // the displayed frame between finger samples and race the next seek.
         if isPlaying || (player?.rate ?? 0) != 0 {
@@ -4519,6 +4776,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         seekLatencyMeter.request()
         guard scrubFrameTask == nil, let generator = scrubFrameGenerator else { return true }
         let generation = scrubFrameGeneration
+        let frameTicket = currentPreviewWork
         scrubFrameTask = Task { @MainActor [weak self, generator] in
             while !Task.isCancelled, let target = self?.pendingScrubFrameTime {
                 self?.pendingScrubFrameTime = nil
@@ -4529,6 +4787,7 @@ struct NativeEditorTemporaryVideo: Sendable {
                     if self.pendingScrubFrameTime != nil { continue }
                     self.scrubPreviewTime = frame.actualTime.seconds
                     self.scrubPreviewFrame = UIImage(cgImage: frame.image)
+                    self.acceptInPlaceFrame(frameTicket, item: item, composition: composition, isStill: true)
                     self.prepareInteractionLayers()
                     if let elapsed = self.seekLatencyMeter.visible() {
                         self.previewInstrumentation.record(MetricEvent(name: .seekLatency, value: elapsed))
@@ -4539,8 +4798,12 @@ struct NativeEditorTemporaryVideo: Sendable {
                     NativePreviewDiagnostics.failure("scrub-frame-failure", error: error)
                     #endif
                     if self.pendingScrubFrameTime == nil {
-                        self.scrubPreviewFrame = nil
-                        self.scrubPreviewTime = nil
+                        if self.inPlacePreviewFrame?.ticket == frameTicket, frameTicket == self.currentPreviewWork {
+                            self.failSourcePreview(error)
+                        } else {
+                            self.scrubPreviewFrame = nil
+                            self.scrubPreviewTime = nil
+                        }
                     }
                 }
             }
@@ -8106,6 +8369,13 @@ struct NativeEditorTemporaryVideo: Sendable {
             return false
         }
         let selected = selection
+        let retentionSequence = sourcePreviewSequence
+        if jobID == context.destinationJob, variantKey == context.destinationVariant, itemID == context.destinationItem {
+            retainAdmittedPreview()
+        }
+        defer {
+            if sourcePreviewSequence == retentionSequence { retirePreviousPreview() }
+        }
         if context.originalJob != context.destinationJob { discardPlaybackForNewJob() }
         document = rebased
         cleanDocument = context.clean
@@ -9147,6 +9417,12 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func failSourcePreview(_ error: Error, reloadsLatestOnConflict: Bool = true) {
+        previewResumeIntent = nil
+        sourcePreview?.cancelPendingPlaybackFrame()
+        inPlacePreviewFrame = nil
+        if previewWork.end(currentPreviewWork), retainedPreview != nil {
+            previousPreviewStatus = error is CancellationError ? .cancelled : .failed
+        }
         NativePreviewDiagnostics.record("finished-render-fallback", fields: [
             "error": String(((error as NSError).domain + ".\((error as NSError).code)").prefix(80)),
             "finishedCurrent": finishedRenderIsCurrent ? "1" : "0"], attachRoutine: true)
@@ -9252,6 +9528,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// rebuild every player and composition. The old ones never play again, so recovery budgets that
     /// were spent on failures from before the reset start over.
     func handleMediaServicesReset() {
+        clearPreviewAdmission()
+        previewWork.reset()
         NativePreviewDiagnostics.record("media-services-reset", fields: ["state": sourcePreviewStateLabel])
         startPlaybackRecoveryEpisode()
         finishedRenderRecoveryTask?.cancel(); finishedRenderRecoveryInFlight = false
@@ -9485,9 +9763,10 @@ struct NativeEditorTemporaryVideo: Sendable {
         // SwiftUI may retain the outgoing VideoPlayer after this replacement.
         // Stop and detach it first so its audio cannot outlive the visible player.
         player?.pause()
-        player?.replaceCurrentItem(with: nil)
+        if retainedPreview?.player !== player { player?.replaceCurrentItem(with: nil) }
         let next = prerolled ?? AVPlayer(playerItem: item)
         player = next
+        previewDisplayTicket = currentPreviewWork
         observingPlayer = next
         playbackStateObserver = next.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self, weak next] _, _ in
             Task { @MainActor [weak self, weak next] in
@@ -9608,7 +9887,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         // every timing-gesture sample (updateTrim/updateTimedEdit), and
         // clamping to the stale composition length here would fight
         // auto-scroll's own widened bound mid-drag.
-        if currentTime > timelineScrubDuration { seek(to: timelineScrubDuration) }
+        if currentTime > timelineScrubDuration { positionPreview(to: timelineScrubDuration) }
     }
 
     private func setAuthoritativeDuration(_ value: TimeInterval?) {
