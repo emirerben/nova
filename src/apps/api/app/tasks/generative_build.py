@@ -10834,6 +10834,7 @@ def _run_phone_subtitled_job(
                     )
                     ending_reason = "media_lanes_disabled"
                 closing_text_rows, closing_text_receipt = _closing_rows_for(None)
+                cues = _cues_clear_of_cta(cues, closing_text_rows, closing_text_receipt)
                 styled_rows = _protected_style_rows(
                     title_rows + spoken_text_rows + closing_text_rows,
                     job_id=job_id,
@@ -11715,6 +11716,7 @@ def _run_phone_subtitled_job(
                             if lanes is not None and beat_closing_card_id
                             else None
                         )
+                        cues = _cues_clear_of_cta(cues, closing_text_rows, closing_text_receipt)
                         recipe = _compile_lanes(title_rows + spoken_text_rows + closing_text_rows)
                         # Rows are on the take timeline; the inserts' length is on the recipe.
                         take_duration = recipe.duration - sum(
@@ -13674,6 +13676,28 @@ def _phone_saved_title_rule() -> dict:
         if isinstance(preferences.get(role), dict):
             rule.update(preferences[role])
     return rule
+
+
+def _cues_clear_of_cta(cues: Any, rows: list[dict], receipt: dict[str, Any] | None) -> Any:
+    """KRI-1306: when the CTA ending could only be placed touching the captions, the captions
+    stop where the ending starts, so no caption word lands on "comment"/the keyword."""
+    if not rows or not receipt or receipt.get("text_overlap") is not True:
+        return cues
+    stop = min(float(row["start_s"]) for row in rows)
+    out = []
+    for cue in cues or []:
+        if not isinstance(cue, dict) or float(cue["end_s"]) <= stop:
+            out.append(cue)
+            continue
+        if float(cue["start_s"]) >= stop:
+            continue
+        words = [w for w in (cue.get("words") or []) if float(w.get("start_s", 0.0)) < stop]
+        if cue.get("words") is not None and not words:
+            continue
+        out.append(
+            {**cue, "end_s": stop, **({"words": words} if cue.get("words") is not None else {})}
+        )
+    return out
 
 
 def _phone_talking_closing_rows(
