@@ -101,11 +101,16 @@ Without a `keep_text_off` fact or a mark nothing runs and the render is unchange
   `choose_caption_look(subjects=...)` measures each caption line against the clip playing
   under it. A clip nobody marked reads `other_source` (the receipt row is never clearer than
   the weakest clip, `merge_target_rows`). The closing line over the last speaker is placed
-  against that clip's plan. A spoken-word or list-label row shown while a later speaker plays
-  was only placed against the first clip, so its placement is `unverified`.
+  against that clip's plan. A title, spoken-word or list-label row shown at any moment while a
+  later speaker plays (it starts there or runs onto it) was only placed against the first clip,
+  so its placement is `unverified` (`_past_first_speaker` checks the row's end, not only its
+  start). The restyle re-measure above judges a row against the plan of each clip it plays
+  over (`speaker_pieces`), each on that clip's own clock.
 - **Faces for captions** are sampled inside every caption line (`caption_window_faces`: at
   least two samples per line, plus the take's six spread samples), and each line also checks
-  a band over its own samples, so a head moving inside a line is covered across it.
+  a band over its own samples, so a head moving inside a line is covered across it. A sampler
+  that could not confirm the frame still protects every face it did detect, with the fallback
+  box beside them (receipt `faces: fallback`).
 - **Cards and reaction beats.** The worker hands the marked object's canvas boxes, on the
   speaker clip's own clock (`source_clock_object_regions`), to `ground_phone_subtitled_overlays`
   and `ground_phone_reaction_beats` (`protected_regions`). A picture-in-picture card allows no

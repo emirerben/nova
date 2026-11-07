@@ -514,28 +514,52 @@ def protected_text_receipt(
     }
 
 
+def speaker_pieces(
+    plan: ProtectedPlan, start_s: float, end_s: float
+) -> list[tuple[ProtectedPlan, float, float]]:
+    """``(plan, start, end)`` for each speaker clip a timeline window ``[start_s, end_s]``
+    plays over (KRI-903), the window on that clip's own clock. A plan with no extra speakers
+    is one piece, the window unchanged."""
+    if not plan.speakers:
+        return [(plan, start_s, end_s)]
+    pieces: list[tuple[ProtectedPlan, float, float]] = []
+    first_end_s = plan.speakers[0].start_s
+    if start_s < first_end_s:
+        pieces.append((plan, start_s, min(end_s, first_end_s)))
+    pieces.extend(
+        (s.plan, max(start_s, s.start_s) - s.start_s, min(end_s, s.end_s) - s.start_s)
+        for s in plan.speakers
+        if start_s < s.end_s and end_s > s.start_s
+    )
+    return pieces or [(plan, start_s, end_s)]
+
+
 def _row_coverage(row: Mapping[str, Any], plan: ProtectedPlan, canvas: _Canvas) -> float:
     """How much of a face or a marked object ``row``'s drawn ink (its font, size, spot and
-    motion as styled) covers at worst over its whole window."""
+    motion as styled) covers at worst over its whole window, against the plan of each
+    speaker clip the window plays over."""
     from app.pipeline.phone_text_style import animation_box, measure_box  # noqa: PLC0415
 
-    geometry = plan.geometry
-    assert geometry is not None
     probe = copy.deepcopy(dict(row))
     box = NormalizedBox(*animation_box(probe, measure_box(probe, canvas), canvas))  # type: ignore[arg-type]
-    worst = max((box.coverage_by(face) for face in geometry.faces), default=0.0)
-    for track in plan.objects:
-        found, _ = object_canvas_boxes(
-            track,
-            window=(float(row["start_s"]), float(row["end_s"])),
-            keep_segments=geometry.keep_segments,
-            display_width=geometry.display_width,
-            display_height=geometry.display_height,
-            canvas=canvas,
-            scale=geometry.scale,
-            position_x=geometry.position_x,
-        )
-        worst = max([worst, *(object_collision(box, o) for o in found)])
+    worst = 0.0
+    for piece, start_s, end_s in speaker_pieces(plan, float(row["start_s"]), float(row["end_s"])):
+        geometry = piece.geometry
+        if geometry is None:
+            raise ValueError("speaker plan has no geometry to measure against")
+        worst = max([worst, *(box.coverage_by(face) for face in geometry.faces)])
+        for track in piece.objects:
+            found, _ = object_canvas_boxes(
+                track,
+                window=(start_s, end_s),
+                keep_segments=geometry.keep_segments,
+                display_width=geometry.display_width,
+                display_height=geometry.display_height,
+                canvas=canvas,
+                scale=geometry.scale,
+                position_x=geometry.position_x,
+            )
+            worst = max([worst, *(object_collision(box, o) for o in found)])
     return worst
 
 
@@ -584,4 +608,5 @@ __all__ = [
     "protected_text_receipt",
     "resolve_protected_plan",
     "source_clock_object_regions",
+    "speaker_pieces",
 ]

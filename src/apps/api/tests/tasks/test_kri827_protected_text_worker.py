@@ -394,3 +394,115 @@ def test_grounding_hears_nothing_when_the_creator_never_asked(monkeypatch):
 
     cards.assert_called_once()
     assert "protected_regions" not in cards.call_args.kwargs
+
+
+# ── Review round 2: a row that STARTS on the first speaker and runs onto the next ────────────────
+#
+# Failure mode (written before the code): a text row's receipt was judged only by where it
+# starts, so a spoken-word row, a list label or a held title that runs from the first speaker
+# onto the second kept its first-clip-only "clear" while it sat over the second clip unmeasured.
+
+from app.pipeline.phone_protected_text import (  # noqa: E402
+    ProtectedGeometry,
+    ProtectedPlan,
+    SpeakerSlice,
+    protected_text_receipt,
+)
+
+_MEASURED = {"status": "preset", "objects_verified": True, "object_collision": False}
+
+
+def _two_speaker_protection() -> ProtectedPlan:
+    from app.kria.protected_targets import ProtectedTarget
+
+    target = ProtectedTarget("object", "plate", ("r1",))
+    row = {
+        "kind": "object",
+        "label": "plate",
+        "requirement_ids": ["r1"],
+        "track_status": "tracked",
+    }
+    second = ProtectedPlan(targets=(target,), target_rows=(row,))
+    return ProtectedPlan(
+        targets=(target,),
+        target_rows=(row,),
+        geometry=ProtectedGeometry(((0.0, 10.0),), 1080, 1920, 1.0, 0.0),
+        speakers=(SpeakerSlice("take2", 10.0, 20.0, second),),
+    )
+
+
+def test_a_row_that_runs_from_the_first_speaker_onto_the_next_is_not_called_clear():
+    plan = _two_speaker_protection()
+
+    straddling = gb._past_first_speaker(_MEASURED, 9.0, 11.0, plan, 10.0)
+
+    assert straddling["objects_verified"] is False
+    assert protected_text_receipt(plan, {"spoken:r1": straddling})["verdict"] == "unverified"
+
+
+def test_a_row_inside_the_first_speaker_keeps_its_verdict():
+    plan = _two_speaker_protection()
+
+    assert gb._past_first_speaker(_MEASURED, 7.0, 10.0, plan, 10.0) == _MEASURED
+    assert gb._past_first_speaker(_MEASURED, 7.0, 10.0, None, 10.0) == _MEASURED
+
+
+def test_a_row_wholly_on_a_later_speaker_stays_unverified():
+    plan = _two_speaker_protection()
+
+    assert gb._past_first_speaker(_MEASURED, 12.0, 14.0, plan, 10.0)["objects_verified"] is False
+
+
+def test_a_spoken_word_row_that_runs_onto_the_next_speaker_is_not_called_clear():
+    plan = _two_speaker_protection()
+    receipt = {
+        "rows": [
+            {
+                "requirement_id": "r1",
+                "status": "placed",
+                "start_s": 9.0,
+                "end_s": 11.0,
+                "placement": _MEASURED,
+            },
+            {
+                "requirement_id": "r2",
+                "status": "placed",
+                "start_s": 2.0,
+                "end_s": 4.0,
+                "placement": _MEASURED,
+            },
+        ]
+    }
+
+    placements = gb._spoken_protected_placements(receipt, plan, 10.0)
+
+    assert placements["spoken:r1"]["objects_verified"] is False
+    assert placements["spoken:r2"] == _MEASURED
+
+
+def test_a_list_label_that_runs_onto_the_next_speaker_is_not_called_clear():
+    plan = _two_speaker_protection()
+    receipt = {
+        "rows": [
+            {
+                "requirement_id": "l1",
+                "status": "placed",
+                "start_s": 8.5,
+                "end_s": 11.5,
+                "placement": _MEASURED,
+            }
+        ]
+    }
+
+    placements = gb._list_label_protected_placements(receipt, plan, 10.0)
+
+    assert placements["list:l1-1"]["objects_verified"] is False
+
+
+def test_a_title_held_past_a_short_first_clip_is_not_called_clear():
+    plan = _two_speaker_protection()
+    held = [{"id": "t", "start_s": 0.0, "end_s": 4.0}]
+
+    assert gb._title_protected_placement(_MEASURED, held, plan, 3.0)["objects_verified"] is False
+    assert gb._title_protected_placement(_MEASURED, held, plan, 10.0) == _MEASURED
+    assert gb._title_protected_placement(_MEASURED, [], plan, 3.0) is None

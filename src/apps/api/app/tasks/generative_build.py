@@ -12194,18 +12194,16 @@ def _run_phone_subtitled_job(
                 **protected_text_receipt(
                     protected_plan,
                     {
-                        "title": title_receipt if title_rows else None,
+                        "title": _title_protected_placement(
+                            title_receipt,
+                            title_rows,
+                            protected_plan,
+                            float(binding.original.duration_s),
+                        ),
                         "closing": closing_text_receipt if closing_text_rows else None,
-                        **{
-                            f"spoken:{row.get('requirement_id')}": _past_first_speaker(
-                                row.get("placement"),
-                                row.get("start_s"),
-                                protected_plan,
-                                float(binding.original.duration_s),
-                            )
-                            for row in (spoken_text_receipt or {}).get("rows", [])
-                            if row.get("status") == "placed"
-                        },
+                        **_spoken_protected_placements(
+                            spoken_text_receipt, protected_plan, float(binding.original.duration_s)
+                        ),
                         # Item 19: a list label (and each item found on the take) is text too.
                         **_list_label_protected_placements(
                             list_label_receipt, protected_plan, float(binding.original.duration_s)
@@ -12777,18 +12775,52 @@ def _speaker_protection(protected: Any, media_id: str) -> Any:
     return next((s.plan for s in protected.speakers if s.media_id == media_id), None)
 
 
-def _past_first_speaker(placement: Any, start_s: Any, protected: Any, first_end_s: float) -> Any:
-    """KRI-903: a text row placed against the FIRST speaker's tracks but shown while a later
-    speaker plays was never measured against that speaker: unverified, never clear."""
+def _past_first_speaker(
+    placement: Any, start_s: Any, end_s: Any, protected: Any, first_end_s: float
+) -> Any:
+    """KRI-903: a text row placed against the FIRST speaker's tracks but shown at any moment
+    while a later speaker plays (it starts there, or runs onto it) was never measured against
+    that speaker: unverified, never clear."""
     if (
         protected is None
         or not protected.speakers
         or not isinstance(placement, Mapping)
         or not isinstance(start_s, int | float)
-        or start_s < first_end_s - 1e-3
     ):
         return placement
+    last_s = end_s if isinstance(end_s, int | float) else start_s
+    if last_s <= first_end_s + 1e-3:
+        return placement
     return {**placement, "objects_verified": False, "faces": "fallback"}
+
+
+def _spoken_protected_placements(
+    receipt: Mapping[str, Any] | None, protected: Any, first_end_s: float
+) -> dict[str, Any]:
+    """The placed spoken-word rows as ``protected_text_receipt`` placements."""
+    return {
+        f"spoken:{row.get('requirement_id')}": _past_first_speaker(
+            row.get("placement"), row.get("start_s"), row.get("end_s"), protected, first_end_s
+        )
+        for row in (receipt or {}).get("rows", [])
+        if row.get("status") == "placed"
+    }
+
+
+def _title_protected_placement(
+    receipt: Any, title_rows: Sequence[Mapping[str, Any]], protected: Any, first_end_s: float
+) -> Any:
+    """The opening title's placement receipt as ``protected_text_receipt`` takes it: none
+    without a title row, unverified while the title is held onto a later speaker."""
+    if not title_rows:
+        return None
+    return _past_first_speaker(
+        receipt,
+        min(float(row["start_s"]) for row in title_rows),
+        max(float(row["end_s"]) for row in title_rows),
+        protected,
+        first_end_s,
+    )
 
 
 def _protected_card_regions(protected: Any, duration_s: Any, canvas: Any = None) -> tuple[Any, ...]:
@@ -14133,7 +14165,7 @@ def _list_label_protected_placements(
     placements, so "text kept off X" is never claimed while one of them sits on X."""
     return {
         f"list:{row.get('requirement_id')}-{row.get('list_item', 1)}": _past_first_speaker(
-            row.get("placement"), row.get("start_s"), protected, first_end_s
+            row.get("placement"), row.get("start_s"), row.get("end_s"), protected, first_end_s
         )
         for row in (receipt or {}).get("rows", [])
         if row.get("status") == "placed"

@@ -550,7 +550,8 @@ def caption_window_faces(
     (the union of the faces seen at that window's samples, so a head moving inside a line is
     covered across it, not only where it was sampled). Fail-safe like `_face_boxes`: a
     sampler that did not confirm the frame (no clip, error, timeout, too few decoded frames)
-    protects the conservative fallback face (``receipt["faces"] == "fallback"``)."""
+    protects the conservative fallback face beside any face it did detect
+    (``receipt["faces"] == "fallback"``)."""
     per_window: list[list[float]] = []
     for start_s, end_s in windows:
         span = max(float(end_s) - float(start_s), 0.0)
@@ -623,15 +624,16 @@ def caption_window_faces(
         boxes.append(mapped)
         if anchored[nearest] >= 0:
             by_window.setdefault(anchored[nearest], []).append(mapped)
-    if not confirmed:
-        receipt["faces"] = "fallback"
-        return [_FALLBACK_FACE_BOX], [], receipt
     bands = [
         ProtectedRegion(
             float(windows[index][0]), float(windows[index][1]), _union_box(found), "face"
         )
         for index, found in sorted(by_window.items())
     ]
+    if not confirmed:
+        # What the sampler did see stays protected, with the conservative box beside it.
+        receipt["faces"] = "fallback"
+        return [*boxes, _FALLBACK_FACE_BOX], bands, receipt
     receipt["faces"] = "detected" if boxes else "none"
     return boxes, bands, receipt
 
