@@ -1061,7 +1061,11 @@ struct AttachmentSheet: View {
         guard let footage = footageDurationSummary.exactDuration, recorder.duration > footage else { return nil }
         return "Your voiceover is \(DurationFormatter.seconds(recorder.duration - footage)) longer than your footage. Add more footage, or use it anyway."
     }
-    private func advanceAfterFootageSelection() { guard step == .footage else { return }; advance() }
+    /// A pick the composer's + started ends back in the chat; from the sheet's own picker it moves on to the next step.
+    private func advanceAfterFootageSelection() {
+        guard step == .footage else { return }
+        if case .source = launch { requestDismiss() } else { advance() }
+    }
     private func advance() { guard stepIndex + 1 < steps.count else { requestDismiss(); return }; let next = steps[stepIndex + 1]; step = next; role = next.role }
     private func goBack() { guard !recorder.isRecording, stepIndex > 0 else { return }; let previous = steps[stepIndex - 1]; step = previous; role = previous.role }
     private func requestDismiss() {

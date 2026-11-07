@@ -678,11 +678,16 @@ private struct CreationWorkspaceView: View {
         model.projects.first(where: { $0.id == project.id }) ?? project
     }
 
-    private var canAttachMedia: Bool {
-        selectedFormat != nil && !isSending && !isActing && !isThinking
-            && (selectedFormat != .slides || hasDedicatedSlideWorkspace)
-            && currentProject.status != .rendering
+    /// Why the composer's + cannot add media right now, in the words its tray shows. Nil = it can.
+    private var attachBlockedReason: String? {
+        if selectedFormat == nil { return "Choose a video format first." }
+        if selectedFormat == .slides, !hasDedicatedSlideWorkspace { return "This post is still being set up." }
+        if isSending || isActing || isThinking { return "Kria is replying. Add media in a moment." }
+        if currentProject.status == .rendering { return "Your video is rendering. Add media once it’s ready." }
+        return nil
     }
+
+    private var canAttachMedia: Bool { attachBlockedReason == nil }
 
     private var rerecordFacts: RerecordPhase.Facts {
         let swapping = uploadRecords.contains { $0.projectID == project.id && $0.replacesMediaID != nil && $0.uploadFailed != true }
@@ -2232,18 +2237,32 @@ private struct CreationWorkspaceView: View {
     }
 
     /// What the composer's + offers (Paper S3.05): Record and Upload for every format, and the optional script and
-    /// voiceover rows only where they mean something.
+    /// voiceover rows only where they mean something. Every row opens Add media on the place it names; at the most
+    /// clips Record and Upload give way to the limit notice and Manage clips.
     private var attachMenu: ChatAttachMenu {
+        let takesPhotos = selectedFormat?.usesVisualPool == true
+        var replaceOffered = false
+        if selectedFormat == .talkingToCamera, case .one = RerecordOffer.resolve(thread: fullThread) { replaceOffered = true }
+        let room: AttachRoom = takesPhotos ? .open : .resolve(used: clipSlotsUsed, maximum: selectedMaximumClipCount, recordReplaces: replaceOffered)
         return ChatAttachMenu(
-            disabledReason: canAttachMedia ? nil : "Choose a video format first.",
+            disabledReason: attachBlockedReason,
             offersSaved: capabilities?.mediaLibrary == true,
-            record: selectedFormat?.usesVisualPool == true ? nil : { openAttachments(launch: .record) },
+            takesPhotos: takesPhotos,
+            room: room,
+            record: takesPhotos ? nil : { openAttachments(launch: .record) },
             upload: { openAttachments(launch: .source($0)) },
             addScript: selectedFormat == .talkingToCamera ? { openAttachments(launch: .recordWithScript) } : nil,
             addVoiceover: selectedFormat == .narrated ? { openAttachments(launch: .voiceover) } : nil,
             addSong: capabilities?.songUploadEnabled == true && selectedFormat?.runsAsMontage == true ? { openAttachments(launch: .step(.song)) } : nil,
-            addOverlays: capabilities?.visualsEnabled == true && selectedFormat?.usesVisualPool == false ? { openAttachments(launch: .step(.overlays)) } : nil
+            addOverlays: capabilities?.visualsEnabled == true && selectedFormat?.usesVisualPool == false ? { openAttachments(launch: .step(.overlays)) } : nil,
+            manageClips: { openAttachments() }
         )
+    }
+
+    /// Clips attached plus clips still uploading or being chosen: the count the picker measures its room against.
+    private var clipSlotsUsed: Int {
+        attachedClipCount + uploadRecords.filter { $0.projectID == project.id && $0.role == .clip }.count
+            + BackgroundUploadCoordinator.reservedCount(projectID: project.id, role: .clip, inFlight: uploadInFlight, records: uploadRecords, selections: photoSelections)
     }
 
     private var editorConversation: some View {

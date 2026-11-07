@@ -33,7 +33,7 @@ struct KriaSourceOption: Identifiable {
 /// The Record | Upload (| third) row.
 ///
 /// - `.tiles`: 120pt-minimum tiles. Two options get 16pt padding; three get 12pt and a tighter gap.
-/// - `.compact`: a 44pt capsule pair with 15pt icons, for "Add more" once media exists.
+/// - `.compact`: a 44pt capsule pair with 15pt icons, for a choice inside a card, such as the no-speech recovery.
 ///
 /// `leadsWithFirst` is the Talk to camera lead: the first tile (Record) takes the butter fill and the rest keep
 /// the same size. A disabled tile dims to 40%; pass `disabledReason` to say why under the row.
