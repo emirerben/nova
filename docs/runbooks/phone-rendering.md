@@ -4349,8 +4349,8 @@ Talking variant with the card lane open): `MEDIA_TILT_ENABLED`, `clipTilt` verif
 >= `MEDIA_CARD_TILT_MIN_CLIENT_PROTOCOL` (30). Builds 28 and 29 decode `clipTilt` but draw a placed card upright, so a
 pinned recipe that carries a tilted card answers `426 client_update_required` (`feature: "card_tilt"`,
 `minimum_client_protocol: 30`) to them. The capability opens only the rotate gesture and the Rotation slider;
-`visual_editor_style` (zoom, fit, animation) stays closed, and Save refuses a card style that sets anything but the
-angle, and an angle on a full-screen card (422, never silently dropped). A new or changed angle while a gate is
+zoom and animation have their own gate (KRI-1264, below), `visual_editor_style` (the fit) stays closed, and Save
+refuses a fit and an angle on a full-screen card (422, never silently dropped). A new or changed angle while a gate is
 closed is a 422 `unsupported_phone_edit` ("tilting a picture isn't available on this edit yet"); keeping a stored
 angle and straightening one always work. Rollback is `MEDIA_TILT_ENABLED=false` (+ restart), never a code revert.
 
@@ -4359,6 +4359,40 @@ Chat: `patch_overlay` takes `rotation_deg` (replaces) or `rotation_delta_deg` (a
 v101). A tilted card lists `tilt=(rotation_deg=...)` in OVERLAY CARDS. Proof: `tests/routes/test_overlay_card_tilt.py`,
 `tests/routes/test_overlay_card_tilt_chat.py`, the `overlay_tilt_*` replay goldens, `PlacedCardTiltTests`
 (`tests/fixtures/card-tilt-parity/v1.json` is read by both sides) and `NativeOverlayCardTiltTests`.
+
+### Picture card zoom and animation (KRI-1264)
+
+A phone Talking card's Zoom (1 to 4: the card drawn that many times its size, about its centre) and Animation
+(entrance, exit, loop, speed) pass through the same stages as its tilt:
+
+| Stage | Where they live |
+|---|---|
+| Editor Zoom slider / Animation tab | `media_overlays[i].editor_style.zoom` / `.animation` (a plain card carries no `editor_style`) |
+| Save -> `_overlays_from_sections` | `SubtitledOverlayCard.zoom` / `.animation` (omitted from the row while default) |
+| Talking compile | the card clip's `visual_placement.editor_style` (rotation 0 there: the angle stays on `transform.rotation_degrees`) |
+| Pinned recipe -> editor read-back | `lanes_from_recipe` reads them back; `sections_from_lanes` projects one `editor_style` with the angle |
+| Device render | `VisualMediaPlacement.position` (zoom scales the card's width, `VisualEditorStyle.sample` the animation) |
+
+Where they used to be lost: Save refused both, the recipe placement had no field for them, and the device's
+`VisualEditorStyle` could not be decoded from a recipe at all (`RecipeJSON` turns `rotation_deg` into `rotationDeg`
+before the lookup; it now reads both spellings).
+
+Gates: the rollout token `cardStyle` in `PHONE_RENDER_VERIFIED_FEATURES` (no env flag) and a build declaring protocol
+>= `MEDIA_CARD_STYLE_MIN_CLIENT_PROTOCOL` (44). `editor_capabilities.media_overlay_style` is present only when both hold,
+on a device-rendered Talking variant with the card lane open; it opens Zoom and Animation for an on-top card only
+(not a full-screen card, not an added visual block). Builds below 44 fail the whole recipe on a placement
+`editor_style`, so a pinned recipe that carries a zoomed or animated card answers `426 client_update_required`
+(`feature: "card_style"`, `minimum_client_protocol: 44`). A new or changed zoom or animation while a gate is closed is a
+422 ("zooming or animating a picture isn't available on this edit yet"); keeping a stored one and resetting to plain
+always work. Chat does not set them, and a chat tilt keeps them.
+
+Apply: ship the protocol-44 build, run a physical-iPhone check (a 2x card with a Pop entrance, alone and tilted, in
+the editor preview and in the export), then add `cardStyle` to `PHONE_RENDER_VERIFIED_FEATURES` on Fly (api + worker)
+and restart. Rollback: remove the token and restart, never a code revert; cards already saved keep their style.
+
+Proof: `tests/routes/test_overlay_card_style.py`, `PlacedCardStyleTests` (`tests/fixtures/card-style-parity/v1.json` is
+read by both sides), `NativeOverlayCardStyleTests`, and the device chain `scripts/ios/card-style-e2e.py all OUT
+--simulator UDID` (writes `OUT/report.json` and `OUT/montage.png`).
 
 ### Video editor (KRI-1136, PR B)
 
