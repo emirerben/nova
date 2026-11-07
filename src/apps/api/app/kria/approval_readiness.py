@@ -168,7 +168,7 @@ def _pinned_promise(req: BriefRequirement, facts: Any) -> str | None:
     return _pinned_spoken_text_plan(ask, facts) if ask is not None else None
 
 
-# The sentence the apps send for a media-only send and for the "Let Kria cut the first version"
+# The sentence the apps send for a media-only send and for the "Let Kria decide"
 # chip. It states no requirement by construction: the creator delegated every choice, so an
 # absent brief is the true record, not missing evidence (KRI-774).
 _OPEN_REQUESTS = frozenset({"suggest an edit"})
@@ -550,6 +550,11 @@ def assess_readiness(
             ),
             phone_talking=talking_writer and talking_edit_format in {"subtitled", "talking_head"},
             caption_words_at_render=talking_writer,
+            # KRI-980/981: the draft turn judges a Talking edit's length and clip sound against
+            # which clips can speak; readiness reads the same clips or it disagrees with it.
+            media_snapshot=media
+            if talking_writer and talking_edit_format in {"subtitled", "talking_head"}
+            else None,
         )
     )
     if editor_payload is None and facts.ordering_basis is None:

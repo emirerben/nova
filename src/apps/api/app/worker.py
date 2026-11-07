@@ -513,9 +513,12 @@ def _worker_consumes_render_queues(sender) -> bool:
     """True when this worker process consumes at least one render-worker
     queue. Deliberately coarse: it matches machine SIZING, not per-task CLIP
     need — an overlay-jobs-only worker (dev-auto.sh 7b) prewarms a model it
-    won't use, which is fine on render-sized VMs. If a small dedicated
-    analysis/overlay process is ever split out (TODOS worker-topology (a)),
-    revisit this before pointing it at a render queue.
+    won't use, which is fine on render-sized VMs. The one small process that
+    consumes a render queue is the 2GB `visuals` machine (KRI-1240,
+    `-Q visuals-analysis`): queues in VISUALS_WORKER_QUEUES don't count, so a
+    process consuming only those skips the prewarm. Any future small
+    analysis/overlay process needs the same treatment before it is pointed at
+    a render queue.
 
     `sender` is the celery.worker.consumer.Consumer instance that
     `worker_ready` passes; `sender.app.amqp.queues.consume_from` reflects the
@@ -536,7 +539,10 @@ def _worker_consumes_render_queues(sender) -> bool:
     polls for two days. See agents/DECISIONS.md (2026-08-04).
     """
     try:
-        from app.services.queue_state import RENDER_WORKER_QUEUES  # noqa: PLC0415
+        from app.services.queue_state import (  # noqa: PLC0415
+            RENDER_WORKER_QUEUES,
+            VISUALS_WORKER_QUEUES,
+        )
 
         consumed = set(sender.app.amqp.queues.consume_from.keys())
     except Exception as exc:  # noqa: BLE001
@@ -544,6 +550,9 @@ def _worker_consumes_render_queues(sender) -> bool:
         return False
     if not consumed & RENDER_WORKER_QUEUES:
         print("[worker_ready] no render queue consumed — skipping CLIP prewarm")
+        return False
+    if consumed <= VISUALS_WORKER_QUEUES:
+        print("[worker_ready] visuals-only worker (small VM) — skipping CLIP prewarm")
         return False
     return True
 

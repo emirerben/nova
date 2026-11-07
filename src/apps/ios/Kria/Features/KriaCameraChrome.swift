@@ -2,7 +2,7 @@ import SwiftUI
 import AVFoundation
 import AVKit
 
-/// Translucent camera chrome (Paper S3.08): the same recipe as `KriaCameraUploadButton`, for any shape.
+/// Translucent camera chrome (Paper S3.08): ultra-thin material under a white wash, for any shape.
 private struct CameraGlassModifier<S: InsettableShape>: ViewModifier {
     let shape: S
     var strength = 0.2
@@ -106,6 +106,11 @@ struct KriaCameraCapsule: View {
     var identifier: String?
     /// The control is switched on: ink on white, the camera's version of the selected state.
     var isOn = false
+    /// A switch rather than an action. Off it says "Off" and sits on a dark scrim, so the state still reads over a
+    /// bright picture where plain glass washes out.
+    var isSwitch = false
+    /// Shows a spinner in place of the symbol.
+    var isBusy = false
     var action: (() -> Void)?
 
     var body: some View {
@@ -113,6 +118,7 @@ struct KriaCameraCapsule: View {
             Button(action: action) { label }
                 .buttonStyle(.plain)
                 .accessibilityLabel(title)
+                .accessibilityValue(isSwitch ? (isOn ? "On" : "Off") : "")
                 .accessibilityIdentifier(identifier ?? "camera-capsule")
         } else {
             label.accessibilityElement(children: .combine)
@@ -121,12 +127,25 @@ struct KriaCameraCapsule: View {
 
     private var label: some View {
         HStack(spacing: 8) {
-            if let symbol { Image(systemName: symbol).font(.system(size: 15, weight: .regular)) }
-            Text(title).kriaType(.button).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+            if isBusy { ProgressView().tint(isOn ? KriaColor.ink : Color.white) }
+            else if let symbol { Image(systemName: symbol).font(.system(size: 15, weight: .regular)) }
+            if isSwitch, !isOn {
+                // "Off" follows the name on one line, or drops under it at large text, so no word is split.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { Text(title).fixedSize(); Text("Off").opacity(0.72).fixedSize() }
+                    VStack(spacing: 0) { Text(title); Text("Off").opacity(0.72) }
+                }
+                .kriaType(.button).multilineTextAlignment(.center)
+            } else {
+                Text(title).kriaType(.button).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+            }
         }
         .foregroundStyle(isOn ? KriaColor.ink : Color.white)
         .padding(.horizontal, 16).padding(.vertical, 6).frame(minHeight: 44)
-        .background { if isOn { Capsule().fill(Color.white) } }
+        .background {
+            if isOn { Capsule().fill(Color.white) }
+            else if isSwitch { Capsule().fill(Color.black.opacity(0.5)) }
+        }
         .kriaCameraGlass(Capsule())
         .contentShape(Capsule())
         .accessibilityAddTraits(isOn ? .isSelected : [])
@@ -151,13 +170,12 @@ struct KriaCountdownDisc: View {
     }
 }
 
-/// Camera or microphone refused or unavailable (Paper S3.10). Always two ways forward: fix it, or upload a video.
+/// Camera or microphone refused or unavailable (Paper S3.10): the way to fix it, or to try again.
 struct CameraAccessCard: View {
     let kind: TeleprompterCamera.ErrorKind?
     let message: String
     let openSettings: () -> Void
     let retry: () -> Void
-    let upload: (() -> Void)?
 
     private var title: String {
         switch kind {
@@ -192,20 +210,6 @@ struct CameraAccessCard: View {
                     Button("Try again", action: retry)
                         .buttonStyle(KriaButtonStyle(role: .primary, size: .medium, fullWidth: true))
                         .accessibilityIdentifier("teleprompter-retry-camera")
-                }
-                if let upload {
-                    Button(action: upload) {
-                        HStack(spacing: 8) {
-                            Image(systemName: KriaSourceOption.uploadSymbol).font(.system(size: 15))
-                            Text("Upload").kriaType(.button).multilineTextAlignment(.center)
-                        }
-                        .foregroundStyle(Color.white).padding(.vertical, 8).frame(maxWidth: .infinity, minHeight: 44)
-                        .background(Color.white.opacity(0.2), in: Capsule())
-                        .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Upload")
-                    .accessibilityIdentifier("camera-upload")
                 }
             }
             if dynamicTypeSize.isAccessibilitySize {

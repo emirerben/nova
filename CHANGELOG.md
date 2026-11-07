@@ -2,6 +2,126 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.67.0] - 2026-11-07
+
+### Changed
+- feat(ios): glass AI suggestion chips with a slow turning edge light (KRI-1273) (#2181) <!-- release-pr: 2181 -->
+
+## [0.88.66.0] - 2026-11-07
+
+### Changed
+- feat(ios): clean up the talk-to-camera recording screen (KRI-1259) (#2167) <!-- release-pr: 2167 -->
+
+## [0.88.65.0] - 2026-11-07
+
+### Changed
+- feat(ios): make the composer + the one way to add media (KRI-1272) (#2180) <!-- release-pr: 2180 -->
+
+## [0.88.64.0] - 2026-11-07
+
+### Changed
+- feat(ios): live plan feed enters block by block, Making your video, lighter ready stage (KRI-1261) (#2159) <!-- release-pr: 2159 -->
+
+## [0.88.63.0] - 2026-11-07
+
+### Changed
+- fix(kria): zoom and animation on a phone Talking picture card, protocol 44 (KRI-1264) (#2163) <!-- release-pr: 2163 -->
+
+## [0.88.62.0] - 2026-11-07
+
+### Changed
+- fix(kria): lead chip reads "Let Kria decide" (KRI-1274) (#2179) <!-- release-pr: 2179 -->
+
+## [0.88.61.0] - 2026-11-07
+
+### Changed
+- fix(kria): one failure line, silent export repairs, real chat titles (KRI-1262) (#2170) <!-- release-pr: 2170 -->
+
+## [0.88.60.0] - 2026-11-07
+
+### Changed
+- docs(suggestions): fix stale backfill_clip_signals line (KRI-1251) (#2182) <!-- release-pr: 2182 -->
+
+## [0.88.59.0] - 2026-11-07
+
+### Changed
+- feat(ios): drawings selectable on canvas, stacked-tap cycling, 44pt grab zones for editor overlays (KRI-1265) (#2150) <!-- release-pr: 2150 -->
+
+## [0.88.58.0] - 2026-11-07
+
+### Changed
+- fix(speech-cleanup): cut long pauses whisper stamps hide on phone Talking (KRI-1270) (#2177) <!-- release-pr: 2177 -->
+
+## [0.88.57.0] - 2026-11-07
+
+### Changed
+- fix(chat): turn on captions reaches hidden lyrics on lip-sync/song videos (KRI-1001) (#2158) <!-- release-pr: 2158 -->
+
+## [0.88.56.0] - 2026-11-07
+
+### Changed
+- fix(kria): spoken-word text on the right word, asked hold, inside the letterboxed picture (KRI-972, KRI-747, KRI-1018) (#2160) <!-- release-pr: 2160 -->
+
+## [0.88.55.0] - 2026-11-07
+
+### Fixed
+- fix(fly): analyse Visuals six at a time on a small always-on process (KRI-1240) (#2148) <!-- release-pr: 2148 -->
+
+## [0.88.54.0] - 2026-11-07
+
+### Changed
+- fix(phone-text): lyric rows take the Lyric preference; keep the plan's shadow (KRI-1095, KRI-1050) (#2168) <!-- release-pr: 2168 -->
+
+## [0.88.53.0] - 2026-11-07
+
+### Changed
+- fix(api): get main's API suite green (Turkish fold guard exemption, brief digest re-freeze) (#2178) <!-- release-pr: 2178 -->
+
+## [0.88.52.0] - 2026-11-07
+
+### Changed
+- fix(ios): restore editor reconciliation and account-safe recovery (#2146) <!-- release-pr: 2146 -->
+
+## [0.88.51.0] - 2026-11-07
+
+### Changed
+- fix(captions): a caption asked at the bottom ends at 0.84, not 0.70 (KRI-1266) (#2151) <!-- release-pr: 2151 -->
+
+## [0.88.50.0] - 2026-11-07
+
+### Changed
+- fix(kria): Talking cards ask is a render promise, then judged on the card receipt (KRI-1237) (#2153) <!-- release-pr: 2153 -->
+
+## [0.88.49.0] - 2026-11-07
+
+### Changed
+- fix(api): creator labels anchor to their own quote and stack instead of failing (KRI-884, KRI-888) (#2166) <!-- release-pr: 2166 -->
+
+## [0.88.48.0] - 2026-11-07
+
+### Changed
+- fix(kria): approval card leads with Keep original speech when the brief keeps the take whole (KRI-971) (#2164) <!-- release-pr: 2164 -->
+
+## [0.88.47.0] - 2026-11-07
+
+### Changed
+- fix(kria): Talking draft receipts count only the talking clip, mute footage clips, say nothing-to-cut once (KRI-980, KRI-981, KRI-748) (#2162) <!-- release-pr: 2162 -->
+
+## [0.88.46.0] - 2026-11-07
+
+### Changed
+- fix(captions): preserve numeric tokens before proofreading alignment (KRI-1263) (#2174) <!-- release-pr: 2174 -->
+
+## [0.88.45.0] - 2026-11-07
+
+### Changed
+- feat(ios): quiet the chat chrome (KRI-1260) (#2156) <!-- release-pr: 2156 -->
+
+## [0.88.44.0] - 2026-11-07
+
+### Changed
+- fix(kria): "Make it without these" leaves out only what its card named, and says so (KRI-1236) (#2149) <!-- release-pr: 2149 -->
+
 ## [0.88.43.0] - 2026-11-07
 
 ### Changed

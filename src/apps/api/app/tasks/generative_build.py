@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import contextvars
 import copy
+import functools
 import hashlib
 import inspect
 import json
@@ -9833,6 +9834,7 @@ def _run_phone_subtitled_job(
             cut_plan: CutPlan | None = None
             speech_cleanup_outcome_context: dict[str, Any] | None = None
             tight_pauses_report: dict[str, Any] | None = None
+            long_pauses_report: dict[str, Any] | None = None
             if cleanup_required:
                 try:
                     speech_cleanup_snapshot = hydrate_job_speech_cleanup_snapshot(
@@ -9867,6 +9869,16 @@ def _run_phone_subtitled_job(
                         clip_path=clip_path,
                         duration_s=float(probe.duration_s),
                     )
+                    if tight_pauses_report is None:
+                        # Emir's camera take: the cleanup default also cuts pauses the word
+                        # stamps swallow (>= 0.6 s). Never when the creator asked for tight.
+                        cut_plan, long_pauses_report = _phone_long_pause_cut(
+                            snapshot,
+                            cut_plan,
+                            speech_cleanup_snapshot.source_words(),
+                            clip_path=clip_path,
+                            duration_s=float(probe.duration_s),
+                        )
                     if cut_plan is not consented_plan:
                         # The public receipt reads only these two counts: report what was cut.
                         speech_cleanup_outcome_context["output_removal_count"] = (
@@ -12240,6 +12252,8 @@ def _run_phone_subtitled_job(
             )
         if tight_pauses_report is not None:
             new_entry["tight_pauses"] = tight_pauses_report
+        if long_pauses_report is not None:
+            new_entry["long_pauses"] = long_pauses_report
         if cut_plan is not None and not opening_cut_only:
             # The source `_speech_cleanup_outcome_context` the device-export completion route
             # (`app.routes.device_render._device_speech_cleanup_outcome`) reads to publish the
@@ -12641,6 +12655,62 @@ def _phone_tight_pause_cut(
         }
     try:
         record_pipeline_event("phone", "tight_pauses", receipt)
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return new_plan, receipt
+
+
+def _phone_long_pause_cut(
+    snapshot: dict,
+    cut_plan: CutPlan,
+    words: Sequence[Any],
+    *,
+    clip_path: str,
+    duration_s: float,
+) -> tuple[CutPlan, dict[str, Any] | None]:
+    """Cut pauses of ``MAX_PAUSE_S`` or more that whisper's contiguous word stamps hide.
+
+    The cleanup default for a consented single-clip phone Talking render, behind
+    ``SPEECH_CLEANUP_LONG_PAUSES_ENABLED``. Same cutter and protections as tight pauses, but
+    only Kria silence spans of 0.6 s or more are cut, and the receipt lands under
+    ``variant["long_pauses"]`` (never ``tight_pauses``, which means the creator asked). Flag off,
+    or a brief that asks for tight pauses (that path owns them): ``(cut_plan, None)`` with the
+    SAME plan object. Never raises: a failure keeps the consented plan."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.tight_pause_ask import brief_tight_pauses  # noqa: PLC0415
+    from app.pipeline.silence_cut import MAX_PAUSE_S  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    if not settings.speech_cleanup_long_pauses_enabled:
+        return cut_plan, None
+    raw_binding = snapshot.get("creator_brief_binding")
+    if raw_binding:
+        try:
+            if brief_tight_pauses(BriefBinding.model_validate(raw_binding).resolve()):
+                return cut_plan, None
+        except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no tight ask"
+            log.warning("phone_long_pauses.binding_unreadable", error=str(exc)[:200])
+    try:
+        from app.pipeline.tight_pause_cut import apply_tight_pauses  # noqa: PLC0415
+
+        new_plan, report = apply_tight_pauses(
+            cut_plan, clip_path, list(words), duration_s, min_pause_s=MAX_PAUSE_S
+        )
+        receipt = report.to_variant()
+    except Exception as exc:  # noqa: BLE001 - the consented plan stands
+        log.warning("phone_long_pauses.failed", error=str(exc)[:200])
+        new_plan = cut_plan
+        receipt = {
+            "version": 1,
+            "mode": "long",
+            "status": "unavailable",
+            "limit_s": MAX_PAUSE_S,
+            "added_cuts": 0,
+            "added_removed_ms": 0,
+            "reason": "failed",
+        }
+    try:
+        record_pipeline_event("phone", "long_pauses", receipt)
     except Exception:  # noqa: BLE001 - observability only
         pass
     return new_plan, receipt
@@ -13761,12 +13831,19 @@ def _phone_talking_spoken_text_rows(
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
 
     canvas = canvas if canvas is not None else _STORY_CANVAS
-    from app.pipeline.phone_subtitled_title import place_talking_title  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_title import (  # noqa: PLC0415
+        picture_band,
+        place_talking_title,
+    )
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
     display_width, display_height = display_dims(binding.original)
     scale = fit_transform(display_width, display_height, canvas, landscape_fit).scale
     speaker_span_s = sum(max(0.0, end - start) for start, end in keep_segments)
+    # KRI-1018: a letterboxed speaker's picture is a band of the canvas; the bars are not a place
+    # to put the text. The band is this speaker's: a row past its span plays another clip (an
+    # extra speaker), whose picture is unknown here, so that row gets no band and no claim.
+    band = picture_band(display_width, display_height, canvas, scale)
 
     def place(row: dict, avoid: Any) -> tuple[dict, dict[str, Any]]:
         return place_talking_title(
@@ -13779,6 +13856,7 @@ def _phone_talking_spoken_text_rows(
             scale=scale,
             position_x=position_x,
             avoid=avoid,
+            picture_band=band if float(row["start_s"]) < speaker_span_s else None,
             **_protected_placement_kwargs(protected),
         )
 
@@ -22861,6 +22939,89 @@ def _build_ai_timeline(
 
 _CONTEXT_LABEL_CONTIGUITY_EPSILON_S = 0.001
 _CONTEXT_LABEL_COMBINED_MAX_CHARS = 120
+# KRI-888: a stack is bounded by what the frame draws, measured with the renderer's own
+# wrap (`measure_text_overlay_box`) on the tighter of the two canvases, not by characters.
+# `TextElement.text` is also capped at 500 characters.
+_CONTEXT_LABEL_STACKED_MAX_CHARS = 500
+# The measured block excludes the glow the label draws below it: ink ends 25px (portrait)
+# to 30px (landscape) past `bottom` through `_draw_frame`, so the block keeps this much room.
+_CONTEXT_LABEL_GLOW_PAD_PX = 32
+# Used only when skia is unavailable: the label bar's measured one-line width, and the
+# five lines landscape's 1080px height holds.
+_CONTEXT_LABEL_LINE_CHARS = 28
+_CONTEXT_LABEL_STACKED_MAX_LINES = 5
+# The element shape `_context_sport_text_elements` and the guided compile both emit.
+_CONTEXT_LABEL_ELEMENT_SHAPE: dict[str, Any] = {
+    "start_s": 0.0,
+    "end_s": 2.0,
+    "role": "generative_sequence",
+    "position": "custom",
+    "x_frac": 0.86,
+    "y_frac": 0.86,
+    "font_family": "Inter",
+    "size_class": "small",
+    "color": "#FFFFFF",
+    "highlight_color": "#FFFFFF",
+    "alignment": "right",
+    "effect": "static",
+    "z": 8,
+}
+
+
+def _context_label_lines(text: str) -> int:
+    return sum(max(1, -(-len(part) // _CONTEXT_LABEL_LINE_CHARS)) for part in text.split("\n"))
+
+
+@functools.lru_cache(maxsize=256)
+def _context_label_stack_fits(text: str) -> bool:
+    """Whether ``text`` draws inside the frame on both portrait and landscape."""
+    if len(text) > _CONTEXT_LABEL_STACKED_MAX_CHARS:
+        return False
+    try:
+        from app.pipeline import text_overlay_skia as cloud  # noqa: PLC0415
+        from app.pipeline.canvas import LANDSCAPE, PORTRAIT  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 - no skia here (structural evals CI)
+        return _context_label_lines(text) <= _CONTEXT_LABEL_STACKED_MAX_LINES
+    burn = _context_sport_burn_dicts(
+        [{**_CONTEXT_LABEL_ELEMENT_SHAPE, "text": text}], video_duration_s=2.0
+    )
+    if not burn:
+        return False
+    return all(
+        cloud.measure_text_overlay_box(burn[0], render_canvas=canvas)["bottom"] * canvas.height
+        + _CONTEXT_LABEL_GLOW_PAD_PX
+        < canvas.height
+        for canvas in (PORTRAIT, LANDSCAPE)
+    )
+
+
+def _combined_context_label_text(
+    rows: list[dict[str, Any]], *, clip_id: str
+) -> tuple[str, list[dict[str, Any]]]:
+    """One clip's labels as one overlay text, and the rows it actually holds.
+
+    KRI-888: a creator label can run 80 characters, so two can pass the joined cap.
+    Failing the render over copy the creator wrote is wrong; each label keeps its own
+    line instead, up to what the frame can draw. The rows returned are exactly the
+    labels in the text, so provenance never claims a label the frame cannot show.
+    """
+    texts = [str(row["sport"]) for row in rows]
+    joined = " · ".join(texts)
+    if len(joined) <= _CONTEXT_LABEL_COMBINED_MAX_CHARS:
+        return joined, list(rows)
+    kept: list[dict[str, Any]] = []
+    for row, text in zip(rows, texts, strict=True):
+        stacked = "\n".join([*(str(r["sport"]) for r in kept), text])
+        if kept and not _context_label_stack_fits(stacked):
+            log.warning(
+                "context_label_stack_truncated",
+                clip_id=clip_id,
+                kept=len(kept),
+                dropped=[r.get("intent_id") or "" for r in rows[len(kept) :]],
+            )
+            break
+        kept.append(row)
+    return "\n".join(str(r["sport"]) for r in kept), kept
 
 
 def _resolve_clip_id_for_media_id(media_id: str, clip_id_to_gcs: dict[str, str]) -> str | None:
@@ -23051,6 +23212,7 @@ def _grounded_context_labels(
                     vision_answer=vision_answer,
                     vision_confidence=vision_confidence,
                     intent_id=intent.intent_id,
+                    source_quote=getattr(intent, "source_quote", None),
                 )
                 if grounded is not None:
                     break
@@ -23154,13 +23316,8 @@ def _context_sport_text_elements(
                 continue
             seen_texts.add(text)
             rendered_rows.append(row)
-        sport = " · ".join(str(row["sport"]) for row in rendered_rows)
+        sport, shown_rows = _combined_context_label_text(rendered_rows, clip_id=clip_id)
         if sport:
-            if len(sport) > _CONTEXT_LABEL_COMBINED_MAX_CHARS:
-                raise ValueError(
-                    "Combined context labels for clip "
-                    f"{clip_id!r} exceed the {_CONTEXT_LABEL_COMBINED_MAX_CHARS}-character limit"
-                )
             row = rendered_rows[0]
             # Keep the stable source identity used to merge and pin rendered
             # labels across re-renders. Stored snapshots retain this shape.
@@ -23173,7 +23330,7 @@ def _context_sport_text_elements(
                 "confidence": row.get("confidence"),
                 "intent_id": row.get("intent_id") or "",
             }
-            if len(rendered_rows) > 1:
+            if len(shown_rows) > 1:
                 source_params["context_label_provenance"] = [
                     {
                         "text": candidate["sport"],
@@ -23181,7 +23338,12 @@ def _context_sport_text_elements(
                         "confidence": candidate.get("confidence"),
                         "intent_id": candidate.get("intent_id") or "",
                     }
-                    for candidate in rendered_rows
+                    for candidate in shown_rows
+                ]
+            if len(shown_rows) < len(rendered_rows):
+                source_params["context_labels_not_shown"] = [
+                    candidate.get("intent_id") or ""
+                    for candidate in rendered_rows[len(shown_rows) :]
                 ]
             element = TextElement(
                 text=sport,

@@ -55,6 +55,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.agents._schemas.visual_editor import VisualAnimation, VisualEditorStyle
 from app.kria.render_assets import LibraryRenderAsset
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.silence_cut import CutPlan  # noqa: TCH001
@@ -136,6 +137,12 @@ class SubtitledOverlayCard(_LaneModel):
     # Server-owned (an editor Save carries it by card id, never from the client). Omitted from
     # the dump while False, so every other card's row is byte-identical.
     caption_clear: bool = False
+    # KRI-1264: the editor's Zoom (the card drawn this many times its `scale`, about its centre)
+    # and Animation (entrance, exit, loop). A pip card only, like `rotation_deg`. The compile
+    # writes both as the card clip's `visual_placement.editor_style`. Each is omitted from the
+    # dump while it is the default, so a plain card's row is byte-identical.
+    zoom: float = Field(default=1.0, ge=1, le=4)
+    animation: VisualAnimation = Field(default_factory=VisualAnimation)
 
     @model_validator(mode="after")
     def _window(self) -> SubtitledOverlayCard:
@@ -143,7 +150,26 @@ class SubtitledOverlayCard(_LaneModel):
             raise ValueError("overlay card must have a positive-duration window")
         if self.rotation_deg != 0 and self.display_mode == "fullscreen":
             raise ValueError("a full-screen overlay card cannot be tilted")
+        if self.placement_style() is not None and self.display_mode == "fullscreen":
+            raise ValueError("a full-screen overlay card cannot be zoomed or animated")
         return self
+
+    def placement_style(self) -> VisualEditorStyle | None:
+        """What the recipe placement carries: zoom and animation, None while both are default.
+
+        The angle stays on the clip's ``transform.rotation_degrees`` (KRI-1141).
+        """
+        if self.zoom == 1 and self.animation == VisualAnimation():
+            return None
+        return VisualEditorStyle(zoom=self.zoom, animation=self.animation)
+
+    def editor_style(self) -> VisualEditorStyle | None:
+        """The editor's ``editor_style`` for this card, None while it is upright and plain."""
+        if self.rotation_deg == 0 and self.placement_style() is None:
+            return None
+        return VisualEditorStyle(
+            rotation_deg=self.rotation_deg, zoom=self.zoom, animation=self.animation
+        )
 
     @model_serializer(mode="wrap")
     def _image_shape(self, handler: SerializerFunctionWrapHandler) -> dict:
@@ -161,6 +187,10 @@ class SubtitledOverlayCard(_LaneModel):
             payload.pop("rotation_deg", None)
         if not self.caption_clear:
             payload.pop("caption_clear", None)
+        if self.zoom == 1:
+            payload.pop("zoom", None)
+        if self.animation == VisualAnimation():
+            payload.pop("animation", None)
         return payload
 
 

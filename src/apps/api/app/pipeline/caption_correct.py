@@ -230,8 +230,22 @@ class _Retimed(NamedTuple):
     reverted: int
 
 
+def _has_numeric_content(text: str) -> bool:
+    """Include fractions/numerals and compatibility forms such as ㎟ -> mm2."""
+
+    return any(ch.isnumeric() for ch in text) or any(
+        ch.isnumeric()
+        for ch in unicodedata.normalize("NFKD", text)  # single-fold: numeric probe
+    )
+
+
 def _word_key(text: str) -> str:
-    """The letters of a word for comparison: case, accents and punctuation folded away."""
+    """Fold spelling, but keep numeric tokens exact before alignment."""
+
+    # Punctuation can change a number's value, sign or units ("1.5" != "15").
+    # Folding it away would send an unsafe edit through the unguarded equal path.
+    if _has_numeric_content(text):
+        return text
 
     key = _WORD_RE.sub("", _fold(text))
     return key or text
@@ -257,12 +271,12 @@ def _edit_distance(left: str, right: str) -> int:
 def _is_word_edit(old: str, new: str) -> bool:
     """True when ``new`` reads as the spoken ``old`` spelled or inflected correctly.
 
-    Digits never change ("10" -> "11" rewrites what was said). Dropping or adding a
+    Numbers never change ("10" -> "11" rewrites what was said). Dropping or adding a
     suffix of two or more letters ("Arabası" -> "Araba") rewords it (KRI-708), a
     one-letter ending ("your" -> "you're", "nereye" -> "nereyi") does not.
     """
 
-    if not old or not new or any(ch.isdigit() for ch in old + new):
+    if not old or not new or _has_numeric_content(old + new):
         return False
     longer, shorter = (old, new) if len(old) >= len(new) else (new, old)
     if longer.startswith(shorter) and len(longer) - len(shorter) >= 2:
@@ -281,7 +295,7 @@ def _is_respacing(old: str, new: str) -> bool:
     return (
         bool(old)
         and bool(new)
-        and not any(ch.isdigit() for ch in old + new)
+        and not _has_numeric_content(old + new)
         and _edit_distance(old, new) <= 1
     )
 
