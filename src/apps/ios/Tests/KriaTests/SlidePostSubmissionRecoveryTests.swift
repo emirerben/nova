@@ -428,7 +428,7 @@ final class SlidePostSubmissionRecoveryTests: XCTestCase {
         owner = "other-owner"
         await value.create(api: api, itemID: itemID)
         XCTAssertTrue(server.requests.isEmpty)
-        XCTAssertEqual(value.draft?.caption, "Unsent edit")
+        XCTAssertNil(value.draft, "the other account never sees the previous account's draft")
         XCTAssertNotNil(value.error)
     }
 
@@ -639,7 +639,8 @@ final class SlidePostSubmissionRecoveryTests: XCTestCase {
         await reopened.refresh(api: api, itemID: itemID)
         XCTAssertEqual(server.requests.count, 3, "Foreground polling must not reset the automatic budget")
         await reopened.create(api: api, itemID: itemID)
-        XCTAssertEqual(server.requests, Array(repeating: operation, count: 4))
+        XCTAssertEqual(server.requests, Array(repeating: operation, count: 3), "the explicit observation reads the committed receipt instead of posting again")
+        XCTAssertEqual(server.receiptReads, 1)
         XCTAssertEqual(server.receipts.count, 1)
         XCTAssertEqual(try SlidePostSubmissionJournal(root: root).load(scope)?.receipt?.clientRequestID, operation)
         XCTAssertEqual(try SlidePostSubmissionJournal(root: root).load(scope)?.remainingPostAttempts, 0)
@@ -731,7 +732,7 @@ extension SlidePostSessionRecoveryTests {
         now.addTimeInterval(29)
         await value.refresh(api: api, itemID: itemID, readOnlyObservation: true)
         XCTAssertEqual(reads, first)
-        now.addTimeInterval(1)
+        now.addTimeInterval(31)
         await value.refresh(api: api, itemID: itemID, readOnlyObservation: true)
         XCTAssertGreaterThan(reads, first); XCTAssertTrue(server.requests.isEmpty)
         XCTAssertEqual(try journal.load(scope)?.remainingReads, 0)

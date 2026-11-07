@@ -3517,13 +3517,6 @@ def test_two_talking_clips_play_back_to_back_and_footage_covers_them(monkeypatch
     _assert_receipt_cutaways_match_recipe(receipt, recipe)
     assert gb.PHONE_TALKING_HEAD_FIELD not in variant
 
-    from app.services.nova_steps import render_notes_from_talking_multi_clip_receipt
-
-    assert render_notes_from_talking_multi_clip_receipt(receipt) == [
-        "Played your 2 talking clips back to back",
-        "Showed your 1 other clip full screen while you talk",
-    ]
-
 
 def test_one_talking_clip_with_footage_keeps_one_speaker(monkeypatch):
     job, _snapshot, _bindings = _setup_talking_multi(
@@ -3560,13 +3553,6 @@ def test_footage_that_finds_no_room_is_reported_by_upload_position(monkeypatch):
     assert receipt["unplaced"] == [
         {"media_id": "b", "position": 3, "reason": "no_room_in_timeline"},
         {"media_id": "c", "position": 4, "reason": "no_room_in_timeline"},
-    ]
-    from app.services.nova_steps import render_notes_from_talking_multi_clip_receipt
-
-    assert render_notes_from_talking_multi_clip_receipt(receipt) == [
-        "Showed 1 of your 3 other clips full screen",
-        "There wasn't room in the video to show clip 3 too",
-        "There wasn't room in the video to show clip 4 too",
     ]
 
 

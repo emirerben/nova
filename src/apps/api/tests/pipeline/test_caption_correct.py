@@ -4,6 +4,8 @@ import json
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 import app.pipeline.caption_correct as cc
 
 _CUES = [
@@ -383,3 +385,293 @@ def test_the_correction_prompt_names_every_caption_language():
     assert cc._language_name("EN") == "English"
     assert cc._language_name("xx") == "xx"
     assert cc._language_name(None) == "the spoken language"
+
+
+# ── KRI-1263: a good spelling fix must land, a bad one must not take the line with it ─────────
+# Failure modes the word alignment has to survive (see the PR body):
+#   timing drift, hallucinated rewrites, Turkish case/suffix, names/brands, numbers/emoji,
+#   split/merge at line edges, a refused change leaking onto its neighbours, trace counts.
+
+
+def _spoken(text: str) -> dict:
+    return _timed(text)
+
+
+def _correct(monkeypatch, spoken: list[str], proposed: list[str], language: str = "en"):
+    monkeypatch.setattr(cc, "_llm_correct_lines", lambda texts, lang, *, model: proposed)
+    return cc.correct_caption_cues([_spoken(t) for t in spoken], language)
+
+
+def _spans(cue: dict) -> list[tuple[float, float]]:
+    return [(w["start_s"], w["end_s"]) for w in cue["words"]]
+
+
+def _assert_timeline_intact(before: dict, after: dict) -> None:
+    spans = _spans(after)
+    assert spans[0][0] == before["words"][0]["start_s"]
+    assert spans[-1][1] == before["words"][-1]["end_s"]
+    assert all(start <= end for start, end in spans)
+    assert all(a[1] <= b[0] + 1e-9 for a, b in zip(spans, spans[1:]))
+    assert " ".join(w["text"] for w in after["words"]) == after["text"]
+
+
+def test_kri1263_misspellings_the_old_filter_dropped_now_land(monkeypatch) -> None:
+    out = _correct(
+        monkeypatch,
+        ["I have alot of time", "your going home", "teh dog barks"],
+        ["I have a lot of time", "you're going home", "the dog barks"],
+    )
+    assert [c["text"] for c in out] == [
+        "I have a lot of time",
+        "you're going home",
+        "the dog barks",
+    ]
+
+
+def test_kri1263_edited_word_keeps_its_timing(monkeypatch) -> None:
+    before = _spoken("your going home")
+    [after] = _correct(monkeypatch, ["your going home"], ["you're going home"])
+    assert after["text"] == "you're going home"
+    assert _spans(after) == _spans(before)
+    _assert_timeline_intact(before, after)
+
+
+def test_kri1263_split_word_shares_its_source_span(monkeypatch) -> None:
+    before = _spoken("I have alot of time")
+    [after] = _correct(monkeypatch, [before["text"]], ["I have a lot of time"])
+    assert [w["text"] for w in after["words"]] == ["I", "have", "a", "lot", "of", "time"]
+    a, lot = after["words"][2], after["words"][3]
+    assert (a["start_s"], lot["end_s"]) == (2.0, 3.0)
+    assert a["end_s"] == lot["start_s"]
+    assert _spans(after)[:2] + _spans(after)[4:] == [(0.0, 1.0), (1.0, 2.0), (3.0, 4.0), (4.0, 5.0)]
+    _assert_timeline_intact(before, after)
+
+
+def test_kri1263_merged_words_span_both(monkeypatch) -> None:
+    before = _spoken("go in to the room")
+    [after] = _correct(monkeypatch, [before["text"]], ["go into the room"])
+    assert [w["text"] for w in after["words"]] == ["go", "into", "the", "room"]
+    assert (after["words"][1]["start_s"], after["words"][1]["end_s"]) == (1.0, 3.0)
+    _assert_timeline_intact(before, after)
+
+
+def test_kri1263_split_and_merge_at_the_line_edges(monkeypatch) -> None:
+    first = _spoken("alot happened")
+    last = _spoken("it was alot")
+    tail_merge = _spoken("we went to day light")
+    out = _correct(
+        monkeypatch,
+        [first["text"], last["text"], tail_merge["text"]],
+        ["a lot happened", "it was a lot", "we went to daylight"],
+    )
+    assert [c["text"] for c in out] == ["a lot happened", "it was a lot", "we went to daylight"]
+    for before, after in zip((first, last, tail_merge), out):
+        _assert_timeline_intact(before, after)
+    assert out[2]["words"][-1]["end_s"] == 5.0
+
+
+def test_kri1263_punctuation_riding_the_word_survives_a_split(monkeypatch) -> None:
+    [after] = _correct(monkeypatch, ["it was alot, honestly."], ["it was a lot, honestly."])
+    assert [w["text"] for w in after["words"]] == ["it", "was", "a", "lot,", "honestly."]
+
+
+def test_kri1263_a_rewording_is_refused_but_a_clean_fix_in_the_same_line_lands(
+    monkeypatch,
+) -> None:
+    [after] = _correct(
+        monkeypatch,
+        ["I think thier plan is fine"],
+        ["I believe their plan is fine"],
+    )
+    assert after["text"] == "I think their plan is fine"
+
+
+def test_kri1263_hallucinated_rewrites_keep_the_spoken_line(monkeypatch) -> None:
+    spoken = [
+        "so good",
+        "the cat sat down",
+        "we went there today",
+        "Arabası hararet yapmıştı",
+        "one two three four five",
+    ]
+    proposed = [
+        "so very good very much",
+        "the dog sat down",
+        "today we went there",
+        "Araba hararet yapmıştı",
+        "one two",
+    ]
+    out = _correct(monkeypatch, spoken, proposed)
+    assert [c["text"] for c in out] == spoken
+
+
+def test_kri1263_a_line_whose_word_count_moves_by_more_than_two_is_kept_whole(
+    monkeypatch,
+) -> None:
+    before = _spoken("alot of time")
+    [after] = _correct(monkeypatch, [before["text"]], ["a lot of time and then some more"])
+    assert after == before
+
+
+def test_kri1263_numbers_never_change(monkeypatch) -> None:
+    out = _correct(
+        monkeypatch,
+        ["we have 10 dogs", "meet at 5 pm", "it cost 15 dollars"],
+        ["we have 11 dogs", "meet at 6 pm", "it cost fifteen dollars"],
+    )
+    assert [c["text"] for c in out] == ["we have 10 dogs", "meet at 5 pm", "it cost 15 dollars"]
+
+
+@pytest.mark.parametrize(
+    ("spoken_number", "proposed_number"),
+    [
+        ("1.5", "15"),
+        ("15", "1.5"),
+        (".5", "5"),
+        ("1,5", "15"),
+        ("1,000", "1000"),
+        ("1.000,5", "10005"),
+        ("-5", "5"),
+        ("−5", "5"),
+        ("+5", "-5"),
+        ("1e-5", "1e5"),
+        ("1/2", "12"),
+        ("1:30", "130"),
+        ("5%", "5"),
+        ("$5", "5"),
+        ("(5)", "5"),
+        ("10²", "102"),
+        ("1.5,", "15."),
+        ("1.5", "1.5,"),
+        ("14", "¼"),
+        ("12", "½"),
+        ("13", "⅓"),
+        ("¼", "14"),
+        ("¼", "½"),
+        ("$¼", "$½"),
+        ("Ⅳ", "Ⅵ"),
+        ("xⅣ", "xⅥ"),
+        ("四", "五"),
+        ("x四", "x五"),
+        ("㎟", "mm2"),
+        ("mm2", "㎟"),
+        ("㎟", "㎠"),
+        ("x㎟", "x㎠"),
+        ("㋀", "1月"),
+        ("㍙", "1点"),
+        ("1日", "㏠"),
+        ("⼀", "一"),
+        ("①", "1"),
+        ("½kg", "½ kg"),
+        ("½ kg", "½kg"),
+        ("Ⅳkg", "Ⅳ kg"),
+        ("Ⅳ kg", "Ⅳkg"),
+        ("㎟x", "㎟ x"),
+        ("㎟ x", "㎟x"),
+    ],
+)
+def test_kri1263_numeric_tokens_keep_their_exact_spoken_form(
+    monkeypatch, spoken_number: str, proposed_number: str
+) -> None:
+    # Numeric punctuation can carry value, sign, units or locale. Do not guess
+    # which parts the proofreader may remove, even for a trailing comma.
+    spoken = f"it cost {spoken_number} dollars"
+    [after] = _correct(monkeypatch, [spoken], [f"it cost {proposed_number} dollars"])
+    assert after == _spoken(spoken)
+
+
+def test_kri1263_refused_numeric_edit_keeps_other_spelling_and_punctuation(monkeypatch) -> None:
+    spoken = "well it cost -1.5 dolars again today"
+    [after] = _correct(monkeypatch, [spoken], ["Well, it cost 15 dollars again today."])
+    assert after["text"] == "Well, it cost -1.5 dollars again today."
+    assert _spans(after) == _spans(_spoken(spoken))
+    _assert_timeline_intact(_spoken(spoken), after)
+
+
+@pytest.mark.parametrize("number", ["1.5", "½", "Ⅳ", "㎡"])
+def test_kri1263_unchanged_number_allows_surrounding_punctuation(monkeypatch, number) -> None:
+    spoken = f"well it cost {number} dollars today"
+    proposed = f"Well, it cost {number} dollars today."
+    [after] = _correct(monkeypatch, [spoken], [proposed])
+    assert after["text"] == proposed
+    assert _spans(after) == _spans(_spoken(spoken))
+
+
+def test_kri1263_emoji_are_kept_and_never_swapped(monkeypatch) -> None:
+    out = _correct(
+        monkeypatch,
+        ["lets go 🔥 now", "teh fire 🔥 burns"],
+        ["lets go 🎉 now", "the fire 🔥 burns"],
+    )
+    assert out[0]["text"] == "lets go 🔥 now"
+    assert out[1]["text"] == "the fire 🔥 burns"
+
+
+def test_kri1263_turkish_case_and_vowel_fixes_land_but_a_dropped_suffix_does_not(
+    monkeypatch,
+) -> None:
+    out = _correct(
+        monkeypatch,
+        ["Bu nereye çalıştırıyor", "Kaçer adet yapıyoruz", "arabaya bindi", "istanbul güzel"],
+        ["Bu nereyi çalıştırıyor", "Kaçar adet yapıyoruz", "araba bindi", "İstanbul güzel"],
+        language="tr",
+    )
+    assert [c["text"] for c in out] == [
+        "Bu nereyi çalıştırıyor",
+        "Kaçar adet yapıyoruz",
+        "arabaya bindi",
+        "İstanbul güzel",
+    ]
+
+
+def test_kri1263_a_brand_swapped_for_an_unrelated_name_is_refused(monkeypatch) -> None:
+    out = _correct(
+        monkeypatch,
+        ["we love Nutella here", "send it to Gonzalo"],
+        ["we love Samsung here", "send it to Gonzales"],
+    )
+    assert out[0]["text"] == "we love Nutella here"
+    assert out[1]["text"] == "send it to Gonzales"
+
+
+def test_kri1263_a_refused_change_does_not_move_punctuation_onto_neighbours(monkeypatch) -> None:
+    [after] = _correct(
+        monkeypatch,
+        ["Kim, Atakan'ı alacağız değil mi şimdi?"],
+        ["Şimdi Atakan'ı alacağız değil mi?"],
+        language="tr",
+    )
+    assert after["text"] == "Kim, Atakan'ı alacağız değil mi şimdi?"
+
+
+def test_kri1263_trace_carries_accepted_and_reverted_counts(monkeypatch) -> None:
+    events: list[tuple] = []
+    import app.services.pipeline_trace as trace
+
+    monkeypatch.setattr(trace, "record_pipeline_event", lambda *a: events.append(a))
+    _correct(
+        monkeypatch,
+        ["I have alot of time", "so good", "I think thier plan"],
+        ["I have a lot of time", "so very good very much", "I believe their plan"],
+    )
+    [(stage, name, payload)] = events
+    assert (stage, name) == ("captions", "caption_correction")
+    assert payload["accepted_words"] == 2
+    assert payload["reverted_words"] == 4
+    assert payload["reverted_lines"] == 1
+    assert [e["before"] for e in payload["reverted_examples"]] == ["so good", "I think thier plan"]
+
+
+def test_kri1263_untimed_cues_still_take_the_corrected_text(monkeypatch) -> None:
+    monkeypatch.setattr(cc, "_llm_correct_lines", lambda texts, lang, *, model: ["a lot"])
+    [after] = cc.correct_caption_cues([{"text": "alot", "start_s": 0.0, "end_s": 1.0}], "en")
+    assert after["text"] == "a lot"
+
+
+def test_kri1263_punctuation_far_from_a_refused_insertion_still_lands(monkeypatch) -> None:
+    [after] = _correct(
+        monkeypatch,
+        ["Caro can you describe it two sentences"],
+        ["Caro, can you describe it in two sentences"],
+    )
+    assert after["text"] == "Caro, can you describe it two sentences"

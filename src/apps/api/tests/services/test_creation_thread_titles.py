@@ -336,3 +336,230 @@ async def test_summarizer_sends_only_the_first_prompt_as_data(monkeypatch):
     assert "same language" in request["config"].system_instruction
     assert request["config"].response_mime_type == "application/json"
     client.__aexit__.assert_awaited_once()
+
+
+# KRI-1262: the app's stock "Suggest an edit." must never become the chat's title.
+#
+# Failure modes (each is a test below):
+# - the stock prompt (any case, punctuation or heading) is kept as, or summarized into, the title;
+# - a real request that merely contains the words is deferred by mistake;
+# - no plan ever arrives: the chat keeps the placeholder and nothing crashes;
+# - the creator renames the chat before the plan, while it is queued, or while the model runs;
+# - the provider times out or fails: the placeholder stays, never the stock prompt;
+# - a Turkish plan is summarized in its own language;
+# - two draft commits (concurrent turns) release the same chat twice.
+
+STOCK = [
+    "Suggest an edit.",
+    "suggest an edit",
+    "SUGGEST AN EDIT!",
+    "Suggest an edit.\nSuggest an edit.",
+]
+
+
+@pytest.mark.parametrize("prompt", STOCK)
+def test_the_stock_prompt_is_never_the_title_and_waits_for_a_plan(prompt: str) -> None:
+    thread = _thread()
+
+    assert titles.prepare_title(thread, prompt) is True
+    assert thread.title == "Untitled video"
+    assert thread.state == {"title_source": "first_prompt", "title_generation": "deferred"}
+
+
+def test_a_real_request_containing_the_words_is_named_as_before() -> None:
+    thread = _thread()
+
+    titles.prepare_title(thread, "Suggest an edit for my Barcelona trip")
+
+    assert thread.title == "Suggest an edit for my Barcelona trip"
+    assert thread.state["title_generation"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_a_later_message_does_not_name_a_deferred_chat_from_the_prompt() -> None:
+    from unittest.mock import AsyncMock
+
+    thread = _thread()
+    titles.prepare_title(thread, "Suggest an edit.")
+    db = SimpleNamespace(scalar=AsyncMock(return_value=None))
+
+    await titles.prepare_message_title(db, thread, "Make it fast, Barcelona text")
+
+    assert thread.title == "Untitled video"
+    assert thread.state["title_generation"] == "deferred"
+
+
+def test_a_plan_releases_a_deferred_chat_once() -> None:
+    thread = _thread(state={"title_source": "first_prompt", "title_generation": "deferred"})
+
+    assert titles.release_deferred_title(thread, "  Open on the whisk\nand end on the order.  ")
+    assert thread.state == {
+        "title_source": "first_prompt",
+        "title_generation": "pending",
+        "title_plan_text": "Open on the whisk and end on the order.",
+    }
+    assert titles.release_deferred_title(thread, "A second draft") is False
+    assert thread.state["title_plan_text"] == "Open on the whisk and end on the order."
+
+
+@pytest.mark.parametrize("plan", [None, "", "  \n "])
+def test_no_plan_text_leaves_the_chat_waiting(plan: str | None) -> None:
+    thread = _thread(state={"title_source": "first_prompt", "title_generation": "deferred"})
+
+    assert titles.release_deferred_title(thread, plan) is False
+    assert thread.state["title_generation"] == "deferred"
+    assert thread.title == "Untitled video"
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        {"title_source": "user", "title_generation": "deferred"},
+        {"title_source": "first_prompt", "title_generation": "running"},
+        {"title_source": "generated", "title_generation": "completed"},
+        {},
+    ],
+)
+def test_a_rename_or_any_other_state_is_never_released(state: dict) -> None:
+    thread = _thread(title="My own name", state=dict(state))
+
+    assert titles.release_deferred_title(thread, "Open on the whisk.") is False
+    assert thread.state == state
+
+
+def test_a_renamed_title_blocks_release_even_if_the_state_was_not_stamped() -> None:
+    thread = _thread(
+        title="My own name", state={"title_source": "first_prompt", "title_generation": "deferred"}
+    )
+
+    assert titles.release_deferred_title(thread, "Open on the whisk.") is False
+    assert thread.title == "My own name"
+
+
+@pytest.mark.asyncio
+async def test_a_released_chat_is_named_from_its_plan_in_the_plan_language(monkeypatch) -> None:
+    plan = "Mutfaktaki çırpıcıyla aç, sipariş paketiyle bitir."
+    thread = _thread(
+        state={
+            "title_source": "first_prompt",
+            "title_generation": "pending",
+            "title_plan_text": plan,
+        }
+    )
+    sessions = _SessionFactory(_Session(thread, prompt="Suggest an edit."), _Session(thread))
+    seen: list[tuple[str, bool]] = []
+
+    async def provider(text: str, *, from_plan: bool = False) -> str:
+        seen.append((text, from_plan))
+        return "Mutfak Günlüğü"
+
+    async def append(_: _Session, target: SimpleNamespace, **__: object) -> None:
+        target.revision += 1
+
+    from app.routes import creation_threads
+
+    monkeypatch.setattr(titles, "AsyncSessionLocal", sessions)
+    monkeypatch.setattr(titles, "_summarize", provider)
+    monkeypatch.setattr(creation_threads, "_append", append)
+
+    await titles.generate_thread_title(thread.id)
+
+    assert seen == [(plan, True)]
+    assert thread.title == "Mutfak Günlüğü"
+    assert thread.state["title_generation"] == "completed"
+    assert "title_plan_text" not in thread.state
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [TimeoutError, RuntimeError])
+async def test_a_failed_plan_title_keeps_the_placeholder_never_the_stock_prompt(
+    monkeypatch, failure
+) -> None:
+    thread = _thread(
+        state={
+            "title_source": "first_prompt",
+            "title_generation": "pending",
+            "title_plan_text": "Open on the whisk.",
+        }
+    )
+    monkeypatch.setattr(
+        titles,
+        "AsyncSessionLocal",
+        _SessionFactory(_Session(thread, prompt="Suggest an edit."), _Session(thread)),
+    )
+
+    async def provider(*_: object, **__: object) -> str:
+        raise failure
+
+    monkeypatch.setattr(titles, "_summarize", provider)
+
+    await titles.generate_thread_title(thread.id)
+
+    assert thread.title == "Untitled video"
+    assert thread.state["title_generation"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_a_deferred_chat_is_not_generated_before_it_is_released(monkeypatch) -> None:
+    thread = _thread(state={"title_source": "first_prompt", "title_generation": "deferred"})
+    first = _Session(thread, prompt="Suggest an edit.")
+    monkeypatch.setattr(titles, "AsyncSessionLocal", _SessionFactory(first))
+
+    async def provider(*_: object, **__: object) -> str:
+        raise AssertionError("a deferred chat has nothing to summarize yet")
+
+    monkeypatch.setattr(titles, "_summarize", provider)
+
+    await titles.generate_thread_title(thread.id)
+
+    assert first.commits == 0
+    assert thread.state["title_generation"] == "deferred"
+
+
+@pytest.mark.asyncio
+async def test_a_rename_while_the_plan_is_summarized_wins(monkeypatch) -> None:
+    thread = _thread(
+        state={
+            "title_source": "first_prompt",
+            "title_generation": "pending",
+            "title_plan_text": "Open on the whisk.",
+        }
+    )
+    monkeypatch.setattr(
+        titles, "AsyncSessionLocal", _SessionFactory(_Session(thread), _Session(thread))
+    )
+
+    async def provider(*_: object, **__: object) -> str:
+        thread.title = "My own name"
+        thread.state = {**thread.state, "title_source": "user"}
+        return "Generated Name"
+
+    monkeypatch.setattr(titles, "_summarize", provider)
+
+    await titles.generate_thread_title(thread.id)
+
+    assert thread.title == "My own name"
+    assert thread.state["title_source"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_the_plan_summary_is_sent_as_data_with_its_own_instruction(monkeypatch) -> None:
+    from unittest.mock import AsyncMock, Mock
+
+    from google import genai
+
+    models = SimpleNamespace(
+        generate_content=AsyncMock(
+            return_value=SimpleNamespace(text=json.dumps({"title": "Whisk To Order"}))
+        )
+    )
+    client = AsyncMock()
+    client.__aenter__.return_value = SimpleNamespace(models=models)
+    monkeypatch.setattr(genai, "Client", Mock(return_value=SimpleNamespace(aio=client)))
+
+    assert await titles._summarize("Open on the whisk.", from_plan=True) == "Whisk To Order"
+
+    request = models.generate_content.await_args.kwargs
+    assert json.loads(request["contents"]) == {"plan": "Open on the whisk."}
+    assert "plan" in request["config"].system_instruction
+    assert "first user prompt" not in request["config"].system_instruction

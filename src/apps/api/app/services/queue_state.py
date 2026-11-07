@@ -148,6 +148,18 @@ RENDER_WORKER_QUEUES: frozenset[str] = frozenset(
     }
 )
 
+# The queues the small always-on `visuals` Fly process consumes (fly.toml:
+# `celery ... --concurrency=6 ... -Q visuals-analysis`, KRI-1240). Every queue
+# here is ALSO in RENDER_WORKER_QUEUES: the worker stays the fallback consumer,
+# so the wake hook and render_worker_idle() keep treating it as worker work
+# (a Visuals burst can keep the worker up a little longer; it never strands).
+# What this set changes is machine SIZING: the CLIP prewarm gate in
+# app/worker.py skips a process that consumes nothing outside this set, so the
+# 2GB visuals VM never loads torch + ViT-B/32 (the 2026-08-04 light-machine
+# OOM shape). Hand-synced with fly.toml's visuals `-Q` flag; drift fails CI in
+# tests/test_worker_prewarm_gate.py.
+VISUALS_WORKER_QUEUES: frozenset[str] = frozenset({"visuals-analysis"})
+
 RuntimeStateLiteral = Literal["active", "reserved", "not_found", "unknown"]
 TaskRuntimeStateLiteral = Literal["active", "reserved", "queued", "not_found", "unknown"]
 

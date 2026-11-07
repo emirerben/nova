@@ -125,6 +125,10 @@ _PLATFORM_CAPTION_ZONE_TOP_PX = 1530.0
 # this many rows clears the mark, the cue is split in time instead
 # (`_split_cue_in_time`), so a long sentence never grows toward the speaker's face.
 _CAPTION_ROW_BUDGET = 2
+# The frame budget of an ASKED caption position (`PhoneCaptionLook.frame_budget_frac`). The
+# writer places an asked-bottom block to end at 0.84 and budgets 0.86; the extra 0.02 is the
+# measured slack of the compiled line boxes.
+ASKED_CAPTION_FRAME_BUDGET_FRAC = 0.88
 # The last round of `compile_caption_layers` cannot split any more; a cue may then
 # still gain this many lines rather than keep its ink on the mark.
 _MAX_EXTRA_CAPTION_LINES = 2
@@ -187,6 +191,10 @@ class PhoneCaptionLook:
     position_x_frac: float = 0.5
     max_width_frac: float | None = None
     shape_text: bool = False
+    # None = no frame budget (every unasked caption, byte-identical). Set (as a share of the
+    # canvas height) only for a caption position the creator asked for: no cue's final ink
+    # ends lower, a cue is lifted -- never shrunk -- to keep it (KRI-1266).
+    frame_budget_frac: float | None = None
     # These four are only ever set onto the compiled overlay dict when NOT
     # None -- absent (the default) reproduces today's implicit "standard"
     # text_overlay_skia shadow/outline exactly (see `_base_overlay`).
@@ -431,8 +439,23 @@ def caption_look_from_variant(variant: dict) -> PhoneCaptionLook:
         single_word=_single_word_enabled(variant),
         default_animation_phases=_phases_or_none(variant.get("caption_animation_phases")),
         line_overrides=editor_style.get("line_overrides"),
+        frame_budget_frac=_frame_budget_or_none(variant.get("caption_frame_budget_frac")),
         **_caption_shape_fields(variant),
     )
+
+
+def _frame_budget_or_none(value: object) -> float | None:
+    """``variant["caption_frame_budget_frac"]`` when it is a sane canvas fraction, else None."""
+    import math
+
+    if (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and 0.5 <= value <= 1.0
+    ):
+        return float(value)
+    return None
 
 
 def _caption_shape_fields(variant: dict) -> dict:
@@ -645,6 +668,14 @@ def compile_caption_layers(
             rounds = rounds + 1 if split is not None else max_rounds
             prepared = split if split is not None else prepared
             continue
+        if resolved_look.frame_budget_frac is not None:
+            resolved = _keep_cues_in_frame(
+                layers,
+                resolved,
+                overlays,
+                canvas=canvas,
+                budget=canvas.height * resolved_look.frame_budget_frac,
+            )
         if any(isinstance(entry, _SingleWordCue) for entry in entries):
             resolved = _merge_single_word_cues(entries, resolved)
             if len(resolved) > MAX_CAPTION_LAYERS:
@@ -942,6 +973,11 @@ def _make_room_for_watermark(
                 typeface=typefaces[index],
                 left_edge=left_edge,
                 may_split=unresolved is not None,
+                frame_budget_px=(
+                    None
+                    if look.frame_budget_frac is None
+                    else canvas.height * look.frame_budget_frac
+                ),
             )
         except Exception:  # noqa: BLE001 - keep today's layer on any surprise
             cleared = None
@@ -962,6 +998,7 @@ def _clear_of_watermark(
     typeface: Any,
     left_edge: tuple[float, float] | None = None,
     may_split: bool = False,
+    frame_budget_px: float | None = None,
 ) -> Any:
     """This cue re-broken so no line's ink meets ``keepout``, or None to keep it.
 
@@ -1131,6 +1168,9 @@ def _clear_of_watermark(
         bottom = top + block["block_h"]
         if clear_of_zone and bottom - lift > lowest_bottom:
             lift = bottom - lowest_bottom
+        if frame_budget_px is not None and bottom - lift > frame_budget_px:
+            # An asked position: a rewrap that adds lines never grows the block past the frame.
+            lift = bottom - frame_budget_px
         baselines = [
             top - lift + block["ascent_offset"] + k * block["line_step"] for k in range(count)
         ]
@@ -1183,6 +1223,10 @@ def _clear_of_watermark(
         # let the usual wrap shrink it to fit there, the way a word wider
         # than the frame is already handled, rather than keep it on the mark.
         cleared, _font = compile_text_overlay(candidate, layer_id=layer.id, canvas=canvas)
+        if frame_budget_px is not None:
+            cleared = _lift_into_frame(
+                cleared, candidate, typeface=typeface, canvas=canvas, budget=frame_budget_px
+            )
         if not _layer_touches(cleared, typeface, keepout):
             return cleared
     return None
@@ -1261,6 +1305,76 @@ def _split_cue_in_time(cue: dict) -> tuple[dict, dict] | None:
     if words is not None:
         first["words"], second["words"] = words[:cut], words[cut:]
     return first, second
+
+
+def _keep_cues_in_frame(
+    before: list[PortableTextLayer],
+    resolved: list[PortableTextLayer],
+    overlays: list[dict[str, Any]],
+    *,
+    canvas: Any,
+    budget: float,
+) -> list[PortableTextLayer]:
+    """Lift any cue the watermark pass left untouched whose ink still ends below the budget.
+
+    A rewrapped cue was already held to the budget while it was re-broken; a cue that never
+    touched the mark keeps its layout and is recompiled from its own overlay, lifted."""
+    from app.pipeline import text_overlay_skia as cloud
+
+    out = list(resolved)
+    for index, (layer, overlay) in enumerate(zip(resolved, overlays, strict=True)):
+        if layer is not before[index]:
+            continue
+        try:
+            typeface = cloud._resolve_typeface_for_overlay(overlay).typeface
+            out[index] = _lift_into_frame(
+                layer, overlay, typeface=typeface, canvas=canvas, budget=budget
+            )
+        except Exception:  # noqa: BLE001 - never fail a render on a cosmetic lift
+            continue
+    return out
+
+
+def _ink_bottom(layer: PortableTextLayer, typeface: Any) -> float | None:
+    inks = [ink for run in layer.runs if (ink := caption_ink_box(run, typeface))]
+    return max(ink[3] for ink in inks) if inks else None
+
+
+def _lift_into_frame(
+    layer: PortableTextLayer,
+    overlay: dict[str, Any],
+    *,
+    typeface: Any,
+    canvas: Any,
+    budget: float,
+) -> PortableTextLayer:
+    """Recompile ``overlay`` lifted just far enough that its ink ends inside the frame budget.
+
+    The caption keeps its size and line breaks; only its anchor moves up. Anything unexpected
+    (no ink, the lift not compiling, ink still too low) keeps ``layer``."""
+    from app.pipeline import text_overlay_skia as cloud
+    from app.pipeline.portable_text_layout import compile_text_overlay
+
+    bottom = _ink_bottom(layer, typeface)
+    if bottom is None or bottom <= budget + 0.5:
+        return layer
+    try:
+        _cx, cy = cloud._resolve_anchor(overlay, canvas)
+        lifted, _font = compile_text_overlay(
+            {**overlay, "position_y_frac": (cy - (bottom - budget)) / canvas.height},
+            layer_id=layer.id,
+            canvas=canvas,
+        )
+    except Exception:  # noqa: BLE001 - lifting is cosmetic; keep today's layer
+        return layer
+    new_bottom = _ink_bottom(lifted, typeface)
+    if (
+        new_bottom is None
+        or new_bottom >= bottom
+        or any(run.font_size != layer.runs[0].font_size for run in lifted.runs)
+    ):
+        return layer
+    return lifted
 
 
 def _best_rows(

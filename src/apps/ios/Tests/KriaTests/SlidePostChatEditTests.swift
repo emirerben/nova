@@ -8,13 +8,13 @@ import XCTest
     private var defaults: UserDefaults!
     private var suite: String!
     private var now = Date()
-    override func setUp() {
-        super.setUp(); suite = "SlidePostChatEditTests.\(UUID())"; defaults = UserDefaults(suiteName: suite)
+    override func setUp() async throws {
+        try await super.setUp(); suite = "SlidePostChatEditTests.\(UUID())"; defaults = UserDefaults(suiteName: suite)
     }
-    override func tearDown() {
+    override func tearDown() async throws {
         NativeEditorURLProtocol.handler = nil
         SlidePostTestSubmissionStorage.reset(defaults: defaults); defaults.removePersistentDomain(forName: suite); defaults = nil
-        super.tearDown()
+        try await super.tearDown()
     }
 
     private func state(version: Int = 1) -> SlidePostState {
@@ -131,14 +131,27 @@ import XCTest
         XCTAssertFalse(session.hasUnsavedChanges)
     }
 
-    func testNetworkErrorLeavesTheDraftAndOffersRetry() async throws {
+    func testLostResponseRecoversOriginalReceiptWithoutRepeatingChat() async throws {
         let remote = state()
-        var fail = true
-        serve(remote: remote) {
-            if fail { throw URLError(.notConnectedToInternet) }
-            return try self.response("clarification", reply: "Which photos?")
+        serve(remote: remote) { try self.response("clarification", reply: "Which photos?") }
+        let transport = try XCTUnwrap(NativeEditorURLProtocol.handler)
+        var posts: [UUID] = []; var receiptReads: [UUID] = []
+        NativeEditorURLProtocol.handler = { request in
+            if request.httpMethod == "POST", request.url!.path.hasSuffix("/ai-requests") {
+                let body = try JSONDecoder().decode(SlidePostAIRequest.self, from: NativeEditorTestSupport.bodyData(request))
+                posts.append(body.clientRequestID)
+                let committed = try transport(request) // The bridge stores the completed original receipt.
+                XCTAssertEqual(committed.0, 200)
+                guard committed.0 == 200 else { return committed }
+                throw URLError(.networkConnectionLost)
+            }
+            if request.url!.path.contains("/ai-requests/"), let id = UUID(uuidString: request.url!.lastPathComponent) {
+                receiptReads.append(id)
+            }
+            return try transport(request)
         }
         let session = await session(remote: remote)
+        defer { session.stopObserving() }
         let before = session.draft
         let staged = await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "sort them")
         XCTAssertFalse(staged)
@@ -146,27 +159,86 @@ import XCTest
         XCTAssertFalse(session.isChatting)
         let failure = try XCTUnwrap(session.chat.last)
         XCTAssertEqual(failure.retryText, "sort them")
-        fail = false
         now = now.addingTimeInterval(3)
         await session.retryChat(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, bubble: failure)
-        XCTAssertEqual(session.chat.map(\.text), ["sort them", "Which photos?"], "retry replaces the failed pair instead of stacking")
+        XCTAssertEqual(session.chat.map(\.text), ["sort them", "Which photos?"], "recovery replaces the failed pair instead of stacking")
+        XCTAssertEqual(session.draft, before)
+        XCTAssertEqual(posts.count, 1)
+        XCTAssertFalse(receiptReads.isEmpty)
+        XCTAssertEqual(Set(receiptReads), Set(posts), "recovery observes only the original operation")
+        XCTAssertTrue(captured.putBodies.isEmpty)
     }
 
-    func testEditsMadeWhileKriaWorksAreNeverOverwritten() async throws {
+    func testMissingReceiptRetryKeepsCheckingWithoutRepeatingChat() async throws {
+        let remote = state()
+        serve(remote: remote) { throw URLError(.notConnectedToInternet) }
+        let session = await session(remote: remote)
+        defer { session.stopObserving() }
+        let before = session.draft
+        let staged = await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "sort them")
+        XCTAssertFalse(staged)
+        let failure = try XCTUnwrap(session.chat.last)
+        XCTAssertEqual(failure.retryText, "sort them")
+        now = now.addingTimeInterval(3)
+        await session.retryChat(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, bubble: failure)
+        XCTAssertEqual(captured.chatBodies.count, 1, "a missing receipt must not authorize another AI request")
+        XCTAssertEqual(session.draft, before)
+        XCTAssertEqual(session.chat.last?.text, "Checking the original AI request. Your draft is safe; this check will not start another AI call.")
+        XCTAssertEqual(session.chat.last?.retryText, "sort them")
+        XCTAssertTrue(captured.putBodies.isEmpty)
+    }
+
+    func testIndependentCaptionAndAIReorderMergeWithoutLosingLocalEdit() async throws {
         let remote = state()
         let local = SlidePostSessionBox()
         serve(remote: remote) {
-            // The user edits the caption while the request is in flight.
-            DispatchQueue.main.sync { MainActor.assumeIsolated { local.session?.setCaption("Mine") } }
+            DispatchQueue.main.sync { MainActor.assumeIsolated {
+                local.session?.setCaption("Mine")
+                local.beforeAI = local.session?.draft
+            } }
             var draft = remote.draft!; draft.slides.reverse()
             return try self.response("edited", reply: "Reordered.", draft: draft)
         }
         let session = await session(remote: remote)
         local.session = session
         let staged = await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "reverse")
-        XCTAssertFalse(staged)
+        XCTAssertTrue(staged)
         XCTAssertEqual(session.draft?.caption, "Mine")
-        XCTAssertEqual(session.draft?.slides.map(\.id), ["slide-1", "slide-2", "slide-3"])
+        XCTAssertEqual(session.draft?.slides.map(\.id), ["slide-3", "slide-2", "slide-1"])
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertTrue(captured.putBodies.isEmpty)
+        session.undoEdit()
+        XCTAssertEqual(session.draft, try XCTUnwrap(local.beforeAI), "Undo restores the complete local document from before AI application")
+        XCTAssertTrue(session.hasUnsavedChanges)
+    }
+
+    func testOverlappingCaptionOrRemovedSourceRequiresReviewWithoutOverwrite() async throws {
+        for removesSource in [false, true] {
+            SlidePostTestSubmissionStorage.reset(defaults: defaults)
+            defaults.removePersistentDomain(forName: suite)
+            let remote = state()
+            let local = SlidePostSessionBox()
+            serve(remote: remote) {
+                DispatchQueue.main.sync { MainActor.assumeIsolated {
+                    local.session?.setCaption("Mine")
+                    if removesSource { local.session?.removeSlide(id: "slide-2") }
+                    local.beforeAI = local.session?.draft
+                } }
+                var draft = remote.draft!; draft.slides.reverse()
+                if !removesSource { draft.caption = "AI caption" }
+                return try self.response("edited", reply: "Changed.", draft: draft)
+            }
+            let session = await session(remote: remote)
+            local.session = session
+            let staged = await session.chatEdit(api: SlidePostTestSubmissionStorage.api(), itemID: itemID, message: "reverse")
+            XCTAssertFalse(staged)
+            XCTAssertEqual(session.draft, try XCTUnwrap(local.beforeAI))
+            XCTAssertEqual(session.draft?.caption, "Mine")
+            XCTAssertNotNil(session.proposal, "overlap or changed source must remain reviewable")
+            XCTAssertTrue(session.hasUnsavedChanges)
+            XCTAssertTrue(captured.putBodies.isEmpty)
+            session.stopObserving()
+        }
     }
 
     // MARK: Staging
@@ -415,4 +487,4 @@ import XCTest
     }
 }
 
-@MainActor private final class SlidePostSessionBox { var session: SlidePostSession? }
+@MainActor private final class SlidePostSessionBox { var session: SlidePostSession?; var beforeAI: SlidePostDraft? }

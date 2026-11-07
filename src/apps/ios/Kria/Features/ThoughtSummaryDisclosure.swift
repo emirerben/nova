@@ -150,7 +150,6 @@ private struct ThoughtSummaryRow: View {
                 if reduceMotion { isExpanded.toggle() } else { withAnimation(.easeOut(duration: 0.2)) { isExpanded.toggle() } }
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "sparkles")
                     Text(title)
                         .lineLimit(1)
                         .truncationMode(.tail)

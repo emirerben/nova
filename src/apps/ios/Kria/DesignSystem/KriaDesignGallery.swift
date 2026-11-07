@@ -114,7 +114,7 @@ struct KriaDesignGallery: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 KriaAnswerChip(title: "After I say hello", action: {})
-                KriaAnswerChip(title: "Start right away", isRecommended: true, action: {})
+                KriaAnswerChip(title: "Start right away", action: {})
             }
             HStack {
                 KriaAnswerChip(title: "Start right away", state: .selected, action: {})
@@ -161,8 +161,6 @@ struct KriaDesignGallery: View {
         caption("On a fill card")
         KriaSourceRow(options: [.record(action: {}), .upload(action: {})], onFill: true)
             .padding(12).background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20))
-        caption("Camera")
-        HStack { KriaCameraUploadButton {}; Spacer() }.padding(16).background(Color.black)
     }
 }
 

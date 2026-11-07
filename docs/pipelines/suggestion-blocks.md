@@ -22,7 +22,7 @@ the phone. The `Action` stays server-side; a tap pins `{set_id, chip_id}`.
 | `services/suggestions/restate_judgment.py` | the one question the serve and a restating tap ask: would the commit approve this draft? (`restate_problem`, `plan_media`) |
 | `services/suggestion_serve.py` | the GET's read path: freeze, ring write, and the strip of cards the tap would refuse |
 | `services/clip_signals/` | per-clip measured signals, stored at `analysis["signals"]` next to `analysis["understanding"]` |
-| `app/cli/backfill_clip_signals.py` | read-only skeleton; `--write` is refused until a store is wired |
+| `app/cli/backfill_clip_signals.py` | dry run by default (downloads nothing); `--write` measures missing signals and stores them through the fenced `mutate_plan_item_media` path, idempotent and resumable via `--after-item-id` |
 
 ## Adding or changing a kind
 

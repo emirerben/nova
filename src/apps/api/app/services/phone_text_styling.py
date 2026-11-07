@@ -390,7 +390,7 @@ def caption_spot_is_asked() -> bool:
 def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
     from dataclasses import replace
 
-    from app.pipeline.phone_captions import PhoneCaptionLook
+    from app.pipeline.phone_captions import ASKED_CAPTION_FRAME_BUDGET_FRAC, PhoneCaptionLook
     from app.pipeline.phone_text_style import drawable_family
 
     policy = _POLICY.get()
@@ -499,7 +499,7 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
         resolved = replace(
             resolved,
             position_x_frac=0.06 if alignment == "left" else 0.82 if alignment == "right" else x,
-            position_y_frac=min(y, 0.70),
+            position_y_frac=y,
             text_anchor=alignment,
         )
     if cues:
@@ -578,6 +578,9 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
                 position_y_frac=row["y_frac"],
                 text_anchor=row["alignment"],
                 max_width_frac=row["max_width_frac"],
+                # An asked spot is held inside the frame by the compiler (KRI-1266); an unasked
+                # caption compiles exactly as before.
+                frame_budget_frac=ASKED_CAPTION_FRAME_BUDGET_FRAC if spot_asked else None,
             )
             if "color" not in rule:
                 # Green 5: kept so a background that arrives later re-picks the colour.
@@ -1387,6 +1390,10 @@ def generation_style_fields() -> dict:
     shape = policy.get("_caption_shape")
     if shape and look is not None:
         result["caption_shape"] = {"version": 1, **shape}
+    if look is not None and look.frame_budget_frac is not None:
+        # Only for an asked spot (KRI-1266): a rebuild or Save reloads it, so the compiler keeps
+        # holding the caption inside the frame. Every other variant keeps its exact fields.
+        result["caption_frame_budget_frac"] = look.frame_budget_frac
     if look is not None:
         result.update(
             voiceover_caption_font=look.font_family,
