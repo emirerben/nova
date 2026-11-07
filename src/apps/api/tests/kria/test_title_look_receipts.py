@@ -162,3 +162,47 @@ def test_review_a_logo_only_her_captions_blocked_names_her_captions() -> None:
     reason = (check_requirement(_logo_req(), facts).reason or "").lower()
     assert "room above your title" in reason and "captions" in reason
     assert "couldn't find" not in reason and "face" not in reason
+
+
+def _title_with_logo_req() -> BriefRequirement:
+    """KRI-1303: one ask holds the title text AND the logo above it ("[text/title]")."""
+    return BriefRequirement(
+        id="r1",
+        scope="title",
+        kind="text",
+        description="bold caps, then serif, then handwritten, with the GitHub logo above it",
+        literal=_WANTED,
+    )
+
+
+def _miss(reason: str) -> dict[str, Any]:
+    return {"beat_id": "gh", "trigger": "GitHub logo", "reason": reason, "anchor": "title"}
+
+
+def test_title_ask_with_a_dropped_logo_is_never_met() -> None:
+    facts = plan_facts_from_phone_variant(
+        _variant(receipt=_receipt(unplaced=[_miss("no_room_above_title")]))
+    )
+    receipt = check_requirement(_title_with_logo_req(), facts)
+    assert receipt.status != "met"
+    assert "room above your title" in (receipt.reason or "").lower()
+
+
+def test_title_ask_with_a_placed_logo_stays_met() -> None:
+    placed = {
+        "beat_id": "gh",
+        "trigger": "GitHub logo",
+        "at_s": 0.0,
+        "end_s": 3.0,
+        "visual_label": "GitHub",
+        "anchor": "title",
+    }
+    facts = plan_facts_from_phone_variant(_variant(receipt=_receipt(placed=[placed])))
+    assert check_requirement(_title_with_logo_req(), facts).status == "met"
+
+
+def test_title_ask_without_a_logo_ignores_another_asks_logo_miss() -> None:
+    facts = plan_facts_from_phone_variant(
+        _variant(receipt=_receipt(unplaced=[_miss("no_room_above_title")]))
+    )
+    assert check_requirement(_title_req(_WANTED), facts).status == "met"

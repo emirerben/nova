@@ -7632,6 +7632,24 @@ def _title_miss_problem(trigger: str, reason: str) -> str:
     )
 
 
+def _title_logo_miss_receipt(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """KRI-1303: a title ask that also names a logo above it is not met while the render
+    dropped that logo. ``None`` when the ask names no missed logo (or nothing was dropped)."""
+    if req.scope != "title" or not facts.title_beat_misses:
+        return None
+    text = _req_text(req)
+    if not _VISUAL_RE.search(text):
+        return None
+    missed = [
+        (trigger, reason)
+        for trigger, reason in facts.title_beat_misses
+        if _fold(trigger) in text or _trigger_heard(trigger, text)
+    ]
+    if not missed:
+        return None
+    return _receipt(req, "partial", "; ".join(_title_miss_problem(t, r) for t, r in missed))
+
+
 def _placement_reason(placements: Sequence[BeatFact]) -> str | None:
     """Where the met pop-ins landed, in time order; None when the render gave no times."""
     titled = [b for b in placements if b.anchor == "title"]
@@ -12822,6 +12840,9 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         whole_video = _whole_video_text_receipt(req, facts)
         if whole_video is not None:
             return whole_video
+        logo_miss = _title_logo_miss_receipt(req, facts)
+        if logo_miss is not None:
+            return logo_miss
         return _receipt(req, "met", None)
     # Checked BEFORE the spoken-text branch: a wording cue ("when I talk about them") with no
     # trigger is the worker's list label, not KRI-791's "tell me the exact word".
