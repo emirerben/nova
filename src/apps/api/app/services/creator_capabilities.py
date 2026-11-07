@@ -1983,6 +1983,8 @@ def _repair_creator_speaker_background(
     opening_fields: dict[str, Any] = (
         {"full_screen_opening": True, "full_screen_opening_s": opening_s} if opening else {}
     )
+    if wanted is not None and wanted.left_out and entries:
+        opening_fields["left_out"] = wanted.left_out  # KRI-1304: said in the finished reply
     # Qendresa item 18: a side / zoom for the recordings. A colour fill with no windows has
     # nothing to aim (dropped silently); a closed gate with the flag on says so once.
     if (
