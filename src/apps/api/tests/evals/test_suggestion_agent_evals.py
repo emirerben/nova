@@ -36,6 +36,7 @@ import os
 import random
 import sys
 from collections import Counter
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -1228,6 +1229,25 @@ def test_thread_dry_run_through_the_real_task_costs_nothing_and_obeys_the_contra
     assert run.latency_ms is not None
 
 
+def test_live_run_refuses_when_either_budget_is_below_the_batch_worst_case():
+    total = sum(sa.preflight_estimates(list(THREADS.values())).values())
+    assert sa.live_budget_shortfall(total, monthly=2, suggestions=2) is None
+    only_capability = sa.live_budget_shortfall(total, monthly=0, suggestions=2)
+    assert only_capability and "AI_OPENAI_MONTHLY_BUDGET_USD" in only_capability
+    only_monthly = sa.live_budget_shortfall(total, monthly=2, suggestions=0)
+    assert only_monthly and "AI_OPENAI_SUGGESTIONS_BUDGET_USD" in only_monthly
+
+
+def test_the_documented_live_command_sets_both_budgets_the_ledger_checks():
+    readme = (Path(__file__).parent / "README.md").read_text(encoding="utf-8")
+    command = readme.split("pytest tests/evals/test_suggestion_agent_evals.py --eval-mode=live", 1)[
+        0
+    ]
+    command = command.rsplit("```bash", 1)[1]
+    assert "AI_OPENAI_MONTHLY_BUDGET_USD=2" in command
+    assert "AI_OPENAI_SUGGESTIONS_BUDGET_USD=2" in command
+
+
 def test_the_thread_summary_reports_cost_latency_and_the_witness_share():
     runs = [sa.run_thread(c, sa.DryRunClient(), live=False) for c in THREADS.values()]
     summary = sa.summarize(runs)
@@ -1335,6 +1355,13 @@ def live_cost_preflight(eval_mode):
             f"threads > ${cap:.2f} approved run cap.",
             returncode=2,
         )
+    shortfall = sa.live_budget_shortfall(
+        total,
+        monthly=settings.ai_openai_monthly_budget_usd,
+        suggestions=settings.ai_openai_suggestions_budget_usd,
+    )
+    if shortfall:
+        pytest.exit(shortfall, returncode=2)
     return total
 
 

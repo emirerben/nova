@@ -336,7 +336,9 @@ requests; transcripts and measured signals are keyed by clip ordinal) go through
 (OpenAI, so `OPENAI_API_KEY`, not the Gemini key), and the reservation is the real ledger. The task's
 `RunContext` is swapped for the conftest attribution (`live_eval`, the run id, the approved cap, the
 acknowledgement), so the run books under the `suggestions` capability and
-`AI_OPENAI_SUGGESTIONS_BUDGET_USD` must be set for it. The conftest gate refuses a run without all
+`AI_OPENAI_SUGGESTIONS_BUDGET_USD` must be set for it, and so must the provider-wide
+`AI_OPENAI_MONTHLY_BUDGET_USD` (the ledger checks both; each defaults to 0 = no spend; the file
+refuses to start when either is below the batch worst case). The conftest gate refuses a run without all
 four flags or over $2; the file also refuses a batch whose worst case exceeds `--max-cost-usd`
 before the first call. Without `--eval-mode=live` the same ten threads run against a zero-cost
 stand-in model and `test_live_thread` skips.
@@ -344,7 +346,7 @@ stand-in model and `test_live_thread` skips.
 ```bash
 cd src/apps/api
 NOVA_EVAL_MODE=live AI_COST_CONTROL_ENABLED=true AI_USAGE_ENVIRONMENT=development \
-AI_OPENAI_SUGGESTIONS_BUDGET_USD=2 \
+AI_OPENAI_MONTHLY_BUDGET_USD=2 AI_OPENAI_SUGGESTIONS_BUDGET_USD=2 \
 pytest tests/evals/test_suggestion_agent_evals.py --eval-mode=live --usage-purpose=live_eval \
   --test-run-id=suggestion-agent-<date> --max-cost-usd=2 --approve-reservation
 ```

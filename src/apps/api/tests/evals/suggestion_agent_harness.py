@@ -732,6 +732,27 @@ def preflight_estimates(cases: list[h.Case]) -> dict[str, float]:
     return out
 
 
+def live_budget_shortfall(total: float, *, monthly: float, suggestions: float) -> str | None:
+    """The ledger checks the provider-wide monthly budget AND the per-capability one, and both
+    default to 0 (no spend). A run that sets only one is rejected on every call as ``budget``;
+    say so before the first call instead of failing ten threads."""
+    short = [
+        name
+        for name, value in (
+            ("AI_OPENAI_MONTHLY_BUDGET_USD", monthly),
+            ("AI_OPENAI_SUGGESTIONS_BUDGET_USD", suggestions),
+        )
+        if value < total
+    ]
+    if not short:
+        return None
+    return (
+        f"Refusing live suggestion eval: {' and '.join(short)} must be at least the batch worst "
+        f"case (${total:.3f}); the ledger checks the provider-wide and the per-capability budget "
+        "and rejects every call as `budget` otherwise."
+    )
+
+
 def run_thread(case: h.Case, client: Any, *, live: bool) -> ThreadRun:
     """One thread through the real task body, then the same oracles the replay uses.
 
