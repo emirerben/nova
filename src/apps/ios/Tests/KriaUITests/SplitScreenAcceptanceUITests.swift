@@ -26,6 +26,7 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
         let layout = try XCTUnwrap((authored["split_screen_sections"] as? [[String: Any]])?.first)
         let weights = try XCTUnwrap(layout["panel_weights"] as? [Double])
         XCTAssertEqual(weights.count, 3)
+        XCTAssertEqual(try XCTUnwrap(layout["duration_s"] as? Double), 4, accuracy: 0.001)
         XCTAssertGreaterThan(weights[0], weights[1] * 2)
         XCTAssertEqual(try XCTUnwrap(layout["gutter"] as? Double), 0.05, accuracy: 0.006)
         XCTAssertEqual((authored["timeline_slots"] as? [Any])?.count, 4)
@@ -101,6 +102,10 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
         let probe = app.descendants(matching: .any)["native-editor-test-document"].firstMatch
         XCTAssertTrue(probe.waitForExistence(timeout: 5))
         let value = try XCTUnwrap(probe.value as? String)
+        let attachment = XCTAttachment(string: value)
+        attachment.name = "Split-screen persisted document"
+        attachment.lifetime = .keepAlways
+        add(attachment)
         let document = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any])
         let payload = try XCTUnwrap(document["editor_payload"] as? [String: Any])
         return try XCTUnwrap(payload["sections"] as? [String: Any])

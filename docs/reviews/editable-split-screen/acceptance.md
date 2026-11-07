@@ -2,6 +2,8 @@
 
 The creator requested ordinary editable media in two or three horizontal panels. The operation examples were not a scope limit. This matrix separates existing capability restrictions from split-screen implementation and verification.
 
+The [November 7 verification record](verification-2026-11-07.md) supersedes the execution status below. It records 87 engine, 36 native and 649 API passes at `2604afd9b`, then 95 passes and three new UI failures at `8e1fff813`. The UI corrections are reviewed but unrun. Shared formal alignment, recovery integration and remaining product/device acceptance stay open. Earlier counts below belong to their named revisions.
+
 ## Integrated verification on November 6
 
 The latest focused native result is **92/92 passed** on `69f0b02af6d87bbe1e511990245da17249b878ac`: 83 unit cases and all nine UI journeys, with zero skips. This includes split creation and named rows, mixed-photo replacement with crop preserved, ordinary duplication, per-occurrence drag/pinch with exact peer invariance, and custom → Save/relaunch → Full → Save/relaunch → inspector reset. Results are in `.dev/split-screen/native-69f0b02af-fixture-corrections-r1-results.xcresult`.

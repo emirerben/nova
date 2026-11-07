@@ -1737,10 +1737,11 @@ struct NativeEditorTemporaryVideo: Sendable {
             }
             cleanDocument = document
         }
-        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background") {
-            // KRI-1118: same stub commit transport; the pool visuals are canned (see `refreshVisualLibrary`).
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background")
+            || ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-persistence") {
             api = NativeEditorUITestCommitTransport.api()
-            itemID = "fixture-speaker-background-item"
+            itemID = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-persistence")
+                ? "fixture-split-controls-item" : "fixture-speaker-background-item"
             variantKey = "initial"
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-delayed-source") { loadState = .loading }

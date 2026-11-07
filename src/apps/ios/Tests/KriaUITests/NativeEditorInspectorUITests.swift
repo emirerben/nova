@@ -17,6 +17,10 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let element = app.descendants(matching: .any)["native-editor-test-document"].firstMatch
         XCTAssertTrue(element.waitForExistence(timeout: 5))
         let data = try XCTUnwrap((element.value as? String)?.data(using: .utf8))
+        let attachment = XCTAttachment(string: String(decoding: data, as: UTF8.self))
+        attachment.name = "Panel editing persisted document"
+        attachment.lifetime = .keepAlways
+        add(attachment)
         let root = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         let payload = try XCTUnwrap(root["editor_payload"] as? [String: Any])
         let sections = try XCTUnwrap(payload["sections"] as? [String: Any])
@@ -74,7 +78,20 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let editedID = try XCTUnwrap(original.rows[0]["slot_id"] as? String)
         let clip = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
         let timeline = app.descendants(matching: .any)["native-editor-timeline-content"].firstMatch
-        timeline.pinch(withScale: 0.5, velocity: -1)
+        selectTimelineClip(1, in: app)
+        // The full timeline extends behind the tool rail. Pinch the exposed clip row
+        // so both touches belong to the scroll view, not the Sounds button below it.
+        func zoomPercentage() throws -> Double {
+            let value = try XCTUnwrap(timeline.value as? String)
+            let percentage = try XCTUnwrap(value.components(separatedBy: "Zoom ").last?.components(separatedBy: " percent").first)
+            return try XCTUnwrap(Double(percentage))
+        }
+        let zoomBefore = try zoomPercentage()
+        clip.pinch(withScale: 0.5, velocity: -1)
+        XCTAssertLessThan(try zoomPercentage(), zoomBefore, "The row pinch must zoom out")
+        let zoomed = try splitSnapshot(app)
+        XCTAssertEqual(NSArray(array: zoomed.rows), NSArray(array: original.rows), "Zoom must not edit footage")
+        XCTAssertEqual(NSArray(array: zoomed.sections), NSArray(array: original.sections))
         selectTimelineClip(1, in: app)
         let trailing = app.descendants(matching: .any)["native-editor-trim-trailing"].firstMatch
         XCTAssertTrue(trailing.waitForExistence(timeout: 3))
@@ -150,7 +167,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.buttons["native-editor-adjust"].tap()
         let speed = app.sliders["native-editor-playback-rate"]
         revealSplitControl(speed, in: app)
-        speed.adjust(toNormalizedSliderPosition: 0.6)
+        dragSplitSlider(speed, toNormalizedPosition: 1, in: app)
         app.buttons["native-editor-inspector-done"].tap()
         let retimed = try splitSnapshot(app)
         let fast = try retimed.row(editedID)
@@ -182,7 +199,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.buttons["native-editor-adjust"].tap()
         let volume = app.sliders["native-editor-clip-source-volume"]
         revealSplitControl(volume, in: app)
-        volume.adjust(toNormalizedSliderPosition: 0.2)
+        dragSplitSlider(volume, toNormalizedPosition: 0.2, in: app)
         app.buttons["native-editor-inspector-done"].tap()
         let quieter = try splitSnapshot(app)
         let quietRow = try quieter.row(editedID)
@@ -203,6 +220,32 @@ final class NativeEditorInspectorUITests: XCTestCase {
         attachment.name = "Independent panel speed crop and source gain restored by undo"
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    private func dragSplitSlider(_ slider: XCUIElement, toNormalizedPosition target: CGFloat, in app: XCUIApplication) {
+        // A partially visible slider can report hittable while its thumb is below
+        // the home indicator. Keep the complete track inside the inspector first.
+        let safeBottom = app.frame.maxY - 60
+        for _ in 0..<6 where slider.frame.maxY > safeBottom {
+            let form = app.collectionViews.firstMatch
+            let start = form.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.65))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -100)))
+        }
+        let frame = slider.frame
+        guard slider.isEnabled, slider.isHittable, app.frame.contains(frame),
+              frame.maxY <= safeBottom, frame.width > frame.height, frame.height > 0 else {
+            XCTFail("Panel slider must be enabled and fully visible before dragging: \(frame)")
+            return
+        }
+        // Match NativeSpeedUITests' physical thumb drag instead of XCUI's adjust,
+        // which can synthesize a successful event without moving this SwiftUI slider.
+        let inset = frame.height / 2
+        let position = CGFloat(slider.normalizedSliderPosition)
+        let origin = slider.coordinate(withNormalizedOffset: .zero)
+        let start = origin.withOffset(CGVector(dx: inset + (frame.width - 2 * inset) * position, dy: frame.height / 2))
+        let targetX = target == 1 ? app.frame.maxX - 1 - frame.minX : inset + (frame.width - 2 * inset) * target
+        let end = origin.withOffset(CGVector(dx: targetX, dy: frame.height / 2))
+        start.press(forDuration: 0.25, thenDragTo: end, withVelocity: 20, thenHoldForDuration: 0.3)
     }
 
     private func selectTimelineClip(_ number: Int, in app: XCUIApplication) {
