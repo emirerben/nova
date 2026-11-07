@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.70.0] - 2026-11-07
+
+### Changed
+- feat(ios): the + tray's camera and pickers return to the chat when closed empty (KRI-1275) (#2185) <!-- release-pr: 2185 -->
+
 ## [0.88.69.0] - 2026-11-07
 
 ### Changed
