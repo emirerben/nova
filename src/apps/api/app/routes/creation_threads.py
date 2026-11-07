@@ -52,6 +52,7 @@ from app.kria.api_schemas import (
     SuggestionTapIn,
     ThreadDeltaOut,
 )
+from app.kria.brief import CreativeBrief
 from app.kria.device_render import DeviceRenderCapabilities
 from app.kria.http import KriaFailureRoute, problem_response
 from app.kria.language import is_status_question
@@ -3437,6 +3438,45 @@ async def _render_shape_projection(
         return None
 
 
+async def _pending_approval_brief(
+    db: AsyncSession, thread: CreationThread
+) -> tuple[CreativeBrief | None, dict[str, Any] | None]:
+    """The brief pinned to the newest pending approval's draft, with that draft snapshot."""
+    from app.services import render_shape  # noqa: PLC0415
+
+    if int(getattr(thread, "runtime_version", 1)) != 2:
+        return None, None
+    snapshot = (
+        await db.execute(
+            select(CreatorEditDraft.snapshot_json)
+            .join(CreatorAgentApproval, CreatorAgentApproval.draft_id == CreatorEditDraft.id)
+            .where(
+                CreatorAgentApproval.thread_id == thread.id,
+                CreatorAgentApproval.status == "pending",
+            )
+            .order_by(CreatorAgentApproval.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if not isinstance(snapshot, dict):
+        return None, None
+    return render_shape.readable_brief(snapshot.get("brief_binding")), snapshot
+
+
+async def _keeps_original_speech_ask(db: AsyncSession, thread: CreationThread) -> bool:
+    """KRI-971: the pending brief asks to keep the clip whole / the speech as filmed, so the
+    cleanup card should lead with "Keep original speech". Best-effort like the projection
+    above: anything unreadable is False and never breaks the thread read."""
+    from app.kria.tight_pause_ask import brief_wants_original_speech  # noqa: PLC0415
+
+    try:
+        brief, _snapshot = await _pending_approval_brief(db, thread)
+        return brief_wants_original_speech(brief)
+    except Exception:  # noqa: BLE001 - an optional projection never breaks a read
+        log.warning("creation_thread.keeps_original_speech_projection_failed", exc_info=True)
+        return False
+
+
 async def _cleanup_ask_projection(
     db: AsyncSession, thread: CreationThread, item: PlanItem
 ) -> tuple[bool, bool]:
@@ -3452,26 +3492,9 @@ async def _cleanup_ask_projection(
         brief_tight_pauses,
         brief_wants_speech_cleanup,
     )
-    from app.services import render_shape  # noqa: PLC0415
 
     try:
-        if int(getattr(thread, "runtime_version", 1)) != 2:
-            return False, False
-        snapshot = (
-            await db.execute(
-                select(CreatorEditDraft.snapshot_json)
-                .join(CreatorAgentApproval, CreatorAgentApproval.draft_id == CreatorEditDraft.id)
-                .where(
-                    CreatorAgentApproval.thread_id == thread.id,
-                    CreatorAgentApproval.status == "pending",
-                )
-                .order_by(CreatorAgentApproval.created_at.desc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-        if not isinstance(snapshot, dict):
-            return False, False
-        brief = render_shape.readable_brief(snapshot.get("brief_binding"))
+        brief, snapshot = await _pending_approval_brief(db, thread)
         if brief is None or not brief_wants_speech_cleanup(brief):
             return False, False
         if not brief_tight_pauses(brief):
@@ -3666,6 +3689,9 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
                     speech_cleanup["requested_in_chat"] = True
                 if tight:
                     speech_cleanup["pause_style"] = "tight"
+            if isinstance(speech_cleanup, dict) and await _keeps_original_speech_ask(db, thread):
+                # KRI-971: older apps ignore this and keep today's buttons.
+                speech_cleanup["recommended_choice"] = "keep_original"
     render_shape_projection = None
     if isinstance(db, AsyncSession) and item is not None:
         render_shape_projection = await _render_shape_projection(db, thread, item, session)
