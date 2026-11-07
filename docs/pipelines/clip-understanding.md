@@ -629,6 +629,14 @@ asset. On T08 a small JPEG stayed `analyzing` for 528.58 s.
   `now + claim_window + run_window` (image 10 min + 6 min, video 30 min + 12 min). The
   worker's claim may only shorten it to `claim + run_window`. Celery retries, broker
   re-sends and the reaper never extend it. Broker messages carry `expires=deadline`.
+- **The claim window is sized to the one shared lane** (#2183, after KRI-1240's dedicated
+  `visuals` group was reverted for cost). The unified worker (`--concurrency=1`) is the
+  only `visuals-analysis` consumer, and it may already be running another task. So the
+  claim window is base + one 40-min lane occupant (the longest worker task, a Drive
+  import) + the lane seconds ahead (`queue_backlog_stmt`: 7 min per photo, 13 min per
+  video), capped at 4 h. A truly lost message on a quiet lane therefore reads
+  "Analyzing…" for up to 50 min (photo) / 70 min (video) plus its run window. Constants
+  are pinned to `fly.toml` and the task limits by `tests/test_pool_asset_fly_contract.py`.
 - **Past the deadline** a queued/analyzing row is `failed / analysis_timed_out`,
   `retryable=true`. The list/Slider projection (`_asset_out`) shows that at once. The
   reaper (`reconcile_stale_pool_assets`, every 5 min) persists it and rotates the
