@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.60.0] - 2026-11-07
+
+### Changed
+- docs(suggestions): fix stale backfill_clip_signals line (KRI-1251) (#2182) <!-- release-pr: 2182 -->
+
 ## [0.88.59.0] - 2026-11-07
 
 ### Changed
