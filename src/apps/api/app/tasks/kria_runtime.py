@@ -3667,7 +3667,7 @@ def _complete_draft_turn(
                     "brief_binding": BriefBinding.create(
                         thread.id,
                         brief,
-                        latest_message=str(source_event.content or "")
+                        latest_message=_model_message(source_event)
                         if source_event
                         else document.intent,
                         full_creator_request=full_request,

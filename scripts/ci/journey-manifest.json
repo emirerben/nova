@@ -3470,6 +3470,17 @@
         "src/apps/ios/Tests/KriaTests/DeviceTalkingCardStyleRenderE2ETests.swift",
         "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/PlacedCardStyleTests.swift"
       ]
+    },
+    {
+      "id": "kri-1294-choice-request",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri1294_choice_request_journey.py tests/kria/test_request_binding_journey.py tests/kria/test_kri694_picker_answer_language.py",
+      "paths": [
+        "src/apps/api/app/services/song_order.py",
+        "src/apps/api/app/kria/request_budget.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/tests/kria/test_kri1294_choice_request_journey.py"
+      ]
     }
   ]
 }

@@ -4434,6 +4434,46 @@
       ],
       "red_control": "not_applicable",
       "journey": "kria-continued-turn-paid-calls"
+    },
+    {
+      "id": "kri-1294-choice-request",
+      "tickets": [
+        "KRI-1294",
+        "KRI-1293"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-1294",
+      "journey": "kri-1294-choice-request",
+      "symptom": "A simpler-version button echo became the latest creator instruction and text composition refused an unresolved these after approval.",
+      "boundary": "persistence",
+      "paths": [
+        "src/apps/api/app/services/song_order.py",
+        "src/apps/api/app/kria/request_budget.py",
+        "src/apps/api/app/tasks/kria_runtime.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri1294_choice_request_journey.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Original Q3 red on base 899098e4e. Real planner, hold, structured or typed choice, named consent, approval binding, dispatch, montage source planning, text composition and phone compilation; only provider responses authored. Historical hold runs with keep_whole_take_plan_enabled off so KRI-1295 can remove the unnecessary hold independently.",
+        "live_model": "Not run; production I/O is redacted and no paid call is authorized.",
+        "native_output": "Opt-in KRIA_Q3_EXPORT_DIR writes exact compiled recovery recipe for AudioParityFixtureTests, with synthetic source and missing-text control; see docs/reviews/kri-1294-choice-request.md.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "Typed alias through choice matching",
+        "English and Turkish choice neutralization",
+        "Typed literal matching button label is preserved",
+        "Named omission consent and UI echo stay intact",
+        "Actual unmet composer request still fails"
+      ],
+      "neighbours_gap": [
+        "Original-footage/device replay and live-model behavior",
+        "Whole-clip first-draft acceptance belongs to KRI-1295"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

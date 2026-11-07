@@ -20,6 +20,7 @@ from app.kria.brief_binding import MAX_REQUEST_CHARS, bound_request
 from app.kria.duplicate_send import is_duplicate_answer
 from app.kria.removed_messages import is_removed, removed_turn_ids_sync
 from app.models import CreationThreadEvent
+from app.services.song_order import model_text
 
 
 def creator_request_text_sync(
@@ -36,7 +37,7 @@ def creator_request_text_sync(
     rows = db.execute(query.order_by(CreationThreadEvent.sequence)).all()
     removed = removed_turn_ids_sync(db, thread_id, (payload for _content, payload in rows))
     messages = [
-        str(content).strip()
+        model_text(payload, content).strip()
         for content, payload in rows
         # KRI-552: a re-sent copy of a message adds no instruction to the pinned request;
         # Steer now: neither does a waiting message the creator removed.
