@@ -3389,23 +3389,6 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     #if DEBUG
-    func pendingMergeSnapshotForTesting() -> [String: JSONValue]? {
-        guard let context = pendingMerge else { return nil }
-        let remoteSong = mergeRemoteSong(for: context)
-        let result = NativeEditorMerge.documents(base: context.base, local: context.localOverride ?? document,
-            remote: context.remote, baseSong: context.baseSong, remoteSong: remoteSong)
-        let paths: [JSONValue]
-        if case .conflicts(let conflicts) = result {
-            paths = conflicts.map { .array($0.path.map(JSONValue.string)) }
-        } else { paths = [] }
-        return ["base": .object(context.base.encodeSnapshot()),
-                "local": .object((context.localOverride ?? document).encodeSnapshot()),
-                "remote": .object(context.remote.encodeSnapshot()), "base_song": context.baseSong ?? .null,
-                "remote_song": remoteSong ?? .null, "conflict_paths": .array(paths),
-                "authority_matches": .bool(context.authority == mergeAuthority),
-                "variant": .object(context.variant ?? [:])]
-    }
-
     /// KRI-669: deterministic provider/HTTP fixtures, real original resolution,
     /// placement, compiler, undo and local export. No account or network.
     @Published private(set) var gamedayFixtureSaved = false
