@@ -39,11 +39,12 @@ CheckpointCurrent == WithoutOwnerMatches(s.checkpointScope)
                      /\ (Mutation = "IgnoreRedoOwner" \/ s.checkpointScope.owner = s.owner)
 ReceiptCurrent == Proven /\ s.context = Scope(1, 1, A1)
 ReadLifetimeFence == ~s.readCancelled /\ s.readScope.editor = s.editor
-\* Prompt checks its sequence and captured clean baseline (abstract authority).
+\* Prompt retains its captured owner, sequence and clean baseline (abstract authority).
 \* Latest checks its captured owner/cancelled ticket, not captured generation.
 ReadFence == ReadLifetimeFence
              /\ IF ReadKind = "prompt"
                  THEN s.readSequence = s.sequence /\ s.readScope.authority = s.authority
+                      /\ s.readScope.owner = s.owner
                  ELSE s.readScope.owner = s.owner
 AutoEligible == ~Overlap /\ (Origin = "rendered" \/ ReceiptCurrent)
 Headless(seq) == SubSeq(seq, 1, Len(seq) - 1)
@@ -141,13 +142,16 @@ Export == /\ (~s.review \/ Mutation = "ReviewExport")
                    !.replacementExport = @ \/ (~s.review /\ s.editor = 2)]
 
 \* This callback is captured BEFORE a possible Undo or editor replacement.
-\* Prompt has no captured-owner test in source. Latest-job observation does.
+\* Both paths retain their captured owner through completion; prompt retries
+\* reuse the outer capture rather than adopting a newly observed owner.
 BeginRead == /\ ~s.quiet /\ s.read = "idle" /\ ~s.pending /\ ~s.review
              /\ s' = [s EXCEPT !.read = "waiting", !.readScope = Current,
                       !.readSequence = s.sequence, !.readCancelled = FALSE]
 CompleteRead == /\ s.read = "waiting"
     /\ LET allowed == ReadFence \/ Mutation = "StaleObservation"
                    \/ (Mutation = "LatestOwnerFence" /\ ReadKind = "latest" /\ ReadLifetimeFence)
+                   \/ (Mutation = "PromptOwnerFence" /\ ReadKind = "prompt" /\ ReadLifetimeFence
+                       /\ s.readSequence = s.sequence /\ s.readScope.authority = s.authority)
            deliver == allowed /\ ~s.resultUsed
        IN s' = [s EXCEPT !.read = "done",
            \* Acceptance creates a pending decision under CURRENT authority, as
@@ -225,8 +229,8 @@ ExecutableAuthority == ~s.review => s.doc.authority = s.authority
 NoStaleDecision == ~s.badDecision
 NoStaleObservation == ~s.badObservation
 NoUnprovenOverwrite == ~s.badUnproven
-\* EXPECTED RESIDUAL for prompt + in-place owner change. This is not an asserted
-\* app exploit: whether that lifecycle is reachable requires external mapping.
+\* Accepted callbacks cannot cross their captured owner. The named owner-fence
+\* mutants restore only the respective old acceptance policy, not other fences.
 NoOldOwnerCompletion == ~s.oldOwnerRead
 NoOldOwnerPromptCompletion == ~s.oldOwnerPrompt
 QueuedObservationConverges == (<>s.quiet) => (s.queued ~> ~s.queued)

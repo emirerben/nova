@@ -1,11 +1,11 @@
 # Merge-decision policy companion
 
-Status: initial execution completed 25 checks then stopped on a progress-spec
-encoding error; see execution record below. The corrected progress encoding has
-independent static approval but has not run. This companion is separate from the
-unchanged default verifier.
-The native-tested product head is bf1874e3b9325cf7d9f74ac500c59ef1d990c30b;
-this verification branch starts there and does not alter product code.
+Status: owner-fence follow-up prepared for independent review and a bounded run.
+Historical model head 8c34765d completed 32 expected outcomes with an explicit
+prompt-owner source gap. The follow-up corresponds to product head
+5075deb1cc36975e6aef0f224d60b4ffb7f6854e in the separate prompt-owner-fix
+worktree. Product source in this verification worktree remains unchanged; no
+native result is attributed to the verification-only commit.
 
 ## Scope and correspondence
 
@@ -51,28 +51,42 @@ receipt, API/player readiness). They do not prove dirty-state/save completion or
 actual render/export eligibility; the existing SavedRenderReceipt model and
 native/integration tests cover separate parts of those obligations.
 
-## Explicit unresolved source correspondence
+## Historical source gap and correction
 
-`runPromptRevisionSync` checks operation lifetime/sequence, cancellation and its
-clean baseline, but does not compare an owner captured before the awaited read.
+At historical native-tested repair bf1874e3b, `runPromptRevisionSync` checked
+operation lifetime/sequence, cancellation and its clean baseline, but did not
+compare an owner captured before the awaited read.
 Latest-job observation does compare its captured owner. The account token can
 change before SwiftUI teardown; no synchronous reset guarantee was found in
 AuthStore, RootView, NativeEditorView.onDisappear or setObserversVisible(false).
 This is a source-level gap requiring native/app replay, not a reproduced data
 exposure or confirmed exploit.
 
-The companion therefore permits an in-place owner change. A prompt completion
-can be accepted under the current owner; an old submitted receipt is not thereby
-proven. `NoOldOwnerCompletion` is a separate expected-violation probe for
-prompt reads and is excluded from the passing safety claims. The latest-read
-variant must pass. The harness reports exit 3 after otherwise passing checks to
-keep this gap visible. No production guard is invented to make the model pass.
+The historical companion permitted an in-place owner change and its unmodified
+prompt completion violated `NoOldOwnerCompletion`; that trace and exit-3 report
+are retained. A deterministic native-session replay subsequently reproduced old
+responses changing document/recovery state, with same-owner controls passing.
+
+Product head 5075deb1 captures owner once in synchronizePromptRevision, retains
+it across baseline retries, and checks it before follow-up reads, response
+application and failure handling. Scheduled and foreground recovery retain an
+optional scope record containing the original editor identity and owner; absence
+of scope differs from an anonymous (nil) owner. Completion, app-gate failure,
+stop and reset clear that scope. Four focused native tests cover 29 response and
+recovery scenarios; the timer negative awaits actual captured-task completion.
+
+The updated companion adds prompt owner equality and a PromptOwnerFence mutant
+that removes only that check. Both prompt/latest owner positive checks must pass;
+both matching owner mutants must violate the same generic property. The model
+still has one read, so it does not prove arbitrary retry/catch execution; native
+regressions and source review establish those parts. Real account-switch UI and
+provider transport remain outside the local replay claim.
 
 ## Controls and execution
 
-The standalone harness schedules six safety scenarios, eleven policy mutants,
+The standalone harness schedules six safety scenarios, twelve policy mutants,
 nine positive reachability witnesses, two queue-progress checks and their two
-NoRearm controls, plus the two owner probes (32 TLC invocations). Every mutant
+NoRearm controls, plus the two owner positive checks (33 TLC invocations). Every mutant
 must violate its named property; compile/discovery/timeout failures do not count.
 Every witness must produce the named invariant counterexample. Existing formal
 models, controls, hash registry and default verification command are untouched.
@@ -87,11 +101,11 @@ TLC_TIMEOUT=120 python3 formal/ios_edit_flow/verify_merge_decision.py
 
 The runner requires existing explicit tool files and validates the original
 TLC 1.8.0 SHA-256 pin through the shared helper. It does not install tools.
-Artifacts are separate under `.dev/formal-merge-decision/`; the default verifier's
+Artifacts are separate under `.dev/formal-merge-decision-owner/`; the default verifier's
 output is preserved. An outer 15-minute batch timeout and resource coordination are required before
 execution. Stop on timeout or the first unexpected outcome and report the partial
 results; do not weaken properties, enlarge bounds or retry without allocation.
-The 32 checks at 120 seconds each have a worst case ceiling exceeding that batch
+The 33 checks at 120 seconds each have a worst case ceiling exceeding that batch
 budget, not a predicted duration. Static syntax checks are not formal evidence.
 
 ## Static review record
@@ -119,11 +133,20 @@ The correction keeps weak fairness in SpecProgress and expresses the same
 conditional obligation as `(<>quiet) => (queued ~> ~queued)`. The two progress
 configurations already disable owner change and replacement, so the redundant
 stable-owner/lifetime specification conjunct is removed. NoRearm must still
-produce a named temporal violation with the identical assumptions. Corrected
-formal execution requires a new allocated bounded batch.
+produce a named temporal violation with the identical assumptions. That correction was subsequently executed at 8c34765d; both progress checks
+and both NoRearm controls produced their expected outcomes.
 
 Independent reviewer confirmed the rewrite is logically equivalent specifically
 for these fixed-owner/lifetime progress configurations. A queued notification can
 be followed by choice/Redo and Quiesce, and NoRearm can keep it queued forever
-while quiet, so the intended negative control remains nonvacuous. TLC acceptance
-and actual progress results remain unverified until the corrected run.
+while quiet, so the intended negative control remains nonvacuous. At the time of that review TLC acceptance and progress were unverified; the
+subsequent 8c34765d run completed both progress checks and their NoRearm controls.
+
+
+## Owner-fence follow-up validation
+
+The first 32-check companion result remains historical before-fix evidence, not
+proof of the new source guard. The updated 33-check harness must complete on its
+new exact model head. No original hash registry or existing baseline model/control
+is changed. New verification results will be stored separately from the retained
+historical reports; no previous expected source-gap trace is relabeled as fixed.

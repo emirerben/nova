@@ -2,7 +2,8 @@
 """Separate bounded companion. Explicit provisioned tools; never installs tools.
 
 Run only with an allocated formal lane. Existing verification remains unchanged.
-Exit 3 means bounded checks passed with a documented source-correspondence gap.
+Exit 0 means bounded policy checks and named negative controls passed.
+This does not prove app lifecycle, arbitrary retries, or JSON merge fidelity.
 """
 import hashlib
 import json
@@ -26,7 +27,7 @@ def main():
     for name in ("JAVA", "TLA2TOOLS"):
         if not os.environ.get(name) or not Path(os.environ[name]).is_file():
             sys.exit(f"FAIL: set {name} to an existing approved tool; no installation attempted")
-    verify.OUT = verify.REPO / ".dev/formal-merge-decision"
+    verify.OUT = verify.REPO / ".dev/formal-merge-decision-owner"
     verify.OUT.mkdir(parents=True, exist_ok=True)
     verify.JAR = verify.tlc_jar()
     verify.JAVA = verify.java()
@@ -43,7 +44,8 @@ def main():
                             expected=expected, result=result))
         report = dict(model_sha256=hashlib.sha256(MODEL.read_bytes()).hexdigest(),
                       scope="bounded policy; opaque documents; not JSON merge or app lifecycle proof",
-                      source_gap="prompt completion lacks captured-owner comparison; app replay pending",
+                      source_head="5075deb1cc36975e6aef0f224d60b4ffb7f6854e",
+                      scope_limit="one read; retry/catch and actual app lifecycle require native evidence",
                       results=results)
         (verify.OUT / "report.json").write_text(json.dumps(report, indent=2) + "\n")
         wanted = [] if expected is None else [expected]
@@ -89,10 +91,11 @@ def main():
     check("latest-owner-fence", {}, "NoOldOwnerCompletion")
     check("mutant-LatestOwnerFence", {"Mutation": '"LatestOwnerFence"'},
           "NoOldOwnerCompletion", "NoOldOwnerCompletion")
-    check("prompt-owner-assumption-probe", {"ReadKind": '"prompt"'},
+    check("prompt-owner-fence", {"ReadKind": '"prompt"'}, "NoOldOwnerCompletion")
+    check("mutant-PromptOwnerFence", {"ReadKind": '"prompt"', "Mutation": '"PromptOwnerFence"'},
           "NoOldOwnerCompletion", "NoOldOwnerCompletion")
-    print("PASS WITH SOURCE GAP: bounded checks passed; prompt owner lifecycle needs replay")
-    return 3
+    print("PASS: bounded merge decision policy and owner fence controls")
+    return 0
 
 
 if __name__ == "__main__":
