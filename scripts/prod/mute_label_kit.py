@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import inspect
 import json
 import random
 import shutil
@@ -38,21 +39,57 @@ LABELS = ("clean", "wind", "crowd", "music", "clipped", "silence")
 TEMPLATE = ""
 MAX_BYTES = 150 * 1024 * 1024
 
+
+def choose(hits, pool, n_hits, n_sample, per_user, seed):
+    """Pick distinct footage: no media_id or gcs_path twice, at most per_user clips per creator."""
+    import random
+
+    rng = random.Random(seed)
+    rng.shuffle(hits)
+    rng.shuffle(pool)
+    seen_media, seen_path, per = set(), set(), {}
+    chosen = []
+    for group, entries, limit in (
+        ("detector_hit", hits, n_hits),
+        ("random_sample", pool, n_sample),
+    ):
+        taken = 0
+        for e in entries:
+            if taken >= limit:
+                break
+            owner = e.get("user_id")
+            if e["media_id"] in seen_media or e["gcs_path"] in seen_path:
+                continue
+            if per.get(owner, 0) >= per_user:
+                continue
+            seen_media.add(e["media_id"])
+            seen_path.add(e["gcs_path"])
+            per[owner] = per.get(owner, 0) + 1
+            chosen.append(dict(e, group=group))
+            taken += 1
+    return chosen
+
+
 REMOTE = r"""
-import json, random, sys
+import json, sys
 from sqlalchemy import select
 from app import storage
 from app.database import sync_session
-from app.models import PlanItem
+from app.models import ContentPlan, PlanItem
 from app.services.clip_signals import registry
 
-HITS, SAMPLE, SCAN, SEED = {hits}, {sample}, {scan}, {seed}
+{choose_src}
+
+HITS, SAMPLE, SCAN, SEED, PER_USER = {hits}, {sample}, {scan}, {seed}, {per_user}
 hits, pool = [], []
 with sync_session() as db:
     rows = db.execute(
-        select(PlanItem.id, PlanItem.clip_assignments).order_by(PlanItem.id).limit(SCAN)
+        select(PlanItem.id, ContentPlan.user_id, PlanItem.clip_assignments)
+        .join(ContentPlan, ContentPlan.id == PlanItem.content_plan_id)
+        .order_by(PlanItem.id.desc())
+        .limit(SCAN)
     )
-    for item_id, assignments in rows:
+    for item_id, user_id, assignments in rows:
         for row in assignments or []:
             if not isinstance(row, dict) or str(row.get("kind") or "video") != "video":
                 continue
@@ -62,7 +99,8 @@ with sync_session() as db:
                 continue
             data = registry.read_signals(row.get("analysis")).get("audio_quality") or {{}}
             entry = {{
-                "item_id": str(item_id), "media_id": str(media_id), "gcs_path": path,
+                "item_id": str(item_id), "user_id": str(user_id),
+                "media_id": str(media_id), "gcs_path": path,
                 "generation": generation, "signal": data,
             }}
             measured = data.get("measured") is not False
@@ -70,11 +108,7 @@ with sync_session() as db:
                 hits.append(entry)
             elif measured and data.get("noisy") is False:
                 pool.append(entry)
-rng = random.Random(SEED)
-rng.shuffle(hits)
-rng.shuffle(pool)
-chosen = [dict(e, group="detector_hit") for e in hits[:HITS]]
-chosen += [dict(e, group="random_sample") for e in pool[:SAMPLE]]
+chosen = choose(hits, pool, HITS, SAMPLE, PER_USER, SEED)
 out = []
 for e in chosen:
     try:
@@ -94,12 +128,14 @@ print("{end}")
 """
 
 
-def remote_snippet(hits: int, sample: int, scan: int, seed: int) -> str:
+def remote_snippet(hits: int, sample: int, scan: int, seed: int, per_user: int) -> str:
     return REMOTE.format(
         hits=hits,
         sample=sample,
         scan=scan,
         seed=seed,
+        per_user=per_user,
+        choose_src=inspect.getsource(choose),
         max_bytes=MAX_BYTES,
         start=MARK_START,
         end=MARK_END,
@@ -107,7 +143,7 @@ def remote_snippet(hits: int, sample: int, scan: int, seed: int) -> str:
 
 
 def select_remote(args: argparse.Namespace) -> dict:
-    code = remote_snippet(args.hits, args.sample, args.scan, args.seed)
+    code = remote_snippet(args.hits, args.sample, args.scan, args.seed, args.per_user)
     blob = base64.b64encode(code.encode()).decode()
     cmd = [
         "fly",
@@ -115,7 +151,8 @@ def select_remote(args: argparse.Namespace) -> dict:
         "console",
         "-a",
         FLY_APP,
-        "-s",
+        "-g",
+        "worker",
         "-C",
         f"sh -c 'echo {blob} | base64 -d | python -'",
     ]
@@ -279,13 +316,16 @@ def main() -> int:
         if name in ("pull", "remote"):
             p.add_argument("--hits", type=int, default=20)
             p.add_argument("--sample", type=int, default=20)
-            p.add_argument("--scan", type=int, default=4000, help="plan items to look through")
+            p.add_argument(
+                "--scan", type=int, default=4000, help="newest plan items to look through"
+            )
+            p.add_argument("--per-user", type=int, default=4, help="max clips from one creator")
         if name == "pull":
             p.add_argument("--selection", help="a saved selection JSON: skip the prod read")
             p.add_argument("--force", action="store_true")
     args = parser.parse_args()
     if args.cmd == "remote":
-        print(remote_snippet(args.hits, args.sample, args.scan, args.seed))
+        print(remote_snippet(args.hits, args.sample, args.scan, args.seed, args.per_user))
         return 0
     return pull(args) if args.cmd == "pull" else check(args)
 

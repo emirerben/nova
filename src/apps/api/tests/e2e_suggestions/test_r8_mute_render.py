@@ -88,7 +88,8 @@ async def test_r8_a_tapped_mute_card_silences_the_clip_in_the_phone_recipe(
     verdict = k._judge(muted, muted_brief)[moved.id]
     refused = k._judge(control, muted_brief)[moved.id]
     assert verdict["status"] == "met", verdict  # R3
-    assert refused["status"] != "met", refused
+    assert refused["status"] == "not_possible", refused
+    assert "not_built" in str(refused).lower(), refused
 
     ARTIFACT.mkdir(parents=True, exist_ok=True)
     (ARTIFACT / "mute-card-render.json").write_text(
