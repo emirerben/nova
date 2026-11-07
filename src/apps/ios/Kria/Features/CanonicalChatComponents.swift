@@ -1142,7 +1142,7 @@ struct KriaFilledChip: View {
     let action: () -> Void
 
     var body: some View {
-        KriaAnswerChip(title: text, caption: caption, state: state, action: action)
+        KriaAnswerChip(title: text, caption: caption, state: state, isSuggestion: true, isLead: isPrimary, action: action)
             .accessibilityLabel(caption.map { "\(text), \($0)" } ?? text)
             .accessibilityValue(isPrimary ? "Recommended" : "")
     }

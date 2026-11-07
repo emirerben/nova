@@ -4,7 +4,7 @@ import SwiftUI
 /// Every shared primitive in its states, as one scrolling page per group. Open the previews in Xcode to
 /// compare against the Paper board "Kria iOS — Component Redesign" (page 4, S4.01 to S4.11).
 struct KriaDesignGallery: View {
-    enum Page: Int, CaseIterable { case buttons, text, notices, rows, answers, sources, sheet }
+    enum Page: Int, CaseIterable { case buttons, text, notices, rows, answers, aiChips, sources, sheet }
     let page: Page
 
     @State private var text = ""
@@ -34,6 +34,7 @@ struct KriaDesignGallery: View {
         case .notices: notices
         case .rows: rows
         case .answers: answers
+        case .aiChips: aiChips
         case .sources: sources
         case .sheet: EmptyView()
         }
@@ -136,6 +137,34 @@ struct KriaDesignGallery: View {
         Button("Let Kria decide") {}.buttonStyle(.kriaTertiary).frame(maxWidth: .infinity)
     }
 
+    @ViewBuilder private var aiChips: some View {
+        ForEach(0..<3, id: \.self) { stage in
+            caption(["AI suggestions beside gray answers, on white", "on the butter wash", "on a dark stage"][stage])
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    KriaAnswerChip(title: "Let Kria decide", isSuggestion: true, isLead: true, action: {})
+                    KriaAnswerChip(title: "Start with the sunset", isSuggestion: true, action: {})
+                }
+                KriaAnswerChip(title: "Cut the slow middle", caption: "Your best shot is at 0:12", isSuggestion: true, action: {})
+                HStack(spacing: 8) {
+                    KriaAnswerChip(title: "After I say hello", action: {})
+                    KriaAnswerChip(title: "Type my own", typeMyOwn: true, action: {})
+                }
+            }
+            .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+            .background { stageBackground(stage) }
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        }
+    }
+
+    @ViewBuilder private func stageBackground(_ stage: Int) -> some View {
+        switch stage {
+        case 0: KriaColor.paper
+        case 1: KriaButterWash().background(KriaColor.paper)
+        default: Color(red: 0.07, green: 0.08, blue: 0.1)
+        }
+    }
+
     @ViewBuilder private var sources: some View {
         caption("Video 2-up, Talk to camera lead")
         KriaSourceRow(options: [.record(action: {}), .upload(action: {})], leadsWithFirst: true)
@@ -170,6 +199,7 @@ struct KriaDesignGallery: View {
 #Preview("Notices and progress") { KriaDesignGallery(page: .notices) }
 #Preview("Step rail and media rows") { KriaDesignGallery(page: .rows) }
 #Preview("Answer chips and blocks") { KriaDesignGallery(page: .answers) }
+#Preview("AI suggestion chips") { KriaDesignGallery(page: .aiChips) }
 #Preview("Source rows") { KriaDesignGallery(page: .sources) }
 #Preview("Sheet scaffold") { KriaDesignGallery(page: .sheet) }
 #endif
