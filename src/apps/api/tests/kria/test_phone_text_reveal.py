@@ -77,7 +77,10 @@ def test_reference_matches_cloud():
 
 
 def test_fixed_line_reveal_keeps_full_geometry():
-    assert _fixed_reveal_lines(["Hello", "brave world"], "Hello bra") == (["Hello", "bra"], 1)
+    assert _fixed_reveal_lines(["Hello", "brave world"], "Hello bra", "Hello brave world") == (
+        ["Hello", "bra"],
+        1,
+    )
 
 
 if __name__ == "__main__" and "--write" in sys.argv:

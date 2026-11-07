@@ -108,8 +108,8 @@ def test_pillow_manual_text_keeps_rows_and_size_inside_the_safe_width(tmp_path):
 @pytest.mark.parametrize(
     ("x_frac", "anchor"), [(0.5, "center"), (0.7, "center"), (0.3, "left"), (0.8, "right")]
 )
-def test_pillow_authored_line_never_leaves_the_safe_area(tmp_path, x_frac, anchor):
-    """Off-centre or edge-anchored authored text wraps to the room it has (KRI-826)."""
+def test_pillow_authored_line_never_leaves_the_frame(tmp_path, x_frac, anchor):
+    """Off-centre or edge-anchored authored text wraps to the room to the frame edge (KRI-885)."""
     import numpy as np
     from PIL import Image
 
@@ -127,9 +127,9 @@ def test_pillow_authored_line_never_leaves_the_safe_area(tmp_path, x_frac, ancho
     )
     alpha = np.array(Image.open(out))[..., 3]
     xs = np.nonzero(alpha > 0)[1]
-    margin = 0.05 * pillow.CANVAS_W
-    assert xs.min() >= margin - 4
-    assert xs.max() <= pillow.CANVAS_W - margin + 4
+    margin = 0.05 * pillow.CANVAS_W if x_frac == 0.5 else 1
+    assert xs.min() >= margin - 4 and xs.min() > 0
+    assert xs.max() <= pillow.CANVAS_W - margin + 4 and xs.max() < pillow.CANVAS_W - 1
 
 
 def test_pillow_inline_emoji_draws_in_color_not_as_a_box(tmp_path):
@@ -317,7 +317,8 @@ def test_server_slide_export_keeps_long_turkish_emoji_text_inside_the_frame(
     rgba = np.array(Image.open(out)).astype(int)
     assert rgba.shape[:2] == (1350, 1080)
     xs = np.nonzero(rgba[..., 3] > 40)[1]
-    assert xs.min() >= 0.05 * 1080 - 6 and xs.max() <= 0.95 * 1080 + 6, (xs.min(), xs.max())
+    margin = 0.05 * 1080 if x_frac is None else 0.03 * 1080  # off-centre: room to the frame edge
+    assert xs.min() >= margin - 6 and xs.max() <= 1080 - margin + 6, (xs.min(), xs.max())
     if pillow._emoji_font() is not None:
         opaque = rgba[rgba[..., 3] > 200]
         assert ((opaque[:, 0] - opaque[:, 2]) > 80).sum() > 100  # the sunset/coffee in color
