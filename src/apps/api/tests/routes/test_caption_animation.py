@@ -27,6 +27,7 @@ from app.routes import generative_jobs as gj
 from app.services.client_protocol import clear_request_context, set_client_protocol
 from app.services.device_render import device_status
 from app.services.phone_editor import PHONE_EDITOR_SAVED_PLAN_FIELD
+from tests.pipeline.single_word_fixture import origin_main_caption_rows  # noqa: F401
 from tests.routes.caption_animation_fixture import (
     GOLDEN_FILE,
     all_cases,
@@ -50,7 +51,7 @@ STILL = {"entrance": "none", "exit": "none", "loop": "none", "speed": 1.0}
 
 
 @pytest.fixture(autouse=True)
-def _request_context():
+def _request_context(origin_main_caption_rows):  # noqa: F811
     clear_request_context()
     yield
     clear_request_context()

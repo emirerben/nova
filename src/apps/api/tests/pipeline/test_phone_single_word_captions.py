@@ -34,6 +34,7 @@ from tests.pipeline.single_word_fixture import (
     OFF_STATE_CASES,
     TALK_SECONDS,
     off_state_digests,
+    origin_main_caption_rows,  # noqa: F401
     recipe_digest,
     save_digests,
     save_word_style,
@@ -50,7 +51,7 @@ LIME = (0xC5 / 255, 0xF8 / 255, 0x2A / 255)
 
 
 @pytest.fixture(autouse=True)
-def _no_request_context():
+def _no_request_context(origin_main_caption_rows):  # noqa: F811
     clear_request_context()
     yield
     clear_request_context()

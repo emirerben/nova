@@ -144,6 +144,7 @@ from app.services.job_phases import (
 from app.services.job_storage_paths import JOB_POSTER_PATH_PREFIX, owned_job_output_path
 from app.services.music_genre import asked_genres, genre_shortlist
 from app.services.phone_text_styling import (
+    caption_spot_is_asked,
     current_phone_text_policy,
     generation_caption_cues,
     generation_style_fields,
@@ -9420,6 +9421,8 @@ def _run_phone_subtitled_job(
     protected_caption_look: Any = None
     protected_caption_receipt: dict[str, Any] | None = None
     protected_caption_avoid: Any = None
+    # KRI-632: where the captions sit against the speaker's face band when no protected ask ran.
+    caption_face_band_receipt: dict[str, Any] | None = None
     # The take's words on the timeline the recipe plays, for `spoken_text_asks`.
     timeline_words: list[Any] = []
 
@@ -10432,6 +10435,19 @@ def _run_phone_subtitled_job(
             protected_card_regions = _protected_card_regions(
                 protected_plan, probe.duration_s, **text_canvas
             )
+            if protected_caption_receipt is None:
+                # KRI-632: no protected ask measured the captions, so keep them off the
+                # speaker's face band the way the titles do.
+                protected_caption_look, caption_face_band_receipt = _phone_face_band_caption_look(
+                    binding=binding,
+                    clip_path=clip_path,
+                    keep_segments=speaker_keep_segments,
+                    landscape_fit=framed_fit,
+                    position_x=speaker_position_x or 0.0,
+                    cues=cues,
+                    caption_style=caption_style,
+                    **text_canvas,
+                )
             if protected_caption_look is not None:
                 framed_compile["caption_look"] = protected_caption_look
             protected_caption_avoid = _protected_caption_avoid(
@@ -12190,6 +12206,8 @@ def _run_phone_subtitled_job(
             caption_style_map = dict(new_entry.get("caption_editor_style") or {})
             caption_style_map["position_y_frac"] = protected_caption_look.position_y_frac
             new_entry["caption_editor_style"] = caption_style_map
+        if caption_face_band_receipt is not None:
+            new_entry["caption_face_band_placement"] = caption_face_band_receipt
         if protected_plan is not None:
             # KRI-827: per target, whether every text stayed off it (the brief receipt's
             # evidence), with each mark's provenance (source, generation, seed) so a later
@@ -13301,6 +13319,7 @@ def _phone_protected_plan(
     from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
     from app.pipeline.render_geometry import ProtectedRegion  # noqa: PLC0415
+    from app.services.phone_rollout import caption_row_budget_enabled  # noqa: PLC0415
 
     canvas = canvas if canvas is not None else _STORY_CANVAS
 
@@ -13319,7 +13338,7 @@ def _phone_protected_plan(
         return None, None, None
     # The clips after the first play in full, each right after the one before it, on the
     # same clock the caption cues were shifted onto (`extra_offset_s`).
-    offset_s = float(binding.original.duration_s)
+    offset_s = float(binding.original.duration_s) if extra_speakers else 0.0
     speakers: list[tuple[Any, str | None, Any, float, float]] = []
     for extra_binding, extra_path in extra_speakers:
         length_s = float(extra_binding.original.duration_s)
@@ -13337,7 +13356,7 @@ def _phone_protected_plan(
     caption_receipt: dict[str, Any] | None = None
     look = None
     if any(p.objects or p.protect_all_faces for p in plans):
-        first_end_s = float(binding.original.duration_s)
+        first_end_s = float(binding.original.duration_s) if extra_speakers else 0.0
         subjects: list[Any] = []
         face_receipts: list[dict[str, Any]] = []
         resolved: list[Any] = []
@@ -13413,7 +13432,10 @@ def _phone_protected_plan(
                         objects=speaker_plan.objects,
                         # Faces are a hard limit for the captions only when the creator named
                         # a face; "no text on the plate" alone never moves captions off one.
-                        faces=tuple(faces) if speaker_plan.protect_all_faces else (),
+                        faces=tuple(faces)
+                        if speaker_plan.protect_all_faces
+                        or (caption_row_budget_enabled() and not caption_spot_is_asked())
+                        else (),
                         face_windows=face_windows,
                         keep_segments=tuple(speaker_keep),
                         display_width=float(display_width),
@@ -13434,8 +13456,8 @@ def _phone_protected_plan(
                 cues,
                 caption_style=caption_style,
                 canvas=canvas,
-                objects=(),
-                faces=(),
+                objects=subjects[0].objects,
+                faces=subjects[0].faces,
                 keep_segments=kept,
                 display_width=float(subjects[0].display_width),
                 display_height=float(subjects[0].display_height),
@@ -13455,6 +13477,70 @@ def _phone_protected_plan(
     elif speakers:
         plan = replace(plan, target_rows=merge_target_rows(plans))
     return plan, look, caption_receipt
+
+
+def _phone_face_band_caption_look(
+    *,
+    binding: Any,
+    clip_path: str | None,
+    keep_segments: list[tuple[float, float]],
+    landscape_fit: str,
+    position_x: float,
+    cues: list[dict],
+    caption_style: str,
+    canvas: Any = None,
+) -> tuple[Any, dict[str, Any] | None]:
+    """KRI-632: the caption look whose block stays off the speaker's face band, the same
+    band (`phone_subtitled_title._face_boxes`) the titles are placed against, plus a
+    receipt of the decision. ``(None, None)`` keeps the captions where they are drawn
+    (already clear, nothing to measure, or the measuring failed: captions are never
+    worth failing a render for)."""
+    from app.pipeline import phone_subtitled_title as title_mod  # noqa: PLC0415
+    from app.pipeline.phone_protected_text import choose_caption_look  # noqa: PLC0415
+    from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.services.phone_rollout import caption_row_budget_enabled  # noqa: PLC0415
+
+    canvas = canvas if canvas is not None else _STORY_CANVAS
+    kept = [(float(a), float(b)) for a, b in keep_segments if float(b) > float(a)]
+    if not kept or not cues or not caption_row_budget_enabled():
+        return None, None
+    if caption_spot_is_asked():
+        return None, {"status": "creator_spot_kept"}
+    try:
+        display_width, display_height = display_dims(binding.original)
+        scale = fit_transform(display_width, display_height, canvas, landscape_fit).scale
+        faces, face_receipt = title_mod._face_boxes(
+            clip_path,
+            window=(0.0, sum(end - start for start, end in kept)),
+            keep_segments=kept,
+            display_width=display_width,
+            display_height=display_height,
+            canvas=canvas,
+            scale=scale,
+            sample=title_mod.sample_face_regions,
+            position_x=position_x,
+        )
+        look, receipt = choose_caption_look(
+            cues,
+            caption_style=caption_style,
+            canvas=canvas,
+            objects=[],
+            faces=faces,
+            keep_segments=kept,
+            display_width=display_width,
+            display_height=display_height,
+            scale=scale,
+            position_x=position_x,
+        )
+    except Exception as exc:  # noqa: BLE001 - the captions stay put; the log says why
+        log.warning("phone_caption_face_band.failed", error=str(exc)[:200])
+        return None, None
+    return look, {
+        **receipt,
+        "faces": face_receipt.get("faces"),
+        "face_band": face_receipt.get("face_band"),
+    }
 
 
 def _phone_talking_title_rows(
