@@ -268,7 +268,7 @@ struct KriaPlanPill: View {
 
 // MARK: - Buttons
 
-/// The ink + butter capsule CTA ("Review your video", "Update video"): 48pt, ink fill, #FFF0A6 label. Disabled is
+/// The ink + butter capsule CTA (the Review sheet's "Done" and "Try again"): 48pt, ink fill, #FFF0A6 label. Disabled is
 /// ink at 10% with the label at 40%.
 struct KriaInkCTAButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
@@ -321,21 +321,144 @@ struct KriaCloseMark: Shape {
 
 // MARK: - Progress
 
-/// 6pt track (ink at 8%) with a butter gradient fill.
+/// 6pt track (ink at 8%) with a butter gradient fill. A nil `progress` is indeterminate: a butter segment sweeps
+/// along the track (still, at partial fill, under Reduce Motion).
 struct KriaProgressTrack: View {
-    let progress: Double
+    let progress: Double?
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var sweep: CGFloat = -0.4
+
+    private static let sweepDuration = 1.2
+    private static let segment: CGFloat = 0.4
+    private var sweeps: Bool { progress == nil && !KriaMotion.isReduced(systemReduceMotion) && scenePhase == .active }
+    private var fill: LinearGradient {
+        LinearGradient(colors: [KriaColor.butter, KriaColor.butterDeep], startPoint: .leading, endPoint: .trailing)
+    }
 
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 Capsule().fill(KriaColor.ink.opacity(0.08))
-                Capsule()
-                    .fill(LinearGradient(colors: [KriaColor.butter, KriaColor.butterDeep], startPoint: .leading, endPoint: .trailing))
-                    .frame(width: max(progress > 0 ? 8 : 0, proxy.size.width * min(1, max(0, progress))))
+                if let progress {
+                    Capsule().fill(fill)
+                        .frame(width: max(progress > 0 ? 8 : 0, proxy.size.width * min(1, max(0, progress))))
+                } else {
+                    Capsule().fill(fill)
+                        .frame(width: proxy.size.width * Self.segment)
+                        .offset(x: proxy.size.width * (sweeps ? sweep : 0.3))
+                }
             }
+            .clipShape(Capsule())
         }
         .frame(height: 6)
+        .task(id: sweeps) { await runSweep() }
     }
+
+    private func runSweep() async {
+        guard sweeps else { return }
+        while !Task.isCancelled {
+            var reset = Transaction()
+            reset.disablesAnimations = true
+            withTransaction(reset) { sweep = -Self.segment }
+            withAnimation(.easeInOut(duration: Self.sweepDuration)) { sweep = 1 }
+            do { try await Task.sleep(for: .seconds(Self.sweepDuration + 0.15)) } catch { return }
+        }
+    }
+}
+
+// MARK: - Live text
+
+/// Text with a soft light sweep across it every couple of seconds (the "Thinking" row's shimmer). The sweep is
+/// drawn in paper over the text and masked to its glyphs; Reduce Motion and a backgrounded app leave it still.
+/// The text itself stays the one accessibility element, so callers put identifiers and traits on this view.
+struct KriaShimmerText: View {
+    let text: String
+    var font: Font
+    var color: Color
+    /// False = plain text, so a caller can switch the shimmer off without swapping views.
+    var isShimmering = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var shimmerOffset: CGFloat = -1
+
+    private static let shimmerInterval = 2.25
+    private static let shimmerDuration = 0.58
+    private var animates: Bool { isShimmering && !reduceMotion && scenePhase == .active }
+
+    init(_ text: String, font: Font, color: Color, isShimmering: Bool = true) {
+        self.text = text; self.font = font; self.color = color; self.isShimmering = isShimmering
+    }
+
+    var body: some View {
+        Text(text)
+            .font(font)
+            .foregroundStyle(color)
+            .overlay {
+                if animates {
+                    GeometryReader { proxy in
+                        LinearGradient(
+                            colors: [KriaColor.paper.opacity(0), KriaColor.paper.opacity(0.65), KriaColor.paper.opacity(0)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .frame(width: max(proxy.size.width * 0.65, 16))
+                        .offset(x: shimmerOffset * proxy.size.width)
+                    }
+                    .mask(Text(text).font(font).accessibilityHidden(true))
+                    .accessibilityHidden(true)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .task(id: animates) { await shimmer() }
+    }
+
+    private func shimmer() async {
+        guard animates else {
+            resetShimmer()
+            return
+        }
+
+        while !Task.isCancelled {
+            resetShimmer()
+            withAnimation(.linear(duration: Self.shimmerDuration)) { shimmerOffset = 1.25 }
+            do { try await Task.sleep(for: .seconds(Self.shimmerInterval)) } catch { return }
+        }
+    }
+
+    private func resetShimmer() {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { shimmerOffset = -1 }
+    }
+}
+
+/// A soft breathing pulse for the card being decided: opacity eases down and back every couple of seconds.
+/// Still under Reduce Motion or a backgrounded app. Finite animations in a task loop (not `repeatForever`), so
+/// UI tests can still reach idle.
+struct KriaSoftPulse: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var dimmed = false
+
+    private static let half = 1.0
+    private var pulses: Bool { !KriaMotion.isReduced(systemReduceMotion) && scenePhase == .active }
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(pulses && dimmed ? 0.86 : 1)
+            .task(id: pulses) {
+                guard pulses else { dimmed = false; return }
+                while !Task.isCancelled {
+                    withAnimation(.easeInOut(duration: Self.half)) { dimmed.toggle() }
+                    do { try await Task.sleep(for: .seconds(Self.half)) } catch { return }
+                }
+            }
+    }
+}
+
+extension View {
+    func kriaSoftPulse() -> some View { modifier(KriaSoftPulse()) }
 }
 
 /// The skeleton bars of a card that is still being decided (ink at 14% and 10%).

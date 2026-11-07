@@ -1,0 +1,227 @@
+{
+ "projectID": "00000000-0000-4000-8000-000000000524",
+ "revision": 1,
+ "etag": "overlay-edit-verify",
+ "captions": {
+  "enabled": true,
+  "style": "sentence"
+ },
+ "music": null,
+ "clips": [
+  {
+   "id": "00000000-0000-4000-8000-000000000100",
+   "asset_id": "00000000-0000-4000-8000-000000000200",
+   "clip_index": 0,
+   "start": 0.0,
+   "end": 4.0,
+   "trim_in": 0.0,
+   "trim_out": 4.0,
+   "source_duration": 12,
+   "muted": false,
+   "slot_id": "cut-1"
+  }
+ ],
+ "text": [
+  {
+   "id": "00000000-0000-4000-8000-000000000301",
+   "content": "Stack A",
+   "position": [
+    0.5,
+    0.18
+   ],
+   "style": "Inter",
+   "canonicalID": "stack-a"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000000302",
+   "content": "Stack B",
+   "position": [
+    0.5,
+    0.18
+   ],
+   "style": "Inter",
+   "canonicalID": "stack-b"
+  }
+ ],
+ "serverSnapshot": {
+  "schema_version": 2,
+  "kind": "editor",
+  "editor_capabilities": {
+   "text_elements": true,
+   "timeline": true,
+   "caption_cues": {
+    "editable": true
+   },
+   "caption_meta": {
+    "editable": true
+   },
+   "caption_style_scope": true,
+   "caption_editor_style": true,
+   "media_overlays": {
+    "editable": true
+   },
+   "overlays": {
+    "editable": true
+   },
+   "visual_blocks": {
+    "editable": true
+   },
+   "visual_editor_style": true,
+   "drawings": {
+    "add": true,
+    "edit": true,
+    "trim": true,
+    "delete": true
+   },
+   "drawings.edit": {
+    "editable": true
+   },
+   "drawings.add": {
+    "editable": true
+   },
+   "drawings.delete": {
+    "editable": true
+   },
+   "drawings.trim": {
+    "editable": true
+   }
+  },
+  "editor_payload": {
+   "base_generation": "overlay-edit-verify",
+   "sections": {
+    "timeline_slots": [
+     {
+      "slot_id": "cut-1",
+      "clip_index": 0,
+      "in_s": 0.0,
+      "duration_s": 4.0,
+      "source_duration_s": 12,
+      "removed": false
+     }
+    ],
+    "text_elements": [
+     {
+      "id": "stack-a",
+      "text": "Stack A",
+      "start_s": 0.0,
+      "end_s": 4.0,
+      "x_frac": 0.5,
+      "y_frac": 0.18,
+      "font_family": "Inter",
+      "size_px": 72.0,
+      "z": 1,
+      "color": "#FFFFFF"
+     },
+     {
+      "id": "stack-b",
+      "text": "Stack B",
+      "start_s": 0.0,
+      "end_s": 4.0,
+      "x_frac": 0.5,
+      "y_frac": 0.18,
+      "font_family": "Inter",
+      "size_px": 72.0,
+      "z": 2,
+      "color": "#FFFFFF"
+     }
+    ],
+    "caption_cues": [
+     {
+      "id": "cue-a",
+      "start_s": 0.0,
+      "end_s": 4.0,
+      "text": "Caption A"
+     },
+     {
+      "id": "cue-b",
+      "start_s": 0.0,
+      "end_s": 4.0,
+      "text": "Caption B"
+     }
+    ],
+    "caption_meta": {
+     "enabled": true,
+     "style": "sentence"
+    },
+    "drawings": [
+     {
+      "id": "draw-a",
+      "start_s": 0.0,
+      "end_s": 4.0,
+      "canvas_aspect": 0.5625,
+      "center_x": 0.5,
+      "center_y": 0.62,
+      "scale": 0.8,
+      "rotation_deg": 0,
+      "animation": {
+       "entrance": "none",
+       "draw_duration_s": 1.2,
+       "exit": "none"
+      },
+      "strokes": [
+       {
+        "color": "#32ADE6",
+        "opacity": 1.0,
+        "width_frac": 0.03,
+        "texture": "pen",
+        "seed": 1,
+        "points": [
+         [
+          0.2,
+          0.4
+         ],
+         [
+          0.5,
+          0.5
+         ],
+         [
+          0.8,
+          0.4
+         ]
+        ]
+       }
+      ]
+     },
+     {
+      "id": "draw-b",
+      "start_s": 0.0,
+      "end_s": 4.0,
+      "canvas_aspect": 0.5625,
+      "center_x": 0.5,
+      "center_y": 0.62,
+      "scale": 0.8,
+      "rotation_deg": 0,
+      "animation": {
+       "entrance": "none",
+       "draw_duration_s": 1.2,
+       "exit": "none"
+      },
+      "strokes": [
+       {
+        "color": "#32ADE6",
+        "opacity": 1.0,
+        "width_frac": 0.03,
+        "texture": "pen",
+        "seed": 1,
+        "points": [
+         [
+          0.2,
+          0.4
+         ],
+         [
+          0.5,
+          0.5
+         ],
+         [
+          0.8,
+          0.4
+         ]
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  }
+ }
+}

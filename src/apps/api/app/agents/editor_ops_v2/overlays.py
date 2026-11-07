@@ -25,6 +25,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from pydantic import ValidationError
+
 from app.agents._schemas.visual_editor import VisualEditorStyle
 from app.agents.editor_ops_v2 import OpSpec
 from app.kria.clip_tilt import wrap_degrees
@@ -95,11 +97,17 @@ def card_rotation(card: dict[str, Any]) -> float:
 
 
 def _set_card_rotation(card: dict[str, Any], degrees: float) -> None:
-    """Store ``degrees`` as the card's angle; upright removes the style, like an untouched card."""
-    if degrees == 0:
+    """Store ``degrees`` as the card's angle and keep the rest of its style (the KRI-1264 zoom and
+    animation). An upright, plain card carries no style, like an untouched card."""
+    try:
+        style = VisualEditorStyle.model_validate(card.get("editor_style") or {})
+    except ValidationError:
+        style = VisualEditorStyle()
+    style = style.model_copy(update={"rotation_deg": degrees})
+    if style == VisualEditorStyle():
         card.pop("editor_style", None)
         return
-    card["editor_style"] = VisualEditorStyle(rotation_deg=degrees).model_dump()
+    card["editor_style"] = style.model_dump()
 
 
 def _coerce_set_overlay_display(
