@@ -1032,6 +1032,7 @@ def _settle_on_only_video(
                 creator_request=creator_request,
                 record=records_by_id[take.media_id],
                 intent_id=intent.intent_id,
+                source_quote=intent.source_quote,
             )
         )
         if label is None:
@@ -1045,6 +1046,7 @@ def _settle_on_only_video(
             records=[records_by_id[take.media_id]],
             intent_id=intent.intent_id,
             creator_copy=True,
+            source_quote=intent.source_quote,
         )
         if caption is None:
             return False
@@ -1482,6 +1484,7 @@ async def resolve_clip_intents_for_turn(
                     attribute=i.attribute,
                     source_kind=i.source_kind,
                     creator_text=i.creator_text,
+                    source_quote=i.source_quote,
                     placeholder=i.placeholder,
                     position=i.position,
                     ordered_members=i.ordered_members,
@@ -1694,6 +1697,7 @@ async def resolve_clip_intents_for_turn(
                             creator_request=creator_request,
                             record=records_by_id[media_id],
                             intent_id=intent.intent_id,
+                            source_quote=intent.source_quote,
                         )
                         if label is not None:
                             work.kept.append(
@@ -1727,6 +1731,7 @@ async def resolve_clip_intents_for_turn(
                     creator_request=creator_request,
                     record=records_by_id[media_id],
                     intent_id=intent.intent_id,
+                    source_quote=intent.source_quote,
                 )
                 if label is not None:
                     work.kept.append(
@@ -2234,6 +2239,7 @@ async def resolve_clip_intents_for_turn(
                 records=member_records,
                 intent_id=intent.intent_id,
                 creator_copy=True,
+                source_quote=intent.source_quote,
             )
             if grounded is not None:
                 work.caption_text = grounded.text
@@ -2409,6 +2415,7 @@ async def resolve_clip_intents_for_turn(
                     attribute=intent.attribute,
                     source_kind=intent.source_kind,
                     creator_text=intent.creator_text,
+                    source_quote=intent.source_quote,
                     placeholder=intent.placeholder,
                     caption_attribute=intent.caption_attribute,
                     position=intent.position,
@@ -2431,6 +2438,7 @@ async def resolve_clip_intents_for_turn(
                     attribute=intent.attribute,
                     source_kind=intent.source_kind,
                     creator_text=intent.creator_text,
+                    source_quote=intent.source_quote,
                     placeholder=intent.placeholder,
                     caption_attribute=intent.caption_attribute,
                     position=intent.position,
@@ -2678,6 +2686,7 @@ def _settle_named_label_guesses(
             creator_request=creator_request,
             record=records_by_id[media_id],
             intent_id=work.intent.intent_id,
+            source_quote=work.intent.source_quote,
         )
         if label is None:
             continue

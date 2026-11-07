@@ -22861,6 +22861,27 @@ def _build_ai_timeline(
 
 _CONTEXT_LABEL_CONTIGUITY_EPSILON_S = 0.001
 _CONTEXT_LABEL_COMBINED_MAX_CHARS = 120
+_CONTEXT_LABEL_STACKED_MAX_CHARS = 500
+
+
+def _combined_context_label_text(rows: list[dict[str, Any]], *, clip_id: str) -> str:
+    """One clip's labels as one overlay text: " · " joined, stacked when that is too long.
+
+    KRI-888: a creator label can run 80 characters, so two can pass the joined cap.
+    Failing the render over copy the creator wrote is wrong; each label keeps its own
+    line instead. Only the overlay element's own text bound can still leave one out.
+    """
+    texts = [str(row["sport"]) for row in rows]
+    joined = " · ".join(texts)
+    if len(joined) <= _CONTEXT_LABEL_COMBINED_MAX_CHARS:
+        return joined
+    kept: list[str] = []
+    for text in texts:
+        if len("\n".join([*kept, text])) > _CONTEXT_LABEL_STACKED_MAX_CHARS:
+            log.warning("context_label_stack_truncated", clip_id=clip_id, kept=len(kept))
+            break
+        kept.append(text)
+    return "\n".join(kept)
 
 
 def _resolve_clip_id_for_media_id(media_id: str, clip_id_to_gcs: dict[str, str]) -> str | None:
@@ -23051,6 +23072,7 @@ def _grounded_context_labels(
                     vision_answer=vision_answer,
                     vision_confidence=vision_confidence,
                     intent_id=intent.intent_id,
+                    source_quote=getattr(intent, "source_quote", None),
                 )
                 if grounded is not None:
                     break
@@ -23154,13 +23176,8 @@ def _context_sport_text_elements(
                 continue
             seen_texts.add(text)
             rendered_rows.append(row)
-        sport = " · ".join(str(row["sport"]) for row in rendered_rows)
+        sport = _combined_context_label_text(rendered_rows, clip_id=clip_id)
         if sport:
-            if len(sport) > _CONTEXT_LABEL_COMBINED_MAX_CHARS:
-                raise ValueError(
-                    "Combined context labels for clip "
-                    f"{clip_id!r} exceed the {_CONTEXT_LABEL_COMBINED_MAX_CHARS}-character limit"
-                )
             row = rendered_rows[0]
             # Keep the stable source identity used to merge and pin rendered
             # labels across re-renders. Stored snapshots retain this shape.

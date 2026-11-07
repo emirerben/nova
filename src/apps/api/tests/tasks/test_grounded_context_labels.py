@@ -13,6 +13,7 @@ import pytest
 from app.pipeline.agents.gemini_analyzer import ClipMeta
 from app.schemas.clip_intents import ClipAssignment, ResolvedClipIntent
 from app.tasks.generative_build import (
+    _context_sport_burn_dicts,
     _context_sport_text_elements,
     _grounded_context_labels,
     _resolve_clip_id_for_media_id,
@@ -429,32 +430,50 @@ def test_multiple_grounded_labels_combine_and_keep_each_provenance():
     ]
 
 
-def test_overlong_combined_labels_raise_instead_of_dropping_a_value():
-    rows = [
-        {
-            "clip_id": "clip-a",
-            "sport": "A" * 61,
-            "source": "grounded_label",
-            "grounding": "record_span",
-            "confidence": 0.9,
-            "intent_id": "i1",
-        },
-        {
-            "clip_id": "clip-a",
-            "sport": "B" * 61,
-            "source": "grounded_label",
-            "grounding": "record_span",
-            "confidence": 0.9,
-            "intent_id": "i2",
-        },
+def test_two_long_creator_labels_on_one_clip_stack_instead_of_failing_the_render():
+    """KRI-888: two creator labels the label bar accepts can join past the 120-char cap.
+
+    Failure modes: the render raises; a label is dropped to fit; the stack loses a
+    label's provenance; the labels run together on one line.
+    """
+    first = " ".join(["il"] * 26)
+    second = " ".join(["li"] * 26)
+    assert len(first) + len(" · ") + len(second) > 120
+    request = f"label the first clips {first} and the later clips {second}"
+    rows = _grounded_context_labels(
+        [
+            _intent(
+                intent_id="one",
+                attribute="first",
+                creator_text=first,
+                assignments=[ClipAssignment(media_id="clip-a", value=first, confidence=1.0)],
+            ),
+            _intent(
+                intent_id="two",
+                attribute="later",
+                creator_text=second,
+                assignments=[ClipAssignment(media_id="clip-a", value=second, confidence=1.0)],
+            ),
+        ],
+        {"clip-a": "a.mp4"},
+        [_meta("clip-a")],
+        creator_request=request,
+    )
+    assert [row["sport"] for row in rows] == [first, second]
+
+    elements = _context_sport_text_elements(
+        rows,
+        steps=[SimpleNamespace(clip_id="clip-a", slot={"transition_in": "cut"})],
+        resolved_plans=[{"duration_s": 2.0}],
+        video_duration_s=2.0,
+    )
+
+    assert [e["text"] for e in elements] == [f"{first}\n{second}"]
+    assert [p["text"] for p in elements[0]["source_params"]["context_label_provenance"]] == [
+        first,
+        second,
     ]
-    with pytest.raises(ValueError, match="120-character limit"):
-        _context_sport_text_elements(
-            rows,
-            steps=[SimpleNamespace(clip_id="clip-a", slot={"transition_in": "cut"})],
-            resolved_plans=[{"duration_s": 2.0}],
-            video_duration_s=2.0,
-        )
+    assert _context_sport_burn_dicts(elements, video_duration_s=2.0)
 
 
 def test_every_grounded_element_carries_provenance_in_source_params():
