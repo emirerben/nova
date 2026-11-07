@@ -142,37 +142,3 @@ private struct KriaSourceStyle: ButtonStyle {
         return pressed ? KriaColor.fillPressed : KriaColor.fill
     }
 }
-
-/// The camera's labelled Upload control (Paper S3.08): a 44pt translucent capsule with the photo glyph, sitting
-/// left of the capture button. It is a labelled capsule, not a bare thumbnail, so it reads as a way to leave
-/// the camera and upload instead.
-struct KriaCameraUploadButton: View {
-    var title = "Upload"
-    var identifier = "camera-upload"
-    /// Fills the row (the camera at accessibility sizes, where the label needs the width).
-    var fullWidth = false
-    let action: () -> Void
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: KriaSourceOption.uploadSymbol).font(.system(size: 18, weight: .regular))
-                Text(title).kriaType(.button).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-            }
-            .foregroundStyle(Color.white)
-            .padding(.horizontal, 16).padding(.vertical, 6)
-            .frame(maxWidth: fullWidth ? .infinity : nil, minHeight: 44)
-            .background {
-                ZStack {
-                    if !KriaTransparency.isReduced(reduceTransparency) { Capsule().fill(.ultraThinMaterial) }
-                    Capsule().fill(Color.white.opacity(KriaTransparency.isReduced(reduceTransparency) ? 0.28 : 0.2))
-                }
-            }
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(title)
-        .accessibilityIdentifier(identifier)
-    }
-}
