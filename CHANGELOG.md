@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.40.0] - 2026-11-07
+
+### Changed
+- fix(kria): preserve exact approval promises through receipt caps (KRI-1235) (#2142) <!-- release-pr: 2142 -->
+
 ## [0.88.39.0] - 2026-11-06
 
 ### Changed
