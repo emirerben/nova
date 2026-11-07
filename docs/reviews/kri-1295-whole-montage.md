@@ -17,6 +17,9 @@ hold; the regression restores it to open to replay the original request.
 - `style`, `timing`, and other global typed keep-whole facts agree. English and
   Turkish labels do not affect the typed fact. Words without the fact, false,
   superseded, clip/title-scoped, and spoken-line triggers must not enable it.
+- A compound text-and-keep-whole row still requires its literal in the draft;
+  source preservation cannot waive missing words. The text-only subcheck removes
+  the keep-whole fact so it cannot route back to the coverage checker.
 - An explicit shorter duration or a multi-clip request must not silently become
   approvable. Final-cut preflight misses must reach readiness before approval.
 - Rechecking the same saved snapshot must preserve the readiness digest. Missing,
@@ -54,10 +57,12 @@ full post-recovery journey; KRI-1294 separately owns the recovery-label failure.
 - Red control: the new original Q3 replay failed at `report["ready"]` before
   implementation, reproducing the false hold with the recorded style/global ask.
 - `bash scripts/check-api.sh test tests/kria/test_kri1295_whole_montage.py
-  tests/kria/test_kri1295_whole_montage_postgres.py -q`: 38 passed. Includes the
+  tests/kria/test_kri1295_whole_montage_postgres.py -q`: 40 passed. Includes the
   original request, EN/TR, all five kinds, stale/missing/conflicting evidence,
   explicit shorter length, two clips, switch-off, correction recovery and a
-  repeated-subset wrong-content control. Real Postgres approval preserves r3.
+  repeated-subset wrong-content control. The review-found compound-row regression
+  fails before the correction and now refuses missing literal text while allowing
+  present text to defer source coverage. Real Postgres approval preserves r3.
 - Focused existing whole-take/whole-line/Leverkusen tests: 101 passed.
 - Existing phone preflight, length planning and Postgres readiness tests: 128
   passed. These include the existing approval/recheck path.

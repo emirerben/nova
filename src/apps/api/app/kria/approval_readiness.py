@@ -356,7 +356,19 @@ def _no_pre_render_checker(req: Any, facts: Any) -> bool:
     if _fact_entries(req.facts.get(KEEP_TEXT_OFF_KEY)):
         return False
     if _wants_whole_take(req):
-        return True  # KRI-1295: the typed fact can be filed under text too.
+        # KRI-1295: the typed fact can be filed under text too, but a compound
+        # row's literal must still be present. Remove only the source-preservation
+        # fact so text_words_met checks its words instead of routing back to the
+        # whole-take checker (which takes precedence over text requirements).
+        if req.kind == "text" and req.literal:
+            words = req.model_copy(
+                update={"facts": {k: v for k, v in req.facts.items() if k != "keep_whole_take"}}
+            )
+            # A compound row is not the plain global text ask covered by the
+            # contract-only fallback. Removing its whole-take fact must not also
+            # manufacture that guarantee when the draft contains no such words.
+            return text_words_met(words, dataclasses.replace(facts, contract_drawn_texts=()))
+        return True
     if is_text_sequence(req):
         # 29 Ekim (prod thread 64bb9853): words shown a piece at a time are laid out by the
         # creation text pass, which runs after approval on the planned draft

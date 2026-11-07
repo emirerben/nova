@@ -385,3 +385,20 @@ def test_length_correction_recovers_without_waiving_keep_whole():
 @pytest.mark.parametrize("flag", [False, "false", "maybe", None, {}, []])
 def test_malformed_or_false_fact_never_enables_whole_clip_from_words(kind, flag):
     assert not keeps_whole_take(_brief(kind, facts={"keep_whole_take": flag}))
+
+
+@pytest.mark.parametrize("text_present", [False, True])
+def test_compound_literal_and_whole_clip_checks_words_before_deferring_source_coverage(
+    monkeypatch, text_present
+):
+    """Review control: source coverage must not waive a literal on the same row."""
+    brief = BRIEF.model_copy(deep=True)
+    brief.requirements = [req for req in brief.requirements if req.id != "r3"]
+    brief.requirements[0].facts["keep_whole_take"] = True
+    brief = CreativeBrief.model_validate(brief.model_dump())
+    if not text_present:
+        monkeypatch.setitem(STRATEGY, "pinned_texts", [])
+    _media, _manifest, report = _replay(brief)
+    compound = next(row for row in report["requirements"] if row["requirement_id"] == "r1")
+    assert report["ready"] is text_present, report
+    assert compound["disposition"] == ("unverified" if text_present else "evidence_missing")
