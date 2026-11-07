@@ -2315,10 +2315,11 @@ final class CreationUITests: XCTestCase {
         app.buttons["plan-feed.block.title"].tap()
         XCTAssertTrue(eventually(timeout: 5) { !app.descendants(matching: .any)["plan-feed.change.title"].exists })
 
-        // Everything decided: progress, then the Review plan entry that expands every block.
+        // Everything decided: the status line turns to "Making your video" on an indeterminate track, then the
+        // Review plan entry that expands every block.
         let title = app.staticTexts["plan-feed.title"]
-        XCTAssertTrue(eventually(timeout: 60) { title.label == "Plan ready · 7 of 7 decided" })
-        XCTAssertEqual(app.otherElements["plan-feed.progress"].value as? String ?? app.descendants(matching: .any)["plan-feed.progress"].value as? String, "7 of 7 decided")
+        XCTAssertTrue(eventually(timeout: 60) { title.label == "Making your video" })
+        XCTAssertEqual(app.otherElements["plan-feed.progress"].value as? String ?? app.descendants(matching: .any)["plan-feed.progress"].value as? String, "in progress")
         let review = app.buttons["plan-feed.review"]
         XCTAssertTrue(review.waitForExistence(timeout: 5))
         XCTAssertTrue(planBlockValue(app, "overlays").contains("Not used"), "a skipped section counts as decided")
@@ -2332,13 +2333,16 @@ final class CreationUITests: XCTestCase {
         // ReadyStage is unchanged once the render finishes.
         XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 60))
         XCTAssertFalse(feed.exists)
-        // Feed only (no contract v2): no Review CTA in the feed and no Review row under the finished video.
+        // The ready stage is just the video and what to do next: no "first cut" header, no Review row, no render notes.
+        XCTAssertFalse(app.staticTexts["Your first cut is ready"].exists)
         XCTAssertFalse(app.buttons["plan-feed-review-cta"].exists)
         XCTAssertFalse(app.buttons["project-review-entry"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.descendants(matching: .any)["chat.job.renderNotes"].exists)
     }
 
     /// Contract v2: structured payloads render rich cards, a malformed payload falls back to its summary, the 8th
-    /// section (post caption) shows, and the finished feed offers the ink + butter "Review your video" CTA.
+    /// section (post caption) shows, and the finished feed says "Making your video" with no Review CTA (Review opens
+    /// from a card's Change).
     func testLivePlanFeedRendersStructuredPayloadsAndOffersReview() {
         // `review` also serves the Review sheet's server model, which the card's Change hand-off at the end needs.
         let app = launchLivePlanFeed(reduceMotion: true, review: true)
@@ -2356,16 +2360,14 @@ final class CreationUITests: XCTestCase {
         attach(app, "plan-feed-v2-clips")
 
         let title = app.staticTexts["plan-feed.title"]
-        XCTAssertTrue(eventually(timeout: 90) { title.label == "Plan ready · 8 of 8 decided" }, "post_caption is the 8th section")
-        XCTAssertEqual(app.descendants(matching: .any)["plan-feed.progress"].value as? String, "8 of 8 decided")
+        XCTAssertTrue(eventually(timeout: 90) { title.label == "Making your video" }, "post_caption is the 8th section, then the video is made")
+        XCTAssertEqual(app.descendants(matching: .any)["plan-feed.progress"].value as? String, "in progress")
         XCTAssertTrue(app.staticTexts["Your plan is ready"].exists)
         XCTAssertTrue(self.planBlockValue(app, "sfx").contains("4 sound effects"), "a malformed payload falls back to the summary")
         XCTAssertTrue(self.planBlockValue(app, "post_caption").contains("Slow summer days in Bodrum"))
 
-        let review = app.buttons["plan-feed-review-cta"]
-        XCTAssertTrue(review.waitForExistence(timeout: 5))
-        XCTAssertGreaterThanOrEqual(review.frame.height, 48)
-        XCTAssertFalse(app.buttons["plan-feed.review"].exists, "v2 replaces the expand-all toggle with the Review CTA")
+        XCTAssertFalse(app.buttons["plan-feed-review-cta"].exists, "Review opens from a card's Change, not a CTA")
+        XCTAssertFalse(app.buttons["plan-feed.review"].exists, "v2 has no expand-all toggle")
         attach(app, "plan-feed-v2-ready")
 
         // Opening a collapsed row shows its structured content.
@@ -2584,12 +2586,19 @@ final class CreationUITests: XCTestCase {
         return target
     }
 
-    /// The feed finishes, "Review your video" opens the sheet. Returns once every card is on screen.
+    /// The feed finishes, a card's Change opens the sheet. The card's section arrives flagged, so it is un-flagged
+    /// again and the sheet starts idle. Returns once every card is on screen.
     private func openReviewFromFeed(_ app: XCUIApplication) {
-        let cta = app.buttons["plan-feed-review-cta"]
-        XCTAssertTrue(cta.waitForExistence(timeout: 100), "the finished feed offers the Review CTA")
-        cta.tap()
+        XCTAssertTrue(app.staticTexts["plan-feed.title"].waitForExistence(timeout: 100))
+        XCTAssertTrue(eventually(timeout: 100) { self.planBlockValue(app, "post_caption").hasPrefix("decided") })
+        app.buttons["plan-feed.block.look"].tap()
+        let change = element(app, "plan-feed.change.look")
+        XCTAssertTrue(change.waitForExistence(timeout: 10), "an opened card offers Change")
+        change.tap()
         XCTAssertTrue(app.otherElements["review-section-title"].waitForExistence(timeout: 15), "the Review sheet opens")
+        XCTAssertTrue(element(app, "review-chip-look").waitForExistence(timeout: 15), "the card's Change flags its section")
+        reveal(app, "review-change-look").tap()
+        XCTAssertTrue(eventually(timeout: 5) { !self.element(app, "review-chip-look").exists })
         XCTAssertTrue(element(app, "review-change-captions").waitForExistence(timeout: 15), "the snapshot makes sections changeable")
     }
 
@@ -2704,19 +2713,12 @@ final class CreationUITests: XCTestCase {
         attach(app, "review-manual-edits-updated")
     }
 
-    func testReviewPlanOpensFromTheProjectAndKeepAsIsSendsNothing() {
+    func testFinishedVideoHasNoReviewRowOrRenderNotes() {
         let app = launchLivePlanFeed(reduceMotion: true, review: true)
         XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 120))
-        let entry = app.buttons["project-review-entry"]
-        XCTAssertTrue(entry.waitForExistence(timeout: 15), "a finished video offers Review")
-        entry.tap()
-        XCTAssertTrue(app.otherElements["review-section-captions"].waitForExistence(timeout: 15))
-        XCTAssertTrue(element(app, "review-change-captions").waitForExistence(timeout: 15))
-        XCTAssertFalse(element(app, "review-undo-all").exists, "nothing has been updated yet")
-        reveal(app, "review-change-music").tap()
-        element(app, "review-keep-as-is").tap()
-        XCTAssertTrue(eventually(timeout: 10) { !app.otherElements["review-section-captions"].exists }, "Keep as is closes the sheet")
-        XCTAssertTrue(app.buttons["Open editor"].exists, "nothing was sent: still the same finished video")
+        XCTAssertFalse(app.buttons["project-review-entry"].waitForExistence(timeout: 3), "a finished video has no Review row")
+        XCTAssertFalse(app.staticTexts["Your first cut is ready"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["chat.job.renderNotes"].exists)
         XCTAssertFalse(app.otherElements["plan-feed"].exists)
     }
 

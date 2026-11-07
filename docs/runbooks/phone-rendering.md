@@ -1215,8 +1215,7 @@ then spread mechanically, never at a mention.
 - **Receipt**: `variants[i].phone_talking_multi_clip.mention_cutaways` = `{version, demoted[{clip_id,
   media_id, reason}], kept, placements[{media_id, basis: mention|spread, start_s, end_s, at_s?,
   reason?}], sound?}` (only with the flag on and a full-screen ask); the roles receipt `clips` marks
-  a moved clip `{role: footage, was: speaker, reason}`. `render_notes` (nova_steps) says how many
-  clips sit at a mention, how many were spread, and a missing sound.
+  a moved clip `{role: footage, was: speaker, reason}`.
 - **Gate / apply**: `phone_rollout.phone_talking_mention_cutaways_supported()` = the flag, on top of
   `TALKING_MULTI_CLIP_ENABLED`. Apply: `fly secrets set PHONE_TALKING_MENTION_CUTAWAYS_ENABLED=true
   --app nova-video` + restart api + worker (Fly only, no Vercel twin, no app build: recipe-only, no
@@ -1328,14 +1327,8 @@ the safest corner instead of over the speaker, and the receipt records
 `face_sampling: "failed"`. A successful sample that finds no face keeps
 today's behaviour.
 
-**Chat receipt (KRI-183).** `creation_threads._job_projection` derives
-`render_notes` from BOTH the variant's `phone_beat_receipt` (KRI-178, first)
-and its `phone_overlay_receipt` (`nova_steps.render_notes_from_overlay_
-receipt`): "Showed 2 of 3 Visuals as cards", then one honest line per
-unplaced Visual by reason bucket (no spoken moment / no room without covering
-your face or the captions / is a video, which can't be a card on your iPhone
-yet / couldn't add). The iOS chat shows them under the ready job
-(`chat.job.renderNotes`, KRI-178) -- no second mechanism.
+**Chat receipt (KRI-183).** The receipt is stored on the variant only. The thread's job projection no
+longer derives `render_notes` from it, and the iOS ready screen no longer lists them (KRI-1261).
 
 **Manual override wins.** An admin-authored `phone-lanes` request (Phase 1.5,
 above) that carries `overlays` is used as-is and skips grounding entirely;
@@ -1477,10 +1470,7 @@ Traced as `("phone", "subtitled_reaction_beats")`
 and humanized by `nova_steps.py` as "Kria timed your photos and sounds to
 your words" (or "Kria listened for the moments you named"), naming each
 missed trigger IN THE CREATOR'S OWN WORDS -- safe to quote verbatim, unlike
-Phase 2's `matcher`/`face_sampling`. `creation_threads._job_projection` also
-derives `render_notes: list[str]` from the primary variant's
-`phone_beat_receipt` via `nova_steps.render_notes_from_beat_receipt`, so the
-same sentences surface on a plain job poll, not just the live activity feed.
+Phase 2's `matcher`/`face_sampling`.
 
 **Flag-off byte-identity.** `PHONE_SUBTITLED_REACTION_BEATS_ENABLED` false
 (the default), or a strategy with no `reaction_beats`/`closing_media`: no
@@ -3086,7 +3076,7 @@ to `TALKING_MULTI_CLIP_MAX_CLIPS` (10) clips.
 - **Footage** becomes muted full-frame cutaways on the KRI-136 `talking-head-cutaways`
   track, timed by `schedule_footage_cutaways` (KRI-297 rules: 2.5 s hook and title
   free, 1 s tail, 1.5-4 s windows, word-snapped, never over a full-screen Visual).
-  No room: receipt `unplaced` with upload position, shown as chat render notes.
+  No room: receipt `unplaced` with upload position (stored on the variant, not shown in chat).
 - **v1 limits**: speech cleanup refused for any multi-clip Talking (KRI-720); with
   2+ speakers the KRI-174 lanes (cards, sounds, beats) and KRI-547 face fill are
   skipped (`lanes_skipped`; a KRI-841 Visuals ending still plays); cloud Talking still uses only the first clip, so keep
@@ -3939,7 +3929,7 @@ Phone-inexpressible plans used to fail only after approval. Now:
   `_run_phone_guided_job`. Deterministic repairs, each noted (never silent):
   sequence effect outside the composite-safe set becomes `fade-in`; an unqualified
   font becomes a qualified default (Inter). Notes land in the proposal's
-  `adjustments` and the variant's `phone_repair_notes` (job `render_notes`).
+  `adjustments` and the variant's `phone_repair_notes`.
 - A genuine transition hole (outgoing source too short) is NOT repairable; the
   dry run rejects it so the draft takes the deterministic fallback.
 - `PhoneCapabilityUnavailable` (`phone_rollout.py`) is raised for gates that depend on

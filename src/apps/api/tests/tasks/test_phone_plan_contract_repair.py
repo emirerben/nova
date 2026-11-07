@@ -102,13 +102,6 @@ def test_prod_150d30b4_the_confirmed_title_renders_instead_of_a_refusal(harness,
     assert MARATHON in [row["text"] for row in variant["text_elements"]]
     repaired = [e for e in events if e[1] == "phone_plan_repaired"]
     assert repaired and note in repaired[-1][2]["notes"]
-    # What iOS reads: the thread's job projection `render_notes` ("What Kria changed").
-    import app.routes.creation_threads as threads_routes
-    import app.routes.generative_jobs as gj
-
-    monkeypatch.setattr(gj.storage, "signed_get_url", lambda path, **_: f"https://s/{path}")
-    job.current_phase = None  # a real Job row's column; the harness row lacks it
-    assert note in threads_routes._job_projection(job)["render_notes"]
 
 
 def test_without_the_repair_the_prod_refusal_reproduces(harness, monkeypatch):  # noqa: F811
