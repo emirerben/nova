@@ -543,6 +543,31 @@ def test_kri1263_numbers_never_change(monkeypatch) -> None:
         ("10²", "102"),
         ("1.5,", "15."),
         ("1.5", "1.5,"),
+        ("14", "¼"),
+        ("12", "½"),
+        ("13", "⅓"),
+        ("¼", "14"),
+        ("¼", "½"),
+        ("$¼", "$½"),
+        ("Ⅳ", "Ⅵ"),
+        ("xⅣ", "xⅥ"),
+        ("四", "五"),
+        ("x四", "x五"),
+        ("㎟", "mm2"),
+        ("mm2", "㎟"),
+        ("㎟", "㎠"),
+        ("x㎟", "x㎠"),
+        ("㋀", "1月"),
+        ("㍙", "1点"),
+        ("1日", "㏠"),
+        ("⼀", "一"),
+        ("①", "1"),
+        ("½kg", "½ kg"),
+        ("½ kg", "½kg"),
+        ("Ⅳkg", "Ⅳ kg"),
+        ("Ⅳ kg", "Ⅳkg"),
+        ("㎟x", "㎟ x"),
+        ("㎟ x", "㎟x"),
     ],
 )
 def test_kri1263_numeric_tokens_keep_their_exact_spoken_form(
@@ -563,9 +588,10 @@ def test_kri1263_refused_numeric_edit_keeps_other_spelling_and_punctuation(monke
     _assert_timeline_intact(_spoken(spoken), after)
 
 
-def test_kri1263_unchanged_number_allows_surrounding_punctuation(monkeypatch) -> None:
-    spoken = "well it cost 1.5 dollars today"
-    proposed = "Well, it cost 1.5 dollars today."
+@pytest.mark.parametrize("number", ["1.5", "½", "Ⅳ", "㎡"])
+def test_kri1263_unchanged_number_allows_surrounding_punctuation(monkeypatch, number) -> None:
+    spoken = f"well it cost {number} dollars today"
+    proposed = f"Well, it cost {number} dollars today."
     [after] = _correct(monkeypatch, [spoken], [proposed])
     assert after["text"] == proposed
     assert _spans(after) == _spans(_spoken(spoken))
