@@ -1767,27 +1767,28 @@ def _normalize_reveal_text(text: str) -> str:
     return "\n".join(" ".join(raw_line.split()) for raw_line in text.split("\n"))
 
 
-def _fixed_reveal_lines(lines: list[str], visible_text: str) -> tuple[list[str], int]:
+def _fixed_reveal_lines(
+    lines: list[str], visible_text: str, layout_text: str
+) -> tuple[list[str], int]:
     """Map a visible prefix onto lines wrapped from the complete text.
 
     The complete lines own geometry; the returned prefixes only control which
-    glyphs are painted. A single source separator (space or newline) is
-    consumed between wrapped lines so reveal timing continues naturally.
+    glyphs are painted. Each line is located in ``layout_text`` so the characters
+    skipped between lines (a wrap space, a newline, or nothing at a cluster break
+    of an unbreakable run, KRI-886) are never counted as visible glyphs.
     """
-    remaining = len(visible_text)
     revealed: list[str] = []
     cursor_line = 0
+    cursor = 0
+    visible = len(visible_text)
     for index, line in enumerate(lines):
-        visible_count = min(len(line), remaining)
+        found = layout_text.find(line, cursor) if line else -1
+        start = found if found >= 0 else cursor
+        visible_count = max(0, min(len(line), visible - start))
         revealed.append(line[:visible_count])
         if visible_count > 0:
             cursor_line = index
-        if remaining <= len(line):
-            remaining = 0
-        else:
-            remaining -= len(line)
-            if index < len(lines) - 1:
-                remaining = max(0, remaining - 1)
+        cursor = start + len(line)
     return revealed, cursor_line
 
 
@@ -2204,7 +2205,9 @@ def _draw_centered_text(
         return
 
     draw_lines, cursor_line = (
-        _fixed_reveal_lines(lines, text) if layout_text is not None else (lines, len(lines) - 1)
+        _fixed_reveal_lines(lines, text, layout_text)
+        if layout_text is not None
+        else (lines, len(lines) - 1)
     )
     smooth_line_progresses = (
         smooth_type_line_progresses(lines, smooth_t_local, smooth_motion)

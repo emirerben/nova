@@ -145,6 +145,28 @@ final class AuthoredTextFitTests: XCTestCase {
         XCTAssertEqual(keptWhole, "one\nverylongword", "above the floor a word stays whole")
     }
 
+    /// A highlighted caption word is one run (the cloud karaoke keeps it whole, `_wrap_word_indices`). A token wider
+    /// than the safe width at the 24 px floor must therefore overflow whole instead of being cut between clusters,
+    /// which made `compileHighlightedWords` throw `AuthoredTextLayout-213` and failed the whole native caption render.
+    func testHighlightedCaptionKeepsAnUnbreakableWordWholeAtTheFloor() throws {
+        let font = repo.appendingPathComponent("src/apps/api/assets/fonts/Inter-Bold.ttf")
+        let url = "https://example.com/" + String(repeating: "a-very-long-path-segment/", count: 12)
+        let canvas = Canvas(width: 1080, height: 1920)
+        let ink = TextInk(red: 1, green: 1, blue: 1, alpha: 1)
+        for wrapsLines in [true, false] {
+            let style = AuthoredTextLayout.Style(fontAssetID: "font", size: 56, widthFraction: 0.8, color: ink, wrapsLines: wrapsLines)
+            for text in [url, "see \(url) now", String(repeating: "🔥", count: 90)] {
+                let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
+                let layer = try AuthoredTextLayout.compileHighlightedWords(id: "c", text: text, start: 0, end: 3,
+                    starts: words.indices.map { Double($0) }, highlight: ink, style: style, fontURL: font, canvas: canvas)
+                XCTAssertEqual(layer.runs.map(\.text), words, "wrapsLines=\(wrapsLines): \(text.prefix(12))")
+            }
+            let single = try AuthoredTextLayout.compileSingleWords(id: "c", text: "see \(url)", start: 0, end: 3,
+                starts: [0, 1], highlight: ink, style: style, fontURL: font, canvas: canvas)
+            XCTAssertNil(single, "a word that cannot stay on one line falls back to the full-line karaoke layer")
+        }
+    }
+
     func testWrappingTextKeepsItsOwnBoxAndSize() throws {
         let font = repo.appendingPathComponent("src/apps/api/assets/fonts/Inter-Bold.ttf")
         let text = "chimichurri + salsa criolla ve Julio’s 🔥 asado akşam yemeği"

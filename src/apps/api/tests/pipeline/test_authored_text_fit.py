@@ -13,6 +13,7 @@ Failure modes this file pins:
   wraps at the authored fit width, so a stack reserves the wrong number of rows.
 """
 
+import numpy as np
 import pytest
 import regex
 import skia
@@ -126,11 +127,12 @@ def test_pillow_lane_uses_the_same_room_as_skia():
 
 UNBREAKABLE = {
     "emoji_chain": "🔥" * 90,
-    "zwj_families": "👨‍👩‍👧‍👦" * 40,
+    "zwj_families": "👨‍👩‍👧‍👦" * 120,
     "flags": "🇹🇷🇯🇵🇧🇷" * 30,
     "skin_tones": "👍🏽👍🏿" * 40,
     "combining": "éä" * 90,
     "cjk": "今日は天気がいいので散歩に行きましょう" * 9,
+    "hangul": "오늘은날씨가좋아서산책을하러갑니다" * 10,
     "url": "https://example.com/" + "a-very-long-path-segment/" * 12,
 }
 
@@ -148,11 +150,14 @@ def test_unbreakable_run_breaks_only_at_the_floor_and_never_inside_a_cluster(nam
     assert size >= 24
     assert "".join(rows) == text
     assert sum(len(_graphemes(row)) for row in rows) == len(_graphemes(text))
-    assert all(_graphemes(row) == _graphemes("".join(_graphemes(row))) for row in rows)
+    assert [g for row in rows for g in _graphemes(row)] == _graphemes(text), (
+        "a row boundary split a cluster"
+    )
+    assert len(rows) > 1 and size == 24, (
+        "the run must overflow the box at the floor so it is broken"
+    )
     widest = max(cloud._measure_line(font, row, shape_text=shaped) for row in rows)
     assert widest <= max_width + 0.5, (name, widest, max_width)
-    if len(rows) > 1:
-        assert size == 24, "a run is broken only after the text has shrunk to the floor"
 
 
 def test_a_run_that_fits_after_shrinking_is_not_broken():
@@ -179,7 +184,7 @@ def test_fitting_text_reports_no_overflow():
     assert not [entry for entry in logs if entry["event"] == "authored_text_overflow"]
 
 
-@pytest.mark.parametrize("name", ["cjk", "url", "combining"])
+@pytest.mark.parametrize("name", ["cjk", "hangul", "url", "combining"])
 def test_pillow_lane_breaks_the_same_way(name):
     text = UNBREAKABLE[name]
     draw = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
@@ -247,3 +252,81 @@ def test_measure_text_block_keeps_wrapping_rows_on_their_box():
     text = "Kadıköy'de sabahları çay içiyoruz"
     size = _size_for_width(text, 0.87 * W, 0.89 * W)
     assert len(measure_text_block(_stack_row(text, wrap_lines=True, size_px=size))["lines"]) > 1
+
+
+# -- cluster-broken rows under a reveal --------------------------------------------------
+
+
+def _drawn_text(overlay, t_local, duration_s=4.0):
+    from unittest.mock import patch
+
+    with patch.object(cloud, "_draw_line_with_layers") as draw:
+        cloud._draw_overlay_on_canvas(
+            skia.Surface(W, 1920).getCanvas(), overlay, t_local, duration_s, render_canvas=FRAME
+        )
+    return "".join(call.args[1] for call in draw.call_args_list)
+
+
+def _reveal_case(name, **extra):
+    text = UNBREAKABLE[name]
+    return text, {**_burn(text), "start_s": 0, "end_s": 4, "shadow_enabled": False, **extra}
+
+
+@pytest.mark.parametrize("name", ["emoji_chain", "cjk", "hangul", "url", "combining"])
+def test_fixed_reveal_lines_keeps_every_character_of_cluster_broken_rows(name):
+    text = UNBREAKABLE[name]
+    _font, _size, rows, _ = _skia_rows(_burn(text))
+    assert len(rows) > 1 and "".join(rows) == text
+    revealed, cursor_line = cloud._fixed_reveal_lines(rows, text, text)
+    assert revealed == rows and cursor_line == len(rows) - 1
+
+
+def test_fixed_reveal_lines_still_skips_the_space_and_newline_between_rows():
+    rows = ["alpha beta", "gamma", "delta"]
+    full = "alpha beta gamma\ndelta"
+    assert cloud._fixed_reveal_lines(rows, full, full)[0] == rows
+    revealed, cursor_line = cloud._fixed_reveal_lines(rows, full[:13], full)
+    assert revealed == ["alpha beta", "ga", ""] and cursor_line == 1
+
+
+@pytest.mark.parametrize("name", ["emoji_chain", "cjk", "url", "combining"])
+@pytest.mark.parametrize(
+    "phases",
+    [
+        {"entrance": "none", "exit": "none"},
+        {"entrance": "wordRelay", "exit": "none"},
+        {"entrance": "silkReveal", "exit": "none"},
+    ],
+    ids=["plain_phases", "word_relay_hold", "designed_hold"],
+)
+def test_phase_animated_hold_draws_every_character(name, phases):
+    text, overlay = _reveal_case(name, animation_phases=phases)
+    assert _drawn_text(overlay, 2.0) == text
+
+
+@pytest.mark.parametrize("effect", ["typewriter", "stream-in"])
+@pytest.mark.parametrize("name", ["emoji_chain", "url"])
+def test_typewriter_hold_draws_every_character(name, effect):
+    text, overlay = _reveal_case(name, effect=effect, end_s=120)
+    assert _drawn_text(overlay, 119.0, 120.0) == text
+
+
+@pytest.mark.parametrize("name", ["emoji_chain", "cjk", "hangul", "url"])
+def test_pillow_phase_hold_paints_every_character(name, tmp_path):
+    text = UNBREAKABLE[name]
+    overlay = {
+        **_burn(text),
+        "start_s": 0,
+        "end_s": 4,
+        "shadow_enabled": False,
+        "animation_phases": {"entrance": "none", "exit": "none"},
+    }
+    held = tmp_path / "held.png"
+    pillow._render_authored_phase_frame(overlay, text, "center", str(held), 2.0, 4)
+    plain = tmp_path / "plain.png"
+    pillow._render_static_overlay_layer(
+        {k: v for k, v in overlay.items() if k != "animation_phases"}, text, "center", str(plain)
+    )
+    held_ink = int(np.asarray(Image.open(held).getchannel("A"), dtype=np.int64).sum())
+    plain_ink = int(np.asarray(Image.open(plain).getchannel("A"), dtype=np.int64).sum())
+    assert held_ink == pytest.approx(plain_ink, rel=0.002)

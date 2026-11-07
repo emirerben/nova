@@ -83,7 +83,8 @@ public enum AuthoredTextLayout {
     public static func compile(id: String, text: String, start: Double, end: Double,
                                style: Style, fontURL: URL, canvas: Canvas,
                                phases: TextAnimationPhases? = nil, legacyEffect: PortableTextLayer.Effect = .none,
-                               motion: TextMotionParameters? = nil, revealSchedule: [Double]? = nil) throws -> PortableTextLayer {
+                               motion: TextMotionParameters? = nil, revealSchedule: [Double]? = nil,
+                               keepsWordsWhole: Bool = false) throws -> PortableTextLayer {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.count <= 500,
               style.size.isFinite, style.size >= 8,
               style.widthFraction.isFinite, style.widthFraction >= 0.2,
@@ -114,7 +115,7 @@ public enum AuthoredTextLayout {
             }
             if !style.wrapsLines {
                 values.append(contentsOf: AuthoredTextFit.authoredRows(paragraph, attributes: attributes, width: wrapWidth,
-                                                                       breaksRuns: size <= AuthoredTextFit.minimumSize))
+                                                                       breaksRuns: !keepsWordsWhole && size <= AuthoredTextFit.minimumSize))
                 continue
             }
             let source = paragraph as NSString
@@ -305,7 +306,8 @@ public enum AuthoredTextLayout {
             // KRI-1192: CoreText's line breaker split a word wider than the box (a long German compound) between
             // two lines, and a highlighted word must stay one run. Keep every word whole like the cloud's karaoke
             // (`_wrap_word_indices`): greedy rows at the box width, a wider word alone on its row, shrunk only if it
-            // would leave the frame's safe width (`AuthoredTextFit`). Text whose words all fit never gets here.
+            // would leave the frame's safe width (`AuthoredTextFit`). A word wider than the floor's room overflows
+            // whole instead of breaking between clusters (`keepsWordsWhole`). Text whose words all fit never gets here.
             var rows = style
             rows.wrapsLines = false
             let probe = NativeFontIdentity.font(graphics, size: style.size, variations: style.fontVariations)
@@ -314,7 +316,7 @@ public enum AuthoredTextLayout {
                 NSAttributedString.Key(kCTKernAttributeName as String): style.letterSpacing * style.size,
             ], width: Double(canvas.width) * style.widthFraction)
             layout = try compile(id: id, text: lines.joined(separator: "\n"), start: start, end: end, style: rows,
-                                 fontURL: fontURL, canvas: canvas)
+                                 fontURL: fontURL, canvas: canvas, keepsWordsWhole: true)
         }
         // KRI-826: authored lines may have been fitted smaller than `style.size`.
         let size = layout.runs.first?.fontSize ?? style.size

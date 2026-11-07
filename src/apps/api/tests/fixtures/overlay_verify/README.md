@@ -81,8 +81,10 @@ through Pillow, not Skia, so `tests/pipeline/test_authored_newlines.py` renders 
 text through the real `slide_post.build.render_text_element_png`.
 
 `kri885_886_unbreakable_and_off_centre.json` (KRI-885, KRI-886) is hand-edited text
-(`wrap_lines=false`) with runs that have no space to wrap at: a 90-emoji chain, 180 CJK
-characters, a long URL and a ZWJ family / flag / skin-tone chain, plus two legacy lines placed
+(`wrap_lines=false`) with runs that have no space to wrap at: a 90-emoji chain, 180 Hangul
+characters (Inter lacks them, so the whole run moves to Noto Sans KR via `glyph-fallbacks.json`;
+no bundled face draws Japanese or Chinese, so those are checked by measurement only in
+`test_authored_text_fit.py`, never as pixels), a long URL and a ZWJ family / flag / skin-tone chain, plus two legacy lines placed
 off-centre (centred at x=0.68, left-anchored at x=0.2) that sit inside the frame. The text
 shrinks to the 24px floor, then breaks between grapheme clusters (never inside a ZWJ
 sequence, flag or skin tone); every row must stay un-clipped, and the off-centre lines must
