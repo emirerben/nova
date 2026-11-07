@@ -436,3 +436,76 @@ def test_a_short_title_keeps_its_dot() -> None:
         placed=[{"media_id": "m1", "label": "Q3.m", "start_s": 9.0, "end_s": 12.0}], unplaced=[]
     )
     assert "Q3.m" in _receipt(CARDS, plan_facts_from_phone_variant(variant)).reason
+
+
+# ----------------------------------- 5. review #2153: the omissions always fit (failure mode 6)
+
+LONG = "Screenshot 2026-11-05 at 14.22.31 spec-kit demo walkthrough"  # 60 chars, the worker cap
+_MISS_MARK = {"en": "; not shown: ", "tr": "; çıkmadı: "}
+
+
+def _long_rows(count: int, prefix: str, *, placed: bool) -> list[dict]:
+    rows = []
+    for i in range(count):
+        label = f"{prefix} {i}"[-60:] if prefix != LONG else f"{LONG[: 60 - len(str(i)) - 1]} {i}"
+        row: dict[str, Any] = {"media_id": f"{prefix[:3]}-{i}", "label": label}
+        if placed:
+            row.update(start_s=5.0 + 4 * i, end_s=8.0 + 4 * i)
+        else:
+            row["reason"] = "no_spoken_match"
+        rows.append(row)
+    return rows
+
+
+def _accounted(section: str, labels: list[str]) -> int:
+    """Labels named in ``section`` plus the "and N more" / "N Visuals" it folds the rest into."""
+    import re  # noqa: PLC0415 - parses the test's own receipt text
+
+    named = sum(label in section for label in labels)
+    folded = re.findall(r"(\d+) (?:more|tane daha|Visuals|görsel)\b", section)
+    return named + sum(int(n) for n in folded)
+
+
+@pytest.mark.parametrize("language", ["en", "tr"])
+@pytest.mark.parametrize(
+    ("placed", "unplaced"),
+    [
+        (_long_rows(8, LONG, placed=True), VARIANT["phone_overlay_receipt"]["unplaced"]),
+        (
+            _long_rows(8, LONG, placed=True),
+            _long_rows(12, "Screen Recording " + "x" * 30, placed=False),
+        ),
+        (_long_rows(1, LONG, placed=True), _long_rows(14, LONG, placed=False)),
+    ],
+    ids=["emir-8-long-shown-q1-misses", "8-long-shown-12-long-misses", "1-shown-14-long-misses"],
+)
+def test_the_left_out_visuals_are_always_told(language: str, placed, unplaced) -> None:  # noqa: ANN001
+    """Emir's #2153 review: 8 long shown names used the whole receipt and the 5 misses vanished
+    while it said "met". The sentence now keeps room for what was left out (named, or counted)."""
+    variant = _variant(placed=placed, unplaced=unplaced)
+    with reply_language_for(language):
+        receipt = _receipt(CARDS, plan_facts_from_phone_variant(variant))
+    reason = receipt.reason or ""
+    assert receipt.status == "met"
+    assert len(reason) <= 300 and reason.endswith("."), reason
+    assert receipt.full_reason == reason  # nothing cut by the 300-character cap
+    assert _MISS_MARK[language] in reason, reason
+    shown_part, missed_part = reason.split(_MISS_MARK[language], 1)
+    shown_labels = [row["label"] for row in placed]
+    missed_labels = [str(row["label"]).split("-", 5)[-1] for row in unplaced]
+    assert _accounted(shown_part, shown_labels) == len(placed), reason
+    assert _accounted(missed_part, missed_labels) == len(unplaced), reason
+
+
+@pytest.mark.parametrize("language", ["en", "tr"])
+def test_nothing_shown_and_many_long_misses_still_count_them(language: str) -> None:
+    unplaced = _long_rows(14, LONG, placed=False)
+    with reply_language_for(language):
+        receipt = _receipt(
+            CARDS, plan_facts_from_phone_variant(_variant(placed=[], unplaced=unplaced))
+        )
+    reason = receipt.reason or ""
+    assert receipt.status == "not_possible"
+    assert len(reason) <= 300 and receipt.full_reason == reason, reason
+    _lead, missed_part = reason.split(": ", 1)
+    assert _accounted(missed_part, [row["label"] for row in unplaced]) == 14, reason

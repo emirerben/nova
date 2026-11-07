@@ -7782,24 +7782,19 @@ def _check_grounded_cards(
     shown = [card for card in cards if card.status == "placed"]
     missed = [card for card in cards if card.status == "unplaced"]
     if shown:
-        items = [_card_shown(card) for card in shown]
-        lead = say(en="Shown: ", tr="Gösterildi: ")
-        lead += next(
-            (
-                text
-                for keep in range(min(len(items), _MAX_NAMED_IN_REASON), 0, -1)
-                if len(lead + (text := _capped_join(items, keep))) < 300
-            ),
-            say(en=f"{len(items)} Visuals", tr=f"{len(items)} görsel"),
+        reason = _fit_card_reason(
+            say(en="Shown: ", tr="Gösterildi: "),
+            [_card_shown(card) for card in shown],
+            missed,
+            prefix=say(en="; not shown: ", tr="; çıkmadı: "),
         )
-        reason = _with_card_misses(lead, missed, prefix=say(en="; not shown: ", tr="; çıkmadı: "))
         return _receipt(req, "met", reason, verification="checked")
     if missed:
         lead = say(
             en="None of your Visuals showed as a card",
             tr="Görsellerinin hiçbiri kart olarak çıkmadı",
         )
-        reason = _with_card_misses(lead, missed, prefix=": ")
+        reason = _fit_card_reason(lead, [], missed, prefix=": ")
         return _receipt(req, "not_possible", reason, verification="checked")
     return _receipt(
         req,
@@ -7830,26 +7825,45 @@ def _capped_join(items: Sequence[str], keep: int) -> str:
     return ", ".join(items[:keep]) + say(en=f" and {extra} more", tr=f" ve {extra} tane daha")
 
 
-def _with_card_misses(lead: str, missed: Sequence[GroundedCardFact], *, prefix: str) -> str:
-    """``lead`` plus every left-out Visual by name, inside the receipt's 300 characters: first
-    with every group's reason, then without the common "no spoken moment", then with the last of
-    those names folded into "and N more" (never cut mid-name). A group with its own reason (cut
-    out, no room) comes before the common one, so it is the last to be folded."""
-    if not missed:
-        return lead + "."
+# RequirementReceipt.reason holds 300 characters; the card sentence is built to fit, never cut.
+_CARD_REASON_MAX = 300
+
+
+def _fit_card_reason(
+    lead: str, shown: Sequence[str], missed: Sequence[GroundedCardFact], *, prefix: str
+) -> str:
+    """``lead``, the shown cards and the left-out Visuals inside the receipt's 300 characters.
+
+    The left-out part is never dropped (review of #2153: a long shown list used to fill the
+    sentence while it said "met"): at the least it counts them ("5 Visuals"). Among the versions
+    that fit, the one naming the most Visuals wins, then the one naming more shown cards, then the
+    one that also says why each was left out. Names fold into "and N more", never cut mid-name;
+    a group with its own reason (cut out, no room) is the last to fold. The full per-card record
+    stays in `PlanFacts.grounded_cards` (and the variant's `phone_overlay_receipt`)."""
     groups: dict[str, list[str]] = {}
     for card in sorted(missed, key=lambda card: card.reason == "no_spoken_match"):
         groups.setdefault(card.reason or "", []).append(_card_name(card))
+    count = len(shown)
+    shown_texts = [(keep, _capped_join(shown, keep)) for keep in range(min(count, 6), 0, -1)]
+    if shown:
+        shown_texts.append((0, say(en=f"{count} Visuals", tr=f"{count} görsel")))
+    else:
+        shown_texts = [(0, "")]
     total = len(missed)
-    candidates = [_card_miss_text(groups, total, default_why=True)]
-    candidates += [
-        _card_miss_text(groups, keep, default_why=False) for keep in range(total, -1, -1)
-    ]
-    for text in candidates:
-        reason = f"{lead}{prefix}{text}."
-        if len(reason) <= 300:
-            return reason
-    return lead + "."
+    miss_texts = [(total, True), *((keep, False) for keep in range(total, -1, -1))]
+    if not missed:
+        miss_texts = [(0, False)]
+    best: tuple[tuple[int, int, bool], str] | None = None
+    for named_shown, shown_text in shown_texts:
+        for named_missed, why in miss_texts:
+            tail = prefix + _card_miss_text(groups, named_missed, default_why=why) if missed else ""
+            text = f"{lead}{shown_text}{tail}."
+            score = (named_shown + named_missed, named_shown, why)
+            if len(text) <= _CARD_REASON_MAX and (best is None or score > best[0]):
+                best = (score, text)
+    if best is None:  # only a lead longer than the receipt; never in practice
+        return (lead.rstrip(": ") + ".")[:_CARD_REASON_MAX]
+    return best[1]
 
 
 def _card_miss_text(groups: Mapping[str, list[str]], keep: int, *, default_why: bool) -> str:
