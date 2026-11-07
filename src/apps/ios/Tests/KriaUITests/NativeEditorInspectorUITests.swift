@@ -134,6 +134,15 @@ final class NativeEditorInspectorUITests: XCTestCase {
             try XCTUnwrap(left["in_s"] as? Double) + leftDuration, accuracy: 0.001)
         try assertSplitPeers(original, unchangedIn: divided, excluding: [editedID])
 
+        // The cut pieces are narrower than their overlapping trim hit targets
+        // at the zoom used for trimming. Zoom on the intact peer before selecting one.
+        selectTimelineClip(3, in: app)
+        let zoomBeforeDuplicate = try zoomPercentage()
+        app.descendants(matching: .any)["native-editor-clip-3"].firstMatch.pinch(withScale: 3.5, velocity: 1)
+        XCTAssertGreaterThan(try zoomPercentage(), zoomBeforeDuplicate)
+        let enlarged = try splitSnapshot(app)
+        XCTAssertEqual(NSArray(array: enlarged.rows), NSArray(array: divided.rows), "Zoom must not edit either cut piece or its peer")
+        XCTAssertEqual(NSArray(array: enlarged.sections), NSArray(array: divided.sections))
         selectTimelineClip(2, in: app)
         app.buttons["native-editor-adjust"].tap()
         let duplicate = app.buttons["native-editor-split-duplicate"]
@@ -185,9 +194,20 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let crop = app.buttons["native-editor-footage-crop"]
         revealSplitControl(crop, in: app)
         crop.tap()
-        let cropEditor = app.descendants(matching: .any)["kria-crop-editor"].firstMatch
+        // The sheet identifier propagates to the crop area's accessibility node.
+        let cropEditor = app.otherElements.matching(NSPredicate(
+            format: "identifier == %@ AND label == %@", "native-editor-crop-sheet", "Crop area"
+        )).firstMatch
         XCTAssertTrue(cropEditor.waitForExistence(timeout: 20), "Crop must load the actual source frame")
-        cropEditor.pinch(withScale: 2, velocity: 1)
+        for corner in ["topLeading", "topTrailing", "bottomLeading", "bottomTrailing"] {
+            XCTAssertTrue(cropEditor.otherElements["kria-crop-handle-\(corner)"].exists)
+        }
+        // Use the fitted source-image rectangle, not the taller geometry container;
+        // the overlay at these coordinates receives the real pinch.
+        let cropImage = app.images["native-editor-crop-sheet"].firstMatch
+        XCTAssertTrue(cropImage.exists)
+        XCTAssertTrue(cropEditor.frame.contains(cropImage.frame))
+        cropImage.pinch(withScale: 2, velocity: 1)
         app.buttons["native-editor-crop-done"].tap()
         app.buttons["native-editor-inspector-done"].tap()
         let cropped = try splitSnapshot(app)

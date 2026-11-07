@@ -2,7 +2,7 @@
 
 The creator requested ordinary editable media in two or three horizontal panels. The operation examples were not a scope limit. This matrix separates existing capability restrictions from split-screen implementation and verification.
 
-The [November 7 verification record](verification-2026-11-07.md) supersedes the execution status below. It records 87 engine, 36 native and 649 API passes at `2604afd9b`, then 95 passes and three new UI failures at `8e1fff813`. The four-journey rerun at `b7d1e9b59` passed one and failed three: custom layout Save/reopen and rendered pixels now pass, but inspector Crop and pinch-versus-trim exposed additional defects. Their reviewed corrections and the off-screen clip reveal await native rerun. The required complete phone-audio-parity cycle is also pending. Shared formal alignment, recovery integration and remaining product/device acceptance stay open. Earlier counts below belong to their named revisions.
+The [November 7 verification record](verification-2026-11-07.md) supersedes execution status below. The latest native batch at `507192916` passed 86/88 cases, including all 84 units and the complete custom-layout Save/reopen/full-screen journey. The two remaining inspector test failures have reviewed selector/zoom corrections awaiting rerun. The full audio-parity cycle passed with 19 exports and all nine negative controls detected. Shared formal alignment, recovery integration and remaining product/device acceptance stay open. Earlier counts below belong to their named revisions.
 
 ## Integrated verification on November 6
 
