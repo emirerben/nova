@@ -31,6 +31,7 @@ prod record `src/apps/api/tests/fixtures/kri1236_qendresa_q1_simpler.json` (read
 | F3 | A removed ask is missing from the draft reply or the after-render review. | "Left out as agreed: …" for each removed ask in the draft and in the review. |
 | F4 | The card names a truncated list, or none (600-char cap). | The card names every ask it leaves out (cap 900, Q1's eight asks fit); a list too long to name whole gets no card, never an unnamed one. |
 | F5 | The ending's words go with its arrow. | An ending held only because its arrow is missing keeps its words; only the arrow is left out (`arrow_left_out`), named as such in the card, draft and review. |
+| F5b | (review, #2149) The card left out only the arrow; by the tap the ending's words fall short too, and the tap recomputes the scope, so it drops the whole ending. | The card records each partial omission's scope (`omitted_facets`); a tap whose scope differs from the card's is no consent, and a new card names the whole ending. Negative control: removing that check makes the drift replay list the whole ending as left out. |
 | F6 | A loop: the same card again, or a second card after the first. | One hold for Q1 with KRI-1235's verdicts. |
 | F7 | A typed instruction that removes asks ("Drop the numbered labels") is mistaken for the tap. | It stays the creator's removal (`superseded_by: creator`). |
 | F8 | Prod's own unnamed card still consents to a set it never showed. | Tapped after the fix it drops nothing and re-offers the current set by name. |
