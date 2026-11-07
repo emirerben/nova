@@ -1306,6 +1306,8 @@ jobs:
             -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
             -destination "platform=iOS Simulator,id=$(cat ../../../test-results/ios/simulator-id.txt)" \
             -only-testing:KriaUITests/CreationUITests/testServerSuggestionChipsSendOnTapAndReplaceFixedChips \
+            -only-testing:KriaUITests/CreationUITests/testFirstPromptChipsScrollAwayWithTheTranscriptWhileTheKeyboardIsOpen \
+            -only-testing:KriaUITests/CreationUITests/testLeadSuggestionChipIsOneLineAtTheDefaultTextSize \
             -only-testing:KriaUITests/CreationUITests/testSuggestionCardsInChatAndTheEditorImproveSheetShareOneSet \
             -only-testing:KriaUITests/CreationUITests/testDeclinedSuggestionCardRepliesNoLongerFitsThenTheRefreshedSet \
             -only-testing:KriaUITests/CreationUITests/testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize \
@@ -1315,6 +1317,8 @@ jobs:
           python3 ../../../scripts/ci/journey-gate.py verify-tests \
             --test-results ../../../test-results/kri-559/suggestion-chips-native-tests.json \
             --xctest CreationUITests/testServerSuggestionChipsSendOnTapAndReplaceFixedChips \
+            --xctest CreationUITests/testFirstPromptChipsScrollAwayWithTheTranscriptWhileTheKeyboardIsOpen \
+            --xctest CreationUITests/testLeadSuggestionChipIsOneLineAtTheDefaultTextSize \
             --xctest CreationUITests/testSuggestionCardsInChatAndTheEditorImproveSheetShareOneSet \
             --xctest CreationUITests/testDeclinedSuggestionCardRepliesNoLongerFitsThenTheRefreshedSet \
             --xctest CreationUITests/testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize
