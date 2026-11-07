@@ -280,17 +280,46 @@ async def test_g7_a_denied_mute_render_withdraws_its_requirement(talking_world, 
 
 @pytest.mark.asyncio
 async def test_g8_an_approval_no_card_staged_is_denied_as_before(talking_world, monkeypatch):
-    """A typed request's approval carries no footprint: deny changes nothing but its status."""
+    """A typed request's approval carries no footprint: deny changes nothing but its status.
+
+    A different thread can be between a hook tap and Undo while this test runs in another
+    shard worker. Removing this test's footprint must leave that thread's undo evidence intact.
+    """
+    from app.models import CreatorAgentExecution
+    from tests.e2e_suggestions import scenes as s
+
+    neighbor = s.build(talking_world, KEY, TALKING)
+    await s.route_save(neighbor.seeded, caption_meta={"size_px": 96})
+    neighbor_out = await neighbor.phone.serve()
+    neighbor_before = Before(neighbor.seeded)
+    neighbor_tap = await neighbor.phone.tap(card_of(neighbor_out, "hook"), neighbor_out)
+    assert neighbor_tap.new_drafts == 1
+    assert d.live_brief(neighbor.seeded.thread_id) != neighbor_before.brief
+
+    def neighbor_execution_result():  # noqa: ANN202
+        with sync_session() as db:
+            return db.execute(
+                h.select(CreatorAgentExecution.result).where(
+                    CreatorAgentExecution.target_draft_id == neighbor_tap.head_after["id"]
+                )
+            ).scalar_one()
+
+    neighbor_result = neighbor_execution_result()
+    assert neighbor_result.get("pinned_undo")
+
     seeded, phone, out = await served(talking_world)
     flags_before = d.item_flags(seeded)
     brief_before = d.live_brief(seeded.thread_id)
     card = card_of(out, "filler_words")
     tap = await phone.tap(card, out)
-    # Strip the footprint, as a draft minted by a typed turn would not have one.
+    # Strip only this turn's footprint. Parallel tests share the database, and another
+    # thread still needs its own footprint for Undo or a declined approval.
     with sync_session() as db:
-        from app.models import CreatorAgentExecution
-
-        for execution in db.execute(h.select(CreatorAgentExecution)).scalars():
+        for execution in db.execute(
+            h.select(CreatorAgentExecution).where(
+                CreatorAgentExecution.turn_id == uuid.UUID(tap.accepted.turn_id)
+            )
+        ).scalars():
             if (execution.result or {}).get("pinned_undo"):
                 execution.result = {k: v for k, v in execution.result.items() if k != "pinned_undo"}
         db.commit()
@@ -302,6 +331,12 @@ async def test_g8_an_approval_no_card_staged_is_denied_as_before(talking_world, 
     assert d.item_flags(seeded) == flags_tapped != flags_before
     assert d.live_brief(seeded.thread_id) == brief_tapped != brief_before
     assert ring_consumed(phone, tap.set_id) == {card.id: tap.accepted.turn_id}
+
+    restored = await neighbor.phone.undo()
+    assert neighbor_execution_result() == neighbor_result
+    assert restored is not None
+    assert restored["snap"] == neighbor_tap.head_before["snap"]
+    assert d.live_brief(neighbor.seeded.thread_id) == neighbor_before.brief
 
 
 @pytest.mark.asyncio

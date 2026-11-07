@@ -5,9 +5,13 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
+import pytest
+import regex
+
 from app.agents._schemas.text_element import _ALLOWED_EFFECTS
 from app.pipeline.text_motion_v2 import (
     authored_motion_time_s,
+    grapheme_count,
     normalize_text_motion,
     renderer_settle_duration_s,
     settle_duration_s,
@@ -75,6 +79,22 @@ def reference_cases():
             }
         )
     return cases
+
+
+@pytest.mark.parametrize(
+    ("text", "clusters"),
+    [
+        ("नमस्ते दुनिया", ["न", "म", "स्ते", " ", "दु", "नि", "या"]),
+        ("क्ष", ["क्ष"]),
+        ("क्\u200cष", ["क्\u200c", "ष"]),
+        ("क्\u200dष", ["क्\u200dष"]),
+        ("👩🏽‍🚀 café\ne\u0301", ["👩🏽‍🚀", " ", "c", "a", "f", "é", "\n", "e\u0301"]),
+        ("🇹🇷🇪🇸", ["🇹🇷", "🇪🇸"]),
+    ],
+)
+def test_text_motion_graphemes_preserve_native_character_boundaries(text, clusters):
+    assert regex.findall(r"\X", text) == clusters
+    assert grapheme_count(text) == len(clusters)
 
 
 def test_native_text_motion_fixture_matches_python_renderer():
