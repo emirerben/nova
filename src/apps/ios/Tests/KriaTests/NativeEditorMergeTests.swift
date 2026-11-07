@@ -265,6 +265,49 @@ final class NativeEditorMergeTests: XCTestCase {
         XCTAssertFalse(result.conflicts.isEmpty)
     }
 
+    func testRenderedWordingMirrorPreservesIndependentTrimAndRejectsUnprovenMirrorChanges() {
+        let slot: JSONValue = .object(["slot_id": .string("slot"), "asset_id": .string("source"),
+            "in_s": .number(0), "duration_s": .number(3)])
+        let first: JSONValue = .object(["id": .string("a"), "text": .string("old"), "start_s": .number(0), "end_s": .number(1)])
+        let second: JSONValue = .object(["id": .string("b"), "text": .string("other"), "start_s": .number(1), "end_s": .number(2)])
+        let firstMirror: JSONValue = .object(["id": .string("a"), "content": .string("old"), "future": .string("preserve")])
+        let secondMirror: JSONValue = .object(["id": .string("b"), "content": .string("other")])
+        let base = state(["timeline_slots": .array([slot]), "text_elements": .array([first, second]),
+            "ios_editor": .object(["text": .array([firstMirror, secondMirror]), "future": .bool(true)])])
+        var local = base, remote = base
+        var trim = slot.objectValue!; trim["duration_s"] = .number(2.5)
+        local.sections["timeline_slots"] = .array([.object(trim)])
+        var wording = first.objectValue!; wording["text"] = .string("new")
+        var mirrored = firstMirror.objectValue!; mirrored["content"] = .string("new")
+        remote.sections["text_elements"] = .array([.object(wording), second])
+        func mirror(_ rows: [JSONValue]) -> JSONValue {
+            .object(["text": .array(rows), "future": .bool(true)])
+        }
+        remote.sections["ios_editor"] = mirror([.object(mirrored), secondMirror])
+        for (left, right) in [(local, remote), (remote, local)] {
+            let merged = NativeEditorMerge.merge(base: base, local: left, remote: right)
+            XCTAssertTrue(merged.conflicts.isEmpty)
+            XCTAssertEqual(merged.state?.sections["timeline_slots"], local.sections["timeline_slots"])
+            XCTAssertEqual(merged.state?.sections["text_elements"], remote.sections["text_elements"])
+            XCTAssertEqual(merged.state?.sections["ios_editor"], right.sections["ios_editor"], "latest opaque mirror metadata stays authoritative")
+        }
+        var unknown = mirrored; unknown["future"] = .string("changed")
+        var mismatched = mirrored; mismatched["content"] = .string("not canonical")
+        var wrongID = mirrored; wrongID["id"] = .string("unknown")
+        var missing = mirrored; missing.removeValue(forKey: "content")
+        var nullContent = mirrored; nullContent["content"] = .null
+        for rows in [[.object(unknown), secondMirror], [.object(mismatched), secondMirror],
+                     [.object(wrongID), secondMirror], [secondMirror, .object(mirrored)],
+                     [.object(mirrored), .object(mirrored)], [.object(missing), secondMirror],
+                     [.object(nullContent), secondMirror]] {
+            remote.sections["ios_editor"] = mirror(rows)
+            XCTAssertNil(NativeEditorMerge.merge(base: base, local: local, remote: remote).state)
+        }
+        remote.sections["ios_editor"] = base.sections["ios_editor"]
+        XCTAssertTrue(NativeEditorMerge.merge(base: base, local: local, remote: remote).conflicts.isEmpty,
+            "an unchanged compatibility mirror must not block a canonical chat wording edit")
+    }
+
     func testMotionHashIsAtomicButUnrelatedRemoteTitleSurvivesChoice() {
         let base = state(["motion_scenes": .array([]), "motion_runtime_hash": .string("base"), "title": .string("old")])
         var local = base, remote = base

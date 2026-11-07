@@ -8,12 +8,6 @@ import XCTest
 
 @MainActor
 final class NativeEditorSessionTests: XCTestCase {
-    private func reportPendingMerge(_ session: NativeEditorSession, label: String) {
-        guard let state = session.pendingMergeSnapshotForTesting() else { return }
-        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-        guard let data = try? encoder.encode(state), let text = String(data: data, encoding: .utf8) else { return }
-        print("MERGE_FIXTURE \(label) \(text)")
-    }
 
     func testRepeatedOpaqueSlotHydrationPreservesProjectScopedClipAndSourceIdentity() throws {
         let project = UUID()
@@ -771,7 +765,6 @@ final class NativeEditorSessionTests: XCTestCase {
             revisionNumber: 3, revisionHash: "h", expectedDuration: nil)
         session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.5)
         await session.save()
-        reportPendingMerge(session, label: "saved-removal")
         XCTAssertEqual(fake.commitCount, count + 3, "the refused save is resent once, automatically")
         XCTAssertNil(fake.lastRequest?.userSong, "the automatic resend does not resend the removal")
         XCTAssertNil(session.document.userSong)
@@ -848,7 +841,6 @@ final class NativeEditorSessionTests: XCTestCase {
             revisionNumber: 2, revisionHash: "saved", expectedDuration: nil,
             renderStarted: false, renderRecovery: "Your edit is saved; its render needs more footage.")
         await session.save()
-        reportPendingMerge(session, label: "saved-song-projection")
         XCTAssertNil(session.mergeConflictMessage, "the exact saved removal outranks its retained render plan")
         XCTAssertEqual(fake.commitCount, 3, "one conflict refresh and one resend")
         XCTAssertNil(fake.lastRequest?.userSong, "the acknowledged removal must not be sent twice")
@@ -7162,14 +7154,13 @@ final class NativeEditorSessionTests: XCTestCase {
 
         // The creator keeps editing; meanwhile a newer version (g2) lands on the server.
         session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.5)
-        let local = session.document.clips
+        let local = try XCTUnwrap(session.document.snapshot(for: .timeline))
         fake.authoritativeVariant = Self.variant(duration: 2, generation: "g2")
         await session.retryPreview()
         let secondFailure = await settledFailure()
-        reportPendingMerge(session, label: "preview-conflict")
         XCTAssertNotNil(secondFailure, "Retry ends on the Retry card again, not an endless Preparing preview")
         XCTAssertEqual(session.document.revision.baseGeneration, "g2", "Retry loaded the newest version")
-        XCTAssertEqual(session.document.clips, local, "with the unsaved trim on top")
+        XCTAssertEqual(session.document.snapshot(for: .timeline), local, "with the complete unsaved timeline on top")
         XCTAssertTrue(session.hasUnsavedChanges)
         let calls = fake.sourcePoolCallCount
         XCTAssertEqual(calls, 4, "Retry's build, then one rebuild on g2")

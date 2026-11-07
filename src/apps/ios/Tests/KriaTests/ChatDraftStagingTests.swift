@@ -6,12 +6,6 @@ import XCTest
 /// (never rendered). The editor must show it immediately as UNSAVED edits.
 @MainActor
 final class ChatDraftStagingTests: XCTestCase {
-    private func reportPendingMerge(_ session: NativeEditorSession, label: String) {
-        guard let state = session.pendingMergeSnapshotForTesting() else { return }
-        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-        guard let data = try? encoder.encode(state), let text = String(data: data, encoding: .utf8) else { return }
-        print("MERGE_FIXTURE \(label) \(text)")
-    }
 
     private static let jobID = "5b1d2f0a-6c0e-4b8e-9d0a-1c2d3e4f5a6b"
     private static let musicID = "8c9c1e0e-2d62-4a44-8d0c-2f4d3a0a9b11"
@@ -864,7 +858,6 @@ final class ChatDraftStagingTests: XCTestCase {
         let before = session.document
         await session.adoptLatestJob(newProject, api: fake)
         let adopted = await settle { session.document.revision.baseGeneration == "gNew" }
-        reportPendingMerge(session, label: "chat-replan-matching-base")
         XCTAssertTrue(adopted)
         XCTAssertNil(session.newerJobPrompt)
         XCTAssertNil(session.mergeConflictMessage)
@@ -1711,7 +1704,6 @@ extension ChatDraftStagingTests {
         let before = session.document
         fake.editorVariantsByJob[jobB] = [Self.variant(generation: "gNew")]
         let merged = await settle { session.document.revision.baseGeneration == "gNew" }
-        reportPendingMerge(session, label: "chat-replan-ready-after-rendering")
         XCTAssertTrue(merged)
         XCTAssertNil(session.newerJobPrompt)
         XCTAssertNil(session.mergeConflictMessage)
