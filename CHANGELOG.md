@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.62.0] - 2026-11-07
+
+### Changed
+- fix(kria): lead chip reads "Let Kria decide" (KRI-1274) (#2179) <!-- release-pr: 2179 -->
+
 ## [0.88.61.0] - 2026-11-07
 
 ### Changed
