@@ -426,7 +426,8 @@ def _extractor_prompt(**kw) -> str:
 # Says-done group E (#2131) rewords the caption-count and cleanup sentences (her Q1/Q2
 # sentences as examples); with v136's sentences the digest is
 # 14ad8c6e284569817ed3c380fea76ae35b5983b1fe42a2f53c42a6c14bcaa6d7.
-_BRIEF_SECTION_BEFORE_INSERTS = "001bd937bb08cea812fa52d0379a1af9ea6a81108011c563c60a543d4fdfe206"
+# KRI-971 (keep-a-take-whole also records speech_cleanup false) moves it from 001bd937bb08cea8….
+_BRIEF_SECTION_BEFORE_INSERTS = "5d020e50a866f3d40d112f942f2b2364363e057af9c35b0b587d1d4b920594d8"
 
 
 def test_a_closed_rollout_leaves_the_brief_section_byte_identical_to_before_inserts():

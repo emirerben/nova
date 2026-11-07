@@ -4036,7 +4036,7 @@ def compile_guided_runtime_plan(
             grounded_intents = []
         if grounded_intents:
             from app.tasks.generative_build import (  # noqa: PLC0415
-                _CONTEXT_LABEL_COMBINED_MAX_CHARS,
+                _combined_context_label_text,
                 _compact_context_sport_text_elements,
                 _grounded_context_labels,
             )
@@ -4065,17 +4065,11 @@ def compile_guided_runtime_plan(
                         continue
                     seen_texts.add(text)
                     rendered_rows.append(row)
-                sport = " · ".join(str(row["sport"]) for row in rendered_rows)
+                sport, shown_rows = _combined_context_label_text(rendered_rows, clip_id=clip_id)
                 start_s = float(moment.get("output_start_s") or 0.0)
                 end_s = float(moment.get("output_end_s") or 0.0)
                 if not sport or end_s <= start_s:
                     continue
-                if len(sport) > _CONTEXT_LABEL_COMBINED_MAX_CHARS:
-                    raise ValueError(
-                        "Combined context labels for clip "
-                        f"{clip_id!r} exceed the "
-                        f"{_CONTEXT_LABEL_COMBINED_MAX_CHARS}-character limit"
-                    )
                 row = rendered_rows[0]
                 source_params: dict[str, Any] = {
                     "source": "context_sport",
@@ -4086,7 +4080,7 @@ def compile_guided_runtime_plan(
                     "confidence": row.get("confidence"),
                     "intent_id": row.get("intent_id") or "",
                 }
-                if len(rendered_rows) > 1:
+                if len(shown_rows) > 1:
                     source_params["context_label_provenance"] = [
                         {
                             "text": candidate["sport"],
@@ -4094,7 +4088,12 @@ def compile_guided_runtime_plan(
                             "confidence": candidate.get("confidence"),
                             "intent_id": candidate.get("intent_id") or "",
                         }
-                        for candidate in rendered_rows
+                        for candidate in shown_rows
+                    ]
+                if len(shown_rows) < len(rendered_rows):
+                    source_params["context_labels_not_shown"] = [
+                        candidate.get("intent_id") or ""
+                        for candidate in rendered_rows[len(shown_rows) :]
                     ]
                 context_elements.append(
                     TextElement(

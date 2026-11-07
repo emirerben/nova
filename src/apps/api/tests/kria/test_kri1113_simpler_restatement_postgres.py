@@ -12,7 +12,8 @@ Ways this can fail, written before any fix:
     the same question comes back (the loop KRI-610 / KRI-968 closed for the no-update case).
  F2 over-waiver: the model ALSO adds a new ask on the same turn. A new instruction needs its own
     offer, so nothing may be dropped and the offer is made again.
- F3 over-waiver: the model removes an ask the offer never named. Same: ask again, keep it.
+ F3 over-waiver: the model removes an ask the offer never named. Keep it. (Since KRI-1236 the
+    tap's model removals are dropped, so the simpler version is made from the card's list.)
 
 Runs the real runtime turns (submit, run_kria_turn, brief persistence, receipts, the offer and
 consent) on scratch Postgres; only the planner's output is supplied, as in
@@ -117,8 +118,12 @@ async def test_a_new_ask_beside_the_restatement_is_asked_about_again(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_removing_an_ask_the_offer_never_named_is_asked_about_again(monkeypatch):
-    """F3: the offer named r1 only; the same turn also removes r2."""
+async def test_removing_an_ask_the_offer_never_named_keeps_it(monkeypatch):
+    """F3: the offer named r1 only; the model also removes r2 on the tap turn.
+
+    KRI-1236 (prod thread b931bc4e): a "Make it without these" answer states nothing but the
+    tap, so the model's removal is dropped (it never becomes the creator's) and the simpler
+    version is made from the card's list: r1 left out as agreed, r2 kept."""
     user_id, thread_id, _ = _seed_runtime_project()
     await _run_turns(
         monkeypatch,
@@ -150,6 +155,11 @@ async def test_removing_an_ask_the_offer_never_named_is_asked_about_again(monkey
             ),
         ],
     )
-    assert reply[0:2] == ("completed", "assistant_response"), reply
+    assert reply[0:2] == ("awaiting_approval", "draft_applied"), reply
+    assert f"Left out as agreed: {_SUMMARY}" in reply[2]
     with sync_session() as db:
-        assert "r1" in {req.id for req in load_latest_brief_sync(db, thread_id).live()}
+        brief = load_latest_brief_sync(db, thread_id)
+        assert [req.id for req in brief.live()] == ["r2"]
+        assert next(r for r in brief.requirements if r.id == "r1").facts["superseded_by"] == (
+            "server"
+        )

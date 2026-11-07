@@ -96,7 +96,10 @@ def test_every_role_the_app_can_save_has_defaults():
 @pytest.mark.parametrize("role", sorted(ROW_IDS))
 def test_unsaved_role_renders_what_the_endpoint_says(role):
     advertised = text_style_defaults()["roles"][role]
-    row = _row(role)
+    # A title is the one role whose writer-authored shadow survives (KRI-1050); its gap with
+    # the advertised "off" is pinned below and tracked in KRI-1269. Here the title row asks
+    # for no shadow, which is the case the advertised default describes.
+    row = _row(role, **({"shadow_enabled": False} if role == "title" else {}))
     assert text_role(row) == role
 
     (resolved,) = resolve_phone_text_style([row], preferences={}, requested={})
@@ -116,6 +119,21 @@ def test_unsaved_role_renders_what_the_endpoint_says(role):
         assert resolved["alignment"] == row["alignment"]
 
 
+def test_guided_title_keeps_its_authored_shadow_while_the_app_advertises_off():
+    """Known gap, KRI-1269: remove this test when the advertised title default is decided."""
+    assert text_style_defaults()["roles"]["title"]["shadow"] == "off"
+    (resolved,) = resolve_phone_text_style([_row("title")], preferences={}, requested={})
+    assert resolved["shadow_enabled"] is True
+
+
+@pytest.mark.parametrize("role", sorted(set(ROW_IDS) - {"title"}))
+def test_every_other_role_still_renders_the_advertised_shadow_off(role):
+    """A writer-authored shadow on a pin, label, caption or lyric is restyled to the default."""
+    (resolved,) = resolve_phone_text_style([_row(role)], preferences={}, requested={})
+    assert text_style_defaults()["roles"][role]["shadow"] == "off"
+    assert resolved["shadow_enabled"] is False
+
+
 def test_label_usual_spot_is_where_a_default_label_stays():
     spot = text_style_defaults()["roles"]["label"]["usual_position"]
     x, y, alignment = LABEL_ANCHORS[spot]
@@ -132,7 +150,7 @@ def test_label_usual_spot_is_where_a_default_label_stays():
 def test_cascade_falls_to_next_spot_when_first_is_taken(role):
     advertised = text_style_defaults()["roles"][role]
     first, second = advertised["placement_order"][:2]
-    row = _row(role, text="Short")
+    row = _row(role, text="Short", **({"shadow_enabled": False} if role == "title" else {}))
     anchors = text_style_defaults()["position_anchors"]
     taken = (0, anchors[first]["y"] - 0.08, 1, anchors[first]["y"] + 0.08)
 

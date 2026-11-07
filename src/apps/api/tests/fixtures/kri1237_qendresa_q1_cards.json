@@ -1,0 +1,576 @@
+{
+ "_about": "KRI-1237: Qendresa Q1 'Talking + screenshot cards' (TestFlight 1910, protocol 42, prod Fly v2122, server 11310a4ea). Read-only admin GETs on 2026-11-07: thread b931bc4e-cfe8-466c-ae78-fbe492d635ad events (turn 1 = event seq 7), plan item 3ca419c4-a1d3-497e-a2e0-17310f1c0415, job e7d1e06f-9353-434a-887a-e0d1909032f1 (variants[0], render-relevant keys only: no URLs, storage paths, captions or transcript). brief_v1 = the job's stored brief v3 with every row re-opened and `superseded_by` dropped (the rows themselves are turn 1's). Turn 1's strategy was never stored (no draft applied); `strategy` is the approved turn-3 strategy, which has the same edit format and no reaction beats.",
+ "prompt": "Cut out all my pauses and mistakes so it's tight. Captions word by word in the middle of the screen, white, two words at a time. Start with a big title \"5 repos / I'd build with / this weekend!!\" for the first 3 seconds. When I talk about something, show the matching screenshot or screen recording in the top or bottom part of the screen, not over my face. When I list the five repos, show each one as big text, like \"1. Spec-kit\". End with \"comment REPO\" and an arrow for the last 3 seconds. Only my voice, no music.",
+ "turn1_receipts": [
+  {
+   "stage": "checked",
+   "reason": "Choose Clean up speech when you approve and every pause is cut down to about 0.3 s; Clean up speech also cuts a sentence you restarted if it finds one, and I'll tell you after",
+   "status": "partial",
+   "inferred": [],
+   "verification": "checked",
+   "brief_version": 1,
+   "generation_id": null,
+   "requirement_id": "r1",
+   "inferred_labels": [],
+   "target_media_ids": []
+  },
+  {
+   "stage": "checked",
+   "reason": null,
+   "status": "met",
+   "inferred": [],
+   "verification": "checked",
+   "brief_version": 1,
+   "generation_id": null,
+   "requirement_id": "r2",
+   "inferred_labels": [],
+   "target_media_ids": []
+  },
+  {
+   "stage": "checked",
+   "reason": null,
+   "status": "met",
+   "inferred": [],
+   "verification": "checked",
+   "brief_version": 1,
+   "generation_id": null,
+   "requirement_id": "r3",
+   "inferred_labels": [],
+   "target_media_ids": []
+  },
+  {
+   "stage": "checked",
+   "reason": "This draft has no pop-ins timed to your words.",
+   "status": "not_possible",
+   "inferred": [],
+   "verification": "checked",
+   "brief_version": 1,
+   "generation_id": null,
+   "requirement_id": "r4",
+   "inferred_labels": [],
+   "target_media_ids": []
+  },
+  {
+   "stage": "checked",
+   "reason": "I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear",
+   "status": "partial",
+   "inferred": [],
+   "verification": "checked",
+   "brief_version": 1,
+   "generation_id": null,
+   "requirement_id": "r5",
+   "inferred_labels": [],
+   "target_media_ids": []
+  },
+  {
+   "stage": "checked",
+   "reason": "I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear",
+   "status": "partial",
+   "inferred": [],
+   "verification": "checked",
+   "brief_version": 1,
+   "generation_id": null,
+   "requirement_id": "r6",
+   "inferred_labels": [],
+   "target_media_ids": []
+  },
+  {
+   "stage": "checked",
+   "reason": "I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear",
+   "status": "partial",
+   "inferred": [],
+   "verification": "checked",
+   "brief_version": 1,
+   "generation_id": null,
+   "requirement_id": "r7",
+   "inferred_labels": [],
+   "target_media_ids": []
+  },
+  {
+   "stage": "checked",
+   "reason": "I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear",
+   "status": "partial",
+   "inferred": [],
+   "verification": "checked",
+   "brief_version": 1,
+   "generation_id": null,
+   "requirement_id": "r8",
+   "inferred_labels": [],
+   "target_media_ids": []
+  },
+  {
+   "stage": "checked",
+   "reason": "I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear",
+   "status": "partial",
+   "inferred": [],
+   "verification": "checked",
+   "brief_version": 1,
+   "generation_id": null,
+   "requirement_id": "r9",
+   "inferred_labels": [],
+   "target_media_ids": []
+  },
+  {
+   "stage": "checked",
+   "reason": "I'll draw a curly arrow next to your ending text",
+   "status": "partial",
+   "inferred": [],
+   "verification": "checked",
+   "brief_version": 1,
+   "generation_id": null,
+   "requirement_id": "r10",
+   "inferred_labels": [],
+   "target_media_ids": []
+  },
+  {
+   "stage": "checked",
+   "reason": "No music, as asked.",
+   "status": "met",
+   "inferred": [],
+   "verification": "checked",
+   "brief_version": 1,
+   "generation_id": null,
+   "requirement_id": "r11",
+   "inferred_labels": [],
+   "target_media_ids": []
+  }
+ ],
+ "turn1_readiness_rows": [
+  {
+   "reason": "If Clean up speech is offered when you approve, choose it and every pause is cut down to about 0.3 s; Clean up speech also cuts a sentence you restarted if it finds one, and I'll tell you after",
+   "disposition": "needs_choice",
+   "evidence_owner": "brief_checks",
+   "requirement_id": "r1"
+  },
+  {
+   "reason": null,
+   "disposition": "executable",
+   "evidence_owner": "brief_checks",
+   "requirement_id": "r2"
+  },
+  {
+   "reason": null,
+   "disposition": "executable",
+   "evidence_owner": "brief_checks",
+   "requirement_id": "r3"
+  },
+  {
+   "reason": "This draft has no pop-ins timed to your words.",
+   "disposition": "unsupported",
+   "evidence_owner": "brief_checks",
+   "requirement_id": "r4"
+  },
+  {
+   "reason": "I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear",
+   "disposition": "needs_choice",
+   "evidence_owner": "brief_checks",
+   "requirement_id": "r5"
+  },
+  {
+   "reason": "I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear",
+   "disposition": "needs_choice",
+   "evidence_owner": "brief_checks",
+   "requirement_id": "r6"
+  },
+  {
+   "reason": "I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear",
+   "disposition": "needs_choice",
+   "evidence_owner": "brief_checks",
+   "requirement_id": "r7"
+  },
+  {
+   "reason": "I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear",
+   "disposition": "needs_choice",
+   "evidence_owner": "brief_checks",
+   "requirement_id": "r8"
+  },
+  {
+   "reason": "I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear",
+   "disposition": "needs_choice",
+   "evidence_owner": "brief_checks",
+   "requirement_id": "r9"
+  },
+  {
+   "reason": "I'll draw a curly arrow next to your ending text",
+   "disposition": "needs_choice",
+   "evidence_owner": "brief_checks",
+   "requirement_id": "r10"
+  },
+  {
+   "reason": "No music, as asked.",
+   "disposition": "executable",
+   "evidence_owner": "brief_checks",
+   "requirement_id": "r11"
+  }
+ ],
+ "brief_v1": {
+  "version": 1,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "style",
+    "facts": {
+     "pauses": "tight",
+     "cut_restarts": true,
+     "speech_cleanup": true
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Cut out all my pauses and mistakes so it's tight",
+    "source_turn_id": "17e9fb29-b7e4-453a-9d59-62410cefd660"
+   },
+   {
+    "id": "r2",
+    "kind": "style",
+    "facts": {
+     "captions": "word_by_word",
+     "caption_color": "#FFFFFF",
+     "caption_words": 2,
+     "caption_position": "middle"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Captions word by word in the middle of the screen, white, two words at a time",
+    "source_turn_id": "17e9fb29-b7e4-453a-9d59-62410cefd660"
+   },
+   {
+    "id": "r3",
+    "kind": "text",
+    "facts": {},
+    "scope": "title",
+    "status": "open",
+    "literal": "5 repos / I'd build with / this weekend!!",
+    "description": "Start with a big title for the first 3 seconds",
+    "source_turn_id": "17e9fb29-b7e4-453a-9d59-62410cefd660"
+   },
+   {
+    "id": "r4",
+    "kind": "style",
+    "facts": {
+     "keep_text_off": [
+      {
+       "kind": "face"
+      }
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "When I talk about something, show the matching screenshot or screen recording in the top or bottom part of the screen, not over my face",
+    "source_turn_id": "17e9fb29-b7e4-453a-9d59-62410cefd660"
+   },
+   {
+    "id": "r5",
+    "kind": "text",
+    "facts": {
+     "triggers": [
+      "Spec Kit"
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": "1. Spec-kit",
+    "description": "show each one as big text when listed",
+    "source_turn_id": "17e9fb29-b7e4-453a-9d59-62410cefd660"
+   },
+   {
+    "id": "r6",
+    "kind": "text",
+    "facts": {
+     "triggers": [
+      "Impeccable"
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": "2. Impeccable",
+    "description": "show each one as big text when listed",
+    "source_turn_id": "17e9fb29-b7e4-453a-9d59-62410cefd660"
+   },
+   {
+    "id": "r7",
+    "kind": "text",
+    "facts": {
+     "triggers": [
+      "Trading Agents"
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": "3. Trading Agents",
+    "description": "show each one as big text when listed",
+    "source_turn_id": "17e9fb29-b7e4-453a-9d59-62410cefd660"
+   },
+   {
+    "id": "r8",
+    "kind": "text",
+    "facts": {
+     "triggers": [
+      "The Agents Marketplace"
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": "4. The Agents Marketplace",
+    "description": "show each one as big text when listed",
+    "source_turn_id": "17e9fb29-b7e4-453a-9d59-62410cefd660"
+   },
+   {
+    "id": "r9",
+    "kind": "text",
+    "facts": {
+     "triggers": [
+      "Cloud Code Game Studios"
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": "5. Claude Code Game Studios",
+    "description": "show each one as big text when listed",
+    "source_turn_id": "17e9fb29-b7e4-453a-9d59-62410cefd660"
+   },
+   {
+    "id": "r10",
+    "kind": "text",
+    "facts": {
+     "closing": "comment REPO"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": "comment REPO",
+    "description": "End with comment REPO and an arrow for the last 3 seconds",
+    "source_turn_id": "17e9fb29-b7e4-453a-9d59-62410cefd660"
+   },
+   {
+    "id": "r11",
+    "kind": "audio",
+    "facts": {
+     "audio_intent": "no_music"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Only my voice, no music",
+    "source_turn_id": "17e9fb29-b7e4-453a-9d59-62410cefd660"
+   }
+  ]
+ },
+ "strategy": {
+  "pacing": "balanced",
+  "direction": "native",
+  "rationale": "I've removed the closing arrow request so we can move forward. The video will feature your talking take with original audio and no music. It includes your requested opening title, and the captions will appear word-by-word in the middle of the screen.",
+  "edit_format": "subtitled",
+  "caption_style": "karaoke",
+  "opening_title": "5 repos / I'd build with / this weekend!!",
+  "audio_strategy": "original_audio",
+  "render_program": "native",
+  "story_structure": [
+   "Opening title",
+   "Creator lists the 5 AI projects"
+  ],
+  "target_duration_s": 49,
+  "selected_media_ids": [
+   "analysis-proxy-ios-9706AB91-F739-4251-AAEF-BB72C0FB630C.mp4"
+  ],
+  "video_reuse_policy": "once",
+  "optional_treatments": [],
+  "opening_title_duration_s": 3.0
+ },
+ "media": [
+  {
+   "media_id": "analysis-proxy-ios-9706AB91-F739-4251-AAEF-BB72C0FB630C.mp4",
+   "kind": "video",
+   "duration_s": 48.8
+  },
+  {
+   "media_id": "asset-d650ee8a-03b6-49f8-911b-c9bbd69acc71",
+   "kind": "image"
+  },
+  {
+   "media_id": "asset-9059efad-1198-4af9-9fff-cd5dd1be33c4",
+   "kind": "video",
+   "duration_s": 18.0
+  },
+  {
+   "media_id": "asset-19276e8f-96ff-4e7d-b3fc-a3e1e87eb810",
+   "kind": "video",
+   "duration_s": 18.0
+  },
+  {
+   "media_id": "asset-843c6a91-6e47-4a94-9653-30465ad11172",
+   "kind": "video",
+   "duration_s": 18.0
+  },
+  {
+   "media_id": "asset-ce4049a8-3f4a-4c92-a989-0cec5f8cbc96",
+   "kind": "video",
+   "duration_s": 18.0
+  },
+  {
+   "media_id": "asset-d28e6706-b17a-4f5e-87e2-eb49e52fee1d",
+   "kind": "image"
+  },
+  {
+   "media_id": "asset-d2fc120c-228d-4a1a-9eae-f5bc2c0692c2",
+   "kind": "image"
+  },
+  {
+   "media_id": "asset-d44bfc09-e9ff-4f63-a4e2-7b9b2e6d5899",
+   "kind": "video",
+   "duration_s": 18.0
+  },
+  {
+   "media_id": "asset-f159d25a-8485-4c61-8c4a-78efead935bd",
+   "kind": "image"
+  },
+  {
+   "media_id": "asset-0d0b0356-4041-41f8-a871-4edc63df454a",
+   "kind": "image"
+  }
+ ],
+ "pool_filenames": {
+  "d650ee8a-03b6-49f8-911b-c9bbd69acc71": "2BC8CD89-E01F-41EE-950C-B2E60627615A-Screenshot 3 tradingagents.png",
+  "9059efad-1198-4af9-9fff-cd5dd1be33c4": "3C8D94FA-B6D0-45BB-8AF8-99171A8DDFF2-Screen Recording 1 spec-kit.mp4",
+  "19276e8f-96ff-4e7d-b3fc-a3e1e87eb810": "C9517882-A3A9-499C-BE01-F689F0D7B189-Screen Recording 5 game-studios.mp4",
+  "843c6a91-6e47-4a94-9653-30465ad11172": "00DC57D9-3C87-4BDC-976D-9F76AA53CA9F-Screen Recording 4 agents.mp4",
+  "ce4049a8-3f4a-4c92-a989-0cec5f8cbc96": "5664AB43-A914-4F1C-83C1-D1AC12376640-Screen Recording 2 impeccable.mp4",
+  "d28e6706-b17a-4f5e-87e2-eb49e52fee1d": "DFFCD223-C049-4744-8877-B1C3ED63CFD0-Screenshot 2 impeccable.png",
+  "d2fc120c-228d-4a1a-9eae-f5bc2c0692c2": "174F3FF6-551A-445E-AECF-049170ED4E62-Screenshot 1 spec-kit.png",
+  "d44bfc09-e9ff-4f63-a4e2-7b9b2e6d5899": "DDD56715-30C3-4B36-9A54-7F75D8D6A575-Screen Recording 3 tradingagents.mp4",
+  "f159d25a-8485-4c61-8c4a-78efead935bd": "069F7F62-66A4-45B3-9797-1EA53ED7243E-Screenshot 4 agents.png",
+  "0d0b0356-4041-41f8-a871-4edc63df454a": "4C754F72-89FD-41D0-97E4-4C087355CC10-Screenshot 5 gamestudios.png"
+ },
+ "variant": {
+  "variant_id": "subtitled",
+  "resolved_archetype": "subtitled",
+  "render_destination": "device",
+  "ok": true,
+  "render_status": "ready",
+  "render_generation_id": "cbeeade2-4498-499c-bcbb-dae478684b95",
+  "duration_s": 43.75106302452088,
+  "edit_duration_s": 42.15106302452088,
+  "brand_tail_s": 1.6,
+  "silence_cut": {
+   "removed": [
+    {
+     "end_s": 3.04,
+     "reason": "retake",
+     "start_s": 0.0
+    },
+    {
+     "end_s": 14.334,
+     "reason": "silence",
+     "start_s": 12.965
+    },
+    {
+     "end_s": 21.71,
+     "reason": "silence",
+     "start_s": 21.105
+    },
+    {
+     "end_s": 37.495,
+     "reason": "silence",
+     "start_s": 36.105
+    },
+    {
+     "end_s": 41.01,
+     "reason": "silence",
+     "start_s": 40.765
+    }
+   ],
+   "version": 2,
+   "time_saved_s": 6.649,
+   "original_duration_s": 48.8
+  },
+  "silence_cut_outcome": "applied",
+  "phone_lane_receipt": {
+   "applied": [
+    "overlays"
+   ],
+   "dropped": []
+  },
+  "phone_overlay_receipt": {
+   "placed": [
+    {
+     "kind": "image",
+     "end_s": 12.84,
+     "label": "174F3FF6-551A-445E-AECF-049170ED4E62-Screenshot 1 spec-kit.p",
+     "reason": "You say 'Spec Kit' — this image shows the Spec Kit GitHub README.",
+     "start_s": 8.48,
+     "media_id": "d2fc120c-228d-4a1a-9eae-f5bc2c0692c2"
+    },
+    {
+     "kind": "image",
+     "end_s": 20.98,
+     "label": "DFFCD223-C049-4744-8877-B1C3ED63CFD0-Screenshot 2 impeccable",
+     "reason": "You say 'Impeccable' — this image shows the Impeccable README with 'Without Impeccable' and 'With Impeccable' examples.",
+     "start_s": 15.32,
+     "media_id": "d28e6706-b17a-4f5e-87e2-eb49e52fee1d"
+    },
+    {
+     "kind": "image",
+     "end_s": 29.4,
+     "label": "2BC8CD89-E01F-41EE-950C-B2E60627615A-Screenshot 3 tradingage",
+     "reason": "You say 'Trading Agents' — this image shows the GitHub repository for TradingAgents.",
+     "start_s": 22.82,
+     "media_id": "d650ee8a-03b6-49f8-911b-c9bbd69acc71"
+    },
+    {
+     "kind": "image",
+     "end_s": 35.98,
+     "label": "069F7F62-66A4-45B3-9797-1EA53ED7243E-Screenshot 4 agents.png",
+     "reason": "You mention 'Agents Marketplace' and 'ready-made sub-agents' for 'Cloud Code' — this image shows a plugin catalog for AI coding tools.",
+     "start_s": 31.06,
+     "media_id": "f159d25a-8485-4c61-8c4a-78efead935bd"
+    },
+    {
+     "kind": "image",
+     "end_s": 44.92,
+     "label": "4C754F72-89FD-41D0-97E4-4C087355CC10-Screenshot 5 gamestudio",
+     "reason": "You say 'Cloud Code Game Studios' — this image shows the GitHub README page for Claude Code Game Studios.",
+     "start_s": 39.32,
+     "media_id": "0d0b0356-4041-41f8-a871-4edc63df454a"
+    }
+   ],
+   "matcher": "agent",
+   "version": 1,
+   "unplaced": [
+    {
+     "kind": "video",
+     "label": "3C8D94FA-B6D0-45BB-8AF8-99171A8DDFF2-Screen Recording 1 spec",
+     "reason": "no_spoken_match",
+     "media_id": "9059efad-1198-4af9-9fff-cd5dd1be33c4"
+    },
+    {
+     "kind": "video",
+     "label": "C9517882-A3A9-499C-BE01-F689F0D7B189-Screen Recording 5 game",
+     "reason": "no_spoken_match",
+     "media_id": "19276e8f-96ff-4e7d-b3fc-a3e1e87eb810"
+    },
+    {
+     "kind": "video",
+     "label": "00DC57D9-3C87-4BDC-976D-9F76AA53CA9F-Screen Recording 4 agen",
+     "reason": "no_spoken_match",
+     "media_id": "843c6a91-6e47-4a94-9653-30465ad11172"
+    },
+    {
+     "kind": "video",
+     "label": "5664AB43-A914-4F1C-83C1-D1AC12376640-Screen Recording 2 impe",
+     "reason": "no_spoken_match",
+     "media_id": "ce4049a8-3f4a-4c92-a989-0cec5f8cbc96"
+    },
+    {
+     "kind": "video",
+     "label": "DDD56715-30C3-4B36-9A54-7F75D8D6A575-Screen Recording 3 trad",
+     "reason": "no_spoken_match",
+     "media_id": "d44bfc09-e9ff-4f63-a4e2-7b9b2e6d5899"
+    }
+   ],
+   "wishlist": [],
+   "face_sampling": "ok"
+  },
+  "phone_beat_receipt": null
+ }
+}
