@@ -3285,16 +3285,22 @@ extension DraftSnapshot {
         var changed: Set<EditorSection> = []
         for lane in Self.stagedLaneKeys where draftPayload[lane.key] != nil && !changed.contains(lane.section) {
             var candidate = sections
+            let removesMusic = lane.section == .music && draftPayload["remove_music"] == .bool(true)
+            if removesMusic { candidate.removeValue(forKey: "music") }
             if lane.section == .timeline {
                 guard let merged = Self.mergedTimeline(draft: Self.array(draftValue("timeline_slots")), base: Self.array(baseSections["timeline_slots"])) else { continue }
                 candidate["timeline_slots"] = .array(merged)
             } else {
                 for key in lane.sectionKeys {
-                    if key == "music_track_id", draftPayload["remove_music"] == .bool(true) { candidate[key] = .null }
+                    // Removal clears the canonical track/window pair. Retaining
+                    // the previous track's window creates an unrepresentable
+                    // selected state when a later rebase validates typed output.
+                    if removesMusic { candidate[key] = .null }
                     else if let value = draftValue(key) { candidate[key] = value }
                 }
             }
             let differs = lane.sectionKeys.contains { Self.strippingNulls(candidate[$0]) != Self.strippingNulls(baseSections[$0]) }
+                || (removesMusic && candidate["music"] != baseSections["music"])
             guard differs else { continue }
             sections = candidate; changed.insert(lane.section)
         }
