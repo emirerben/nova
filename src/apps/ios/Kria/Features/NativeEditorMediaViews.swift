@@ -2118,6 +2118,12 @@ struct NativeMiniStrip: View {
                 }
             )
             .background(TimelinePinchCapture { scale, ended in
+                session.setTimelinePinching(!ended)
+                if !ended, !isPinching {
+                    endAutoScroll(); endTrimHaptics()
+                    endClipReorder(commit: false)
+                    moveAlignment = nil; movePreviousEdges = nil
+                }
                 if ended {
                     pinchAnchor = zoom
                     isPinching = false
@@ -2225,8 +2231,9 @@ struct NativeMiniStrip: View {
                 // start is fixed by slot order, so the leading handle never
                 // tracks the finger and clock-delta compensation would
                 // un-trim it. See NativeMiniStrip's design note above.
-                let applyTrailingTrim: (TimeInterval) -> TimeInterval? = { raw in
-                    session.updateTrim(by: raw)
+                let applyTrailingTrim: (TimeInterval, NativeTimelineGestureID) -> TimeInterval? = { raw, token in
+                    guard session.ownsTimingGesture(token) else { return nil }
+                    session.updateTrim(by: raw, gestureID: token)
                     guard let trimmed = session.timelineClips.first(where: { $0.id == clip.id }) else { return nil }
                     updateTrimHaptics(start: trimmed.start, end: trimmed.end)
                     return trimmed.end
@@ -2243,24 +2250,30 @@ struct NativeMiniStrip: View {
                     onReorderStart: { beginClipReorder(clip, index: index, viewportGlobalRange: viewportGlobalRange) },
                     onReorderChange: { travel, x in updateClipReorder(travel: travel, globalX: x) },
                     onReorderEnd: { commit in endClipReorder(commit: commit) },
-                    onTrimStart: { edge in
+                    onTrimStart: { edge, token in
+                        guard session.beginTrim(clipID: clip.id, edge: edge, gestureID: token) else { return false }
                         beginTrimHaptics(selection: EditorSelection(kind: .clip, id: clip.id.uuidString), edge: edge, start: clip.start, end: clip.end)
-                        session.beginTrim(clipID: clip.id, edge: edge)
                         if edge == .trailing {
-                            beginAutoScroll(viewportGlobalRange: viewportGlobalRange, applyRaw: applyTrailingTrim)
+                            beginAutoScroll(viewportGlobalRange: viewportGlobalRange, applyRaw: { applyTrailingTrim($0, token) })
                         }
+                        return true
                     },
-                    onTrimChange: { edge, translation in
+                    onTrimChange: { edge, translation, token in
+                        guard session.ownsTimingGesture(token) else { return }
                         if edge == .trailing {
-                            applyCompensatedDrag(raw: translation, applyRaw: applyTrailingTrim)
+                            applyCompensatedDrag(raw: translation, applyRaw: { applyTrailingTrim($0, token) })
                         } else {
-                            session.updateTrim(by: translation)
+                            session.updateTrim(by: translation, gestureID: token)
                             if let trimmed = session.timelineClips.first(where: { $0.id == clip.id }) {
                                 updateTrimHaptics(start: trimmed.start, end: trimmed.end)
                             }
                         }
                     },
-                    onTrimEnd: { session.endTrim(); endTrimHaptics(); endAutoScroll() },
+                    onTrimEnd: { token, commit in
+                        guard session.ownsTimingGesture(token) else { return }
+                        if commit { session.endTrim(gestureID: token) } else { session.cancelTimingGesture(gestureID: token) }
+                        endTrimHaptics(); endAutoScroll()
+                    },
                     onMove: { offset in
                         session.selectClip(clip.id)
                         if session.selectedSplitScreenSectionID != nil {
@@ -2605,8 +2618,9 @@ struct NativeMiniStrip: View {
                     moveAlignment = aligned
                     return moved.start
                 }
-                let applyTrim: (TimeInterval) -> TimeInterval? = { raw in
-                    session.updateTimedEdgeTrim(by: raw)
+                let applyTrim: (TimeInterval, NativeTimelineGestureID) -> TimeInterval? = { raw, token in
+                    guard session.ownsTimingGesture(token) else { return nil }
+                    session.updateTimedEdgeTrim(by: raw, gestureID: token)
                     guard let trimmed = session.timelineItems.first(where: { $0.selection == item.selection }) else { return nil }
                     updateTrimHaptics(start: trimmed.start, end: trimmed.end)
                     return trimEdge == .leading ? trimmed.start : trimmed.end
@@ -2618,7 +2632,7 @@ struct NativeMiniStrip: View {
                     color: color,
                     isSelected: session.selection == item.selection,
                     canMove: !isPinching && panStartTime == nil && canEditTimedOperation(item, operation: "timing"),
-                    canTrim: canEditTimedOperation(item, operation: "trim"),
+                    canTrim: !isPinching && canEditTimedOperation(item, operation: "trim"),
                     pixelsPerSecond: pixelsPerSecond,
                     onSelect: { select(item) },
                     onMoveStart: {
@@ -2642,13 +2656,21 @@ struct NativeMiniStrip: View {
                         endAutoScroll()
                         refreshItems()
                     },
-                    onTrimStart: { edge in
+                    onTrimStart: { edge, token in
+                        guard session.beginTimedEdgeTrim(kind: item.kind, id: item.id, edge: edge, gestureID: token) else { return false }
                         beginTrimHaptics(selection: item.selection, edge: edge, start: item.start, end: item.end)
-                        session.beginTimedEdgeTrim(kind: item.kind, id: item.id, edge: edge)
-                        beginAutoScroll(viewportGlobalRange: viewportGlobalRange, applyRaw: applyTrim)
+                        beginAutoScroll(viewportGlobalRange: viewportGlobalRange, applyRaw: { applyTrim($0, token) })
+                        return true
                     },
-                    onTrimChange: { raw in applyCompensatedDrag(raw: raw, applyRaw: applyTrim) },
-                    onTrimEnd: { session.endTimedEdgeTrim(); endTrimHaptics(); endAutoScroll() },
+                    onTrimChange: { raw, token in
+                        guard session.ownsTimingGesture(token) else { return }
+                        applyCompensatedDrag(raw: raw, applyRaw: { applyTrim($0, token) })
+                    },
+                    onTrimEnd: { token, commit in
+                        guard session.ownsTimingGesture(token) else { return }
+                        if commit { session.endTimedEdgeTrim(gestureID: token) } else { session.cancelTimingGesture(gestureID: token) }
+                        endTrimHaptics(); endAutoScroll()
+                    },
                     onDragXChange: { x in updateAutoScrollX(x) }
                 )
             }
@@ -2996,9 +3018,9 @@ private struct NativeTimelineBar: View {
     let onMoveStart: () -> Void
     let onMoveChange: (TimeInterval) -> Void
     let onMoveEnd: () -> Void
-    let onTrimStart: (NativeTrimEdge) -> Void
-    let onTrimChange: (TimeInterval) -> Void
-    let onTrimEnd: () -> Void
+    let onTrimStart: (NativeTrimEdge, NativeTimelineGestureID) -> Bool
+    let onTrimChange: (TimeInterval, NativeTimelineGestureID) -> Void
+    let onTrimEnd: (NativeTimelineGestureID, Bool) -> Void
     var onDragXChange: ((CGFloat) -> Void)? = nil
     @State private var isMoving = false
     /// Global x of the finger when the long press was recognized. The move is
@@ -3098,7 +3120,7 @@ private struct NativeTimelineBar: View {
                     visualOffset: -min(44, hitWidth / 3) / 2 + 6,
                     touchWidth: min(44, hitWidth / 3),
                     onTrimStart: onTrimStart,
-                    onTrimChange: { _, seconds in onTrimChange(seconds) },
+                    onTrimChange: { _, seconds, token in onTrimChange(seconds, token) },
                     onTrimEnd: onTrimEnd,
                     onDragXChange: onDragXChange
                 )
@@ -3110,7 +3132,7 @@ private struct NativeTimelineBar: View {
                     visualOffset: min(44, hitWidth / 3) / 2 - 6,
                     touchWidth: min(44, hitWidth / 3),
                     onTrimStart: onTrimStart,
-                    onTrimChange: { _, seconds in onTrimChange(seconds) },
+                    onTrimChange: { _, seconds, token in onTrimChange(seconds, token) },
                     onTrimEnd: onTrimEnd,
                     onDragXChange: onDragXChange
                 )
@@ -3154,9 +3176,9 @@ private struct NativeClipSurface: View {
     let onReorderStart: () -> Void
     let onReorderChange: (TimeInterval, CGFloat) -> Void
     let onReorderEnd: (Bool) -> Void
-    let onTrimStart: (NativeTrimEdge) -> Void
-    let onTrimChange: (NativeTrimEdge, TimeInterval) -> Void
-    let onTrimEnd: () -> Void
+    let onTrimStart: (NativeTrimEdge, NativeTimelineGestureID) -> Bool
+    let onTrimChange: (NativeTrimEdge, TimeInterval, NativeTimelineGestureID) -> Void
+    let onTrimEnd: (NativeTimelineGestureID, Bool) -> Void
     let onMove: (TimeInterval) -> Void
     /// Only the trailing handle forwards drag position — a clip's timeline
     /// `start` is fixed by slot order (reflowSlots is a no-op), so a leading
@@ -3288,11 +3310,12 @@ private struct NativeTrimHandle: View {
     let pixelsPerSecond: CGFloat
     let visualOffset: CGFloat
     var touchWidth: CGFloat = 44
-    let onTrimStart: (NativeTrimEdge) -> Void
-    let onTrimChange: (NativeTrimEdge, TimeInterval) -> Void
-    let onTrimEnd: () -> Void
+    let onTrimStart: (NativeTrimEdge, NativeTimelineGestureID) -> Bool
+    let onTrimChange: (NativeTrimEdge, TimeInterval, NativeTimelineGestureID) -> Void
+    let onTrimEnd: (NativeTimelineGestureID, Bool) -> Void
     var onDragXChange: ((CGFloat) -> Void)? = nil
-    @State private var isDragging = false
+    @State private var gestureID: NativeTimelineGestureID?
+    @State private var rejected = false
     // SwiftUI never calls onEnded for a cancelled gesture (a system gesture,
     // Control Center, or the outer vertical ScrollView stealing the touch).
     // @GestureState resets to its initial value on both a normal end AND a
@@ -3317,43 +3340,51 @@ private struct NativeTrimHandle: View {
                 DragGesture(minimumDistance: 0, coordinateSpace: .global)
                     .updating($dragActive) { _, active, _ in active = true }
                     .onChanged { value in
-                        if !isDragging {
-                            isDragging = true
-                            onTrimStart(edge)
+                        guard !rejected else { return }
+                        if gestureID == nil {
+                            let token = NativeTimelineGestureID()
+                            guard onTrimStart(edge, token) else { rejected = true; return }
+                            gestureID = token
                         }
-                        // DragGesture.translation is cumulative from pointer
-                        // down. The session applies it to one captured baseline.
+                        guard let token = gestureID else { return }
                         let seconds = TimeInterval(value.translation.width / max(1, pixelsPerSecond))
-                        onTrimChange(edge, seconds)
+                        onTrimChange(edge, seconds, token)
                         onDragXChange?(value.location.x)
                     }
                     .onEnded { value in
-                        if !isDragging { onTrimStart(edge) }
+                        guard let token = gestureID else { rejected = false; return }
+                        gestureID = nil
                         let seconds = TimeInterval(value.translation.width / max(1, pixelsPerSecond))
-                        onTrimChange(edge, seconds)
-                        onTrimEnd()
-                        isDragging = false
+                        onTrimChange(edge, seconds, token)
+                        onTrimEnd(token, true)
+                        rejected = false
                     }
             )
             .onChange(of: dragActive) { _, active in
-                if !active && isDragging {
-                    isDragging = false
-                    onTrimEnd()
+                if !active {
+                    // Normal completion clears the token in onEnded; system cancellation does not.
+                    // Defer to let a normal final sample commit before observing a reset.
+                    let token = gestureID
+                    Task { @MainActor in
+                        await Task.yield()
+                        guard !dragActive, gestureID == token else { return }
+                        if let token { gestureID = nil; onTrimEnd(token, false) }
+                        rejected = false
+                    }
                 }
             }
             .onDisappear {
-                if isDragging {
-                    isDragging = false
-                    onTrimEnd()
-                }
+                if let token = gestureID { gestureID = nil; onTrimEnd(token, false) }
+                rejected = false
             }
             .accessibilityLabel(edge == .leading ? "Trim block start" : "Trim block end")
             .accessibilityIdentifier(edge == .leading ? "native-editor-trim-leading" : "native-editor-trim-trailing")
             .accessibilityHint("Drag to adjust the selected block")
             .accessibilityAdjustableAction { direction in
-                onTrimStart(edge)
-                onTrimChange(edge, direction == .increment ? 0.1 : -0.1)
-                onTrimEnd()
+                let token = NativeTimelineGestureID()
+                guard onTrimStart(edge, token) else { return }
+                onTrimChange(edge, direction == .increment ? 0.1 : -0.1, token)
+                onTrimEnd(token, true)
             }
     }
 }
@@ -3398,7 +3429,10 @@ private struct TimelinePinchCapture: UIViewRepresentable {
             host = scroll
             scroll.addGestureRecognizer(pinch)
         }
-        func detach() { host?.removeGestureRecognizer(pinch); host = nil }
+        func detach() {
+            if pinch.state == .began || pinch.state == .changed { changed(pinch.scale, true) }
+            host?.removeGestureRecognizer(pinch); host = nil
+        }
         @objc private func handle(_ gesture: UIPinchGestureRecognizer) {
             switch gesture.state {
             case .began, .changed: changed(gesture.scale, false)

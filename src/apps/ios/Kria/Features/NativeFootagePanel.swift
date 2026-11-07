@@ -19,7 +19,6 @@ struct NativeFootagePanel: View {
         }
         // Recreate the controls when the inspector follows another item.
         .id(selection)
-        .sheet(isPresented: $showCrop) { NativeCropSheet(session: session, selection: selection) }
     }
 
     /// Crop opens the shared editor; the clip's `clips.source_crop` capability (or, for an overlay, its section) decides.
@@ -34,6 +33,7 @@ struct NativeFootagePanel: View {
         }
         .disabled(blocked != nil)
         .accessibilityIdentifier("native-editor-footage-crop")
+        .sheet(isPresented: $showCrop) { NativeCropSheet(session: session, selection: selection) }
         if let blocked { Text(blocked).font(.footnote).foregroundStyle(.secondary) }
     }
 

@@ -105,10 +105,15 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(shortened["in_s"] as? Double, original.rows[0]["in_s"] as? Double)
         try assertSplitPeers(original, unchangedIn: trimmed, excluding: [editedID])
 
-        // Re-select to align the clip start, then scrub its ruler by half the visible clip width.
+        // Re-select to align the clip start, then drag the actual playhead forward.
+        // A short gesture on blank ruler space can be interpreted as deselection.
         clip.tap()
-        let ruler = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.03))
-        ruler.press(forDuration: 0.05, thenDragTo: ruler.withOffset(CGVector(dx: -clip.frame.width / 2, dy: 0)))
+        let playhead = app.descendants(matching: .any)["native-editor-playhead"].firstMatch
+        XCTAssertTrue(playhead.isHittable)
+        let start = playhead.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: clip.frame.width / 2, dy: 0)),
+            withVelocity: 20, thenHoldForDuration: 0.3)
+        XCTAssertTrue(clip.isSelected, "Seeking with the playhead must retain the clip selected for cutting")
         app.buttons["native-editor-adjust"].tap()
         let cut = app.buttons["native-editor-split-cut"]
         revealSplitControl(cut, in: app)

@@ -5,6 +5,11 @@ import SwiftUI
 import ImageIO
 import UIKit
 
+struct NativeTimelineGestureID: Equatable, Sendable {
+    private let value = UUID()
+    init() {}
+}
+
 enum NativeSourcePreviewState: Equatable {
     case idle, preparing, ready, failed(String)
     /// KRI-211: the project's original clips are not on this iPhone (made on
@@ -1339,6 +1344,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// at construction can be trusted before `load()` confirms it. See
     /// `canDisplayCurrentPlayer`'s `.idle` case.
     private let seedIsTrusted: Bool
+    private var timelinePinching = false
     private var activeTrim: ActiveTrim?
     private var transactionBaseline: EditorDocument?
     private var draftProjectionCache: EditorDraft?
@@ -1573,6 +1579,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private struct ActiveTrim {
+        let gestureID: NativeTimelineGestureID?
+        var undoBaseline: [EditorDocument]
         let clipID: UUID
         let edge: NativeTrimEdge
         var baseline: EditorDocument
@@ -1584,6 +1592,8 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     private enum TimedEditKind { case move, trim }
     private struct ActiveTimedEdit {
+        let gestureID: NativeTimelineGestureID?
+        var undoBaseline: [EditorDocument]
         let selection: EditorSelection
         let edge: NativeTrimEdge?
         let kind: TimedEditKind
@@ -4729,18 +4739,21 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// Captures one immutable source window for the whole pointer gesture.
     /// Every preview update is derived from this baseline, so cumulative drag
     /// translations cannot be applied repeatedly to an already-trimmed clip.
-    func beginTrim(clipID: UUID, edge: NativeTrimEdge) {
-        guard canEditTimeline, draft.clips.contains(where: { $0.id == clipID }) else { return }
+    @discardableResult
+    func beginTrim(clipID: UUID, edge: NativeTrimEdge, gestureID: NativeTimelineGestureID? = nil) -> Bool {
+        guard !timelinePinching, activeTrim == nil, activeTimedEdit == nil,
+              canEditTimeline, draft.clips.contains(where: { $0.id == clipID }) else { return false }
         activeTrim = ActiveTrim(
-            clipID: clipID,
+            gestureID: gestureID, undoBaseline: undoStack, clipID: clipID,
             edge: edge,
             baseline: document,
             redoBaseline: redoStack
         )
+        return true
     }
 
-    func updateTrim(by translation: TimeInterval) {
-        guard translation.isFinite, var active = activeTrim else { return }
+    func updateTrim(by translation: TimeInterval, gestureID: NativeTimelineGestureID? = nil) {
+        guard !timelinePinching, translation.isFinite, var active = activeTrim, active.gestureID == gestureID else { return }
         active.lastTranslation = translation
         let translation = translation - active.translationOrigin
         guard let index = clipSlotIndex(active.clipID.uuidString, in: active.baseline) else { return }
@@ -4858,7 +4871,35 @@ struct NativeEditorTemporaryVideo: Sendable {
         return 1
     }
 
-    func endTrim() {
+    func ownsTimingGesture(_ id: NativeTimelineGestureID) -> Bool {
+        activeTrim?.gestureID == id || activeTimedEdit?.gestureID == id
+    }
+
+    func setTimelinePinching(_ pinching: Bool) {
+        timelinePinching = pinching
+        if pinching { cancelTimingGesture() }
+    }
+
+    /// Cancels only the owning gesture; nil is reserved for a timeline-wide takeover.
+    func cancelTimingGesture(gestureID: NativeTimelineGestureID? = nil) {
+        let baseline: EditorDocument
+        let undo: [EditorDocument]
+        let redo: [EditorDocument]
+        let recorded: Bool
+        if let active = activeTrim, gestureID == nil || active.gestureID == gestureID {
+            baseline = active.baseline; undo = active.undoBaseline; redo = active.redoBaseline; recorded = active.recordedUndo
+            activeTrim = nil
+        } else if let active = activeTimedEdit, gestureID == nil || active.gestureID == gestureID {
+            baseline = active.baseline; undo = active.undoBaseline; redo = active.redoBaseline; recorded = active.recordedUndo
+            activeTimedEdit = nil
+        } else { return }
+        if recorded { saveHistory?.cancelLastCheckpoint(matching: baseline) }
+        undoStack = undo; redoStack = redo; document = baseline
+        refreshDirtyState(); refreshDuration(); flushDeferredSourcePreviewUpdate()
+    }
+
+    func endTrim(gestureID: NativeTimelineGestureID? = nil) {
+        guard activeTrim?.gestureID == gestureID else { return }
         activeTrim = nil
         flushDeferredSourcePreviewUpdate()
     }
@@ -7799,10 +7840,11 @@ struct NativeEditorTemporaryVideo: Sendable {
     func beginTimedBodyMove(kind: EditorSelectionKind, id: String) { beginTimedEdit(selection: EditorSelection(kind: kind, id: id), kind: .move, edge: nil) }
     func updateTimedBodyMove(by translation: TimeInterval) { updateTimedEdit(by: translation) }
     func endTimedBodyMove() { endTimedEdit() }
-    func beginTimedEdgeTrim(kind: EditorSelectionKind, id: String, edge: NativeTrimEdge) { beginTimedEdit(selection: EditorSelection(kind: kind, id: id), kind: .trim, edge: edge) }
+    @discardableResult
+    func beginTimedEdgeTrim(kind: EditorSelectionKind, id: String, edge: NativeTrimEdge, gestureID: NativeTimelineGestureID? = nil) -> Bool { beginTimedEdit(selection: EditorSelection(kind: kind, id: id), kind: .trim, edge: edge, gestureID: gestureID) }
     func beginTimedEdgeTrim(selection: EditorSelection, edge: NativeTrimEdge) { beginTimedEdit(selection: selection, kind: .trim, edge: edge) }
-    func updateTimedEdgeTrim(by translation: TimeInterval) { updateTimedEdit(by: translation) }
-    func endTimedEdgeTrim() { endTimedEdit() }
+    func updateTimedEdgeTrim(by translation: TimeInterval, gestureID: NativeTimelineGestureID? = nil) { updateTimedEdit(by: translation, gestureID: gestureID) }
+    func endTimedEdgeTrim(gestureID: NativeTimelineGestureID? = nil) { endTimedEdit(gestureID: gestureID) }
 
     func reorderLayer(selection: EditorSelection, to destination: Int) {
         guard canEditOperation(["layers.reorder", "layer_order", "lanes.layer_order"], section: .timeline) else { return }
@@ -8243,6 +8285,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         if var activeTrim {
             activeTrim.baseline = document
             activeTrim.translationOrigin = activeTrim.lastTranslation
+            activeTrim.undoBaseline = undoStack
             activeTrim.redoBaseline = redoStack
             activeTrim.recordedUndo = false
             self.activeTrim = activeTrim
@@ -8251,6 +8294,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             activeTimedEdit.baseline = document
             activeTimedEdit.translationOrigin = activeTimedEdit.lastTranslation
             activeTimedEdit.projection = timelineProjection
+            activeTimedEdit.undoBaseline = undoStack
             activeTimedEdit.redoBaseline = redoStack
             activeTimedEdit.recordedUndo = false
             self.activeTimedEdit = activeTimedEdit
@@ -8726,21 +8770,23 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
     }
 
-    private func beginTimedEdit(selection: EditorSelection, kind: TimedEditKind, edge: NativeTrimEdge?) {
+    @discardableResult
+    private func beginTimedEdit(selection: EditorSelection, kind: TimedEditKind, edge: NativeTrimEdge?, gestureID: NativeTimelineGestureID? = nil) -> Bool {
         let operation = kind == .move ? "timing" : "trim"
-        guard activeTimedEdit == nil,
+        guard !timelinePinching, activeTimedEdit == nil, activeTrim == nil,
               let section = section(for: selection.kind),
               // KRI-589: a drawing's window moves and trims under the server's `drawings.trim` / `drawings.edit`.
               canEditOperation(section == .drawings ? ["drawings.trim", "drawings.edit"] : ["\(section.rawValue).\(operation)", section.rawValue], section: section),
               // KRI-1162: a background window moves and trims only while the server opens `speaker_background_windows`.
               section != .speakerBackground || canEditSpeakerBackgroundWindows,
               timedObjectExists(selection),
-              supportsTimedGesture(selection) else { return }
-        activeTimedEdit = ActiveTimedEdit(selection: selection, edge: edge, kind: kind, baseline: document, redoBaseline: redoStack, projection: timelineProjection)
+              supportsTimedGesture(selection) else { return false }
+        activeTimedEdit = ActiveTimedEdit(gestureID: gestureID, undoBaseline: undoStack, selection: selection, edge: edge, kind: kind, baseline: document, redoBaseline: redoStack, projection: timelineProjection)
+        return true
     }
 
-    private func updateTimedEdit(by translation: TimeInterval) {
-        guard translation.isFinite, var active = activeTimedEdit else { return }
+    private func updateTimedEdit(by translation: TimeInterval, gestureID: NativeTimelineGestureID? = nil) {
+        guard !timelinePinching, translation.isFinite, var active = activeTimedEdit, active.gestureID == gestureID else { return }
         active.lastTranslation = translation
         let translation = translation - active.translationOrigin
         var next = active.baseline
@@ -8798,7 +8844,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         refreshDirtyState(); refreshDuration(); activeTimedEdit = active
     }
 
-    private func endTimedEdit() {
+    private func endTimedEdit(gestureID: NativeTimelineGestureID? = nil) {
+        guard activeTimedEdit?.gestureID == gestureID else { return }
         activeTimedEdit = nil
         flushDeferredSourcePreviewUpdate()
     }
@@ -9975,11 +10022,13 @@ struct NativeEditorTemporaryVideo: Sendable {
         if let transactionBaseline { self.transactionBaseline = refreshed(transactionBaseline) }
         if var activeTrim {
             activeTrim.baseline = refreshed(activeTrim.baseline)
+            activeTrim.undoBaseline = activeTrim.undoBaseline.map(refreshed)
             activeTrim.redoBaseline = activeTrim.redoBaseline.map(refreshed)
             self.activeTrim = activeTrim
         }
         if var activeTimedEdit {
             activeTimedEdit.baseline = refreshed(activeTimedEdit.baseline)
+            activeTimedEdit.undoBaseline = activeTimedEdit.undoBaseline.map(refreshed)
             activeTimedEdit.redoBaseline = activeTimedEdit.redoBaseline.map(refreshed)
             self.activeTimedEdit = activeTimedEdit
         }
@@ -10290,11 +10339,13 @@ struct NativeEditorTemporaryVideo: Sendable {
         if let transactionBaseline { self.transactionBaseline = rebase(transactionBaseline) }
         if var activeTrim {
             activeTrim.baseline = rebase(activeTrim.baseline)
+            activeTrim.undoBaseline = activeTrim.undoBaseline.map(rebase)
             activeTrim.redoBaseline = activeTrim.redoBaseline.map(rebase)
             self.activeTrim = activeTrim
         }
         if var activeTimedEdit {
             activeTimedEdit.baseline = rebase(activeTimedEdit.baseline)
+            activeTimedEdit.undoBaseline = activeTimedEdit.undoBaseline.map(rebase)
             activeTimedEdit.redoBaseline = activeTimedEdit.redoBaseline.map(rebase)
             self.activeTimedEdit = activeTimedEdit
         }

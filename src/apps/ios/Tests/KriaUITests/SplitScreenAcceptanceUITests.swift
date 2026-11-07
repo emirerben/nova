@@ -30,6 +30,7 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
         XCTAssertGreaterThan(weights[0], weights[1] * 2)
         XCTAssertEqual(try XCTUnwrap(layout["gutter"] as? Double), 0.05, accuracy: 0.006)
         XCTAssertEqual((authored["timeline_slots"] as? [Any])?.count, 4)
+        try assertAuthoredDuration(authored)
         assertPanelPicture(app)
         attach(app, name: "Customized three panels before Save")
         let save = app.buttons["native-editor-save"]
@@ -43,6 +44,7 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
         let reopened = launch(reset: false)
         XCTAssertTrue(clip(1, in: reopened).waitForExistence(timeout: 30))
         let persisted = try sections(reopened)
+        try assertAuthoredDuration(persisted)
         for key in ["timeline_slots", "split_screen_sections"] {
             XCTAssertEqual(try canonical(authored[key]), try canonical(persisted[key]), key)
         }
@@ -83,6 +85,13 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
 
     private func selectClip(_ index: Int, in app: XCUIApplication) {
         let target = clip(index, in: app)
+        let timeline = app.descendants(matching: .any)["native-editor-timeline-content"].firstMatch
+        for _ in 0..<6 where !target.exists {
+            let ruler = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.03))
+            ruler.press(forDuration: 0.05, thenDragTo: ruler.withOffset(
+                CGVector(dx: index == 1 ? 120 : -120, dy: 0)), withVelocity: 100, thenHoldForDuration: 0.2)
+        }
+        XCTAssertTrue(target.waitForExistence(timeout: 3), "Reveal the clip in the horizontal timeline before selecting it")
         let lanes = app.scrollViews["native-editor-lane-scroll"]
         let toolbar = app.descendants(matching: .any)["native-editor-clip-context"].firstMatch
         let rail = app.descendants(matching: .any)["native-editor-tool-rail"].firstMatch
@@ -113,6 +122,17 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
 
     private func canonical(_ value: Any?) throws -> Data {
         try JSONSerialization.data(withJSONObject: XCTUnwrap(value), options: [.sortedKeys, .fragmentsAllowed])
+    }
+
+    private func assertAuthoredDuration(_ sections: [String: Any]) throws {
+        let layouts = try XCTUnwrap(sections["split_screen_sections"] as? [[String: Any]])
+        let rows = try XCTUnwrap(sections["timeline_slots"] as? [[String: Any]])
+        let sectionDuration = try layouts.reduce(0.0) { try $0 + XCTUnwrap($1["duration_s"] as? Double) }
+        let serialDuration = try rows.filter { $0["split_section_id"] == nil }.reduce(0.0) {
+            try $0 + XCTUnwrap($1["duration_s"] as? Double)
+        }
+        XCTAssertEqual(sectionDuration + serialDuration, 6, accuracy: 0.001,
+                       "The branded playback outro must not extend authored footage")
     }
 
     private func assertPanelPicture(_ app: XCUIApplication) {
