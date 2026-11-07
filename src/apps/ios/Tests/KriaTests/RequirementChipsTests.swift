@@ -85,6 +85,17 @@ final class RequirementChipsTests: XCTestCase {
         XCTAssertTrue(empty.requirements.isEmpty)
     }
 
+    func testChipTitleNamesEachListItem() {
+        // KRI-1289: five rows from one clause must not read the same.
+        let spec = CreativeBriefRequirement(id: "r5", description: "show each one as big text", literal: "1. Spec-kit")
+        let impeccable = CreativeBriefRequirement(id: "r6", description: "show each one as big text", literal: "2. Impeccable")
+        XCTAssertEqual(spec.chipTitle, "show each one as big text (\"1. Spec-kit\")")
+        XCTAssertNotEqual(spec.chipTitle, impeccable.chipTitle)
+        // Already in the description, or no description: unchanged.
+        XCTAssertEqual(CreativeBriefRequirement(id: "a", description: "Title \"Before\"", literal: "Before").chipTitle, "Title \"Before\"")
+        XCTAssertEqual(CreativeBriefRequirement(id: "b", literal: "Before").chipTitle, "Before")
+    }
+
     func testCorrectionDraftAppendsAndStubIsNotSendable() {
         let label = InferredLabel(text: "Harbor Point", mediaID: nil, clipIndex: 3)
         XCTAssertEqual(label.correctionDraft(appendingTo: ""), "Clip 4 isn't Harbor Point, it's ")
