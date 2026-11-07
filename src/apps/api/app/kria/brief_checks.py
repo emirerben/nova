@@ -15309,7 +15309,7 @@ def reply_and_lead_from_receipts(
             line += f" ({_outcome_reason(str(row['reason'])).rstrip('.')})"
         lines.append(line)
     for receipt in judged:
-        line = f"{_label(receipt.status)}: {ask_text(by_id[receipt.requirement_id])}"
+        line = f"{_label(receipt.status)}: {by_id[receipt.requirement_id].text()}"
         if receipt.reason:
             line += f" ({_loc(receipt.reason).rstrip('.')})"
         lines.append(line)
@@ -15358,7 +15358,7 @@ def reply_and_lead_from_receipts(
         # Keep every requested action/status visible when its labels fit. A long
         # explanation must not consume the final action's display budget. Stored
         # receipt reasons remain complete; ellipses mark shortened display only.
-        labels = [f"{_label(r.status)}: {ask_text(by_id[r.requirement_id])}" for r in judged]
+        labels = [f"{_label(r.status)}: {by_id[r.requirement_id].text()}" for r in judged]
         prefix, suffix = text.rsplit(body, 1)
         label_body = "\n".join(f"- {line}" for line in labels)
         available = MAX_REPLY_CHARS - len(prefix + label_body + suffix + "\n…")
