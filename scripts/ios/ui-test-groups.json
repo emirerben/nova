@@ -414,7 +414,19 @@
       "KriaUITests/SpeakerFrameDirectManipulationUITests/testTapDragAndPinchMoveAndResizeTheSpeaker",
       "KriaUITests/SpeakerFrameDirectManipulationUITests/testOneDragIsOneUndoStep",
       "KriaUITests/SpeakerFrameDirectManipulationUITests/testDragAndPinchPastTheLimitsSaveAFrameInRange",
-      "KriaUITests/SpeakerFrameDirectManipulationUITests/testFullFrameSpeakerIsNotSelectable"
+      "KriaUITests/SpeakerFrameDirectManipulationUITests/testFullFrameSpeakerIsNotSelectable",
+      "KriaUITests/NativeEditorInspectorUITests/testDelayedPanelImportKeepsCapturedOwnerUndoAndReopen",
+      "KriaUITests/NativeEditorInspectorUITests/testOrdinaryFootageCanDuplicateBeforeCreatingSplitScreen",
+      "KriaUITests/NativeEditorInspectorUITests/testSplitPanelHandleExtensionClampsAtSectionAndMinimumWithoutMovingPeers",
+      "KriaUITests/NativeEditorInspectorUITests/testSplitPanelReplacesVideoWithUnusedPhotoAndKeepsCrop",
+      "KriaUITests/NativeEditorInspectorUITests/testSplitPanelSpeedCropAndSourceGainKeepPeersExact",
+      "KriaUITests/NativeEditorInspectorUITests/testSplitPanelTrimCutDuplicateAndUndoKeepPeersExact",
+      "KriaUITests/NativeEditorInspectorUITests/testSplitScreenCreationKeepsOrdinaryClipControlsAndPanelRows",
+      "KriaUITests/NativeEditorInspectorUITests/testSplitSectionLongPressDragMovesEveryPanelAndUndoesOnce",
+      "KriaUITests/SpeakerFrameDirectManipulationUITests/testRepeatedSpeakerPanelsSelectAndDragTheChosenOccurrence",
+      "KriaUITests/SpeakerFrameDirectManipulationUITests/testScopedSpeakerSaveReopenAndFullResetThroughClipInspector",
+      "KriaUITests/SplitScreenAcceptanceUITests/testCustomThreePanelLayoutSaveReopenAndFullscreenBoundary",
+      "KriaUITests/SplitScreenAcceptanceUITests/testGlobalLayersStayOnCanvasWhileScrubbingAcrossSplitBoundary"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
@@ -604,6 +616,7 @@
     "src/apps/ios/Kria/Core/FootagePlacement.swift": "creation",
     "src/apps/ios/Kria/Core/SteerNow.swift": "creation",
     "src/apps/ios/Kria/Features/WaitingMessageBar.swift": "creation",
-    "src/apps/ios/Tests/KriaUITests/SteerNowUITests.swift": "creation"
+    "src/apps/ios/Tests/KriaUITests/SteerNowUITests.swift": "creation",
+    "src/apps/ios/Tests/KriaUITests/SplitScreenAcceptanceUITests.swift": "editor"
   }
 }
