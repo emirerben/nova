@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.66.0] - 2026-11-07
+
+### Changed
+- feat(ios): clean up the talk-to-camera recording screen (KRI-1259) (#2167) <!-- release-pr: 2167 -->
+
 ## [0.88.65.0] - 2026-11-07
 
 ### Changed
