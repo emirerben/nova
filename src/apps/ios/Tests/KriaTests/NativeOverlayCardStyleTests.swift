@@ -64,6 +64,10 @@ final class NativeOverlayCardStyleTests: XCTestCase {
         XCTAssertEqual(reloaded.mediaOverlays.first?.raw["editor_style"]?.objectValue?["zoom"], .number(2))
     }
 
+    func testTheAppDeclaresTheFirstProtocolThatDecodesACardStyle() {
+        XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, 44, "44 = decodes a placed card's editor_style")
+    }
+
     func testTheFitStaysClosedAndAnAddedVisualBlockStaysPlain() {
         let session = session(style: true)
         let before = session.document
