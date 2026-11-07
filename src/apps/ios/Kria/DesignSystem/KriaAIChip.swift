@@ -59,7 +59,7 @@ struct KriaAIChipBackground: View {
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 22, style: .continuous) }
     private var solid: Bool { KriaTransparency.isReduced(reduceTransparency) }
     private var still: Bool { solid || KriaMotion.isReduced(systemReduceMotion) }
-    private var strength: Double { (isLead ? 1.3 : 1) * (pressed ? 0.7 : 1) }
+    private var strength: Double { (isLead ? 1.2 : 1) * (pressed ? 0.7 : 1) }
 
     var body: some View {
         ZStack {
@@ -73,7 +73,7 @@ struct KriaAIChipBackground: View {
 
     @ViewBuilder private var fill: some View {
         KriaGlassBackground(shape: shape, whiteness: solid ? 1 : 0.8, shadowOpacity: 0.07, shadowRadius: 8, shadowY: 3)
-            .overlay(shape.fill(LinearGradient(colors: [.clear, KriaAIColor.sky.opacity(pressed ? 0.22 : 0.12)],
+            .overlay(shape.fill(LinearGradient(colors: [.clear, KriaAIColor.sky.opacity(pressed ? 0.12 : 0.06)],
                                                startPoint: .topLeading, endPoint: .bottomTrailing)))
     }
 
@@ -89,13 +89,13 @@ struct KriaAIChipBackground: View {
 
     private var edgeLight: some View {
         ZStack {
-            turning(Rectangle().fill(KriaAIColor.ring(strength: 0.45 * strength)))
+            turning(Rectangle().fill(KriaAIColor.ring(strength: 0.22 * strength)))
                 .mask(shape.strokeBorder(lineWidth: 6).blur(radius: 3.5))
-            turning(Rectangle().fill(KriaAIColor.ring(strength: 0.7 * strength)))
+            turning(Rectangle().fill(KriaAIColor.ring(strength: 0.34 * strength)))
                 .mask(shape.strokeBorder(lineWidth: 1))
             if !still {
                 turning(Rectangle().fill(KriaAIColor.sheen))
-                    .opacity(0.5)
+                    .opacity(0.22)
                     .clipShape(shape)
             }
         }
