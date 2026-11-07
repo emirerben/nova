@@ -108,3 +108,21 @@ artifacts must pass before merge. Full account-switch UI/live-provider replay,
 KRI-1230 feature fulfillment, real-server re-record/new-take selection, physical
 render/export and rollout remain unverified; these local unit/model results do
 not establish them. The broader incidents remain open with their owners.
+
+## Xcode 26.3 CI compatibility follow-up
+
+Published documentation head `9b8462148904d017cbd1a692b05c77984f216fe5`
+started PR CI run `42344621029`. The iPhone job `128319692460` failed during
+compilation, before native tests ran: SlidePostChatEditTests and SlidePostTests
+passed their actor-isolated UserDefaults to reset(defaults:) from synchronous
+XCTest teardown, then used them in the local nonisolated override. Xcode 26.3
+reported a data-race transfer; local Xcode 26.6 had compiled those same fixtures.
+The dependent native journey and aggregate gates correctly failed.
+
+Both classes now use async throws setup/teardown with awaited superclass calls,
+matching the existing SlidePostSessionAutoAppendTests lifecycle pattern. Journal
+reset, transport-handler clearing, persistent-domain removal and defaults cleanup
+keep their original order. All test bodies/assertions, product code and formal
+model remain unchanged. Swift parsing and independent isolation review pass;
+the actual Xcode 26.3 compilation and runtime result must come from the new PR CI
+head. This follow-up does not relabel the earlier local runs as its own execution.
