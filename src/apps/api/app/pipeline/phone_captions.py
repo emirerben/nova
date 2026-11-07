@@ -424,8 +424,23 @@ def caption_look_from_variant(variant: dict) -> PhoneCaptionLook:
         single_word=_single_word_enabled(variant),
         default_animation_phases=_phases_or_none(variant.get("caption_animation_phases")),
         line_overrides=editor_style.get("line_overrides"),
+        frame_budget_frac=_frame_budget_or_none(variant.get("caption_frame_budget_frac")),
         **_caption_shape_fields(variant),
     )
+
+
+def _frame_budget_or_none(value: object) -> float | None:
+    """``variant["caption_frame_budget_frac"]`` when it is a sane canvas fraction, else None."""
+    import math
+
+    if (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and 0.5 <= value <= 1.0
+    ):
+        return float(value)
+    return None
 
 
 def _caption_shape_fields(variant: dict) -> dict:

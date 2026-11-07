@@ -36,3 +36,8 @@ watermark rewrap never grows the block past it, and a cue the pass leaves alone 
 
 Size is kept (96 px) in every case. Red control: with the compiler change stashed, 3 of the
 15 new cases fail.
+
+The budget is persisted as `caption_frame_budget_frac` (only for an asked spot) and reloaded by
+`caption_look_from_variant`, so a recipe rebuild or Save compiles with it too
+(`test_the_frame_budget_survives_persist_and_reload`: writer -> variant fields -> reload ->
+compiler; 3 cases fail with the reload line removed).

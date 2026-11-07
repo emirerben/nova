@@ -1372,6 +1372,10 @@ def generation_style_fields() -> dict:
     shape = policy.get("_caption_shape")
     if shape and look is not None:
         result["caption_shape"] = {"version": 1, **shape}
+    if look is not None and look.frame_budget_frac is not None:
+        # Only for an asked spot (KRI-1266): a rebuild or Save reloads it, so the compiler keeps
+        # holding the caption inside the frame. Every other variant keeps its exact fields.
+        result["caption_frame_budget_frac"] = look.frame_budget_frac
     if look is not None:
         result.update(
             voiceover_caption_font=look.font_family,
