@@ -453,6 +453,9 @@ class SpeakerBackgroundFact:
     # (spoken phrase or None, the worker's drop reason or None). Empty = none missing, or a
     # render recorded before the worker wrote it (no claim either way).
     unshown: tuple[tuple[str | None, str | None], ...] = ()
+    # KRI-1307: whether the recordings behind the speaker are really aimed (zoomed) at their text
+    # (None = unknown: a draft, or a render recorded before the worker wrote it).
+    aimed: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -1281,6 +1284,8 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
             color=str(doc["color"]) if doc.get("color") and not doc.get("media_id") else None,
             # The document is the creator's own edit: its windows decide, never the lane receipt.
             full_screen_opening_s=_opening_seconds(doc.get("full_screen_windows")),
+            aimed=bool(doc.get("focus"))
+            or any(isinstance(w, Mapping) and w.get("focus") for w in windows or []),
         )
     receipt = variant.get("phone_lane_receipt")
     if not isinstance(receipt, Mapping) or not isinstance(receipt.get("applied"), list):
@@ -1313,6 +1318,7 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
         asked_full_opening=opening_s is not None or opening_code is not None,
         opening_code=opening_code if opening_s is None else None,
         unshown=_unshown_recordings(detail.get("unshown")),
+        aimed=detail["aimed"] if isinstance(detail.get("aimed"), bool) else None,
     )
 
 
@@ -5303,6 +5309,7 @@ def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> Requir
     and a made one is reported beside it.
     """
     receipt = _check_speaker_background_core(req, facts)
+    receipt = _with_zoom_verdict(req, receipt, facts.speaker_background)
     fact = facts.speaker_background
     if not _full_opening_asked(req) or fact is None or receipt.status == "not_possible":
         return receipt
@@ -5316,6 +5323,42 @@ def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> Requir
         return _receipt(req, receipt.status, f"{receipt.full_reason or ''} {extra}".strip())
     gap = _opening_missing_sentence(fact, rendered=rendered)
     return _receipt(req, "partial", f"{receipt.full_reason or ''} {gap}".strip())
+
+
+def _with_zoom_verdict(
+    req: BriefRequirement, receipt: RequirementReceipt, fact: SpeakerBackgroundFact | None
+) -> RequirementReceipt:
+    """KRI-1307: a "zoom into the recordings so the text is readable" ask is judged on its own.
+
+    A typed fact (``background_zoom``, KRI-667), read off the worker's ``aimed`` record: made is
+    said beside the background; not made makes the receipt "partial" instead of a quiet "met".
+    """
+    if (
+        _fact_flag(req, "background_zoom") is not True
+        or fact is None
+        or fact.status not in {"applied", "planned"}
+        or receipt.status == "not_possible"
+    ):
+        return receipt
+    if fact.aimed is True:
+        extra = say(
+            en="Your recordings are zoomed in on their text.",
+            tr="Kayıtlar yazılarına yakınlaştırıldı.",
+        )
+        status = receipt.status
+    elif fact.aimed is False:
+        extra = say(
+            en="I couldn't zoom into your recordings this time, so small text may stay small.",
+            tr="Kayıtlara bu sefer yakınlaşamadım, küçük yazılar küçük kalabilir.",
+        )
+        status = "partial"
+    else:
+        extra = say(
+            en="I'll zoom in on the text when it's made; I can't confirm it before then.",
+            tr="Video yapılınca yazılara yakınlaşacağım; öncesinde doğrulayamıyorum.",
+        )
+        status = receipt.status
+    return _receipt(req, status, f"{receipt.full_reason or ''} {extra}".strip())
 
 
 def _check_speaker_background_core(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:

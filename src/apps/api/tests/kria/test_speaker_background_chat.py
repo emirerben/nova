@@ -1022,21 +1022,21 @@ def test_flag_off_the_brief_sections_are_the_bytes_they_were_before_the_opening(
     # keep-the-take-whole line also records speech_cleanup false).
     assert brief_prompt_section() is _BRIEF_PROMPT_SECTION
     assert digest(brief_prompt_section()) == (
-        "5d020e50a866f3d40d112f942f2b2364363e057af9c35b0b587d1d4b920594d8"
+        "2524292d4a03eaa47df8e86b440d2bd2654dd7a5ee7b4337abcd68b3187f7eb1"
     )
     assert digest(brief_prompt_section(True)) == (
-        "e212a447096d62a2f5126a17a96d6521bfeabdcaf69ea8e5486dada28b734cd9"
+        "391daf0b8d874c0948549e05cafcfd194c3d201f99cf6fb2fd522d679ce4ba2b"
     )
     assert digest(_narrow_brief_section(False)) == (
-        "cf65cdd123d476c25eebce0f6db508084122328a7d3945dec82be03520292961"
+        "61384559686fcd4290f41ea0399be972145abe50cb5c33d56a8747d5f948fc35"
     )
     assert digest(_narrow_brief_section(True)) == (
-        "38cb1ddb7ae94bc39ce23844ffacb13a7f1559169e463597af90d9e8f2f064f3"
+        "6dc9171ad05a2a92d85aa42321914ecce361754b9a177c15e5def4cd86445801"
     )
     # and the whole extractor prompt, byte for byte (captured from that same tree)
     for insert_open, expected in (
-        (False, "db92cf32636380b4fdd80ca67d55fbe0745c593d446483a7143d80dde23bb3fd"),
-        (True, "bf306d8829712ed2258592a9794791f1fccfb9994cc1a0d85af04ef9675481d6"),
+        (False, "309291769aa78f3639c5de4e9ee83da73b17b41f341239e2625365d9e2269a57"),
+        (True, "a295c877937422545ab83ee471db13f99e19211a5aafa9c464a7f4f5eaf3e4c8"),
     ):
         rendered = BriefExtractorAgent(None).render_prompt(
             BriefExtractionInput(

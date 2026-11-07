@@ -11859,6 +11859,14 @@ def _run_phone_subtitled_job(
                                 lane_receipt["background"]["focus"] = _side
                         if _named is not None and _named.zoom is not None:
                             lane_receipt["background"]["focus_zoom"] = _named.zoom
+                        # KRI-1307: whether the compiled recipe really aims the recordings at
+                        # their text (the measure or a named side / zoom), so a "zoom in so the
+                        # text is readable" ask is reported as made or not made.
+                        lane_receipt["background"]["aimed"] = bool(
+                            getattr(
+                                getattr(recipe, "speaker_background", None), "uses_focus", False
+                            )
+                        )
                 try:
                     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
