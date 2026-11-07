@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.48.0] - 2026-11-07
+
+### Changed
+- fix(kria): approval card leads with Keep original speech when the brief keeps the take whole (KRI-971) (#2164) <!-- release-pr: 2164 -->
+
 ## [0.88.47.0] - 2026-11-07
 
 ### Changed
