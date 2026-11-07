@@ -22,8 +22,49 @@ import XCTest
         app.buttons["attach-record"].tap()
         XCTAssertTrue(app.buttons["teleprompter-close"].waitForExistence(timeout: 20), "Record opens the camera")
         app.buttons["teleprompter-close"].tap()
-        XCTAssertTrue(app.buttons["attachment-close"].waitForExistence(timeout: 10), "closing the camera lands on this project's clips")
-        XCTAssertTrue(app.buttons["Remove sample.mov"].exists)
+        assertBackInTheChat(app, "closing the camera from the tray lands in the chat, not on the clip list")
+    }
+
+    func testClosingTheCameraFromTheAddMediaStepStaysOnAddMedia() {
+        let app = launch(format: "format-montage", media: false)
+        let record = app.buttons["record-footage"]
+        XCTAssertTrue(record.waitForExistence(timeout: 10), "the stage offers Record before any clip is attached")
+        record.tap()
+        XCTAssertTrue(app.buttons["teleprompter-close"].waitForExistence(timeout: 20))
+        app.buttons["teleprompter-close"].tap()
+        XCTAssertTrue(app.buttons["attachment-close"].waitForExistence(timeout: 10), "opened from the stage, the camera returns to Add media")
+        XCTAssertTrue(app.buttons["source-record"].exists)
+        capture(app, "After closing the camera from the Add media step")
+
+        app.buttons["source-record"].tap()
+        XCTAssertTrue(app.buttons["teleprompter-close"].waitForExistence(timeout: 20))
+        app.buttons["teleprompter-close"].tap()
+        XCTAssertTrue(app.buttons["attachment-close"].waitForExistence(timeout: 10), "Record on the Add media step itself returns to Add media")
+        XCTAssertTrue(app.buttons["source-upload"].exists)
+    }
+
+    func testTrayUploadThenCancellingTheFilesPickerReturnsToTheChat() {
+        let app = launch(format: "format-montage")
+        XCTAssertTrue(app.descendants(matching: .any)["footage-ready-count"].waitForExistence(timeout: 10))
+        app.buttons["chat-attach"].tap()
+        app.buttons["attach-upload"].tap()
+        let files = app.buttons["upload-source-files"]
+        XCTAssertTrue(files.waitForExistence(timeout: 5))
+        files.tap()
+        let cancel = app.buttons["Cancel"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 15), "the Files picker opens\n\(app.debugDescription)")
+        cancel.tap()
+        assertBackInTheChat(app, "cancelling the Files picker from the tray lands in the chat")
+    }
+
+    private func assertBackInTheChat(_ app: XCUIApplication, _ message: String) {
+        let left = app.buttons["attachment-close"].waitForNonExistence(timeout: 10)
+        capture(app, message)
+        XCTAssertTrue(left, message)
+        let composer = app.buttons["chat-attach"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        XCTAssertTrue(composer.isHittable, "the composer is in front")
+        XCTAssertFalse(app.buttons["source-upload"].exists)
     }
 
     func testPlusAtTheClipLimitExplainsAndOffersManageClips() {
@@ -93,11 +134,11 @@ import XCTest
         capture(app, "Tray while Kria is replying")
     }
 
-    private func launch(format: String, talkingMaxClips: String? = nil, largeText: Bool = false, sendDelay: String? = nil) -> XCUIApplication {
+    private func launch(format: String, media: Bool = true, talkingMaxClips: String? = nil, largeText: Bool = false, sendDelay: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
-        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        if media { app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1" }
         app.launchEnvironment["KRIA_TELEPROMPTER_CAMERA_UNAVAILABLE"] = "1"
         if let talkingMaxClips { app.launchEnvironment["KRIA_CHAT_TALKING_MAX_CLIPS"] = talkingMaxClips }
         if let sendDelay { app.launchEnvironment["KRIA_CHAT_SEND_DELAY"] = sendDelay }

@@ -650,6 +650,7 @@ private struct CreationWorkspaceView: View {
     /// KRI-815: the script the attachment sheet shows on its voiceover step; nil = the sheet as before.
     @State private var attachmentScript: VoiceoverScript?
     @State private var attachmentLaunch: AttachmentLaunch?
+    @State private var attachmentOrigin: AttachmentOrigin = .addMedia
     @State private var showsResult = false
     /// Live plan & review: the "Review your video" sheet, opened from the feed's CTA / Change or the project.
     @State private var reviewPresentation: ReviewPlanPresentation?
@@ -1673,6 +1674,7 @@ private struct CreationWorkspaceView: View {
     private func openVoiceoverStep(with script: VoiceoverScript) {
         guard canAttachMedia else { return }
         attachmentLaunch = nil
+        attachmentOrigin = .addMedia
         attachmentScript = script
         scrollRequest += 1
         showsAttachments = true
@@ -1795,6 +1797,7 @@ private struct CreationWorkspaceView: View {
             capabilitiesLoaded: capabilitiesAreAuthoritative,
             voiceoverScript: rerecordTarget == nil ? attachmentScript : nil,
             launch: rerecordTarget == nil ? attachmentLaunch : nil,
+            origin: rerecordTarget == nil ? attachmentOrigin : .addMedia,
             rerecordTarget: rerecordTarget,
             refresh: {
                 if !capabilitiesAreAuthoritative { await refreshCapabilities() }
@@ -1805,9 +1808,10 @@ private struct CreationWorkspaceView: View {
             .environment(\.dynamicTypeSize, dynamicTypeSize)
     }
 
-    private func openAttachments(launch: AttachmentLaunch? = nil) {
+    private func openAttachments(launch: AttachmentLaunch? = nil, origin: AttachmentOrigin = .addMedia) {
         guard canAttachMedia else { return }
         attachmentLaunch = launch
+        attachmentOrigin = origin
         attachmentScript = nil
         scrollRequest += 1
         showsAttachments = true
@@ -2249,8 +2253,8 @@ private struct CreationWorkspaceView: View {
             offersSaved: capabilities?.mediaLibrary == true,
             takesPhotos: takesPhotos,
             room: room,
-            record: takesPhotos ? nil : { openAttachments(launch: .record) },
-            upload: { openAttachments(launch: .source($0)) },
+            record: takesPhotos ? nil : { openAttachments(launch: .record, origin: .composerTray) },
+            upload: { openAttachments(launch: .source($0), origin: .composerTray) },
             addScript: selectedFormat == .talkingToCamera ? { openAttachments(launch: .recordWithScript) } : nil,
             addVoiceover: selectedFormat == .narrated ? { openAttachments(launch: .voiceover) } : nil,
             addSong: capabilities?.songUploadEnabled == true && selectedFormat?.runsAsMontage == true ? { openAttachments(launch: .step(.song)) } : nil,
