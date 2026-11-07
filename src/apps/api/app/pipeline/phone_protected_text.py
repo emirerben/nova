@@ -30,6 +30,7 @@ from typing import Any, Protocol
 import structlog
 
 from app.kria.protected_targets import (
+    ProtectedRegionSelection,
     ProtectedTarget,
     binding_protected_regions,
     protected_targets,
@@ -41,7 +42,7 @@ from app.pipeline.object_track import (
     object_collision,
     track_object,
 )
-from app.pipeline.render_geometry import NormalizedBox
+from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion
 
 log = structlog.get_logger(__name__)
 
@@ -85,12 +86,114 @@ class ProtectedGeometry:
 
 
 @dataclass(frozen=True)
+class SpeakerSlice:
+    """A speaker clip after the first on a multi-speaker Talking edit (KRI-903): its own plan
+    (its mark, its cut and crop) and the stretch of the main timeline it plays on."""
+
+    media_id: str
+    start_s: float
+    end_s: float
+    plan: ProtectedPlan
+
+
+@dataclass(frozen=True)
 class ProtectedPlan:
     targets: tuple[ProtectedTarget, ...]
     objects: tuple[ObjectTrack, ...] = ()
     target_rows: tuple[dict[str, Any], ...] = ()
     protect_all_faces: bool = False
     geometry: ProtectedGeometry | None = None
+    speakers: tuple[SpeakerSlice, ...] = ()
+
+
+@dataclass(frozen=True)
+class CaptionSubject:
+    """One speaker clip's stretch of the caption timeline (KRI-903): the objects tracked in
+    that clip, the faces seen in it, and how the clip is cut and drawn. ``start_s``/``end_s``
+    place it on the caption timeline; ``keep_segments`` are in the clip's own seconds and
+    ``face_windows`` (per caption line) in caption-timeline seconds."""
+
+    start_s: float
+    end_s: float
+    objects: tuple[ObjectTrack, ...]
+    faces: tuple[NormalizedBox, ...]
+    face_windows: tuple[ProtectedRegion, ...]
+    keep_segments: tuple[tuple[float, float], ...]
+    display_width: float
+    display_height: float
+    scale: float = 1.0
+    position_x: float = 0.0
+
+
+def _subject_at(subjects: Sequence[CaptionSubject], at_s: float) -> CaptionSubject:
+    for subject in subjects:
+        if subject.start_s <= at_s < subject.end_s:
+            return subject
+    return subjects[-1]
+
+
+def source_clock_object_regions(
+    plan: ProtectedPlan, *, canvas: _Canvas, duration_s: float, window_s: float = 0.5
+) -> list[ProtectedRegion]:
+    """Where the marked objects are on the canvas, over the speaker clip's own seconds, as
+    one box per ``window_s`` (the objects' sweep): what cards and pop-ins, which are laid out
+    on the clip's clock before any cut, must stay off. Empty without a marked object."""
+    geometry = plan.geometry
+    if geometry is None or not plan.objects or duration_s <= 0:
+        return []
+    regions: list[ProtectedRegion] = []
+    start_s = 0.0
+    while start_s < duration_s - 1e-6:
+        end_s = min(start_s + window_s, duration_s)
+        boxes: list[NormalizedBox] = []
+        for track in plan.objects:
+            found, _ = object_canvas_boxes(
+                track,
+                window=(start_s, end_s),
+                keep_segments=[(0.0, duration_s)],
+                display_width=geometry.display_width,
+                display_height=geometry.display_height,
+                canvas=canvas,
+                scale=geometry.scale,
+                position_x=geometry.position_x,
+            )
+            boxes.extend(found)
+        if boxes:
+            regions.append(
+                ProtectedRegion(
+                    start_s,
+                    end_s,
+                    NormalizedBox(
+                        min(b.left for b in boxes),
+                        min(b.top for b in boxes),
+                        max(b.right for b in boxes),
+                        max(b.bottom for b in boxes),
+                    ),
+                    kind="object",
+                )
+            )
+        start_s = end_s
+    return regions
+
+
+def binding_ask(
+    raw_binding: Mapping[str, Any] | None,
+) -> tuple[tuple[ProtectedTarget, ...], list[ProtectedRegionSelection]] | None:
+    """What the approved binding asks to keep text off and the creator's marks, or ``None``
+    when it names nothing (or is unreadable: nothing is claimed)."""
+    if not isinstance(raw_binding, Mapping):
+        return None
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+
+    try:
+        binding = BriefBinding.model_validate(dict(raw_binding))
+        brief = binding.resolve()
+    except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
+        log.warning("protected_text.binding_unreadable", error=str(exc)[:200])
+        return None
+    selections = binding_protected_regions(raw_binding)
+    targets = protected_targets(brief, selections)
+    return (targets, selections) if targets else None
 
 
 def resolve_protected_plan(
@@ -105,20 +208,10 @@ def resolve_protected_plan(
 ) -> ProtectedPlan | None:
     """The targets and tracks for one speaker clip, or ``None`` when the creator named
     nothing to keep text off (or the binding is unreadable: nothing is claimed)."""
-    if not isinstance(raw_binding, Mapping):
+    ask = binding_ask(raw_binding)
+    if ask is None:
         return None
-    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
-
-    try:
-        binding = BriefBinding.model_validate(dict(raw_binding))
-        brief = binding.resolve()
-    except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
-        log.warning("protected_text.binding_unreadable", error=str(exc)[:200])
-        return None
-    selections = binding_protected_regions(raw_binding)
-    targets = protected_targets(brief, selections)
-    if not targets:
-        return None
+    targets, selections = ask
     objects: list[ObjectTrack] = []
     rows: list[dict[str, Any]] = []
     for target in targets:
@@ -174,6 +267,25 @@ def resolve_protected_plan(
     )
 
 
+def merge_target_rows(plans: Sequence[ProtectedPlan]) -> tuple[dict[str, Any], ...]:
+    """One receipt row per target across several speaker clips' plans (KRI-903): the first
+    clip's row, except that a clip with no usable mark (``no_selection`` / ``other_source`` /
+    ``invalidated``) makes the target that status, and a mark lost on any clip makes it
+    ``unverified``. Never clearer than the weakest clip."""
+    merged: list[dict[str, Any]] = []
+    for rows in zip(*(plan.target_rows for plan in plans), strict=True):
+        worst = max(rows, key=lambda row: _STATUS_RANK.get(row.get("status", "clear"), 3))
+        row = dict(worst if "status" in worst else rows[0])
+        if "status" not in row and any(
+            r.get("track_status") != "tracked"
+            for r in rows
+            if r.get("grounding") == "creator_mark_tracked"
+        ):
+            row["track_status"] = "unverified"
+        merged.append(row)
+    return tuple(merged)
+
+
 def choose_caption_look(
     cues: Sequence[dict],
     *,
@@ -186,9 +298,14 @@ def choose_caption_look(
     display_height: float,
     scale: float = 1.0,
     position_x: float = 0.0,
+    subjects: Sequence[CaptionSubject] | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     """The caption look whose every line is clear of the objects (and, only when the creator
     named a face, the faces) while shown.
+
+    ``subjects`` (KRI-903, default ``None`` = the one clip the other arguments describe):
+    the speaker clips of a multi-speaker edit, each with its own objects, faces, cut and
+    crop. A caption line is judged against the clip playing when it starts.
 
     Measured with the look the render really draws: the phone text-style policy's caption
     look (`generation_caption_look`: its font, size, width and spot) when one applies, else
@@ -204,7 +321,23 @@ def choose_caption_look(
     )
     from app.services.phone_text_styling import generation_caption_look  # noqa: PLC0415
 
-    if not cues or (not objects and not faces):
+    if subjects is None:
+        subjects = [
+            CaptionSubject(
+                start_s=0.0,
+                end_s=float("inf"),
+                objects=tuple(objects),
+                faces=tuple(faces),
+                face_windows=(),
+                keep_segments=tuple(keep_segments),
+                display_width=display_width,
+                display_height=display_height,
+                scale=scale,
+                position_x=position_x,
+            )
+        ]
+    all_objects = [track for subject in subjects for track in subject.objects]
+    if not cues or not any(s.objects or s.faces or s.face_windows for s in subjects):
         return None, {"status": "skipped"}
     drawn = generation_caption_look(
         [dict(cue) for cue in cues],
@@ -237,18 +370,30 @@ def choose_caption_look(
                 max(b[2] for b in inks) / canvas.width,
                 max(b[3] for b in inks) / canvas.height,
             )
-            face = max((box.coverage_by(f) for f in faces), default=0.0)
+            subject = _subject_at(subjects, float(layer.start))
+            lit = (
+                *subject.faces,
+                *(
+                    w.box
+                    for w in subject.face_windows
+                    if w.overlaps(float(layer.start), float(layer.end))
+                ),
+            )
+            face = max((box.coverage_by(f) for f in lit), default=0.0)
             obj = 0.0
-            for track in objects:
+            for track in subject.objects:
                 found, receipt = object_canvas_boxes(
                     track,
-                    window=(float(layer.start), float(layer.end)),
-                    keep_segments=keep_segments,
-                    display_width=display_width,
-                    display_height=display_height,
+                    window=(
+                        float(layer.start) - subject.start_s,
+                        float(layer.end) - subject.start_s,
+                    ),
+                    keep_segments=subject.keep_segments,
+                    display_width=subject.display_width,
+                    display_height=subject.display_height,
                     canvas=canvas,
-                    scale=scale,
-                    position_x=position_x,
+                    scale=subject.scale,
+                    position_x=subject.position_x,
                 )
                 if receipt["status"] != "seen" and found:
                     verified = False
@@ -276,7 +421,7 @@ def choose_caption_look(
                 "look": "policy" if drawn is not None else "default",
                 "object_collision": False,
                 "face_collision": False,
-                "objects_verified": verified and all(t.status == "tracked" for t in objects),
+                "objects_verified": verified and all(t.status == "tracked" for t in all_objects),
                 "evaluated": evaluated,
             }
     # Nothing clears every named target: the spot covering the fewest lines (the drawn spot
@@ -297,7 +442,7 @@ def choose_caption_look(
         "status": "best_effort",
         "position_y_frac": best["position_y_frac"],
         "look": "policy" if drawn is not None else "default",
-        "object_collision": bool(objects) and best["object_lines"] > 0,
+        "object_collision": bool(all_objects) and best["object_lines"] > 0,
         "face_collision": best["face_lines"] > 0,
         "objects_verified": False,
         "evaluated": evaluated,
@@ -428,10 +573,15 @@ def keep_styled_rows_clear(
 
 
 __all__ = [
+    "CaptionSubject",
     "ProtectedGeometry",
     "ProtectedPlan",
+    "SpeakerSlice",
+    "binding_ask",
     "keep_styled_rows_clear",
     "choose_caption_look",
+    "merge_target_rows",
     "protected_text_receipt",
     "resolve_protected_plan",
+    "source_clock_object_regions",
 ]

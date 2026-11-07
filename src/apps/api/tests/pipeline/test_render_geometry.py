@@ -671,3 +671,71 @@ def test_flush_corners_are_tried_only_when_asked():
     assert arbitrate_media_overlays([_card()], **kwargs) == arbitrate_media_overlays(
         [_card()], strict_kinds=frozenset(), hug_corners=False, **kwargs
     )
+
+
+# ── KRI-903: guided-story text keeps off a marked object and every face ───────
+
+
+def _translated(probe: NormalizedBox, y_frac: float) -> NormalizedBox:
+    half = probe.height / 2.0
+    return NormalizedBox(probe.left, y_frac - half, probe.right, y_frac + half)
+
+
+def test_guided_text_leaves_a_marked_object_even_when_no_face_is_seen() -> None:
+    probe = NormalizedBox(0.1, 0.10, 0.9, 0.22)
+    plate = NormalizedBox(0.30, 0.08, 0.70, 0.26)
+    chosen, receipt = choose_guided_text_y_frac(
+        [], _receipt(detected=0), probe, [], _GUIDED_CANDIDATES, object_boxes=[plate]
+    )
+    assert chosen != pytest.approx(0.16)
+    assert _translated(probe, chosen).intersection_area(plate) == pytest.approx(0.0)
+    assert receipt["status"] == "moved"
+    assert receipt["face_reason"] == "no_face"
+
+
+def test_guided_text_leaves_a_small_object_under_a_wide_title() -> None:
+    """A thumb-sized object under a full-width title is a sliver of the title box but all of
+    the object: the object is judged by the smaller area, as the Talking writer does."""
+    probe = NormalizedBox(0.1, 0.10, 0.9, 0.22)
+    cup = NormalizedBox(0.48, 0.14, 0.52, 0.18)
+    chosen, receipt = choose_guided_text_y_frac(
+        [], _receipt(detected=0), probe, [], _GUIDED_CANDIDATES, object_boxes=[cup]
+    )
+    assert chosen != pytest.approx(0.16)
+    assert _translated(probe, chosen).intersection_area(cup) == pytest.approx(0.0)
+    assert receipt["object_coverage"] <= 0.05
+
+
+def test_guided_text_still_leaves_the_object_when_the_face_sampler_failed() -> None:
+    probe = NormalizedBox(0.1, 0.10, 0.9, 0.22)
+    plate = NormalizedBox(0.30, 0.08, 0.70, 0.26)
+    chosen, receipt = choose_guided_text_y_frac(
+        [],
+        {"timed_out": True, "attempted": 6},
+        probe,
+        [],
+        _GUIDED_CANDIDATES,
+        object_boxes=[plate],
+    )
+    assert _translated(probe, chosen).intersection_area(plate) == pytest.approx(0.0)
+    assert receipt["face_reason"] == "sampler_timeout"
+
+
+def test_guided_text_all_faces_leaves_a_face_the_dominant_cluster_ignores() -> None:
+    """The creator named a face: a second person seen at one anchor of five is still a face."""
+    probe = NormalizedBox(0.1, 0.10, 0.9, 0.22)
+    main = _face(NormalizedBox(0.35, 0.60, 0.65, 0.85))
+    minor = _face(NormalizedBox(0.30, 0.05, 0.70, 0.30))
+    regions = [main, main, main, main, minor]
+
+    kept, kept_receipt = choose_guided_text_y_frac(
+        regions, _receipt(), probe, [], _GUIDED_CANDIDATES
+    )
+    assert kept == pytest.approx(0.16), "unasked: today's dominant-face rule is unchanged"
+
+    moved, receipt = choose_guided_text_y_frac(
+        regions, _receipt(), probe, [], _GUIDED_CANDIDATES, all_faces=True
+    )
+    assert moved != pytest.approx(0.16)
+    assert _translated(probe, moved).intersection_area(minor.box) == pytest.approx(0.0)
+    assert receipt["status"] == "moved"

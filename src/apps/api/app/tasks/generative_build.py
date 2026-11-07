@@ -5005,6 +5005,14 @@ def _run_phone_guided_job(
 
         raw_plan = style_guided_generation(plan, bindings, job_id=job_id)
         plan = GuidedStoryExecutionPlan.model_validate(raw_plan)
+    from app.pipeline.phone_guided_text_placement import (  # noqa: PLC0415
+        place_guided_text,
+        unplaced_guided_receipt,
+    )
+
+    # KRI-903: "no text on her face or on the plate" -- the receipt says per target whether
+    # the text stayed clear, or that this pass could not look.
+    guided_protected_receipt = unplaced_guided_receipt(snapshot.get("creator_brief_binding"))
     if (
         settings.phone_guided_text_face_placement_enabled
         and not current_phone_text_policy()
@@ -5013,13 +5021,15 @@ def _run_phone_guided_job(
         # KRI-140/KRI-116: the cloud burn moves a title off a face on decoded
         # frames; the phone has none, so decide it here from the proxies and
         # bake it into the rows the variant persists (Save keeps it).
-        from app.pipeline.phone_guided_text_placement import (  # noqa: PLC0415
-            place_guided_text_off_faces,
-        )
         from app.storage import download_to_file  # noqa: PLC0415
 
-        placed = place_guided_text_off_faces(
-            plan, raw_plan["text_elements"], bindings, job_id=job_id, download=download_to_file
+        placed, guided_protected_receipt = place_guided_text(
+            plan,
+            raw_plan["text_elements"],
+            bindings,
+            job_id=job_id,
+            download=download_to_file,
+            raw_binding=snapshot.get("creator_brief_binding"),
         )
         if placed != raw_plan["text_elements"]:
             raw_plan["text_elements"] = placed
@@ -5314,6 +5324,16 @@ def _run_phone_guided_job(
                 "ok": False,
             }
         ]
+        if guided_protected_receipt is not None:
+            from app.kria.protected_targets import (  # noqa: PLC0415
+                PROTECTED_TEXT_FIELD,
+                protected_text_fingerprint,
+            )
+
+            current["variants"][0][PROTECTED_TEXT_FIELD] = {
+                **guided_protected_receipt,
+                "measured_fingerprint": protected_text_fingerprint(current["variants"][0]),
+            }
         if raw_plan.get("editor_sound_effects"):
             # The editor and chat read the current effects off the variant row (as on the
             # cloud guided row); absent when there are none, so other rows are unchanged.
@@ -9395,6 +9415,7 @@ def _run_phone_subtitled_job(
         list_label_asks = _list_label_asks(_phone_brief_live_requirements(snapshot))
     # KRI-827: what the creator asked to keep text off (None without such an ask).
     protected_plan: Any = None
+    protected_card_regions: tuple = ()
     protected_caption_look: Any = None
     protected_caption_receipt: dict[str, Any] | None = None
     protected_caption_avoid: Any = None
@@ -10385,8 +10406,19 @@ def _run_phone_subtitled_job(
                     position_x=speaker_position_x or 0.0,
                     cues=cues,
                     caption_style=caption_style,
+                    extra_speakers=tuple(
+                        (extra_binding, clip_id_to_local.get(extra_id))
+                        for extra_id, extra_binding in zip(
+                            extra_speaker_ids, extra_speaker_bindings, strict=True
+                        )
+                    ),
                     **text_canvas,
                 )
+            )
+            # KRI-903: cards and reaction beats are laid out on the speaker clip's own clock,
+            # so they hear where the marked object is on that clock.
+            protected_card_regions = _protected_card_regions(
+                protected_plan, probe.duration_s, **text_canvas
             )
             if protected_caption_look is not None:
                 framed_compile["caption_look"] = protected_caption_look
@@ -10574,6 +10606,8 @@ def _run_phone_subtitled_job(
                         clip_path=clip_id_to_local.get(extra_speaker_ids[-1]),
                         keep_segments=[(0.0, last_duration_s)],
                         landscape_fit=landscape_fit,
+                        # KRI-903: kept off what was marked on this clip, as on the first one.
+                        protected=_speaker_protection(protected_plan, last.media_id),
                         cta=cta_planned,
                         arrow=cta_arrow,
                         cues=cues,
@@ -10999,6 +11033,11 @@ def _run_phone_subtitled_job(
                                         phone_reaction_grounding_mod.TALKING_FULLSCREEN_HOLD_S_DEFAULT
                                     ),
                                     **framed_grounding,
+                                    **(
+                                        {"protected_regions": protected_card_regions}
+                                        if protected_card_regions
+                                        else {}
+                                    ),
                                 )
                         except OperationalError:
                             raise  # transient DB -> Celery autoretry, never a lane drop
@@ -11194,6 +11233,11 @@ def _run_phone_subtitled_job(
                                 ),
                                 **framed_grounding,
                                 **({"card_layout": card_layout} if card_layout is not None else {}),
+                                **(
+                                    {"protected_regions": protected_card_regions}
+                                    if protected_card_regions
+                                    else {}
+                                ),
                             )
                         except OperationalError:
                             raise  # transient DB -> Celery autoretry, never a lane drop
@@ -12153,12 +12197,19 @@ def _run_phone_subtitled_job(
                         "title": title_receipt if title_rows else None,
                         "closing": closing_text_receipt if closing_text_rows else None,
                         **{
-                            f"spoken:{row.get('requirement_id')}": row.get("placement")
+                            f"spoken:{row.get('requirement_id')}": _past_first_speaker(
+                                row.get("placement"),
+                                row.get("start_s"),
+                                protected_plan,
+                                float(binding.original.duration_s),
+                            )
                             for row in (spoken_text_receipt or {}).get("rows", [])
                             if row.get("status") == "placed"
                         },
                         # Item 19: a list label (and each item found on the take) is text too.
-                        **_list_label_protected_placements(list_label_receipt),
+                        **_list_label_protected_placements(
+                            list_label_receipt, protected_plan, float(binding.original.duration_s)
+                        ),
                         "captions": protected_caption_receipt,
                     },
                 ),
@@ -12718,6 +12769,45 @@ def _phone_face_box_mapper(binding: Any, position_x: float, canvas: Any = None) 
     )
 
 
+def _speaker_protection(protected: Any, media_id: str) -> Any:
+    """KRI-903: the plan of the speaker clip ``media_id`` after the first on a multi-speaker
+    edit, or ``None`` (no ask, or that clip is not one of the extra speakers)."""
+    if protected is None:
+        return None
+    return next((s.plan for s in protected.speakers if s.media_id == media_id), None)
+
+
+def _past_first_speaker(placement: Any, start_s: Any, protected: Any, first_end_s: float) -> Any:
+    """KRI-903: a text row placed against the FIRST speaker's tracks but shown while a later
+    speaker plays was never measured against that speaker: unverified, never clear."""
+    if (
+        protected is None
+        or not protected.speakers
+        or not isinstance(placement, Mapping)
+        or not isinstance(start_s, int | float)
+        or start_s < first_end_s - 1e-3
+    ):
+        return placement
+    return {**placement, "objects_verified": False, "faces": "fallback"}
+
+
+def _protected_card_regions(protected: Any, duration_s: Any, canvas: Any = None) -> tuple[Any, ...]:
+    """KRI-903: where the creator's marked objects are over the speaker clip's own seconds, for
+    the Visuals cards and reaction beats grounded on that clock; none without a marked object."""
+    if protected is None or not protected.objects:
+        return ()
+    from app.pipeline.phone_protected_text import source_clock_object_regions  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+
+    return tuple(
+        source_clock_object_regions(
+            protected,
+            canvas=canvas if canvas is not None else _STORY_CANVAS,
+            duration_s=float(duration_s),
+        )
+    )
+
+
 def _protected_placement_kwargs(protected: Any) -> dict[str, Any]:
     """KRI-827: the hard limits a protected plan adds to a text row's placement (none
     without a plan, so the placement call is exactly what it was)."""
@@ -13085,27 +13175,39 @@ def _phone_protected_plan(
     cues: list[dict],
     caption_style: str,
     canvas: Any = None,
+    extra_speakers: Sequence[tuple[Any, str | None]] = (),
 ) -> tuple[Any, Any, dict[str, Any] | None]:
     """KRI-827: what the creator asked to keep text off ("no text on her face or on the
     plate"), tracked over the speaker's kept span, and the caption look that keeps the
     caption lines off it. ``(None, None, None)`` without such an ask: nothing runs and the
-    render is unchanged."""
+    render is unchanged.
+
+    KRI-903: ``extra_speakers`` are the clips after the first on a multi-speaker edit
+    (``(binding, local_path)``, each played in full, back to back). Each is tracked on its
+    own clock, the caption lines are measured against the clip playing under them, and the
+    returned plan carries them as ``plan.speakers`` with a receipt row that is never clearer
+    than the weakest clip. Faces for the captions are sampled inside every caption line."""
     from app.pipeline import phone_subtitled_title as title_mod  # noqa: PLC0415
     from app.pipeline.phone_protected_text import (  # noqa: PLC0415
+        CaptionSubject,
         ProtectedGeometry,
+        SpeakerSlice,
         choose_caption_look,
+        merge_target_rows,
         resolve_protected_plan,
     )
     from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.pipeline.render_geometry import ProtectedRegion  # noqa: PLC0415
 
     canvas = canvas if canvas is not None else _STORY_CANVAS
 
     kept = [(float(a), float(b)) for a, b in keep_segments if float(b) > float(a)]
     if not kept:
         return None, None, None
+    raw_binding = snapshot.get("creator_brief_binding")
     plan = resolve_protected_plan(
-        snapshot.get("creator_brief_binding"),
+        raw_binding,
         media_id=binding.media_id,
         generation=getattr(binding, "generation", None),
         clip_path=clip_path,
@@ -13113,53 +13215,143 @@ def _phone_protected_plan(
     )
     if plan is None:
         return None, None, None
+    # The clips after the first play in full, each right after the one before it, on the
+    # same clock the caption cues were shifted onto (`extra_offset_s`).
+    offset_s = float(binding.original.duration_s)
+    speakers: list[tuple[Any, str | None, Any, float, float]] = []
+    for extra_binding, extra_path in extra_speakers:
+        length_s = float(extra_binding.original.duration_s)
+        extra_plan = resolve_protected_plan(
+            raw_binding,
+            media_id=extra_binding.media_id,
+            generation=getattr(extra_binding, "generation", None),
+            clip_path=extra_path,
+            source_span=(0.0, length_s),
+        )
+        if extra_plan is not None:
+            speakers.append((extra_binding, extra_path, extra_plan, offset_s, offset_s + length_s))
+        offset_s += length_s
+    plans = [plan, *(speaker[2] for speaker in speakers)]
     caption_receipt: dict[str, Any] | None = None
     look = None
-    if plan.objects or plan.protect_all_faces:
-        display_width, display_height = display_dims(binding.original)
-        scale = fit_transform(display_width, display_height, canvas, landscape_fit).scale
-        timeline_s = sum(end - start for start, end in kept)
-        geometry = ProtectedGeometry(
-            keep_segments=tuple(kept),
-            display_width=float(display_width),
-            display_height=float(display_height),
-            scale=float(scale),
-            position_x=float(position_x),
-        )
-        plan = replace(plan, geometry=geometry)
+    if any(p.objects or p.protect_all_faces for p in plans):
+        first_end_s = float(binding.original.duration_s)
+        subjects: list[Any] = []
+        face_receipts: list[dict[str, Any]] = []
+        resolved: list[Any] = []
         try:
-            faces, face_receipt = title_mod._face_boxes(
-                clip_path,
-                window=(0.0, timeline_s),
-                keep_segments=kept,
-                display_width=display_width,
-                display_height=display_height,
-                canvas=canvas,
-                scale=scale,
-                sample=title_mod.sample_face_regions,
-                position_x=position_x,
-                all_faces=plan.protect_all_faces,
+            entries = [
+                (binding, clip_path, plan, 0.0, first_end_s, kept, position_x),
+                *(
+                    (b, path, sp, start, end, [(0.0, end - start)], 0.0)
+                    for b, path, sp, start, end in speakers
+                ),
+            ]
+            for entry in entries:
+                speaker_binding, speaker_path, speaker_plan, start_s, end_s, speaker_keep, shift = (
+                    entry
+                )
+                display_width, display_height = display_dims(speaker_binding.original)
+                scale = fit_transform(display_width, display_height, canvas, landscape_fit).scale
+                timeline_s = sum(b - a for a, b in speaker_keep)
+                geometry = ProtectedGeometry(
+                    keep_segments=tuple(speaker_keep),
+                    display_width=float(display_width),
+                    display_height=float(display_height),
+                    scale=float(scale),
+                    position_x=float(shift),
+                )
+                lines = [
+                    (
+                        max(0.0, float(cue["start_s"]) - start_s),
+                        min(float(cue["end_s"]) - start_s, timeline_s),
+                    )
+                    for cue in cues
+                    if start_s - 1e-6 <= float(cue["start_s"]) < start_s + timeline_s
+                ]
+                lines = [(a, b) for a, b in lines if b > a]
+                face_windows: tuple[Any, ...] = ()
+                if speaker_plan.protect_all_faces and lines:
+                    faces, bands, face_receipt = title_mod.caption_window_faces(
+                        speaker_path,
+                        windows=lines,
+                        keep_segments=speaker_keep,
+                        display_width=display_width,
+                        display_height=display_height,
+                        canvas=canvas,
+                        scale=scale,
+                        sample=title_mod.sample_face_regions,
+                        position_x=shift,
+                    )
+                    face_windows = tuple(
+                        ProtectedRegion(start_s + w.start_s, start_s + w.end_s, w.box, "face")
+                        for w in bands
+                    )
+                else:
+                    faces, face_receipt = title_mod._face_boxes(
+                        speaker_path,
+                        window=(0.0, timeline_s),
+                        keep_segments=speaker_keep,
+                        display_width=display_width,
+                        display_height=display_height,
+                        canvas=canvas,
+                        scale=scale,
+                        sample=title_mod.sample_face_regions,
+                        position_x=shift,
+                        all_faces=speaker_plan.protect_all_faces,
+                    )
+                resolved.append(
+                    replace(speaker_plan, geometry=replace(geometry, faces=tuple(faces)))
+                )
+                face_receipts.append(face_receipt)
+                subjects.append(
+                    CaptionSubject(
+                        start_s=start_s,
+                        end_s=end_s if extra_speakers else float("inf"),
+                        objects=speaker_plan.objects,
+                        # Faces are a hard limit for the captions only when the creator named
+                        # a face; "no text on the plate" alone never moves captions off one.
+                        faces=tuple(faces) if speaker_plan.protect_all_faces else (),
+                        face_windows=face_windows,
+                        keep_segments=tuple(speaker_keep),
+                        display_width=float(display_width),
+                        display_height=float(display_height),
+                        scale=float(scale),
+                        position_x=float(shift),
+                    )
+                )
+            plan = replace(
+                resolved[0],
+                target_rows=merge_target_rows(resolved),
+                speakers=tuple(
+                    SpeakerSlice(media_id=sb.media_id, start_s=start, end_s=end, plan=rp)
+                    for (sb, _path, _sp, start, end), rp in zip(speakers, resolved[1:], strict=True)
+                ),
             )
-            plan = replace(plan, geometry=replace(geometry, faces=tuple(faces)))
             look, caption_receipt = choose_caption_look(
                 cues,
                 caption_style=caption_style,
                 canvas=canvas,
-                objects=plan.objects,
-                # Faces are a hard limit for the captions only when the creator named a
-                # face; "no text on the plate" alone never moves captions off a face.
-                faces=faces if plan.protect_all_faces else [],
+                objects=(),
+                faces=(),
                 keep_segments=kept,
-                display_width=display_width,
-                display_height=display_height,
-                scale=scale,
-                position_x=position_x,
+                display_width=float(subjects[0].display_width),
+                display_height=float(subjects[0].display_height),
+                subjects=subjects,
             )
             # Whether the captions were measured against faces the sampler actually saw.
-            caption_receipt = {**caption_receipt, "faces": face_receipt.get("faces")}
+            seen = [r.get("faces") for r in face_receipts]
+            caption_receipt = {
+                **caption_receipt,
+                "faces": "fallback"
+                if "fallback" in seen
+                else ("detected" if "detected" in seen else seen[0]),
+            }
         except Exception as exc:  # noqa: BLE001 - captions stay put; the receipt says so
             log.warning("phone_protected_text.captions_failed", error=str(exc)[:200])
             caption_receipt = {"status": "error", "object_collision": True, "error": str(exc)[:200]}
+    elif speakers:
+        plan = replace(plan, target_rows=merge_target_rows(plans))
     return plan, look, caption_receipt
 
 
@@ -13934,11 +14126,15 @@ def _phone_list_label_follow(
     return anchors, list(layout.get("phrases") or [])
 
 
-def _list_label_protected_placements(receipt: Mapping[str, Any] | None) -> dict[str, Any]:
+def _list_label_protected_placements(
+    receipt: Mapping[str, Any] | None, protected: Any = None, first_end_s: float = 0.0
+) -> dict[str, Any]:
     """The placed list labels (and the items found on the take) as ``protected_text_receipt``
     placements, so "text kept off X" is never claimed while one of them sits on X."""
     return {
-        f"list:{row.get('requirement_id')}-{row.get('list_item', 1)}": row.get("placement")
+        f"list:{row.get('requirement_id')}-{row.get('list_item', 1)}": _past_first_speaker(
+            row.get("placement"), row.get("start_s"), protected, first_end_s
+        )
         for row in (receipt or {}).get("rows", [])
         if row.get("status") == "placed"
     }
