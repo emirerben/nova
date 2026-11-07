@@ -42,7 +42,7 @@ from sqlalchemy import func, select
 
 from app.agents._schemas.text_element import _ALLOWED_FONTS, _HEX_COLOR_RE
 from app.config import settings
-from app.kria.asset_holds import Authority, resolve_clip_scope, stamp_authority
+from app.kria.asset_holds import Authority, hold_seconds, resolve_clip_scope, stamp_authority
 from app.kria.brief_route import fold_text, loose_text, wants_filming_time_text
 from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.duplicate_send import is_duplicate_answer
@@ -714,6 +714,19 @@ def _with_cut_quote(update: BriefUpdate, *sources: str | None) -> str | None:
     return update.description
 
 
+def _live_holds_on_scope(
+    prior: CreativeBrief, added: BriefRequirement, *, excluded: Collection[str]
+) -> list[BriefRequirement]:
+    """The live photo holds on ``added``'s scope, oldest first (KRI-856, KRI-857)."""
+    if hold_seconds(added) is None:
+        return []
+    return [
+        req
+        for req in prior.live()
+        if req.id not in excluded and req.scope == added.scope and hold_seconds(req) is not None
+    ]
+
+
 def apply_updates(
     prior: CreativeBrief | None,
     updates: Iterable[BriefUpdate],
@@ -753,6 +766,7 @@ def apply_updates(
     incoming: list[BriefRequirement] = []
     changed: dict[str, BriefRequirement] = {}
     removed: set[str] = set()
+    replaced: set[str] = set()
     for update in updates:
         if update.operation == "remove":
             removed.add(update.target_requirement_id or "")
@@ -812,9 +826,15 @@ def apply_updates(
             ),
             source_turn_id=source_turn_id,
         )
-        incoming.append(
-            added.model_copy(update={"authority": stamp_authority(added, creator_text)})
+        earlier = _live_holds_on_scope(prior, added, excluded=[*changed, *removed])
+        added = added.model_copy(  # noqa: PLW2901 - same requirement, stamped
+            update={
+                "authority": stamp_authority(added, creator_text, earlier[-1] if earlier else None)
+            }
         )
+        if added.authority is not None:
+            replaced.update(req.id for req in earlier)
+        incoming.append(added)
         counter += 1
     # KRI-994: a later typed "video clips only" ask withdraws an earlier typed photo ask.
     withdrawn = withdrawn_photo_asks(
@@ -847,7 +867,7 @@ def apply_updates(
                 requirements.append(req)
         elif req.id in changed and req.live:
             requirements.append(changed[req.id])
-        elif req.id in withdrawn and req.live:
+        elif (req.id in withdrawn or req.id in replaced) and req.live:
             requirements.append(req.model_copy(update={"status": "superseded"}))
         else:
             requirements.append(req)
