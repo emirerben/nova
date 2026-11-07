@@ -72,13 +72,21 @@ _NEGATED_RES = (
 )
 
 
+# KRI-1236: set by the server when the creator took a simpler version that leaves out only
+# the arrow of an ending; the ending's words stay asked for.
+ARROW_LEFT_OUT_FACT = "arrow_left_out"
+
+
 def requirement_asks_arrow(req: Any) -> bool:
     """Does this brief requirement ask for an arrow? Quoted text and the literal are
     the creator's words to show, not a request, so they are ignored; a negated mention
-    ("no arrow", "oksuz") is not an ask."""
+    ("no arrow", "oksuz") is not an ask, and neither is an arrow the creator agreed to leave
+    out (``ARROW_LEFT_OUT_FACT``)."""
     try:
         pieces = [getattr(req, "description", None)]
         facts = getattr(req, "facts", None)
+        if isinstance(facts, dict) and facts.get(ARROW_LEFT_OUT_FACT) is True:
+            return False
         if isinstance(facts, dict):
             pieces.extend(v for v in facts.values() if isinstance(v, str))
         literal = getattr(req, "literal", None)
