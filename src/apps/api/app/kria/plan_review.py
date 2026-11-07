@@ -47,6 +47,7 @@ from app.kria.plan_contract import (
     PlanSectionUndoOut,
 )
 from app.kria.reply_language import say
+from app.kria.spoken_text_ask import is_spoken_text_bar
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -320,6 +321,10 @@ def section_of_text_bar(bar: dict[str, Any], *, clip_bar_ids: frozenset[str] = f
     if is_caption_bar(bar):
         return "captions"
     role = str(bar.get("role") or "")
+    if is_spoken_text_bar(bar):
+        # KRI-747: a text the creator put on a spoken word is an overlay; it keeps the title's
+        # `generative_intro` role only because the renderers draw that role.
+        return "overlays"
     if bar_id.startswith("guided-title") or role in {"title", "intro", "hook", "generative_intro"}:
         return "title"
     if (

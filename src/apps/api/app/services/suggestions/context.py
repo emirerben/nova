@@ -13,6 +13,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from app.kria.spoken_text_ask import is_spoken_text_bar
+
 if TYPE_CHECKING:
     from app.services.suggestions.models import ChipKind
 
@@ -141,6 +143,8 @@ def title_bar(
             continue
         if editor_ids is not None and bar_id not in editor_ids:
             continue
+        if is_spoken_text_bar(bar):
+            continue  # KRI-747: the text on a spoken word wears the title's role, it is not it
         if bar.get("role") in TITLE_ROLES or bar_id.startswith("guided-title"):
             return index, bar
     return None

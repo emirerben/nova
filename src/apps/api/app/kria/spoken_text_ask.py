@@ -26,6 +26,8 @@ fact the model wrote.
 
 from __future__ import annotations
 
+import math
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
@@ -38,6 +40,23 @@ if TYPE_CHECKING:
 # Fact keys that name the spoken words a text line waits for. Narrower than
 # `brief_checks._TRIGGER_FACT_KEYS`: on a text ask, "words" / "keywords" may be the text itself.
 SPOKEN_TEXT_CUE_KEYS = ("triggers", "trigger", "trigger_words", "when_i_say", "spoken_words")
+# The id every spoken-text row carries (`phone_spoken_text.spoken_text_element`). The row keeps the
+# title's `generative_intro` role (the renderers and the iOS editor draw that role), so code that
+# reads roles to find "the title" tells the two apart by this prefix instead (KRI-747).
+SPOKEN_TEXT_ELEMENT_PREFIX = "spoken-text-"
+# Fact keys a model may record a hold under; the creator's seconds in the wording count too.
+SPOKEN_TEXT_HOLD_KEYS = ("hold_s", "duration_s")
+# The shortest and longest hold worth honouring: below this the text is not readable, above it
+# the ask is for something other than "a text on a word".
+MIN_HOLD_S = 0.3
+MAX_HOLD_S = 10.0
+# "for about a second" names one second though it holds no digit (`asset_holds.stated_seconds`
+# reads only a number and a seconds unit).
+_ONE_SECOND = re.compile(
+    r"(?<!\w)(?:for|about|around|roughly)\s+(?:(?:about|around|roughly)\s+)?(?:a|one)\s+"
+    r"(?:second|sec)(?!\w)",
+    re.IGNORECASE,
+)
 # Who says the trigger, when the creator names someone else ("the first time she says ...").
 SPOKEN_TEXT_SPEAKER_KEY = "speaker"
 # A `speaker` value that filters nothing: the creator themself, or anyone at all.
@@ -78,6 +97,41 @@ class SpokenTextAsk:
     # the legacy Talking path's first-hit rule; narrated voiceovers refuse an
     # unqualified repeat rather than inventing a moment.
     occurrence: str | int | None = None
+    # KRI-972: how long the creator asked the text to stay ("for about a second" -> 1.0). None =
+    # they named no length: the worker's default (`phone_spoken_text.HOLD_S`).
+    hold_s: float | None = None
+
+
+def is_spoken_text_bar(bar: Mapping[str, Any]) -> bool:
+    """``bar`` (a text row or editor text bar) is the text-on-a-spoken-word row, not a title."""
+    return str(bar.get("id") or "").startswith(SPOKEN_TEXT_ELEMENT_PREFIX)
+
+
+def _hold_in_range(value: float) -> float | None:
+    return round(value, 3) if math.isfinite(value) and MIN_HOLD_S <= value <= MAX_HOLD_S else None
+
+
+def spoken_text_hold_s(req: BriefRequirement) -> float | None:
+    """The seconds ``req`` asks its text to stay on screen, or None when it names none.
+
+    A numeric ``hold_s`` fact first (a typed field, KRI-667), else the one length the
+    requirement's own wording states ("for about a second", "for 3 seconds"). Seconds that sit
+    inside the on-screen copy ("3 SECONDS LEFT") are the text, not a hold; two different
+    lengths in one ask name none."""
+    for key in SPOKEN_TEXT_HOLD_KEYS:
+        value = req.facts.get(key)
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            return _hold_in_range(float(value))
+    from app.kria.asset_holds import stated_seconds  # noqa: PLC0415 - import cycle
+
+    wording = " ".join((req.description or "").split())
+    literal = " ".join((req.literal or "").split())
+    if literal:
+        wording = re.sub(re.escape(literal), " ", wording, flags=re.IGNORECASE)
+    lengths = {float(s) for s in stated_seconds(wording)}
+    if _ONE_SECOND.search(wording):
+        lengths.add(1.0)
+    return _hold_in_range(next(iter(lengths))) if len(lengths) == 1 else None
 
 
 def _fact_occurrence(req: BriefRequirement) -> str | int | None:
@@ -137,7 +191,39 @@ def requirement_spoken_text(req: BriefRequirement) -> SpokenTextAsk | None:
         triggers=triggers,
         speaker=speaker,
         occurrence=occurrence,
+        hold_s=spoken_text_hold_s(req),
     )
+
+
+def _contains_run(tokens: tuple[str, ...], run: tuple[str, ...]) -> bool:
+    return any(tokens[i : i + len(run)] == run for i in range(len(tokens) - len(run) + 1))
+
+
+def narrowed_to_answer(req: BriefRequirement, value: object) -> BriefRequirement | None:
+    """``req`` with the trigger the creator's occurrence answer was about put back (KRI-972).
+
+    The question is asked about the creator's own trigger words ("grilled cheese"); its answer
+    records them as ``value``. When the brief later carries those words inside a longer
+    trigger ("Provolone grilled cheese", lifted from the option's sentence that came back as
+    the tap's message), the pick would time the wrong word. The answered words replace that
+    longer trigger. None when no trigger of ``req`` widens ``value`` (nothing to put back)."""
+    from app.services.spoken_quotes import fold_tokens  # noqa: PLC0415
+
+    want = tuple(fold_tokens(str(value or "")))
+    if not want:
+        return None
+    for key in SPOKEN_TEXT_CUE_KEYS:
+        raw = req.facts.get(key)
+        items = list(raw) if isinstance(raw, list | tuple) else [raw]
+        for index, item in enumerate(items):
+            if not isinstance(item, str):
+                continue
+            folded = tuple(fold_tokens(item))
+            if folded != want and _contains_run(folded, want):
+                items[index] = str(value).strip()
+                kept = items if isinstance(raw, list | tuple) else items[0]
+                return req.model_copy(update={"facts": {**req.facts, key: kept}})
+    return None
 
 
 def spoken_text_asks(requirements: Iterable[BriefRequirement]) -> tuple[SpokenTextAsk, ...]:
@@ -175,12 +261,19 @@ def brief_spoken_texts(
 
 
 __all__ = [
+    "MAX_HOLD_S",
+    "MIN_HOLD_S",
     "SPOKEN_TEXT_CUE_KEYS",
+    "SPOKEN_TEXT_ELEMENT_PREFIX",
+    "SPOKEN_TEXT_HOLD_KEYS",
     "SPOKEN_TEXT_SPEAKER_KEY",
     "SpokenTextAsk",
     "brief_spoken_texts",
+    "is_spoken_text_bar",
+    "narrowed_to_answer",
     "requirement_spoken_text",
     "spoken_text_asks",
+    "spoken_text_hold_s",
     "spoken_triggers",
     "with_answered_pins",
 ]
