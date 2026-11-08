@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.111.0] - 2026-11-08
+
+### Changed
+- fix(ios): a published phone render no longer flashes Preparing your video (#2224) <!-- release-pr: 2224 -->
+
 ## [0.88.110.0] - 2026-11-08
 
 ### Changed
