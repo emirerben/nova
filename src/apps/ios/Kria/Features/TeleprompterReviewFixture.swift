@@ -24,6 +24,8 @@ import UIKit
         for slot in [TeleprompterTakeSlot.pending, .candidate] {
             var take = TeleprompterTakeManifest(status: .review, script: draft, slot: slot)
             take.speakerBackground = reference
+            // The bake fixture (a slow baker, see `FixtureCinematicBaker`) needs a candidate that still owes one.
+            if slot == .candidate, FixtureCinematicBaker.current != nil { take.cinematic = .rawReview }
             try store.save(manifest: take)
             let video = AVURLAsset(url: videoURL), audio = AVURLAsset(url: audioURL)
             guard let sourceVideo = try await video.loadTracks(withMediaType: .video).first,

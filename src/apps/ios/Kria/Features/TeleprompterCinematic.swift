@@ -62,6 +62,14 @@ enum TeleprompterCinematic {
         return (is1080p ? 0 : 4) + (has30 ? 0 : 2) + (eightBit ? 0 : 1)
     }
 
+    /// Bit rate of the baked movie (`CinematicBake`).
+    static let bakedBitsPerSecond = 16_000_000
+
+    /// Free space a bake needs before it starts: the baked movie's size, half as much again, and slack for the container.
+    static func bytesNeededToBake(seconds: Double) -> Int64 {
+        Int64((max(seconds, 0) * Double(bakedBitsPerSecond) / 8 * 1.5).rounded(.up)) + 50_000_000
+    }
+
     /// Turns Cinematic on for an input already in a committed (not yet running) session. Returns whether it is on.
     /// Every property is checked before it is set: AVFoundation raises an uncatchable exception otherwise.
     @available(iOS 26.0, *)
@@ -83,19 +91,12 @@ enum TeleprompterCinematic {
     }
 }
 
-/// What happened to a take recorded with Cinematic on. Nil on a manifest means Cinematic was off.
+/// How one bake ended. The take's persisted reading of it is `CinematicBakeState`.
 enum CinematicTakeOutcome: String, Codable, Sendable {
     /// The Cinematic look is baked into the movie.
     case applied
-    /// Cinematic was on, but this take is standard (the camera dropped the mode, or the look could not be baked).
+    /// The look could not be baked; the take stays standard.
     case standard
-
-    var creatorMessage: String {
-        switch self {
-        case .applied: "Recorded in Cinematic."
-        case .standard: "Cinematic couldn’t be applied to this take, so it’s in standard mode."
-        }
-    }
 }
 
 #if canImport(Cinematic)
@@ -103,23 +104,39 @@ enum CinematicTakeOutcome: String, Codable, Sendable {
 enum CinematicTakeFinisher {
     private static let log = Logger(subsystem: "com.kria.app", category: "teleprompter")
 
+    static func isCinematic(movieAt url: URL) async -> Bool {
+        await CNAssetInfo.isCinematic(asset: AVURLAsset(url: url))
+    }
+
     /// Nil: the movie is not Cinematic and was not touched. Otherwise the movie at `url` was replaced by a verified
     /// ordinary movie (`.applied`), or by the sharp source alone when baking failed (`.standard`). The original stays
     /// in place until a verified replacement exists, so a failure here never loses the take.
-    static func finish(movieAt url: URL) async -> CinematicTakeOutcome? {
+    ///
+    /// Throws `CancellationError`, with the movie untouched, when the task is cancelled or the system takes the GPU away
+    /// (the app left the foreground). Neither is a failed bake: the caller starts over later, so neither falls back to
+    /// the plain copy.
+    static func finish(movieAt url: URL, progress: (@Sendable (Double) -> Void)? = nil) async throws -> CinematicTakeOutcome? {
         let asset = AVURLAsset(url: url)
         guard await CNAssetInfo.isCinematic(asset: asset) else { return nil }
         let staging = FileManager.default.temporaryDirectory.appendingPathComponent("cinematic-\(UUID().uuidString).mov")
         defer { try? FileManager.default.removeItem(at: staging) }
         do {
             let info = try await CNAssetInfo(asset: asset)
-            try await CinematicBake(asset: asset, info: info).run(to: staging)
+            let length = try await asset.load(.duration).seconds
+            guard hasRoomToBake(seconds: length, in: staging.deletingLastPathComponent()) else { throw CinematicBakeError.notEnoughStorage }
+            try await CinematicBake(asset: asset, info: info).run(to: staging, progress: progress)
+            try Task.checkCancellation()
             try await verify(staging, against: asset)
             _ = try FileManager.default.replaceItemAt(url, withItemAt: staging)
             return .applied
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch CinematicBakeError.interrupted {
+            throw CancellationError()
         } catch {
             log.error("cinematic bake failed: \(error.localizedDescription, privacy: .public)")
         }
+        try Task.checkCancellation()
         do {
             try? FileManager.default.removeItem(at: staging)
             try await standardCopy(of: asset, to: staging)
@@ -130,6 +147,12 @@ enum CinematicTakeFinisher {
             log.error("cinematic standard copy failed: \(error.localizedDescription, privacy: .public)")
         }
         return .standard
+    }
+
+    private static func hasRoomToBake(seconds: Double, in directory: URL) -> Bool {
+        guard let free = try? directory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+            .volumeAvailableCapacityForImportantUsage else { return true }
+        return free >= TeleprompterCinematic.bytesNeededToBake(seconds: seconds)
     }
 
     /// The sharp source video and the audio, without the depth and metadata tracks.
@@ -181,6 +204,9 @@ enum CinematicBakeError: LocalizedError {
     case couldNotWrite
     case renderFailed(String)
     case verificationFailed(String)
+    case notEnoughStorage
+    /// The system refused GPU work because the app left the foreground.
+    case interrupted
 
     var errorDescription: String? {
         switch self {
@@ -189,6 +215,8 @@ enum CinematicBakeError: LocalizedError {
         case .couldNotWrite: "could not write the movie"
         case let .renderFailed(detail): "render failed: \(detail)"
         case let .verificationFailed(detail): "verification failed: \(detail)"
+        case .notEnoughStorage: "not enough free storage to bake"
+        case .interrupted: "the system stopped GPU work"
         }
     }
 }
@@ -207,7 +235,8 @@ final class CinematicBake: @unchecked Sendable {
         self.info = info
     }
 
-    func run(to output: URL) async throws {
+    func run(to output: URL, progress: (@Sendable (Double) -> Void)? = nil) async throws {
+        try Task.checkCancellation()
         let sessionAttributes = try await CNRenderingSession.Attributes(asset: asset)
         // The script carries the focus decisions the camera made while filming; without it the metadata's own
         // per-frame focus is used, which is what the live preview showed.
@@ -243,7 +272,7 @@ final class CinematicBake: @unchecked Sendable {
 
         let writer = try AVAssetWriter(outputURL: output, fileType: .mov)
         writer.metadata = try await Self.ordinaryMetadata(of: asset)
-        var compression: [String: Any] = [AVVideoAverageBitRateKey: 16_000_000, AVVideoExpectedSourceFrameRateKey: 30]
+        var compression: [String: Any] = [AVVideoAverageBitRateKey: TeleprompterCinematic.bakedBitsPerSecond, AVVideoExpectedSourceFrameRateKey: 30]
         if Self.isTenBit(destinationFormat) { compression[AVVideoProfileLevelKey] = kVTProfileLevel_HEVC_Main10_AutoLevel }
         var videoSettings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.hevc,
@@ -281,36 +310,53 @@ final class CinematicBake: @unchecked Sendable {
                                    metadata: SampleAligner(output: metadataOutput) {
                                        CNRenderingSession.FrameAttributes(sampleBuffer: $0, sessionAttributes: sessionAttributes)
                                    })
-        let failure: String? = await withCheckedContinuation { continuation in
-            let group = DispatchGroup()
-            let state = BakeFailure()
-            group.enter()
-            pump(videoInput, on: videoQueue, group: group) {
-                guard let sample = videoOutput.copyNextSampleBuffer() else { return .finished }
-                guard let image = CMSampleBufferGetImageBuffer(sample) else { return .skipped }
-                let time = CMSampleBufferGetPresentationTimeStamp(sample)
-                guard let pool = adaptor.pixelBufferPool else { state.set("no destination pool"); return .failed }
-                switch frames.render(image, at: time, pool: pool) {
-                case let .success(buffer):
-                    guard adaptor.append(buffer, withPresentationTime: time) else { state.set("append video"); return .failed }
-                    return .appended
-                case let .failure(failure):
-                    state.set(failure.reason); return .failed
-                }
-            }
-            for (input, output) in zip(audioInputs, audioOutputs) {
+        let length = try await asset.load(.duration).seconds
+        let cancelled = BakeCancel()
+        let report = ProgressThrottle(total: length, send: progress)
+        let failure: BakeFailure.Reason? = await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let group = DispatchGroup()
+                let state = BakeFailure()
                 group.enter()
-                pump(input, on: audioQueue, group: group) {
-                    guard let sample = output.copyNextSampleBuffer() else { return .finished }
-                    return input.append(sample) ? .appended : .failed
+                pump(videoInput, on: videoQueue, group: group) {
+                    // Cancelling finishes the inputs the ordinary way; the writer is cancelled once every pump has left.
+                    if cancelled.isSet { return .finished }
+                    guard let sample = videoOutput.copyNextSampleBuffer() else { return .finished }
+                    guard let image = CMSampleBufferGetImageBuffer(sample) else { return .skipped }
+                    let time = CMSampleBufferGetPresentationTimeStamp(sample)
+                    guard let pool = adaptor.pixelBufferPool else { state.set("no destination pool"); return .failed }
+                    switch frames.render(image, at: time, pool: pool) {
+                    case let .success(buffer):
+                        guard adaptor.append(buffer, withPresentationTime: time) else { state.set("append video"); return .failed }
+                        report.frame(at: time)
+                        return .appended
+                    case let .failure(failure):
+                        state.set(failure.reason, leftForeground: failure.leftForeground); return .failed
+                    }
                 }
+                for (input, output) in zip(audioInputs, audioOutputs) {
+                    group.enter()
+                    pump(input, on: audioQueue, group: group) {
+                        if cancelled.isSet { return .finished }
+                        guard let sample = output.copyNextSampleBuffer() else { return .finished }
+                        return input.append(sample) ? .appended : .failed
+                    }
+                }
+                group.notify(queue: videoQueue) { continuation.resume(returning: state.value) }
             }
-            group.notify(queue: videoQueue) { continuation.resume(returning: state.value) }
+        } onCancel: {
+            cancelled.set()
+        }
+        if cancelled.isSet {
+            reader.cancelReading()
+            writer.cancelWriting()
+            throw CancellationError()
         }
         if let failure {
             reader.cancelReading()
             writer.cancelWriting()
-            throw CinematicBakeError.renderFailed(failure)
+            if failure.leftForeground { throw CinematicBakeError.interrupted }
+            throw CinematicBakeError.renderFailed(failure.text)
         }
         if reader.status == .failed {
             writer.cancelWriting()
@@ -400,14 +446,23 @@ private final class FrameRenderer: @unchecked Sendable {
                                    destinationImage: destination) else { return .failure(FrameFailure("encodeRender refused \(time.seconds) s")) }
         commands.commit()
         commands.waitUntilCompleted()
-        if let error = commands.error { return .failure(FrameFailure(error.localizedDescription)) }
+        if let error = commands.error {
+            // Metal refuses GPU work once the app has left the foreground. That is the app being suspended, not a bad take.
+            let denied = (error as NSError).domain == MTLCommandBufferErrorDomain
+                && (error as NSError).code == MTLCommandBufferError.Code.notPermitted.rawValue
+            return .failure(FrameFailure(error.localizedDescription, leftForeground: denied))
+        }
         return .success(destination)
     }
 }
 
 private struct FrameFailure: Error {
     let reason: String
-    init(_ reason: String) { self.reason = reason }
+    let leftForeground: Bool
+    init(_ reason: String, leftForeground: Bool = false) {
+        self.reason = reason
+        self.leftForeground = leftForeground
+    }
 }
 
 /// Follows a side track (disparity, metadata) alongside the video: the latest sample at or before a video frame's time,
@@ -448,10 +503,45 @@ private final class SampleAligner<Value>: @unchecked Sendable {
 }
 
 private final class BakeFailure: @unchecked Sendable {
+    struct Reason: Sendable {
+        let text: String
+        let leftForeground: Bool
+    }
+
     private let lock = NSLock()
-    private var reason: String?
-    var value: String? { lock.lock(); defer { lock.unlock() }; return reason }
-    func set(_ text: String) { lock.lock(); if reason == nil { reason = text }; lock.unlock() }
+    private var reason: Reason?
+    var value: Reason? { lock.lock(); defer { lock.unlock() }; return reason }
+    func set(_ text: String, leftForeground: Bool = false) {
+        lock.lock(); if reason == nil { reason = Reason(text: text, leftForeground: leftForeground) }; lock.unlock()
+    }
+}
+
+/// Set from the task's cancellation handler (any thread), read by both pumps.
+private final class BakeCancel: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+    var isSet: Bool { lock.lock(); defer { lock.unlock() }; return flag }
+    func set() { lock.lock(); flag = true; lock.unlock() }
+}
+
+/// Reports the fraction of the source rendered, at most once per percent. Only called from the video pump's queue.
+private final class ProgressThrottle: @unchecked Sendable {
+    private let total: Double
+    private let send: (@Sendable (Double) -> Void)?
+    private var last = -1.0
+
+    init(total: Double, send: (@Sendable (Double) -> Void)?) {
+        self.total = total
+        self.send = send
+    }
+
+    func frame(at time: CMTime) {
+        guard let send, total.isFinite, total > 0 else { return }
+        let fraction = min(1, max(0, time.seconds / total))
+        guard fraction - last >= 0.01 else { return }
+        last = fraction
+        send(fraction)
+    }
 }
 
 /// Only touched on its input's serial queue.
@@ -467,6 +557,7 @@ private final class StepSource: @unchecked Sendable {
 #else
 /// The simulator SDK has no Cinematic framework, and no simulator camera records Cinematic: nothing to bake.
 enum CinematicTakeFinisher {
-    static func finish(movieAt url: URL) async -> CinematicTakeOutcome? { nil }
+    static func isCinematic(movieAt url: URL) async -> Bool { false }
+    static func finish(movieAt url: URL, progress: (@Sendable (Double) -> Void)? = nil) async throws -> CinematicTakeOutcome? { nil }
 }
 #endif

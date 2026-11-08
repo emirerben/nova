@@ -224,14 +224,18 @@ import XCTest
         XCTAssertTrue(stop.waitForExistence(timeout: 10))
         wait(seconds: 6)
         stop.tap()
-        // Baking runs on the GPU after Stop; allow it far longer than a standard save.
+        // Review opens on the raw take at once; the bake runs on the GPU afterwards and the note turns final when it ends.
         let outcome = app.descendants(matching: .any).matching(identifier: "teleprompter-review-cinematic").firstMatch
-        guard outcome.waitForExistence(timeout: 120) else {
-            XCTFail("A Cinematic take reaches Review with its Cinematic note.")
+        guard outcome.waitForExistence(timeout: 10) else {
+            XCTFail("A Cinematic take reaches Review right after Stop, with its Cinematic note.")
+            return
+        }
+        XCTAssertTrue(app.buttons["teleprompter-use-take"].isEnabled, "The raw take is usable while the look bakes.")
+        guard waitForBakeToSettle(outcome, timeout: 240) else {
+            XCTFail("The Cinematic look finishes baking within 240 s for a 6 s take.")
             return
         }
         XCTAssertEqual(outcome.label, "Recorded in Cinematic.")
-        XCTAssertTrue(app.buttons["teleprompter-use-take"].isEnabled)
         screenshot(app, named: "Cinematic take review")
 
         app.buttons["teleprompter-retake"].tap()
@@ -265,7 +269,7 @@ import XCTest
         guard environment["KRIA_TELEPROMPTER_HARDWARE_TEST"] == "1", environment["KRIA_TALK_BENCH"] == "1" else {
             throw XCTSkip("Set KRIA_TELEPROMPTER_HARDWARE_TEST=1 and KRIA_TALK_BENCH=1 (scripts/ios/talk-bench.sh does).")
         }
-        // A failed wait would otherwise run on into a 10-minute Cinematic bake that has nothing left to measure.
+        // A failed wait would otherwise run on into a long Cinematic bake that has nothing left to measure.
         continueAfterFailure = false
         let background = environment["KRIA_TALK_BENCH_BACKGROUND"] ?? "none"
         let cinematicWanted = environment["KRIA_TALK_BENCH_CINEMATIC"] == "1"
@@ -333,9 +337,23 @@ import XCTest
             XCTFail("Stop should reach Review within \(Int(reviewTimeout)) s, bake included.")
             return
         }
+        // A Cinematic take bakes after Review opens. By default the bench lets it finish first, so Use take measures the
+        // steady state and the pulled take is the baked one; KRIA_TALK_BENCH_USE_BEFORE_BAKE=1 taps Use take at once instead,
+        // which measures the wait (`talk.use.bakeWait`).
+        let bakeNote = app.descendants(matching: .any).matching(identifier: "teleprompter-review-cinematic").firstMatch
+        let bakeTimeout = TimeInterval(environment["KRIA_TALK_BENCH_BAKE_TIMEOUT"] ?? "") ?? 1_500
+        let useBeforeBake = environment["KRIA_TALK_BENCH_USE_BEFORE_BAKE"] == "1"
+        if cinematicWanted, !useBeforeBake {
+            XCTAssertTrue(waitForBakeToSettle(bakeNote, timeout: bakeTimeout), "The Cinematic look should finish baking within \(Int(bakeTimeout)) s.")
+        }
         if environment["KRIA_TALK_BENCH_USE_TAKE"] == "1", useTake.isEnabled {
             useTake.tap()
+            if cinematicWanted, useBeforeBake {
+                XCTAssertTrue(waitForBakeToSettle(bakeNote, timeout: bakeTimeout), "The Cinematic look should finish baking within \(Int(bakeTimeout)) s.")
+            }
             wait(seconds: 45)
+        } else if cinematicWanted, useBeforeBake {
+            XCTAssertTrue(waitForBakeToSettle(bakeNote, timeout: bakeTimeout), "The Cinematic look should finish baking within \(Int(bakeTimeout)) s.")
         }
         screenshot(app, named: "Talk bench review")
         // The app writes its numbers every two seconds and again when it leaves the foreground.
@@ -346,6 +364,12 @@ import XCTest
     }
 
     #if !targetEnvironment(simulator)
+    /// The Review note says "Applying your Cinematic look..." while the bake owes or runs, then turns final.
+    private func waitForBakeToSettle(_ note: XCUIElement, timeout: TimeInterval) -> Bool {
+        let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "NOT (label CONTAINS 'Applying your Cinematic look')"), object: note)
+        return XCTWaiter().wait(for: [settled], timeout: timeout) == .completed
+    }
+
     private func setWindowBackground(_ appearance: String, in app: XCUIApplication, fontChangesAllowed: Bool? = nil) {
         let grip = app.buttons["teleprompter-window-move"]
         XCTAssertTrue(grip.waitForExistence(timeout: 5))

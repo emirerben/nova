@@ -285,7 +285,9 @@
       "KriaUITests/CreationUITests/testEditorAIActivityCompletingReducedMotionCapture",
       "KriaUITests/CreationUITests/testEditorAIActivityCompletingOpaqueCapture",
       "KriaUITests/CreationUITests/testTheEditorHasNoImproveButtonAndItsChatSheetOffersTheSuggestionChips",
-      "KriaUITests/CreationUITests/testChangedEditorPreviewRetainsOldPictureAndBlocksExportThenSupportsManualUndo"
+      "KriaUITests/CreationUITests/testChangedEditorPreviewRetainsOldPictureAndBlocksExportThenSupportsManualUndo",
+      "KriaUITests/TalkBakeUITests/testReviewOpensAtOnceAndUseTakeWaitsForTheBakeThenSwaps",
+      "KriaUITests/TalkBakeUITests/testReviewNoteBecomesFinalWhenTheBakeSettlesAndUseTakeThenDoesNotWait"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
