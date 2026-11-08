@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.79.0] - 2026-11-08
+
+### Changed
+- test(kria): live OpenAI path for the SuggestionAgent eval, ten thread inputs (KRI-1254) (#2154) <!-- release-pr: 2154 -->
+
 ## [0.88.78.0] - 2026-11-08
 
 ### Changed
