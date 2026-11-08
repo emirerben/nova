@@ -212,20 +212,61 @@ extension TeleprompterRecordingFlow {
             if background != nil { clearBackground() }
             return
         }
+        switch kind {
+        case .image:
+            do {
+                let began = DispatchTime.now().uptimeNanoseconds
+                let file = try TalkBenchFixtures.makePhoto()
+                TalkBench.shared.finished("talk.bench.backgroundMake", since: began, detail: kind.rawValue)
+                chooseBackground(from: file, kind: kind)
+            } catch {
+                backgroundNote = "The bench could not make its photo background: \(error.localizedDescription)"
+            }
+        case .video:
+            // Not awaited: `load()` runs before the camera is prepared, so a video encode that stalls would leave the camera black
+            // and Record disabled, which reads as a permission failure. Awaiting it is what hid the real cause in 18 of 18 runs.
+            Task { [weak self] in await self?.installBenchVideo() }
+        }
+    }
+
+    private func installBenchVideo() async {
+        let began = DispatchTime.now().uptimeNanoseconds
         do {
-            let began = DispatchTime.now().uptimeNanoseconds
-            let file = kind == .image ? try TalkBenchFixtures.makePhoto() : try await TalkBenchFixtures.makeVideo()
-            TalkBench.shared.finished("talk.bench.backgroundMake", since: began, detail: kind.rawValue)
-            chooseBackground(from: file, kind: kind)
+            let file = try await TalkBenchFixtures.makeVideo()
+            TalkBench.shared.finished("talk.bench.backgroundMake", since: began, detail: SpeakerBackgroundKind.video.rawValue)
+            chooseBackground(from: file, kind: .video)
         } catch {
-            backgroundNote = "The bench could not make its \(kind.rawValue) background: \(error.localizedDescription)"
+            backgroundNote = "The bench could not make its video background: \(error.localizedDescription)"
         }
     }
 }
 
 /// Backgrounds for a scripted run: nobody can pick from Photos in an unattended test, so the bench makes one.
 enum TalkBenchFixtures {
-    enum Failure: Error { case writerUnavailable }
+    enum Failure: Error, CustomStringConvertible, LocalizedError {
+        case writerUnavailable
+        case writerFailed(String, frames: Int, timedOut: Bool)
+
+        var errorDescription: String? { description }
+        var description: String {
+            switch self {
+            case .writerUnavailable: "the writer or its pixel buffer pool was unavailable"
+            case let .writerFailed(reason, frames, timedOut):
+                "\(timedOut ? "encode timed out" : "writer stopped") after \(frames) of 300 frames: \(reason)"
+            }
+        }
+    }
+
+    /// Frames handed to the encoder, readable from the watchdog that cancels a stalled writer.
+    private final class EncodeProgress: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        private var expired = false
+        var appended: Int { lock.lock(); defer { lock.unlock() }; return count }
+        var timedOut: Bool { lock.lock(); defer { lock.unlock() }; return expired }
+        func appendedOne() { lock.lock(); count += 1; lock.unlock() }
+        func markTimedOut() { lock.lock(); expired = true; lock.unlock() }
+    }
 
     static var requestedBackground: SpeakerBackgroundKind? {
         switch ProcessInfo.processInfo.environment["KRIA_TALK_BENCH_BACKGROUND"] {
@@ -247,7 +288,31 @@ enum TalkBenchFixtures {
     }
 
     /// Ten seconds of 720x1280 H.264 with bars sweeping across, so the looping video background has real motion to decode.
-    static func makeVideo() async throws -> URL {
+    ///
+    /// The phone's hardware encoder is shared with the screen recording XCUITest runs, and it can fail a session: the writer
+    /// then goes to `.failed` and `isReadyForMoreMediaData` stays false for good, so a loop that only waits on that flag never
+    /// returns. Every attempt is therefore bounded, checks the writer's status while it waits, and leaves its outcome in the
+    /// `bench.video.make` fact so a stalled encode is named in `summary.json` instead of looking like a missing permission.
+    static func makeVideo(attempts: Int = 3, timeout: Duration = .seconds(45)) async throws -> URL {
+        var outcomes: [String] = []
+        for attempt in 1...attempts {
+            let began = DispatchTime.now().uptimeNanoseconds
+            do {
+                let url = try await encodeVideo(timeout: timeout)
+                outcomes.append("attempt\(attempt)=ok in \((DispatchTime.now().uptimeNanoseconds - began) / 1_000_000) ms")
+                TalkBench.shared.fact("bench.video.make", outcomes.joined(separator: "; "))
+                return url
+            } catch {
+                outcomes.append("attempt\(attempt)=\(describe(error)) after \((DispatchTime.now().uptimeNanoseconds - began) / 1_000_000) ms")
+                TalkBench.shared.fact("bench.video.make", outcomes.joined(separator: "; "))
+                if attempt == attempts || error is CancellationError { throw error }
+                try await Task.sleep(for: .seconds(1))
+            }
+        }
+        throw Failure.writerUnavailable
+    }
+
+    private static func encodeVideo(timeout: Duration) async throws -> URL {
         let size = CGSize(width: 720, height: 1280)
         let url = FileManager.default.temporaryDirectory.appending(path: "talk-bench-background.mp4")
         try? FileManager.default.removeItem(at: url)
@@ -261,11 +326,24 @@ enum TalkBenchFixtures {
         ])
         guard writer.canAdd(input) else { throw Failure.writerUnavailable }
         writer.add(input)
-        guard writer.startWriting() else { throw writer.error ?? Failure.writerUnavailable }
+        guard writer.startWriting() else { throw Failure.writerFailed(describe(writer.error), frames: 0, timedOut: false) }
         writer.startSession(atSourceTime: .zero)
+        let progress = EncodeProgress()
+        // `cancelWriting` is safe from any thread; it is what unblocks a writer the encoder stopped draining.
+        nonisolated(unsafe) let stalled = writer
+        let watchdog = Task {
+            try await Task.sleep(for: timeout)
+            progress.markTimedOut()
+            stalled.cancelWriting()
+        }
+        defer { watchdog.cancel() }
         let frames = 300
         for frame in 0..<frames {
-            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(2)) }
+            while !input.isReadyForMoreMediaData {
+                try stopIfWriterEnded(writer, progress: progress)
+                try await Task.sleep(for: .milliseconds(2))
+            }
+            try stopIfWriterEnded(writer, progress: progress)
             guard let pool = adaptor.pixelBufferPool else { throw Failure.writerUnavailable }
             var buffer: CVPixelBuffer?
             CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer)
@@ -278,13 +356,31 @@ enum TalkBenchFixtures {
             }
             CVPixelBufferUnlockBaseAddress(buffer, [])
             guard adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 30)) else {
-                throw writer.error ?? Failure.writerUnavailable
+                throw Failure.writerFailed(describe(writer.error), frames: progress.appended, timedOut: progress.timedOut)
             }
+            progress.appendedOne()
         }
         input.markAsFinished()
         await writer.finishWriting()
-        guard writer.status == .completed else { throw writer.error ?? Failure.writerUnavailable }
+        guard writer.status == .completed else {
+            throw Failure.writerFailed(describe(writer.error), frames: progress.appended, timedOut: progress.timedOut)
+        }
         return url
+    }
+
+    private static func stopIfWriterEnded(_ writer: AVAssetWriter, progress: EncodeProgress) throws {
+        guard writer.status != .writing else { return }
+        throw Failure.writerFailed(describe(writer.error), frames: progress.appended, timedOut: progress.timedOut)
+    }
+
+    /// Domain, code and the underlying error: the VideoToolbox code is what names an encoder that could not start.
+    private static func describe(_ error: Error?) -> String {
+        guard let error else { return "no error reported" }
+        if let failure = error as? Failure { return failure.description }
+        let ns = error as NSError
+        var text = "\(ns.domain) \(ns.code): \(ns.localizedDescription)"
+        if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError { text += " (underlying \(underlying.domain) \(underlying.code))" }
+        return text
     }
 
     private static func draw(in context: CGContext, size: CGSize, phase: CGFloat) {
