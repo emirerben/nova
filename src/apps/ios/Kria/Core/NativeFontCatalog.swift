@@ -3,6 +3,37 @@ import Foundation
 import SwiftUI
 import UIKit
 
+/// The type groups the font picker's sideways tabs show (KRI-1312). Derived from the
+/// registry's `vibe` (and `category` for mono) so a new font joins a tab by data alone.
+enum NativeFontGroup: String, CaseIterable, Identifiable {
+    case editorial, headlines, clean, handwriting, script, mono
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .editorial: "Editorial"
+        case .headlines: "Headlines"
+        case .clean: "Clean"
+        case .handwriting: "Handwriting"
+        case .script: "Script"
+        case .mono: "Mono"
+        }
+    }
+
+    init?(vibe: String?, category: String?) {
+        if category == "mono" { self = .mono; return }
+        switch vibe {
+        case "editorial": self = .editorial
+        case "viral_headlines": self = .headlines
+        case "clean_captions": self = .clean
+        case "handwritten": self = .handwriting
+        case "script": self = .script
+        default: return nil
+        }
+    }
+}
+
 /// The fonts the editor offers, read from the same bundled `fonts/` folder the
 /// render compiler uses (`font-registry.json` + the TTFs). The picker list is
 /// every non-deprecated registry key, i.e. the web's `INTRO_FONTS`, so both
@@ -18,6 +49,8 @@ final class NativeFontCatalog: @unchecked Sendable {
     static let fallbackFonts = ["Inter", "Fraunces", "Space Grotesk"]
 
     let pickerFonts: [String]
+    /// Picker font -> its sideways tab. A font without a recognised vibe is only in "All".
+    let groups: [String: NativeFontGroup]
     private let directory: URL?
     private let files: [String: String]
     private let instances: [String: [String: Double]]
@@ -28,16 +61,21 @@ final class NativeFontCatalog: @unchecked Sendable {
         self.directory = directory
         var files: [String: String] = [:]
         var live: [String] = []
+        var groups: [String: NativeFontGroup] = [:]
         if let directory,
            let data = try? Data(contentsOf: directory.appendingPathComponent("font-registry.json")),
            let registry = NativeFontRegistry.entries(from: data) {
             for (name, entry) in registry {
                 files[name] = entry.file
-                if entry.deprecated != true { live.append(name) }
+                if entry.deprecated != true {
+                    live.append(name)
+                    if let group = NativeFontGroup(vibe: entry.vibe, category: entry.category) { groups[name] = group }
+                }
             }
         }
         assert(!live.isEmpty || directory == nil, "font-registry.json missing from the bundled fonts folder")
         self.files = files
+        self.groups = groups
         self.pickerFonts = live.isEmpty
             ? Self.fallbackFonts
             : live.sorted { $0.lowercased() < $1.lowercased() }
@@ -49,6 +87,12 @@ final class NativeFontCatalog: @unchecked Sendable {
             instances = [:]
         }
     }
+
+    /// The picker fonts in one tab, in picker (alphabetical) order.
+    func fonts(in group: NativeFontGroup) -> [String] { pickerFonts.filter { groups[$0] == group } }
+
+    /// The tabs that have at least one font, in display order.
+    var populatedGroups: [NativeFontGroup] { NativeFontGroup.allCases.filter { !fonts(in: $0).isEmpty } }
 
     /// Same lookup order as `NativeEditorRenderCompiler.resolveFont`.
     func fontURL(for name: String) -> URL? {
@@ -100,13 +144,18 @@ enum NativeFontRegistry {
         /// Read by `NativeGlyphFallback`'s script step (KRI-1192); a value that is not a number reads as absent
         /// rather than dropping the face.
         let weight: Double?
+        /// The picker tab this font belongs to (KRI-1312); absent reads as "All" only.
+        let vibe: String?
+        let category: String?
 
-        private enum CodingKeys: String, CodingKey { case file, deprecated, weight }
+        private enum CodingKeys: String, CodingKey { case file, deprecated, weight, vibe, category }
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             file = try container.decode(String.self, forKey: .file)
             deprecated = try container.decodeIfPresent(Bool.self, forKey: .deprecated)
             weight = try? container.decodeIfPresent(Double.self, forKey: .weight)
+            vibe = try? container.decodeIfPresent(String.self, forKey: .vibe)
+            category = try? container.decodeIfPresent(String.self, forKey: .category)
         }
     }
 
