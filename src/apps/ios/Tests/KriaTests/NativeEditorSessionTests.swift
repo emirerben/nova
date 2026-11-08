@@ -4028,6 +4028,60 @@ final class NativeEditorSessionTests: XCTestCase {
         return (session, spy, loading)
     }
 
+    /// What NativeEditorProjectHeader renders for its Save button.
+    private func headerSaveControl(_ session: NativeEditorSession) -> NativeEditorSaveControl {
+        NativeEditorSaveControl(isSaving: session.isSaving, hasUnsavedChanges: session.hasUnsavedChanges)
+    }
+
+    private func gatedLoadSpy(jobID: UUID, openReceipt: OpenInEditorResponse? = nil) -> EditorCommitSpy {
+        let spy = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 1,
+            snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString,
+            baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            openReceipt: openReceipt,
+            authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
+        spy.suspendNextEditorVariant = true
+        return spy
+    }
+
+    func testThreadLoadNeverShowsSavingControl() async {
+        let spy = gatedLoadSpy(jobID: UUID())
+        let session = NativeEditorSession()
+        let loading = Task { @MainActor in await session.load(api: spy, threadID: UUID()) }
+        _ = await waitUntil { spy.editorVariantIsSuspended }
+        XCTAssertTrue(spy.editorVariantIsSuspended, "the variant read never suspended, so the load window was not observed")
+        XCTAssertEqual(headerSaveControl(session), .saved, "opening the editor is not a save the creator asked for")
+        spy.resumeEditorVariant()
+        await loading.value
+        XCTAssertEqual(headerSaveControl(session), .saved)
+    }
+
+    func testJobLoadNeverShowsSavingControl() async {
+        let jobID = UUID()
+        let spy = gatedLoadSpy(jobID: jobID, openReceipt: OpenInEditorResponse(planItemID: "item", variantID: "initial"))
+        let session = NativeEditorSession()
+        let loading = Task { @MainActor in await session.load(libraryJobID: jobID, api: spy) }
+        _ = await waitUntil { spy.editorVariantIsSuspended }
+        XCTAssertTrue(spy.editorVariantIsSuspended, "the variant read never suspended, so the load window was not observed")
+        XCTAssertEqual(headerSaveControl(session), .saved, "opening the editor is not a save the creator asked for")
+        spy.resumeEditorVariant()
+        await loading.value
+        XCTAssertEqual(headerSaveControl(session), .saved)
+    }
+
+    func testRealSaveStillShowsSavingControl() async {
+        let (session, fake) = await loadDeletionSaveFixture(suspendCommit: true)
+        XCTAssertEqual(headerSaveControl(session), .saved)
+        session.updateTextContent(id: "keep", content: "Edited")
+        XCTAssertEqual(headerSaveControl(session), .unsaved)
+        let saving = Task { await session.save() }
+        _ = await waitUntil { fake.commitIsSuspended }
+        XCTAssertTrue(fake.commitIsSuspended)
+        XCTAssertEqual(headerSaveControl(session), .saving, "a save the creator asked for must still spin")
+        fake.resumeCommit()
+        await saving.value
+    }
+
     func testNeedsReloadIsTrueBeforeAnyLoadAndFalseAfterMatchingRevision() async {
         let jobID = UUID()
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
