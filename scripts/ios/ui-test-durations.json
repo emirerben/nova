@@ -3,6 +3,7 @@
   "KriaUITests/AccountPrivacyUITests/testAcceptingAIConsentEntersWorkspace": 31.0,
   "KriaUITests/AccountPrivacyUITests/testConfirmedAccountDeletionReturnsToSignIn": 50.3,
   "KriaUITests/AccountPrivacyUITests/testDeletionRequiresConfirmationAndFailedCodeKeepsAccountOpen": 31.2,
+  "KriaUITests/AppleTextAccessibilityUITests/testFontPickerGroupsFontsByTypeUnderSidewaysTabs": 24.5,
   "KriaUITests/AppleTextAccessibilityUITests/testTextFontPickerListsWebFontsAndAppliesTheChoice": 29.9,
   "KriaUITests/AppleTextAccessibilityUITests/testTextInspectorKeepsEditingAndStyleControlsReachableAtAccessibilityTextSize": 69.8,
   "KriaUITests/AttachmentFlowUITests/testExistingVoiceoverKeepsItsCapacityAndContinueChoice": 39.6,
