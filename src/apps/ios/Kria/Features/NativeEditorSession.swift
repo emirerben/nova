@@ -8856,10 +8856,10 @@ struct NativeEditorTemporaryVideo: Sendable {
             let connected = conflicts.contains(where: { $0.path.first == "dependent" })
             canKeepLocalMergeConflicts = context.baseSong == remoteSong || (local.userSong?.isEmpty != false && !connected)
             mergeConflictMessage = !canKeepLocalMergeConflicts
-                ? "The latest version may use a different song. Use the latest conflicting changes, then edit the song. Your current edits remain here until you choose."
+                ? "The latest version may use a different song. Use it, then edit the song."
                 : connected
-                ? "Timing or deletion changes affect connected content. Choose which version of that connected content to keep; unrelated changes are preserved."
-                : "Your edits and the latest version changed the same content. Choose which conflicting changes to keep; other changes are preserved."
+                ? "Timing or deletions affect connected content. Choose which version to keep."
+                : "You and the latest version changed the same content. Choose which one to keep."
             return false
         case .unsupported(let message):
             canKeepLocalMergeConflicts = false
