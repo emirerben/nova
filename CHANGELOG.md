@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.93.0] - 2026-11-08
+
+### Fixed
+- fix(kria): exact quoted CTA ending skips the wording question, no double arrow (KRI-1286) (#2205) <!-- release-pr: 2205 -->
+
 ## [0.88.92.0] - 2026-11-08
 
 ### Fixed
