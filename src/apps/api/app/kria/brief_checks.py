@@ -47,7 +47,12 @@ from app.kria.caption_look_ask import (
     caption_look_reason,
     caption_over_speaker,
 )
-from app.kria.clip_sound_toggle_ask import SoundTarget, SoundToggleAsk, requirement_sound_toggle
+from app.kria.clip_sound_toggle_ask import (
+    SoundTarget,
+    SoundToggleAsk,
+    requirement_sound_toggle,
+    requirement_source_mute,
+)
 from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.contracts import InferredLabel, RequirementReceipt
 from app.kria.freeze_ask import (
@@ -13342,6 +13347,7 @@ def judged_at_render(req: BriefRequirement) -> bool:
         or asks_clip_speed(req)
         # KRI-942: clip sound on/off is read off the recipe the phone renders.
         or requirement_sound_toggle(req) is not None
+        or requirement_source_mute(req) is not None
         # KRI-1027: bars/crop of the sideways clips is read off the render's framing receipt.
         or _asks_landscape_fit(req)
         # Qendresa case 9: how long a whole-video line stays is read off the finished text
@@ -13673,6 +13679,7 @@ def wants_lipsync(req: BriefRequirement) -> bool:
         or wants_engine_noise_reduction(req)
         or requirement_clip_sound(req) is not None
         or requirement_sound_toggle(req) is not None
+        or requirement_source_mute(req) is not None
     ):
         return False
     return mentions_lipsync(" ".join(x for x in (req.description, req.literal) if x))
@@ -14503,6 +14510,15 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         # KRI-842: a recorded fact owns the ask, whatever words it is worded in.
         return _check_narrated_clip_sound(req, clip_sound, facts)
     sound_toggle = requirement_sound_toggle(req)
+    if sound_toggle is None and not (
+        facts.voiceover_edit
+        or facts.phone_narrated
+        or facts.phone_talking
+        or facts.audio_strategy == "voiceover"
+    ):
+        # KRI-1297: a typed whole-video ``source_muted`` ("Mute my sound") on a montage is the
+        # same ask as ``clip_sound: off``; a voiceover / Talking edit keeps the bed reader.
+        sound_toggle = requirement_source_mute(req)
     if sound_toggle is not None:
         # KRI-942: "clip sound off except that last line": the recorded on/off facts own it.
         return _check_sound_toggle(req, sound_toggle, facts)
