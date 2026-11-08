@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.102.0] - 2026-11-08
+
+### Changed
+- v0.88.42.0 feat(ios): show AI editing activity and retain the previous preview (#2145) <!-- release-pr: 2145 -->
+
 ## [0.88.101.0] - 2026-11-08
 
 ### Changed
