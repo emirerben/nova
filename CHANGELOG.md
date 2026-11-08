@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.97.0] - 2026-11-08
+
+### Changed
+- fix(kria): tight pauses stop treating a noise-gated take's fade tails as sound (KRI-1288) (#2206) <!-- release-pr: 2206 -->
+
 ## [0.88.96.0] - 2026-11-08
 
 ### Changed
