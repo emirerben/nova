@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.95.0] - 2026-11-08
+
+### Fixed
+- fix(ios): done-list rows show each list label's own text (KRI-1289) (#2208) <!-- release-pr: 2208 -->
+
 ## [0.88.94.0] - 2026-11-08
 
 ### Changed
