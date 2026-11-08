@@ -2077,7 +2077,7 @@
     {
       "id": "kri-551-consented-retakes",
       "needs_native": true,
-      "api_tests": "tests/agents/test_retake_detector.py tests/services/test_speech_cleanup_preflight.py tests/services/test_speech_cleanup_retakes_consent.py tests/services/test_speech_cleanup_decision.py tests/tasks/test_speech_cleanup_analysis.py tests/routes/test_creation_threads_speech_cleanup.py tests/kria/test_runtime_v2.py tests/kria/test_runtime_speech_cleanup_approval.py tests/kria/test_kri520_receipts.py tests/kria/test_brief_talking_receipts.py tests/kria/test_brief_marathon_receipts.py tests/tasks/test_kri551_cleanup_review_note.py tests/tasks/test_kri978_cleanup_review_seconds.py tests/routes/test_creator_agent.py tests/tasks/test_marathon_render_ready_review.py tests/kria/test_brief_rendered_speech_facts.py tests/kria/test_runtime_talking_first_draft.py tests/kria/test_kri787_merope_t1_runtime_postgres.py tests/kria/test_kri1176_restart_cut_receipts.py tests/pipeline/test_kri1176_green3_retake_replay.py tests/evals/test_retake_detector_evals.py tests/kria/test_kri1189_cut_restarts_receipts.py tests/evals/test_brief_extractor_evals.py",
+      "api_tests": "tests/agents/test_retake_detector.py tests/services/test_speech_cleanup_preflight.py tests/services/test_speech_cleanup_retakes_consent.py tests/services/test_speech_cleanup_decision.py tests/tasks/test_speech_cleanup_analysis.py tests/routes/test_creation_threads_speech_cleanup.py tests/kria/test_runtime_v2.py tests/kria/test_runtime_speech_cleanup_approval.py tests/kria/test_kri520_receipts.py tests/kria/test_brief_talking_receipts.py tests/kria/test_brief_marathon_receipts.py tests/tasks/test_kri551_cleanup_review_note.py tests/tasks/test_kri978_cleanup_review_seconds.py tests/routes/test_creator_agent.py tests/tasks/test_marathon_render_ready_review.py tests/kria/test_brief_rendered_speech_facts.py tests/kria/test_runtime_talking_first_draft.py tests/kria/test_kri787_merope_t1_runtime_postgres.py tests/kria/test_kri1176_restart_cut_receipts.py tests/pipeline/test_kri1176_green3_retake_replay.py tests/pipeline/test_speech_slate.py tests/pipeline/test_speech_slate_cleanup_e2e.py tests/evals/test_retake_detector_evals.py tests/kria/test_kri1189_cut_restarts_receipts.py tests/evals/test_brief_extractor_evals.py",
       "xctests": [
         "KriaTests/SpeechCleanupOfferTests/testLegacyStatsWithoutRetakesKeepTheOriginalDisclosure",
         "KriaTests/SpeechCleanupOfferTests/testSummarySentenceNamesRestartedSentencesWhenTheyAreIncludedInTheCount",
@@ -2086,6 +2086,7 @@
       "paths": [
         "src/apps/api/app/agents/retake_detector.py",
         "src/apps/api/app/pipeline/speech_cleanup_analysis.py",
+        "src/apps/api/app/pipeline/speech_slate.py",
         "src/apps/api/app/tasks/speech_cleanup_analysis.py",
         "src/apps/api/app/services/plan_item_media.py",
         "src/apps/api/app/services/speech_cleanup_selection.py",
