@@ -261,7 +261,8 @@ class VerifyShellTests(unittest.TestCase):
         self.assertEqual(
             filters, sorted(set(data["groups"]["smoke"]) | {f"KriaUITests/{changed}"})
         )
-        self.assertIn("Verified 5 selected UI tests passed.", result.stdout)
+        selected = len(set(data["groups"]["smoke"]) | {f"KriaUITests/{changed}"})
+        self.assertIn(f"Verified {selected} selected UI tests passed.", result.stdout)
 
     def test_each_shard_runs_and_verifies_exactly_its_part(self):
         import importlib.util
