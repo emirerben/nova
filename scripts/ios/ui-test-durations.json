@@ -174,7 +174,7 @@
   "KriaUITests/SlidePostUITests/testSwitchingSlidesAfterAddingTextNeverShowsTheBlur": 38.7,
   "KriaUITests/SlidePostUITests/testTappingAnotherTextWhilePanelIsOpenSwitchesToItsEditField": 41.1,
   "KriaUITests/SlidePostUITests/testTappingTextOnACreatedPostOpensEditTextWithKeyboard": 54.5,
-  "KriaUITests/SlidePostUITests/testTypedLineStaysOnOneLineAndResizeOnlyScalesIt": 95.2,
+  "KriaUITests/SlidePostUITests/testTypedLongLineWrapsInsideTheFrameAndShrinksToFewerRows": 95.2,
   "KriaUITests/SongOrderUITests/testAddYourSongStepAppearsOnlyWhenTheServerAdvertisesIt": 33.0,
   "KriaUITests/SongOrderUITests/testOrderCardShowsBadgesReordersAndSendsTheConfirmedOrder": 34.6,
   "KriaUITests/SongOrderUITests/testOrderQuestionFallsBackToTextWhenServerDoesNotAdvertiseIt": 18.1,
