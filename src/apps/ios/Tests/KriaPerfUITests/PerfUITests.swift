@@ -337,10 +337,15 @@ final class PerfUITests: XCTestCase {
     /// The common case: the creator reads the chat for a few seconds, then taps Open editor. The editor was prepared while
     /// the chat was on screen, so the interval from the tap to the first admitted preview frame is the whole wait, and the
     /// open does none of its heavy work again. Reports the counters' change from the tap to five seconds after it.
-    func testEditorOpenAfterIdle() {
+    func testEditorOpenAfterIdle() { openEditorAfterIdle(warm: true, name: "testEditorOpenAfterIdle") }
+
+    /// The same run with warming disabled (`KRIA_EDITOR_WARM_DISABLED`): the cold open the creator had before.
+    func testEditorOpenAfterIdleWarmingOff() { openEditorAfterIdle(warm: false, name: "testEditorOpenAfterIdleWarmingOff") }
+
+    private func openEditorAfterIdle(warm: Bool, name: String) {
         var book = CounterBook()
         measure(metrics: [interval("editor.tap.toFrame")], options: options) {
-            let app = makeApp(reset: true, editorEnvironment)
+            let app = makeApp(reset: true, editorEnvironment.merging(["KRIA_EDITOR_WARM_DISABLED": warm ? "0" : "1"]) { $1 })
             app.launch()
             waitForTranscript(app)
             let open = app.buttons["Open editor"]
@@ -354,7 +359,7 @@ final class PerfUITests: XCTestCase {
             book.add(after.reduce(into: [:]) { $0[$1.key] = $1.value - (before[$1.key] ?? 0) })
             app.terminate()
         }
-        book.report("testEditorOpenAfterIdle", prefixes: ["net ", "source", "sha256", "editor.preview.build"])
+        book.report(name, prefixes: ["net ", "source", "sha256", "editor.preview.build"])
     }
 
     /// Chat scroll while the editor prepares in the background: the hitch gate for warming. A finished render makes the
