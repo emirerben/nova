@@ -106,8 +106,10 @@ from app.services.song_range import (
     validate_song_range_answer,
 )
 from app.services.speech_cleanup_decision import (
+    BRIEF_ORIGIN,
     SPEECH_CLEANUP_CONFLICT_COPY,
     SpeechCleanupDecisionConflict,
+    brief_keep_original_decision,
     evaluate_enforce_mode_decision,
     legacy_default_decision,
     resolve_next_audio_mode,
@@ -2118,6 +2120,7 @@ async def _apply_strategy_approval_media(
     strategy_payload: dict[str, Any],
     body: ApprovalDecisionBody,
     execution: CreatorAgentExecution | None,
+    brief_binding: Any = None,
 ) -> _StrategyApprovalMedia:
     """Apply a strategy draft's media targets, then gate on speech cleanup.
 
@@ -2262,27 +2265,50 @@ async def _apply_strategy_approval_media(
     submitted_analysis_id = body.speech_cleanup_analysis_id
     submitted_choice = body.speech_cleanup_choice
     reused_recorded_decision = False
+    kept_for_brief = None
     if submitted_analysis_id is None or submitted_choice is None:
+        from app.kria.tight_pause_ask import brief_wants_original_speech  # noqa: PLC0415
+        from app.services.client_protocol import (  # noqa: PLC0415
+            cleanup_card_ignores_keep_original,
+        )
+        from app.services.render_shape import readable_brief  # noqa: PLC0415
+
+        current_cleanup = await current_analysis_async(db, item.id, for_update=True)
+        source_policy_fingerprint = (
+            resolution.source.source_policy_fingerprint if resolution.source else None
+        )
         # Follow-up approval after the creator already chose: the projection
         # stopped asking, so the client sends neither. Reuse the recorded one.
         reusable = reuse_recorded_cleanup_decision(
-            await current_analysis_async(db, item.id, for_update=True),
-            source_policy_fingerprint=(
-                resolution.source.source_policy_fingerprint if resolution.source else None
-            ),
+            current_cleanup,
+            source_policy_fingerprint=source_policy_fingerprint,
             submitted_analysis_id=submitted_analysis_id,
             submitted_choice=submitted_choice,
         )
+        if (
+            reusable is None
+            and submitted_choice is None
+            and cleanup_card_ignores_keep_original()
+            and brief_wants_original_speech(readable_brief(brief_binding))
+        ):
+            # The question the thread read did not ask this build (`_brief_answers_cleanup_ask`).
+            kept_for_brief = reusable = brief_keep_original_decision(
+                current_cleanup,
+                source_policy_fingerprint=source_policy_fingerprint,
+                submitted_analysis_id=submitted_analysis_id,
+            )
         if reusable is not None:
             log.info(
-                "kria_speech_cleanup_recorded_decision_reused",
+                "kria_speech_cleanup_brief_keeps_original"
+                if kept_for_brief
+                else "kria_speech_cleanup_recorded_decision_reused",
                 item_id=str(item.id),
                 analysis_id=str(reusable.analysis_id),
                 choice=reusable.choice,
             )
             submitted_analysis_id = reusable.analysis_id
             submitted_choice = reusable.choice
-            reused_recorded_decision = True
+            reused_recorded_decision = kept_for_brief is None
 
     result = await evaluate_enforce_mode_decision(
         db,
@@ -2308,6 +2334,7 @@ async def _apply_strategy_approval_media(
         {
             "analysis_id": str(result.analysis_id) if result.analysis_id else None,
             "choice": result.choice,
+            **({"origin": BRIEF_ORIGIN} if kept_for_brief else {}),
         },
         preflight_analysis_id,
     )
@@ -3467,6 +3494,7 @@ async def decide_approval(
             strategy_payload=document_peek.strategy,
             body=body,
             execution=execution,
+            brief_binding=document_peek.brief_binding,
         )
         if strategy_media.speech_cleanup_stash is not None and execution is not None:
             execution.result = {

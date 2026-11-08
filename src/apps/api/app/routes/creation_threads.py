@@ -3449,6 +3449,49 @@ async def _keeps_original_speech_ask(
         return False
 
 
+async def _brief_answers_cleanup_ask(
+    db: AsyncSession,
+    thread: CreationThread,
+    pending: tuple[CreativeBrief | None, dict[str, Any] | None],
+) -> bool:
+    """KRI-1291: the pending brief keeps the take whole (the caller checked), so this build's
+    card, which leads with "Clean up speech", is not asked. Only for the approval whose plain
+    create `_apply_strategy_approval_media` answers with keep_original: a pending strategy
+    approval, not a render retry (a retry ignores the cleanup choice). Reads only."""
+    from app.kria.render_retry import RETRY_FIELD  # noqa: PLC0415
+    from app.services.client_protocol import cleanup_card_ignores_keep_original  # noqa: PLC0415
+
+    _brief, snapshot = pending
+    if not (
+        cleanup_card_ignores_keep_original()
+        and isinstance(snapshot, dict)
+        and snapshot.get("kind") == "strategy"
+    ):
+        return False
+    try:
+        execution_ids = (
+            await db.execute(
+                select(CreatorAgentApproval.execution_ids)
+                .where(
+                    CreatorAgentApproval.thread_id == thread.id,
+                    CreatorAgentApproval.status == "pending",
+                )
+                .order_by(CreatorAgentApproval.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        execution = (
+            await db.get(CreatorAgentExecution, uuid.UUID(str(execution_ids[0])))
+            if execution_ids
+            else None
+        )
+    except Exception:  # noqa: BLE001 - an optional projection never breaks a read
+        log.warning("creation_thread.cleanup_ask_approval_lookup_failed", exc_info=True)
+        return False
+    result = execution.result if execution is not None else None
+    return not (isinstance(result, dict) and isinstance(result.get(RETRY_FIELD), dict))
+
+
 async def _cleanup_ask_projection(
     db: AsyncSession,
     thread: CreationThread,
@@ -3670,8 +3713,14 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
                     if tight:
                         speech_cleanup["pause_style"] = "tight"
                 if await _keeps_original_speech_ask(db, thread, pending):
-                    # KRI-971: older apps ignore this and keep today's buttons.
+                    # KRI-971: apps below KEEP_ORIGINAL_CARD_PROTOCOL ignore this.
                     speech_cleanup["recommended_choice"] = "keep_original"
+                    if (
+                        in_cohort
+                        and speech_cleanup["requires_choice"]
+                        and await _brief_answers_cleanup_ask(db, thread, pending)
+                    ):
+                        speech_cleanup["requires_choice"] = False
     render_shape_projection = None
     if isinstance(db, AsyncSession) and item is not None:
         render_shape_projection = await _render_shape_projection(db, thread, item, session)

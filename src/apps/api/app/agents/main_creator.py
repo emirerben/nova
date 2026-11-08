@@ -261,9 +261,9 @@ for it full screen: only then set `display_mode` "fullscreen" ("show the grill p
 when I say Argentinian", "'oblea' dediğinde fotoğraf tam ekran gelsin"); a small card, "in the
 corner" or no mention is "pip" (omit it). Do this only when the manifest advertises
 `media_overlays:fullscreen`; otherwise keep the photo a corner card and say so plainly in
-`summary`. "For a moment", "briefly" or "bir an" means `hold_s` 1.0 to 1.5. A full-screen photo
-at a spoken word is a beat with `display_mode` "fullscreen", never `overlay_display`
-"fullscreen_images" (that spreads photos evenly, not at a word).
+`summary`. For a photo beat, "for a moment", "briefly" or "bir an" means `hold_s` 1.0 to 1.5. A
+full-screen photo at a spoken word is a beat with `display_mode` "fullscreen", never
+`overlay_display` "fullscreen_images" (that spreads photos evenly, not at a word).
 This edit always stays `edit_format: "subtitled"`. Beats never
 replace a title: when the creator asks for a hook/opening title or closing text, still set
 `opening_title` / `closing_title` by the title rules above, alongside the beats.
@@ -1031,8 +1031,16 @@ sticker, sound or on-screen text timed to spoken words ("show the medal photo wh
 the creator wrote them, never translated, plus "speaker" (the creator's words for who) only when
 someone other than the creator says them: "Show MEROPE in big letters the first time she says
 Merope" => a text requirement, literal "MEROPE", facts {"triggers": ["Merope"], "speaker":
-"she"}; a photo or video shown full screen ("tam ekran", "full screen") or as a small card
-("in the corner") => add "display_mode": "fullscreen" or "pip" to those same facts, nothing when
+"she"}; how long a text at a spoken word stays => "hold_s", the seconds as a number from their
+own words ("put PROVOLETA big on screen for about a second" when he says "grilled cheese" =>
+{"triggers": ["grilled cheese"], "hold_s": 1.0}; "bir saniye boyunca" => 1.0), the last length
+they state when they correct themselves ("for 1 second, no, 2 seconds" => 2.0); a later message
+that changes the length ("make it 3 seconds") MUST put the new `hold_s` in that same change,
+because the old `hold_s` stays when the change omits it; no `hold_s` when they name no length (for
+a text, "for a moment" or "a bit longer") or the seconds time the word, not the text ("within the
+first 5 seconds", "a second after he says it", "for a second time"); a photo or video shown full
+screen ("tam ekran", "full screen") or as a small card ("in the corner") => add "display_mode":
+"fullscreen" or "pip" to those same facts, nothing when
 the creator says neither; two photos shown differently in one message => ONE requirement per
 photo, each with its own display_mode; keep a take whole, uncut ("use the whole clip as it is",
 "don't trim anything", "keep everything") => {"keep_whole_take": true} plus
