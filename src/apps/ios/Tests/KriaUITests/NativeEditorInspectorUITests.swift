@@ -1519,6 +1519,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(enlargedSample.contains(";dangerGuideLast:"), "The live guide sample must be available")
         XCTAssertFalse(enlargedSample.hasSuffix("dangerGuideLast:"),
                        "The enlarged live footprint must record unsafe edges")
+        // A 604 px text fits to its own room, about half the canvas high, so a gentle shrink still leaves its top in the top band.
         preview.pinch(withScale: 0.5, velocity: -0.4)
         XCTAssertTrue((preview.value as? String ?? "").hasSuffix("dangerGuideLast:"),
                       "Shrinking the footprint inside the safe area must clear the last warning sample")
