@@ -350,6 +350,9 @@ def _phrase_windows(
     starts = _find_all([t.text for t in stream], tokens)
     if starts:
         return [(stream[i].start_s, stream[i + len(tokens) - 1].end_s, None) for i in starts]
+    plural = _plural_windows(stream, tokens)
+    if plural:
+        return plural
     # KRI-1281: for a creator's on-screen text, "SpecKit", "Spec-kit" and "Spec Kit" are one
     # word spelled three ways. Opt-in: the background-follows-talk matcher deliberately keeps
     # "Mero pe" from hearing "Merope".
@@ -360,6 +363,28 @@ def _phrase_windows(
 
 
 _MIN_JOINED_CHARS = 5
+# KRI-1327 (S3): a named word heard with a plural / possessive "s" ("Nar" as "NARS", "café" as
+# "cafes."). Only words of this many letters or more, so "i" never takes "is".
+_MIN_PLURAL_STEM = 3
+
+
+def _plural_windows(stream: list[_Token], tokens: list[str]) -> list[_Heard]:
+    """Occurrences of ``tokens`` where some word was heard with an "s" or "es" added (and
+    every other word exactly); only when no exact hearing exists (the caller's order)."""
+
+    def reads_as(heard: str, wanted: str) -> bool:
+        return heard == wanted or (
+            len(wanted) >= _MIN_PLURAL_STEM
+            and wanted.isalpha()
+            and heard in (f"{wanted}s", f"{wanted}es")
+        )
+
+    m = len(tokens)
+    out: list[_Heard] = []
+    for i in range(len(stream) - m + 1):
+        if all(reads_as(stream[i + j].text, tokens[j]) for j in range(m)):
+            out.append((stream[i].start_s, stream[i + m - 1].end_s, None))
+    return out
 
 
 def _joined_spelling_windows(stream: list[_Token], tokens: list[str]) -> list[_Heard]:
