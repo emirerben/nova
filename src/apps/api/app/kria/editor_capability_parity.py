@@ -361,9 +361,9 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "soundEffectPreviewURL visualLayerSelections visualRaw footageCrop footagePlaybackRate "
         "textElement textAnchor captionPosition captionStyleSize clipTilt tiltBlockedReason "
         "tiltBackdropIsMissing "
-        "canRotateVisual canStyleVisual speakerBackgroundFocus canEditSpeakerFrame speakerEditingFrame "
-        "speakerFrame speakerFrameRect speakerSelection speakerViewport usesScopedSpeakerFrame "
-        "ownsTimingGesture",
+        "canRotateVisual canStyleVisual speakerBackgroundFocus canEditSpeakerFrame "
+        "speakerEditingFrame speakerFrame speakerFrameRect speakerSelection speakerViewport "
+        "usesScopedSpeakerFrame ownsTimingGesture",
         reason="Read-only queries the UI uses to decide what to offer.",
     ),
 }
