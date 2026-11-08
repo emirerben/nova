@@ -2505,6 +2505,23 @@ final class NativeEditorSessionTests: XCTestCase {
         }
     }
 
+    /// Same content but a newer draft revision: the document's revision stamp (what Save sends) would go stale, so it rebuilds.
+    func testNewerDraftRevisionWithIdenticalContentIsNotSkipped() async throws {
+        for kind in [HydratingProject.phoneTalking, .narrated, .voiceover] {
+            let (session, fake) = try await Self.hydratedProject(kind)
+            let builds = session.sourcePreviewBuildCountForTesting
+            let current = fake.draftSnapshot
+            let bumped = DraftSnapshot(draftID: current.draftID, itemID: current.itemID, variantKey: current.variantKey,
+                draftRevision: current.draftRevision + 1, snapshotHash: current.snapshotHash, etag: current.etag,
+                baseJobID: current.baseJobID, baseGenerationID: current.baseGenerationID, snapshot: current.snapshot,
+                canUndo: current.canUndo, createdAt: current.createdAt)
+            fake.draftSnapshot = bumped
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.sourcePreviewBuildCountForTesting - builds, 1, "\(kind)")
+            XCTAssertEqual(session.document.revision.number, bumped.draftRevision, "\(kind)")
+        }
+    }
+
     /// A save or rebase that rewrites the clean document must retire the skip, with no hook at those sites.
     func testRewrittenCleanDocumentInvalidatesTheSkip() async throws {
         for kind in [HydratingProject.phoneTalking, .narrated, .phoneNarrated] {

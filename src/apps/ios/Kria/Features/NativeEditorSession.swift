@@ -1227,6 +1227,11 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var redoStack: [EditorDocument] = []
     private var saveHistory: EditorSaveHistory<EditorDocument>?
     private var cleanDocument: EditorDocument
+    /// What the live preview was last built from: the server document as it arrived (`raw`) and the clean
+    /// document after source hydration (`hydrated`). Hydration rewrites `cleanDocument`, so a reopen can only
+    /// recognise an unchanged server document by comparing like with like. A save, rebase or merge that
+    /// rewrites `cleanDocument` breaks the second equality, which retires the pair with no hook at those sites.
+    private var serverBaseline: (raw: EditorDocument, hydrated: EditorDocument)?
     private var api: (any KriaAPIClient)?
     private weak var mediaUploads: BackgroundUploadCoordinator?
     private var pendingPlacementIDs: Set<UUID> = []
@@ -2643,6 +2648,13 @@ struct NativeEditorTemporaryVideo: Sendable {
             guard transactionBaseline == nil, !isTimingGestureActive else { return }
             if sameTarget { refreshEditingPermissions(from: variant, document: nextDocument) }
             guard !sameTarget || nextDocument != cleanDocument || staged != nil else { return }
+            if sameTarget, staged == nil, sourcePreviewState == .ready, let known = serverBaseline,
+               cleanDocument == known.hydrated, nextDraft.etag == etag {
+                // The draft setter stamps the server revision onto the document it builds; compare with that stamp.
+                var arrived = nextDocument
+                arrived.revision.number = nextDraft.revision
+                if arrived == known.raw { return }
+            }
             let retentionSequence = sourcePreviewSequence
             if sameTarget { retainAdmittedPreview() }
             defer {
@@ -4029,6 +4041,8 @@ struct NativeEditorTemporaryVideo: Sendable {
                 abandonPreviewWork(workTicket)
             }
         }
+        let rawBaseline = cleanDocument
+        serverBaseline = nil
         let generation = document.revision.baseGeneration
         sourcePreviewGeneration = generation
         sourcePreviewState = .preparing
@@ -4172,7 +4186,11 @@ struct NativeEditorTemporaryVideo: Sendable {
             sourcePool = pool
             resolvedSources = sources
             previewTalkingCutaways = phoneTalkingIndices == nil ? [] : phoneTalkingCutaways
+            let hydratedBaseline = cleanDocument
             await rebuildSourcePreview(sequence: sequence)
+            if sequence == sourcePreviewSequence, !Task.isCancelled, !sourcePreviewState.isFailure {
+                serverBaseline = (rawBaseline, hydratedBaseline)
+            }
         } catch {
             guard sequence == sourcePreviewSequence, !Task.isCancelled else { return }
             #if DEBUG
