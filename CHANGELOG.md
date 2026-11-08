@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.109.0] - 2026-11-08
+
+### Changed
+- fix(ios): editor playback no longer freezes after a missed retained-preview handoff (#2221) <!-- release-pr: 2221 -->
+
 ## [0.88.108.0] - 2026-11-08
 
 ### Changed
