@@ -87,6 +87,52 @@ final class AppleTextAccessibilityUITests: XCTestCase {
         XCTAssertEqual(font.value as? String, "Bebas Neue")
     }
 
+    /// KRI-1312: the font sheet groups fonts by type under tabs that scroll sideways.
+    func testFontPickerGroupsFontsByTypeUnderSidewaysTabs() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-two-text"]
+        app.launchEnvironment["UI_TEST_EDITOR_WIDTH"] = "390"
+        app.launch()
+
+        let timelineText = app.buttons["native-editor-timeline-text-00000000-0000-4000-8000-000000000100"].firstMatch
+        XCTAssertTrue(timelineText.waitForExistence(timeout: 8))
+        timelineText.tap()
+        timelineText.tap()
+        let styleTab = app.buttons["Style"]
+        XCTAssertTrue(styleTab.waitForExistence(timeout: 3))
+        styleTab.tap()
+        let font = app.buttons["native-editor-text-font"]
+        reveal(font, in: app.scrollViews["native-editor-text-inspector-scroll"])
+        XCTAssertTrue(font.waitForExistence(timeout: 3))
+        font.tap()
+
+        let all = app.buttons["native-editor-font-tab-all"]
+        let script = app.buttons["native-editor-font-tab-script"]
+        XCTAssertTrue(all.waitForExistence(timeout: 3))
+        XCTAssertTrue(all.isSelected)
+        XCTAssertTrue(app.buttons["native-editor-font-option-bebas-neue"].waitForExistence(timeout: 3))
+        attachScreenshot(app, name: "Font picker, All tab")
+
+        // A swipe on the pages moves to the next type and the chip follows.
+        app.scrollViews.element(boundBy: 1).swipeLeft()
+        let editorial = app.buttons["native-editor-font-tab-editorial"]
+        XCTAssertTrue(editorial.waitForExistence(timeout: 3))
+        XCTAssertTrue(editorial.isSelected)
+        XCTAssertTrue(app.buttons["native-editor-font-option-editorial-playfair-display"].waitForExistence(timeout: 3))
+
+        // Tapping a chip jumps straight to that type, which lists only its fonts.
+        XCTAssertTrue(script.waitForExistence(timeout: 3))
+        script.tap()
+        let pacifico = app.buttons["native-editor-font-option-script-pacifico"]
+        XCTAssertTrue(pacifico.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["native-editor-font-option-script-bebas-neue"].exists)
+        attachScreenshot(app, name: "Font picker, Script tab")
+        pacifico.tap()
+
+        XCTAssertTrue(font.waitForExistence(timeout: 3))
+        XCTAssertEqual(font.value as? String, "Pacifico")
+    }
+
     private func reveal(_ control: XCUIElement, in inspector: XCUIElement) {
         for _ in 0..<24 where !control.isHittable {
             let moveUp = !control.exists || control.frame.midY > inspector.frame.midY

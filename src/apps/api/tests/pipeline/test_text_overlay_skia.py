@@ -296,6 +296,20 @@ _TR_UNSAFE_FONTS: set[str] = {
     # the form matcher's TR hint biases toward simpler effects which sharply
     # narrows this exposure.
     "PermanentMarker-Regular.ttf",
+    # KRI-1312 faces without every Turkish letter. Not an EN-only scope: font_coverage swaps
+    # the WHOLE run to the glyph-fallbacks.json partner when the text needs a missing letter,
+    # so Turkish text renders in the partner instead of tofu.
+    "Italiana-Regular.ttf",
+    "BagelFatOne-Regular.ttf",
+    "GasoekOne-Regular.ttf",
+    "HomemadeApple-Regular.ttf",
+    "ReenieBeanie-Regular.ttf",
+    "NothingYouCouldDo-Regular.ttf",
+    "CoveredByYourGrace-Regular.ttf",
+    "LaBelleAurore-Regular.ttf",
+    "WaitingfortheSunrise-Regular.ttf",
+    "SueEllenFrancisco-Regular.ttf",
+    "RockSalt-Regular.ttf",
     # KRI-1192 Hangul script-fallback faces: the Noto Sans KR source has no ş ğ ı İ.
     # Never chosen for Turkish: they are deprecated (never offered) and the whole-run
     # glyph fallback only reaches them for text with Hangul (font_coverage._script_face).

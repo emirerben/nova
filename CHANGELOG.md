@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.106.0] - 2026-11-08
+
+### Changed
+- fix(ios): song timeline drag after chat scroll; repair stale UI tests and review fixture (KRI-1276) (#2211) <!-- release-pr: 2211 -->
+
+## [0.88.105.0] - 2026-11-08
+
+### Changed
+- feat(fonts): add 39 editorial, display, sans, handwriting and mono fonts (KRI-1312) (#2212) <!-- release-pr: 2212 -->
+
+## [0.88.104.0] - 2026-11-08
+
+### Changed
+- fix(kria): judge the 'zoom into the recordings' ask on its own in the receipt (KRI-1307) (#2201) <!-- release-pr: 2201 -->
+
+## [0.88.103.0] - 2026-11-08
+
+### Changed
+- feat(ios): group the font picker by type under sideways tabs (KRI-1314) (#2213) <!-- release-pr: 2213 -->
+
 ## [0.88.102.0] - 2026-11-08
 
 ### Changed

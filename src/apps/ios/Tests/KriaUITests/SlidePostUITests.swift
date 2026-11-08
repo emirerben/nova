@@ -1102,7 +1102,7 @@ import XCTest
 
     /// KRI-564: a line typed on one line stays on one line on the slide, and resizing only scales it. The edit
     /// box scrolls sideways so the caret stays visible past the box edge and comes back when it moves back.
-    func testTypedLineStaysOnOneLineAndResizeOnlyScalesIt() {
+    func testTypedLongLineWrapsInsideTheFrameAndShrinksToFewerRows() {
         let app = openRichWorkspace()
         addText(app, "Athens")
         let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
@@ -1116,7 +1116,7 @@ import XCTest
         let oneLineHeight = selection.frame.height
         XCTAssertGreaterThan(oneLineHeight, 0)
 
-        // Re-open the text and type a line far wider than the canvas (it used to wrap onto four or more lines).
+        // Re-open the text and type a line far wider than the canvas.
         Thread.sleep(forTimeInterval: 0.9)
         text.tap()
         let field = app.textViews["slidepost-text-field"].firstMatch
@@ -1140,10 +1140,11 @@ import XCTest
         canvasText(app).press(forDuration: 0.9)
         XCTAssertTrue(selection.waitForExistence(timeout: 3))
         let longHeight = selection.frame.height
-        XCTAssertLessThan(longHeight, oneLineHeight * 1.5, "the typed line stays on one line, not wrapped")
-        attach(app, "Long typed line: one line on the canvas")
+        XCTAssertGreaterThan(longHeight, oneLineHeight * 1.5, "a line wider than the frame soft-wraps instead of running off it")
+        XCTAssertLessThanOrEqual(selection.frame.width, preview.frame.width, "the wrapped line stays inside the frame")
+        attach(app, "Long typed line: wrapped inside the canvas")
 
-        // Shrinking changes the size, never the number of lines.
+        // Shrinking scales the text; the same words need fewer rows.
         Thread.sleep(forTimeInterval: 0.9)
         canvasText(app).tap()
         app.buttons["Style"].tap()
@@ -1152,8 +1153,9 @@ import XCTest
         preview.pinch(withScale: 0.5, velocity: -1)
         let shrunk = NSPredicate { _, _ in self.number(self.canvasText(app).value as? String ?? "", after: "size") < sizeBefore }
         expectation(for: shrunk, evaluatedWith: nil); waitForExpectations(timeout: 5)
-        XCTAssertLessThan(selection.frame.height, oneLineHeight * 1.5, "still one line after resizing")
-        attach(app, "Long typed line: one line after shrinking")
+        XCTAssertLessThan(selection.frame.height, longHeight, "a smaller size fits the same words in fewer rows")
+        XCTAssertLessThanOrEqual(selection.frame.width, preview.frame.width, "still inside the frame after resizing")
+        attach(app, "Long typed line: fewer rows after shrinking")
     }
 
     func testTappingAnotherTextWhilePanelIsOpenSwitchesToItsEditField() {

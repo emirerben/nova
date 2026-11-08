@@ -481,6 +481,320 @@
       "css_family": "'Noto Sans Arabic', sans-serif",
       "deprecated": true,
       "script_fallback": true
+    },
+    "Newsreader": {
+      "file": "Newsreader-Medium.ttf",
+      "ass_name": "Newsreader",
+      "weight": 500,
+      "category": "serif",
+      "css_family": "'Newsreader', serif",
+      "vibe": "editorial"
+    },
+    "Young Serif": {
+      "file": "YoungSerif-Regular.ttf",
+      "ass_name": "Young Serif",
+      "weight": 400,
+      "category": "serif",
+      "css_family": "'Young Serif', serif",
+      "vibe": "editorial"
+    },
+    "Libre Caslon Display": {
+      "file": "LibreCaslonDisplay-Regular.ttf",
+      "ass_name": "Libre Caslon Display",
+      "weight": 400,
+      "category": "serif",
+      "css_family": "'Libre Caslon Display', serif",
+      "vibe": "editorial"
+    },
+    "Hedvig Letters Serif": {
+      "file": "HedvigLettersSerif-Regular.ttf",
+      "ass_name": "Hedvig Letters Serif",
+      "weight": 400,
+      "category": "serif",
+      "css_family": "'Hedvig Letters Serif', serif",
+      "vibe": "editorial"
+    },
+    "Literata": {
+      "file": "Literata-SemiBold.ttf",
+      "ass_name": "Literata",
+      "weight": 600,
+      "category": "serif",
+      "css_family": "'Literata', serif",
+      "vibe": "editorial"
+    },
+    "Italiana": {
+      "file": "Italiana-Regular.ttf",
+      "ass_name": "Italiana",
+      "weight": 400,
+      "category": "serif",
+      "css_family": "'Italiana', serif",
+      "vibe": "editorial"
+    },
+    "Cinzel": {
+      "file": "Cinzel-SemiBold.ttf",
+      "ass_name": "Cinzel",
+      "weight": 600,
+      "category": "serif",
+      "css_family": "'Cinzel', serif",
+      "vibe": "editorial"
+    },
+    "Yeseva One": {
+      "file": "YesevaOne-Regular.ttf",
+      "ass_name": "Yeseva One",
+      "weight": 400,
+      "category": "serif",
+      "css_family": "'Yeseva One', serif",
+      "vibe": "editorial"
+    },
+    "Rozha One": {
+      "file": "RozhaOne-Regular.ttf",
+      "ass_name": "Rozha One",
+      "weight": 400,
+      "category": "serif",
+      "css_family": "'Rozha One', serif",
+      "vibe": "editorial"
+    },
+    "Lora": {
+      "file": "Lora-SemiBold.ttf",
+      "ass_name": "Lora",
+      "weight": 600,
+      "category": "serif",
+      "css_family": "'Lora', serif",
+      "vibe": "editorial"
+    },
+    "Shrikhand": {
+      "file": "Shrikhand-Regular.ttf",
+      "ass_name": "Shrikhand",
+      "weight": 400,
+      "category": "serif",
+      "css_family": "'Shrikhand', serif",
+      "vibe": "viral_headlines"
+    },
+    "Bagel Fat One": {
+      "file": "BagelFatOne-Regular.ttf",
+      "ass_name": "Bagel Fat One",
+      "weight": 400,
+      "category": "sans",
+      "css_family": "'Bagel Fat One', sans-serif",
+      "vibe": "viral_headlines"
+    },
+    "Dela Gothic One": {
+      "file": "DelaGothicOne-Regular.ttf",
+      "ass_name": "Dela Gothic One",
+      "weight": 400,
+      "category": "sans",
+      "css_family": "'Dela Gothic One', sans-serif",
+      "vibe": "viral_headlines"
+    },
+    "Gasoek One": {
+      "file": "GasoekOne-Regular.ttf",
+      "ass_name": "Gasoek One",
+      "weight": 400,
+      "category": "sans",
+      "css_family": "'Gasoek One', sans-serif",
+      "vibe": "viral_headlines"
+    },
+    "Climate Crisis": {
+      "file": "ClimateCrisis-Regular.ttf",
+      "ass_name": "Climate Crisis",
+      "weight": 400,
+      "category": "sans",
+      "css_family": "'Climate Crisis', sans-serif",
+      "vibe": "viral_headlines"
+    },
+    "Bungee": {
+      "file": "Bungee-Regular.ttf",
+      "ass_name": "Bungee",
+      "weight": 400,
+      "category": "sans",
+      "css_family": "'Bungee', sans-serif",
+      "vibe": "viral_headlines"
+    },
+    "Basteleur": {
+      "file": "Basteleur-Bold.ttf",
+      "ass_name": "Basteleur",
+      "weight": 700,
+      "category": "serif",
+      "css_family": "'Basteleur', serif",
+      "vibe": "viral_headlines"
+    },
+    "Anybody": {
+      "file": "Anybody-ExpandedExtraBold.ttf",
+      "ass_name": "Anybody Expanded",
+      "weight": 800,
+      "category": "sans",
+      "css_family": "'Anybody Expanded', sans-serif",
+      "vibe": "viral_headlines"
+    },
+    "Geist": {
+      "file": "Geist-SemiBold.ttf",
+      "ass_name": "Geist",
+      "weight": 600,
+      "category": "sans",
+      "css_family": "'Geist', sans-serif",
+      "vibe": "clean_captions"
+    },
+    "Mona Sans": {
+      "file": "MonaSans-Bold.ttf",
+      "ass_name": "Mona Sans",
+      "weight": 700,
+      "category": "sans",
+      "css_family": "'Mona Sans', sans-serif",
+      "vibe": "clean_captions"
+    },
+    "Funnel Display": {
+      "file": "FunnelDisplay-SemiBold.ttf",
+      "ass_name": "Funnel Display",
+      "weight": 600,
+      "category": "sans",
+      "css_family": "'Funnel Display', sans-serif",
+      "vibe": "clean_captions"
+    },
+    "Instrument Sans": {
+      "file": "InstrumentSans-SemiBold.ttf",
+      "ass_name": "Instrument Sans",
+      "weight": 600,
+      "category": "sans",
+      "css_family": "'Instrument Sans', sans-serif",
+      "vibe": "clean_captions"
+    },
+    "Schibsted Grotesk": {
+      "file": "SchibstedGrotesk-Bold.ttf",
+      "ass_name": "Schibsted Grotesk",
+      "weight": 700,
+      "category": "sans",
+      "css_family": "'Schibsted Grotesk', sans-serif",
+      "vibe": "clean_captions"
+    },
+    "Familjen Grotesk": {
+      "file": "FamiljenGrotesk-SemiBold.ttf",
+      "ass_name": "Familjen Grotesk",
+      "weight": 600,
+      "category": "sans",
+      "css_family": "'Familjen Grotesk', sans-serif",
+      "vibe": "clean_captions"
+    },
+    "Host Grotesk": {
+      "file": "HostGrotesk-SemiBold.ttf",
+      "ass_name": "Host Grotesk",
+      "weight": 600,
+      "category": "sans",
+      "css_family": "'Host Grotesk', sans-serif",
+      "vibe": "clean_captions"
+    },
+    "Homemade Apple": {
+      "file": "HomemadeApple-Regular.ttf",
+      "ass_name": "Homemade Apple",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Homemade Apple', cursive",
+      "vibe": "handwritten"
+    },
+    "Geist Mono": {
+      "file": "GeistMono-Medium.ttf",
+      "ass_name": "Geist Mono",
+      "weight": 500,
+      "category": "mono",
+      "css_family": "'Geist Mono', monospace",
+      "vibe": "clean_captions"
+    },
+    "Courier Prime": {
+      "file": "CourierPrime-Regular.ttf",
+      "ass_name": "Courier Prime",
+      "weight": 400,
+      "category": "mono",
+      "css_family": "'Courier Prime', monospace",
+      "vibe": "clean_captions"
+    },
+    "Instrument Serif Italic": {
+      "file": "InstrumentSerif-Italic.ttf",
+      "ass_name": "Instrument Serif",
+      "weight": 400,
+      "category": "serif",
+      "css_family": "'Instrument Serif', serif",
+      "vibe": "editorial"
+    },
+    "Reenie Beanie": {
+      "file": "ReenieBeanie-Regular.ttf",
+      "ass_name": "Reenie Beanie",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Reenie Beanie', cursive",
+      "vibe": "handwritten"
+    },
+    "Nothing You Could Do": {
+      "file": "NothingYouCouldDo-Regular.ttf",
+      "ass_name": "Nothing You Could Do",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Nothing You Could Do', cursive",
+      "vibe": "handwritten"
+    },
+    "Covered By Your Grace": {
+      "file": "CoveredByYourGrace-Regular.ttf",
+      "ass_name": "Covered By Your Grace",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Covered By Your Grace', cursive",
+      "vibe": "handwritten",
+      "limited_charset": true,
+      "note": "Handwriting face; lacks '%' from printable ASCII. Use for text without a percent sign; Turkish and other missing glyphs use the whole-run fallback."
+    },
+    "La Belle Aurore": {
+      "file": "LaBelleAurore-Regular.ttf",
+      "ass_name": "La Belle Aurore",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'La Belle Aurore', cursive",
+      "vibe": "handwritten"
+    },
+    "Over the Rainbow": {
+      "file": "OvertheRainbow-Regular.ttf",
+      "ass_name": "Over the Rainbow",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Over the Rainbow', cursive",
+      "vibe": "handwritten"
+    },
+    "Zeyada": {
+      "file": "Zeyada-Regular.ttf",
+      "ass_name": "Zeyada",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Zeyada', cursive",
+      "vibe": "handwritten"
+    },
+    "Waiting for the Sunrise": {
+      "file": "WaitingfortheSunrise-Regular.ttf",
+      "ass_name": "Waiting for the Sunrise",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Waiting for the Sunrise', cursive",
+      "vibe": "handwritten"
+    },
+    "Just Me Again Down Here": {
+      "file": "JustMeAgainDownHere-Regular.ttf",
+      "ass_name": "Just Me Again Down Here",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Just Me Again Down Here', cursive",
+      "vibe": "handwritten"
+    },
+    "Sue Ellen Francisco": {
+      "file": "SueEllenFrancisco-Regular.ttf",
+      "ass_name": "Sue Ellen Francisco",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Sue Ellen Francisco', cursive",
+      "vibe": "handwritten"
+    },
+    "Rock Salt": {
+      "file": "RockSalt-Regular.ttf",
+      "ass_name": "Rock Salt",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Rock Salt', cursive",
+      "vibe": "handwritten"
     }
   },
   "style_defaults": {

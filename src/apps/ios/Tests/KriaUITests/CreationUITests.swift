@@ -1996,7 +1996,7 @@ final class CreationUITests: XCTestCase {
         let next = app.buttons["Send clips"]
         XCTAssertTrue(next.waitForExistence(timeout: 5))
         next.tap()
-        XCTAssertTrue(app.descendants(matching: .any)["chat-thinking"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["chat-submission-status"].waitForExistence(timeout: 3), "the slow send shows its status until Kria accepts it")
         let confirm = app.buttons["Create this video"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 10))
         confirm.tap()
@@ -3101,6 +3101,7 @@ final class CreationUITests: XCTestCase {
         XCTAssertFalse(element(app, "review-chip-title").exists)
 
         // Typing in a field flags its section: no Change tap needed.
+        _ = reveal(app, "review-change-title")
         let title = reveal(app, "review-edit-title")
         title.tap()
         title.typeText(" by the sea")
