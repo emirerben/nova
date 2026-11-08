@@ -659,6 +659,14 @@ private struct CreationWorkspaceView: View {
     /// Bumped when "Open editor" is tapped in the editor's own Kria sheet: the editor is already
     /// underneath, so the sheet closes instead.
     @State private var editorConversationCloseID: UUID?
+    private var editorAIActivity: NativeEditorAIActivity? {
+        let sending = pendingTurnSubmission?.clientEventID
+            ?? chatDrafts.submission(for: project.id).flatMap { $0.phase == .accepted ? nil : $0.clientEventID }
+        return NativeEditorAIActivity.current(
+            projectID: project.id, isSending: isSending, sendingRequestID: sending,
+            isThinking: isThinking, thinkingRequestID: thinkingTurnID ?? thoughtRequestID
+        )
+    }
     /// KRI-756: the server's latest suggestion chips for this chat. Only read through `suggestionChips(for:)`.
     @State private var suggestionSet: SuggestionSet?
     /// The `suggestionScopeKey` that `suggestionSet` was fetched under; a set from another scope is never drawn.
@@ -2153,6 +2161,7 @@ private struct CreationWorkspaceView: View {
                     sharedSession: editorSession,
                     conversationAcceptedID: conversationAcceptedID,
                     conversationCloseID: editorConversationCloseID,
+                    conversationActivity: editorAIActivity,
                     conversation: { AnyView(editorConversation) },
                     improve: readyCardsPresentation,
                     onBack: close

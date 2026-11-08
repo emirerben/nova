@@ -3,6 +3,9 @@
     "creation": [
       "KriaUITests/CreationUITests/testDelayedNewChatAcceptsTypingBeforeItsServerIdentityExists",
       "KriaUITests/SlidePostUITests/testLooksAppearOnThePhotoBeforeSavingWhenDeviceCapabilityIsEnabled",
+      "KriaUITests/CreationUITests/testEditorAIActivityUsesTheLiveRequestAcrossRepeatedPromptsAndBackgrounding",
+      "KriaUITests/CreationUITests/testEditorAIActivityStopsOnRejectedPromptAndKeepsTheDraft",
+      "KriaUITests/CreationUITests/testEditorAIHaloWorkingAndOpaqueAccessibilitySurfaces",
       "KriaUITests/CreationUITests/testChatBubblesPreserveShapeAndWrappingAtAccessibilityTextSize",
       "KriaUITests/CreationUITests/testLongPressCopiesPromptsAndRepliesWithoutBlockingOptionTaps",
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
@@ -273,7 +276,12 @@
       "KriaUITests/TalkRerecordUITests/testRefusedSwapKeepsTheOldTakeAndStartsNoPlan",
       "KriaUITests/TalkRerecordUITests/testBusyServerOffersRetryThenSwapsWithTheSameTake",
       "KriaUITests/TalkRerecordUITests/testFullSlotOffersReplaceInsteadOfRefusing",
-      "KriaUITests/TalkRerecordUITests/testFlagOffHidesReRecord"
+      "KriaUITests/TalkRerecordUITests/testFlagOffHidesReRecord",
+      "KriaUITests/CreationUITests/testEditorAIActivityCompletingLifecycleCapture",
+      "KriaUITests/CreationUITests/testEditorAIActivityCompletingReducedMotionCapture",
+      "KriaUITests/CreationUITests/testEditorAIActivityCompletingOpaqueCapture",
+      "KriaUITests/CreationUITests/testImproveAndAIActivityStaySeparateDuringPreviewPreparation",
+      "KriaUITests/CreationUITests/testChangedEditorPreviewRetainsOldPictureAndBlocksExportThenSupportsManualUndo"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
@@ -423,6 +431,7 @@
       "KriaUITests/SpeakerFrameDirectManipulationUITests/testOneDragIsOneUndoStep",
       "KriaUITests/SpeakerFrameDirectManipulationUITests/testDragAndPinchPastTheLimitsSaveAFrameInRange",
       "KriaUITests/SpeakerFrameDirectManipulationUITests/testFullFrameSpeakerIsNotSelectable",
+      "KriaUITests/NativeEditorPlaybackAdmissionUITests/testPlayingTitleUpdateSettlesThroughTheRealSurfaceAndCompositor",
       "KriaUITests/OverlayEditVerifyUITests/testText",
       "KriaUITests/OverlayEditVerifyUITests/testCaption",
       "KriaUITests/OverlayEditVerifyUITests/testPipCard",
@@ -438,7 +447,8 @@
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
       "KriaUITests/CreationUITests/testCreationWithAttachedFootageReachesConfirmationAndReadyForBothRuntimes",
       "KriaUITests/EditorUITests/testNativeEditorBackButtonReturnsToPreviousSurface",
-      "KriaUITests/EditorUITests/testNativeEditorFixturePlaysAndAdvancesTheClock"
+      "KriaUITests/EditorUITests/testNativeEditorFixturePlaysAndAdvancesTheClock",
+      "KriaUITests/NativeEditorPlaybackAdmissionUITests/testPlayingTitleUpdateSettlesThroughTheRealSurfaceAndCompositor"
     ]
   },
   "sources": {
@@ -621,6 +631,8 @@
     "src/apps/ios/Kria/Features/KriaCameraChrome.swift": "creation",
     "src/apps/ios/Kria/Core/SteerNow.swift": "creation",
     "src/apps/ios/Kria/Features/WaitingMessageBar.swift": "creation",
-    "src/apps/ios/Tests/KriaUITests/SteerNowUITests.swift": "creation"
+    "src/apps/ios/Tests/KriaUITests/SteerNowUITests.swift": "creation",
+    "src/apps/ios/Kria/Features/NativeEditorPlaybackAdmissionFixture.swift": "editor",
+    "src/apps/ios/Tests/KriaUITests/NativeEditorPlaybackAdmissionUITests.swift": "editor"
   }
 }

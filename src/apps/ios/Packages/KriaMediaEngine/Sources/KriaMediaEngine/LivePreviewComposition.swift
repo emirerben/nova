@@ -18,6 +18,7 @@ public struct LivePreviewExportSnapshot: Sendable {
     public private(set) var recipe: EditRecipe
     public let preview: PreviewComposition
     private var assetURLs: [String: URL]
+    private var playbackRevision: UUID?
 
     public init(recipe: EditRecipe, assetURLs: [String: URL], branding: KriaBranding.Options = .none) async throws {
         self.recipe = recipe
@@ -204,7 +205,20 @@ public struct LivePreviewExportSnapshot: Sendable {
         try updateText(recipe: next)
     }
 
-    public func updateText(recipe next: EditRecipe, assetURLs nextURLs: [String: URL]? = nil) throws {
+    public func cancelPendingPlaybackFrame() {
+        (preview.playerItem.customVideoCompositor as? RecipeVideoCompositor)?.playbackFrameReceipt.cancel()
+    }
+
+    public func observeNextPlaybackFrame(_ callback: @escaping @Sendable (Double) -> Void) throws {
+        guard let playbackRevision,
+              let compositor = preview.playerItem.customVideoCompositor as? RecipeVideoCompositor else {
+            throw NativePreviewFeatureError("LivePreviewComposition-playback-receipt-unavailable")
+        }
+        compositor.playbackFrameReceipt.arm(revision: playbackRevision, callback: callback)
+    }
+
+    public func updateText(recipe next: EditRecipe, assetURLs nextURLs: [String: URL]? = nil,
+                           onPlaybackFrame: (@Sendable (Double) -> Void)? = nil) throws {
         try next.validate()
         let urls = nextURLs ?? assetURLs
         func nonFontReferences(_ value: EditRecipe) -> [RenderAssetReference] {
@@ -356,17 +370,28 @@ public struct LivePreviewExportSnapshot: Sendable {
         let total = TimelineMath.totalDuration(of: next)
         // Keep the live matte (and its warmed segmenter) across a text-only edit; drop it when no layer asks any more.
         let subjectMatte = next.textLayers.contains(where: { $0.behindSubject == true }) ? (first.subjectMatte ?? NativeSubjectMatte()) : nil
+        let playbackRevision = UUID()
+        let playbackCompositor = preview.playerItem.customVideoCompositor as? RecipeVideoCompositor
+        if onPlaybackFrame != nil, playbackCompositor == nil {
+            throw NativePreviewFeatureError("LivePreviewComposition-playback-receipt-unavailable")
+        }
         replacement.instructions = RecipeInstructionTiming.tiledRanges(total: total, layers: layers).map { range, active in
             RecipeVideoInstruction(timeRange: range, layers: active, text: painted, canvas: current.renderSize,
                 cameraPulses: next.cameraPulses, motionScenes: motion, textStore: textStore, drawings: drawings, subjectMatte: subjectMatte,
                 // The background is unchanged apart from a moved frame (guarded above), so its layer, its matte and its
                 // full-screen windows carry over.
                 speakerMatte: first.speakerMatte, speakerFrame: movesSpeakerFrame ? next.speakerBackground?.speakerFrame : first.speakerFrame,
-                fullScreenWindows: first.fullScreenWindows)
+                fullScreenWindows: first.fullScreenWindows, playbackRevision: playbackRevision)
         }
         // Publish only after every layer validates successfully. Never touch
         // `audioMix` here (see `withoutVisuals`).
+        if let onPlaybackFrame {
+            playbackCompositor?.playbackFrameReceipt.arm(revision: playbackRevision, callback: onPlaybackFrame)
+        } else {
+            playbackCompositor?.playbackFrameReceipt.cancel()
+        }
         preview.playerItem.videoComposition = replacement
+        self.playbackRevision = playbackRevision
         assetURLs = urls
         recipe = next
     }
