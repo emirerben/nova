@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.104.0] - 2026-11-08
+
+### Changed
+- fix(kria): judge the 'zoom into the recordings' ask on its own in the receipt (KRI-1307) (#2201) <!-- release-pr: 2201 -->
+
 ## [0.88.103.0] - 2026-11-08
 
 ### Changed
