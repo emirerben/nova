@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.77.0] - 2026-11-08
+
+### Changed
+- feat(kria): typed hold_s for text on a spoken word (KRI-1292) (#2186) <!-- release-pr: 2186 -->
+
 ## [0.88.76.0] - 2026-11-07
 
 ### Fixed
