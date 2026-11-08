@@ -4829,6 +4829,35 @@ _TURN_FAILURE_COPY: dict[str, tuple[str, str]] = {
         "olursa her seferinde tek bir değişiklik iste.",
     ),
 }
+# KRI-1301: a timeout on a tapped answer (choice, clip, mark, moment order). The creator sent no
+# request to shrink, so never tell her to ask for "one change at a time"; the app's Try again
+# re-sends the same tap, which opens on the lighter rung (`_previous_turn_hit_provider_deadline`).
+_TAPPED_ANSWER_TIMEOUT_COPY = (
+    "The AI service ran out of time on that answer. Your choice, footage and saved draft "
+    "are safe. Tap Try again.",
+    "Yapay zekâ hizmeti bu cevabı zamanında işleyemedi. Seçimin, çekimlerin ve kayıtlı "
+    "taslağın güvende. Yeniden dene'ye dokun.",
+)
+_TAPPED_ANSWER_PAYLOAD_KEYS = (
+    "choice_selection",
+    "clip_selection",
+    "protected_region",
+    "moment_order",
+)
+
+
+def _source_is_tapped_answer(db, turn: CreatorAgentTurn) -> bool:  # noqa: ANN001
+    """Whether the creator's message behind ``turn`` was a card tap, not typed words."""
+    try:
+        source = db.get(CreationThreadEvent, turn.source_event_id)
+    except Exception:  # noqa: BLE001 - a lookup miss only costs the generic copy
+        return False
+    payload = getattr(source, "payload", None)
+    return isinstance(payload, dict) and any(
+        isinstance(payload.get(key), dict) for key in _TAPPED_ANSWER_PAYLOAD_KEYS
+    )
+
+
 _TURN_FAILURE_DEFAULT_COPY = (
     "I couldn't finish that step, but your project and saved draft are safe. "
     "Try the request again.",
@@ -4914,6 +4943,8 @@ def _project_retryable_failure(
     # the copy follows the chat's language from the thread row itself.
     with reply_language_for(thread_reply_language(thread)):
         en, tr = _TURN_FAILURE_COPY.get(code, _TURN_FAILURE_DEFAULT_COPY)
+        if code == "runtime_provider_outcome_unknown" and _source_is_tapped_answer(db, turn):
+            en, tr = _TAPPED_ANSWER_TIMEOUT_COPY
         failure_copy = say(en=en, tr=tr)
     event = _append_sync_event(
         db,
