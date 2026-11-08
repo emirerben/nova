@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.112.0] - 2026-11-08
+
+### Fixed
+- fix(kria): Approve no longer cancels on builds older than split screens (KRI-1321) (#2226) <!-- release-pr: 2226 -->
+
 ## [0.88.111.0] - 2026-11-08
 
 ### Changed
