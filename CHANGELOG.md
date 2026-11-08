@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.98.0] - 2026-11-08
+
+### Changed
+- fix(kria): list labels keep their own look and spot (KRI-1284) (#2204) <!-- release-pr: 2204 -->
+
 ## [0.88.97.0] - 2026-11-08
 
 ### Changed
