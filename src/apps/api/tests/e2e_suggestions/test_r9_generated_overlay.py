@@ -288,6 +288,17 @@ async def test_g6_a_changed_idea_rebuilds_the_prompt_at_the_same_price(world, mo
     assert "A quiet morning at the market" in generator.calls[0]["prompt"]
 
 
+@pytest.mark.asyncio
+async def test_g7_a_price_that_moved_after_the_serve_is_never_charged_unseen(world, monkeypatch):
+    open_gate(monkeypatch)
+    generator = generates(monkeypatch)
+    _seeded, phone, out = await served(world)
+    monkeypatch.setattr(generated_overlay, "QUOTED_COST_USD", generated_overlay.QUOTED_COST_USD * 2)
+    tapped = await phone.tap(card(out), out)
+    assert (tapped.refused or {}).get("reason") == pinned.BASE_MOVED, tapped.refused
+    assert generator.calls == [], "the creator agreed to the old price, so nothing was spent"
+
+
 def test_the_witness_proves_the_offer_it_was_built_from():
     from app.services.suggestions.context import SuggestionContext
 

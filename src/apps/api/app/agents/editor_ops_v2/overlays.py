@@ -41,6 +41,7 @@ KINDS = ("image", "video", "all")
 # Where a card lands when it leaves full screen: the upper-right corner, clear of the
 # caption band and of a centred face (the same default the card matcher starts from).
 PIP_DEFAULT_GEOMETRY = {"x_frac": 0.74, "y_frac": 0.22, "scale": 0.36}
+POSITION_PRESETS = {"top": 0.18, "center": 0.5, "bottom": 0.82}
 PATCHABLE = ("start_s", "end_s", "x_frac", "y_frac", "scale", "display_mode")
 # KRI-1141: a card's tilt, clockwise on screen like `patch_slots.tilt`. `rotation_deg` replaces the
 # card's angle, `rotation_delta_deg` adds to it. Both are patch_overlay keys only while the snapshot
@@ -269,8 +270,14 @@ def _op_add_overlay(state: Any, op: dict[str, Any]) -> None:
     mode = op.get("display_mode") or "pip"
     if mode not in DISPLAY_MODES:
         raise KriaEditorOpError("Overlay display must be on top or full screen")
+    preset = POSITION_PRESETS.get(str(op.get("position")))
+    base = (
+        PIP_DEFAULT_GEOMETRY
+        if preset is None
+        else {**PIP_DEFAULT_GEOMETRY, "x_frac": 0.5, "y_frac": preset}
+    )
     geometry = {
-        key: float(op[key]) if op.get(key) is not None else PIP_DEFAULT_GEOMETRY[key]
+        key: float(op[key]) if op.get(key) is not None else base[key]
         for key in PIP_DEFAULT_GEOMETRY
     }
     card: dict[str, Any] = {
@@ -284,6 +291,8 @@ def _op_add_overlay(state: Any, op: dict[str, Any]) -> None:
         "z": max((int(row.get("z") or 0) for row in state.media_overlays), default=-1) + 1,
         **geometry,
     }
+    if op.get("effect_bundle_id"):
+        card["effect_group_id"] = op["effect_bundle_id"]
     if mode == "fullscreen":
         _to_fullscreen(card)
     state.media_overlays.append(card)
