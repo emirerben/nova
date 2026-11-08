@@ -19,6 +19,12 @@ title-look placer):
 * F6 a logo asked above the title finds no room although a small one fits between her chin and
   the title (then it must sit off her face, above the block, inside the frame).
 * F7 nothing overlaps: nothing changes (cues and rows byte-identical).
+* F8 (coordinator review) the captions wait although a smaller / tighter title fits between her
+  face and her captions: the kit's ``captions_on`` rule (captions in >= 80% of the talk; run 2
+  measured exactly 0.80) then fails. The title first shrinks (never below a 40 px cap height on
+  its smallest line) and tightens its line spacing (ink to ink); only when that floor cannot fit
+  do the captions wait.
+* F9 the squeezed lines collide with each other, her face or the captions as DRAWN (ink).
 """
 
 from __future__ import annotations
@@ -50,6 +56,48 @@ POLICY = {
     "selection_roles": ["title"],
     "_environment_sampled": True,
 }
+
+
+# The captions as the recipe drew them in the title window (the run's second
+# `subtitled_title_placement`, measured with her resolved grey-box look).
+HER_CAPTIONS = [
+    NormalizedBox(0.31262, 0.76839, 0.66415, 0.81172),
+    NormalizedBox(0.41372, 0.76839, 0.57757, 0.81172),
+    NormalizedBox(0.39733, 0.76839, 0.58797, 0.81172),
+    NormalizedBox(0.25787, 0.76839, 0.71452, 0.81172),
+    NormalizedBox(0.32578, 0.76839, 0.65378, 0.81172),
+]
+MIN_CAP_PX = 40.0
+
+
+def _ink(row) -> NormalizedBox:
+    """The drawn ink of one title row: its measured line box less the font's empty space above
+    the tallest glyph and below the lowest one (skia metrics, independent of the placer)."""
+    import skia
+
+    from app.pipeline import text_overlay_skia as cloud
+    from app.pipeline.phone_title_look import title_block_box
+
+    box = title_block_box([row], canvas=CANVAS)
+    typeface = cloud._resolve_typeface_for_overlay({"font_family": row["font_family"]}).typeface
+    font = skia.Font(typeface, float(row["size_px"]))
+    metrics = font.getMetrics()
+    bounds = skia.Rect()
+    font.measureText(row["text"], skia.TextEncoding.kUTF8, bounds)
+    top = max(0.0, -metrics.fAscent + bounds.top()) / CANVAS.height
+    bottom = max(0.0, metrics.fDescent - bounds.bottom()) / CANVAS.height
+    return NormalizedBox(box.left, box.top + top, box.right, box.bottom - bottom)
+
+
+def _cap_px(row) -> float:
+    import skia
+
+    from app.pipeline import text_overlay_skia as cloud
+
+    typeface = cloud._resolve_typeface_for_overlay({"font_family": row["font_family"]}).typeface
+    bounds = skia.Rect()
+    skia.Font(typeface, float(row["size_px"])).measureText("H", skia.TextEncoding.kUTF8, bounds)
+    return bounds.height()
 
 
 def _cues() -> list[dict]:
@@ -120,34 +168,55 @@ def _window(rows) -> tuple[float, float]:
     return (min(float(r["start_s"]) for r in rows), max(float(r["end_s"]) for r in rows))
 
 
-def test_the_title_and_her_captions_never_overlap():
-    rows, receipt = _place()
-    assert receipt["text_overlap"] is True  # the run's situation: no spot clears both
-    first_scale = receipt["scale"]
+def test_her_title_fits_between_her_face_and_her_captions():
+    """F8 / F9: run 2's geometry, no logo. The title squeezes in (smaller, tighter lines) and her
+    captions keep showing under it: nothing waits, nothing overlaps as drawn."""
+    rows, receipt = _place(avoid=lambda _window: HER_CAPTIONS)
     rows, receipt, cues = _resolve(rows, receipt)
 
-    block, window = _block(rows), _window(rows)
-    # F1 / F5: what is drawn, measured again: no caption line touches the title while it shows.
-    drawn = caption_boxes(cues, window=window, caption_style="word", canvas=CANVAS)
-    assert all(
-        line.coverage_by(block) <= 0.05 and block.coverage_by(line) <= 0.05 for line in drawn
-    ), drawn
+    assert receipt["text_overlap"] is False
+    assert "caption_move" not in receipt and cues == _cues()  # her captions all stay
+    assert receipt["status"] == "squeezed"
+    inks = [_ink(row) for row in rows]
+    shown = HER_CAPTIONS
+    for ink in inks:
+        assert ink.coverage_by(FACE) <= 0.05 and FACE.coverage_by(ink) <= 0.05  # off her face
+        for line in shown:  # off her captions, as drawn
+            assert ink.coverage_by(line) <= 0.05 and line.coverage_by(ink) <= 0.05
+        assert 0.06 <= ink.top and ink.bottom <= 0.95
+    for upper, lower in zip(inks, inks[1:], strict=False):
+        assert upper.bottom <= lower.top + 1e-6  # lines never touch, top to bottom in order
+    assert min(_cap_px(row) for row in rows) >= MIN_CAP_PX - 0.5  # still legible
+
+
+def test_when_even_the_floor_cannot_fit_the_captions_wait():
+    """F1 / F4 / F5: a closer face (0.12-0.72) and captions a little lower (0.80-0.85) leave less
+    room above the face, between face and captions and below the captions than the smallest
+    legible title (cap height 40 px): only then do the captions wait while it shows."""
+    global FACE
+    low = NormalizedBox(0.207, 0.12, 0.845, 0.72)
+    lower_captions = [NormalizedBox(b.left, 0.80, b.right, 0.85) for b in HER_CAPTIONS]
+    saved, FACE = FACE, low
+    try:
+        rows, receipt = _place(avoid=lambda _window: lower_captions)
+        assert receipt["text_overlap"] is True and receipt["status"] != "squeezed"
+        rows, receipt, cues = _resolve(rows, receipt)
+    finally:
+        FACE = saved
+    window = _window(rows)
     assert receipt["text_overlap"] is False
     assert receipt["caption_move"]["status"] == "captions_wait"
-    # F3: off her face, inside the frame, and never smaller for the captions' sake (at 1x her
-    # third line wraps and the block no longer fits under her face, so 0.85 is her face's limit).
-    assert block.coverage_by(FACE) <= 0.05 and FACE.coverage_by(block) <= 0.05
-    assert 0.06 <= block.top and block.bottom <= 0.95
-    assert receipt["scale"] >= first_scale
-    # F4: only what is said while the title shows waits: every later line is untouched, and a
+    assert caption_boxes(cues, window=window, caption_style="word", canvas=CANVAS) == []
+    # Only what is said while the title shows waits: every later line is untouched, and a
     # line running past the title keeps its later words ("stop talking" -> "talking").
     after = [cue for cue in _cues() if float(cue["start_s"]) >= window[1]]
     assert all(cue in cues for cue in after)
-    assert all(float(cue["start_s"]) >= window[1] - 1e-6 for cue in cues)
     words_after = [
         w["text"] for cue in _cues() for w in cue["words"] if float(w["start_s"]) >= window[1]
     ]
     assert [w["text"] for cue in cues for w in cue["words"]] == words_after
+    block = _block(rows)
+    assert block.coverage_by(low) <= 0.05 and low.coverage_by(block) <= 0.05
 
 
 def test_her_caption_spot_is_kept():

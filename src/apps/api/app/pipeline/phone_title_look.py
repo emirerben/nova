@@ -76,6 +76,18 @@ _MAX_COVERAGE = title_mod._MAX_FACE_COVERAGE
 _SHRINK = (1.0, 0.85, 0.72, 0.6)
 _Y_DECIMALS = 4
 
+# KRI-1305 (coordinator review): when no spot clears her face AND her captions, the title
+# squeezes in before the captions are asked to wait (the kit's `captions_on` rule needs captions
+# in >= 80% of the talk). Smaller steps than `_SHRINK`, down to a legibility floor: the smallest
+# line's cap height stays >= 40 px of the 1920 px canvas (her captions: 64 px TikTok Sans Bold,
+# ~46 px caps; 40 px is the text-style readable floor, `phone_text_style._READABLE_FLOOR_PX`).
+# Lines are stacked ink to ink (the measured line box is ascent + descent, mostly empty above
+# caps), 12 px apart, each ink box padded 6 px for the high-visibility shadow.
+_SQUEEZE = (1.0, 0.92, 0.85, 0.78, 0.72, 0.66, 0.6, 0.55, 0.5, 0.45)
+_MIN_CAP_PX = 40.0
+_TIGHT_GAP_PX = 12.0
+_INK_PAD_PX = 6.0
+
 # Logo limits.
 _LOGO_WIDTH = 0.32
 _LOGO_MAX_HEIGHT = 0.16
@@ -440,6 +452,95 @@ def _inside(boxes: Sequence[NormalizedBox]) -> bool:
     )
 
 
+def _ink_insets(row: Mapping[str, Any], canvas: _Canvas) -> tuple[float, float]:
+    """The empty space (fractions of canvas height) inside a row's measured line box above its
+    tallest glyph and below its lowest one, from the font's own metrics. Conservative for a
+    wrapped row (the whole text's extremes)."""
+    import skia  # noqa: PLC0415
+
+    from app.pipeline import text_overlay_skia as cloud  # noqa: PLC0415
+
+    typeface = cloud._resolve_typeface_for_overlay(dict(row)).typeface
+    font = skia.Font(typeface, float(row["size_px"]))
+    metrics = font.getMetrics()
+    bounds = skia.Rect()
+    font.measureText(str(row.get("text") or ""), skia.TextEncoding.kUTF8, bounds)
+    top = max(0.0, -metrics.fAscent + bounds.top())
+    bottom = max(0.0, metrics.fDescent - bounds.bottom())
+    return top / canvas.height, bottom / canvas.height
+
+
+def _cap_px(row: Mapping[str, Any]) -> float:
+    """The row's cap height in canvas pixels (the ink of "H" at its size and face)."""
+    import skia  # noqa: PLC0415
+
+    from app.pipeline import text_overlay_skia as cloud  # noqa: PLC0415
+
+    typeface = cloud._resolve_typeface_for_overlay(dict(row)).typeface
+    bounds = skia.Rect()
+    skia.Font(typeface, float(row["size_px"])).measureText("H", skia.TextEncoding.kUTF8, bounds)
+    return float(bounds.height())
+
+
+def _clash(boxes: Sequence[NormalizedBox], others: Sequence[NormalizedBox]) -> float:
+    """Either way round: a small caption box inside a wide title line counts too."""
+    return max(
+        (max(b.coverage_by(o), o.coverage_by(b)) for b in boxes for o in others), default=0.0
+    )
+
+
+def _squeeze(
+    base: Sequence[dict],
+    *,
+    faces: Sequence[NormalizedBox],
+    hard: Sequence[NormalizedBox],
+    avoid: Sequence[NormalizedBox],
+    position: str | None,
+    reserve_logo: bool,
+    logo_fits: Any,
+    canvas: _Canvas,
+) -> tuple[float, list[dict], list[NormalizedBox], str] | None:
+    """KRI-1305: the biggest size (never below the cap-height floor) and spot where the title,
+    its lines stacked ink to ink, clears every face, object and caption line as drawn (and leaves
+    the logo room when one is asked). ``(factor, placed rows, ink boxes, spot kind)`` or None."""
+    gap = _TIGHT_GAP_PX / canvas.height
+    pad = _INK_PAD_PX / canvas.height
+    for factor in _SQUEEZE:
+        sized = _sized(base, factor)
+        if min(_cap_px(row) for row in sized) < _MIN_CAP_PX - 1e-6:
+            return None  # every smaller size is under the floor too
+        layout = [_measure(row, canvas) for row in sized]
+        insets = [_ink_insets(row, canvas) for row in sized]
+        heights = [
+            box.height - top - bottom for box, (top, bottom) in zip(layout, insets, strict=True)
+        ]
+        height = sum(heights) + gap * (len(heights) - 1)
+        for kind, top in _candidates(height, faces, position, logo=reserve_logo, avoid=avoid):
+            inks: list[NormalizedBox] = []
+            cursor = top
+            for box, ink_h in zip(layout, heights, strict=True):
+                inks.append(NormalizedBox(box.left, cursor, box.right, cursor + ink_h))
+                cursor += ink_h + gap
+            padded = [
+                NormalizedBox(b.left - pad, b.top - pad, b.right + pad, b.bottom + pad)
+                for b in inks
+            ]
+            if not _inside(inks):
+                continue
+            if _clash(padded, hard) > _MAX_COVERAGE or _clash(padded, avoid) > _MAX_COVERAGE:
+                continue
+            if reserve_logo and not logo_fits(inks):
+                continue
+            placed = []
+            for row, box, ink, (top_inset, _bottom) in zip(
+                sized, layout, inks, insets, strict=True
+            ):
+                layout_top = ink.top - top_inset
+                placed.append({**row, "y_frac": round(layout_top + box.height / 2, _Y_DECIMALS)})
+            return factor, placed, inks, kind
+    return None
+
+
 def _sized(rows: Sequence[dict], scale: float) -> list[dict]:
     if scale == 1.0:
         return [dict(row) for row in rows]
@@ -554,6 +655,51 @@ def place_title_look(
                 )
         chosen = min(options, key=lambda option: option[0])[1] if options else None
         logo_room = bool(chosen and chosen[6]) if reserve_logo else None
+        squeezed = (
+            _squeeze(
+                base,
+                faces=faces,
+                hard=hard,
+                avoid=avoid,
+                position=position,
+                reserve_logo=reserve_logo,
+                logo_fits=logo_fits,
+                canvas=canvas,
+            )
+            if avoid and (chosen is None or chosen[5])
+            else None
+        )
+        if squeezed is not None:
+            # Text on text otherwise: smaller, tighter lines between her face and her captions
+            # beat captions that wait (KRI-1305 coordinator review).
+            factor, placed, inks, kind = squeezed
+            block = NormalizedBox(
+                min(b.left for b in inks),
+                min(b.top for b in inks),
+                max(b.right for b in inks),
+                max(b.bottom for b in inks),
+            )
+            return placed, {
+                **receipt,
+                "status": "squeezed",
+                "spot": kind,
+                "coverage": round(_worst(inks, hard), 5),
+                "face_collision": False,
+                "text_overlap": False,
+                "lines": len(placed),
+                "line_gap": "tight",
+                # The drawn ink of the stack (what the face / caption checks measured).
+                "block": block.as_dict(),
+                "face_boxes": [f.as_dict() for f in faces],
+                "object_boxes": [b.as_dict() for b in object_boxes],
+                "caption_boxes": [a.as_dict() for a in avoid],
+                "faces": receipt.get("faces"),
+                "scale": factor,
+                "min_cap_px": round(min(_cap_px(row) for row in placed), 1),
+                "objects": object_receipts,
+                **({"logo_room": True} if reserve_logo else {}),
+                **({"logo_below_band": True} if logo_below_band else {}),
+            }
         if chosen is not None:
             kind, factor, sized, boxes, coverage, overlap, _logo_ok = chosen
             status = (
