@@ -334,6 +334,50 @@ final class PerfUITests: XCTestCase {
         book.report("testEditorReopenWarm", prefixes: ["net ", "source", "sha256", "t "])
     }
 
+    /// The common case: the creator reads the chat for a few seconds, then taps Open editor. The editor was prepared while
+    /// the chat was on screen, so the interval from the tap to the first admitted preview frame is the whole wait, and the
+    /// open does none of its heavy work again. Reports the counters' change from the tap to five seconds after it.
+    func testEditorOpenAfterIdle() {
+        var book = CounterBook()
+        measure(metrics: [interval("editor.tap.toFrame")], options: options) {
+            let app = makeApp(reset: true, editorEnvironment)
+            app.launch()
+            waitForTranscript(app)
+            let open = app.buttons["Open editor"]
+            XCTAssertTrue(open.waitForExistence(timeout: 20), "The chat offers no Open editor")
+            RunLoop.current.run(until: Date().addingTimeInterval(4))
+            let before = counters(app)
+            open.tap()
+            XCTAssertTrue(app.staticTexts["native-editor-duration"].waitForExistence(timeout: 10), "The editor never opened")
+            RunLoop.current.run(until: Date().addingTimeInterval(5))
+            let after = counters(app)
+            book.add(after.reduce(into: [:]) { $0[$1.key] = $1.value - (before[$1.key] ?? 0) })
+            app.terminate()
+        }
+        book.report("testEditorOpenAfterIdle", prefixes: ["net ", "source", "sha256", "editor.preview.build"])
+    }
+
+    /// Chat scroll while the editor prepares in the background: the hitch gate for warming. A finished render makes the
+    /// chat warm its editor the moment it is idle, and a fresh disk store means the first launch downloads every source,
+    /// so the flicks overlap the prepare. `Off` is the same run with warming disabled (`KRIA_EDITOR_WARM_DISABLED`), the
+    /// baseline: read the hitch metrics of the two side by side.
+    private func scrollTranscript(warm: Bool) {
+        let app = makeApp(reset: true, ["KRIA_EDITOR_FIXTURE": "1", "KRIA_EDITOR_WARM_DISABLED": warm ? "0" : "1"])
+        app.launch()
+        waitForTranscript(app)
+        let scroll = app.scrollViews.firstMatch
+        XCTAssertTrue(scroll.waitForExistence(timeout: 10))
+        var metrics: [XCTMetric] = [XCTOSSignpostMetric.scrollDecelerationMetric, XCTCPUMetric(application: app)]
+        if #available(iOS 26, *) { metrics.append(XCTHitchMetric(application: app)) }
+        measure(metrics: metrics, options: options) {
+            for _ in 0..<4 { scroll.swipeDown(velocity: .fast) }
+            for _ in 0..<4 { scroll.swipeUp(velocity: .fast) }
+        }
+    }
+
+    func testScrollTranscriptWhileTheEditorWarms() { scrollTranscript(warm: true) }
+    func testScrollTranscriptWithWarmingOff() { scrollTranscript(warm: false) }
+
     /// What playing the open editor costs: CPU and hitches over a rewind and two seconds of playback, repeated, with the
     /// launch and the open outside the measured block. (The CPU metric cannot take an explicit start and stop on a
     /// device, so the rewind swipes are inside; they cost the same for every build compared.) The editor's playhead

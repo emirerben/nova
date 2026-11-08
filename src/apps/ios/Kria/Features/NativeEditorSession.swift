@@ -101,6 +101,8 @@ struct NativeEditorTemporaryVideo: Sendable {
 
 /// Local-first state for the Paper native editor. Every edit is a synchronous
 /// value transaction; persistence happens only from the explicit Save action.
+enum EditorOpenIntent { case warm, open }
+
 @MainActor final class NativeEditorSession: ObservableObject {
     /// Canonical mutable editor state. The legacy `draft` accessor below is a
     /// compatibility projection for first-pass views and test fixtures.
@@ -2934,10 +2936,15 @@ struct NativeEditorTemporaryVideo: Sendable {
         return true
     }
 
+    /// Placeholders for the warm editor (red commit): the behaviour arrives with the fix.
+    func cancelWarm() {}
+    func releaseWarmForMemoryPressure() {}
+
     /// The open path the editor view used to run inline: follow a newer job, reconcile or reload, then show a
     /// finished device render. It lives here so it can also run while the editor is closed.
     func openOrWarm(project: ProjectSummary, libraryJobID: UUID?, api: any KriaAPIClient,
-                    deviceRenders: DeviceRenderSessions, uploads: BackgroundUploadCoordinator) async {
+                    deviceRenders: DeviceRenderSessions, uploads: BackgroundUploadCoordinator,
+                    intent: EditorOpenIntent = .open) async {
         useDeviceRendering(deviceRenders)
         useMediaUploads(uploads)
         if isBehindActiveJob(project) {
@@ -4055,6 +4062,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         #if DEBUG
         sourcePreviewBuildCountForTesting += 1
         #endif
+        Perf.event("editor.preview.build")
         Perf.begin("editor.preview", id: jobID.uuidString)
         defer { Perf.end("editor.preview", id: jobID.uuidString) }
         sourcePreviewTask?.cancel()
