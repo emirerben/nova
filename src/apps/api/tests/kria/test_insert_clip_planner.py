@@ -427,7 +427,8 @@ def _extractor_prompt(**kw) -> str:
 # sentences as examples); with v136's sentences the digest is
 # 14ad8c6e284569817ed3c380fea76ae35b5983b1fe42a2f53c42a6c14bcaa6d7.
 # KRI-971 (keep-a-take-whole also records speech_cleanup false) moves it from 001bd937bb08cea8….
-_BRIEF_SECTION_BEFORE_INSERTS = "2524292d4a03eaa47df8e86b440d2bd2654dd7a5ee7b4337abcd68b3187f7eb1"
+# KRI-1292 (`hold_s` for a text at a spoken word) moves it from 5d020e50a866f3d4….
+_BRIEF_SECTION_BEFORE_INSERTS = "57f3bdbfedf269939ba49d61c102e96f30565c6cf91d89665eb20264d7ca94fb"
 
 
 def test_a_closed_rollout_leaves_the_brief_section_byte_identical_to_before_inserts():

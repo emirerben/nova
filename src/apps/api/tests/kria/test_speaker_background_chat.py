@@ -1019,24 +1019,25 @@ def test_flag_off_the_brief_sections_are_the_bytes_they_were_before_the_opening(
     # underneath item 16. Re-frozen for the says-done group E rewording (#2131: caption count /
     # one captions requirement / "all my pauses" / unnamed mistakes / one-moment holds / typed
     # ending); the flag-off section was 14ad8c6e… before it. Re-frozen again for #2164 (the
-    # keep-the-take-whole line also records speech_cleanup false).
+    # keep-the-take-whole line also records speech_cleanup false), and for KRI-1292 (`hold_s`
+    # for a text at a spoken word).
     assert brief_prompt_section() is _BRIEF_PROMPT_SECTION
     assert digest(brief_prompt_section()) == (
-        "2524292d4a03eaa47df8e86b440d2bd2654dd7a5ee7b4337abcd68b3187f7eb1"
+        "57f3bdbfedf269939ba49d61c102e96f30565c6cf91d89665eb20264d7ca94fb"
     )
     assert digest(brief_prompt_section(True)) == (
-        "391daf0b8d874c0948549e05cafcfd194c3d201f99cf6fb2fd522d679ce4ba2b"
+        "84efb17469fadcedcb91773105d9cff9a919c59643a2a4c06b53b75e790d9528"
     )
     assert digest(_narrow_brief_section(False)) == (
-        "61384559686fcd4290f41ea0399be972145abe50cb5c33d56a8747d5f948fc35"
+        "f81e1cd37f93bda0d9fc79232657e7aed6051ce73a963c913713af86d228f8a1"
     )
     assert digest(_narrow_brief_section(True)) == (
-        "6dc9171ad05a2a92d85aa42321914ecce361754b9a177c15e5def4cd86445801"
+        "c6aad6a3988c5eb66a57ffdb06d3b2efebf467c4f67b799019fcb98d997a06b1"
     )
     # and the whole extractor prompt, byte for byte (captured from that same tree)
     for insert_open, expected in (
-        (False, "309291769aa78f3639c5de4e9ee83da73b17b41f341239e2625365d9e2269a57"),
-        (True, "a295c877937422545ab83ee471db13f99e19211a5aafa9c464a7f4f5eaf3e4c8"),
+        (False, "2cdbedd98e05e50c4ff56649653d46839a55b2c23f90b1fa4f1cec3cf051faa9"),
+        (True, "7f52303a015ec76d59bf81983883fa340be75d32048b19df1f19721ac3a88cb1"),
     ):
         rendered = BriefExtractorAgent(None).render_prompt(
             BriefExtractionInput(

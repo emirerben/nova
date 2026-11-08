@@ -114,6 +114,39 @@ def _hold_in_range(value: float) -> float | None:
     return round(value, 3) if math.isfinite(value) and MIN_HOLD_S <= value <= MAX_HOLD_S else None
 
 
+def _fact_seconds(value: object) -> float | None:
+    """A recorded length as a number: a number, or a model's numeric string ("1.5"). Not a bool."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip().replace(",", "."))
+        except ValueError:
+            return None
+    return None
+
+
+def with_valid_hold_fact(facts: Mapping[str, Any]) -> dict[str, Any]:
+    """``facts`` of a text update with ``hold_s`` as a number in range, or without it.
+
+    The boundary for the typed hold the brief writer records (KRI-1292): "1" becomes 1.0, and a
+    value that is not a length a text can hold (a word, zero, a negative, 400, NaN) is dropped
+    rather than stored. ``spoken_text_hold_s`` then reads the creator's wording, which still
+    states a length, and else the default applies: the same answer for a bad value wherever it
+    arrives."""
+    out = dict(facts)
+    if "hold_s" in out:
+        hold = _fact_seconds(out["hold_s"])
+        hold = None if hold is None else _hold_in_range(hold)
+        if hold is None:
+            del out["hold_s"]
+        else:
+            out["hold_s"] = hold
+    return out
+
+
 def _hold_tokens(key: str) -> list[tuple[int, int, str]]:
     tokens: list[tuple[int, int, str]] = []
     position = 0
@@ -172,15 +205,20 @@ def _held_lengths(wording: str, literal: str) -> set[float]:
 def spoken_text_hold_s(req: BriefRequirement) -> float | None:
     """The seconds ``req`` asks its text to stay on screen, or None when it names none.
 
-    A numeric ``hold_s`` fact first (a typed field, KRI-667), else the one length the
-    requirement's own wording attaches to how long the text stays ("for about a second",
-    "for 3 seconds", "bir saniye boyunca"). Seconds that only time the word ("within the first
-    5 seconds"), count something ("for a second time") or sit inside the on-screen copy
-    ("3 SECONDS LEFT") are not a hold; two different holds in one ask name none."""
+    A typed ``hold_s`` fact the brief writer records (KRI-1292) decides when it is a length a
+    text can hold (0.3 to 10 s). One that is not (a word, 400) is no length: the brief drops it
+    when it is written, and a requirement that still carries one reads like one without it. The
+    wording then decides, for these and for briefs stored before the field existed (a stored
+    brief is re-read on every retry and reburn): the one length the wording attaches to how long
+    the text stays ("for about a second", "for 3 seconds", "bir saniye boyunca"). Seconds that
+    only time the word ("within the first 5 seconds"), count something ("for a second time")
+    or sit inside the on-screen copy ("3 SECONDS LEFT") are not a hold; two different holds in
+    one ask name none."""
     for key in SPOKEN_TEXT_HOLD_KEYS:
-        value = req.facts.get(key)
-        if isinstance(value, int | float) and not isinstance(value, bool):
-            return _hold_in_range(float(value))
+        seconds = _fact_seconds(req.facts.get(key))
+        hold = None if seconds is None else _hold_in_range(seconds)
+        if hold is not None:
+            return hold
     lengths = _held_lengths(req.description or "", req.literal or "")
     return _hold_in_range(next(iter(lengths))) if len(lengths) == 1 else None
 
@@ -327,4 +365,5 @@ __all__ = [
     "spoken_text_hold_s",
     "spoken_triggers",
     "with_answered_pins",
+    "with_valid_hold_fact",
 ]

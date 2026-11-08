@@ -56,6 +56,7 @@ from app.kria.order_replacement import OrderReplacementProof
 from app.kria.removed_messages import is_removed, removed_turn_ids_sync
 from app.kria.reply_language import detect_chat_language
 from app.kria.select_asks import withdrawn_photo_asks
+from app.kria.spoken_text_ask import with_valid_hold_fact
 from app.kria.text_shape_ask import TEXT_SHAPE_FACT, with_text_shape
 from app.models import CreationThreadEvent, CreativeBriefVersion, CreatorAgentTurn
 from app.schemas.clip_intents import asks_clip_description
@@ -298,6 +299,12 @@ class BriefUpdate(_BriefModel):
         return value
 
     @model_validator(mode="after")
+    def _text_hold(self) -> BriefUpdate:
+        if self.kind == "text" and "hold_s" in self.facts:
+            self.facts = with_valid_hold_fact(self.facts)
+        return self
+
+    @model_validator(mode="after")
     def _needs_content(self) -> BriefUpdate:
         content = (self.kind, self.scope, self.literal, self.description)
         if self.operation == "remove":
@@ -521,14 +528,22 @@ def _complete_change(target: BriefRequirement, update: BriefUpdate) -> BriefUpda
     """KRI-805: a partial change keeps every field it leaves out; a complete one replaces."""
     if update.operation != "change" or (update.kind is not None and update.scope is not None):
         return update
-    facts = {**target.facts, **update.facts}
+    kind = update.kind or target.kind
+    inherited = target.facts
+    if kind != target.kind and "hold_s" in inherited:
+        # KRI-1292: `hold_s` is a text's stay or a photo's hold; it is not the new kind's.
+        inherited = {k: v for k, v in inherited.items() if k != "hold_s"}
+    facts = {**inherited, **update.facts}
+    if kind == "text" and "hold_s" in update.facts:
+        # KRI-1292: a partial change skips BriefUpdate's text check (no kind yet); same rule here.
+        facts = with_valid_hold_fact(facts)
     if "duration_s" in update.facts and "duration_bound" not in update.facts:
         # KRI-847: a new length is exact until the update says it is a ceiling again, so
         # "at most 10 seconds" then "make it 15 seconds" does not become "at most 15".
         facts.pop("duration_bound", None)
     return update.model_copy(
         update={
-            "kind": update.kind or target.kind,
+            "kind": kind,
             "scope": update.scope or target.scope,
             "literal": target.literal if update.literal is None else update.literal,
             "description": target.description if update.description is None else update.description,

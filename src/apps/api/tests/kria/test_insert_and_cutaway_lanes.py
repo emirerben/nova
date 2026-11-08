@@ -86,11 +86,13 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # Re-pinned for says-done group E (#2131): the brief section's caption-count and cleanup
 # sentences carry her Q1/Q2 sentences as examples; v136's values were 39455ee1 / 06797395 /
 # 4b280598 / 83b280d6.
+# Re-pinned for KRI-1292: the brief section teaches `hold_s` for a text at a spoken word;
+# removing that clause reproduces the values above.
 MAIN_PROMPT_SHA = {
-    "neither": "b5dfb48f25a2cfb0ecd79341fa66fef54f105348227bbfd69599465e7b973228",
-    (True, True): "3318626e1cb1abf33c8d8c72adc698c9f9a554d0cb57c7061cf98b69e31baf6e",
-    (True, False): "a29931f76fff0bac223c941f8a511cd8cccd06b501a8443483cd70de87da45e3",
-    (False, True): "62e65bc388e78d82d22d2d39788557d1460b372bb6e577dcf15d0a9eb1f5cc6e",
+    "neither": "bee031cc1ccbbee964b310ace7068e9e8da37bf0351ef7c078e4429158e903bb",
+    (True, True): "da51fd41885a6f4871c5ccadee9111591a0195b1fccee8cc52579449f4867008",
+    (True, False): "871f16739257f2741e4f36bca53bf024619d3e0ab84255578ebc97b275d7bd05",
+    (False, True): "626c12cc2469b070271c53da4910220fc71d1a61f8baf1a2bf4bf016f5fe2385",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (

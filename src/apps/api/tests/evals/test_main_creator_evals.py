@@ -146,6 +146,18 @@ def test_main_creator_eval(
         failures = moment_hold_brief_failures(result.output.get("brief_updates") or [], moment_hold)
         assert not failures, failures
 
+    spoken_hold = fixture.meta.get("spoken_text_hold_brief")
+    if spoken_hold:
+        # KRI-1292: the text at a spoken word carries its length as a typed `hold_s`. Replay = the
+        # hand-authored golden; the paid live run measures the model.
+        from .runners.spoken_text_hold_brief import spoken_text_hold_brief_failures
+
+        assert result.output is not None
+        failures = spoken_text_hold_brief_failures(
+            result.output.get("brief_updates") or [], spoken_hold
+        )
+        assert not failures, failures
+
     copy_meta = fixture.meta.get("creative_copy_decision")
     if copy_meta:
         assert result.output is not None
