@@ -1931,6 +1931,18 @@ class Settings(BaseSettings):
         "and worker restart.",
     )
 
+    speech_cleanup_slate_cut_enabled: bool = Field(
+        default=False,
+        description="Speech cleanup also cuts a production slate that opens a take: the first "
+        'utterance, when it is only recording / rolling / countdown / mic-check talk ("okay, '
+        'we\'re recording", "tamam, kayıttayız", "three two one"), ends with a full stop, a '
+        "gap or a silence, lasts under 3 s and leaves at least 3 words "
+        "(`app/pipeline/speech_slate.py`; Çiğdem S2, docs/reviews/cigdem-s2-failure-modes.md). "
+        "It is cut like an abandoned take. Default off: no span is added and every plan and "
+        "receipt is byte-identical to before. Kill switch: `fly secrets set "
+        "SPEECH_CLEANUP_SLATE_CUT_ENABLED=false --app nova-video` + api and worker restart.",
+    )
+
     speech_cleanup_long_pauses_enabled: bool = Field(
         default=False,
         description="Long pauses on the phone Talking render. Whisper-1 word stamps are "

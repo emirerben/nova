@@ -22,8 +22,11 @@ if TYPE_CHECKING:
     from app.kria.brief import BriefRequirement, CreativeBrief
 
 # The pixel size each asked size draws at on the 1080x1920 canvas. The default caption is 78 px
-# (`phone_captions._CAPTION_TEXT_SIZE_PX`); the readable floor is 40 px.
-CAPTION_ASK_SIZE_PX: dict[str, int] = {"small": 52, "large": 96}
+# (`phone_captions._CAPTION_TEXT_SIZE_PX`); the readable floor is 40 px. "small" is 42 px: the
+# creators who ask for it (Çiğdem's "Yorumla" reels) caption at 40-52 px OCR line height, which
+# is ~31-40 px type, and 52 px read as 68 px lines (S2 "ss2b",
+# docs/reviews/cigdem-s2-failure-modes.md).
+CAPTION_ASK_SIZE_PX: dict[str, int] = {"small": 42, "large": 96}
 CAPTION_ASK_POSITIONS = (
     "top_left",
     "top",

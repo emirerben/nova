@@ -107,7 +107,11 @@ def test_unheard_phrase_that_still_rotates_in_is_met(monkeypatch):
         facts={"speaker_background": True, "background_changes": True},
     )
     receipt = _receipt(job.assembly_plan["variants"][0], req)
-    assert receipt.status == "met", receipt.reason
+    # Nothing is missing (no "never shown" sentence). Two photos over the talk cannot change every
+    # 6 s without a repeat, so the reply says that (Çiğdem S2) and the ask is partial for it.
+    assert "unicorn parade" not in receipt.reason, receipt.reason
+    assert "you asked for a change about every 6 s" in receipt.reason, receipt.reason
+    assert receipt.status == "partial", receipt.reason
 
 
 def _variant(background: dict) -> dict:

@@ -8378,6 +8378,7 @@ def _resolve_strategy_background(
     title_end_s: float | None = None,
     layout_out: dict[str, Any] | None = None,
     entries_out: list[dict[str, Any]] | None = None,
+    rhythm_out: dict[str, Any] | None = None,
 ) -> tuple[Any, frozenset[str]]:
     """The ``SubtitledBackground`` lane the approved strategy names, and the pool spellings
     that stay out of every mid-talk placement (KRI-1117).
@@ -8585,6 +8586,15 @@ def _resolve_strategy_background(
             **({"opening_s": opening_end_s} if opening_end_s is not None else {}),
         )
         lane_drops.extend(layout.notes)
+        if rhythm_out is not None and layout.windows:
+            # Çiğdem S2: how long the longest photo really stays (kept-take seconds) and the
+            # rhythm the creator named, so the finished-video reply can say when one stays
+            # clearly longer than asked (too few photos, none repeats).
+            rhythm_out["longest_s"] = round(
+                max(window.end_s - window.start_s for window in layout.windows), 2
+            )
+            if request.get("cadence_s") is not None:
+                rhythm_out["cadence_s"] = float(request["cadence_s"])
         if layout_out is not None:
             layout_out["phrases"] = [
                 (index, str(entry.get("spoken_phrase")))
@@ -10974,6 +10984,7 @@ def _run_phone_subtitled_job(
                 background_reserved: frozenset[str] = frozenset()
                 # Qendresa case 5: every asked recording, so the receipt names one never shown.
                 background_entries: list[dict[str, Any]] = []
+                background_rhythm: dict[str, Any] = {}
                 background_request = _strategy_background_request(all_candidates)
                 if background_request is not None:
                     if ending_lane_only:
@@ -11009,6 +11020,7 @@ def _run_phone_subtitled_job(
                                 ),
                                 layout_out=list_label_layout if list_label_asks else None,
                                 entries_out=background_entries,
+                                rhythm_out=background_rhythm,
                             )
                         )
 
@@ -11866,6 +11878,11 @@ def _run_phone_subtitled_job(
                         if _unshown:
                             lane_receipt["background"]["unshown"] = _unshown
                         # KRI-1304: what the planner left out (no recording / never said).
+                        # Çiğdem S2: the asked rhythm against the longest photo, only when one
+                        # was named (the 4 s default is not an ask).
+                        if background_rhythm.get("cadence_s") is not None and _bg.windows:
+                            lane_receipt["background"]["cadence_s"] = background_rhythm["cadence_s"]
+                            lane_receipt["background"]["longest_s"] = background_rhythm["longest_s"]
                         _left_out = (background_request or {}).get("left_out")
                         if _left_out:
                             lane_receipt["background"]["left_out"] = _left_out
@@ -33292,6 +33309,13 @@ def _silence_cut_analysis(
                     job_id=job_id,
                     source_fingerprint=source_fingerprint or cache_key or clip_path,
                 )
+                # Çiğdem S2: a production slate opening the take ("okay, we're recording").
+                if settings.speech_cleanup_slate_cut_enabled:
+                    from app.pipeline.speech_slate import opening_slate_span  # noqa: PLC0415
+
+                    slate = opening_slate_span(transcript.words, silences=silences)
+                    if slate is not None and slate not in retake_spans:
+                        retake_spans = [*retake_spans, slate]
             # Explicit opt-in (required_v1) clamps an over-budget removal set to
             # the consent budget instead of bailing — the bailout would be
             # escalated to a deterministic unsafe_plan render failure by every

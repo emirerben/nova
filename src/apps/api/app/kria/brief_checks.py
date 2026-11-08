@@ -463,6 +463,11 @@ class SpeakerBackgroundFact:
     aimed: bool | None = None
     # KRI-1304: what the planner left out of the sequence, as (name, "no_recording" | "not_said").
     left_out: tuple[tuple[str, str], ...] = ()
+    # Çiğdem S2: on a finished video, the rhythm the creator named (``cadence_s``, the midpoint of a
+    # range) and how long the longest photo really stays (kept-take seconds). None = no rhythm was
+    # named, or a render recorded before the worker wrote it (no claim either way).
+    asked_cadence_s: float | None = None
+    longest_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -1326,7 +1331,15 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
         unshown=_unshown_recordings(detail.get("unshown")),
         aimed=detail["aimed"] if isinstance(detail.get("aimed"), bool) else None,
         left_out=_left_out_recordings(detail.get("left_out")),
+        asked_cadence_s=_positive_seconds(detail.get("cadence_s")),
+        longest_s=_positive_seconds(detail.get("longest_s")),
     )
+
+
+def _positive_seconds(value: object) -> float | None:
+    if isinstance(value, int | float) and not isinstance(value, bool) and value > 0:
+        return float(value)
+    return None
 
 
 def _left_out_recordings(rows: object) -> tuple[tuple[str, str], ...]:
@@ -5476,6 +5489,13 @@ def _check_speaker_background_core(req: BriefRequirement, facts: PlanFacts) -> R
             tr += f"; sen {corner[1]}sın"
     missing = _unshown_sentence(fact) if rendered else None
     left_out = _left_out_sentence(fact) if rendered else None
+    slow = _slower_than_asked_sentence(fact) if rendered and wants_several else None
+    if slow:
+        # Çiğdem S2: "changing every 3-5 seconds" with too few photos for the talk is not met.
+        extra = " ".join(
+            part for part in (slow, missing, left_out[0] if left_out else None) if part
+        )
+        return _receipt(req, "partial", f"{say(en=en + '.', tr=tr + '.')} {extra}")
     if missing or (left_out and left_out[1]):
         # Qendresa case 5: a recording she asked for never shows, so the ask is not met.
         # KRI-1304: so is a repo with no recording attached.
@@ -5484,6 +5504,33 @@ def _check_speaker_background_core(req: BriefRequirement, facts: PlanFacts) -> R
     if left_out:
         return _receipt(req, "met", f"{say(en=en + '.', tr=tr + '.')} {left_out[0]}")
     return _receipt(req, "met", say(en=en + ".", tr=tr + "."))
+
+
+# A photo may stay this much longer than the named rhythm before the reply calls it out ("3-5
+# seconds" is recorded as 4, so anything over 5 s is outside what was asked).
+_RHYTHM_SLACK_S = 1.0
+
+
+def _slower_than_asked_sentence(fact: SpeakerBackgroundFact) -> str | None:
+    """Çiğdem S2: one photo stays clearly longer than the rhythm the creator named, because each
+    photo shows once and there are too few for the talk. None when no rhythm was named, the
+    record predates it, or every photo changes within it."""
+    cadence, longest = fact.asked_cadence_s, fact.longest_s
+    if cadence is None or longest is None or longest <= cadence + _RHYTHM_SLACK_S:
+        return None
+    shown = _background_media_shown(fact)
+    return say(
+        en=(
+            f"One stays on for {longest:.0f} s, but you asked for a change about every "
+            f"{cadence:g} s: there are only {shown} photos or videos for this talk and none "
+            "repeats. Add more for faster changes."
+        ),
+        tr=(
+            f"Biri {longest:.0f} sn ekranda kalıyor ama yaklaşık {cadence:g} saniyede bir "
+            f"değişmesini istedin: bu konuşma için yalnızca {shown} fotoğraf ya da video var ve "
+            "hiçbiri tekrar etmiyor. Daha hızlı değişmesi için daha fazlasını ekle."
+        ),
+    )
 
 
 def _left_out_sentence(fact: SpeakerBackgroundFact) -> tuple[str, bool] | None:
