@@ -1208,9 +1208,15 @@ def _speaker_background_facts(
             )
         }
     opening_planned = bool(getattr(kept, "full_screen_opening", False))
+    # KRI-1304 leftover: what the planner left out, so the draft row says it like its lead.
+    left_out = tuple(
+        (row.name, row.why)
+        for row in (getattr(kept, "left_out", ()) or getattr(asked, "left_out", ()) or ())
+    )
     return {
         "speaker_background": SpeakerBackgroundFact(
             "planned",
+            left_out=left_out,
             pool_count=len(pool),
             fill_id=kept.media_id,
             window_count=len(kept.sequence),
@@ -5338,7 +5344,9 @@ def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> Requir
     and a made one is reported beside it.
     """
     receipt = _check_speaker_background_core(req, facts)
-    receipt = _with_zoom_verdict(req, receipt, facts.speaker_background)
+    receipt = _with_zoom_verdict(
+        req, receipt, facts.speaker_background, rendered=bool(facts.rendered_variant)
+    )
     fact = facts.speaker_background
     if not _full_opening_asked(req) or fact is None or receipt.status == "not_possible":
         return receipt
@@ -5370,7 +5378,11 @@ def _document_all_zoomed(doc: Mapping[str, Any]) -> bool:
 
 
 def _with_zoom_verdict(
-    req: BriefRequirement, receipt: RequirementReceipt, fact: SpeakerBackgroundFact | None
+    req: BriefRequirement,
+    receipt: RequirementReceipt,
+    fact: SpeakerBackgroundFact | None,
+    *,
+    rendered: bool = False,
 ) -> RequirementReceipt:
     """KRI-1307: a "zoom into the recordings so the text is readable" ask is judged on its own.
 
@@ -5401,8 +5413,30 @@ def _with_zoom_verdict(
             en="I'll zoom in on the text when it's made; I can't confirm it before then.",
             tr="Video yapılınca yazılara yakınlaşacağım; öncesinde doğrulayamıyorum.",
         )
-        status = receipt.status
+        # KRI-1304 leftover: a draft never says Done for what only the render can show.
+        status = receipt.status if rendered else "partial"
     return _receipt(req, status, f"{receipt.full_reason or ''} {extra}".strip())
+
+
+def speaker_background_waits_for_render(req: BriefRequirement, facts: PlanFacts) -> bool:
+    """KRI-1304 leftover: this draft's green-screen row is short only of what the render
+    decides (the zoom) or of recordings the planner left out, never of anything the plan lacks.
+
+    The row then reads Partly (it matches the lead and the finished list), and approval
+    readiness still approves it: holding it would offer "Make it without these", which drops
+    the whole green-screen ask for one recording. Re-judged with the zoom made and nothing left
+    out; met then means nothing else is short.
+    """
+    fact = facts.speaker_background
+    if fact is None or facts.rendered_variant or fact.status != "planned":
+        return False
+    if not fact.left_out and fact.aimed is not None:
+        return False
+    hopeful = dataclasses.replace(fact, aimed=True, left_out=())
+    return (
+        check_requirement(req, dataclasses.replace(facts, speaker_background=hopeful)).status
+        == "met"
+    )
 
 
 def _check_speaker_background_core(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -5485,10 +5519,13 @@ def _check_speaker_background_core(req: BriefRequirement, facts: PlanFacts) -> R
             en += f"; you're {corner[0]}"
             tr += f"; sen {corner[1]}sın"
     missing = _unshown_sentence(fact) if rendered else None
-    left_out = _left_out_sentence(fact) if rendered else None
-    if missing or (left_out and left_out[1]):
+    left_out = _left_out_sentence(fact)
+    if missing or (left_out and (left_out[1] or not rendered)):
         # Qendresa case 5: a recording she asked for never shows, so the ask is not met.
-        # KRI-1304: so is a repo with no recording attached.
+        # KRI-1304: so is a repo with no recording attached. On a draft a recording the planner
+        # left out is never "Done" either (Q2 run 2: the lead said the trending page was left
+        # out while the row said Done); readiness still approves it
+        # (`speaker_background_waits_for_render`).
         extra = " ".join(part for part in (missing, left_out[0] if left_out else None) if part)
         return _receipt(req, "partial", f"{say(en=en + '.', tr=tr + '.')} {extra}")
     if left_out:
