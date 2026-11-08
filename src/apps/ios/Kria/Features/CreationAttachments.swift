@@ -15,6 +15,8 @@ enum AttachmentLaunch: Equatable {
     /// The "Upload from" list over the sheet.
     case chooseSource
     case source(FootageSourceKind)
+    /// A generated image a suggestion card made: the overlays step, with the review of that image already open.
+    case generatedOverlays
 }
 
 /// Which surface asked Add media to open a camera or a picker, and so where that presentation lands when it ends with
@@ -359,6 +361,9 @@ struct AttachmentSheet: View {
                 case .step(let target): if steps.contains(target) { step = target; role = target.role }
                 case .chooseSource: pickerLaunch = .sources
                 case .source(let kind): pickerLaunch = kind
+                case .generatedOverlays:
+                    if steps.contains(.overlays) { step = .overlays; role = .visual }
+                    openOverlaySet()
                 case nil: break
                 }
             }

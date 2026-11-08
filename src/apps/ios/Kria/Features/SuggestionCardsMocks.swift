@@ -14,6 +14,10 @@ enum SuggestionCardsMocks {
 
     /// The card whose tap the fixture server answers with the "no longer fits" reply, as `plan_pinned_suggestion_turn` does.
     static let staleCardID = "ss_fixture_stale"
+    /// The one paid card (`KRIA_SUGGESTION_CARDS=generated`): its tap makes an image and nothing else.
+    static let generatedCardID = "ss_fixture_generated_overlay"
+    /// The server's reply to a spending tap whose image is ready (`_GENERATION_READY_REPLY`).
+    static let generatedReadyReply = "Your image is ready. Review it before it goes in your video. Nothing in the edit changed."
     /// The server's English reply for a pin it will not run (`_NO_LONGER_FITS`).
     static let noLongerFitsReply = "This suggestion no longer fits your edit. Nothing was changed, and I'm refreshing the ideas."
 
@@ -92,6 +96,14 @@ enum SuggestionCardsMocks {
         ])
     }
 
+    /// Ready, with one card that spends: it quotes a price and the app asks before the tap goes out.
+    static func generated() -> [String: Any] {
+        set("sg_fixture_generated", cards: [
+            card("generated_overlay", "Add a generated image", why: "The pasta is only described", evidence: ["You review it before it goes in"],
+                 prompt: "Add a generated image overlay", action: "async_generate", cost: 0.04, id: generatedCardID, requiresProtocol: 45),
+        ])
+    }
+
     /// Ready, with nothing to suggest: the chips-free, card-free outcome of a clean edit.
     static func empty() -> [String: Any] { set("sg_fixture_empty", cards: []) }
 
@@ -99,11 +111,11 @@ enum SuggestionCardsMocks {
 
     static func card(_ kind: String, _ title: String, why: String? = nil, evidence: [String] = [], prompt: String,
                      copy: String? = nil, action: String = "editor_ops", cost: Double? = nil,
-                     anchor: [String: Any] = [:], id: String? = nil) -> [String: Any] {
+                     anchor: [String: Any] = [:], id: String? = nil, requiresProtocol: Int? = nil) -> [String: Any] {
         [
             "id": id ?? "ss_fixture_\(kind)", "kind": kind, "title": title, "why": why ?? "", "evidence": evidence,
             "prompt": prompt + promptSuffix, "copy_text": copy ?? NSNull(), "rank": 1, "anchor": anchor, "action_type": action,
-            "cost_usd": cost ?? NSNull(), "requires_protocol": NSNull(),
+            "cost_usd": cost ?? NSNull(), "requires_protocol": requiresProtocol ?? NSNull(),
         ]
     }
 

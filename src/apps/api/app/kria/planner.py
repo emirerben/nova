@@ -2203,6 +2203,21 @@ async def _copilot_clip_context(
         log.warning(
             "kria_copilot_background_pool_unavailable", thread_id=str(thread_id), exc_info=True
         )
+    try:
+        # KRI-1253: the generated images the creator accepted, which chat may place as a picture
+        # card. No query unless the card's flag is on and this is a phone Talking edit.
+        from app.services import generated_overlay_pool  # noqa: PLC0415
+
+        if generated_overlay_pool.enabled_for(variant):
+            generated = await generated_overlay_pool.load_pool(db, item.id, thread.creator_id)
+            if generated:
+                context["generated_overlay_pool"] = generated
+    except Exception:  # noqa: BLE001 - fail closed: empty pool => no add_overlay
+        log.warning(
+            "kria_copilot_generated_overlay_pool_unavailable",
+            thread_id=str(thread_id),
+            exc_info=True,
+        )
     return context
 
 
@@ -6666,6 +6681,30 @@ _UNSAVED_EDITS_REPLY_TR = (
 )
 
 
+_GENERATION_READY_REPLY = (
+    "Your image is ready. Review it before it goes in your video. Nothing in the edit changed."
+)
+_GENERATION_READY_REPLY_TR = (
+    "Görselin hazır. Videoya girmeden önce gözden geçir. Düzenlemede hiçbir şey değişmedi."
+)
+_GENERATION_STARTED_REPLY = (
+    "I started your image. It shows up on the card when it is ready, and you review it before it "
+    "goes in your video."
+)
+_GENERATION_STARTED_REPLY_TR = (
+    "Görselini hazırlamaya başladım. Hazır olunca kartta görünür, videoya girmeden önce sen "
+    "gözden geçirirsin."
+)
+_GENERATION_FAILED_REPLY = "I couldn't make the image this time. Nothing in the edit changed."
+_GENERATION_FAILED_REPLY_TR = "Bu sefer görseli yapamadım. Düzenlemede hiçbir şey değişmedi."
+_GENERATION_BUDGET_REPLY = (
+    "Image generation is paused right now, so I didn't make one. Nothing in the edit changed."
+)
+_GENERATION_BUDGET_REPLY_TR = (
+    "Görsel üretimi şu an durduruldu, bu yüzden görsel yapmadım. Düzenlemede hiçbir şey değişmedi."
+)
+
+
 async def plan_pinned_suggestion_turn(
     db: AsyncSession,
     *,
@@ -6744,11 +6783,12 @@ async def plan_pinned_suggestion_turn(
     suggestion = card.suggestion
     action = suggestion.action
     restate = pinned.restates_strategy(action)
+    spends = pinned.spends(action)
     ops = pinned.editor_ops(action)
     allow = pinned.PINNED_OP_ALLOW
     if ops is None and (ops := pinned.copy_ops(action)) is not None:
         allow = pinned.COPY_OP_ALLOW
-    if ops is None and not restate:
+    if ops is None and not restate and not spends:
         return _no_longer_fits(pinned.ACTION_UNSUPPORTED)
     if (ops is not None and pinned.disallowed_op(ops, allow) is not None) or (
         not pinned.kind_enabled(suggestion)
@@ -6821,10 +6861,66 @@ async def plan_pinned_suggestion_turn(
         ops = pinned.editor_ops(action)
         if ops is None:
             ops = pinned.copy_ops(action)
-        if (ops is None and not restate) or (
+        if (ops is None and not restate and not spends) or (
             ops is not None and pinned.disallowed_op(ops, allow) is not None
         ):
             return _no_longer_fits(pinned.BASE_MOVED)
+
+    if spends:
+        # The card quotes a price; the tap is the creator's yes (the app asks first, and only a
+        # build that does is offered the card). One operation per card: a repeat finds it.
+        from app.services import generated_media  # noqa: PLC0415
+        from app.services.suggestions.kinds import generated_overlay  # noqa: PLC0415
+
+        if pinned.is_consumed(thread.state, set_id, suggestion_id):
+            return _no_longer_fits(pinned.CONSUMED)
+        prompt = str(action.spec.get("prompt") or "")
+        if not prompt or not generated_media.generated_images_available(
+            creator_id, client_protocol
+        ):
+            return _no_longer_fits(pinned.GENERATION_UNAVAILABLE)
+        made = await asyncio.to_thread(
+            generated_media.generate_image_for_card,
+            owner_id=creator_id,
+            item_id=item_id,
+            prompt=prompt,
+            event_id=generated_overlay.event_id(set_id, suggestion_id),
+        )
+        log.info(
+            "suggestion_pin.spent",
+            thread_id=str(thread_id),
+            kind=suggestion.kind,
+            state=made.state,
+            failure_code=made.failure_code,
+        )
+        if made.state == "failed":
+            budget = made.failure_code == "budget_unavailable"
+            return _reply(
+                say(
+                    en=_GENERATION_BUDGET_REPLY if budget else _GENERATION_FAILED_REPLY,
+                    tr=_GENERATION_BUDGET_REPLY_TR if budget else _GENERATION_FAILED_REPLY_TR,
+                ),
+                pinned.BUDGET_UNAVAILABLE if budget else pinned.GENERATION_FAILED,
+            )
+        ready = made.state == "ready"
+        return PlannedKriaTurn(
+            plan=KriaTurnPlan(
+                mode="respond",
+                turn_value="review",
+                response=say(
+                    en=_GENERATION_READY_REPLY if ready else _GENERATION_STARTED_REPLY,
+                    tr=_GENERATION_READY_REPLY_TR if ready else _GENERATION_STARTED_REPLY_TR,
+                ),
+                diagnostics=_record(
+                    "generated",
+                    operation_id=str(made.operation_id),
+                    state=made.state,
+                    event_id=str(generated_overlay.event_id(set_id, suggestion_id)),
+                ),
+            ),
+            manifest_hash=manifest.manifest_hash,
+            context_hash=manifest.context_hash,
+        )
 
     brief_fields: dict[str, Any] = {}
     parsed: list[dict] | None = None

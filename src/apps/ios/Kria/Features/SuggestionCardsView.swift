@@ -12,8 +12,12 @@ struct SuggestionCardsPresentation {
     let refresh: () -> Void
     /// The card now sending, so its row can say so and the others wait.
     let sendingID: String?
+    /// The image a paid card is making (or made), drawn above the cards until the creator reviews or dismisses it.
+    var generated: GeneratedCardResult? = nil
+    var reviewGenerated: () -> Void = {}
+    var dismissGenerated: () -> Void = {}
 
-    var isEmpty: Bool { cards.isEmpty }
+    var isEmpty: Bool { cards.isEmpty && generated == nil }
 }
 
 /// One suggestion: what it does, why it is offered, the measured fact behind it, and (hook and title cards) the exact
@@ -132,15 +136,27 @@ struct SuggestionCardList: View {
     let presentation: SuggestionCardsPresentation
     let idPrefix: String
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The paid card the creator tapped and has not yet agreed to pay for. Nothing is sent while this is set.
+    @State private var asking: SuggestionCard?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let generated = presentation.generated {
+                GeneratedCardRow(
+                    result: generated, identifier: "\(idPrefix)-generated",
+                    review: presentation.reviewGenerated, dismiss: presentation.dismissGenerated
+                )
+                .transition(.opacity)
+            }
             ForEach(Array(presentation.cards.enumerated()), id: \.element.id) { index, card in
                 SuggestionCardView(
                     card: card, identifier: "\(idPrefix)-\(index)",
                     isSending: presentation.sendingID == card.id,
                     isBusy: presentation.sendingID != nil,
-                    tap: { _ = presentation.tap(card) }, dismiss: { presentation.dismiss(card) }
+                    tap: {
+                        if card.needsSpendConsent { asking = card } else { _ = presentation.tap(card) }
+                    },
+                    dismiss: { presentation.dismiss(card) }
                 )
                 .transition(.opacity)
             }
@@ -148,6 +164,116 @@ struct SuggestionCardList: View {
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: presentation.cards.map(\.id))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("\(idPrefix)s")
+        .sheet(item: $asking) { card in
+            SpendConsentSheet(
+                card: card,
+                confirm: { asking = nil; _ = presentation.tap(card) },
+                cancel: { asking = nil }
+            )
+            .presentationDetents([.height(320)])
+            .presentationDragIndicator(.visible)
+        }
+    }
+}
+
+/// "Costs $0.04": a paid card never sends on its first tap. The sheet says what is bought and what is not done
+/// until the creator says so; "Not now" sends nothing and leaves the card where it was.
+struct SpendConsentSheet: View {
+    let card: SuggestionCard
+    let confirm: () -> Void
+    let cancel: () -> Void
+
+    private var price: String { card.costLabel ?? "a small fee" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Make this image?")
+                .font(KriaFont.body(20).weight(.bold))
+                .accessibilityAddTraits(.isHeader)
+            Text(card.title)
+                .font(KriaFont.body(15).weight(.semibold))
+            Text("Costs \(price). Kria makes one image and shows it to you first. Nothing goes in your video until you say so.")
+                .font(KriaFont.body(14))
+                .foregroundStyle(KriaColor.mutedInk)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            HStack(spacing: 12) {
+                Button("Not now", action: cancel)
+                    .buttonStyle(KriaSecondaryButtonStyle(minHeight: 48))
+                    .accessibilityIdentifier("suggestion-spend-cancel")
+                Button("Make it for \(price)", action: confirm)
+                    .buttonStyle(KriaPrimaryButtonStyle())
+                    .accessibilityIdentifier("suggestion-spend-confirm")
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 24)
+        .padding(.bottom, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(KriaColor.paper)
+    }
+}
+
+/// The image a paid card is making, then the way to look at it. It outlives the card: the server replaces the set the
+/// moment the card is spent, so this row does not depend on any set.
+struct GeneratedCardRow: View {
+    let result: GeneratedCardResult
+    let identifier: String
+    let review: () -> Void
+    let dismiss: () -> Void
+
+    private var message: String {
+        switch result.phase {
+        case .making: "Making your image…"
+        case .ready: "Your image is ready"
+        case .unsure: "Kria isn't sure your image finished"
+        case .failed: "Kria couldn't make the image"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Group {
+                if result.phase == .making {
+                    ProgressView().controlSize(.small).tint(KriaColor.ink)
+                } else {
+                    Image(systemName: result.phase == .failed ? "exclamationmark.circle" : "photo.badge.checkmark")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(KriaColor.ink)
+                }
+            }
+            .frame(width: 30, height: 30)
+            .background(KriaColor.butter, in: Circle())
+            .accessibilityHidden(true)
+            Text(message)
+                .font(KriaFont.body(14).weight(.semibold))
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("\(identifier)-status")
+            if result.phase == .ready || result.phase == .unsure {
+                Button("Review", action: review)
+                    .buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
+                    .accessibilityIdentifier("\(identifier)-review")
+            }
+            if result.canDismiss {
+                Button(action: dismiss) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(KriaColor.mutedInk)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss")
+                .accessibilityIdentifier("\(identifier)-dismiss")
+            }
+        }
+        .padding(.leading, 12)
+        .padding(.vertical, 6)
+        .frame(minHeight: 44)
+        .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(identifier)
     }
 }
 

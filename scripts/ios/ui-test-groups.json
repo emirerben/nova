@@ -260,6 +260,7 @@
       "KriaUITests/CreationUITests/testSuggestionCardsInChatAndTheEditorImproveSheetShareOneSet",
       "KriaUITests/CreationUITests/testDeclinedSuggestionCardRepliesNoLongerFitsThenTheRefreshedSet",
       "KriaUITests/CreationUITests/testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize",
+      "KriaUITests/CreationUITests/testGeneratedImageCardAsksFirstThenMakesOneImageAndHandsItToReview",
       "KriaUITests/SteerNowUITests/testWaitingBarAndSteerWhileKriaPlans",
       "KriaUITests/SteerNowUITests/testSteerClosesTheCardAndSaysWhy",
       "KriaUITests/SteerNowUITests/testNoSteerWhileTheVideoIsBeingMade",

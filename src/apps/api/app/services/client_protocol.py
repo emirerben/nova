@@ -64,6 +64,10 @@ CARD_STYLE_PROTOCOL = 44
 # protocol was 42 and #2163 raised it to 44 after it, so a 42 build may still lead with cleanup.
 KEEP_ORIGINAL_CARD_PROTOCOL = 44
 
+# KRI-1253: the first build that asks the creator before it sends a suggestion card whose action
+# is `async_generate` (a tap that spends). An older build would spend on one touch.
+GENERATED_CARD_CONSENT_PROTOCOL = 45
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()
