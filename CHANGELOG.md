@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.84.0] - 2026-11-08
+
+### Changed
+- fix(phone): CTA ending readable on light pages, captions stop at the ending (KRI-1306) (#2193) <!-- release-pr: 2193 -->
+
 ## [0.88.83.0] - 2026-11-08
 
 ### Changed
