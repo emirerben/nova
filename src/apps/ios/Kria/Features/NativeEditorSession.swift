@@ -1334,7 +1334,8 @@ struct NativeEditorTemporaryVideo: Sendable {
                                 submitted: SubmittedEditorState?, revision: Int) {
         let proven = submitted.flatMap { $0.authority == mergeAuthority ? $0 : nil }
         let cumulativeChatOnly = hasOnlyChatStagedChanges
-        let base = proven?.document ?? (cumulativeChatOnly ? document : cleanDocument)
+        // A chat-only editor already holds the earlier draft, which a reused submitted state predates.
+        let base = cumulativeChatOnly ? document : (proven?.document ?? cleanDocument)
         var remote = base
         for section in staged.sections { copy(section, from: staged.document, into: &remote) }
         // Chat changes authored fields; rendered authority remains the current one.
@@ -2641,6 +2642,8 @@ struct NativeEditorTemporaryVideo: Sendable {
             configureCapabilities(from: variant)
             undoStack.removeAll(); redoStack.removeAll()
             changedSections.removeAll(); explicitlyDirtySections.removeAll()
+            // applyStagedChatDocument reads this to tell a clean editor from one with manual edits.
+            hasUnsavedChanges = false
             durationSourcesInvalidated = false
             setAuthoritativeDuration(Self.number(variant?["duration_s"]))
             if let staged { applyStagedChatDocument(staged, revision: snapshot.draftRevision) }
