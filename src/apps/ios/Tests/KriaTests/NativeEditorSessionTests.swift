@@ -3260,43 +3260,122 @@ final class NativeEditorSessionTests: XCTestCase {
         try await exerciseLegacyRefreshAfterSave(overlappingTrim: false)
     }
 
-    private func exerciseLegacyRefreshAfterSave(overlappingTrim: Bool) async throws {
-        let jobID = UUID()
+    func testDeferredSameTargetConflictRetainsItsAdmittedPreviewWhenResolved() async throws {
+        try await exerciseLegacyRefreshAfterSave(overlappingTrim: true, retainsPreview: true)
+    }
+
+    func testRetainedPreviewStopsOnSourceFailureAndRetriesWithoutLosingTheUnsavedTrim() async throws {
+        try await exerciseLegacyRefreshAfterSave(overlappingTrim: true, retainsPreview: true, testsRetainedFailure: true)
+    }
+
+    private func exerciseLegacyRefreshAfterSave(overlappingTrim: Bool, retainsPreview: Bool = false,
+                                               testsRetainedFailure: Bool = false) async throws {
+        let jobID = UUID(), projectID = UUID()
+        var initialVariant = Self.variant(duration: 2, generation: "g1")
+        if retainsPreview { initialVariant["resolved_archetype"] = .string("montage") }
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
             draftID: "unused", itemID: "item", variantKey: "initial", draftRevision: 0,
             snapshotHash: "", etag: "", baseJobID: nil, baseGenerationID: nil,
             snapshot: [:], canUndo: false, createdAt: .now), draftError: .conflict,
-            authoritativeVariant: Self.variant(duration: 2, generation: "g1"),
+            authoritativeVariant: initialVariant,
             commitResponse: EditorCommitResponse(ok: false, generation: "g2",
                 sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false),
                 revisionNumber: nil, revisionHash: nil, expectedDuration: nil))
-        let project = ProjectSummary(id: UUID(), title: "Legacy", status: .ready, updatedAt: .now,
+        var previewSource: NativeTimelineSource?
+        var importedAssetID: String?
+        let retainedSlotID = UUID().uuidString
+        func retainingSourceIdentity(_ variant: [String: JSONValue]) -> [String: JSONValue] {
+            guard retainsPreview else { return variant }
+            guard let importedAssetID,
+                  var timeline = variant["user_timeline"]?.objectValue,
+                  var slots = timeline["slots"]?.arrayValue, slots.count == 1,
+                  var slot = slots[0].objectValue else {
+                XCTFail("The retained fixture requires its imported source and one canonical slot")
+                return variant
+            }
+            slot["slot_id"] = .string(retainedSlotID)
+            slot["id"] = .string(retainedSlotID)
+            slot["asset_id"] = .string(importedAssetID)
+            slots[0] = .object(slot)
+            timeline["slots"] = .array(slots)
+            var result = variant
+            result["user_timeline"] = .object(timeline)
+            return result
+        }
+        if retainsPreview {
+            let sourceProject = BackgroundUploadCoordinator.projectDirectory(projectID)
+            addTeardownBlock { try? FileManager.default.removeItem(at: sourceProject.root) }
+            let footage = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+            let asset = try await AssetImportCoordinator(project: sourceProject).importAsset(from: footage)
+            // MediaAsset.id is String; the importer defaults to a UUID string.
+            _ = try XCTUnwrap(UUID(uuidString: asset.id))
+            importedAssetID = asset.id
+            try SourceAssetStore(project: sourceProject).bind(mediaID: "source", original: asset)
+            let fingerprint = try XCTUnwrap(asset.fingerprint)
+            let descriptor = OriginalMediaDescriptor(sha256: fingerprint.hex, byteCount: fingerprint.byteCount,
+                durationS: 4, width: 1080, height: 1920, orientationDegrees: 0, hasAudio: true)
+            previewSource = NativeTimelineSource(mediaID: "source", sourceURL: nil,
+                original: descriptor, localRequired: true)
+        }
+        func pinPreviewSources(_ generation: String) {
+            guard let previewSource else { return }
+            fake.sourcePoolResult = NativeEditorSourcePool(
+                clips: [.init(clipIndex: 0, nativeSource: previewSource)], baseGeneration: generation)
+        }
+        fake.authoritativeVariant = retainingSourceIdentity(initialVariant)
+        pinPreviewSources("g1")
+        let project = ProjectSummary(id: projectID, title: "Legacy", status: .ready, updatedAt: .now,
             posterURL: nil, outputVariantID: "initial", runtimeVersion: 1,
             activeJobID: jobID, activePlanItemID: "item")
         let session = NativeEditorSession(project: project)
+        defer {
+            if retainsPreview {
+                session.setObserversVisible(false)
+                session.endPreviewPresentation()
+                session.pausePlayback()
+            }
+        }
+        func previewDiagnostics() -> String {
+            "generation=\(session.document.revision.baseGeneration); conflict=\(String(describing: session.mergeConflictMessage)); sourceState=\(session.sourcePreviewState); sourcePoolCalls=\(fake.sourcePoolCallCount)"
+        }
+        func awaitPreparedPreview() async throws {
+            let ready = await waitUntil {
+                session.sourcePreviewState == .ready
+                    && session.admissiblePreviewDisplayTicket != nil
+                    && session.player?.currentItem?.status == .readyToPlay
+            }
+            XCTAssertTrue(ready, "The real local-source preview must settle before admission: \(previewDiagnostics())")
+            XCTAssertEqual(session.sourcePreviewState, .ready)
+            guard ready else { throw APIError.invalidResponse }
+        }
         await session.load(project: project, api: fake)
+        if retainsPreview { try await awaitPreparedPreview() }
         session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.5)
         await session.save()
         XCTAssertEqual(fake.commitCount, 1)
         XCTAssertFalse(session.hasUnsavedChanges)
         func renderedVariant(duration: Double, generation: String, textEnd: Double = 1) -> [String: JSONValue] {
             var value = Self.variant(duration: duration, generation: generation)
+            if retainsPreview { value["resolved_archetype"] = .string("montage") }
             value["text_elements"] = .array([.object([
                 "id": .string("remote-text"), "text": .string("Original"),
                 "start_s": .number(0), "end_s": .number(textEnd),
             ])])
-            return value
+            return retainingSourceIdentity(value)
         }
         let saved = renderedVariant(duration: 1.5, generation: "g2")
         fake.authoritativeVariant = saved
+        pinPreviewSources("g2")
         XCTAssertTrue(session.rebaseCleanDraft(from: saved))
         session.saveState = .saved
+        if retainsPreview { try await awaitPreparedPreview() }
         if overlappingTrim {
             session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.2)
         } else {
             session.updateTextContent(id: "remote-text", content: "My local edit")
         }
         let afterSave = session.document
+        let expectedTimeline = retainsPreview ? try XCTUnwrap(afterSave.snapshot(for: .timeline)) : nil
         await session.synchronizePromptRevision()
         XCTAssertEqual(session.document, afterSave)
         XCTAssertTrue(session.hasUnsavedChanges)
@@ -3310,7 +3389,23 @@ final class NativeEditorSessionTests: XCTestCase {
             XCTAssertTrue(session.hasUnsavedChanges)
             XCTAssertTrue(session.canUndo)
             XCTAssertEqual(fake.commitCount, 1, "a background conflict does not save")
+            if retainsPreview {
+                try await awaitPreparedPreview()
+                XCTAssertEqual(session.sourcePreviewState, .ready)
+                session.beginPreviewPresentation()
+                let player = try XCTUnwrap(session.player)
+                XCTAssertEqual(player.currentItem?.status, .readyToPlay)
+                let ticket = try XCTUnwrap(session.admissiblePreviewDisplayTicket)
+                session.previewFrameWasShown(player: player, ticket: ticket)
+                XCTAssertFalse(session.isPreparingCurrentPreview)
+                XCTAssertNil(session.previousPreviewPresentation, "The conflict choice itself is not preview work")
+            }
+            pinPreviewSources("g3")
             session.resolveMergeConflicts(keepingLocal: true)
+            if retainsPreview {
+                XCTAssertEqual(session.previousPreviewPresentation?.status, .updating,
+                               "Resolving a deferred same-target conflict keeps its admitted picture during preparation")
+            }
         } else {
             XCTAssertNil(session.mergeConflictMessage, "remote timing and local wording merge automatically")
             XCTAssertEqual(session.document.textElements.first?.text, "My local edit")
@@ -3320,13 +3415,96 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertNil(session.mergeConflictMessage)
         XCTAssertEqual(rebased.revision.baseGeneration, "g3")
-        // Compare the persisted authored lane: encoding overlays effective values onto cached
-        // wire rows while retaining source identity, tombstones and opaque fields.
-        XCTAssertEqual(rebased.snapshot(for: .timeline), afterSave.snapshot(for: .timeline),
-                       "the complete authored timeline survives merging or the explicit local choice")
+        if retainsPreview {
+            let resolvedTimeline = try XCTUnwrap(rebased.snapshot(for: .timeline))
+            XCTAssertEqual(resolvedTimeline, try XCTUnwrap(expectedTimeline),
+                           "The complete authored timeline, including unknown fields, survives conflict resolution")
+            let expectedClip = try XCTUnwrap(afterSave.clips.first)
+            let resolvedClip = try XCTUnwrap(rebased.clips.first)
+            let expectedAsset = try XCTUnwrap(expectedClip.raw["asset_id"])
+            XCTAssertEqual(resolvedClip.raw["asset_id"], expectedAsset)
+            XCTAssertEqual(resolvedClip.clipIndex, 0)
+            XCTAssertEqual(resolvedClip.inS, 0)
+            XCTAssertEqual(resolvedClip.durationS, 1.2)
+        } else {
+            // Compare the persisted authored lane: encoding overlays effective values onto cached
+            // wire rows while retaining source identity, tombstones and opaque fields.
+            XCTAssertEqual(rebased.snapshot(for: .timeline), afterSave.snapshot(for: .timeline),
+                           "the complete authored timeline survives merging or the explicit local choice")
+        }
         await session.synchronizePromptRevision()
         XCTAssertEqual(session.document, rebased)
         XCTAssertEqual(fake.draftCallCount, 0)
+        if retainsPreview {
+            try await awaitPreparedPreview()
+            XCTAssertEqual(session.document.revision.baseGeneration, "g3")
+            XCTAssertEqual(session.sourcePreviewState, .ready)
+            XCTAssertNotNil(session.admissiblePreviewDisplayTicket)
+            let candidate = try XCTUnwrap(session.player?.currentItem)
+            XCTAssertEqual(candidate.status, .readyToPlay)
+            XCTAssertNotNil(candidate.videoComposition)
+            let previous = try XCTUnwrap(session.previousPreviewPresentation)
+            XCTAssertEqual(previous.status, .updating)
+            XCTAssertFalse(previous.player === session.player)
+            XCTAssertFalse(session.canDownloadCurrentVideo)
+            let localCandidate = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: localCandidate.path))
+            XCTAssertThrowsError(try session.videoDownloadRoute(deviceLocalFile: localCandidate)) { error in
+                switch error as? NativeEditorVideoDownloadError {
+                case .some(.unavailable): break
+                default: XCTFail("A previous preview must refuse the local-file candidate as unavailable: \(error)")
+                }
+            }
+            do {
+                _ = try await session.exportDisplayedSourcePreview()
+                XCTFail("A previous preview must not export")
+            } catch {
+                switch error as? NativeEditorVideoDownloadError {
+                case .some(.unavailable): break
+                default: XCTFail("A previous preview must refuse source export as unavailable: \(error)")
+                }
+            }
+            XCTAssertTrue(session.isShowingPreviousPreview)
+            if testsRetainedFailure {
+                let sourceCallsBeforeFailure = fake.sourcePoolCallCount
+                fake.sourcePoolError = .requestFailed(status: 503)
+                fake.authoritativeVariant = renderedVariant(duration: 1.4, generation: "g4")
+                await session.synchronizePromptRevision()
+                let adopted = session.document.revision.baseGeneration == "g4"
+                let merged = session.mergeConflictMessage == nil
+                XCTAssertTrue(adopted, "The failure must belong to adopted g4: \(previewDiagnostics())")
+                XCTAssertTrue(merged, "A merge conflict must not substitute for the source failure: \(previewDiagnostics())")
+                guard adopted, merged else { throw APIError.invalidResponse }
+                let requested = await waitUntil(timeout: .seconds(5)) {
+                    fake.sourcePoolCallCount > sourceCallsBeforeFailure
+                }
+                XCTAssertTrue(requested, "The real g4 source request must run: \(previewDiagnostics())")
+                guard requested else { throw APIError.invalidResponse }
+                let failed = await waitUntil {
+                    if case .failed = session.sourcePreviewState { return true }
+                    return false
+                }
+                XCTAssertTrue(failed, "The real source-pool failure must reach a terminal preview state: \(previewDiagnostics())")
+                guard failed else { throw APIError.invalidResponse }
+                XCTAssertFalse(session.isPreparingCurrentPreview)
+                XCTAssertEqual(session.previousPreviewPresentation?.status, .failed)
+                XCTAssertTrue(session.hasUnsavedChanges)
+                XCTAssertNil(session.mergeConflictMessage)
+                XCTAssertEqual(session.document.snapshot(for: .timeline), expectedTimeline)
+                XCTAssertThrowsError(try session.videoDownloadRoute(deviceLocalFile: localCandidate))
+
+                fake.sourcePoolError = nil
+                pinPreviewSources("g4")
+                await session.retryPreview()
+                try await awaitPreparedPreview()
+                XCTAssertEqual(session.document.revision.baseGeneration, "g4")
+                XCTAssertEqual(session.document.snapshot(for: .timeline), expectedTimeline)
+                XCTAssertTrue(session.hasUnsavedChanges)
+                XCTAssertTrue(session.isPreparingCurrentPreview, "A ready candidate still awaits its real surface")
+                XCTAssertEqual(session.previousPreviewPresentation?.status, .updating)
+            }
+            session.endPreviewPresentation()
+        }
     }
 
     /// S2-b: a 503 during the refresh is a server hiccup. It never reaches the save banner, a quiet

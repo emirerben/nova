@@ -1164,14 +1164,11 @@ def resolve_phone_text_style(
             }
             row["font_family"] = family
             row["stroke_width"] = wanted.get("stroke_width", DEFAULT_STROKE_WIDTH)
-            # Only a title keeps the shadow its writer authored (KRI-1050: a guided title over
-            # bright footage). Pins, labels, captions and lyrics still take the account default,
-            # so their size and spot do not move because a writer asked for a shadow.
-            own_shadow = row.get("shadow_enabled") if role == "title" else None
-            row["shadow_enabled"] = wanted.get(
-                "shadow_enabled",
-                own_shadow if isinstance(own_shadow, bool) else DEFAULT_SHADOW_ENABLED,
-            )
+            # The account default says no shadow. Only the creator's own ask (a saved
+            # preference or this turn's request, both in ``wanted``) or a shadow they set in
+            # the editor (restored below from ``creator_style_fields``) turns one on, never a
+            # shadow the plan's writer authored.
+            row["shadow_enabled"] = wanted.get("shadow_enabled", DEFAULT_SHADOW_ENABLED)
             if "color" in wanted:
                 row["color"] = wanted["color"]
             source_fields = (row.get("source_params") or {}).get("creator_style_fields") or []

@@ -848,6 +848,7 @@ struct NativeVideoPreview: View {
     }
 
     var body: some View {
+        let displayTicket = session.admissiblePreviewDisplayTicket
         ZStack(alignment: .topLeading) {
             Color.black
             if session.document.editorState == "empty" {
@@ -875,14 +876,49 @@ struct NativeVideoPreview: View {
                 }
                 .foregroundStyle(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityElement(children: .contain)
-            } else if session.canDisplayCurrentPlayer, let player = session.player {
+            } else if let player = session.player, session.canDisplayCurrentPlayer || session.isShowingPreviousPreview {
                 ZStack {
-                    NativeEditorPlayerSurface(player: player)
+                    NativeEditorPlayerSurface(player: player, readinessID: displayTicket,
+                        onReadyForDisplay: { session.previewFrameWasShown(player: player, ticket: displayTicket) })
                         .aspectRatio(session.previewAspectRatio, contentMode: .fit)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .accessibilityLabel("Video preview")
-                        .accessibilityAction(named: "Expand preview") { onEmptyTap?() }
-                    if let frame = session.scrubPreviewFrame {
+                        .accessibilityHidden(session.isShowingPreviousPreview)
+                        .accessibilityAction(named: "Expand preview") {
+                            if !session.isShowingPreviousPreview { onEmptyTap?() }
+                        }
+                    if let previous = session.previousPreviewPresentation {
+                        Group {
+                            if let frame = previous.frame {
+                                Image(uiImage: frame).resizable()
+                            } else {
+                                NativeEditorPlayerSurface(player: previous.player)
+                            }
+                        }
+                        .aspectRatio(previous.aspectRatio, contentMode: .fit)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(.black)
+                        .overlay(alignment: .top) {
+                            VStack(spacing: 4) {
+                                Text(previous.status.message)
+                                    .font(KriaFont.body(12)).foregroundStyle(.white)
+                                    .multilineTextAlignment(.center)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .accessibilityIdentifier("native-editor-previous-preview-status")
+                                if previous.status != .updating {
+                                    Button("Retry preview") { Task { await session.retryPreview() } }
+                                        .foregroundStyle(.white).frame(minHeight: 44)
+                                        .accessibilityIdentifier("native-editor-previous-preview-retry")
+                                }
+                            }
+                            .padding(8)
+                            .frame(maxWidth: .infinity)
+                            .background(.black, in: RoundedRectangle(cornerRadius: 8))
+                            .padding(8)
+                        }
+                        .accessibilityElement(children: .contain)
+                    }
+                    if !session.isShowingPreviousPreview, let frame = session.scrubPreviewFrame {
                         Image(uiImage: frame)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
@@ -1027,7 +1063,9 @@ struct NativeVideoPreview: View {
             // message sits underneath and the canvas has nothing to interact with. When the finished
             // render still plays, the fallback card below is drawn above the canvas instead, so its
             // buttons work and tap-to-fullscreen on the empty canvas keeps working.
-            .allowsHitTesting(session.document.editorState != "empty" && !(session.sourcePreviewState.isFailure && !session.isShowingRenderedFallback))
+            .opacity(session.isShowingPreviousPreview ? 0 : 1)
+            .accessibilityHidden(session.isShowingPreviousPreview)
+            .allowsHitTesting(!session.isShowingPreviousPreview && session.document.editorState != "empty" && !(session.sourcePreviewState.isFailure && !session.isShowingRenderedFallback))
 
             if session.showsEditApplied {
                 Label("Edit applied", systemImage: "checkmark.circle.fill")
@@ -1157,19 +1195,28 @@ struct NativeEditorFullscreenPreview: View {
     @State private var ready = false
 
     var body: some View {
+        let previous = session.previousPreviewPresentation
         ZStack {
             Color.black
-            if let player = session.player {
+            if let player = previous?.player ?? session.player {
                 NativeEditorPlayerSurface(player: player, onReadyForDisplay: { ready = true })
-                    .aspectRatio(session.previewAspectRatio, contentMode: .fit)
+                    .aspectRatio(previous?.aspectRatio ?? Double(session.previewAspectRatio), contentMode: .fit)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                if let frame = session.scrubPreviewFrame {
+                if let frame = previous?.frame ?? (previous == nil ? session.scrubPreviewFrame : nil) {
                     Image(uiImage: frame)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .allowsHitTesting(false)
                 }
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if let previous {
+                Text(previous.status.message)
+                    .font(KriaFont.body(12)).foregroundStyle(.white)
+                    .multilineTextAlignment(.center).padding(12)
+                    .background(.black.opacity(0.8))
             }
         }
         .frame(width: size.width, height: size.height)
@@ -1184,6 +1231,7 @@ struct NativeEditorFullscreenPreview: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Video preview, fullscreen")
+        .accessibilityValue(previous?.status.message ?? "")
         .accessibilityIdentifier("native-editor-preview-fullscreen")
     }
 }
@@ -1198,17 +1246,17 @@ struct NativeEditorFullscreenPreview: View {
 private struct NativeEditorPlayerSurface: UIViewRepresentable {
     let player: AVPlayer
     /// Fires once the layer has a frame to show (immediately if it already does).
-    var onReadyForDisplay: (() -> Void)? = nil
+    var readinessID: NativeEditorPreviewWork? = nil
+    var onReadyForDisplay: (@MainActor () -> Void)? = nil
 
     func makeUIView(context: Context) -> Surface {
         let view = Surface()
-        view.playerLayer.player = player
-        view.observeReadiness(onReadyForDisplay)
+        view.configure(player: player, ticket: readinessID, onReady: onReadyForDisplay)
         return view
     }
 
     func updateUIView(_ view: Surface, context: Context) {
-        if view.playerLayer.player !== player { view.playerLayer.player = player }
+        view.configure(player: player, ticket: readinessID, onReady: onReadyForDisplay)
     }
 
     final class Surface: UIView {
@@ -1216,11 +1264,28 @@ private struct NativeEditorPlayerSurface: UIViewRepresentable {
         var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
         private var readiness: NSKeyValueObservation?
 
-        func observeReadiness(_ onReady: (() -> Void)?) {
+        private weak var observedPlayer: AVPlayer?
+        private weak var observedItem: AVPlayerItem?
+        private var observedTicket: NativeEditorPreviewWork?
+        private var reportedReady = false
+
+        func configure(player: AVPlayer, ticket: NativeEditorPreviewWork?, onReady: (@MainActor () -> Void)?) {
+            let item = player.currentItem
+            guard observedPlayer !== player || observedItem !== item || observedTicket != ticket else { return }
+            readiness?.invalidate()
+            observedPlayer = player; observedItem = item; observedTicket = ticket; reportedReady = false
+            if playerLayer.player !== player { playerLayer.player = player }
             guard let onReady else { return }
-            readiness = playerLayer.observe(\.isReadyForDisplay, options: [.initial, .new]) { layer, _ in
+            readiness = playerLayer.observe(\.isReadyForDisplay, options: [.initial, .new]) { [weak self, weak player, weak item] layer, _ in
                 guard layer.isReadyForDisplay else { return }
-                DispatchQueue.main.async(execute: onReady)
+                DispatchQueue.main.async { [weak self, weak player, weak item] in
+                    guard let self, let player, let item, !self.reportedReady,
+                          self.observedPlayer === player, self.observedItem === item,
+                          self.observedTicket == ticket, self.playerLayer.player === player,
+                          self.playerLayer.isReadyForDisplay, player.currentItem === item else { return }
+                    self.reportedReady = true
+                    onReady()
+                }
             }
         }
 

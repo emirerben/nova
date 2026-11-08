@@ -191,7 +191,15 @@
         "src/apps/api/tests/routes/test_strict_export_duration.py",
         "src/apps/api/tests/services/test_length_policy.py",
         "src/apps/api/tests/services/test_length_owner_choices.py",
-        "src/apps/api/tests/services/test_phone_editor_render_contract.py"
+        "src/apps/api/tests/services/test_phone_editor_render_contract.py",
+        "src/apps/ios/Kria/Features/NativeEditorAIActivity.swift",
+        "src/apps/ios/Tests/KriaTests/NativeEditorAIActivityTests.swift",
+        "src/apps/ios/Kria/Core/NativeEditorPreviewHandoff.swift",
+        "src/apps/ios/Tests/KriaTests/NativeEditorPreviewHandoffTests.swift",
+        "src/apps/ios/Tests/KriaTests/NativeEditorPreviewWorkSessionTests.swift",
+        "src/apps/ios/Tests/KriaTests/NativeEditorPlaybackFrameReceiptTests.swift",
+        "src/apps/ios/Kria/Features/NativeEditorPlaybackAdmissionFixture.swift",
+        "src/apps/ios/Tests/KriaUITests/NativeEditorPlaybackAdmissionUITests.swift"
       ]
     },
     {

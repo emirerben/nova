@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.102.0] - 2026-11-08
+
+### Changed
+- v0.88.42.0 feat(ios): show AI editing activity and retain the previous preview (#2145) <!-- release-pr: 2145 -->
+
+## [0.88.101.0] - 2026-11-08
+
+### Changed
+- fix(phone-text): the account default decides the shadow; a plan's authored shadow no longer wins (KRI-1269) (#2210) <!-- release-pr: 2210 -->
+
+## [0.88.100.0] - 2026-11-08
+
+### Changed
+- fix(kria): list labels that take turns are not pinned text (KRI-1302) (#2192) <!-- release-pr: 2192 -->
+
 ## [0.88.99.0] - 2026-11-08
 
 ### Changed
