@@ -1,0 +1,613 @@
+{
+ "_note": "Qendresa Q2 run 2 (job 1d512b9c, 2026-11-08), 'Cut all my pauses'. Audio: the uploaded 'Talking take.mp4' AAC stream, copied bit-exact (ElevenLabs TTS take from the test kit). words = the job's overlay_transcript (source-time word stamps); consented = the speech-cleanup removals the creator approved (silence_cut.removed minus the 7 tight-pause cuts); prod_tight_pauses = the variant's tight_pauses receipt.",
+ "duration_s": 48.8,
+ "words": [
+  {
+   "text": "Five",
+   "start_s": 0.0,
+   "end_s": 0.64
+  },
+  {
+   "text": "projects",
+   "start_s": 0.64,
+   "end_s": 1.06
+  },
+  {
+   "text": "the",
+   "start_s": 1.06,
+   "end_s": 1.46
+  },
+  {
+   "text": "AI",
+   "start_s": 1.46,
+   "end_s": 1.74
+  },
+  {
+   "text": "builder.",
+   "start_s": 1.74,
+   "end_s": 2.1
+  },
+  {
+   "text": "Five",
+   "start_s": 3.16,
+   "end_s": 3.46
+  },
+  {
+   "text": "projects",
+   "start_s": 3.46,
+   "end_s": 3.9
+  },
+  {
+   "text": "the",
+   "start_s": 3.9,
+   "end_s": 4.26
+  },
+  {
+   "text": "AI",
+   "start_s": 4.26,
+   "end_s": 4.52
+  },
+  {
+   "text": "builder",
+   "start_s": 4.52,
+   "end_s": 4.76
+  },
+  {
+   "text": "community",
+   "start_s": 4.76,
+   "end_s": 5.34
+  },
+  {
+   "text": "can't",
+   "start_s": 5.34,
+   "end_s": 5.9
+  },
+  {
+   "text": "stop",
+   "start_s": 5.9,
+   "end_s": 6.06
+  },
+  {
+   "text": "talking",
+   "start_s": 6.06,
+   "end_s": 6.4
+  },
+  {
+   "text": "about.",
+   "start_s": 6.4,
+   "end_s": 6.92
+  },
+  {
+   "text": "Number",
+   "start_s": 7.52,
+   "end_s": 7.72
+  },
+  {
+   "text": "one,",
+   "start_s": 7.72,
+   "end_s": 8.08
+  },
+  {
+   "text": "Spec",
+   "start_s": 8.48,
+   "end_s": 8.54
+  },
+  {
+   "text": "Kit.",
+   "start_s": 8.54,
+   "end_s": 8.8
+  },
+  {
+   "text": "You",
+   "start_s": 9.26,
+   "end_s": 9.42
+  },
+  {
+   "text": "write",
+   "start_s": 9.42,
+   "end_s": 9.62
+  },
+  {
+   "text": "the",
+   "start_s": 9.62,
+   "end_s": 9.94
+  },
+  {
+   "text": "spec",
+   "start_s": 9.94,
+   "end_s": 9.94
+  },
+  {
+   "text": "first,",
+   "start_s": 9.94,
+   "end_s": 10.44
+  },
+  {
+   "text": "and",
+   "start_s": 10.46,
+   "end_s": 10.64
+  },
+  {
+   "text": "your",
+   "start_s": 10.64,
+   "end_s": 11.08
+  },
+  {
+   "text": "agent",
+   "start_s": 11.08,
+   "end_s": 11.08
+  },
+  {
+   "text": "builds",
+   "start_s": 11.08,
+   "end_s": 11.38
+  },
+  {
+   "text": "the",
+   "start_s": 11.38,
+   "end_s": 11.66
+  },
+  {
+   "text": "whole",
+   "start_s": 11.66,
+   "end_s": 11.94
+  },
+  {
+   "text": "thing",
+   "start_s": 11.94,
+   "end_s": 12.18
+  },
+  {
+   "text": "from",
+   "start_s": 12.18,
+   "end_s": 12.4
+  },
+  {
+   "text": "it.",
+   "start_s": 12.4,
+   "end_s": 12.84
+  },
+  {
+   "text": "Number",
+   "start_s": 14.48,
+   "end_s": 14.62
+  },
+  {
+   "text": "two,",
+   "start_s": 14.62,
+   "end_s": 15.04
+  },
+  {
+   "text": "Impeccable.",
+   "start_s": 15.32,
+   "end_s": 15.82
+  },
+  {
+   "text": "It",
+   "start_s": 16.04,
+   "end_s": 16.48
+  },
+  {
+   "text": "gives",
+   "start_s": 16.48,
+   "end_s": 16.66
+  },
+  {
+   "text": "your",
+   "start_s": 16.66,
+   "end_s": 16.9
+  },
+  {
+   "text": "coding",
+   "start_s": 16.9,
+   "end_s": 17.12
+  },
+  {
+   "text": "agent",
+   "start_s": 17.12,
+   "end_s": 17.46
+  },
+  {
+   "text": "real",
+   "start_s": 17.46,
+   "end_s": 17.9
+  },
+  {
+   "text": "design",
+   "start_s": 17.9,
+   "end_s": 18.32
+  },
+  {
+   "text": "taste,",
+   "start_s": 18.32,
+   "end_s": 18.72
+  },
+  {
+   "text": "so",
+   "start_s": 18.88,
+   "end_s": 19.22
+  },
+  {
+   "text": "your",
+   "start_s": 19.22,
+   "end_s": 19.5
+  },
+  {
+   "text": "apps",
+   "start_s": 19.5,
+   "end_s": 19.76
+  },
+  {
+   "text": "stop",
+   "start_s": 19.76,
+   "end_s": 20.22
+  },
+  {
+   "text": "looking",
+   "start_s": 20.22,
+   "end_s": 20.52
+  },
+  {
+   "text": "generic.",
+   "start_s": 20.52,
+   "end_s": 20.98
+  },
+  {
+   "text": "Number",
+   "start_s": 22.08,
+   "end_s": 22.18
+  },
+  {
+   "text": "three,",
+   "start_s": 22.18,
+   "end_s": 22.58
+  },
+  {
+   "text": "Trading",
+   "start_s": 22.82,
+   "end_s": 23.08
+  },
+  {
+   "text": "Agents.",
+   "start_s": 23.08,
+   "end_s": 23.6
+  },
+  {
+   "text": "A",
+   "start_s": 24.0,
+   "end_s": 24.3
+  },
+  {
+   "text": "whole",
+   "start_s": 24.3,
+   "end_s": 24.58
+  },
+  {
+   "text": "trading",
+   "start_s": 24.58,
+   "end_s": 24.86
+  },
+  {
+   "text": "firm",
+   "start_s": 24.86,
+   "end_s": 25.18
+  },
+  {
+   "text": "built",
+   "start_s": 25.18,
+   "end_s": 25.44
+  },
+  {
+   "text": "from",
+   "start_s": 25.44,
+   "end_s": 25.72
+  },
+  {
+   "text": "AI",
+   "start_s": 25.72,
+   "end_s": 26.04
+  },
+  {
+   "text": "agents.",
+   "start_s": 26.04,
+   "end_s": 26.5
+  },
+  {
+   "text": "Analysts,",
+   "start_s": 26.5,
+   "end_s": 27.6
+  },
+  {
+   "text": "a",
+   "start_s": 27.7,
+   "end_s": 28.06
+  },
+  {
+   "text": "bull,",
+   "start_s": 28.06,
+   "end_s": 28.06
+  },
+  {
+   "text": "a",
+   "start_s": 28.36,
+   "end_s": 28.66
+  },
+  {
+   "text": "bear,",
+   "start_s": 28.66,
+   "end_s": 28.66
+  },
+  {
+   "text": "and",
+   "start_s": 28.88,
+   "end_s": 29.08
+  },
+  {
+   "text": "a",
+   "start_s": 29.08,
+   "end_s": 29.14
+  },
+  {
+   "text": "trader.",
+   "start_s": 29.14,
+   "end_s": 29.4
+  },
+  {
+   "text": "Number",
+   "start_s": 30.52,
+   "end_s": 30.54
+  },
+  {
+   "text": "four,",
+   "start_s": 30.54,
+   "end_s": 30.84
+  },
+  {
+   "text": "the",
+   "start_s": 31.06,
+   "end_s": 31.4
+  },
+  {
+   "text": "Agents",
+   "start_s": 31.4,
+   "end_s": 31.58
+  },
+  {
+   "text": "Marketplace.",
+   "start_s": 31.58,
+   "end_s": 32.3
+  },
+  {
+   "text": "Hundreds",
+   "start_s": 32.88,
+   "end_s": 33.0
+  },
+  {
+   "text": "of",
+   "start_s": 33.0,
+   "end_s": 33.38
+  },
+  {
+   "text": "ready-made",
+   "start_s": 33.38,
+   "end_s": 33.78
+  },
+  {
+   "text": "sub-agents",
+   "start_s": 33.78,
+   "end_s": 34.28
+  },
+  {
+   "text": "you",
+   "start_s": 34.28,
+   "end_s": 34.56
+  },
+  {
+   "text": "can",
+   "start_s": 34.56,
+   "end_s": 34.76
+  },
+  {
+   "text": "drop",
+   "start_s": 34.76,
+   "end_s": 34.9
+  },
+  {
+   "text": "straight",
+   "start_s": 34.9,
+   "end_s": 35.28
+  },
+  {
+   "text": "into",
+   "start_s": 35.28,
+   "end_s": 35.56
+  },
+  {
+   "text": "Cloud",
+   "start_s": 35.56,
+   "end_s": 35.68
+  },
+  {
+   "text": "Code.",
+   "start_s": 35.68,
+   "end_s": 35.98
+  },
+  {
+   "text": "And",
+   "start_s": 37.62,
+   "end_s": 38.22
+  },
+  {
+   "text": "number",
+   "start_s": 38.22,
+   "end_s": 38.38
+  },
+  {
+   "text": "five,",
+   "start_s": 38.38,
+   "end_s": 38.82
+  },
+  {
+   "text": "Cloud",
+   "start_s": 39.32,
+   "end_s": 39.38
+  },
+  {
+   "text": "Code",
+   "start_s": 39.38,
+   "end_s": 39.7
+  },
+  {
+   "text": "Game",
+   "start_s": 39.7,
+   "end_s": 40.02
+  },
+  {
+   "text": "Studios.",
+   "start_s": 40.02,
+   "end_s": 40.64
+  },
+  {
+   "text": "Directors,",
+   "start_s": 41.46,
+   "end_s": 41.46
+  },
+  {
+   "text": "leads,",
+   "start_s": 41.88,
+   "end_s": 41.88
+  },
+  {
+   "text": "and",
+   "start_s": 41.94,
+   "end_s": 42.22
+  },
+  {
+   "text": "specialists",
+   "start_s": 42.22,
+   "end_s": 42.54
+  },
+  {
+   "text": "that",
+   "start_s": 42.54,
+   "end_s": 42.88
+  },
+  {
+   "text": "build",
+   "start_s": 42.88,
+   "end_s": 43.1
+  },
+  {
+   "text": "a",
+   "start_s": 43.1,
+   "end_s": 43.38
+  },
+  {
+   "text": "whole",
+   "start_s": 43.38,
+   "end_s": 43.58
+  },
+  {
+   "text": "game",
+   "start_s": 43.58,
+   "end_s": 43.84
+  },
+  {
+   "text": "with",
+   "start_s": 43.84,
+   "end_s": 44.22
+  },
+  {
+   "text": "you.",
+   "start_s": 44.22,
+   "end_s": 44.92
+  },
+  {
+   "text": "Comment",
+   "start_s": 45.38,
+   "end_s": 45.76
+  },
+  {
+   "text": "repo,",
+   "start_s": 45.76,
+   "end_s": 46.26
+  },
+  {
+   "text": "and",
+   "start_s": 46.44,
+   "end_s": 46.6
+  },
+  {
+   "text": "I'll",
+   "start_s": 46.6,
+   "end_s": 46.82
+  },
+  {
+   "text": "send",
+   "start_s": 46.82,
+   "end_s": 46.96
+  },
+  {
+   "text": "you",
+   "start_s": 46.96,
+   "end_s": 47.16
+  },
+  {
+   "text": "all",
+   "start_s": 47.16,
+   "end_s": 47.58
+  },
+  {
+   "text": "five",
+   "start_s": 47.58,
+   "end_s": 47.84
+  },
+  {
+   "text": "links.",
+   "start_s": 47.84,
+   "end_s": 48.18
+  }
+ ],
+ "consented": [
+  {
+   "end_s": 3.04,
+   "reason": "retake",
+   "start_s": 0.0
+  },
+  {
+   "end_s": 14.334,
+   "reason": "silence",
+   "start_s": 12.965
+  },
+  {
+   "end_s": 21.71,
+   "reason": "silence",
+   "start_s": 21.105
+  },
+  {
+   "end_s": 37.495,
+   "reason": "silence",
+   "start_s": 36.105
+  },
+  {
+   "end_s": 41.01,
+   "reason": "silence",
+   "start_s": 40.765
+  }
+ ],
+ "prod_tight_pauses": {
+  "capped": false,
+  "reason": null,
+  "status": "applied",
+  "limit_s": 0.35,
+  "version": 1,
+  "target_s": 0.3,
+  "added_cuts": 7,
+  "guard_dropped": 0,
+  "guard_trimmed": 0,
+  "longest_pause_s": 0.55,
+  "added_removed_ms": 1720,
+  "pauses_over_limit": 3,
+  "longest_pause_before_s": 0.83
+ }
+}
