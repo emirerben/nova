@@ -102,12 +102,14 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # unchanged.
 # KRI-971: the two brief-on hashes re-pinned (the keep-a-take-whole sentence also records
 # speech_cleanup false; before: 1d002672… / 7d7d75bc…); brief-off unchanged.
+# KRI-1292: the two brief-on hashes re-pinned again (the spoken-word text asks for a typed
+# `hold_s`; before: 63a22d0d… / 7ed8c8f9…); brief-off unchanged.
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "63a22d0dc95e70a9c8a68c4f697ea0c1e87380c6d1e3a36eff7566f10bea4d6d",
+    (True, True): "97902925ef181f12b4f5f7ad4a986e5df1049687e237d5e442f273e7c4d345e6",
     (True, False): "e3de37c194b88bd906568375111a33a5d8ec8bdab981a29ff6f377162710e87e",
-    (False, True): "7ed8c8f9ef0540314e3c5877c632107f84b0190df6592dd9696fe57a8c1d9d78",
+    (False, True): "f048687f3fb4e5ddf5777fb58ca4c341decc4a4c2e6c1b56974a96fa29430d02",
     (False, False): "e804c3135cb2e6eae9093216bee3ee0d97159aa120c2b1eef8e34e61a3d37240",
 }
 
