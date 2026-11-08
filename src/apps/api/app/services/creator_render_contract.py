@@ -736,6 +736,9 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "background_media.full_screen_opening_s",
         "background_media.focus",
         "background_media.focus_zoom",
+        "background_media.left_out[]",
+        "background_media.left_out[].name",
+        "background_media.left_out[].why",
         "background_media.speaker_frame",
         note=(
             "KRI-1117: kept, filled from the creator's camera pick, or dropped by "

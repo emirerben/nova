@@ -8288,6 +8288,12 @@ def _strategy_background_request(all_candidates: dict) -> dict[str, Any] | None:
         )
     if entries:
         request["sequence"] = entries
+        # KRI-1304: what the planner left out and why, for the finished-video receipt.
+        from app.agents._schemas.reaction_beats import _left_out_rows  # noqa: PLC0415
+
+        left_out = _left_out_rows(raw.get("left_out"))
+        if left_out:
+            request["left_out"] = list(left_out)
         cadence = raw.get("cadence_s")
         if isinstance(cadence, (int, float)) and not isinstance(cadence, bool):
             request["cadence_s"] = float(cadence)
@@ -11843,6 +11849,10 @@ def _run_phone_subtitled_job(
                         _unshown = _unshown_background_entries(background_entries, _bg, lane_drops)
                         if _unshown:
                             lane_receipt["background"]["unshown"] = _unshown
+                        # KRI-1304: what the planner left out (no recording / never said).
+                        _left_out = (background_request or {}).get("left_out")
+                        if _left_out:
+                            lane_receipt["background"]["left_out"] = _left_out
                         # Qendresa item 16: how long the finished video really is full screen
                         # from 0 s, read off the COMPILED recipe (a speech cut is accounted for).
                         _opening_end = next(

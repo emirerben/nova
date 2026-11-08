@@ -453,6 +453,8 @@ class SpeakerBackgroundFact:
     # (spoken phrase or None, the worker's drop reason or None). Empty = none missing, or a
     # render recorded before the worker wrote it (no claim either way).
     unshown: tuple[tuple[str | None, str | None], ...] = ()
+    # KRI-1304: what the planner left out of the sequence, as (name, "no_recording" | "not_said").
+    left_out: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1313,6 +1315,19 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
         asked_full_opening=opening_s is not None or opening_code is not None,
         opening_code=opening_code if opening_s is None else None,
         unshown=_unshown_recordings(detail.get("unshown")),
+        left_out=_left_out_recordings(detail.get("left_out")),
+    )
+
+
+def _left_out_recordings(rows: object) -> tuple[tuple[str, str], ...]:
+    """The worker's ``background.left_out`` rows (KRI-1304) as (name, reason) pairs."""
+    return tuple(
+        (row["name"].strip(), row["why"])
+        for row in (rows if isinstance(rows, list) else [])
+        if isinstance(row, Mapping)
+        and isinstance(row.get("name"), str)
+        and row["name"].strip()
+        and row.get("why") in ("no_recording", "not_said")
     )
 
 
@@ -5398,10 +5413,43 @@ def _check_speaker_background_core(req: BriefRequirement, facts: PlanFacts) -> R
             en += f"; you're {corner[0]}"
             tr += f"; sen {corner[1]}sın"
     missing = _unshown_sentence(fact) if rendered else None
-    if missing:
+    left_out = _left_out_sentence(fact) if rendered else None
+    if missing or (left_out and left_out[1]):
         # Qendresa case 5: a recording she asked for never shows, so the ask is not met.
-        return _receipt(req, "partial", f"{say(en=en + '.', tr=tr + '.')} {missing}")
+        # KRI-1304: so is a repo with no recording attached.
+        extra = " ".join(part for part in (missing, left_out[0] if left_out else None) if part)
+        return _receipt(req, "partial", f"{say(en=en + '.', tr=tr + '.')} {extra}")
+    if left_out:
+        return _receipt(req, "met", f"{say(en=en + '.', tr=tr + '.')} {left_out[0]}")
     return _receipt(req, "met", say(en=en + ".", tr=tr + "."))
+
+
+def _left_out_sentence(fact: SpeakerBackgroundFact) -> tuple[str, bool] | None:
+    """KRI-1304: (sentence, is_shortfall) naming what the planner left out and why, else None.
+
+    "no_recording" is a shortfall (she talks about it, nothing is attached, so the previous
+    picture stays on); "not_said" is only information (she never mentions it).
+    """
+    if not fact.left_out:
+        return None
+    none_for = _quoted([n for n, why in fact.left_out if why == "no_recording"])
+    not_said = _quoted([n for n, why in fact.left_out if why == "not_said"])
+    parts: list[str] = []
+    if none_for:
+        parts.append(
+            say(
+                en=f"No recording for {_names_join(none_for)}, so the one before stays on.",
+                tr=f"{_names_join(none_for)} için kayıt yok, o yüzden öncekisi ekranda kalıyor.",
+            )
+        )
+    if not_said:
+        parts.append(
+            say(
+                en=f"Not used: you don't talk about {_names_join(not_said)}.",
+                tr=f"Kullanılmadı: {_names_join(not_said)} hakkında konuşmuyorsun.",
+            )
+        )
+    return " ".join(parts), bool(none_for)
 
 
 def _quoted(values: Sequence[str]) -> list[str]:
