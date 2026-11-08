@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.96.0] - 2026-11-08
+
+### Changed
+- fix(kria): "Mute my sound" on a montage mutes the whole video (KRI-1297) (#2195) <!-- release-pr: 2195 -->
+
 ## [0.88.95.0] - 2026-11-08
 
 ### Fixed
