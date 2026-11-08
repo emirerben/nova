@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.83.0] - 2026-11-08
+
+### Changed
+- fix(kria): montage draft reply says each ask once, no double stop (KRI-1296) (#2191) <!-- release-pr: 2191 -->
+
 ## [0.88.82.0] - 2026-11-08
 
 ### Changed
