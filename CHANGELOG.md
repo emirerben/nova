@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.89.0] - 2026-11-08
+
+### Changed
+- fix(kria): brief-listed caption spellings must be words the creator typed (KRI-1283) (#2199) <!-- release-pr: 2199 -->
+
 ## [0.88.88.0] - 2026-11-08
 
 ### Fixed
