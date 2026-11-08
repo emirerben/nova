@@ -1214,7 +1214,7 @@ struct NativeEditorFullscreenPreview: View {
         ZStack {
             Color.black
             if let player = previous?.player ?? session.player {
-                NativeEditorPlayerSurface(player: player, onReadyForDisplay: { ready = true })
+                NativeEditorPlayerSurface(player: player, onReadyForDisplay: { ready = true; return true })
                     .aspectRatio(previous?.aspectRatio ?? Double(session.previewAspectRatio), contentMode: .fit)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 if let frame = previous?.frame ?? (previous == nil ? session.scrubPreviewFrame : nil) {
@@ -1260,9 +1260,10 @@ struct NativeEditorFullscreenPreview: View {
 /// action once the keyboard animated in (KRI-168).
 private struct NativeEditorPlayerSurface: UIViewRepresentable {
     let player: AVPlayer
-    /// Fires once the layer has a frame to show (immediately if it already does).
+    /// Fires once the layer has a frame to show (immediately if it already does). Returning false means the
+    /// owner rejected the report, so it is offered again on the next update instead of being consumed.
     var readinessID: NativeEditorPreviewWork? = nil
-    var onReadyForDisplay: (@MainActor () -> Void)? = nil
+    var onReadyForDisplay: (@MainActor () -> Bool)? = nil
 
     func makeUIView(context: Context) -> Surface {
         let view = Surface()
@@ -1283,25 +1284,33 @@ private struct NativeEditorPlayerSurface: UIViewRepresentable {
         private weak var observedItem: AVPlayerItem?
         private var observedTicket: NativeEditorPreviewWork?
         private var reportedReady = false
+        private var onReady: (@MainActor () -> Bool)?
 
-        func configure(player: AVPlayer, ticket: NativeEditorPreviewWork?, onReady: (@MainActor () -> Void)?) {
+        func configure(player: AVPlayer, ticket: NativeEditorPreviewWork?, onReady: (@MainActor () -> Bool)?) {
             let item = player.currentItem
-            guard observedPlayer !== player || observedItem !== item || observedTicket != ticket else { return }
+            self.onReady = onReady
+            guard observedPlayer !== player || observedItem !== item || observedTicket != ticket else {
+                if !reportedReady, onReady != nil, playerLayer.isReadyForDisplay { reportSoon() }
+                return
+            }
             readiness?.invalidate()
             observedPlayer = player; observedItem = item; observedTicket = ticket; reportedReady = false
             if playerLayer.player !== player { playerLayer.player = player }
-            guard let onReady else { return }
-            readiness = playerLayer.observe(\.isReadyForDisplay, options: [.initial, .new]) { [weak self, weak player, weak item] layer, _ in
+            guard onReady != nil else { return }
+            readiness = playerLayer.observe(\.isReadyForDisplay, options: [.initial, .new]) { [weak self] layer, _ in
                 guard layer.isReadyForDisplay else { return }
-                DispatchQueue.main.async { [weak self, weak player, weak item] in
-                    guard let self, let player, let item, !self.reportedReady,
-                          self.observedPlayer === player, self.observedItem === item,
-                          self.observedTicket == ticket, self.playerLayer.player === player,
-                          self.playerLayer.isReadyForDisplay, player.currentItem === item else { return }
-                    self.reportedReady = true
-                    onReady()
-                }
+                self?.reportSoon()
             }
+        }
+
+        nonisolated private func reportSoon() {
+            DispatchQueue.main.async { [weak self] in self?.reportIfReady() }
+        }
+
+        private func reportIfReady() {
+            guard !reportedReady, let onReady, let player = observedPlayer, let item = observedItem,
+                  playerLayer.player === player, playerLayer.isReadyForDisplay, player.currentItem === item else { return }
+            if onReady() { reportedReady = true }
         }
 
         override init(frame: CGRect) {

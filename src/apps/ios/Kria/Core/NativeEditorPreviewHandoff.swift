@@ -57,8 +57,3 @@ enum NativeEditorPreviousPreviewStatus: Equatable, Sendable {
         }
     }
 }
-
-enum NativeEditorPreviewHandoffError: LocalizedError {
-    case candidateNotReady
-    var errorDescription: String? { "The new preview could not get ready. Your previous preview is still shown." }
-}
