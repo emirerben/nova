@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.82.0] - 2026-11-08
+
+### Changed
+- fix(kria): a timeout on a tapped answer no longer says "ask for one change at a time" (KRI-1301) (#2190) <!-- release-pr: 2190 -->
+
 ## [0.88.81.0] - 2026-11-08
 
 ### Fixed
