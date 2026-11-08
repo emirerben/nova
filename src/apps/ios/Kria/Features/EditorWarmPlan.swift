@@ -16,6 +16,9 @@ struct EditorWarmPlan: Hashable, Sendable {
         var isLowDataMode: Bool
     }
 
+    /// How long the chat has to be idle before the warm-up starts, so it does not compete with the chat's own first paint.
+    static let settleDelay: Duration = .milliseconds(500)
+
     let projectID: UUID
     let jobID: UUID?
     let variantID: String?
@@ -25,6 +28,8 @@ struct EditorWarmPlan: Hashable, Sendable {
         projectID = project.id
         jobID = project.activeJobID
         variantID = project.outputVariantID
-        isWarmable = true // placeholder (red commit): the policy arrives with the fix
+        isWarmable = facts.videoIsReady && facts.formatIsKnown && !facts.isSlidePost && facts.canOpenVideoEditor
+            && facts.sceneIsActive && facts.chatIsIdle && facts.isOnline && !facts.isLowDataMode
+            && project.activeJobID != nil
     }
 }
