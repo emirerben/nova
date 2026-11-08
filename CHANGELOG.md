@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.87.0] - 2026-11-08
+
+### Fixed
+- fix(kria): move captions off the opening title when they would overlap (KRI-1305) (#2196) <!-- release-pr: 2196 -->
+
 ## [0.88.86.0] - 2026-11-08
 
 ### Fixed
