@@ -3667,6 +3667,66 @@ def _creator_asks_arrow(text: str) -> bool:
     return requirement_asks_arrow(_Ask())
 
 
+# KRI-1324: characters that ride on an arrow or emoji grapheme without being one themselves
+# (variation selectors, zero-width joiner, skin tones, the keycap mark).
+_GLYPH_MODIFIERS = frozenset("\ufe0e\ufe0f\u200d\u20e3") | frozenset(
+    chr(c) for c in range(0x1F3FB, 0x1F400)
+)
+
+
+def _is_arrow_grapheme(grapheme: str) -> bool:
+    """An arrow or pointing-hand glyph ("➔", "⇨", "👇🏽"), never a letter or digit."""
+    marks = [ch for ch in grapheme if ch not in _GLYPH_MODIFIERS]
+    return bool(marks) and all(
+        unicodedata.category(ch).startswith("S")
+        and any(word in unicodedata.name(ch, "") for word in ("ARROW", "POINTING"))
+        for ch in marks
+    )
+
+
+def _strip_trailing_arrows(text: str) -> str:
+    """KRI-1324: ``text`` without the arrow glyphs at its end, whichever arrow it is.
+
+    The pipeline's own list (`strip_trailing_arrow_glyphs`) named a few arrows; prod's
+    "comment REPO ➔" (U+2794) was not one of them. Read from the character's Unicode name."""
+    import regex  # noqa: PLC0415
+
+    from app.pipeline.phone_cta_text import strip_trailing_arrow_glyphs  # noqa: PLC0415
+
+    graphemes = regex.findall(r"\X", strip_trailing_arrow_glyphs(text))
+    while graphemes and (graphemes[-1].isspace() or _is_arrow_grapheme(graphemes[-1])):
+        graphemes.pop()
+    return "".join(graphemes).strip()
+
+
+def _without_undrawable_symbols(text: str) -> str:
+    """KRI-1324: ``text`` without the symbol glyphs no curated phone font draws.
+
+    Prod job 4620fd7c failed `phone_plan_unsupported` ("No phone font can draw '➔'") on a
+    wording Kria had suggested and the creator approved. Only symbols go (arrows, dingbats):
+    a letter no font draws stays, so the draft names it (KRI-1024) instead of the words
+    silently changing; colour emoji are the phone's own emoji face and are never named."""
+    import regex  # noqa: PLC0415
+
+    from app.pipeline.phone_text_style import undrawable_text  # noqa: PLC0415
+
+    try:
+        found = undrawable_text([text])
+    except Exception:  # noqa: BLE001 - font coverage unknown: change nothing
+        log.warning("kria_copy_glyph_check_failed")
+        return text
+    if found is None:
+        return text
+    undrawable = set(regex.findall(r"\X", found[1]))
+
+    def symbol(grapheme: str) -> bool:
+        marks = [ch for ch in grapheme if ch not in _GLYPH_MODIFIERS]
+        return bool(marks) and all(unicodedata.category(ch).startswith("S") for ch in marks)
+
+    kept = [g for g in regex.findall(r"\X", text) if not (g in undrawable and symbol(g))]
+    return " ".join("".join(kept).split())
+
+
 def _with_wording_question(wording: PlannedKriaTurn, planned: PlannedKriaTurn) -> PlannedKriaTurn:
     """KRI-802: ask a held title-wording question in the same reply as a clip picker.
 
@@ -4304,12 +4364,9 @@ async def _plan_creator_action(
         # gave exactly (and show two arrows). Drop it when she asked for an arrow.
         closing = action.strategy.closing_title
         if closing:
-            from app.pipeline.phone_cta_text import (  # noqa: PLC0415
-                cta_ending_parts,
-                strip_trailing_arrow_glyphs,
-            )
+            from app.pipeline.phone_cta_text import cta_ending_parts  # noqa: PLC0415
 
-            bare = strip_trailing_arrow_glyphs(closing)
+            bare = _strip_trailing_arrows(closing)
             if (
                 bare != closing
                 and cta_ending_parts(bare) is not None
@@ -4319,6 +4376,23 @@ async def _plan_creator_action(
                 action = action.model_copy(
                     update={"strategy": action.strategy.model_copy(update={"closing_title": bare})}
                 )
+        # KRI-1324: a title or ending Kria wrote never holds a glyph no phone font draws: it
+        # is dropped before the wording question (and before the draft), so the creator is
+        # never asked to approve words the render then refuses. Her own quoted text is hers.
+        quote_sources = [*user_sources, getattr(inputs, "raw_creator_request", None) or ""]
+        drawable = {
+            target: cleaned
+            for target in ("opening_title", "closing_title")
+            if (value := getattr(action.strategy, target))
+            and not creator_quoted(value, quote_sources)
+            and (cleaned := _without_undrawable_symbols(value))
+            and cleaned != value
+        }
+        if drawable:
+            log.info("kria_copy_undrawable_glyph_dropped", thread_id=str(thread_id))
+            action = action.model_copy(
+                update={"strategy": action.strategy.model_copy(update=drawable)}
+            )
         for target in ("opening_title", "closing_title"):
             value = getattr(action.strategy, target)
             state = (getattr(inputs, "creative_copy_state", None) or {}).get(target)
