@@ -1,0 +1,687 @@
+{
+  "schema_version": 1,
+  "evidence_level": "authored offline parser/policy-to-native-output replay",
+  "excluded_boundaries": [
+    "live provider",
+    "creator orchestrator",
+    "dispatch transport",
+    "database persistence",
+    "iPhone UI",
+    "physical device",
+    "production rollout"
+  ],
+  "rgb_tolerance": 80,
+  "sources": [
+    {
+      "id": "ordinary",
+      "kind": "video",
+      "duration_s": 4,
+      "colors": [
+        {
+          "start_frame": 0,
+          "rgb": [
+            255,
+            255,
+            255
+          ]
+        }
+      ],
+      "width": 96,
+      "height": 160,
+      "fps": 30
+    },
+    {
+      "id": "clock-a",
+      "kind": "video",
+      "duration_s": 4,
+      "colors": [
+        {
+          "start_frame": 0,
+          "rgb": [
+            255,
+            0,
+            0
+          ]
+        },
+        {
+          "start_frame": 30,
+          "rgb": [
+            0,
+            255,
+            0
+          ]
+        }
+      ],
+      "width": 96,
+      "height": 160,
+      "fps": 30
+    },
+    {
+      "id": "clock-c",
+      "kind": "video",
+      "duration_s": 4,
+      "colors": [
+        {
+          "start_frame": 0,
+          "rgb": [
+            255,
+            255,
+            0
+          ]
+        },
+        {
+          "start_frame": 60,
+          "rgb": [
+            255,
+            0,
+            255
+          ]
+        }
+      ],
+      "width": 96,
+      "height": 160,
+      "fps": 30
+    },
+    {
+      "id": "still-b",
+      "kind": "image",
+      "colors": [
+        {
+          "start_frame": 0,
+          "rgb": [
+            0,
+            0,
+            255
+          ]
+        }
+      ],
+      "width": 96,
+      "height": 160,
+      "fps": 30
+    }
+  ],
+  "cases": [
+    {
+      "id": "2-panel",
+      "language": "en",
+      "request": "From 0.5 to 2.5 seconds, split the screen horizontally. Put clock-a above, starting at source 0.5 seconds, and the blue still-b below. Then return to the full-screen white ordinary clip.",
+      "authored_response": {
+        "action": {
+          "kind": "propose_strategy",
+          "strategy": {
+            "direction": "guided_story",
+            "edit_format": "montage",
+            "audio_strategy": "original_audio",
+            "render_program": "guided",
+            "selected_media_ids": [
+              "ordinary",
+              "clock-a",
+              "clock-c",
+              "still-b"
+            ],
+            "target_duration_s": 4,
+            "rationale": "Use the requested stacked sources for the bounded section.",
+            "split_screen": {
+              "panels": [
+                {
+                  "media_id": "clock-a",
+                  "source_start_s": 0.5
+                },
+                {
+                  "media_id": "still-b",
+                  "source_start_s": 0
+                }
+              ],
+              "start_s": 0.5,
+              "duration_s": 2,
+              "panel_weights": [
+                1,
+                1
+              ],
+              "gutter": 0,
+              "background_color": "#000000"
+            }
+          },
+          "summary": "Stack the requested media, then return to full screen."
+        }
+      },
+      "expected_duration_s": 4,
+      "control_swap": [
+        0,
+        1
+      ],
+      "samples": [
+        {
+          "time_s": 0.4666666666666667,
+          "x_fraction": 0.5,
+          "y_from_top": 0.25,
+          "rgb": [
+            255,
+            255,
+            255
+          ],
+          "control_must_fail": false
+        },
+        {
+          "time_s": 0.4666666666666667,
+          "x_fraction": 0.5,
+          "y_from_top": 0.75,
+          "rgb": [
+            255,
+            255,
+            255
+          ],
+          "control_must_fail": false
+        },
+        {
+          "time_s": 0.5,
+          "x_fraction": 0.5,
+          "y_from_top": 0.25,
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 0.5,
+          "x_fraction": 0.5,
+          "y_from_top": 0.75,
+          "rgb": [
+            0,
+            0,
+            255
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 0.9666666666666667,
+          "x_fraction": 0.5,
+          "y_from_top": 0.25,
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 0.9666666666666667,
+          "x_fraction": 0.5,
+          "y_from_top": 0.75,
+          "rgb": [
+            0,
+            0,
+            255
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 1.0,
+          "x_fraction": 0.5,
+          "y_from_top": 0.25,
+          "rgb": [
+            0,
+            255,
+            0
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 1.0,
+          "x_fraction": 0.5,
+          "y_from_top": 0.75,
+          "rgb": [
+            0,
+            0,
+            255
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 1.5,
+          "x_fraction": 0.5,
+          "y_from_top": 0.25,
+          "rgb": [
+            0,
+            255,
+            0
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 1.5,
+          "x_fraction": 0.5,
+          "y_from_top": 0.75,
+          "rgb": [
+            0,
+            0,
+            255
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 2.466666666666667,
+          "x_fraction": 0.5,
+          "y_from_top": 0.25,
+          "rgb": [
+            0,
+            255,
+            0
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 2.466666666666667,
+          "x_fraction": 0.5,
+          "y_from_top": 0.75,
+          "rgb": [
+            0,
+            0,
+            255
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 2.5,
+          "x_fraction": 0.5,
+          "y_from_top": 0.25,
+          "rgb": [
+            255,
+            255,
+            255
+          ],
+          "control_must_fail": false
+        },
+        {
+          "time_s": 2.5,
+          "x_fraction": 0.5,
+          "y_from_top": 0.75,
+          "rgb": [
+            255,
+            255,
+            255
+          ],
+          "control_must_fail": false
+        },
+        {
+          "time_s": 3.0,
+          "x_fraction": 0.5,
+          "y_from_top": 0.25,
+          "rgb": [
+            255,
+            255,
+            255
+          ],
+          "control_must_fail": false
+        },
+        {
+          "time_s": 3.0,
+          "x_fraction": 0.5,
+          "y_from_top": 0.75,
+          "rgb": [
+            255,
+            255,
+            255
+          ],
+          "control_must_fail": false
+        }
+      ]
+    },
+    {
+      "id": "3-panel",
+      "language": "tr",
+      "request": "0,5 ile 2,5 saniye arasında ekranı yatay olarak üçe böl. Üste clock-a videosunu kaynakta 0,5 saniyeden, ortaya clock-c videosunu kaynakta 1 saniyeden, alta mavi still-b fotoğrafını koy. Sonra beyaz ordinary videosuna tam ekran dön.",
+      "authored_response": {
+        "action": {
+          "kind": "propose_strategy",
+          "strategy": {
+            "direction": "guided_story",
+            "edit_format": "montage",
+            "audio_strategy": "original_audio",
+            "render_program": "guided",
+            "selected_media_ids": [
+              "ordinary",
+              "clock-a",
+              "clock-c",
+              "still-b"
+            ],
+            "target_duration_s": 4,
+            "rationale": "Use the requested stacked sources for the bounded section.",
+            "split_screen": {
+              "panels": [
+                {
+                  "media_id": "clock-a",
+                  "source_start_s": 0.5
+                },
+                {
+                  "media_id": "clock-c",
+                  "source_start_s": 1
+                },
+                {
+                  "media_id": "still-b",
+                  "source_start_s": 0
+                }
+              ],
+              "start_s": 0.5,
+              "duration_s": 2,
+              "panel_weights": [
+                1,
+                1,
+                1
+              ],
+              "gutter": 0,
+              "background_color": "#000000"
+            }
+          },
+          "summary": "Stack the requested media, then return to full screen."
+        }
+      },
+      "expected_duration_s": 4,
+      "control_swap": [
+        0,
+        1
+      ],
+      "samples": [
+        {
+          "time_s": 0.4666666666666667,
+          "x_fraction": 0.5,
+          "y_from_top": 0.16666666666666666,
+          "rgb": [
+            255,
+            255,
+            255
+          ],
+          "control_must_fail": false
+        },
+        {
+          "time_s": 0.4666666666666667,
+          "x_fraction": 0.5,
+          "y_from_top": 0.5,
+          "rgb": [
+            255,
+            255,
+            255
+          ],
+          "control_must_fail": false
+        },
+        {
+          "time_s": 0.4666666666666667,
+          "x_fraction": 0.5,
+          "y_from_top": 0.8333333333333334,
+          "rgb": [
+            255,
+            255,
+            255
+          ],
+          "control_must_fail": false
+        },
+        {
+          "time_s": 0.5,
+          "x_fraction": 0.5,
+          "y_from_top": 0.16666666666666666,
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 0.5,
+          "x_fraction": 0.5,
+          "y_from_top": 0.5,
+          "rgb": [
+            255,
+            255,
+            0
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 0.5,
+          "x_fraction": 0.5,
+          "y_from_top": 0.8333333333333334,
+          "rgb": [
+            0,
+            0,
+            255
+          ],
+          "control_must_fail": false
+        },
+        {
+          "time_s": 0.9666666666666667,
+          "x_fraction": 0.5,
+          "y_from_top": 0.16666666666666666,
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 0.9666666666666667,
+          "x_fraction": 0.5,
+          "y_from_top": 0.5,
+          "rgb": [
+            255,
+            255,
+            0
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 0.9666666666666667,
+          "x_fraction": 0.5,
+          "y_from_top": 0.8333333333333334,
+          "rgb": [
+            0,
+            0,
+            255
+          ],
+          "control_must_fail": false
+        },
+        {
+          "time_s": 1.0,
+          "x_fraction": 0.5,
+          "y_from_top": 0.16666666666666666,
+          "rgb": [
+            0,
+            255,
+            0
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 1.0,
+          "x_fraction": 0.5,
+          "y_from_top": 0.5,
+          "rgb": [
+            255,
+            255,
+            0
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 1.0,
+          "x_fraction": 0.5,
+          "y_from_top": 0.8333333333333334,
+          "rgb": [
+            0,
+            0,
+            255
+          ],
+          "control_must_fail": false
+        },
+        {
+          "time_s": 1.4666666666666666,
+          "x_fraction": 0.5,
+          "y_from_top": 0.16666666666666666,
+          "rgb": [
+            0,
+            255,
+            0
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 1.4666666666666666,
+          "x_fraction": 0.5,
+          "y_from_top": 0.5,
+          "rgb": [
+            255,
+            255,
+            0
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 1.4666666666666666,
+          "x_fraction": 0.5,
+          "y_from_top": 0.8333333333333334,
+          "rgb": [
+            0,
+            0,
+            255
+          ],
+          "control_must_fail": false
+        },
+        {
+          "time_s": 1.5,
+          "x_fraction": 0.5,
+          "y_from_top": 0.16666666666666666,
+          "rgb": [
+            0,
+            255,
+            0
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 1.5,
+          "x_fraction": 0.5,
+          "y_from_top": 0.5,
+          "rgb": [
+            255,
+            0,
+            255
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 1.5,
+          "x_fraction": 0.5,
+          "y_from_top": 0.8333333333333334,
+          "rgb": [
+            0,
+            0,
+            255
+          ],
+          "control_must_fail": false
+        },
+        {
+          "time_s": 2.466666666666667,
+          "x_fraction": 0.5,
+          "y_from_top": 0.16666666666666666,
+          "rgb": [
+            0,
+            255,
+            0
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 2.466666666666667,
+          "x_fraction": 0.5,
+          "y_from_top": 0.5,
+          "rgb": [
+            255,
+            0,
+            255
+          ],
+          "control_must_fail": true
+        },
+        {
+          "time_s": 2.466666666666667,
+          "x_fraction": 0.5,
+          "y_from_top": 0.8333333333333334,
+          "rgb": [
+            0,
+            0,
+            255
+          ],
+          "control_must_fail": false
+        },
+        {
+          "time_s": 2.5,
+          "x_fraction": 0.5,
+          "y_from_top": 0.16666666666666666,
+          "rgb": [
+            255,
+            255,
+            255
+          ],
+          "control_must_fail": false
+        },
+        {
+          "time_s": 2.5,
+          "x_fraction": 0.5,
+          "y_from_top": 0.5,
+          "rgb": [
+            255,
+            255,
+            255
+          ],
+          "control_must_fail": false
+        },
+        {
+          "time_s": 2.5,
+          "x_fraction": 0.5,
+          "y_from_top": 0.8333333333333334,
+          "rgb": [
+            255,
+            255,
+            255
+          ],
+          "control_must_fail": false
+        },
+        {
+          "time_s": 3.0,
+          "x_fraction": 0.5,
+          "y_from_top": 0.16666666666666666,
+          "rgb": [
+            255,
+            255,
+            255
+          ],
+          "control_must_fail": false
+        },
+        {
+          "time_s": 3.0,
+          "x_fraction": 0.5,
+          "y_from_top": 0.5,
+          "rgb": [
+            255,
+            255,
+            255
+          ],
+          "control_must_fail": false
+        },
+        {
+          "time_s": 3.0,
+          "x_fraction": 0.5,
+          "y_from_top": 0.8333333333333334,
+          "rgb": [
+            255,
+            255,
+            255
+          ],
+          "control_must_fail": false
+        }
+      ]
+    }
+  ]
+}

@@ -56,7 +56,7 @@ SPEAKER_FULL_OPENING_PROTOCOL = 41
 BACKGROUND_FOCUS_PROTOCOL = 42
 
 # KRI-1264: the first build that decodes a placed picture card's `visual_placement.editor_style`
-# (a Talking card's zoom and animation) and edits them. 43 is the split-screen build (KRI-1231).
+# (a Talking card's zoom and animation) and edits them. 46 is the split-screen build (KRI-1231).
 CARD_STYLE_PROTOCOL = 44
 
 # KRI-1291: the first protocol whose every build leads the cleanup card with "Keep original

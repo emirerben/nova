@@ -226,3 +226,44 @@ def test_phone_revision_replaces_reference_timing_with_new_recipe(monkeypatch):
     assert variant["music_track_id"] is None
     # KRI-184: no explicit choice on a reference-only plan keeps the clips' own sound.
     assert variant["source_audio_preserved"] is True
+
+
+@pytest.mark.parametrize(
+    "origin,verified,device",
+    [(True, True, True), (False, True, True), (True, False, True), (True, True, False)],
+)
+def test_authored_song_requires_trusted_split_origin_even_after_unstack(
+    monkeypatch, origin, verified, device
+):
+    # Failure modes: layout metadata grants origin; unstack loses admitted controls;
+    # rollout-off or cloud accidentally inherits the phone-only exception.
+    job = _creator_song_job(monkeypatch)
+    variant = job.assembly_plan["variants"][0]
+    variant.update(
+        editor_timeline_mode="authored", render_destination="device" if device else "cloud"
+    )
+    variant["user_timeline"] = {"slots": [], "split_screen_sections": []}
+    if origin:
+        variant["editor_split_screen_origin"] = True
+    else:
+        variant["user_timeline"]["split_screen_sections"] = [{"id": "forged"}]
+    monkeypatch.setattr(
+        gj.settings, "phone_render_verified_features", ["splitScreen"] if verified else []
+    )
+    from app.services.client_protocol import clear_request_context, set_client_protocol
+
+    set_client_protocol(46)
+    before = copy.deepcopy(job.assembly_plan)
+    request = gj.EditorCommitRequest(
+        base_generation="first", user_song=gj.EditorCommitUserSong(volume=0.5)
+    )
+    try:
+        if origin and verified and device:
+            gj.require_guided_story_editor_commit(job, "song_lyrics", request)
+        else:
+            with pytest.raises(HTTPException) as error:
+                gj.require_guided_story_editor_commit(job, "song_lyrics", request)
+            assert error.value.detail == gj._GUIDED_STORY_EDIT_ERROR
+    finally:
+        clear_request_context()
+    assert job.assembly_plan == before

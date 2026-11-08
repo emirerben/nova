@@ -237,6 +237,7 @@ class BeforeState(NamedTuple):
     camera: list[dict[str, Any]]
     sfx: list[dict[str, Any]]
     overlays: list[dict[str, Any]] = []  # noqa: RUF012 - NamedTuple default, never mutated
+    split_screen_sections: tuple[dict[str, Any], ...] = ()
 
 
 def _slot_key(row: dict[str, Any]) -> str:
@@ -263,6 +264,7 @@ def snapshot_before(state: Any) -> BeforeState:
         camera=copy.deepcopy(state.camera_effects),
         sfx=copy.deepcopy(state.sound_effects),
         overlays=copy.deepcopy(getattr(state, "media_overlays", [])),
+        split_screen_sections=tuple(copy.deepcopy(getattr(state, "split_screen_sections", []))),
     )
 
 
@@ -418,11 +420,12 @@ def _slot_dur(row: Mapping[str, Any]) -> float | None:
     duration = _num(row.get("duration_s"))
     if duration is None or duration <= 0:
         return None
-    rate = _num(row.get("playback_rate"))
-    return duration / (rate if rate and rate > 0 else 1.0)
+    return duration
 
 
 _SLOT_FIELDS = (
+    ("muted", "timeline", lambda r: bool(r.get("muted"))),
+    ("source_audio_volume", "timeline", lambda r: _r(r.get("source_audio_volume", 1.0), 2)),
     ("duration_s", "timeline", lambda r: _r(_slot_dur(r), 2)),
     ("in_s", "timeline", lambda r: _r(r.get("in_s") or 0.0, 2)),
     ("look_preset", "timeline", lambda r: r.get("look_preset") or "none"),
@@ -435,6 +438,18 @@ _SLOT_FIELDS = (
         lambda r: (r.get("transition_after") or "cut", _r(r.get("transition_duration_s"), 2)),
     ),
 )
+
+
+def _timeline_total(rows: list[dict], sections: Iterable[dict]) -> float | None:
+    if any(_slot_dur(row) is None for row in rows):
+        return None
+    if sections:
+        from app.kria.split_screen import layout_split_timeline
+
+        return layout_split_timeline(rows, list(sections))[2]
+    from app.services.authored_text_fit import _segments
+
+    return max((segment["output_end_s"] for segment in _segments(rows)), default=0.0)
 
 
 def _slot_entries(before: BeforeState, state: Any) -> list[DiffEntry]:
@@ -500,14 +515,43 @@ def _slot_entries(before: BeforeState, state: Any) -> list[DiffEntry]:
                 ),
             )
         )
-    total_before = [_slot_dur(r) for _, r in live_before]
-    total_after = [_slot_dur(r) for _, r in live_after]
+    sections_after = getattr(state, "split_screen_sections", [])
+
+    def split_value(rows, sections):
+        return {
+            "sections": list(sections),
+            "members": [
+                (
+                    key,
+                    row.get("split_section_id"),
+                    row.get("split_panel_index"),
+                    row.get("split_offset_s"),
+                )
+                for key, row in rows
+                if row.get("split_section_id")
+            ],
+        }
+
+    split_before = split_value(live_before, before.split_screen_sections)
+    split_after = split_value(live_after, sections_after)
+    if split_before != split_after:
+        entries.append(
+            DiffEntry(
+                "timeline",
+                "split_screen",
+                (
+                    DiffTarget(
+                        "split_screen", "video", None, "split screen", split_before, split_after
+                    ),
+                ),
+            )
+        )
+    total_before = _timeline_total([row for _, row in live_before], before.split_screen_sections)
+    total_after = _timeline_total([row for _, row in live_after], sections_after)
     if (
-        total_before
-        and total_after
-        and None not in total_before
-        and None not in total_after
-        and abs(sum(total_before) - sum(total_after)) > 0.05  # type: ignore[arg-type]
+        total_before is not None
+        and total_after is not None
+        and abs(total_before - total_after) > 0.05
     ):
         entries.append(
             DiffEntry(
@@ -519,8 +563,8 @@ def _slot_entries(before: BeforeState, state: Any) -> list[DiffEntry]:
                         "video",
                         None,
                         "the video",
-                        round(sum(total_before), 2),
-                        round(sum(total_after), 2),  # type: ignore[arg-type]
+                        round(total_before, 2),
+                        round(total_after, 2),
                     ),
                 ),
             )
@@ -1050,6 +1094,20 @@ def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
             return say(en=f"Re-cropped {who}", tr=f"{who} yeniden kırpıldı")
         if name == "tilt":
             return _describe_tilt(entry, who)
+        if name == "muted":
+            return say(
+                en=(f"Muted {who}" if first.after else f"Unmuted {who}"),
+                tr=(f"{who} sessize alındı" if first.after else f"{who} sesi açıldı"),
+            )
+        if name == "source_audio_volume":
+            return say(
+                en=f"Changed the source volume of {who}", tr=f"{who} kaynak ses düzeyi değişti"
+            )
+        if name == "split_screen":
+            return say(
+                en="Updated split-screen layout and panels",
+                tr="Bölünmüş ekran düzeni ve paneller güncellendi",
+            )
         if name == "total_duration":
             return say(
                 en=f"Video length {first.before:g}s → {first.after:g}s",

@@ -45,6 +45,7 @@ from app.agents._schemas.sfx_intent import (
     LicensedSfxIntent,
     SfxIntent,
 )
+from app.agents._schemas.split_screen import InitialSplitScreen
 from app.schemas.clip_intents import MAX_CLIP_INTENTS, ClipIntent, ResolvedClipIntent
 from app.schemas.edit_proposal import (
     CREATOR_TITLE_MAX_CHARS,
@@ -417,6 +418,9 @@ class CreativeStrategy(_CreatorModel):
     the same font/color vocabulary as the authoritative TextElement schema.
     """
 
+    split_screen: InitialSplitScreen | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     direction: CreativeDirection = "fast_montage"
     edit_format: EditFormat = "montage"
     # KRI-118 lane L2: a chat-picked story SHAPE, not a separate edit_format.

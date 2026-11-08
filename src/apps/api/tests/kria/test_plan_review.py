@@ -52,7 +52,14 @@ from app.models import (
     PlanItem,
 )
 from app.tasks.kria_runtime import run_kria_turn
-from tests.kria.test_runtime_postgres_integration import _seed_runtime_project
+
+
+def _seed_runtime_project():
+    # Keep pure scope checks runnable without importing the Postgres probe.
+    from tests.kria.test_runtime_postgres_integration import _seed_runtime_project as seed
+
+    return seed()
+
 
 TITLE = {
     "id": "hook",
@@ -1030,3 +1037,376 @@ def test_text_bar_sections() -> None:
     assert plan_review.section_of_text_bar({"id": "a", "caption_cue": True}) == "captions"
     assert plan_review.section_of_text_bar({"id": "a", "role": "hook"}) == "title"
     assert plan_review.section_of_text_bar({"id": "a", "clip_id": "c1"}) == "clips"
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        "create_split_screen",
+        "update_split_screen",
+        "assign_split_panel",
+        "swap_split_panels",
+        "remove_split_screen",
+        "duplicate_clip",
+        "replace_clip_source",
+        "move_split_clip",
+        "move_split_screen",
+    ],
+)
+def test_split_commands_belong_to_clips_not_unrelated_sections(op):
+    # A supported clip edit must be reachable, but cannot escape a title/look-only scope.
+    command = {"op": op}
+    assert plan_review.filter_ops_to_scope([command], {}, ["clips"]) == ([command], [])
+    for scope in (["title"], ["look"], ["overlays"]):
+        kept, dropped = plan_review.filter_ops_to_scope([command], {}, scope)
+        assert kept == []
+        assert dropped == [{"op": op, "section": "clips"}]
+
+
+def test_split_definitions_and_rows_are_scoped_and_undone_together():
+    # Stripping only rows leaves dangling definitions; Undo of first creation must
+    # explicitly clear definitions even when the prior document omitted the key.
+    before = {"timeline_slots": [{"slot_id": "a", "duration_s": 4}]}
+    data = {
+        "timeline_slots": [
+            {
+                "slot_id": "a",
+                "duration_s": 4,
+                "split_section_id": "s",
+                "split_panel_index": 0,
+                "split_offset_s": 0,
+            }
+        ],
+        "split_screen_sections": [{"id": "s", "duration_s": 4, "panel_count": 2}],
+    }
+    allowed, _ = plan_review.repair_payload(data, before, ["clips"])
+    assert allowed == data
+    for definitions in (data["split_screen_sections"], []):
+        denied, _ = plan_review.repair_payload(
+            {**data, "split_screen_sections": definitions}, before, ["title"]
+        )
+        assert "timeline_slots" not in denied
+        assert "split_screen_sections" not in denied
+    record = plan_review.build_restore_record(data, before, ["clips"], turn_id="t", base_job_id="j")
+    restored, toggle = plan_review.restore_section(record, "clips", data)
+    assert restored == {**before, "split_screen_sections": []}
+    redone, _ = plan_review.restore_section(toggle, "clips", restored)
+    assert redone == data
+
+
+@pytest.mark.parametrize("canonical_clear", [{}, {"split_screen_sections": None}])
+def test_unstack_undo_redo_keeps_explicit_clear_after_durable_normalization(canonical_clear):
+    split = {
+        "timeline_slots": [
+            {
+                "slot_id": "a",
+                "clip_index": 0,
+                "in_s": 0,
+                "split_section_id": "s",
+                "split_panel_index": 0,
+                "split_offset_s": 0,
+                "duration_s": 4,
+            }
+        ],
+        "split_screen_sections": [{"id": "s", "duration_s": 4, "panel_count": 2}],
+    }
+    unstacked = {
+        "timeline_slots": [{"slot_id": "a", "clip_index": 0, "in_s": 0, "duration_s": 4}],
+        "split_screen_sections": [],
+    }
+    record = plan_review.build_restore_record(
+        unstacked, split, ["clips"], turn_id="t", base_job_id="j"
+    )
+    head = {"timeline_slots": unstacked["timeline_slots"], **canonical_clear}
+    restored, redo = plan_review.restore_section(record, "clips", head)
+    assert restored == split
+    reapplied, _ = plan_review.restore_section(redo, "clips", restored)
+    assert reapplied == unstacked
+    # Real commit DTO serialization must retain the clear: None would be omitted and
+    # the server would inherit the just-restored split definitions.
+    from app.routes.generative_jobs import EditorCommitRequest
+
+    wire = EditorCommitRequest.model_validate(reapplied).model_dump(mode="json", exclude_none=True)
+    assert wire["split_screen_sections"] == []
+
+
+def test_clip_scope_carries_only_trusted_rebase_and_undo_preserves_later_content():
+    from app.routes.generative_jobs import EditorCommitRequest
+    from app.services.kria_editor_ops import CompiledEditorDraft
+
+    before = {
+        "text_elements": [{"id": "global", "text": "Original", "start_s": 0, "end_s": 1}],
+        "caption_cues": [
+            {
+                "id": "cue",
+                "text": "Words",
+                "start_s": 0,
+                "end_s": 1,
+                "words": [{"text": "Words", "start_s": 0, "end_s": 1}],
+            }
+        ],
+        "drawings": [
+            {
+                "id": "drawing",
+                "start_s": 0,
+                "end_s": 1,
+                "canvas_aspect": 0.5625,
+                "strokes": [
+                    {"color": "#FF0000", "width_frac": 0.01, "points": [[0.1, 0.1], [0.9, 0.9]]}
+                ],
+            }
+        ],
+        "speaker_background": {
+            "kind": "color",
+            "color": "#000000",
+            "full_screen_windows": [{"start_s": 0, "end_s": 1}],
+        },
+    }
+    auto_before = copy.deepcopy(before)
+    auto_after = copy.deepcopy(before)
+    for lane in ("text_elements", "caption_cues", "drawings"):
+        auto_after[lane][0].update(start_s=2, end_s=3)
+    auto_after["caption_cues"][0]["words"][0].update(start_s=2, end_s=3)
+    auto_after["speaker_background"]["full_screen_windows"] = [{"start_s": 2, "end_s": 3}]
+    payload = copy.deepcopy(auto_after)
+    payload["text_elements"][0]["text"] = "Unauthorized rewrite"
+    payload["speaker_background"]["color"] = "#FFFFFF"
+    compiled = CompiledEditorDraft(
+        payload=EditorCommitRequest.model_validate(payload),
+        changes=[],
+        before=before,
+        timeline_rebase={
+            k: (auto_before[k], auto_after[k])
+            for k in auto_after
+            if auto_before[k] != auto_after[k]
+        },
+    )
+    repaired, _ = plan_review.repair_compiled(compiled, ["clips"])
+    data = repaired.payload.model_dump(mode="json", exclude_none=True)
+    assert data["text_elements"][0]["text"] == "Original"
+    assert data["text_elements"][0]["start_s"] == 2
+    assert data["caption_cues"][0]["words"][0]["start_s"] == 2
+    assert data["speaker_background"]["color"] == "#000000"
+    record = plan_review.build_restore_record(
+        data,
+        repaired.before,
+        ["clips"],
+        turn_id="t",
+        base_job_id="j",
+        timeline_rebase=repaired.timeline_rebase,
+    )
+    current = copy.deepcopy(data)
+    current["text_elements"][0]["text"] = "Later wording"
+    current["speaker_background"]["color"] = "#123456"
+    current["drawings"][0]["strokes"][0]["color"] = "#00FF00"
+    undone, redo = plan_review.restore_section(record, "clips", current)
+    assert undone["text_elements"][0]["text"] == "Later wording"
+    assert undone["text_elements"][0]["start_s"] == 0
+    assert undone["speaker_background"]["color"] == "#123456"
+    assert undone["drawings"][0]["start_s"] == 0
+    assert undone["drawings"][0]["strokes"][0]["color"] == "#00FF00"
+    redone, _ = plan_review.restore_section(redo, "clips", undone)
+    assert redone["text_elements"][0]["start_s"] == 2
+    assert redone["text_elements"][0]["text"] == "Later wording"
+
+
+def test_dependent_collapsed_windows_restore_and_redo_without_replacing_background():
+    before = {
+        "kind": "color",
+        "color": "#000000",
+        "full_screen_windows": [{"start_s": 1, "end_s": 2}],
+    }
+    after = {**before, "full_screen_windows": []}
+    record = plan_review.build_restore_record(
+        {"speaker_background": after},
+        {"speaker_background": before},
+        ["clips"],
+        turn_id="t",
+        base_job_id="j",
+        timeline_rebase={"speaker_background": (before, after)},
+    )
+    restored, redo = plan_review.restore_section(
+        record, "clips", {"speaker_background": {**after, "color": "#112233"}}
+    )
+    assert restored["speaker_background"] == {**before, "color": "#112233"}
+    cleared, _ = plan_review.restore_section(redo, "clips", restored)
+    assert cleared["speaker_background"] == {**after, "color": "#112233"}
+
+
+@pytest.mark.parametrize("order", [("clips", "title"), ("title", "clips")])
+def test_mixed_title_and_clip_undo_orders_keep_independent_timing(order):
+    before = {
+        "text_elements": [
+            {"id": "hook", "role": "generative_intro", "text": "Old", "start_s": 0, "end_s": 1}
+        ]
+    }
+    pre_rebase = copy.deepcopy(before)
+    pre_rebase["text_elements"][0]["text"] = "New"
+    after = copy.deepcopy(pre_rebase)
+    after["text_elements"][0].update(start_s=2, end_s=3)
+    record = plan_review.build_restore_record(
+        after,
+        before,
+        ["clips", "title"],
+        turn_id="t",
+        base_job_id="j",
+        timeline_rebase={"text_elements": (pre_rebase["text_elements"], after["text_elements"])},
+    )
+    current = copy.deepcopy(after)
+    toggles = {}
+    for section in order:
+        patch, toggles[section] = plan_review.restore_section(record, section, current)
+        current.update(patch)
+    assert current == before
+    for section in reversed(order):
+        patch, _ = plan_review.restore_section(toggles[section], section, current)
+        current.update(patch)
+    assert current == after
+
+
+def test_redo_collapsed_anonymous_window_does_not_delete_replacement():
+    a = {"start_s": 1, "end_s": 2, "media_id": "A"}
+    b = {"start_s": 1, "end_s": 2, "media_id": "B"}
+    record = {
+        "sections": {
+            "clips": {"speaker_background": {"timing": [{"windows": []}, {"windows": [a]}]}}
+        }
+    }
+    restored, redo = plan_review.restore_section(
+        record, "clips", {"speaker_background": {"windows": []}}
+    )
+    assert restored["speaker_background"]["windows"] == [a]
+    replaced = {"speaker_background": {"windows": [b]}}
+    replay, _ = plan_review.restore_section(redo, "clips", replaced)
+    assert replay == replaced
+
+
+def test_collapsed_window_undo_does_not_insert_old_entry_into_replacement_list():
+    a = {"start_s": 1, "end_s": 2, "media_id": "A"}
+    b = {"start_s": 1, "end_s": 2, "media_id": "B"}
+    record = {
+        "sections": {
+            "clips": {"speaker_background": {"timing": [{"windows": []}, {"windows": [a]}]}}
+        }
+    }
+    current = {"speaker_background": {"windows": [b]}}
+    restored, _ = plan_review.restore_section(record, "clips", current)
+    assert restored == current
+
+
+def test_absent_collapsed_window_key_survives_scope_repair_and_undo():
+    from app.routes.generative_jobs import EditorCommitRequest
+    from app.services.kria_editor_ops import CompiledEditorDraft
+
+    old = {"kind": "color", "color": "#000000", "full_screen_windows": [{"start_s": 1, "end_s": 2}]}
+    new = {"kind": "color", "color": "#000000"}
+    compiled = CompiledEditorDraft(
+        payload=EditorCommitRequest(speaker_background=new),
+        changes=[],
+        before={"speaker_background": old},
+        timeline_rebase={"speaker_background": (old, new)},
+    )
+    repaired, _ = plan_review.repair_compiled(compiled, ["clips"])
+    from app.services.kria_editor_ops import editor_payload_dump
+
+    data = editor_payload_dump(repaired.payload)
+    assert not data["speaker_background"].get("full_screen_windows")
+    record = plan_review.build_restore_record(
+        data,
+        repaired.before,
+        ["clips"],
+        turn_id="t",
+        base_job_id="j",
+        timeline_rebase=repaired.timeline_rebase,
+    )
+    data["speaker_background"]["color"] = "#112233"
+    restored, redo = plan_review.restore_section(record, "clips", data)
+    assert restored["speaker_background"]["full_screen_windows"] == old["full_screen_windows"]
+    cleared, _ = plan_review.restore_section(redo, "clips", restored)
+    assert not cleared["speaker_background"].get("full_screen_windows")
+    assert cleared["speaker_background"]["color"] == "#112233"
+
+
+@pytest.mark.parametrize("order", [("clips", "look"), ("look", "clips")])
+def test_mixed_background_style_undo_preserves_distinct_anonymous_windows(order):
+    before = {
+        "speaker_background": {
+            "kind": "color",
+            "color": "#000000",
+            "full_screen_windows": [{"start_s": 0, "end_s": 1}, {"start_s": 2, "end_s": 3}],
+        }
+    }
+    pre_rebase = copy.deepcopy(before)
+    pre_rebase["speaker_background"]["color"] = "#FFFFFF"
+    after = copy.deepcopy(pre_rebase)
+    after["speaker_background"]["full_screen_windows"] = [
+        {"start_s": 4, "end_s": 5},
+        {"start_s": 6, "end_s": 7},
+    ]
+    record = plan_review.build_restore_record(
+        after,
+        before,
+        ["clips", "look"],
+        turn_id="t",
+        base_job_id="j",
+        timeline_rebase={
+            "speaker_background": (pre_rebase["speaker_background"], after["speaker_background"])
+        },
+    )
+    current = copy.deepcopy(after)
+    toggles = {}
+    for section in order:
+        patch, toggles[section] = plan_review.restore_section(record, section, current)
+        current.update(patch)
+    assert current == before
+    for section in reversed(order):
+        patch, _ = plan_review.restore_section(toggles[section], section, current)
+        current.update(patch)
+    assert current == after
+
+
+@pytest.mark.parametrize("order", [("clips", "look"), ("look", "clips")])
+def test_mixed_background_color_and_omitted_collapse_undo_orders(order):
+    from app.routes.generative_jobs import EditorCommitRequest
+    from app.services.kria_editor_ops import editor_payload_dump
+
+    before = {
+        "speaker_background": {
+            "kind": "color",
+            "color": "#000000",
+            "full_screen_windows": [{"start_s": 1, "end_s": 2}],
+        }
+    }
+    pre_rebase = copy.deepcopy(before)
+    pre_rebase["speaker_background"]["color"] = "#FFFFFF"
+    after = editor_payload_dump(
+        EditorCommitRequest(speaker_background={"kind": "color", "color": "#FFFFFF"})
+    )
+    after = {"speaker_background": after["speaker_background"]}
+    # Canonical DTO output omits the collapsed temporal list entirely.
+    assert "full_screen_windows" not in after["speaker_background"]
+    record = plan_review.build_restore_record(
+        after,
+        before,
+        ["clips", "look"],
+        turn_id="t",
+        base_job_id="j",
+        timeline_rebase={
+            "speaker_background": (pre_rebase["speaker_background"], after["speaker_background"])
+        },
+    )
+    current = copy.deepcopy(after)
+    toggles = {}
+    for section in order:
+        patch, toggles[section] = plan_review.restore_section(record, section, current)
+        current.update(patch)
+    assert current["speaker_background"]["color"] == "#000000"
+    assert (
+        current["speaker_background"]["full_screen_windows"]
+        == before["speaker_background"]["full_screen_windows"]
+    )
+    for section in reversed(order):
+        patch, _ = plan_review.restore_section(toggles[section], section, current)
+        current.update(patch)
+    assert current["speaker_background"]["color"] == "#FFFFFF"
+    assert not current["speaker_background"].get("full_screen_windows")
