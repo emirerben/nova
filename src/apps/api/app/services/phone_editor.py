@@ -610,7 +610,8 @@ def _compile_editor_commit(
         from app.pipeline.phone_authored_timeline import compile_phone_authored_timeline
 
         recipe = compile_phone_authored_timeline(staged, variant, previous.recipe)
-        recipe = with_drawings(recipe, variant.get("drawings"))
+        if "drawings" in variant:
+            recipe = with_drawings(recipe, variant.get("drawings"))
         validate_phone_pilot_recipe(recipe, allow_editor_media=True)
         request = make_device_request(
             job_id=job.id,
@@ -812,6 +813,22 @@ def prepare_phone_editor_commit(
         None,
     )
     require_phone_voiceover_source_audio_client(before_variant)
+    from app.services.phone_rollout import split_screen_client_supported
+
+    if not split_screen_client_supported():
+        try:
+            split_recipe = device_status(job, variant_id).request.recipe
+        except KeyError:
+            split_recipe = None
+        if split_recipe is not None and "splitScreen" in split_recipe.required_capabilities:
+            raise HTTPException(
+                426,
+                detail={
+                    "code": "client_update_required",
+                    "feature": "split_screen",
+                    "minimum_client_protocol": 42,
+                },
+            )
     staged = _StagedJob(job)
     from app.services.finished_style_learning import learning_available, style_snapshot
 

@@ -14,7 +14,7 @@ enum EditorSelectionKind: String, Codable, CaseIterable, Hashable, Sendable {
     /// is never encoded to the server, and the id is the window's local `bg-<n>` block id.
     case speakerBackgroundWindow = "speaker_background_window"
     /// The Talk-to-camera speaker drawn small in a frame (`speaker_background.speaker_frame`), moved and resized by hand
-    /// on the preview. Client-only like the windows; the id is always `EditorSelection.speakerID`.
+    /// on the preview. The id is `speakerID` globally or a slot id for one occurrence.
     case speaker
 }
 
@@ -22,7 +22,7 @@ struct EditorSelection: Codable, Equatable, Hashable, Sendable {
     let kind: EditorSelectionKind
     let id: String
 
-    /// There is one speaker per Talk-to-camera edit.
+    /// The shared speaker controls use this id; occurrence controls use their slot id.
     static let speakerID = "speaker"
     static let speaker = EditorSelection(kind: .speaker, id: speakerID)
 }
@@ -303,7 +303,9 @@ struct EditorSpeakerBackground: Equatable, Sendable {
 
     /// The engine layer this lane compiles to, looping and bound to the Talking speaker track: asset
     /// `visual-<media_id>` for a pool visual, or a `color` fill with no asset (KRI-1173).
-    var layer: SpeakerBackgroundLayer {
+    var layer: SpeakerBackgroundLayer { layer(subjectClipIDs: nil) }
+
+    func layer(subjectClipIDs: [String]?) -> SpeakerBackgroundLayer {
         let layerWindows = windows.isEmpty ? nil : windows.map(\.layerWindow)
         let layerFullScreen = fullScreenWindows.isEmpty ? nil : fullScreenWindows.map(\.layerWindow)
         switch fill {
@@ -311,10 +313,10 @@ struct EditorSpeakerBackground: Equatable, Sendable {
             return SpeakerBackgroundLayer(assetID: Self.assetID(forMediaID: mediaID), mediaKind: kind, sourceStart: sourceStartS,
                                           loop: true, subjectTrackID: SpeakerBackgroundLimits.defaultSubjectTrackID,
                                           windows: layerWindows, speakerFrame: speakerFrame?.layerFrame,
-                                          fullScreenWindows: layerFullScreen, focus: focus)
+                                          fullScreenWindows: layerFullScreen, focus: focus, subjectClipIDs: subjectClipIDs)
         case .color(let hex):
             return .color(hex, subjectTrackID: SpeakerBackgroundLimits.defaultSubjectTrackID,
-                          windows: layerWindows, speakerFrame: speakerFrame?.layerFrame, fullScreenWindows: layerFullScreen)
+                          windows: layerWindows, speakerFrame: speakerFrame?.layerFrame, fullScreenWindows: layerFullScreen, subjectClipIDs: subjectClipIDs)
         }
     }
 
@@ -510,6 +512,38 @@ struct EditorSpeakerFrame: Equatable, Sendable {
     }
 
     var layerFrame: SpeakerFrame { SpeakerFrame(widthFraction: widthFraction, xFraction: xFraction, yFraction: yFraction) }
+}
+
+enum EditorSpeakerFrameOverride: Equatable, Sendable {
+    case inherit, full, custom(EditorSpeakerFrame)
+
+    init?(json: JSONValue) {
+        guard let fields = json.objectValue, let mode = fields["mode"]?.stringValue else { return nil }
+        switch mode {
+        case "inherit" where Set(fields.keys) == ["mode"]: self = .inherit
+        case "full" where Set(fields.keys) == ["mode"]: self = .full
+        case "custom" where Set(fields.keys) == ["mode", "frame"]:
+            guard let raw = fields["frame"], let frame = EditorSpeakerFrame(json: raw) else { return nil }
+            self = .custom(frame)
+        default: return nil
+        }
+    }
+
+    var json: JSONValue {
+        switch self {
+        case .inherit: .object(["mode": .string("inherit")])
+        case .full: .object(["mode": .string("full")])
+        case .custom(let frame): .object(["mode": .string("custom"), "frame": frame.json])
+        }
+    }
+
+    func resolved(defaultFrame: EditorSpeakerFrame?) -> EditorSpeakerFrame? {
+        switch self {
+        case .inherit: defaultFrame
+        case .full: nil
+        case .custom(let frame): frame
+        }
+    }
 }
 
 struct EditorTimelineSlot: Codable, Equatable, Sendable {
@@ -773,6 +807,16 @@ struct EditorDocument: Equatable, Sendable {
     var kind: String
     var editFormat: String
     var clips: [EditorTimelineSlot]
+    var splitScreenSections: [EditorSplitScreenSection] = [] {
+        didSet {
+            // Once this document authors a split, an empty array is an explicit clear.
+            // Preserve that field ownership across acknowledgement and render retries.
+            if rawSections["split_screen_sections"] == nil, !oldValue.isEmpty || !splitScreenSections.isEmpty {
+                rawSections["split_screen_sections"] = .array(splitScreenSections.map(\.json))
+            }
+        }
+    }
+    var unreadableSplitScreen = false
     var tombstones: [EditorTimelineSlot]
     var textElements: [EditorTextElement]
     var captionMeta: [String: JSONValue]
@@ -863,7 +907,8 @@ struct EditorDocument: Equatable, Sendable {
     enum EditorPresence: Equatable, Sendable { case absent, null, value }
     private struct LoadedState: Equatable {
         let schemaVersion: Int; let kind: String; let editFormat: String
-        let clips: [EditorTimelineSlot]; let tombstones: [EditorTimelineSlot]; let textElements: [EditorTextElement]
+        let hasSplitScreenSections: Bool
+        let clips: [EditorTimelineSlot]; let splitScreenSections: [EditorSplitScreenSection]; let tombstones: [EditorTimelineSlot]; let textElements: [EditorTextElement]
         let captionMeta: [String: JSONValue]; let captionCues: [EditorCaptionCue]; let music: EditorMusic?; let backgroundMusic: EditorBackgroundMusic?
         let mix: [String: JSONValue]; let soundEffects: [EditorTimedEffect]; let mediaOverlays: [EditorTimedEffect]; let visualBlocks: [EditorVisualBlock]
         let motionScenes: [EditorMotionScene]; let motionRuntimeHash: String?; let cameraEffects: [EditorCameraEffect]; let drawings: [EditorDrawing]; let speakerBackground: EditorSpeakerBackground?; let carouselMoment: [String: JSONValue]?; let lyrics: [String: JSONValue]?
@@ -915,6 +960,10 @@ struct EditorDocument: Equatable, Sendable {
         if document.landscapeFit == nil { document.landscapeFit = document.capabilities["landscape_fit"]?.value.flatMap { ["fit", "fill"].contains($0) ? $0 : nil } }
         document.clips = decodeSlots(array(sections["timeline_slots"] ?? object(snapshot["user_timeline"])?["slots"]) ?? []) .filter { !$0.removed }
         document.tombstones = decodeSlots(array(sections["timeline_slots"] ?? object(snapshot["user_timeline"])?["slots"]) ?? []) .filter(\.removed)
+        let splitValue = sections["split_screen_sections"] ?? object(snapshot["user_timeline"])?["split_screen_sections"]
+        let splitRows = array(splitValue) ?? []
+        document.splitScreenSections = splitRows.compactMap(EditorSplitScreenSection.init(json:))
+        document.unreadableSplitScreen = (splitValue != nil && array(splitValue) == nil) || splitRows.count != document.splitScreenSections.count
         document.textElements = decodeText(array(sections["text_elements"] ?? snapshot["text_elements"]) ?? [])
         document.speechTimingBasis = object(sections["speech_timing_basis"] ?? snapshot["speech_timing_basis"]) ?? [:]
         document.captionCues = decodeCaptions(array(sections["caption_cues"] ?? snapshot["caption_cues"]) ?? [])
@@ -953,6 +1002,9 @@ struct EditorDocument: Equatable, Sendable {
         var sections = canonical ? (Self.object(payload["sections"]) ?? rawSections) : rawSections
         if !speechTimingBasis.isEmpty { sections["speech_timing_basis"] = .object(speechTimingBasis) }
         writeSection(&sections, .timeline, values: clips + tombstones, original: Self.array(rawSections[EditorSection.timeline.wireKey]), encode: encodeSlot, id: { Self.string($0["slot_id"]) }, nonEmpty: !(clips + tombstones).isEmpty)
+        if sectionChanged(.timeline), !splitScreenSections.isEmpty || rawSections["split_screen_sections"] != nil {
+            sections["split_screen_sections"] = .array(splitScreenSections.map(\.json))
+        }
         writeSection(&sections, .text, values: textElements, original: Self.array(rawSections[EditorSection.text.wireKey]), encode: encodeText, id: { Self.string($0["id"]) }, nonEmpty: !textElements.isEmpty)
         writeSection(&sections, .captions, values: captionCues, original: Self.array(rawSections[EditorSection.captions.wireKey]), encode: encodeCaption, id: { Self.number($0["start_s"]) != nil && Self.number($0["end_s"]) != nil ? "caption" : nil }, nonEmpty: !captionCues.isEmpty)
         if sectionChanged(.captionMeta) { writeDictionary(&sections, .captionMeta, value: captionMeta, nonEmpty: !captionMeta.isEmpty) }
@@ -1044,6 +1096,9 @@ struct EditorDocument: Equatable, Sendable {
 
     func snapshot(for section: EditorSection) -> JSONValue? {
         let encoded = encodeSnapshot(); let payload = Self.object(encoded["editor_payload"]); let sections = Self.object(payload?["sections"])
+        if section == .timeline, !splitScreenSections.isEmpty || sections?["split_screen_sections"] != nil {
+            return .object(["slots": sections?["timeline_slots"] ?? .array([]), "split_screen_sections": .array(splitScreenSections.map(\.json))])
+        }
         if section == .music {
             if sections?["music_track_id"] != nil || sections?["music_window"] != nil {
                 var value: [String: JSONValue] = [:]
@@ -1057,7 +1112,7 @@ struct EditorDocument: Equatable, Sendable {
     }
 
     private func currentState() -> LoadedState {
-        LoadedState(schemaVersion: schemaVersion, kind: kind, editFormat: editFormat, clips: clips, tombstones: tombstones, textElements: textElements, captionMeta: captionMeta, captionCues: captionCues, music: music, backgroundMusic: backgroundMusic, mix: mix, soundEffects: soundEffects, mediaOverlays: mediaOverlays, visualBlocks: visualBlocks, motionScenes: motionScenes, motionRuntimeHash: motionRuntimeHash, cameraEffects: cameraEffects, drawings: drawings, speakerBackground: speakerBackground, carouselMoment: carouselMoment, lyrics: lyrics, title: title, orientation: orientation, landscapeFit: landscapeFit, capabilities: capabilities, revision: revision, editorState: editorState, deletions: deletions)
+        LoadedState(schemaVersion: schemaVersion, kind: kind, editFormat: editFormat, hasSplitScreenSections: rawSections["split_screen_sections"] != nil, clips: clips, splitScreenSections: splitScreenSections, tombstones: tombstones, textElements: textElements, captionMeta: captionMeta, captionCues: captionCues, music: music, backgroundMusic: backgroundMusic, mix: mix, soundEffects: soundEffects, mediaOverlays: mediaOverlays, visualBlocks: visualBlocks, motionScenes: motionScenes, motionRuntimeHash: motionRuntimeHash, cameraEffects: cameraEffects, drawings: drawings, speakerBackground: speakerBackground, carouselMoment: carouselMoment, lyrics: lyrics, title: title, orientation: orientation, landscapeFit: landscapeFit, capabilities: capabilities, revision: revision, editorState: editorState, deletions: deletions)
     }
 
     private mutating func makeOpaqueRecords(_ sections: [String: JSONValue]) -> [EditorSection: [EditorOpaqueRecord]] {
@@ -1097,7 +1152,8 @@ private extension EditorDocument {
     func sectionChanged(_ section: EditorSection) -> Bool {
         guard let loadedState else { return true }
         switch section {
-        case .timeline: return loadedState.clips != clips || loadedState.tombstones != tombstones
+        case .timeline: return loadedState.clips != clips || loadedState.tombstones != tombstones || loadedState.splitScreenSections != splitScreenSections
+            || loadedState.hasSplitScreenSections != (rawSections["split_screen_sections"] != nil)
         case .text: return loadedState.textElements != textElements
         case .captions: return loadedState.captionCues != captionCues
         case .captionMeta: return loadedState.captionMeta != captionMeta

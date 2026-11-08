@@ -108,10 +108,12 @@ log = structlog.get_logger()
 # the server measured it); the BACKGROUND block prints each aimed window as `aim=left zoom=0.8x`.
 # Taught in speaker_background_focus.txt only where the snapshot offers the `background_focus`
 # family (flag + verified token + protocol 42), so every other prompt is byte-identical.
-# v117 (KRI-1253): PICTURE CARDS teaches add_overlay for an ASSET POOL row (the generated image the
+# v117: editable split-screen sections and per-clip audio gain on top of v116.
+# v118: occurrence speaker framing (custom/full/inherit) on verified split-origin edits.
+# v120 (KRI-1253): PICTURE CARDS teaches add_overlay for an ASSET POOL row (the generated image the
 # creator accepted, listed by its title); with no row the lane still says a new picture can't be
 # added from chat.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-08-v117"
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-08-v120"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1370,6 +1372,31 @@ def _format_snapshot(snapshot: dict) -> str:
     timeline_fields = snapshot.get("timeline_patch_capabilities")
     if isinstance(timeline_fields, dict):
         lines.append("timeline_patch_capabilities: " + json.dumps(timeline_fields, sort_keys=True))
+    if snapshot.get("split_screen_available"):
+        lines.append("split_screen_available: true")
+    if snapshot.get("split_screen_sections"):
+        lines.append(
+            "split_screen_sections: "
+            + json.dumps(snapshot["split_screen_sections"], sort_keys=True)
+        )
+    for slot in slots:
+        if isinstance(slot, dict) and slot.get("split_section_id"):
+            lines.append(
+                "split member: "
+                + json.dumps(
+                    {
+                        key: slot.get(key)
+                        for key in (
+                            "slot_id",
+                            "clip_index",
+                            "split_section_id",
+                            "split_panel_index",
+                            "split_offset_s",
+                        )
+                    },
+                    sort_keys=True,
+                )
+            )
     appearance = _text_appearance_inventory(snapshot)
     if snapshot.get("text_appearance_version") == 1 or appearance["targets"]:
         lines.append("TEXT APPEARANCE: version=1; targets=")
@@ -1413,6 +1440,11 @@ def _format_snapshot(snapshot: dict) -> str:
         lines.append("\nSAFE SOURCE POOL SUMMARY (counts/digests only; no source paths):")
         lines.append(_field(json.dumps(summary, ensure_ascii=False), max_chars=1800))
 
+    if isinstance(snapshot.get("replacement_source_pool"), list):
+        lines.append(
+            "replacement_source_pool: "
+            + json.dumps(snapshot["replacement_source_pool"], ensure_ascii=False)
+        )
     source_pool = snapshot.get("source_pool")
     if isinstance(source_pool, list):
         unused = [
@@ -4475,13 +4507,11 @@ def _indices_valid(name: str, payload: dict, snapshot: dict) -> bool:
     cue_count = _section_len(snapshot, "captions", "cues")
     camera_effect_count = len(snapshot.get("camera_effects") or [])
     visual_block_count = len(snapshot.get("visual_blocks") or [])
-    transition_slot_count = len(
-        [
-            slot
-            for slot in _snapshot_list(snapshot, _SLOT_INDEX_KEYS)
-            if isinstance(slot, dict) and not slot.get("removed")
-        ]
-    )
+    transition_slots = [
+        slot
+        for slot in _snapshot_list(snapshot, _SLOT_INDEX_KEYS)
+        if isinstance(slot, dict) and not slot.get("removed")
+    ]
     for key in ("bar_index",):
         if key in payload and not _index_in_bounds(payload[key], text_count):
             log.warning("edit_copilot.drop_text_index_oob", op=name, index=payload.get(key))
@@ -4522,8 +4552,13 @@ def _indices_valid(name: str, payload: dict, snapshot: dict) -> bool:
             index=payload.get("camera_effect_index"),
         )
         return False
-    if "boundary_index" in payload and not _index_in_bounds(
-        payload["boundary_index"], max(0, transition_slot_count - 1)
+    from app.kria.split_screen import has_timeline_transition_successor
+
+    if "boundary_index" in payload and (
+        not _index_in_bounds(payload["boundary_index"], len(transition_slots))
+        or not has_timeline_transition_successor(
+            transition_slots, transition_slots[int(payload["boundary_index"])]
+        )
     ):
         log.warning(
             "edit_copilot.drop_boundary_index_oob",
@@ -5731,6 +5766,18 @@ def _coerce_payload(
         boundary_index = out["boundary_index"]
         left = slots[boundary_index] if boundary_index < len(slots) else {}
         right = slots[boundary_index + 1] if boundary_index + 1 < len(slots) else {}
+        if left.get("split_section_id"):
+            successors = sorted(
+                [
+                    candidate
+                    for candidate in slots
+                    if candidate.get("split_section_id") == left["split_section_id"]
+                    and candidate.get("split_panel_index") == left.get("split_panel_index")
+                    and float(candidate["split_offset_s"]) > float(left["split_offset_s"])
+                ],
+                key=lambda candidate: float(candidate["split_offset_s"]),
+            )
+            right = successors[0] if successors else {}
         if not isinstance(left, dict) or not isinstance(right, dict):
             state.invalid_value()
             return None

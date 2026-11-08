@@ -2533,6 +2533,7 @@ def _complete_draft_turn(
                         scoped_fields["scope"],
                         turn_id=str(turn.id),
                         base_job_id=str(job.id),
+                        timeline_rebase=compiled.timeline_rebase,
                         clip_bar_ids=clip_bar_ids,
                     )
                 if head is None and not (

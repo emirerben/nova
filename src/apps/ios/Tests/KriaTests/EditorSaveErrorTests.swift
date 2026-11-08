@@ -28,6 +28,26 @@ final class EditorSaveErrorTests: XCTestCase {
         }
     }
 
+    func testSplitScreenRefusalsExplainAvailabilityAndAtomicSaveWithoutLeakingDetails() async throws {
+        let cases = [
+            ("split_screen_unavailable", "Split-screen editing isn’t available right now. Try saving again later. Your edits are still here."),
+            ("split_screen_requires_atomic_commit", "This edit’s clips and panel settings must be saved together. Update Kria and try saving again. Your edits are still here.")
+        ]
+        for (code, expectedCopy) in cases {
+            NativeEditorURLProtocol.handler = { _ in
+                (422, Data("{\"detail\":{\"code\":\"\(code)\",\"reason\":\"private server details\"}}".utf8))
+            }
+            do {
+                _ = try await save()
+                XCTFail("Expected split-screen save refusal")
+            } catch let error as EditorSaveError {
+                XCTAssertEqual(error, .timeline(code: code))
+                XCTAssertEqual(error.localizedDescription, expectedCopy)
+                XCTAssertFalse(error.localizedDescription.contains("private server details"))
+            }
+        }
+    }
+
     /// KRI-428: the song codes carry their own recovery copy; only "unavailable" shows the server's reason.
     func testSongCodesMapToRecoveryCopy() async throws {
         let cases: [(String, EditorSaveError, String)] = [

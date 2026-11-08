@@ -420,6 +420,8 @@ def rebase_guided_text(
     old_segments_override: list[dict[str, Any]] | None = None,
     new_segments_override: list[dict[str, Any]] | None = None,
     text_timing: TextTimingPolicy = "follow",
+    old_total_override: float | None = None,
+    new_total_override: float | None = None,
 ) -> None:
     """Re-window ``state.text`` (and any same-bundle lanes) onto the new timeline.
 
@@ -437,13 +439,21 @@ def rebase_guided_text(
         if old_segments_override is not None
         else _old_segments(old_rows, guided or {})
     )
-    old_total = max((float(s["output_end_s"]) for s in old_segments), default=0.0)
+    old_total = (
+        old_total_override
+        if old_total_override is not None
+        else max((float(s["output_end_s"]) for s in old_segments), default=0.0)
+    )
     new_segments = (
         new_segments_override
         if new_segments_override is not None
         else guided_segments_for_rows(guided or {}, state.slots)
     )
-    new_total = max((float(s["output_end_s"]) for s in new_segments), default=0.0)
+    new_total = (
+        new_total_override
+        if new_total_override is not None
+        else max((float(s["output_end_s"]) for s in new_segments), default=0.0)
+    )
     explicit_text_ids = getattr(state, "explicit_text_ids", set()) or set()
     if text_timing == "preserve_all":
         protected = [bar for bar in state.text if not bar.get("removed") and "end_s" in bar]
@@ -641,7 +651,7 @@ def rebase_guided_text(
         except GuidedTimelineError as exc:
             raise _op_error("Too many effects would be removed by that timeline change") from exc
         for lane in ("sound_effects", "visual_blocks"):
-            if lane in lanes:
+            if lane in baseline:
                 before = len(baseline[lane])
                 after = len(lanes[lane])
                 if after < before:

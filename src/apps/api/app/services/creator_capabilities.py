@@ -985,6 +985,10 @@ def resolve_creator_manifest(
             )
         else:
             capabilities[CAPABILITY_TIMED_CARDS] = _available()
+    from app.services.phone_rollout import split_screen_supported
+
+    if phone_rendering_allowed and has_media and split_screen_supported():
+        capabilities["split_screen"] = _available()
     background_pick: str | None = None
     if is_phone_subtitled and not has_voiceover:
         # Advertised only when open (like `timed_cards`): a closed gate leaves the dict, both
@@ -2087,6 +2091,18 @@ def compile_strategy_to_plan(
     audio-led/voiceover item can never be compiled into a guided proposal even
     if an agent asks for one.
     """
+
+    if strategy.split_screen is not None:
+        capability = manifest.capabilities.get("split_screen")
+        if capability is None or not capability.available:
+            raise CreatorCapabilityError(
+                "Split screen is unavailable for this edit",
+                code="split_screen_unavailable",
+                edit_format=strategy.edit_format,
+            )
+        media_ids = {media.media_id for media in manifest.media}
+        if any(panel.media_id not in media_ids for panel in strategy.split_screen.panels):
+            raise CreatorStrategyError("A split panel source is not in the approved media")
 
     # KRI-118 item 2: repair a chat-picked story shape (day_vlog/single_hero)
     # and any stale/hidden-format strategy BEFORE the render program is

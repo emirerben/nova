@@ -43,6 +43,8 @@
     "speaker_background_window_invalid",
     "speaker_background_windows_disabled",
     "speaker_full_opening_disabled",
+    "split_screen_requires_atomic_commit",
+    "split_screen_unavailable",
     "speaker_full_opening_invalid",
     "talking_range_captions_missing",
     "talking_range_cut_mismatch",

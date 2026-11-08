@@ -30,6 +30,7 @@ A case existing in the enum is **vocabulary**, never a claim of support. Three s
 | Capability | Source lane | Notes |
 | --- | --- | --- |
 | `basicComposition` | any clip | Always required once a timeline has clips. |
+| `splitScreen` | `split_screen_sections[]` and clips carrying section/panel membership | Editable two- or three-panel horizontal sections with independent video/photo source clocks and crops. Native preview and export use the same panel compositor; the server compiles the persistent section structure into the recipe. Requires `phone_render_verified_features` and protocol 43; this row records implemented primitives, not completed physical-device qualification or rollout approval. Other content capabilities remain independently gated. |
 | `local1080Export` | any clip | Always required once a timeline has clips. |
 | `positionedText` | `text_layers` | Any text layer. |
 | `animatedText` | `text_layers[].effect`, `clips[].text` | Non-static/none text effect, or legacy `TextTreatment`. |

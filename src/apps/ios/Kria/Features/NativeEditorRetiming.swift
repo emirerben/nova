@@ -33,6 +33,18 @@ extension NativeEditorSession {
     private func setClipPlaybackRate(_ selection: EditorSelection, rate: Double, resetting: Bool, clearValue: JSONValue?) -> Bool {
         guard let found = sourceWindowSlot(for: selection),
               let index = document.clips.firstIndex(where: { $0.id == found.slot.id }) else { return false }
+        if found.slot.raw["freeze_frame_s"]?.numberValue != nil {
+            var clock = NativeClipSourceClock(slot: found.slot)
+            clock.rate = rate
+            if let id = found.slot.splitSectionID,
+               let section = document.splitScreenSections.first(where: { $0.id == id }) {
+                let limit = document.clips.filter { $0.id != found.slot.id && $0.splitSectionID == id && $0.splitPanelIndex == found.slot.splitPanelIndex && $0.splitOffsetS > found.slot.splitOffsetS }.map(\.splitOffsetS).min() ?? section.durationS
+                if clock.duration > limit - found.slot.splitOffsetS { clock = clock.sliced(from: 0, to: limit - found.slot.splitOffsetS) }
+            }
+            guard clock.duration >= 0.1 else { return false }
+            transactDocument(section: .timeline) { $0.clips[index] = clock.applying(to: $0.clips[index]) }
+            return true
+        }
         let outputDuration = sourceWindowLength(slot: found.slot, clip: found.clip)
         let sourceEnd = found.slot.raw["source_end_s"]?.numberValue
         let nativeSpan = found.slot.raw["native_source_span_s"]?.numberValue
@@ -42,10 +54,20 @@ extension NativeEditorSession {
         let sourceEndValue = found.slot.inS + sourceSpan
         let exactNewDuration = sourceSpan / rate
         guard exactNewDuration.isFinite, exactNewDuration >= 0.1,
-              let newDuration = NativeEditorInteraction.sourcePreservingOutputDuration(
+              let requestedDuration = NativeEditorInteraction.sourcePreservingOutputDuration(
             sourceStart: found.slot.inS, sourceEnd: sourceEndValue, rate: rate,
             renderedClock: found.slot.raw["timing_mode"]?.stringValue == "rendered"
         ) else { return false }
+        var newDuration = requestedDuration
+        if let id = found.slot.splitSectionID,
+           let section = document.splitScreenSections.first(where: { $0.id == id }) {
+            let nextStart = document.clips.filter {
+                $0.id != found.slot.id && $0.splitSectionID == id && $0.splitPanelIndex == found.slot.splitPanelIndex
+                    && $0.splitOffsetS > found.slot.splitOffsetS
+            }.map(\.splitOffsetS).min() ?? section.durationS
+            newDuration = min(newDuration, nextStart - found.slot.splitOffsetS)
+            guard newDuration >= 0.1 else { return false }
+        }
         let existingRate = found.slot.raw["playback_rate"]?.numberValue ?? 1
         let existingSourceEnd = found.slot.raw["source_end_s"]?.numberValue
         let expectedRateIsStored = !resetting && found.slot.raw["playback_rate"] == .number(rate)
