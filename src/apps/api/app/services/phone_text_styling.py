@@ -686,6 +686,49 @@ def _contrast(a: str, b: str) -> float:
     return (high + 0.05) / (low + 0.05)
 
 
+# KRI-1298: TikTok's white text keeps a clearly visible dark shadow on light footage. The look's
+# faint 0.2 shadow is right on dark or mid footage; over a pale background it is raised.
+LIGHT_BACKGROUND_LUMINANCE = 0.45
+LIGHT_BACKGROUND_SHADOW_OPACITY = 0.6
+
+
+def _firm_tiktok_shadow_on_light(row: dict, frames: list[dict]) -> None:
+    """Raise the shadow of a TikTok-look line whose measured background is light.
+
+    Reads the contrast frames the style pass already sampled; with none, the look is unchanged.
+    """
+    from app.pipeline.phone_text_background import HEIGHT, WIDTH
+
+    if (row.get("source_params") or {}).get("clip_text_look") != "tiktok":
+        return
+    if not row.get("shadow_enabled"):
+        return
+    try:
+        start, end = float(row["start_s"]), float(row["end_s"])
+        half_w = min(float(row.get("max_width_frac") or 0.72), 1.0) / 2
+        cx = float(row.get("position_x_frac") or 0.5)
+        cy = float(row.get("position_y_frac") or 0.5)
+    except (KeyError, TypeError, ValueError):
+        return
+    x0, x1 = max(0, int((cx - half_w) * WIDTH)), min(WIDTH, int((cx + half_w) * WIDTH) + 1)
+    y0, y1 = max(0, int((cy - 0.04) * HEIGHT)), min(HEIGHT, int((cy + 0.04) * HEIGHT) + 1)
+    levels = []
+    for frame in frames:
+        if frame["start_s"] < end and start < frame["end_s"]:
+            pixels = frame["pixels"]
+            values = sorted(pixels[y * WIDTH + x] for y in range(y0, y1) for x in range(x0, x1))
+            if values:
+                levels.append(values[len(values) // 2] / 255)
+    if not levels:
+        return
+    mean = sum(levels) / len(levels)
+    linear = mean / 12.92 if mean <= 0.04045 else ((mean + 0.055) / 1.055) ** 2.4
+    if linear >= LIGHT_BACKGROUND_LUMINANCE:
+        row["shadow_opacity"] = max(
+            float(row.get("shadow_opacity") or 0), LIGHT_BACKGROUND_SHADOW_OPACITY
+        )
+
+
 def _readable_on(fill: str) -> str:
     """Black or white, whichever has more contrast on ``fill``."""
     return max(("#000000", "#FFFFFF"), key=lambda ink: _contrast(ink, fill))
@@ -1523,6 +1566,8 @@ def style_guided_generation(plan, bindings, *, job_id: str) -> dict:
         excluded_boxes=boxes,
     )
     by_id = {row["id"]: row for row in styled}
+    for row in styled:
+        _firm_tiktok_shadow_on_light(row, frames)
     for lane in lanes:
         raw[lane] = [by_id[row["id"]] for row in raw.get(lane) or []]
     return raw

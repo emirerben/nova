@@ -601,7 +601,11 @@ copied as spoken from the speaker clip's timed `segments` (or transcript) in
 in the order those words are spoken; each one shows on its words and stays until the next. Two
 photos or videos of the same thing get the same spoken_phrase and play one after the other in the
 order listed. Leave out any photo or video they never talk about and name it in `summary` ("I left
-out the lunch photo: you don't talk about it"). When the creator pairs only some photos with words
+out the lunch photo: you don't talk about it"). Also list each one in `background_media.left_out`
+as {"name": "<its name, in their language>", "why": "no_recording" (they talk about it but no
+photo or video for it is attached, so the previous one stays on) or "not_said" (one is attached
+but they never mention it)}; the finished video's reply tells them, `summary` is not shown then.
+Leave `left_out` out when nothing is left out. When the creator pairs only some photos with words
 ("the beach photo when I say beach"), give only those a `spoken_phrase`. Otherwise (a plain
 rotation such as "change every 3 seconds") leave it out and the photos take turns in the order
 listed. Without a stated rhythm they change every 4 seconds; set `cadence_s` (2 to 10) when the

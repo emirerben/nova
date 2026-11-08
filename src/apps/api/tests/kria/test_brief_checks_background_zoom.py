@@ -92,6 +92,7 @@ def test_editor_document_decides():
     variant = _variant(False)
     variant["speaker_background"] = {
         "media_id": "m1",
+        "focus": {"x": 0.0, "y": 0.5, "zoom": 1.5},
         "windows": [{"media_id": "m1", "focus": {"x": 0.0, "y": 0.5, "zoom": 1.5}}],
     }
     receipt = _receipt(ZOOM, plan_facts_from_phone_variant(variant))
@@ -100,3 +101,51 @@ def test_editor_document_decides():
 
 def test_fact_survives_a_reworded_requirement():
     assert "background_zoom" in STICKY_FACTS
+
+
+# ---- review of 6401eaf93: any focus is not "zoomed"; every recording must be ----
+
+
+def _bg(**kw):
+    from app.kria.portable_speaker_background import SpeakerBackgroundLayer
+
+    base = {"asset_id": "m0", "media_kind": "image"}
+    return SpeakerBackgroundLayer.model_validate({**base, **kw})
+
+
+def _win(media, start, end, zoom=None):
+    w = {"asset_id": media, "media_kind": "image", "start": start, "end": end}
+    if zoom is not None:
+        w["focus"] = {"x": 0.0, "y": 0.5, "zoom": zoom}
+    return w
+
+
+def test_two_windows_both_unzoomed_is_not_zoomed():
+    layer = _bg(windows=[_win("m1", 0, 2, 1.0), _win("m2", 2, 4, 1.0)])
+    assert layer.all_pictures_zoomed is False
+
+
+def test_one_unfocused_window_is_not_zoomed():
+    layer = _bg(windows=[_win("m1", 0, 2, 1.8), _win("m2", 2, 4)])
+    assert layer.all_pictures_zoomed is False
+
+
+def test_every_picture_zoomed_is_zoomed():
+    layer = _bg(windows=[_win("m1", 0, 2, 1.8), _win("m2", 2, 4, 1.4)])
+    layer = layer.model_copy(update={"focus": layer.windows[0].focus})
+    assert layer.all_pictures_zoomed is True
+
+
+def test_editor_document_with_one_unfocused_window_is_partial():
+    variant = _variant(None)
+    variant["speaker_background"] = {
+        "media_id": "m0",
+        "focus": {"x": 0, "y": 0.5, "zoom": 1.5},
+        "windows": [
+            {"media_id": "m1", "focus": {"x": 0, "y": 0.5, "zoom": 1.0}},
+            {"media_id": "m2"},
+        ],
+    }
+    receipt = _receipt(ZOOM, plan_facts_from_phone_variant(variant))
+    assert receipt.status == "partial"
+    assert "small text may stay small" in receipt.reason

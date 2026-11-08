@@ -535,6 +535,46 @@ def _refusal_receipts(
     return None if planned.suggestion_pin is not None else receipts
 
 
+def _held_receipts(
+    receipts: list[dict[str, Any]] | None, readiness_report: Mapping[str, Any] | None
+) -> list[dict[str, Any]] | None:
+    """KRI-1308: a held draft made nothing, so no ask may read "Done".
+
+    The receipts judged the speculative draft the hold rolled back. A blocked ask shows its
+    readiness reason; any other is waiting. Both read partial and unchecked, never
+    done. Receipts that were never "met" keep their own words."""
+    if receipts is None or readiness_report is None or readiness_report.get("ready"):
+        return receipts
+    from app.kria.approval_readiness import APPROVABLE  # noqa: PLC0415
+
+    rows = {
+        str(row.get("requirement_id")): row
+        for row in readiness_report.get("requirements") or ()
+        if isinstance(row, Mapping)
+    }
+    held: list[dict[str, Any]] = []
+    for receipt in receipts:
+        if receipt.get("status") != "met":
+            held.append(receipt)
+            continue
+        row = rows.get(str(receipt.get("requirement_id")))
+        blocked = row is not None and row.get("disposition") not in APPROVABLE
+        held.append(
+            {
+                **receipt,
+                "status": "partial",
+                "verification": "unchecked",
+                "stage": "understood",
+                "reason": (str(row.get("reason") or "")[:300] if blocked else "")
+                or say(
+                    en="Not made yet: the draft is on hold.",
+                    tr="Henüz yapılmadı: taslak beklemede.",
+                ),
+            }
+        )
+    return held
+
+
 def _pin_refusal_for(planned: PlannedKriaTurn, reason: str) -> dict[str, Any] | None:
     """The typed refusal for a tap that ends in a reply instead of a draft; None for any turn
     that is not a pinned tap (so every other reply is exactly what it was)."""
@@ -3471,7 +3511,9 @@ def _complete_draft_turn(
                 brief_updates=_refusal_brief_updates(planned, planned.brief_updates),
                 brief_delegated=planned.brief_delegated,
                 brief_delegation_read_ids=planned.brief_delegation_read_ids,
-                requirement_receipts=_refusal_receipts(planned, requirement_receipts),
+                requirement_receipts=_refusal_receipts(
+                    planned, _held_receipts(requirement_receipts, readiness_report)
+                ),
                 brief_coverage={
                     **(planned.brief_coverage or {}),
                     "stage": "draft",
@@ -4829,6 +4871,35 @@ _TURN_FAILURE_COPY: dict[str, tuple[str, str]] = {
         "olursa her seferinde tek bir değişiklik iste.",
     ),
 }
+# KRI-1301: a timeout on a tapped answer (choice, clip, mark, moment order). The creator sent no
+# request to shrink, so never tell her to ask for "one change at a time"; the app's Try again
+# re-sends the same tap, which opens on the lighter rung (`_previous_turn_hit_provider_deadline`).
+_TAPPED_ANSWER_TIMEOUT_COPY = (
+    "The AI service ran out of time on that answer. Your choice, footage and saved draft "
+    "are safe. Tap Try again.",
+    "Yapay zekâ hizmeti bu cevabı zamanında işleyemedi. Seçimin, çekimlerin ve kayıtlı "
+    "taslağın güvende. Yeniden dene'ye dokun.",
+)
+_TAPPED_ANSWER_PAYLOAD_KEYS = (
+    "choice_selection",
+    "clip_selection",
+    "protected_region",
+    "moment_order",
+)
+
+
+def _source_is_tapped_answer(db, turn: CreatorAgentTurn) -> bool:  # noqa: ANN001
+    """Whether the creator's message behind ``turn`` was a card tap, not typed words."""
+    try:
+        source = db.get(CreationThreadEvent, turn.source_event_id)
+    except Exception:  # noqa: BLE001 - a lookup miss only costs the generic copy
+        return False
+    payload = getattr(source, "payload", None)
+    return isinstance(payload, dict) and any(
+        isinstance(payload.get(key), dict) for key in _TAPPED_ANSWER_PAYLOAD_KEYS
+    )
+
+
 _TURN_FAILURE_DEFAULT_COPY = (
     "I couldn't finish that step, but your project and saved draft are safe. "
     "Try the request again.",
@@ -4914,6 +4985,8 @@ def _project_retryable_failure(
     # the copy follows the chat's language from the thread row itself.
     with reply_language_for(thread_reply_language(thread)):
         en, tr = _TURN_FAILURE_COPY.get(code, _TURN_FAILURE_DEFAULT_COPY)
+        if code == "runtime_provider_outcome_unknown" and _source_is_tapped_answer(db, turn):
+            en, tr = _TAPPED_ANSWER_TIMEOUT_COPY
         failure_copy = say(en=en, tr=tr)
     event = _append_sync_event(
         db,

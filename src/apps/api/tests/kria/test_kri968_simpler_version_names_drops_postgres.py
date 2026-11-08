@@ -97,6 +97,17 @@ TAG = 'name tag when he first appears ("ATAKAN")'
 # Prod asked the KRI-968 question in the words before KRI-983.
 PROD_ASK = "Should I try a different approach, or make this simpler version?"
 ASK = "Should I make it without these, or do you want to change your request?"
+# KRI-1285: prod listed this render promise as "Partly"; the reply now says it is planned.
+_PROMISE_LINE = '"SUPER EXCITED") (I\'ll show it the moment you say that word'
+
+
+def _as_planned(text: str) -> str:
+    return "\n".join(
+        line.replace("- Partly: ", "- Will do at render: ", 1) if _PROMISE_LINE in line else line
+        for line in text.split("\n")
+    )
+
+
 LOOK = "Have a look at these in the video:"
 # The phone Talking writer reads none of the draft's story structure, pacing or direction. They are
 # the planner's own choices (no live order or text ask carries them), so since Green 4/5
@@ -406,7 +417,7 @@ async def test_the_held_draft_names_what_the_simpler_version_leaves_out(monkeypa
     )
     assert held.payload["brief_coverage"]["reason"] == "simplification_requires_choice"
     # Prod's reply, plus one sentence naming the one requirement the simpler version drops.
-    assert held.content == HELD["content"].replace(
+    assert held.content == _as_planned(HELD["content"]).replace(
         f"I held this first draft back. {PROD_ASK}",
         f"I held this first draft back. The simpler version leaves out: {TAG}. {ASK}",
     )
@@ -433,7 +444,7 @@ async def test_the_tap_leaves_out_only_the_named_tag(monkeypatch) -> None:
     assert lines.count(f"- Left out as agreed: {TAG}") == 1
     # F10: the line sits with the Done/Partly lines, never under "Have a look".
     assert lines.index(f"- Left out as agreed: {TAG}") < lines.index(LOOK)
-    assert sorted(draft.content.splitlines()) == sorted(DRAFT["content"].splitlines())
+    assert sorted(draft.content.splitlines()) == sorted(_as_planned(DRAFT["content"]).splitlines())
     assert _pending_approval(thread_id).consequence_summary == f"Render this draft: {draft.content}"
     with sync_session() as db:
         brief = load_latest_brief_sync(db, thread_id)
@@ -617,12 +628,12 @@ async def test_switch_off_names_the_planners_fields_as_before(monkeypatch) -> No
     monkeypatch.setattr(settings, "kria_headsup_asked_only_enabled", False)
     user_id, thread_id = _seed_t1()
     held = await _held_draft(monkeypatch, user_id, thread_id)
-    assert held.content == HELD["content"].replace(
+    assert held.content == _as_planned(HELD["content"]).replace(
         f"I held this first draft back. {PROD_ASK}",
         f"{HELD_HEADS_UP}\nI held this first draft back. The simpler version leaves out: {TAG}. "
         f"{ASK}",
     )
     draft = await _tap_simpler(monkeypatch, user_id, thread_id, held)
     assert sorted(draft.content.splitlines()) == sorted(
-        [*DRAFT["content"].splitlines(), *HEADS_UP_LINES]
+        [*_as_planned(DRAFT["content"]).splitlines(), *HEADS_UP_LINES]
     )

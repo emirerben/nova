@@ -47,7 +47,12 @@ from app.kria.caption_look_ask import (
     caption_look_reason,
     caption_over_speaker,
 )
-from app.kria.clip_sound_toggle_ask import SoundTarget, SoundToggleAsk, requirement_sound_toggle
+from app.kria.clip_sound_toggle_ask import (
+    SoundTarget,
+    SoundToggleAsk,
+    requirement_sound_toggle,
+    requirement_source_mute,
+)
 from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.contracts import InferredLabel, RequirementReceipt
 from app.kria.freeze_ask import (
@@ -456,6 +461,8 @@ class SpeakerBackgroundFact:
     # KRI-1307: whether the recordings behind the speaker are really aimed (zoomed) at their text
     # (None = unknown: a draft, or a render recorded before the worker wrote it).
     aimed: bool | None = None
+    # KRI-1304: what the planner left out of the sequence, as (name, "no_recording" | "not_said").
+    left_out: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1284,8 +1291,7 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
             color=str(doc["color"]) if doc.get("color") and not doc.get("media_id") else None,
             # The document is the creator's own edit: its windows decide, never the lane receipt.
             full_screen_opening_s=_opening_seconds(doc.get("full_screen_windows")),
-            aimed=bool(doc.get("focus"))
-            or any(isinstance(w, Mapping) and w.get("focus") for w in windows or []),
+            aimed=_document_all_zoomed(doc),
         )
     receipt = variant.get("phone_lane_receipt")
     if not isinstance(receipt, Mapping) or not isinstance(receipt.get("applied"), list):
@@ -1319,6 +1325,19 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
         opening_code=opening_code if opening_s is None else None,
         unshown=_unshown_recordings(detail.get("unshown")),
         aimed=detail["aimed"] if isinstance(detail.get("aimed"), bool) else None,
+        left_out=_left_out_recordings(detail.get("left_out")),
+    )
+
+
+def _left_out_recordings(rows: object) -> tuple[tuple[str, str], ...]:
+    """The worker's ``background.left_out`` rows (KRI-1304) as (name, reason) pairs."""
+    return tuple(
+        (row["name"].strip(), row["why"])
+        for row in (rows if isinstance(rows, list) else [])
+        if isinstance(row, Mapping)
+        and isinstance(row.get("name"), str)
+        and row["name"].strip()
+        and row.get("why") in ("no_recording", "not_said")
     )
 
 
@@ -5325,6 +5344,21 @@ def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> Requir
     return _receipt(req, "partial", f"{receipt.full_reason or ''} {gap}".strip())
 
 
+def _zoomed(focus: object) -> bool:
+    zoom = focus.get("zoom") if isinstance(focus, Mapping) else None
+    return isinstance(zoom, int | float) and not isinstance(zoom, bool) and zoom > 1.0
+
+
+def _document_all_zoomed(doc: Mapping[str, Any]) -> bool:
+    """KRI-1307: the editor document zooms in EVERY picture it draws (the media fill, unless it
+    is a flat colour, and each window), not just one of them."""
+    windows = [w for w in doc.get("windows") or [] if isinstance(w, Mapping)]
+    pictures = ([] if doc.get("color") and not doc.get("media_id") else [doc.get("focus")]) + [
+        w.get("focus") for w in windows
+    ]
+    return bool(pictures) and all(_zoomed(f) for f in pictures)
+
+
 def _with_zoom_verdict(
     req: BriefRequirement, receipt: RequirementReceipt, fact: SpeakerBackgroundFact | None
 ) -> RequirementReceipt:
@@ -5348,8 +5382,8 @@ def _with_zoom_verdict(
         status = receipt.status
     elif fact.aimed is False:
         extra = say(
-            en="I couldn't zoom into your recordings this time, so small text may stay small.",
-            tr="Kayıtlara bu sefer yakınlaşamadım, küçük yazılar küçük kalabilir.",
+            en="I couldn't zoom into all of your recordings, so small text may stay small.",
+            tr="Kayıtların hepsine yakınlaşamadım, küçük yazılar küçük kalabilir.",
         )
         status = "partial"
     else:
@@ -5441,10 +5475,43 @@ def _check_speaker_background_core(req: BriefRequirement, facts: PlanFacts) -> R
             en += f"; you're {corner[0]}"
             tr += f"; sen {corner[1]}sın"
     missing = _unshown_sentence(fact) if rendered else None
-    if missing:
+    left_out = _left_out_sentence(fact) if rendered else None
+    if missing or (left_out and left_out[1]):
         # Qendresa case 5: a recording she asked for never shows, so the ask is not met.
-        return _receipt(req, "partial", f"{say(en=en + '.', tr=tr + '.')} {missing}")
+        # KRI-1304: so is a repo with no recording attached.
+        extra = " ".join(part for part in (missing, left_out[0] if left_out else None) if part)
+        return _receipt(req, "partial", f"{say(en=en + '.', tr=tr + '.')} {extra}")
+    if left_out:
+        return _receipt(req, "met", f"{say(en=en + '.', tr=tr + '.')} {left_out[0]}")
     return _receipt(req, "met", say(en=en + ".", tr=tr + "."))
+
+
+def _left_out_sentence(fact: SpeakerBackgroundFact) -> tuple[str, bool] | None:
+    """KRI-1304: (sentence, is_shortfall) naming what the planner left out and why, else None.
+
+    "no_recording" is a shortfall (she talks about it, nothing is attached, so the previous
+    picture stays on); "not_said" is only information (she never mentions it).
+    """
+    if not fact.left_out:
+        return None
+    none_for = _quoted([n for n, why in fact.left_out if why == "no_recording"])
+    not_said = _quoted([n for n, why in fact.left_out if why == "not_said"])
+    parts: list[str] = []
+    if none_for:
+        parts.append(
+            say(
+                en=f"No recording for {_names_join(none_for)}, so the one before stays on.",
+                tr=f"{_names_join(none_for)} için kayıt yok, o yüzden öncekisi ekranda kalıyor.",
+            )
+        )
+    if not_said:
+        parts.append(
+            say(
+                en=f"Not used: you don't talk about {_names_join(not_said)}.",
+                tr=f"Kullanılmadı: {_names_join(not_said)} hakkında konuşmuyorsun.",
+            )
+        )
+    return " ".join(parts), bool(none_for)
 
 
 def _quoted(values: Sequence[str]) -> list[str]:
@@ -7673,6 +7740,24 @@ def _title_miss_problem(trigger: str, reason: str) -> str:
         en=f'I couldn\'t find the photo or sticker for "{trigger}"',
         tr=f'"{trigger}" için fotoğraf ya da çıkartma bulamadım',
     )
+
+
+def _title_logo_miss_receipt(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """KRI-1303: a title ask that also names a logo above it is not met while the render
+    dropped that logo. ``None`` when the ask names no missed logo (or nothing was dropped)."""
+    if req.scope != "title" or not facts.title_beat_misses:
+        return None
+    text = _req_text(req)
+    if not _VISUAL_RE.search(text):
+        return None
+    missed = [
+        (trigger, reason)
+        for trigger, reason in facts.title_beat_misses
+        if _fold(trigger) in text or _trigger_heard(trigger, text)
+    ]
+    if not missed:
+        return None
+    return _receipt(req, "partial", "; ".join(_title_miss_problem(t, r) for t, r in missed))
 
 
 def _placement_reason(placements: Sequence[BeatFact]) -> str | None:
@@ -12865,6 +12950,9 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         whole_video = _whole_video_text_receipt(req, facts)
         if whole_video is not None:
             return whole_video
+        logo_miss = _title_logo_miss_receipt(req, facts)
+        if logo_miss is not None:
+            return logo_miss
         return _receipt(req, "met", None)
     # Checked BEFORE the spoken-text branch: a wording cue ("when I talk about them") with no
     # trigger is the worker's list label, not KRI-791's "tell me the exact word".
@@ -13316,6 +13404,7 @@ def judged_at_render(req: BriefRequirement) -> bool:
         or asks_clip_speed(req)
         # KRI-942: clip sound on/off is read off the recipe the phone renders.
         or requirement_sound_toggle(req) is not None
+        or requirement_source_mute(req) is not None
         # KRI-1027: bars/crop of the sideways clips is read off the render's framing receipt.
         or _asks_landscape_fit(req)
         # Qendresa case 9: how long a whole-video line stays is read off the finished text
@@ -13647,6 +13736,7 @@ def wants_lipsync(req: BriefRequirement) -> bool:
         or wants_engine_noise_reduction(req)
         or requirement_clip_sound(req) is not None
         or requirement_sound_toggle(req) is not None
+        or requirement_source_mute(req) is not None
     ):
         return False
     return mentions_lipsync(" ".join(x for x in (req.description, req.literal) if x))
@@ -14477,6 +14567,15 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         # KRI-842: a recorded fact owns the ask, whatever words it is worded in.
         return _check_narrated_clip_sound(req, clip_sound, facts)
     sound_toggle = requirement_sound_toggle(req)
+    if sound_toggle is None and not (
+        facts.voiceover_edit
+        or facts.phone_narrated
+        or facts.phone_talking
+        or facts.audio_strategy == "voiceover"
+    ):
+        # KRI-1297: a typed whole-video ``source_muted`` ("Mute my sound") on a montage is the
+        # same ask as ``clip_sound: off``; a voiceover / Talking edit keeps the bed reader.
+        sound_toggle = requirement_source_mute(req)
     if sound_toggle is not None:
         # KRI-942: "clip sound off except that last line": the recorded on/off facts own it.
         return _check_sound_toggle(req, sound_toggle, facts)
@@ -15153,6 +15252,36 @@ def _label(status: str) -> str:
     return say(en=_LABEL[status], tr=_LABEL_TR[status])
 
 
+def _receipt_label(receipt: RequirementReceipt) -> str:
+    if _planned_at_render(receipt):
+        return say(en=_PLANNED_LABEL, tr=_PLANNED_LABEL_TR)
+    return _label(receipt.status)
+
+
+_PLANNED_LABEL = "Will do at render"
+_PLANNED_LABEL_TR = "Videoda yapılacak"
+
+
+def _planned_at_render(receipt: RequirementReceipt) -> bool:
+    """KRI-1285: a `partial` receipt that only states what the render will do.
+
+    Its reason is entirely `RENDER_PROMISE_REASONS` texts (English or Turkish twin, joined by
+    "; ") or the pinned spoken-text plan. It is a plan Kria carries out, not a shortfall, so the
+    reply lists it as planned and it never opens "Not everything you asked for made it in".
+    """
+    reason = receipt.full_reason
+    if receipt.status != "partial" or not reason:
+        return False
+    texts = {t for p in RENDER_PROMISE_REASONS for t in (p, _REASON_TR.get(p, p))}
+
+    def only(rest: str) -> bool:
+        if rest in texts or rest.startswith(_TALKING_SPOKEN_TEXT_PINNED):
+            return True
+        return any(rest.startswith(f"{t}; ") and only(rest[len(t) + 2 :]) for t in texts)
+
+    return only(reason)
+
+
 # What the render says about each requested group, label or chapter text
 # (`unified_montage._intent_outcomes`) is English; a Turkish reply reads these known
 # phrases in Turkish and leaves anything else (the creator's own words) as written.
@@ -15251,6 +15380,21 @@ def keeps_model_summary(
     return True
 
 
+def ask_text(req: BriefRequirement) -> str:
+    """The ask as one clean line of a reply (KRI-1296), never the stored text itself.
+
+    ``BriefRequirement.text()`` feeds prompts and digests, so the reply tidies its own copy:
+    a quoted literal the description already holds is said once, and a typed "no music"
+    reads as that ask, not as the creator's reason ("I'll add a song on TikTok.").
+    """
+    if wants_no_music(req):
+        return say(en="No music", tr="Müzik yok")
+    text = req.text()
+    if req.literal and req.description and req.literal in req.description:
+        text = req.description
+    return text.strip()
+
+
 def reply_from_receipts(
     brief: CreativeBrief,
     receipts: list[RequirementReceipt],
@@ -15310,6 +15454,7 @@ def reply_and_lead_from_receipts(
         r
         for r in judged
         if r.status != "met"
+        and not _planned_at_render(r)
         and not (
             declines_after_summary
             and r.status == "not_possible"
@@ -15337,7 +15482,7 @@ def reply_and_lead_from_receipts(
             line += f" ({_outcome_reason(str(row['reason'])).rstrip('.')})"
         lines.append(line)
     for receipt in judged:
-        line = f"{_label(receipt.status)}: {by_id[receipt.requirement_id].text()}"
+        line = f"{_receipt_label(receipt)}: {by_id[receipt.requirement_id].text()}"
         if receipt.reason:
             line += f" ({_loc(receipt.reason).rstrip('.')})"
         lines.append(line)
@@ -15360,7 +15505,7 @@ def reply_and_lead_from_receipts(
     if unchecked:
         look_lines = []
         for receipt in unchecked:
-            line = f"- {by_id[receipt.requirement_id].text()}"
+            line = f"- {ask_text(by_id[receipt.requirement_id])}"
             if receipt.reason and receipt.reason not in _NEUTRAL_REASONS:
                 line += f" ({_loc(receipt.reason).rstrip('.')})"
             look_lines.append(line)
@@ -15386,7 +15531,7 @@ def reply_and_lead_from_receipts(
         # Keep every requested action/status visible when its labels fit. A long
         # explanation must not consume the final action's display budget. Stored
         # receipt reasons remain complete; ellipses mark shortened display only.
-        labels = [f"{_label(r.status)}: {by_id[r.requirement_id].text()}" for r in judged]
+        labels = [f"{_receipt_label(r)}: {by_id[r.requirement_id].text()}" for r in judged]
         prefix, suffix = text.rsplit(body, 1)
         label_body = "\n".join(f"- {line}" for line in labels)
         available = MAX_REPLY_CHARS - len(prefix + label_body + suffix + "\n…")
@@ -15397,7 +15542,11 @@ def reply_and_lead_from_receipts(
                 reason = _loc(receipt.reason).rstrip(".") if receipt.reason else ""
                 if reason and reason_limit >= 2:
                     if len(reason) > reason_limit:
-                        reason = reason[: reason_limit - 1].rstrip() + "…"
+                        cut = reason[: reason_limit - 1]
+                        # KRI-1285: end on a whole word, never "nex…".
+                        if " " in cut and not reason[reason_limit - 1].isspace():
+                            cut = cut.rsplit(" ", 1)[0]
+                        reason = cut.rstrip() + "…"
                     label += f" ({reason})"
                 compact.append(f"- {label}")
             text = prefix + "\n".join(compact) + suffix + "\n…"
@@ -15451,7 +15600,8 @@ def _reply_lead(
         for row in outcomes
         if str(row.get("status") or "") in _LABEL and row.get("name")
     ]
-    statuses = [r.status for r in judged] + rows
+    # KRI-1285: a plan the render carries out is neither done nor partly done yet.
+    statuses = [r.status for r in judged if not _planned_at_render(r)] + rows
     failed = statuses.count("not_possible")
     if look_only:
         lead = say(en="Have a look at these in the video.", tr="Bunlara videoda bir göz at.")

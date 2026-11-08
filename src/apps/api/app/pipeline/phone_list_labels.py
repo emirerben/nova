@@ -294,7 +294,8 @@ def _hearings(stream: Sequence[Any], timed: list[dict], item: str) -> list[tuple
 
     phrase = _split_camel(item.replace("-", " "))
     exact = [
-        (float(a), float(b)) for a, b, _heard in grounding._phrase_windows(stream, timed, phrase)
+        (float(a), float(b))
+        for a, b, _heard in grounding._phrase_windows(stream, timed, phrase, joined=True)
     ]  # noqa: SLF001
     return (
         exact

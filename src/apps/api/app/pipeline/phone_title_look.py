@@ -593,6 +593,62 @@ def place_title_look(
         return list(rows), failed
 
 
+def caption_look_clear_of_title(
+    cues: Sequence[dict],
+    *,
+    caption_style: str,
+    canvas: _Canvas,
+    title_block: NormalizedBox,
+    faces: Sequence[NormalizedBox],
+    window: tuple[float, float],
+    base_look: Any = None,
+) -> tuple[Any, dict[str, Any]] | None:
+    """KRI-1305: a caption look whose lines, while the title is up, touch neither the title
+    block nor a face -- or ``None`` when no caption spot does.
+
+    The title placer prefers a spot clear of the captions but, boxed in by a face, may accept
+    text on text (``text_overlap``). A detected overlap is never rendered as is: the captions
+    step to the first spot (`phone_protected_text._CAPTION_Y_CANDIDATES`, the drawn spot first)
+    where they clear both. Only the block's y changes (font, colour, outline stay), the same as
+    `choose_caption_look`. Returns ``(look, receipt)``; ``look`` is ``None`` when the drawn
+    spot already clears (nothing to move)."""
+    import dataclasses  # noqa: PLC0415
+
+    from app.pipeline.canvas import Canvas as PipelineCanvas  # noqa: PLC0415
+    from app.pipeline.phone_captions import PhoneCaptionLook  # noqa: PLC0415
+    from app.pipeline.phone_protected_text import _CAPTION_Y_CANDIDATES  # noqa: PLC0415
+    from app.pipeline.phone_spoken_text import caption_boxes  # noqa: PLC0415
+    from app.services.phone_text_styling import generation_caption_look  # noqa: PLC0415
+
+    drawn = base_look
+    if drawn is None:
+        drawn = generation_caption_look(
+            [dict(cue) for cue in cues],
+            None,
+            canvas=PipelineCanvas(width=canvas.width, height=canvas.height),
+        )
+    base = drawn if drawn is not None else PhoneCaptionLook()
+    obstacles = [title_block, *faces]
+    for y_frac in dict.fromkeys((base.position_y_frac, *_CAPTION_Y_CANDIDATES)):
+        look = dataclasses.replace(base, position_y_frac=y_frac)
+        lines = caption_boxes(
+            cues, window=window, caption_style=caption_style, canvas=canvas, look=look
+        )
+        worst = max(
+            (max(line.coverage_by(o), o.coverage_by(line)) for line in lines for o in obstacles),
+            default=0.0,
+        )
+        if worst > _MAX_COVERAGE:
+            continue
+        moved = abs(y_frac - base.position_y_frac) > 1e-6
+        return (look if moved else None), {
+            "status": "moved" if moved else "preset",
+            "position_y_frac": y_frac,
+            "reason": "title_overlap",
+        }
+    return None
+
+
 # --- logo --------------------------------------------------------------------------------
 
 

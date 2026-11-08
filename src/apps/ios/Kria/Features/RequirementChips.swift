@@ -119,8 +119,15 @@ struct CreativeBriefRequirement: Equatable, Sendable, Identifiable {
     /// The creator-facing words for one chip: what they asked for, shortest form first. Nil when the
     /// brief carries no words for it (the chip then falls back to a neutral title).
     var chipTitle: String? {
-        [description, literal, scope].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .first { !$0.isEmpty }
+        let words = { (text: String?) in text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
+        let lead = words(description)
+        let exact = words(literal)
+        // KRI-1289: one clause ("show each one as big text") becomes one requirement per list item, all with
+        // the same description. The item's own text is what tells the rows apart, so it follows the lead.
+        if !lead.isEmpty, !exact.isEmpty, !lead.localizedCaseInsensitiveContains(exact) {
+            return "\(lead) (\"\(exact)\")"
+        }
+        return [lead, exact, words(scope)].first { !$0.isEmpty }
     }
 }
 

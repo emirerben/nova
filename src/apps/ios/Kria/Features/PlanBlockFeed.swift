@@ -7,7 +7,7 @@ import UIKit
 /// It shows each decision (title, clips, captions, music, sound effects, overlays, look, post caption) as the
 /// render pipeline makes it: decided sections are 60pt glass rows, the newest decided one is expanded with its
 /// structured content, a section being decided is a softly pulsing butter card with a spinner pill, and the rest
-/// wait as "Still to decide" chips. Each section enters on its own (about 80 ms apart when a burst arrives). A
+/// wait as "Coming up" chips. Each section enters on its own (about 80 ms apart when a burst arrives). A
 /// glass bottom panel carries the progress and Stop; once every section is decided it reads "Making your video"
 /// with an indeterminate track (or the device's real build progress), so the feed never sits still.
 ///
@@ -45,7 +45,10 @@ struct PlanBlockFeed: View {
 
     /// What is on screen: `feed` revealed one section at a time. Everything below reads this, not `feed`.
     private var display: PlanBlockFeedState { shown.isEmpty ? feed : shown }
-    private var waitingBlocks: [PlanBlock] { display.blocks.filter { $0.state == .waiting } }
+    /// Chips for sections the render has not filled in yet. The creator already approved the plan, so these are
+    /// "coming up", not open decisions. Sound effects only exist when asked for, so a waiting one is never shown
+    /// (it appears as a card if it is actually decided). KRI-1290.
+    private var waitingBlocks: [PlanBlock] { display.blocks.filter { $0.state == .waiting && $0.section != .sfx } }
     private var activeBlocks: [PlanBlock] { display.blocks.filter { $0.state != .waiting } }
     /// "Making your video" only once the last section has entered.
     private var effectivePhase: PlanFeedPhase { display == feed ? phase : .planning }
@@ -103,7 +106,7 @@ struct PlanBlockFeed: View {
     private var header: some View {
         VStack(spacing: 2) {
             KriaShimmerText(
-                effectivePhase == .planning ? "Planning your video" : "Your plan is ready",
+                effectivePhase == .planning ? "Making your video" : "Your plan is ready",
                 font: KriaFont.body(17).weight(.semibold), color: KriaColor.ink,
                 isShimmering: effectivePhase == .planning
             )
@@ -268,7 +271,7 @@ struct PlanBlockFeed: View {
 
     private var stillToDecide: some View {
         HStack(alignment: .top, spacing: 10) {
-            Text("Still to decide")
+            Text("Coming up")
                 .font(KriaFont.body(13).weight(.medium))
                 .foregroundStyle(KriaColor.mutedInk)
                 .padding(.top, 6)

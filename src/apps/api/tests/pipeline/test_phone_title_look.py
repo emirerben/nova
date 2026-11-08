@@ -784,3 +784,64 @@ def test_a_saved_rule_fills_in_what_her_pinned_words_did_not_name():
 
     assert ask.font_family == "Pacifico"
     assert ask.line_kinds == ()
+
+
+def _kri1305_cues() -> list[dict]:
+    words = "Five projects in one week".split()
+    return [
+        {
+            "start_s": 0.0,
+            "end_s": 2.5,
+            "text": " ".join(words),
+            "words": [
+                {"word": w, "start_s": i * 0.4, "end_s": i * 0.4 + 0.4} for i, w in enumerate(words)
+            ],
+        }
+    ]
+
+
+def test_kri1305_captions_step_off_a_title_they_would_overlap():
+    """The title sits where the drawn captions are: the captions must move, and the moved
+    lines touch neither the title block nor the face (real caption layout, no mocks)."""
+    from app.pipeline.phone_spoken_text import caption_boxes
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS
+    from app.pipeline.phone_title_look import _MAX_COVERAGE, caption_look_clear_of_title
+    from app.pipeline.render_geometry import NormalizedBox
+
+    cues = _kri1305_cues()
+    title = NormalizedBox(0.1, 0.78, 0.9, 0.95)
+    face = NormalizedBox(0.3, 0.3, 0.7, 0.55)
+    drawn = caption_boxes(cues, window=(0, 5), caption_style="", canvas=_STORY_CANVAS)
+    assert any(line.coverage_by(title) > _MAX_COVERAGE for line in drawn)  # the incident
+    found = caption_look_clear_of_title(
+        cues,
+        caption_style="",
+        canvas=_STORY_CANVAS,
+        title_block=title,
+        faces=[face],
+        window=(0, 5),
+    )
+    assert found is not None
+    look, receipt = found
+    assert look is not None and receipt["status"] == "moved"
+    for line in caption_boxes(
+        cues, window=(0, 5), caption_style="", canvas=_STORY_CANVAS, look=look
+    ):
+        assert line.coverage_by(title) <= _MAX_COVERAGE
+        assert line.coverage_by(face) <= _MAX_COVERAGE
+
+
+def test_kri1305_clear_captions_stay_put():
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS
+    from app.pipeline.phone_title_look import caption_look_clear_of_title
+    from app.pipeline.render_geometry import NormalizedBox
+
+    found = caption_look_clear_of_title(
+        _kri1305_cues(),
+        caption_style="",
+        canvas=_STORY_CANVAS,
+        title_block=NormalizedBox(0.1, 0.1, 0.9, 0.3),
+        faces=[NormalizedBox(0.3, 0.3, 0.7, 0.55)],
+        window=(0, 5),
+    )
+    assert found is not None and found[0] is None and found[1]["status"] == "preset"

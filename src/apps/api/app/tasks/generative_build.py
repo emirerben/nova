@@ -8288,6 +8288,12 @@ def _strategy_background_request(all_candidates: dict) -> dict[str, Any] | None:
         )
     if entries:
         request["sequence"] = entries
+        # KRI-1304: what the planner left out and why, for the finished-video receipt.
+        from app.agents._schemas.reaction_beats import _left_out_rows  # noqa: PLC0415
+
+        left_out = _left_out_rows(raw.get("left_out"))
+        if left_out:
+            request["left_out"] = list(left_out)
         cadence = raw.get("cadence_s")
         if isinstance(cadence, (int, float)) and not isinstance(cadence, bool):
             request["cadence_s"] = float(cadence)
@@ -10823,6 +10829,25 @@ def _run_phone_subtitled_job(
                         caption_style=caption_style,
                         **text_canvas,
                     )
+            if (
+                title_rows
+                and protected_caption_look is None
+                and isinstance(title_receipt, Mapping)
+                and title_receipt.get("text_overlap") is True
+            ):
+                # KRI-1305: the title was boxed in by a face and accepted text on text. Never
+                # render that as is: the captions step to a spot clear of the title and faces.
+                title_receipt = {
+                    **title_receipt,
+                    **_move_captions_off_title(
+                        title_rows,
+                        title_receipt,
+                        framed_compile=framed_compile,
+                        cues=cues,
+                        caption_style=caption_style,
+                        **text_canvas,
+                    ),
+                }
             if not media_lanes_enabled:
                 if ending_request is not None and ending_source != "footage":
                     # KRI-841: no card / ending-clip lane on this render, so a Visuals video
@@ -10834,6 +10859,7 @@ def _run_phone_subtitled_job(
                     )
                     ending_reason = "media_lanes_disabled"
                 closing_text_rows, closing_text_receipt = _closing_rows_for(None)
+                cues = _cues_clear_of_cta(cues, closing_text_rows, closing_text_receipt)
                 styled_rows = _protected_style_rows(
                     title_rows + spoken_text_rows + closing_text_rows,
                     job_id=job_id,
@@ -11002,6 +11028,32 @@ def _run_phone_subtitled_job(
                 # reserved nothing, and the generic pass below put the same photo elsewhere.
                 creator_pinned_media_ids = _creator_pinned_media_keys(beats, closing)
 
+                # Qendresa item 15 / KRI-1282: ONE layout context for every card this pass places
+                # -- the creator's reaction-beat pop-ins AND the generic grounded cards. Closed
+                # (None, byte-identical calls) unless every gate holds.
+                from app.pipeline.phone_recipe_shared import (  # noqa: PLC0415
+                    display_dims,
+                )
+
+                card_layout = _card_layout_context(
+                    open_=(
+                        overlay_layout == "pip"
+                        # The switch first: with it closed nothing below is evaluated.
+                        and _card_layout_planned(all_candidates)
+                        and not landscape_canvas
+                        and _card_layout_framing_ok(
+                            face_filled=bool(framed_grounding or speaker_position_x is not None),
+                            landscape_fit=landscape_fit,
+                            display_width=display_dims(binding.original)[0],
+                            display_height=display_dims(binding.original)[1],
+                        )
+                        and strategy_background_lane is None
+                        and not (lane_request is not None and lane_request.background)
+                    ),
+                    policy=current_phone_text_policy(),
+                    text_rows=title_rows + spoken_text_rows,
+                    keep_segments=speaker_keep_segments,
+                )
                 if beats_enabled and (beats or closing):
                     if lane_request is not None:
                         beat_receipt = {
@@ -11064,6 +11116,11 @@ def _run_phone_subtitled_job(
                                     **(
                                         {"protected_regions": protected_card_regions}
                                         if protected_card_regions
+                                        else {}
+                                    ),
+                                    **(
+                                        {"card_layout": card_layout}
+                                        if card_layout is not None
                                         else {}
                                     ),
                                 )
@@ -11198,27 +11255,6 @@ def _run_phone_subtitled_job(
                             ground_phone_subtitled_overlays,
                         )
 
-                        card_layout = _card_layout_context(
-                            open_=(
-                                overlay_layout == "pip"
-                                # The switch first: with it closed nothing below is evaluated.
-                                and _card_layout_planned(all_candidates)
-                                and not landscape_canvas
-                                and _card_layout_framing_ok(
-                                    face_filled=bool(
-                                        framed_grounding or speaker_position_x is not None
-                                    ),
-                                    landscape_fit=landscape_fit,
-                                    display_width=display_dims(binding.original)[0],
-                                    display_height=display_dims(binding.original)[1],
-                                )
-                                and strategy_background_lane is None
-                                and not (lane_request is not None and lane_request.background)
-                            ),
-                            policy=current_phone_text_policy(),
-                            text_rows=title_rows + spoken_text_rows,
-                            keep_segments=speaker_keep_segments,
-                        )
                         try:
                             grounded = ground_phone_subtitled_overlays(
                                 _sync_session,
@@ -11715,6 +11751,7 @@ def _run_phone_subtitled_job(
                             if lanes is not None and beat_closing_card_id
                             else None
                         )
+                        cues = _cues_clear_of_cta(cues, closing_text_rows, closing_text_receipt)
                         recipe = _compile_lanes(title_rows + spoken_text_rows + closing_text_rows)
                         # Rows are on the take timeline; the inserts' length is on the recipe.
                         take_duration = recipe.duration - sum(
@@ -11822,6 +11859,10 @@ def _run_phone_subtitled_job(
                         _unshown = _unshown_background_entries(background_entries, _bg, lane_drops)
                         if _unshown:
                             lane_receipt["background"]["unshown"] = _unshown
+                        # KRI-1304: what the planner left out (no recording / never said).
+                        _left_out = (background_request or {}).get("left_out")
+                        if _left_out:
+                            lane_receipt["background"]["left_out"] = _left_out
                         # Qendresa item 16: how long the finished video really is full screen
                         # from 0 s, read off the COMPILED recipe (a speech cut is accounted for).
                         _opening_end = next(
@@ -11859,12 +11900,14 @@ def _run_phone_subtitled_job(
                                 lane_receipt["background"]["focus"] = _side
                         if _named is not None and _named.zoom is not None:
                             lane_receipt["background"]["focus_zoom"] = _named.zoom
-                        # KRI-1307: whether the compiled recipe really aims the recordings at
-                        # their text (the measure or a named side / zoom), so a "zoom in so the
-                        # text is readable" ask is reported as made or not made.
+                        # KRI-1307: whether EVERY recording drawn is zoomed in (> 1x) in the
+                        # compiled recipe; one focused or unzoomed recording is not enough for the
+                        # receipt to say a "zoom in so the text is readable" ask was made.
                         lane_receipt["background"]["aimed"] = bool(
                             getattr(
-                                getattr(recipe, "speaker_background", None), "uses_focus", False
+                                getattr(recipe, "speaker_background", None),
+                                "all_pictures_zoomed",
+                                False,
                             )
                         )
                 try:
@@ -13038,6 +13081,56 @@ def _title_on_resolved_captions(
         return title_rows, title_receipt
 
 
+def _move_captions_off_title(
+    title_rows: list[dict],
+    title_receipt: Mapping[str, Any],
+    *,
+    framed_compile: dict[str, Any],
+    cues: list[dict],
+    caption_style: str,
+    canvas: Any = None,
+) -> dict[str, Any]:
+    """KRI-1305: when the placed title still touches the captions (``text_overlap``), move the
+    captions (``framed_compile["caption_look"]``) to the first spot clear of the title block and
+    the faces. Returns receipt fields (``caption_move``; ``text_overlap`` False once cleared).
+    Fails open: any error, or no clear spot, leaves the captions where they are and the receipt
+    says ``unresolved`` -- the overlap stays visible in the job debug view."""
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.pipeline.phone_title_look import caption_look_clear_of_title  # noqa: PLC0415
+    from app.pipeline.render_geometry import NormalizedBox  # noqa: PLC0415
+
+    canvas = canvas if canvas is not None else _STORY_CANVAS
+    if caption_spot_is_asked():
+        return {"caption_move": {"status": "creator_spot_kept"}}
+    block = title_receipt.get("block")
+    if not isinstance(block, Mapping):
+        return {}
+    try:
+        found = caption_look_clear_of_title(
+            cues,
+            caption_style=caption_style,
+            canvas=canvas,
+            title_block=NormalizedBox(
+                **{k: float(block[k]) for k in NormalizedBox.__annotations__}
+            ),
+            faces=[
+                NormalizedBox(**{k: float(f[k]) for k in NormalizedBox.__annotations__})
+                for f in title_receipt.get("face_boxes") or []
+            ],
+            window=(float(title_rows[0]["start_s"]), float(title_rows[0]["end_s"])),
+            base_look=framed_compile.get("caption_look"),
+        )
+    except Exception as exc:  # noqa: BLE001 - the captions stay put; the log says why
+        log.warning("phone_title_caption_move.failed", error=str(exc)[:200])
+        return {"caption_move": {"status": "error"}}
+    if found is None:
+        return {"caption_move": {"status": "unresolved"}}
+    caption_look, receipt = found
+    if caption_look is not None:
+        framed_compile["caption_look"] = caption_look
+    return {"caption_move": receipt, "text_overlap": False}
+
+
 def _is_title_anchored(beat: Any) -> bool:
     return isinstance(beat, dict) and beat.get("anchor") == "title"
 
@@ -13264,7 +13357,15 @@ def _protected_style_rows(
     row onto a face or the marked object is undone, so the placement receipt stays true."""
     # Item 14: her ending's two rows keep their fonts and colours; item 20: her title-look rows keep
     # their own line's face and colour (`_style_rows_keeping_title_look`). The others are restyled.
-    fixed = {i for i, row in enumerate(rows) if "cta_part" in (row.get("source_params") or {})}
+    # KRI-1284: her list labels keep their own look and spot too. `list_label_rows` already placed
+    # each one clear of her face, the captions and the cards; the restyle took that away (grey
+    # auto fill, no outline, slid under the captions, shrunk).
+    fixed = {
+        i
+        for i, row in enumerate(rows)
+        if "cta_part" in (row.get("source_params") or {})
+        or (row.get("source_params") or {}).get("source") == "list_label"
+    }
     if fixed:
         rest = _style_rows_keeping_title_look(
             [row for i, row in enumerate(rows) if i not in fixed], job_id=job_id, canvas=canvas
@@ -13684,6 +13785,28 @@ def _phone_saved_title_rule() -> dict:
     return rule
 
 
+def _cues_clear_of_cta(cues: Any, rows: list[dict], receipt: dict[str, Any] | None) -> Any:
+    """KRI-1306: when the CTA ending could only be placed touching the captions, the captions
+    stop where the ending starts, so no caption word lands on "comment"/the keyword."""
+    if not rows or not receipt or receipt.get("text_overlap") is not True:
+        return cues
+    stop = min(float(row["start_s"]) for row in rows)
+    out = []
+    for cue in cues or []:
+        if not isinstance(cue, dict) or float(cue["end_s"]) <= stop:
+            out.append(cue)
+            continue
+        if float(cue["start_s"]) >= stop:
+            continue
+        words = [w for w in (cue.get("words") or []) if float(w.get("start_s", 0.0)) < stop]
+        if cue.get("words") is not None and not words:
+            continue
+        out.append(
+            {**cue, "end_s": stop, **({"words": words} if cue.get("words") is not None else {})}
+        )
+    return out
+
+
 def _phone_talking_closing_rows(
     closing_title: str,
     *,
@@ -13811,13 +13934,22 @@ def _phone_talking_closing_rows(
     return [placed], receipt, []
 
 
-def _phone_caption_spellings(snapshot: dict, quoted: tuple[str, ...]) -> tuple[str, ...]:
+def _phone_caption_spellings(
+    snapshot: dict, quoted: tuple[str, ...], *, typed: tuple[str, ...] | None = None
+) -> tuple[str, ...]:
     """KRI-793: the words the creator wants spelled their way in the captions -- the quoted
     asks in their request (KRI-631) plus every word the approved brief pinned on the job
     (``creator_brief_binding``) lists for its captions. An unreadable binding adds none,
-    so the render runs exactly as before."""
+    so the render runs exactly as before.
+
+    KRI-1283: ``typed`` (``creator_typed_words`` of the saved request) limits the brief's
+    listed words to ones the creator typed. A label Kria wrote from the transcript ("5. Cloud
+    Code Game Studios", a mishearing of "Claude") is never a creator spelling, so it can
+    not lock the mishearing into the captions. Quoted asks always stay. ``None`` = no limit.
+    """
     from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
     from app.kria.brief_checks import brief_caption_spellings  # noqa: PLC0415
+    from app.pipeline.caption_spelling import _fold  # noqa: PLC0415
 
     listed: tuple[str, ...] = ()
     raw_binding = snapshot.get("creator_brief_binding")
@@ -13826,6 +13958,11 @@ def _phone_caption_spellings(snapshot: dict, quoted: tuple[str, ...]) -> tuple[s
             listed = brief_caption_spellings(BriefBinding.model_validate(raw_binding).resolve())
         except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
             log.warning("phone_caption_spellings.binding_unreadable", error=str(exc)[:200])
+    if typed is not None:
+        typed_keys = {_fold(t) for t in typed}
+        listed = tuple(
+            w for w in listed if all(_fold(part) in typed_keys for part in re.findall(r"\w+", w))
+        )
     folded: set[str] = set()
     targets: list[str] = []
     for word in (*quoted, *listed):
@@ -13881,7 +14018,11 @@ def _phone_talking_caption_text(
     names = creator_request_names(request) if settings.caption_request_names_enabled else ()
     cues = _apply_creator_spellings(
         cues,
-        _phone_caption_spellings(snapshot, extract_spelling_asks(request)),
+        _phone_caption_spellings(
+            snapshot,
+            extract_spelling_asks(request),
+            typed=creator_typed_words(request) if request.strip() else None,
+        ),
         request_names=names,
         typed=creator_typed_words(request) if names else (),
     )
@@ -13984,10 +14125,16 @@ def _clip_spoken_language(clip_metas: Any, clip_id: Any) -> str:
 def _caption_glossary(snapshot: dict, all_candidates: dict) -> tuple[str, ...]:
     """KRI-838: the creator's own names and spellings for the captions -- the do-not-translate
     list of the caption translator (the same words ``_apply_creator_spellings`` applies)."""
-    from app.pipeline.caption_spelling import extract_spelling_asks  # noqa: PLC0415
+    from app.pipeline.caption_spelling import (
+        creator_typed_words,  # noqa: PLC0415
+        extract_spelling_asks,  # noqa: PLC0415
+    )
 
+    request = _creator_request_text(all_candidates)
     return _phone_caption_spellings(
-        snapshot, extract_spelling_asks(_creator_request_text(all_candidates))
+        snapshot,
+        extract_spelling_asks(request),
+        typed=creator_typed_words(request) if request.strip() else None,
     )
 
 

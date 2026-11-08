@@ -736,6 +736,9 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "background_media.full_screen_opening_s",
         "background_media.focus",
         "background_media.focus_zoom",
+        "background_media.left_out[]",
+        "background_media.left_out[].name",
+        "background_media.left_out[].why",
         "background_media.speaker_frame",
         note=(
             "KRI-1117: kept, filled from the creator's camera pick, or dropped by "
@@ -2101,7 +2104,8 @@ def build_render_contract(
         audio_source_ids=source_ids,
         original_audio=original_audio,
         require_voiceover=bool(has_voiceover),
-        exact_texts=tuple(texts),
+        # KRI-1296: the strategy's pinned text and the brief's literal can name the same line.
+        exact_texts=tuple(t for i, t in enumerate(texts) if t not in texts[:i]),
         order_ids=order_ids,
         order_required=order_required,
         order_basis=order_basis,

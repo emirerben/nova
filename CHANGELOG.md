@@ -2,6 +2,111 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.99.0] - 2026-11-08
+
+### Changed
+- fix(ios): plan feed no longer says "Still to decide" after approval (KRI-1290) (#2209) <!-- release-pr: 2209 -->
+
+## [0.88.98.0] - 2026-11-08
+
+### Changed
+- fix(kria): list labels keep their own look and spot (KRI-1284) (#2204) <!-- release-pr: 2204 -->
+
+## [0.88.97.0] - 2026-11-08
+
+### Changed
+- fix(kria): tight pauses stop treating a noise-gated take's fade tails as sound (KRI-1288) (#2206) <!-- release-pr: 2206 -->
+
+## [0.88.96.0] - 2026-11-08
+
+### Changed
+- fix(kria): "Mute my sound" on a montage mutes the whole video (KRI-1297) (#2195) <!-- release-pr: 2195 -->
+
+## [0.88.95.0] - 2026-11-08
+
+### Fixed
+- fix(ios): done-list rows show each list label's own text (KRI-1289) (#2208) <!-- release-pr: 2208 -->
+
+## [0.88.94.0] - 2026-11-08
+
+### Changed
+- fix(kria): draft reply lists render promises as planned (KRI-1285) (#2207) <!-- release-pr: 2207 -->
+
+## [0.88.93.0] - 2026-11-08
+
+### Fixed
+- fix(kria): exact quoted CTA ending skips the wording question, no double arrow (KRI-1286) (#2205) <!-- release-pr: 2205 -->
+
+## [0.88.92.0] - 2026-11-08
+
+### Fixed
+- fix(kria): spoken triggers match joined, hyphenated and spaced spellings (KRI-1281) (#2203) <!-- release-pr: 2203 -->
+
+## [0.88.91.0] - 2026-11-08
+
+### Changed
+- fix(kria): reaction-beat cards use the card layout, not the small pip (KRI-1282) (#2202) <!-- release-pr: 2202 -->
+
+## [0.88.90.0] - 2026-11-08
+
+### Changed
+- fix(kria): finished-video reply names recordings the planner left out (KRI-1304) (#2200) <!-- release-pr: 2200 -->
+
+## [0.88.89.0] - 2026-11-08
+
+### Changed
+- fix(kria): brief-listed caption spellings must be words the creator typed (KRI-1283) (#2199) <!-- release-pr: 2199 -->
+
+## [0.88.88.0] - 2026-11-08
+
+### Fixed
+- fix(kria): a held draft no longer shows Done on any ask (KRI-1308) (#2198) <!-- release-pr: 2198 -->
+
+## [0.88.87.0] - 2026-11-08
+
+### Fixed
+- fix(kria): move captions off the opening title when they would overlap (KRI-1305) (#2196) <!-- release-pr: 2196 -->
+
+## [0.88.86.0] - 2026-11-08
+
+### Fixed
+- fix(kria): a title ask with a dropped logo is never met (KRI-1303) (#2197) <!-- release-pr: 2197 -->
+
+## [0.88.85.0] - 2026-11-08
+
+### Changed
+- fix(kria): firm up TikTok-look shadow over light footage (KRI-1298) (#2194) <!-- release-pr: 2194 -->
+
+## [0.88.84.0] - 2026-11-08
+
+### Changed
+- fix(phone): CTA ending readable on light pages, captions stop at the ending (KRI-1306) (#2193) <!-- release-pr: 2193 -->
+
+## [0.88.83.0] - 2026-11-08
+
+### Changed
+- fix(kria): montage draft reply says each ask once, no double stop (KRI-1296) (#2191) <!-- release-pr: 2191 -->
+
+## [0.88.82.0] - 2026-11-08
+
+### Changed
+- fix(kria): a timeout on a tapped answer no longer says "ask for one change at a time" (KRI-1301) (#2190) <!-- release-pr: 2190 -->
+
+## [0.88.81.0] - 2026-11-08
+
+### Fixed
+- revert(fly): drop the always-on visuals process for cost (KRI-1240, reverts #2148) (#2183) <!-- release-pr: 2183 -->
+
+## [0.88.80.0] - 2026-11-08
+
+### Changed
+- test(kria): prove a tapped mute card silences the clip in the phone recipe (KRI-1252) (#2155) <!-- release-pr: 2155 -->
+
+## [0.88.79.0] - 2026-11-08
+
+### Changed
+- test(kria): live OpenAI path for the SuggestionAgent eval, ten thread inputs (KRI-1254) (#2154) <!-- release-pr: 2154 -->
+
 ## [0.88.78.0] - 2026-11-08
 
 ### Changed
