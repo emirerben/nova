@@ -13347,7 +13347,15 @@ def _protected_style_rows(
     row onto a face or the marked object is undone, so the placement receipt stays true."""
     # Item 14: her ending's two rows keep their fonts and colours; item 20: her title-look rows keep
     # their own line's face and colour (`_style_rows_keeping_title_look`). The others are restyled.
-    fixed = {i for i, row in enumerate(rows) if "cta_part" in (row.get("source_params") or {})}
+    # KRI-1284: her list labels keep their own look and spot too. `list_label_rows` already placed
+    # each one clear of her face, the captions and the cards; the restyle took that away (grey
+    # auto fill, no outline, slid under the captions, shrunk).
+    fixed = {
+        i
+        for i, row in enumerate(rows)
+        if "cta_part" in (row.get("source_params") or {})
+        or (row.get("source_params") or {}).get("source") == "list_label"
+    }
     if fixed:
         rest = _style_rows_keeping_title_look(
             [row for i, row in enumerate(rows) if i not in fixed], job_id=job_id, canvas=canvas
