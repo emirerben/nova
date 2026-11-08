@@ -3727,6 +3727,64 @@ def _without_undrawable_symbols(text: str) -> str:
     return " ".join("".join(kept).split())
 
 
+def _picture_key(name: str) -> str:
+    """A picture's name without its file extension, folded ("GitHub logo.png" -> "github logo")."""
+    stem, dot, ext = name.strip().rpartition(".")
+    if dot and stem and ext.casefold() in {"png", "jpg", "jpeg", "webp", "heic", "gif", "svg"}:
+        name = stem
+    return " ".join(name.casefold().split())
+
+
+def _with_title_picture_beats(
+    strategy: Any, brief: CreativeBrief | None, manifest: Any
+) -> Any | None:
+    """KRI-1322: the strategy with a title-anchored beat for each picture the brief names by its
+    exact file name next to the title ("the GitHub logo above it" -> Visuals "GitHub logo.png"),
+    or None when nothing is missing.
+
+    The phone render places a logo above the title only from such a beat (``anchor: "title"``,
+    ``visual_id`` = the Visuals image). The Main Creator is taught to write it while the title
+    look is on; this is the server's backstop when it does not. Only an exact name match on an
+    owned Visuals image counts (never words read for meaning, KRI-667), and a literal that is
+    part of the opening title is that title's own words, not a picture.
+    """
+    if not settings.title_look_enabled or brief is None or not strategy.opening_title:
+        return None
+    from app.agents._schemas.reaction_beats import ReactionBeat  # noqa: PLC0415
+
+    title_key = _picture_key(strategy.opening_title)
+    images: dict[str, list[str]] = {}
+    for media in getattr(manifest, "media", ()) or ():
+        label = getattr(media, "label", None)
+        if getattr(media, "kind", None) == "image" and str(media.media_id).startswith("asset-"):
+            if label and label.strip():
+                images.setdefault(_picture_key(label), []).append(media.media_id)
+    beats = list(strategy.reaction_beats or [])
+    added = False
+    for req in brief.live():
+        literal = (req.literal or "").strip()
+        key = _picture_key(literal)
+        if req.scope != "title" or not key or key in title_key or len(images.get(key, [])) != 1:
+            continue
+        (visual_id,) = images[key]
+        if any(
+            beat.anchor == "title"
+            and (beat.visual_id == visual_id or _picture_key(beat.trigger) == key)
+            for beat in beats
+        ):
+            continue
+        beats.append(
+            ReactionBeat(
+                beat_id=f"title-picture-{len(beats) + 1}",
+                trigger=literal[:80],
+                visual_id=visual_id,
+                anchor="title",
+            )
+        )
+        added = True
+    return strategy.model_copy(update={"reaction_beats": beats}) if added else None
+
+
 def _with_wording_question(wording: PlannedKriaTurn, planned: PlannedKriaTurn) -> PlannedKriaTurn:
     """KRI-802: ask a held title-wording question in the same reply as a clip picker.
 
@@ -4359,6 +4417,10 @@ async def _plan_creator_action(
                 if row.get("role") == "user"
             ],
         ]
+        titled = _with_title_picture_beats(action.strategy, effective_brief, manifest)
+        if titled is not None:
+            log.info("kria_title_picture_beat_added", thread_id=str(thread_id))
+            action = action.model_copy(update={"strategy": titled})
         # KRI-1286: the drawn arrow already points at "comment WORD"; an arrow emoji the model
         # added to the words is not the creator's text, and would make her confirm words she
         # gave exactly (and show two arrows). Drop it when she asked for an arrow.

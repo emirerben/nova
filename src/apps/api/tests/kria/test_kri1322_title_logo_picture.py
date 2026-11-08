@@ -231,3 +231,113 @@ def test_f7_with_the_title_look_off_nothing_is_promised(monkeypatch) -> None:
     assert receipt.reason not in RENDER_PROMISE_REASONS
     assert receipt.reason != EXACT_TEXT
     assert receipt.status != "met"
+
+
+# ---- the planner side: the render places a logo only from a title-anchored beat ------------
+# (render agent, commit 8fe1708c6: `reaction_beats[*].anchor == "title"` with a `visual_id` that
+# resolves to a ready Visuals IMAGE). Ways this fails: the Main Creator writes no beat and the
+# server adds none (the logo silently never renders); a beat is added for a title's own words
+# ("GitHub tips" next to a "GitHub.png"); a second beat duplicates the model's own; an ambiguous
+# name (two files called the same) picks one at random; the title look is off.
+
+
+async def _planned_strategy(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    beats: list[dict[str, Any]] | None = None,
+    media: list[tuple[str, str]] = ((LOGO, "GitHub logo.png"),),
+    reqs: tuple[BriefRequirement, ...] = (R1, R2),
+    title: str = TITLE,
+):  # noqa: ANN202
+    from types import SimpleNamespace
+
+    from app.agents._schemas.creator_agent import CreativeStrategy, ProposeStrategy
+    from app.agents.main_creator import MainCreatorOutput
+    from app.kria import planner
+    from tests.kria.test_creative_copy_planner import _quoted_title_inputs
+
+    seen: dict[str, Any] = {}
+
+    class _Past(Exception):
+        pass
+
+    def past_gate(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        seen["strategy"] = next(
+            a for a in (*args, *kwargs.values()) if hasattr(a, "reaction_beats")
+        )
+        raise _Past
+
+    monkeypatch.setattr(planner, "check_strategy_for_runtime_v2", past_gate)
+    strategy = {"opening_title": title}
+    if beats:
+        strategy["reaction_beats"] = beats
+    output = MainCreatorOutput(
+        action=ProposeStrategy(
+            kind="propose_strategy",
+            strategy=CreativeStrategy.model_validate(strategy),
+            summary="Talk with the title",
+        )
+    )
+    manifest = SimpleNamespace(
+        manifest_hash="a" * 64,
+        context_hash="b" * 64,
+        media=tuple(
+            SimpleNamespace(media_id=media_id, kind="image", label=label)
+            for media_id, label in media
+        ),
+    )
+    request = f'Start with the title "{title}" with the GitHub logo above it.'
+    with pytest.raises(_Past):
+        await planner._plan_creator_action(
+            None,
+            thread_id=uuid.uuid4(),
+            item_id=uuid.uuid4(),
+            creator_id=uuid.uuid4(),
+            user_message=request,
+            manifest=manifest,
+            inputs=_quoted_title_inputs([{"role": "user", "content": request}]),
+            output=output,
+            effective_brief=CreativeBrief(version=1, requirements=list(reqs)),
+        )
+    return [b.model_dump() for b in seen["strategy"].reaction_beats or []]
+
+
+@pytest.mark.asyncio
+async def test_planner_adds_the_title_logo_beat_the_render_needs(monkeypatch) -> None:
+    beats = await _planned_strategy(monkeypatch)
+    assert len(beats) == 1
+    (beat,) = beats
+    assert beat["anchor"] == "title"
+    assert beat["visual_id"] == LOGO
+    assert beat["trigger"] == "GitHub logo"
+    assert beat["beat_id"]
+
+
+@pytest.mark.asyncio
+async def test_planner_keeps_the_model_beat_and_adds_no_second(monkeypatch) -> None:
+    beats = await _planned_strategy(monkeypatch, beats=[TITLE_BEAT])
+    assert [b["beat_id"] for b in beats] == ["gh"]
+
+
+@pytest.mark.asyncio
+async def test_planner_never_turns_title_words_into_a_logo(monkeypatch) -> None:
+    words = BriefRequirement(id="r1", kind="text", scope="title", literal="GitHub")
+    beats = await _planned_strategy(
+        monkeypatch, media=[(LOGO, "GitHub.png")], reqs=(words,), title="GitHub tips"
+    )
+    assert beats == []
+
+
+@pytest.mark.asyncio
+async def test_planner_never_guesses_between_two_files_with_one_name(monkeypatch) -> None:
+    twin = "asset-2f0c2a9e-0b7d-4c55-9d1e-6a3c2b1f1322"
+    beats = await _planned_strategy(
+        monkeypatch, media=[(LOGO, "GitHub logo.png"), (twin, "GitHub logo.jpg")]
+    )
+    assert beats == []
+
+
+@pytest.mark.asyncio
+async def test_planner_adds_nothing_with_the_title_look_off(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "title_look_enabled", False)
+    assert await _planned_strategy(monkeypatch) == []
