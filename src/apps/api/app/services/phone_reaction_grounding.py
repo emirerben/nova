@@ -337,7 +337,9 @@ def _named_phrase_windows(words: list[dict], phrase: str) -> list[_Heard]:
     return out
 
 
-def _phrase_windows(stream: list[_Token], words: list[dict] | None, phrase: str) -> list[_Heard]:
+def _phrase_windows(
+    stream: list[_Token], words: list[dict] | None, phrase: str, *, joined: bool = False
+) -> list[_Heard]:
     """Every spoken occurrence of ``phrase``, in time order: the exact folded-token matches;
     only when there are none, the creator-named phrase matcher's hearings (KRI-961, when the
     caller passes the raw ``words``). A phrase heard exactly is never also placed on a
@@ -346,9 +348,43 @@ def _phrase_windows(stream: list[_Token], words: list[dict] | None, phrase: str)
     if not tokens:
         return []
     starts = _find_all([t.text for t in stream], tokens)
-    if starts or words is None:
+    if starts:
         return [(stream[i].start_s, stream[i + len(tokens) - 1].end_s, None) for i in starts]
+    # KRI-1281: for a creator's on-screen text, "SpecKit", "Spec-kit" and "Spec Kit" are one
+    # word spelled three ways. Opt-in: the background-follows-talk matcher deliberately keeps
+    # "Mero pe" from hearing "Merope".
+    spaced = _joined_spelling_windows(stream, tokens) if joined else []
+    if spaced or words is None:
+        return spaced
     return _named_phrase_windows(words, phrase)
+
+
+_MIN_JOINED_CHARS = 5
+
+
+def _joined_spelling_windows(stream: list[_Token], tokens: list[str]) -> list[_Heard]:
+    """Occurrences of ``tokens`` heard with the spaces moved: the same letters, split across
+    different word breaks ("speckit" vs "spec" + "kit"). Only runs of 2+ tokens on either
+    side count (a single token on both sides is the exact match), and the letters must be
+    long enough that a short word pair can't collide by accident."""
+    target = "".join(tokens)
+    if len(target) < _MIN_JOINED_CHARS:
+        return []
+    out: list[_Heard] = []
+    i = 0
+    while i < len(stream):
+        acc = ""
+        for j in range(i, len(stream)):
+            acc += stream[j].text
+            if acc == target:
+                if j > i or len(tokens) > 1:
+                    out.append((stream[i].start_s, stream[j].end_s, None))
+                    i = j
+                break
+            if not target.startswith(acc):
+                break
+        i += 1
+    return out
 
 
 @dataclass(frozen=True)
@@ -368,6 +404,7 @@ def _match_trigger(
     occurrence: str,
     *,
     words: list[dict] | None = None,
+    joined: bool = False,
 ) -> _MatchResult:
     """Find qualifying spoken occurrences of ``trigger`` in ``stream``.
 
@@ -382,13 +419,13 @@ def _match_trigger(
     (`_named_phrase_windows`). Without it the match stays exact.
     """
 
-    hits = _phrase_windows(stream, words, trigger)
+    hits = _phrase_windows(stream, words, trigger, joined=joined)
     if not hits:
         return _MatchResult(reason="never_heard")
 
     after_end_s: float | None = None
     if after:
-        after_hits = _phrase_windows(stream, words, after)
+        after_hits = _phrase_windows(stream, words, after, joined=joined)
         if not after_hits:
             return _MatchResult(reason="after_not_heard")
         after_end_s = after_hits[0][1]
