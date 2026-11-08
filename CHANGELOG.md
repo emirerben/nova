@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.106.0] - 2026-11-08
+
+### Changed
+- fix(ios): song timeline drag after chat scroll; repair stale UI tests and review fixture (KRI-1276) (#2211) <!-- release-pr: 2211 -->
+
 ## [0.88.105.0] - 2026-11-08
 
 ### Changed
