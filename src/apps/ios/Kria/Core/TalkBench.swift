@@ -268,6 +268,11 @@ enum TalkBenchFixtures {
         func markTimedOut() { lock.lock(); expired = true; lock.unlock() }
     }
 
+    private final class WriterHandle: @unchecked Sendable {
+        let writer: AVAssetWriter
+        init(_ writer: AVAssetWriter) { self.writer = writer }
+    }
+
     static var requestedBackground: SpeakerBackgroundKind? {
         switch ProcessInfo.processInfo.environment["KRIA_TALK_BENCH_BACKGROUND"] {
         case "photo": .image
@@ -330,11 +335,11 @@ enum TalkBenchFixtures {
         writer.startSession(atSourceTime: .zero)
         let progress = EncodeProgress()
         // `cancelWriting` is safe from any thread; it is what unblocks a writer the encoder stopped draining.
-        nonisolated(unsafe) let stalled = writer
+        let stalled = WriterHandle(writer)
         let watchdog = Task {
             try await Task.sleep(for: timeout)
             progress.markTimedOut()
-            stalled.cancelWriting()
+            stalled.writer.cancelWriting()
         }
         defer { watchdog.cancel() }
         let frames = 300
