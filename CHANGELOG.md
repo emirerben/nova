@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.88.0] - 2026-11-08
+
+### Fixed
+- fix(kria): a held draft no longer shows Done on any ask (KRI-1308) (#2198) <!-- release-pr: 2198 -->
+
 ## [0.88.87.0] - 2026-11-08
 
 ### Fixed
