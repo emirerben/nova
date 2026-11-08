@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.94.0] - 2026-11-08
+
+### Changed
+- fix(kria): draft reply lists render promises as planned (KRI-1285) (#2207) <!-- release-pr: 2207 -->
+
 ## [0.88.93.0] - 2026-11-08
 
 ### Fixed
