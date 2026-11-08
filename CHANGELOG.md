@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.108.0] - 2026-11-08
+
+### Changed
+- feat(ios): add editable two- and three-panel split screens (KRI-1231) (#2147) <!-- release-pr: 2147 -->
+
 ## [0.88.107.0] - 2026-11-08
 
 ### Changed
