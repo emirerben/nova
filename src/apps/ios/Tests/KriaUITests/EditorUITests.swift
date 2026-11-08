@@ -215,6 +215,33 @@ final class EditorUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Your added photos and videos"].exists)
     }
 
+    /// Opening a finished render through the real load path (the chat's "Open editor" card against the perf
+    /// fixture's slowed responses) is not a save, so the header must never read "Saving" while it loads.
+    func testOpeningTheEditorFromChatNeverShowsSaving() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
+        app.launchEnvironment = [
+            "KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_SEED_THREADS": "3", "KRIA_CHAT_LONG_HISTORY": "12",
+            "KRIA_EDITOR_FIXTURE": "1", "KRIA_FIXTURE_LATENCY_MS": "150", "UI_TEST_REDUCE_MOTION": "1",
+        ]
+        app.launch()
+        let open = app.buttons["Open editor"]
+        XCTAssertTrue(open.waitForExistence(timeout: 30))
+        open.tap()
+
+        let save = app.buttons["native-editor-save"]
+        var observed: [String] = []
+        let deadline = Date().addingTimeInterval(8)
+        while Date() < deadline {
+            if save.exists { observed.append(save.label) }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTAssertTrue(app.staticTexts["native-editor-duration"].exists, "the editor finished opening")
+        XCTAssertFalse(observed.contains("Saving"), "opening the editor is not a save; saw \(Set(observed))")
+        XCTAssertTrue(observed.contains("Saved"), "a clean project reads Saved; saw \(Set(observed))")
+        app.terminate()
+    }
+
     func testNativeEditorBackButtonReturnsToPreviousSurface() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor"]

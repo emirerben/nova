@@ -74,4 +74,82 @@ import XCTest
         XCTAssertFalse(session.isPreparingCurrentPreview)
         XCTAssertNil(session.previousPreviewPresentation)
     }
+    private func session(retainingAdmittedPreviewOf file: URL) async throws -> NativeEditorSession {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.draft(for: .sourceText),
+                                          operations: LocalEditorOperations())
+        session.beginPreviewPresentation()
+        await session.prepareFixtureSourcePreview(url: file)
+        try await waitForReadyItem(of: session)
+        let ticket = try XCTUnwrap(session.admissiblePreviewDisplayTicket)
+        XCTAssertTrue(session.previewFrameWasShown(player: try XCTUnwrap(session.player), ticket: ticket))
+        session.retainAdmittedPreview()
+        return session
+    }
+
+    private func waitForReadyItem(of session: NativeEditorSession) async throws {
+        for _ in 0..<250 where session.player?.currentItem?.status != .readyToPlay {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(session.player?.currentItem?.status, .readyToPlay)
+    }
+
+    func testRetainedHandoffThatMissesItsPrerollFallsBackToThePlainSwapAndStaysPlayable() async throws {
+        let file = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let session = try await session(retainingAdmittedPreviewOf: file)
+        defer { session.endPreviewPresentation() }
+        let retainedPlayer = try XCTUnwrap(session.player)
+        session.prerolledPlayerProvider = { _, _ in nil }
+
+        await session.prepareFixtureSourcePreview(url: file)
+
+        XCTAssertEqual(session.sourcePreviewState, .ready, "A preroll miss is not a preview failure")
+        XCTAssertTrue(session.canDisplayCurrentPlayer)
+        XCTAssertNotEqual(session.previousPreviewPresentation?.status, .failed)
+        XCTAssertFalse(session.player === retainedPlayer, "The plain swap installs the new composition")
+        session.togglePlayback()
+        XCTAssertTrue(session.isPlaying, "Play must start the live preview")
+        try await waitForReadyItem(of: session)
+        let ticket = try XCTUnwrap(session.admissiblePreviewDisplayTicket)
+        XCTAssertTrue(session.previewFrameWasShown(player: try XCTUnwrap(session.player), ticket: ticket))
+        XCTAssertNil(session.previousPreviewPresentation)
+        XCTAssertFalse(session.isPreparingCurrentPreview)
+        session.pausePlayback()
+    }
+
+    func testRetainedPreviewRetiresWithinTheBoundWhenNoFrameReportArrives() async throws {
+        let file = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let session = try await session(retainingAdmittedPreviewOf: file)
+        defer { session.endPreviewPresentation() }
+
+        await session.prepareFixtureSourcePreview(url: file)
+        XCTAssertEqual(session.previousPreviewPresentation?.status, .updating,
+                       "The previous picture still covers the candidate until its frame or the bound")
+
+        var retired = false
+        for _ in 0..<200 where !retired {
+            try await Task.sleep(for: .milliseconds(20))
+            retired = session.previousPreviewPresentation == nil
+        }
+        XCTAssertTrue(retired, "The live preview must become visible within the bound")
+        XCTAssertFalse(session.isPreparingCurrentPreview)
+        XCTAssertTrue(session.canDisplayCurrentPlayer)
+        session.togglePlayback()
+        XCTAssertTrue(session.isPlaying)
+        session.pausePlayback()
+    }
+
+    func testRejectedFrameReportIsNotConsumedAndTheMatchingReportStillAdmits() async throws {
+        let file = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let session = try await session(retainingAdmittedPreviewOf: file)
+        defer { session.endPreviewPresentation() }
+        await session.prepareFixtureSourcePreview(url: file)
+        try await waitForReadyItem(of: session)
+        let player = try XCTUnwrap(session.player)
+        let ticket = try XCTUnwrap(session.admissiblePreviewDisplayTicket)
+
+        XCTAssertFalse(session.previewFrameWasShown(player: player, ticket: nil), "A report without the current ticket is rejected")
+        XCTAssertNotNil(session.previousPreviewPresentation)
+        XCTAssertTrue(session.previewFrameWasShown(player: player, ticket: ticket))
+        XCTAssertNil(session.previousPreviewPresentation)
+    }
 }

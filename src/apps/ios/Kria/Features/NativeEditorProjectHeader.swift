@@ -87,7 +87,7 @@ struct NativeEditorProjectHeader: View {
     }
 
     private var saveButton: some View {
-        let control = NativeEditorSaveControl(isSaving: session.isSaving, hasUnsavedChanges: session.hasUnsavedChanges)
+        let control = NativeEditorSaveControl(isSaving: session.showsSavingIndicator, hasUnsavedChanges: session.hasUnsavedChanges)
         return Button { beforeSave(); Task { await session.save() } } label: {
             Group {
                 switch control {
