@@ -89,10 +89,10 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # Re-pinned for KRI-1292: the brief section teaches `hold_s` for a text at a spoken word;
 # removing that clause reproduces the values above.
 MAIN_PROMPT_SHA = {
-    "neither": "bee031cc1ccbbee964b310ace7068e9e8da37bf0351ef7c078e4429158e903bb",
-    (True, True): "da51fd41885a6f4871c5ccadee9111591a0195b1fccee8cc52579449f4867008",
-    (True, False): "871f16739257f2741e4f36bca53bf024619d3e0ab84255578ebc97b275d7bd05",
-    (False, True): "626c12cc2469b070271c53da4910220fc71d1a61f8baf1a2bf4bf016f5fe2385",
+    "neither": "ce15504fa5dce5d85ecda204ea5b1a92c51f8997c7a0eeca5271ccf120459f0d",
+    (True, True): "8a7a2c85d4236c8c303d080506009e9996eb874ac08287252a31f92032dea0a2",
+    (True, False): "68edb943bf51c03e6f78d3fc9f1eb75e20602d174767f2018181679ec04c6e1c",
+    (False, True): "d29283f2d0c4cf5c1c4b150f1a52c99e817b9658479283f6e57c6ce165a6e9b2",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (
