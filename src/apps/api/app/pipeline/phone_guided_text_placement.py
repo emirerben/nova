@@ -24,14 +24,19 @@ from typing import Any
 
 import structlog
 
+from app.kria.protected_targets import ProtectedRegionSelection, ProtectedTarget
 from app.pipeline.guided_story import (
     GuidedStoryExecutionPlan,
     GuidedStoryMoment,
+    GuidedTextProtection,
     _apply_guided_text_face_placement,
     _story_canvas,
 )
+from app.pipeline.object_track import STEP_S, ObjectTrack, track_object
+from app.pipeline.phone_protected_text import ProtectedPlan, binding_ask, protected_text_receipt
 from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion, sample_face_regions
 from app.services.phone_sources import PhoneSourceBinding
+from app.text_fold import fold_text
 
 log = structlog.get_logger(__name__)
 
@@ -112,6 +117,39 @@ def _moment_at(plan: GuidedStoryExecutionPlan, at_s: float) -> GuidedStoryMoment
     return None
 
 
+class ProxyCache:
+    """Each footage proxy downloaded at most once into ``workdir``; ``None`` when it could
+    not be fetched (that source is then simply unsampled)."""
+
+    def __init__(self, workdir: str, download: ProxyDownloader) -> None:
+        self._workdir = workdir
+        self._download = download
+        self._local: dict[str, str | None] = {}
+
+    def path(self, binding: PhoneSourceBinding) -> str | None:
+        if binding.media_id not in self._local:
+            target = os.path.join(self._workdir, f"proxy-{len(self._local)}.mp4")
+            try:
+                self._download(binding.proxy_path, target)
+                self._local[binding.media_id] = target
+            except Exception as exc:  # noqa: BLE001 - fail open: this source is unsampled
+                log.warning(
+                    "phone_guided_text_placement.proxy_download_failed",
+                    media_id=binding.media_id,
+                    error=str(exc)[:200],
+                )
+                self._local[binding.media_id] = None
+        return self._local[binding.media_id]
+
+
+def _upright_dims(binding: PhoneSourceBinding) -> tuple[float, float]:
+    original = binding.original
+    width, height = float(original.width or 0), float(original.height or 0)
+    if original.orientation_degrees in (90, 270):
+        width, height = height, width
+    return width, height
+
+
 def build_phone_face_sampler(
     plan: GuidedStoryExecutionPlan,
     bindings: Sequence[PhoneSourceBinding],
@@ -120,6 +158,7 @@ def build_phone_face_sampler(
     download: ProxyDownloader,
     sample: FaceSampler = sample_face_regions,
     observe_frames=None,
+    proxies: ProxyCache | None = None,
 ) -> Callable[[list[float], float], tuple[list[ProtectedRegion], dict[str, Any]]]:
     """A ``sampler(output_anchors_s, timeout_s)`` over the plan's footage proxies.
 
@@ -130,22 +169,8 @@ def build_phone_face_sampler(
 
     canvas = _story_canvas(plan.output_orientation)
     by_media = {binding.media_id: binding for binding in bindings}
-    local_by_media: dict[str, str | None] = {}
-
-    def proxy_for(binding: PhoneSourceBinding) -> str | None:
-        if binding.media_id not in local_by_media:
-            target = os.path.join(workdir, f"proxy-{len(local_by_media)}.mp4")
-            try:
-                download(binding.proxy_path, target)
-                local_by_media[binding.media_id] = target
-            except Exception as exc:  # noqa: BLE001 - fail open: this source is unsampled
-                log.warning(
-                    "phone_guided_text_placement.proxy_download_failed",
-                    media_id=binding.media_id,
-                    error=str(exc)[:200],
-                )
-                local_by_media[binding.media_id] = None
-        return local_by_media[binding.media_id]
+    cache = proxies or ProxyCache(workdir, download)
+    proxy_for = cache.path
 
     def sampler(anchors: list[float], timeout_s: float):
         grouped: dict[str, list[tuple[GuidedStoryMoment, float]]] = {}
@@ -187,10 +212,7 @@ def build_phone_face_sampler(
             receipt["partial"] = receipt["partial"] or bool(group_receipt.get("partial"))
             if group_receipt.get("worker_error"):
                 receipt["worker_error"] = group_receipt["worker_error"]
-            original = binding.original
-            width, height = float(original.width or 0), float(original.height or 0)
-            if original.orientation_degrees in (90, 270):
-                width, height = height, width
+            width, height = _upright_dims(binding)
             if width <= 0 or height <= 0:
                 continue
             if observe_frames is not None:
@@ -230,6 +252,241 @@ def build_phone_face_sampler(
     return sampler
 
 
+_UNMEASURED = {"objects_verified": False, "faces": "fallback"}
+
+
+def _object_rows(
+    plan: GuidedStoryExecutionPlan,
+    bindings: Sequence[PhoneSourceBinding],
+    targets: Sequence[ProtectedTarget],
+    selections: Sequence[ProtectedRegionSelection],
+    proxies: ProxyCache,
+    track: Callable[..., ObjectTrack],
+) -> tuple[list[dict[str, Any]], list[tuple[GuidedStoryMoment, ObjectTrack, PhoneSourceBinding]]]:
+    """One protected-text receipt row per target, and the creator's marks followed through
+    every footage moment of the clip they were drawn on.
+
+    A mark counts only against the clip it was drawn on, at the generation it was drawn at:
+    another clip is ``other_source``, replaced bytes are ``invalidated``, no mark is
+    ``no_selection``, and a proxy that cannot be read is ``unverified`` (never clear)."""
+    by_media = {binding.media_id: binding for binding in bindings}
+    moments_of: dict[str, list[GuidedStoryMoment]] = {}
+    for moment in plan.story_timeline:
+        if moment.lane == "clip" and moment.kind == "video" and moment.media_id in by_media:
+            moments_of.setdefault(moment.media_id, []).append(moment)
+    rows: list[dict[str, Any]] = []
+    tracks: list[tuple[GuidedStoryMoment, ObjectTrack, PhoneSourceBinding]] = []
+    for target in targets:
+        row: dict[str, Any] = {
+            "kind": target.kind,
+            "label": target.label,
+            "requirement_ids": list(target.requirement_ids),
+        }
+        if target.kind == "face":
+            rows.append({**row, "grounding": "face_sampler"})
+            continue
+        marks = [m for m in selections if fold_text(m.label) == fold_text(target.label)]
+        if not marks:
+            rows.append({**row, "status": "no_selection"})
+            continue
+        on_story = [m for m in marks if m.media_id in moments_of]
+        if not on_story:
+            other = {"selection": marks[-1].model_dump(mode="json"), "status": "other_source"}
+            rows.append({**row, **other})
+            continue
+        row["selection"] = on_story[-1].model_dump(mode="json")
+        found: list[ObjectTrack] = []
+        status: str | None = None
+        for mark in on_story:
+            binding = by_media[mark.media_id]
+            if binding.generation and mark.generation != binding.generation:
+                status = "invalidated"
+                row["current_generation"] = binding.generation
+                break
+            path = proxies.path(binding)
+            if path is None:
+                status = "unverified"
+                row["reason"] = "proxy_unavailable"
+                break
+            for moment in moments_of[mark.media_id]:
+                followed = track(
+                    path,
+                    label=target.label,
+                    media_id=mark.media_id,
+                    generation=binding.generation,
+                    seed_t_s=mark.source_t_s,
+                    seed_box=NormalizedBox(*mark.box),
+                    start_s=moment.source_start_s,
+                    end_s=moment.source_end_s,
+                )
+                found.append(followed)
+                tracks.append((moment, followed, binding))
+        if status is not None:
+            rows.append({**row, "status": status})
+            continue
+        rows.append(
+            {
+                **row,
+                "grounding": "creator_mark_tracked",
+                "track_status": "tracked"
+                if all(t.status == "tracked" for t in found)
+                else "unverified",
+                "track": [t.receipt for t in found],
+                "provenance": found[0].provenance(),
+            }
+        )
+    return rows, tracks
+
+
+def _objects_on_canvas(
+    plan: GuidedStoryExecutionPlan,
+    tracks: Sequence[tuple[GuidedStoryMoment, ObjectTrack, PhoneSourceBinding]],
+) -> Callable[[float, float], tuple[list[NormalizedBox], bool]]:
+    canvas = _story_canvas(plan.output_orientation)
+
+    def objects(start_s: float, end_s: float) -> tuple[list[NormalizedBox], bool]:
+        boxes: list[NormalizedBox] = []
+        seen = True
+        for moment, followed, binding in tracks:
+            low = max(start_s, moment.output_start_s)
+            high = min(end_s, moment.output_end_s)
+            if high <= low:
+                continue
+            width, height = _upright_dims(binding)
+            if width <= 0 or height <= 0:
+                seen = False
+                continue
+            crop = shown_crop(
+                moment,
+                source_width=width,
+                source_height=height,
+                canvas_width=canvas.width,
+                canvas_height=canvas.height,
+            )
+            steps = max(1, round((high - low) / STEP_S))
+            for index in range(steps + 1):
+                at_s = low + (high - low) * index / steps
+                source_s = moment.source_start_s + at_s - moment.output_start_s
+                box, was_seen = followed.box_at(source_s)
+                seen = seen and was_seen
+                mapped = (
+                    face_box_to_canvas(
+                        box,
+                        source_width=width,
+                        source_height=height,
+                        canvas_width=canvas.width,
+                        canvas_height=canvas.height,
+                        crop=crop,
+                    )
+                    if box is not None
+                    else None
+                )
+                if mapped is not None:
+                    boxes.append(mapped)
+        return boxes, seen
+
+    return objects
+
+
+def _receipt(
+    targets: Sequence[ProtectedTarget],
+    target_rows: Sequence[dict[str, Any]],
+    placements: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    plan = ProtectedPlan(
+        targets=tuple(targets),
+        target_rows=tuple(target_rows),
+        protect_all_faces=any(t.kind == "face" for t in targets),
+    )
+    return protected_text_receipt(plan, placements)
+
+
+def unplaced_guided_receipt(raw_binding: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """The protected-text receipt of a guided phone render whose text this pass did not place
+    (the text-style policy or the placement flag owns it): an ask is reported ``unverified``,
+    never left out so the review reads it as met. ``None`` when nothing was asked."""
+    ask = binding_ask(raw_binding)
+    if ask is None:
+        return None
+    targets, selections = ask
+    marked = {fold_text(m.label) for m in selections}
+    rows = [
+        {"kind": t.kind, "label": t.label, "requirement_ids": list(t.requirement_ids)}
+        | (
+            {"grounding": "face_sampler"}
+            if t.kind == "face"
+            else {"status": "unverified" if fold_text(t.label) in marked else "no_selection"}
+        )
+        for t in targets
+    ]
+    return _receipt(targets, rows, {"guided_text": _UNMEASURED})
+
+
+def place_guided_text(
+    plan: GuidedStoryExecutionPlan,
+    text_element_rows: list[dict[str, Any]],
+    bindings: Sequence[PhoneSourceBinding],
+    *,
+    job_id: str,
+    download: ProxyDownloader,
+    sample: FaceSampler = sample_face_regions,
+    raw_binding: Mapping[str, Any] | None = None,
+    track: Callable[..., ObjectTrack] = track_object,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """``text_element_rows`` (the plan's raw rows) with title/chapter/closing rows moved
+    off faces, and, when the approved binding asks to keep text off a face or a marked
+    object (KRI-903), off every face and off each mark followed through the footage, plus
+    the protected-text receipt saying per target whether every text stayed clear
+    (``None`` when nothing was asked).
+
+    Returns the rows unchanged (a copy) when there is nothing eligible, no footage to
+    sample, or anything goes wrong; an ask is then reported ``unverified``.
+    """
+
+    rows = copy.deepcopy(text_element_rows)
+    ask = binding_ask(raw_binding)
+    unverified = unplaced_guided_receipt(raw_binding)
+    if not rows or not bindings or not plan.story_timeline:
+        return rows, (unverified if rows else None)
+    protection: GuidedTextProtection | None = None
+    target_rows: list[dict[str, Any]] = []
+    placements: dict[str, dict[str, Any]] = {}
+    try:
+        with tempfile.TemporaryDirectory(prefix="phone-text-placement-") as workdir:
+            proxies = ProxyCache(workdir, download)
+            sampler = build_phone_face_sampler(
+                plan, bindings, workdir=workdir, download=download, sample=sample, proxies=proxies
+            )
+            if ask is not None:
+                targets, selections = ask
+                target_rows, tracks = _object_rows(
+                    plan, bindings, targets, selections, proxies, track
+                )
+                protection = GuidedTextProtection(
+                    all_faces=any(t.kind == "face" for t in targets),
+                    objects=_objects_on_canvas(plan, tracks) if tracks else None,
+                )
+            placed = _apply_guided_text_face_placement(
+                None,
+                rows,
+                job_id=job_id,
+                canvas=_story_canvas(plan.output_orientation),
+                duration_s=float(plan.resolved_duration_s),
+                sampler=sampler,
+                protection=protection,
+                placements_out=placements,
+            )
+    except Exception as exc:  # noqa: BLE001 - never block a render on a placement nicety
+        log.warning("phone_guided_text_placement.failed", job_id=job_id, error=str(exc)[:200])
+        return copy.deepcopy(text_element_rows), unverified
+    if ask is None:
+        return placed, None
+    for row in placed:
+        if row.get("text") and str(row.get("id", "")) not in placements:
+            placements["other_text"] = dict(_UNMEASURED)
+    return placed, _receipt(ask[0], target_rows, placements)
+
+
 def place_guided_text_off_faces(
     plan: GuidedStoryExecutionPlan,
     text_element_rows: list[dict[str, Any]],
@@ -239,29 +496,7 @@ def place_guided_text_off_faces(
     download: ProxyDownloader,
     sample: FaceSampler = sample_face_regions,
 ) -> list[dict[str, Any]]:
-    """``text_element_rows`` (the plan's raw rows) with title/chapter/closing
-    rows moved off faces.
-
-    Returns the rows unchanged (a copy) when there is nothing eligible, no
-    footage to sample, or anything goes wrong.
-    """
-
-    rows = copy.deepcopy(text_element_rows)
-    if not rows or not bindings or not plan.story_timeline:
-        return rows
-    try:
-        with tempfile.TemporaryDirectory(prefix="phone-text-placement-") as workdir:
-            sampler = build_phone_face_sampler(
-                plan, bindings, workdir=workdir, download=download, sample=sample
-            )
-            return _apply_guided_text_face_placement(
-                None,
-                rows,
-                job_id=job_id,
-                canvas=_story_canvas(plan.output_orientation),
-                duration_s=float(plan.resolved_duration_s),
-                sampler=sampler,
-            )
-    except Exception as exc:  # noqa: BLE001 - never block a render on a placement nicety
-        log.warning("phone_guided_text_placement.failed", job_id=job_id, error=str(exc)[:200])
-        return copy.deepcopy(text_element_rows)
+    """`place_guided_text` for a render that asked for nothing: the rows only."""
+    return place_guided_text(
+        plan, text_element_rows, bindings, job_id=job_id, download=download, sample=sample
+    )[0]

@@ -55,6 +55,10 @@ private func nativeVisualScale(_ raw: [String: JSONValue], fallback: CGFloat = 0
     CGFloat(min(max(nativeRawNumber(raw, "scale") ?? Double(fallback), 0.05), 1.5))
 }
 
+private func nativeVisualZoom(_ raw: [String: JSONValue]) -> CGFloat {
+    CGFloat(min(max(raw["editor_style"]?.objectValue?["zoom"]?.numberValue ?? 1, 1), 4))
+}
+
 private func nativeIsFullscreen(_ raw: [String: JSONValue]) -> Bool {
     [raw["display_mode"]?.stringValue, raw["mode"]?.stringValue, nativeRawString(raw, "display_mode")]
         .compactMap { $0 }
@@ -159,6 +163,19 @@ struct NativeVideoPreview: View {
         }
     }
 
+    /// Where a pip card is actually drawn. A device-rendered variant pulls a card whose centre is below
+    /// `deviceCardMaxYFraction` up to it (the compiler's rule: not full-screen, not `caption_clear`); the box and handle
+    /// follow, and a drag stops there. Cloud variants are not clamped.
+    private func renderedCardPosition(_ overlay: EditorTimedEffect) -> CGPoint {
+        let raw = nativeVisualPosition(overlay.raw, fallback: CGPoint(x: 0.78, y: 0.25))
+        return CGPoint(x: raw.x, y: clampedCardY(raw.y, raw: overlay.raw))
+    }
+
+    private func clampedCardY(_ y: CGFloat, raw: [String: JSONValue]) -> CGFloat {
+        guard session.rendersOnDevice, raw["display_mode"]?.stringValue != "fullscreen", raw["caption_clear"] != .bool(true) else { return y }
+        return min(y, CGFloat(NativeEditorRenderCompiler.deviceCardMaxYFraction))
+    }
+
     private func makeLaneObjects() -> [NativeEditorPreviewObject] {
         let document = session.document
         let captionsEnabled = nativeBool(document.captionMeta["enabled"]) ?? !document.captionCues.isEmpty
@@ -205,14 +222,15 @@ struct NativeVideoPreview: View {
                 let overlay = document.mediaOverlays.first { $0.id == item.id }
                 return NativeEditorPreviewObject(
                     item: item, text: nil,
-                    position: overlay.map { nativeVisualPosition($0.raw, fallback: CGPoint(x: 0.78, y: 0.25)) },
+                    position: overlay.map { renderedCardPosition($0) },
                     style: nil,
                     title: "Media overlay",
                     render: .mediaOverlay,
                     detail: overlay.map { nativeEffectName($0.raw, fallback: $0.kind ?? "Overlay") },
                     scale: overlay.map { nativeVisualScale($0.raw) } ?? 0.35,
                     fullscreen: overlay.map { nativeIsFullscreen($0.raw) } ?? false,
-                    rotation: overlay?.raw["editor_style"]?.objectValue?["rotation_deg"]?.numberValue ?? 0
+                    rotation: overlay?.raw["editor_style"]?.objectValue?["rotation_deg"]?.numberValue ?? 0,
+                    zoom: overlay.map { nativeVisualZoom($0.raw) } ?? 1
                 )
             case .visualBlock:
                 let block = document.visualBlocks.first { $0.id == item.id }
@@ -225,8 +243,14 @@ struct NativeVideoPreview: View {
                     detail: block?.kind,
                     scale: block.map { nativeVisualScale($0.raw) } ?? 0.35,
                     fullscreen: block.map { nativeIsFullscreen($0.raw) } ?? false,
-                    rotation: block?.raw["editor_style"]?.objectValue?["rotation_deg"]?.numberValue ?? 0
+                    rotation: block?.raw["editor_style"]?.objectValue?["rotation_deg"]?.numberValue ?? 0,
+                    zoom: block.map { nativeVisualZoom($0.raw) } ?? 1
                 )
+            case .drawing:
+                // Tap-selectable only: the selected drawing's own transform layer does the move / pinch / rotate.
+                guard let drawing = document.drawings.first(where: { $0.id == item.id }) else { return nil }
+                return NativeEditorPreviewObject(item: item, text: nil, position: CGPoint(x: drawing.centerX, y: drawing.centerY),
+                    style: nil, title: "Drawing", render: .runtimeOnly, detail: nil, scale: CGFloat(drawing.scale), rotation: drawing.rotationDeg)
             case .carousel:
                 return NativeEditorPreviewObject(item: item, text: nil, position: CGPoint(x: 0.5, y: 0.78), style: nil, title: "Carousel moment", render: .carousel, detail: nil)
             case .motionScene:
@@ -299,6 +323,12 @@ struct NativeVideoPreview: View {
 
     private func frame(for object: NativeEditorPreviewObject, in size: CGSize) -> CGRect {
         if object.item.kind == .speaker { return speakerBox(for: object.item.selection, in: size) }
+        if object.item.kind == .drawing {
+            guard let drawing = session.drawing(id: object.item.id) else { return .zero }
+            let box = NativeDrawingTransformLayer.boxSize(of: drawing, in: size)
+            let centre = NativeDrawingTransformLayer.centre(of: drawing, in: size)
+            return CGRect(x: centre.x - box.width / 2, y: centre.y - box.height / 2, width: box.width, height: box.height)
+        }
         if object.item.id == liveTextBaseline?.id, let live = liveText.frame(in: size) {
             return live
         }
@@ -311,7 +341,7 @@ struct NativeVideoPreview: View {
             return CGRect(origin: .zero, size: size).insetBy(dx: 6, dy: 6)
         }
         if let position = object.position {
-            let width = min(size.width * object.scale, max(44, size.width - 24))
+            let width = min(size.width * object.scale * object.zoom, max(44, size.width - 24))
             let height = max(44, 54 * object.scale)
             let center = CGPoint(
                 x: min(max(width / 2, position.x * size.width), size.width - width / 2),
@@ -441,14 +471,16 @@ struct NativeVideoPreview: View {
         }
         let ordered = candidates.map(\.selection)
         let next: EditorSelection
-        let pointIsNearPrevious = lastTapPoint.map { hypot($0.x - point.x, $0.y - point.y) <= 12 } ?? false
+        // Kept as canvas fractions: selecting a caption or drawing opens a panel that resizes the preview, so the
+        // same spot on the picture is a different point value on the next tap.
+        let pointIsNearPrevious = lastTapPoint.map { hypot($0.x * size.width - point.x, $0.y * size.height - point.y) <= 12 } ?? false
         if pointIsNearPrevious, ordered == lastTapIDs, let selected = session.selection, let index = ordered.firstIndex(of: selected) {
             next = ordered[(index + 1) % ordered.count]
         } else {
             next = ordered[0]
         }
         lastTapIDs = ordered
-        lastTapPoint = point
+        lastTapPoint = CGPoint(x: point.x / max(size.width, 1), y: point.y / max(size.height, 1))
         session.select(next, seekToStart: false)
     }
 
@@ -458,15 +490,26 @@ struct NativeVideoPreview: View {
         guard let selection = session.selection,
               let selected = objects.first(where: { $0.item.selection == selection }) else { return false }
         if selection.kind == .speaker {
-            return speakerCorners(for: selection, in: size).contains { hypot(point.x - $0.x, point.y - $0.y) <= NativeTextTransformMath.cornerGrabRadius }
+            return speakerCorners(for: selection, in: size).contains { NativeTextTransformMath.inGrabZone(point, corner: $0) }
         }
         let bounds = frame(for: selected, in: size)
-        let corner = NativeTextTransformMath.cornerPoint(of: bounds, rotationDegrees: selected.rotation)
-        return hypot(point.x - corner.x, point.y - corner.y) <= NativeTextTransformMath.cornerGrabRadius
+        let reach = selected.item.kind == .text
+            ? [NativeTextTransformMath.cornerPoint(of: bounds, rotationDegrees: selected.rotation)]
+            : NativeTextTransformMath.corners(of: bounds, rotationDegrees: selected.rotation)
+        return reach.contains { NativeTextTransformMath.inGrabZone(point, corner: $0) }
     }
 
     private func directMoveCandidate(at point: CGPoint, in size: CGSize) -> NativeEditorPreviewObject? {
-        NativeEditorInteraction.previewOrder(
+        // An already-selected item wins a drag over whatever is stacked on top of it (reached by tap-cycling).
+        if let selection = session.selection,
+           let selected = objects.first(where: { $0.item.selection == selection }),
+           NativeEditorInteraction.visible([selected.item], at: clock.currentTime).isEmpty == false,
+           canDirectlyPosition(selected),
+           selected.item.kind != .speaker || speakerIsDrawnNow(),
+           NativeEditorInteraction.contains(point, in: frame(for: selected, in: size), rotationDegrees: selected.rotation) {
+            return selected
+        }
+        return NativeEditorInteraction.previewOrder(
             NativeEditorInteraction.visible(objects.map(\.item), at: clock.currentTime)
         )
         .reversed()
@@ -548,7 +591,7 @@ struct NativeVideoPreview: View {
         if directMoveObjectID == nil, let selection = session.selection, selection.kind == .speaker,
            let speaker = objects.first(where: { $0.item.selection == selection }), canDirectlyPosition(speaker),
            let frame = session.speakerFrame(for: selection),
-           speakerCorners(for: selection, in: size).contains(where: { hypot(value.startLocation.x - $0.x, value.startLocation.y - $0.y) <= NativeTextTransformMath.cornerGrabRadius }) {
+           speakerCorners(for: selection, in: size).contains(where: { NativeTextTransformMath.inGrabZone(value.startLocation, corner: $0) }) {
             beginDangerGuide(for: speaker, in: size)
             directMoveObjectID = speaker.id
             beginSpeakerGesture(selection)
@@ -563,8 +606,10 @@ struct NativeVideoPreview: View {
            let selected = objects.first(where: { $0.item.selection == selection }),
            selected.item.kind != .text, selected.item.kind != .speaker, canDirectlyPosition(selected), session.canRotateVisual(selected.item.selection) {
             let bounds = frame(for: selected, in: size)
-            let corner = NativeTextTransformMath.cornerPoint(of: bounds, rotationDegrees: selected.rotation)
-            if NativeTextTransformMath.grabsCorner(at: value.startLocation, corner: corner, bounds: bounds) {
+            // All four drawn handles are grabbable (44pt zones), not only the bottom-right one.
+            if NativeTextTransformMath.corners(of: bounds, rotationDegrees: selected.rotation).contains(where: {
+                NativeTextTransformMath.grabsCorner(at: value.startLocation, corner: $0, bounds: bounds)
+            }) {
                 beginDangerGuide(for: selected, in: size)
                 directMoveObjectID = selected.id
                 visualTransformBaseline = selected
@@ -629,8 +674,20 @@ struct NativeVideoPreview: View {
             guard let viewport = session.speakerViewport(for: object.item.selection, at: clock.currentTime) else { return }
             onMove(NativeSpeakerPanelGeometry.movedPosition(from: baseline, translation: value.translation, canvas: size, viewport: viewport))
         } else {
-            onMove(position)
-            liveMediaTranslation = CGPoint(x: position.x - baseline.x, y: position.y - baseline.y)
+            var landed = position
+            if object.item.kind == .mediaOverlay || object.item.kind == .visualBlock {
+                // Same centre snap + tick as the speaker frame.
+                let x = NativeSpeakerFrameGesture.snappedToCenter(position.x), y = NativeSpeakerFrameGesture.snappedToCenter(position.y)
+                if (x.snapped && !speakerSnapX) || (y.snapped && !speakerSnapY) { textAlignmentHaptic.selectionChanged() }
+                speakerSnapX = x.snapped; speakerSnapY = y.snapped
+                landed = CGPoint(x: x.value, y: y.value)
+            }
+            if object.item.kind == .mediaOverlay,
+               let raw = session.document.mediaOverlays.first(where: { $0.id == object.item.id })?.raw {
+                landed.y = clampedCardY(landed.y, raw: raw)
+            }
+            onMove(landed)
+            liveMediaTranslation = CGPoint(x: landed.x - baseline.x, y: landed.y - baseline.y)
         }
     }
 
@@ -750,7 +807,10 @@ struct NativeVideoPreview: View {
         case .text:
             return { point in session.setTextPosition(id: object.item.id, x: point.x, y: point.y) }
         case .mediaOverlay:
-            return { point in session.setMediaOverlayPosition(id: object.item.id, x: point.x, y: point.y) }
+            return { point in
+                let raw = session.document.mediaOverlays.first { $0.id == object.item.id }?.raw ?? [:]
+                session.setMediaOverlayPosition(id: object.item.id, x: point.x, y: clampedCardY(point.y, raw: raw))
+            }
         case .visualBlock:
             return { point in session.setVisualBlockOverlayLayout(id: object.item.id, x: point.x, y: point.y) }
         case .speaker:
@@ -796,6 +856,7 @@ struct NativeVideoPreview: View {
     }
 
     var body: some View {
+        let displayTicket = session.admissiblePreviewDisplayTicket
         ZStack(alignment: .topLeading) {
             Color.black
             if session.document.editorState == "empty" {
@@ -823,14 +884,49 @@ struct NativeVideoPreview: View {
                 }
                 .foregroundStyle(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityElement(children: .contain)
-            } else if session.canDisplayCurrentPlayer, let player = session.player {
+            } else if let player = session.player, session.canDisplayCurrentPlayer || session.isShowingPreviousPreview {
                 ZStack {
-                    NativeEditorPlayerSurface(player: player)
+                    NativeEditorPlayerSurface(player: player, readinessID: displayTicket,
+                        onReadyForDisplay: { session.previewFrameWasShown(player: player, ticket: displayTicket) })
                         .aspectRatio(session.previewAspectRatio, contentMode: .fit)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .accessibilityLabel("Video preview")
-                        .accessibilityAction(named: "Expand preview") { onEmptyTap?() }
-                    if let frame = session.scrubPreviewFrame {
+                        .accessibilityHidden(session.isShowingPreviousPreview)
+                        .accessibilityAction(named: "Expand preview") {
+                            if !session.isShowingPreviousPreview { onEmptyTap?() }
+                        }
+                    if let previous = session.previousPreviewPresentation {
+                        Group {
+                            if let frame = previous.frame {
+                                Image(uiImage: frame).resizable()
+                            } else {
+                                NativeEditorPlayerSurface(player: previous.player)
+                            }
+                        }
+                        .aspectRatio(previous.aspectRatio, contentMode: .fit)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(.black)
+                        .overlay(alignment: .top) {
+                            VStack(spacing: 4) {
+                                Text(previous.status.message)
+                                    .font(KriaFont.body(12)).foregroundStyle(.white)
+                                    .multilineTextAlignment(.center)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .accessibilityIdentifier("native-editor-previous-preview-status")
+                                if previous.status != .updating {
+                                    Button("Retry preview") { Task { await session.retryPreview() } }
+                                        .foregroundStyle(.white).frame(minHeight: 44)
+                                        .accessibilityIdentifier("native-editor-previous-preview-retry")
+                                }
+                            }
+                            .padding(8)
+                            .frame(maxWidth: .infinity)
+                            .background(.black, in: RoundedRectangle(cornerRadius: 8))
+                            .padding(8)
+                        }
+                        .accessibilityElement(children: .contain)
+                    }
+                    if !session.isShowingPreviousPreview, let frame = session.scrubPreviewFrame {
                         Image(uiImage: frame)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
@@ -928,9 +1024,15 @@ struct NativeVideoPreview: View {
                                 rotation: footprint.rotation, canvas: proxy.size),
                             followsFace: speakerGestureBaseline != nil && liveMediaFrame?.face != nil)
                     }
-                    if speakerGestureBaseline != nil, let selection = speakerGestureSelection,
-                       let viewport = session.speakerViewport(for: selection, at: clock.currentTime) {
-                        let rect = NativeSpeakerPanelGeometry.pixelRect(viewport, canvas: proxy.size)
+                    if speakerGestureBaseline != nil || directMoveObjectID != nil {
+                        // The middle lines the dragged object's centre snapped to: its own panel for a speaker, else the canvas.
+                        let rect: CGRect = {
+                            if speakerGestureBaseline != nil, let selection = speakerGestureSelection,
+                               let viewport = session.speakerViewport(for: selection, at: clock.currentTime) {
+                                return NativeSpeakerPanelGeometry.pixelRect(viewport, canvas: proxy.size)
+                            }
+                            return CGRect(origin: .zero, size: proxy.size)
+                        }()
                         if speakerSnapX { Rectangle().fill(KriaColor.sky).frame(width: 1, height: rect.height).offset(x: rect.midX, y: rect.minY) }
                         if speakerSnapY { Rectangle().fill(KriaColor.sky).frame(width: rect.width, height: 1).offset(x: rect.minX, y: rect.midY) }
                     }
@@ -959,6 +1061,16 @@ struct NativeVideoPreview: View {
                         selectPreviewObject(at: value.location, in: proxy.size)
                     }
                 )
+                // The selected drawing's transform layer sits above this canvas and swallows taps; it forwards them
+                // here so a drawing can be tap-cycled past like every other kind.
+                .onChange(of: proxy.size, initial: true) { _, canvas in
+                    // Needs this view's tap-cycling state, so it holds the view (and the session); the cycle is
+                    // broken by clearing it in onDisappear below.
+                    session.previewTapForwarder = { fraction in
+                        selectPreviewObject(at: CGPoint(x: fraction.x * canvas.width, y: fraction.y * canvas.height), in: canvas)
+                    }
+                }
+                .onDisappear { session.previewTapForwarder = nil }
             }
             .accessibilityElement(children: .contain)
             // The canvas's full-size gesture surface used to sit over the failure UI and swallow every
@@ -966,7 +1078,9 @@ struct NativeVideoPreview: View {
             // message sits underneath and the canvas has nothing to interact with. When the finished
             // render still plays, the fallback card below is drawn above the canvas instead, so its
             // buttons work and tap-to-fullscreen on the empty canvas keeps working.
-            .allowsHitTesting(session.document.editorState != "empty" && !(session.sourcePreviewState.isFailure && !session.isShowingRenderedFallback))
+            .opacity(session.isShowingPreviousPreview ? 0 : 1)
+            .accessibilityHidden(session.isShowingPreviousPreview)
+            .allowsHitTesting(!session.isShowingPreviousPreview && session.document.editorState != "empty" && !(session.sourcePreviewState.isFailure && !session.isShowingRenderedFallback))
 
             if session.showsEditApplied {
                 Label("Edit applied", systemImage: "checkmark.circle.fill")
@@ -1096,19 +1210,28 @@ struct NativeEditorFullscreenPreview: View {
     @State private var ready = false
 
     var body: some View {
+        let previous = session.previousPreviewPresentation
         ZStack {
             Color.black
-            if let player = session.player {
+            if let player = previous?.player ?? session.player {
                 NativeEditorPlayerSurface(player: player, onReadyForDisplay: { ready = true })
-                    .aspectRatio(session.previewAspectRatio, contentMode: .fit)
+                    .aspectRatio(previous?.aspectRatio ?? Double(session.previewAspectRatio), contentMode: .fit)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                if let frame = session.scrubPreviewFrame {
+                if let frame = previous?.frame ?? (previous == nil ? session.scrubPreviewFrame : nil) {
                     Image(uiImage: frame)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .allowsHitTesting(false)
                 }
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if let previous {
+                Text(previous.status.message)
+                    .font(KriaFont.body(12)).foregroundStyle(.white)
+                    .multilineTextAlignment(.center).padding(12)
+                    .background(.black.opacity(0.8))
             }
         }
         .frame(width: size.width, height: size.height)
@@ -1123,6 +1246,7 @@ struct NativeEditorFullscreenPreview: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Video preview, fullscreen")
+        .accessibilityValue(previous?.status.message ?? "")
         .accessibilityIdentifier("native-editor-preview-fullscreen")
     }
 }
@@ -1137,17 +1261,17 @@ struct NativeEditorFullscreenPreview: View {
 private struct NativeEditorPlayerSurface: UIViewRepresentable {
     let player: AVPlayer
     /// Fires once the layer has a frame to show (immediately if it already does).
-    var onReadyForDisplay: (() -> Void)? = nil
+    var readinessID: NativeEditorPreviewWork? = nil
+    var onReadyForDisplay: (@MainActor () -> Void)? = nil
 
     func makeUIView(context: Context) -> Surface {
         let view = Surface()
-        view.playerLayer.player = player
-        view.observeReadiness(onReadyForDisplay)
+        view.configure(player: player, ticket: readinessID, onReady: onReadyForDisplay)
         return view
     }
 
     func updateUIView(_ view: Surface, context: Context) {
-        if view.playerLayer.player !== player { view.playerLayer.player = player }
+        view.configure(player: player, ticket: readinessID, onReady: onReadyForDisplay)
     }
 
     final class Surface: UIView {
@@ -1155,11 +1279,28 @@ private struct NativeEditorPlayerSurface: UIViewRepresentable {
         var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
         private var readiness: NSKeyValueObservation?
 
-        func observeReadiness(_ onReady: (() -> Void)?) {
+        private weak var observedPlayer: AVPlayer?
+        private weak var observedItem: AVPlayerItem?
+        private var observedTicket: NativeEditorPreviewWork?
+        private var reportedReady = false
+
+        func configure(player: AVPlayer, ticket: NativeEditorPreviewWork?, onReady: (@MainActor () -> Void)?) {
+            let item = player.currentItem
+            guard observedPlayer !== player || observedItem !== item || observedTicket != ticket else { return }
+            readiness?.invalidate()
+            observedPlayer = player; observedItem = item; observedTicket = ticket; reportedReady = false
+            if playerLayer.player !== player { playerLayer.player = player }
             guard let onReady else { return }
-            readiness = playerLayer.observe(\.isReadyForDisplay, options: [.initial, .new]) { layer, _ in
+            readiness = playerLayer.observe(\.isReadyForDisplay, options: [.initial, .new]) { [weak self, weak player, weak item] layer, _ in
                 guard layer.isReadyForDisplay else { return }
-                DispatchQueue.main.async(execute: onReady)
+                DispatchQueue.main.async { [weak self, weak player, weak item] in
+                    guard let self, let player, let item, !self.reportedReady,
+                          self.observedPlayer === player, self.observedItem === item,
+                          self.observedTicket == ticket, self.playerLayer.player === player,
+                          self.playerLayer.isReadyForDisplay, player.currentItem === item else { return }
+                    self.reportedReady = true
+                    onReady()
+                }
             }
         }
 
@@ -1186,6 +1327,9 @@ private struct NativeEditorPreviewObject: Identifiable, Equatable {
     let scale: CGFloat
     let fullscreen: Bool
     let rotation: Double
+    /// A media card's `editor_style.zoom`: the card is drawn `scale * zoom` wide. Only the frame shown before the
+    /// live preview is ready reads it; the ready frame is the rendered footprint. Resizing keeps writing `scale`.
+    let zoom: CGFloat
 
     init(
         item: NativeEditorTimelineItem,
@@ -1197,7 +1341,8 @@ private struct NativeEditorPreviewObject: Identifiable, Equatable {
         detail: String? = nil,
         scale: CGFloat = 0.84,
         fullscreen: Bool = false,
-        rotation: Double = 0
+        rotation: Double = 0,
+        zoom: CGFloat = 1
     ) {
         self.item = item
         self.text = text
@@ -1209,6 +1354,7 @@ private struct NativeEditorPreviewObject: Identifiable, Equatable {
         self.scale = scale
         self.fullscreen = fullscreen
         self.rotation = rotation
+        self.zoom = zoom
     }
 
     var id: String { "\(item.kind.rawValue)-\(item.id)" }
@@ -1306,7 +1452,9 @@ private struct NativePreviewObjectView: View {
         .frame(width: frame.width, height: frame.height)
         .contentShape(Rectangle())
         .overlay {
-            if isSelected {
+            // A selected drawing's outline comes from NativeDrawingTransformLayer, which follows the live gesture;
+            // drawing a second one here (from the unchanged document) would show two boxes mid-drag.
+            if isSelected, object.item.kind != .drawing {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .stroke(KriaColor.sky, lineWidth: 2)

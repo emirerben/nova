@@ -100,13 +100,17 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # #2131 (Qendresa says-done cases 6-8) rewords the brief section's caption-count and cleanup
 # sentences: the two brief-on hashes re-pinned (v136's: b4ebb285… / bbccdc91…); brief-off
 # unchanged.
+# KRI-971: the two brief-on hashes re-pinned (the keep-a-take-whole sentence also records
+# speech_cleanup false; before: 1d002672… / 7d7d75bc…); brief-off unchanged.
+# KRI-1292: the two brief-on hashes re-pinned again (the spoken-word text asks for a typed
+# `hold_s`; before: 63a22d0d… / 7ed8c8f9…); brief-off unchanged.
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "7d7d75bc140c9d5fc3d641fc1324293f141afea76e3c5bd2ae30eccd4f5ff132",
-    (True, False): "e3de37c194b88bd906568375111a33a5d8ec8bdab981a29ff6f377162710e87e",
-    (False, True): "1d0026727df973ae2e6c8a7da8d05b0c71a9eb4d79862602c5132bdb9235ca06",
-    (False, False): "e804c3135cb2e6eae9093216bee3ee0d97159aa120c2b1eef8e34e61a3d37240",
+    (True, True): "b159312d0744a6d6724fef15bfdb730b4bbc3dc80a9d05b0450c86a62ab3845f",
+    (True, False): "42a19e30cae3fadac2dd65318b2af49ca4a5d70332e17f714aa5875af6433914",
+    (False, True): "3df1401c3a50e8648eacce2dd9cbc3b34e06b87ef11439aec124107546506376",
+    (False, False): "68d42cab5cc0d03ccf3cf164d19bccba9193f01a9409d802acc0454b4adce777",
 }
 
 

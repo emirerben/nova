@@ -116,6 +116,13 @@ def test_unsaved_role_renders_what_the_endpoint_says(role):
         assert resolved["alignment"] == row["alignment"]
 
 
+@pytest.mark.parametrize("role", sorted(ROW_IDS))
+def test_every_role_renders_the_advertised_shadow_off_whatever_the_writer_authored(role):
+    (resolved,) = resolve_phone_text_style([_row(role)], preferences={}, requested={})
+    assert text_style_defaults()["roles"][role]["shadow"] == "off"
+    assert resolved["shadow_enabled"] is False
+
+
 def test_label_usual_spot_is_where_a_default_label_stays():
     spot = text_style_defaults()["roles"]["label"]["usual_position"]
     x, y, alignment = LABEL_ANCHORS[spot]

@@ -139,17 +139,6 @@ enum VideoShapeCopy {
         orientation == RenderShapeOffer.landscape ? "Landscape 16:9" : "Vertical 9:16"
     }
     static func fitTitle(_ fit: String) -> String { fit == RenderShapeOffer.fill ? "Crop" : "Black bars" }
-    static func editorOrientationNote(_ orientation: String) -> String {
-        orientation == RenderShapeOffer.landscape ? "Wide frame for YouTube and the web." : "Tall frame for TikTok, Reels and Shorts."
-    }
-    /// The one-line reminder under the confirm card. Mentions bars/crop only when the
-    /// offer actually draws that row (`offersFit`); otherwise names the frame alone.
-    static func cardNote(for offer: RenderShapeOffer, choice: RenderShapeChoice) -> String {
-        guard offer.offersFit else { return editorOrientationNote(choice.orientation) }
-        return choice.orientation == RenderShapeOffer.landscape
-            ? "Sideways clips fill the wide frame."
-            : "Pick how sideways clips sit in the tall frame."
-    }
 }
 
 /// A two-option choice drawn as a pill pair. Each segment is a 44pt-minimum touch
@@ -294,8 +283,8 @@ private struct FrameGlyph: View {
     }
 }
 
-/// The picker as a card on the confirm screens, with a one-line reminder of what
-/// the choice does. The card only exists for an offer the creator can act on.
+/// The picker as a card on the confirm screens. The card only exists for an offer
+/// the creator can act on.
 struct VideoShapeCard: View {
     let offer: RenderShapeOffer
     @Binding var choice: RenderShapeChoice
@@ -303,21 +292,13 @@ struct VideoShapeCard: View {
 
     var body: some View {
         if offer.isChoosable {
-            VStack(alignment: .leading, spacing: 10) {
-                VideoShapePicker(offer: offer, choice: $choice, isEnabled: isEnabled)
-                // The bars/crop hint only makes sense when the offer draws the fit row; an
-                // orientation-only offer gets the plain frame note instead.
-                Text(VideoShapeCopy.cardNote(for: offer, choice: choice))
-                    .font(KriaFont.body(12))
-                    .foregroundStyle(KriaColor.zinc)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(KriaColor.fill)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("video-shape-card")
+            VideoShapePicker(offer: offer, choice: $choice, isEnabled: isEnabled)
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(KriaColor.fill)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("video-shape-card")
         }
     }
 }

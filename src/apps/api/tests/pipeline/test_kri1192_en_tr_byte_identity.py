@@ -316,7 +316,12 @@ def _platform() -> str:
     return f"{sys.platform}-{platform.machine()}"
 
 
-def test_english_and_turkish_caption_outputs_are_byte_identical_to_main():
+def test_english_and_turkish_caption_outputs_are_byte_identical_to_main(monkeypatch):
+    # The phone recipe goldens predate the KRI-632 row budget (a cue the Kria mark forces past
+    # two rows is split in time); that switch is covered in test_phone_caption_row_budget.py.
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "phone_caption_row_budget_enabled", False)
     golden = json.loads(GOLDEN.read_text(encoding="utf-8"))
     outputs = collect_outputs()
     assert sorted(outputs) == sorted(golden["outputs"]), "output set changed"

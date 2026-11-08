@@ -1177,3 +1177,97 @@ def test_a_stored_generation_prompt_reaches_the_agent_input(monkeypatch):
     sent = captured["input"].assets[0]
     assert sent.generation_prompt == "a glass of beer on a bar"
     assert sent.description == "Beer"
+
+
+# --- KRI-903: a card never covers an object the creator marked --------------------------------
+
+# The plate sits where a card starts life (the upper-right corner) for 3.0-5.0 s.
+PLATE = NormalizedBox(0.55, 0.05, 0.98, 0.40)
+
+
+def _plate(start_s: float = 2.5, end_s: float = 5.5) -> list[ProtectedRegion]:
+    return [ProtectedRegion(start_s, end_s, PLATE, kind="object")]
+
+
+def _card_box(card, aspect: float = 1.0) -> NormalizedBox:
+    return _box_for_overlay(
+        {"position": "custom", "x_frac": card.x_frac, "y_frac": card.y_frac, "scale": card.scale},
+        footprint=MediaFootprint(aspect_ratio=aspect),
+    )
+
+
+def _ground_one_card(monkeypatch, faces=(), **extra):
+    _patch_assets(monkeypatch, [_asset("a1", subject="screenshot")])
+    monkeypatch.setattr(pg.settings, "gemini_api_key", None, raising=False)
+    monkeypatch.setattr(
+        pg, "heuristic_match", lambda *a, **k: [_placement("a1", start_s=3.0, end_s=5.0)]
+    )
+    monkeypatch.setattr(
+        pg,
+        "sample_face_regions",
+        lambda *a, **k: (list(faces), {"attempted": 3, "detected": len(faces)}),
+    )
+    return pg.ground_phone_subtitled_overlays(
+        _open_session,
+        job_id=str(uuid.uuid4()),
+        words=WORDS,
+        duration_s=15.0,
+        clip_path="/tmp/clip.mp4",
+        **extra,
+    )
+
+
+def test_a_card_moves_off_a_marked_object_it_would_have_covered(monkeypatch):
+    plain = _ground_one_card(monkeypatch)
+    assert _card_box(plain.cards[0]).intersection_area(PLATE) > 0, "fixture: default covers it"
+
+    guarded = _ground_one_card(monkeypatch, protected_regions=_plate())
+
+    assert len(guarded.cards) == 1
+    assert _card_box(guarded.cards[0]).intersection_area(PLATE) == 0.0
+
+
+def test_a_card_not_on_screen_with_the_marked_object_is_left_where_it_was(monkeypatch):
+    plain = _ground_one_card(monkeypatch)
+    away = _ground_one_card(monkeypatch, protected_regions=_plate(start_s=8.0, end_s=9.0))
+    assert (away.cards[0].x_frac, away.cards[0].y_frac) == (
+        plain.cards[0].x_frac,
+        plain.cards[0].y_frac,
+    )
+
+
+def test_a_card_with_no_room_beside_the_marked_object_is_reported_never_placed_on_it(monkeypatch):
+    everything = [ProtectedRegion(0.0, 15.0, NormalizedBox(0.0, 0.0, 1.0, 1.0), kind="object")]
+    result = _ground_one_card(monkeypatch, protected_regions=everything)
+    assert result.cards == []
+    assert result.receipt["unplaced"][0]["reason"] == "no_safe_spot"
+
+
+def test_the_card_layout_path_keeps_off_the_marked_object_too(monkeypatch):
+    from app.services.phone_card_layout import CardLayoutContext
+
+    speaker = [
+        ProtectedRegion(0.0, float("inf"), NormalizedBox(0.35, 0.40, 0.65, 0.58), kind="face")
+    ]
+    plain = _ground_one_card(monkeypatch, faces=speaker, card_layout=CardLayoutContext())
+    guarded = _ground_one_card(
+        monkeypatch,
+        faces=speaker,
+        card_layout=CardLayoutContext(),
+        protected_regions=_plate(),
+    )
+
+    def box(result):
+        card = result.cards[0]
+        return _box_for_overlay(
+            {
+                "position": "custom",
+                "x_frac": card.x_frac,
+                "y_frac": card.y_frac,
+                "scale": card.scale,
+            },
+            footprint=MediaFootprint(aspect_ratio=1.0),
+        )
+
+    assert box(plain).intersection_area(PLATE) > 0, "fixture: the layout covers it unguarded"
+    assert guarded.cards and box(guarded).intersection_area(PLATE) == 0.0

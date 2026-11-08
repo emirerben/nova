@@ -47,6 +47,7 @@ from app.kria.plan_contract import (
     PlanSectionUndoOut,
 )
 from app.kria.reply_language import say
+from app.kria.spoken_text_ask import is_spoken_text_bar
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -330,6 +331,10 @@ def section_of_text_bar(bar: dict[str, Any], *, clip_bar_ids: frozenset[str] = f
     if is_caption_bar(bar):
         return "captions"
     role = str(bar.get("role") or "")
+    if is_spoken_text_bar(bar):
+        # KRI-747: a text the creator put on a spoken word is an overlay; it keeps the title's
+        # `generative_intro` role only because the renderers draw that role.
+        return "overlays"
     if bar_id.startswith("guided-title") or role in {"title", "intro", "hook", "generative_intro"}:
         return "title"
     if (
@@ -664,6 +669,19 @@ class RepairReport:
         return bool(self.reverted_fields or self.reverted_bars)
 
 
+def _meta_changes(meta: dict[str, Any], before: dict[str, Any]) -> dict[str, Any]:
+    """The ``caption_meta`` keys that are edits. A look key equal to its pre-edit value next to
+    a real change is a companion, not an edit: Save replaces ``caption_meta`` wholesale, so the
+    planned lyric look travels with a captions toggle and scope must not strip it."""
+    prior = before.get("caption_meta") or {}
+    changes = {
+        k: v
+        for k, v in meta.items()
+        if k == "enabled" or (k, v) != ("font_set", False) and (k not in prior or prior[k] != v)
+    }
+    return changes or dict(meta)
+
+
 def repair_payload(
     data: dict[str, Any],
     before: dict[str, Any],
@@ -691,16 +709,19 @@ def repair_payload(
                 out.pop(key)
     meta = out.get("caption_meta")
     if isinstance(meta, dict):
+        changes = _meta_changes(meta, before)
         kept = {
-            k: v for k, v in meta.items() if ("captions" if k == "enabled" else "look") in flagged
+            k: v
+            for k, v in changes.items()
+            if ("captions" if k == "enabled" else "look") in flagged
         }
-        if len(kept) != len(meta):
+        if len(kept) != len(changes):
             report.reverted_fields.append("caption_meta")
-            for k in meta:
+            for k in changes:
                 if k not in kept:
                     report.add_section("captions" if k == "enabled" else "look")
         if kept and kept != {"font_set": False}:
-            out["caption_meta"] = kept
+            out["caption_meta"] = {**kept, **{k: v for k, v in meta.items() if k not in changes}}
         else:
             out.pop("caption_meta")
     rows = out.get("text_elements")
@@ -779,7 +800,10 @@ def changed_sections(
                     bar_change_section(b.get(rid), a.get(rid), scope, clip_bar_ids=clip_bar_ids)
                 )
         elif lane == "caption_meta":
-            found.update("captions" if k == "enabled" else "look" for k in data["caption_meta"])
+            found.update(
+                "captions" if k == "enabled" else "look"
+                for k in _meta_changes(data["caption_meta"], before)
+            )
         elif lane in FIELD_SECTIONS:
             found.add(FIELD_SECTIONS[lane][0])
     return [s for s in SECTION_ORDER if s in found]
@@ -1011,13 +1035,21 @@ def build_restore_record(
                 put("captions", "caption_cues", {"value": before["caption_cues"]})
         elif lane == "caption_meta":
             prior = before.get("caption_meta") or {}
-            for key in data["caption_meta"]:
+            changes = _meta_changes(data["caption_meta"], before)
+            for key in changes:
                 if key in prior:
                     section = "captions" if key == "enabled" else "look"
                     spec = sections.setdefault(section, {}).setdefault(
                         "caption_meta", {"value": {}}
                     )
                     spec["value"][key] = prior[key]
+            # Restore replaces `caption_meta` wholesale, so the carried look goes back too.
+            for key in data["caption_meta"]:
+                if key in prior and key not in changes:
+                    for section in ("captions", "look"):
+                        spec = sections.get(section, {}).get("caption_meta")
+                        if spec is not None:
+                            spec["value"][key] = prior[key]
         elif lane in ("music_track_id", "remove_music"):
             if "music_track_id" in before:
                 put("music", "music_track_id", {"value": before["music_track_id"]})

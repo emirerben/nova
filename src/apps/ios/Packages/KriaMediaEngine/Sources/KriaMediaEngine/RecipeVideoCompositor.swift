@@ -192,7 +192,9 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
     let speakerSliceClipID: String?
     let canvas: CGRect
     let transparentBackground: Bool
-    init(timeRange: CMTimeRange, layers: [RecipeVideoLayer], text: [RecipeTextLayer], canvas: CGSize, cameraPulses: [CameraPulse] = [], motionScenes: NativeMotionPainter? = nil, textStore: NativeTextLayerStore? = nil, drawings: NativeDrawingStore? = nil, transparentBackground: Bool = false, subjectMatte: NativeSubjectMatte? = nil, speakerMatte: SpeakerMatte? = nil, speakerFrame: SpeakerFrame? = nil, fullScreenWindows: [SpeakerFullScreenWindow] = [], speakerSlice: SpeakerSlice = .whole, speakerSliceClipID: String? = nil) {
+    let playbackRevision: UUID?
+    init(timeRange: CMTimeRange, layers: [RecipeVideoLayer], text: [RecipeTextLayer], canvas: CGSize, cameraPulses: [CameraPulse] = [], motionScenes: NativeMotionPainter? = nil, textStore: NativeTextLayerStore? = nil, drawings: NativeDrawingStore? = nil, transparentBackground: Bool = false, subjectMatte: NativeSubjectMatte? = nil, speakerMatte: SpeakerMatte? = nil, speakerFrame: SpeakerFrame? = nil, fullScreenWindows: [SpeakerFullScreenWindow] = [], speakerSlice: SpeakerSlice = .whole, speakerSliceClipID: String? = nil, playbackRevision: UUID? = nil) {
+        self.playbackRevision = playbackRevision
         self.speakerSlice = speakerSlice
         self.speakerSliceClipID = speakerSliceClipID
         self.transparentBackground = transparentBackground
@@ -251,7 +253,26 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
 
 /// One deterministic compositor is used by AVPlayer and AVAssetReader/Writer. Text is sampled at
 /// composition time, so seeking and export cannot diverge through a wall-clock animation layer.
+final class PreviewPlaybackFrameReceipt: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pending: (revision: UUID, callback: @Sendable (Double) -> Void)?
+
+    func arm(revision: UUID, callback: @escaping @Sendable (Double) -> Void) {
+        lock.lock(); pending = (revision, callback); lock.unlock()
+    }
+    func cancel() { lock.lock(); pending = nil; lock.unlock() }
+    func complete(revision: UUID?, at time: Double) {
+        lock.lock()
+        guard let pending, pending.revision == revision else { lock.unlock(); return }
+        self.pending = nil
+        lock.unlock()
+        pending.callback(time)
+    }
+}
+
 class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
+    // Each AVPlayer / image generator has its own compositor; only the playback instance is armed.
+    let playbackFrameReceipt = PreviewPlaybackFrameReceipt()
     var sourcePixelBufferAttributes: [String: any Sendable]? { [
         kCVPixelBufferPixelFormatTypeKey as String: [kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
     ] }
@@ -300,6 +321,9 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                 if let drawings = instruction.drawings { frame = drawings.compose(over: frame, at: time, canvas: instruction.canvas) }
                 context.render(frame, to: output, bounds: instruction.canvas, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
                 request.finish(withComposedVideoFrame: output)
+                if instruction.speakerSlice == .whole {
+                    playbackFrameReceipt.complete(revision: instruction.playbackRevision, at: time)
+                }
             }
         }
     }

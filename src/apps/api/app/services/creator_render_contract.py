@@ -222,6 +222,9 @@ _CLIP_INTENT_LEAVES = (
     "op",
     "attribute",
     "source_kind",
+    # KRI-884: the creator's own sentence the intent quoted; picks which repeated wording
+    # the resolver and the render-time re-grounding print.
+    "source_quote",
     "label_source",
     "transcript_kind",
     "creator_text",
@@ -349,6 +352,7 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "selection_reconciliation.rejected_selections[].intent.position",
         "selection_reconciliation.rejected_selections[].intent.requirement_id",
         "selection_reconciliation.rejected_selections[].intent.source_kind",
+        "selection_reconciliation.rejected_selections[].intent.source_quote",
         "selection_reconciliation.rejected_selections[].intent.transcript_kind",
         "selection_reconciliation.rejected_selections[].intent.under_s",
         "selection_reconciliation.rejected_selections[].question_id",
@@ -751,6 +755,9 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "background_media.full_screen_opening_s",
         "background_media.focus",
         "background_media.focus_zoom",
+        "background_media.left_out[]",
+        "background_media.left_out[].name",
+        "background_media.left_out[].why",
         "background_media.speaker_frame",
         note=(
             "KRI-1117: kept, filled from the creator's camera pick, or dropped by "
@@ -815,6 +822,35 @@ FIELD_MATRIX: dict[str, FieldRule] = {
 }
 
 
+def _carries_source_quote(strategy: Mapping[str, Any]) -> bool:
+    """Whether any intent in the strategy holds a KRI-884 quote; legacy digests stay put."""
+
+    def quoted(intent: Any) -> bool:
+        value = (
+            intent.get("source_quote")
+            if isinstance(intent, Mapping)
+            else getattr(intent, "source_quote", None)
+        )
+        return value is not None
+
+    if any(
+        quoted(i)
+        for key in ("clip_intents", "resolved_clip_intents")
+        for i in strategy.get(key) or ()
+    ):
+        return True
+    reconciliation = strategy.get("selection_reconciliation")
+    rejected = (
+        reconciliation.get("rejected_selections")
+        if isinstance(reconciliation, Mapping)
+        else getattr(reconciliation, "rejected_selections", None)
+    )
+    return any(
+        quoted(r.get("intent") if isinstance(r, Mapping) else getattr(r, "intent", None))
+        for r in rejected or ()
+    )
+
+
 def field_matrix_for_strategy(strategy: Mapping[str, Any]) -> dict[str, FieldRule]:
     unused = set()
     if not strategy.get("confirmed_order_replacement"):
@@ -829,6 +865,14 @@ def field_matrix_for_strategy(strategy: Mapping[str, Any]) -> dict[str, FieldRul
         for intent in strategy.get(key) or ()
     ):
         unused.update({"clip_intents[].source_kind", "resolved_clip_intents[].source_kind"})
+    if not _carries_source_quote(strategy):
+        unused.update(
+            {
+                "clip_intents[].source_quote",
+                "resolved_clip_intents[].source_quote",
+                "selection_reconciliation.rejected_selections[].intent.source_quote",
+            }
+        )
     return {
         path: rule
         for path, rule in FIELD_MATRIX.items()
@@ -1670,6 +1714,16 @@ def build_render_contract(
         if position and status == "resolved" and clip_ids.intersection(members)
     }
     talking_edit = str(raw.get("edit_format") or "") in {"subtitled", "talking_head"}
+    # KRI-747: the Talking worker places a text on a spoken word only while its rollout is on
+    # (`PHONE_SUBTITLED_SPOKEN_TEXT_ENABLED` and a phone that draws the text lane). Off, nothing
+    # answers the ask, so the literal is pinned like any other text, as before KRI-707.
+    spoken_text_lane = False
+    if talking_edit:
+        from app.services.phone_rollout import (
+            phone_subtitled_spoken_text_supported,  # noqa: PLC0415
+        )
+
+        spoken_text_lane = phone_subtitled_spoken_text_supported()
     # A word-timed text ask is omitted from the ordinary exact-copy pin only
     # when this approval can actually use the native narrated word-text lane.
     # Other typed voiceover strategies still need their literal pinned, so a
@@ -1709,7 +1763,7 @@ def build_render_contract(
             # 29 Ekim: a `text_sequence` pins the same words as a `text` ask; the draft shows
             # them whole.
             if requirement.kind in {"text", "text_sequence"} and requirement.literal:
-                if (talking_edit or voiceover_spoken_text) and (
+                if (spoken_text_lane or voiceover_spoken_text) and (
                     requirement_spoken_text(requirement) is not None
                     or is_spoken_text_cue(requirement)
                 ):
@@ -2069,7 +2123,8 @@ def build_render_contract(
         audio_source_ids=source_ids,
         original_audio=original_audio,
         require_voiceover=bool(has_voiceover),
-        exact_texts=tuple(texts),
+        # KRI-1296: the strategy's pinned text and the brief's literal can name the same line.
+        exact_texts=tuple(t for i, t in enumerate(texts) if t not in texts[:i]),
         order_ids=order_ids,
         order_required=order_required,
         order_basis=order_basis,

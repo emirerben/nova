@@ -107,7 +107,8 @@ struct NativeVisualPanel: View {
                     }
                     .accessibilityIdentifier("native-editor-pending-visual-import")
                 }
-                if mediaSelected && !session.canEdit("visual_editor_style") {
+                // KRI-1264: a Talking card that zooms and animates has only its fit closed, and the Fit row says so.
+                if mediaSelected && !(selected.map { session.canStyleVisual($0) } ?? false) {
                     Text(styleUnavailableNote)
                         .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                         .accessibilityIdentifier("native-editor-visual-style-unavailable")
@@ -483,7 +484,7 @@ struct NativeVisualPanel: View {
                         Button("Bring forward") { session.moveVisualLayer(selected, by: 1) }.disabled(layerIndex >= peers.count - 1)
                         Button("Send backward") { session.moveVisualLayer(selected, by: -1) }.disabled(layerIndex == 0)
                     }
-                    slider("Zoom", value: Binding(get: { style["zoom"]?.numberValue ?? 1 }, set: { session.setVisualEditorStyle(selected, key: "zoom", value: .number($0)) }), range: 1...4).disabled(!session.canEdit("visual_editor_style"))
+                    slider("Zoom", value: Binding(get: { style["zoom"]?.numberValue ?? 1 }, set: { session.setVisualEditorStyle(selected, key: "zoom", value: .number($0)) }), range: 1...4).disabled(!session.canStyleVisual(selected))
                     slider("Rotation", value: Binding(get: { style["rotation_deg"]?.numberValue ?? 0 }, set: { session.setVisualEditorStyle(selected, key: "rotation_deg", value: .number($0)) }), range: -180...180).disabled(!session.canRotateVisual(selected))
                     Text("Drag to position. Use the corner to resize or rotate.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                 } else if selected.kind == .cameraEffect {
@@ -538,7 +539,7 @@ struct NativeVisualPanel: View {
                 }
                 slider("Animation speed", value: Binding(get: { animation["speed"]?.numberValue ?? 1 }, set: { setAnimation("speed", value: .number($0), selected: selected) }), range: 0.25...3)
                 Text("Changes motion speed. Visual timing stays the same.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
-            }.disabled(!session.canEdit("visual_editor_style"))
+            }.disabled(!session.canStyleVisual(selected))
         } else if let element = cardElement {
             NativeEditorTextPanel(id: element.id, session: session, initialTab: .animation, embeddedAnimation: true, onDone: { panelDrafts.visualTab = .edit })
         } else if selected?.kind == .motionScene || selected?.kind == .cameraEffect {

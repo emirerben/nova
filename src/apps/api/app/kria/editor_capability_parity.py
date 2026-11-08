@@ -317,6 +317,7 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "not_an_edit",
         "load save reconcileOnOpen reconcilePlaybackState needsReload isBehindActiveJob "
         "loadForEditorOpen setObserversVisible "
+        "beginPreviewPresentation endPreviewPresentation previewFrameWasShown "
         "adoptLatestJob adoptActiveJobFromThread switchToLatestJob keepEditingCurrentJob "
         "synchronizePromptRevision resumeRefreshSync refreshDeviceRender retryRender "
         "retryDeviceRender retryPreview retryPreviewRefresh rebaseCleanDraft "
@@ -360,7 +361,7 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "soundEffectPreviewURL visualLayerSelections visualRaw footageCrop footagePlaybackRate "
         "textElement textAnchor captionPosition captionStyleSize clipTilt tiltBlockedReason "
         "tiltBackdropIsMissing "
-        "canRotateVisual speakerBackgroundFocus canEditSpeakerFrame speakerEditingFrame "
+        "canRotateVisual canStyleVisual speakerBackgroundFocus canEditSpeakerFrame speakerEditingFrame "
         "speakerFrame speakerFrameRect speakerSelection speakerViewport usesScopedSpeakerFrame "
         "ownsTimingGesture",
         reason="Read-only queries the UI uses to decide what to offer.",

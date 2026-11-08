@@ -245,6 +245,62 @@ def copy_source_occurrence(row: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _has_song_lyric_captions(job: Any, variant: dict[str, Any]) -> bool:
+    """A creator-song video whose lyrics are caption rows in ``text_elements`` (KRI-1000).
+
+    They are not ``caption_cues``, so the caption family keys off them directly; the
+    caption panel's capability must also be open, as it is for the editor's own toggle.
+    """
+    from app.pipeline.song_captions import SONG_CAPTION_ORIGIN  # noqa: PLC0415
+
+    if not any(
+        isinstance(row, dict)
+        and not row.get("removed")
+        and is_caption_text_bar(row)
+        and (row.get("source_params") or {}).get("origin") == SONG_CAPTION_ORIGIN
+        for row in variant.get("text_elements") or []
+    ):
+        return False
+    if _guided_v2_revision(job, variant) is None:
+        # Hidden lyrics live on the guided revision. Without one there is nothing to read the
+        # toggle from or write it to, so chat must not claim captions are on (or offer them).
+        return False
+    caption_meta = _editor_capabilities(job, variant).get("caption_meta")
+    return caption_meta is True or (
+        isinstance(caption_meta, dict) and bool(caption_meta.get("editable"))
+    )
+
+
+def _saved_caption_meta(job: Any, variant: dict[str, Any]) -> dict[str, Any]:
+    """The guided revision's caption settings: Save writes them there, not on the variant."""
+    saved = (_guided_v2_revision(job, variant) or {}).get("caption_meta")
+    return saved if isinstance(saved, dict) else {}
+
+
+def _song_lyric_meta_carry(state: Any) -> dict[str, Any]:
+    """Planned lyric look a chat toggle must not drop.
+
+    Save replaces the revision's ``caption_meta`` wholesale, and the phone loads a draft's
+    the same way, so ``{"enabled": true}`` alone would lose the planned style and spot. These
+    ride in the payload only: the receipt still names just what the creator asked for.
+    """
+    if not _has_song_lyric_captions(state.job, state.variant):
+        return {}
+    saved = _saved_caption_meta(state.job, state.variant)
+    variant = state.variant
+    staged = {
+        "style": variant.get("voiceover_caption_style") or variant.get("caption_style"),
+        "y_frac": variant.get("caption_y_frac")
+        if variant.get("caption_y_frac") is not None
+        else variant.get("caption_margin_v"),
+    }
+    return {
+        key: saved[key]
+        for key in ("style", "y_frac")
+        if key in saved and staged[key] is None and key not in state.caption_patch
+    }
+
+
 def _variant_slots(variant: dict[str, Any], job: Any = None) -> list[dict[str, Any]]:
     """The variant's timeline slots; guided v2 variants fall back to the revision.
 
@@ -831,10 +887,11 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
             isinstance(transition, dict) and transition.get("editable") is True
         ):
             families.append("transition")
-    if variant.get("caption_cues") or variant.get("resolved_archetype") in {
-        "subtitled",
-        "talking_head",
-    }:
+    if (
+        variant.get("caption_cues")
+        or variant.get("resolved_archetype") in {"subtitled", "talking_head"}
+        or _has_song_lyric_captions(job, variant)
+    ):
         families.append("caption")
     if caps.get("automatic_cut") is True and variant.get("speech_cut_candidates"):
         families.append("automatic_cut")
@@ -1469,11 +1526,13 @@ def build_editor_snapshot(
     ]
     families = _allowed_families(job, variant)
     caps = _editor_capabilities(job, variant)
+    song_lyric_captions = _has_song_lyric_captions(job, variant)
     snapshot: dict[str, Any] = {
         "allowed_op_families": families,
         "base_generation": variant_render_baseline(variant),
         "has_narrated_captions": bool(cues)
-        or variant.get("resolved_archetype") in {"subtitled", "talking_head"},
+        or variant.get("resolved_archetype") in {"subtitled", "talking_head"}
+        or song_lyric_captions,
         "max_duration_s": MAX_PROPOSAL_DURATION_S,
         "remaining_duration_s": max(0.0, float(MAX_PROPOSAL_DURATION_S) - duration),
         "slots": slots,
@@ -1559,6 +1618,17 @@ def build_editor_snapshot(
             "total_cues": len(cues),
             "truncated": False,
         }
+        if song_lyric_captions and not cues:
+            # Hidden lyrics are `enabled: false` on the revision, not the variant. A staged
+            # chat patch (already on the variant) still wins over the saved value.
+            saved = _saved_caption_meta(job, variant)
+            meta = snapshot["captions"]["meta"]
+            if "captions_enabled" not in variant:
+                meta["enabled"] = saved.get("enabled", True)
+            if not (variant.get("voiceover_caption_style") or variant.get("caption_style")):
+                meta["style"] = saved.get("style", meta["style"])
+            if meta["y_frac"] is None:
+                meta["y_frac"] = saved.get("y_frac")
         advertised = {key: True for key in COPILOT_EDITOR_CAPABILITIES if caps.get(key) is True}
         if advertised:
             # Present only when ON, so every other snapshot stays byte-identical.
@@ -3407,7 +3477,9 @@ def compile_editor_ops(
         caption_cues=state.captions if "captions" in changed else None,
         drawings=state.drawings if "drawings" in changed else None,
         caption_meta=(
-            EditorCommitCaptionMeta(**state.caption_patch) if "caption_meta" in changed else None
+            EditorCommitCaptionMeta(**state.caption_patch, **_song_lyric_meta_carry(state))
+            if "caption_meta" in changed
+            else None
         ),
         timeline_slots=_timeline_models(state.slots) if "timeline" in changed else None,
         **(
@@ -3503,13 +3575,22 @@ def _before_lanes(
     if "captions" in changed:
         before["caption_cues"] = captions
     if "caption_meta" in changed:
+        hidden_lyrics = _has_song_lyric_captions(state.job, variant)
         before["caption_meta"] = {
-            key: variant.get("captions_enabled", True)
+            key: variant.get(
+                "captions_enabled",
+                _saved_caption_meta(state.job, variant).get("enabled", True)
+                if hidden_lyrics
+                else True,
+            )
             if key == "enabled"
             else variant.get(f"caption_{key}")
             for key in state.caption_patch
             if key != "font_set"
         }
+        # The carried lyric look is restored with the toggle, so Undo puts back the whole
+        # `caption_meta` Save replaced rather than `{enabled}` alone.
+        before["caption_meta"].update(_song_lyric_meta_carry(state))
     if "timeline" in changed:
         if state.split_screen_sections or state.initial_split_screen_sections:
             before["split_screen_sections"] = copy.deepcopy(state.initial_split_screen_sections)

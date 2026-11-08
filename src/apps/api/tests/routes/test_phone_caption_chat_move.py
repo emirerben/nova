@@ -196,6 +196,14 @@ def _ink_top(layers) -> float:
     return min(box[1] for box in boxes if box is not None)
 
 
+def _assert_baseline_anchors(job, y_frac: float) -> None:
+    """Every caption block sits at ``y_frac`` before the edit. How many layers the three cues
+    compile to is the font engine's call (a cue the Kria mark meets is split, KRI-632)."""
+    anchors = _anchor_ys(job)
+    assert len(anchors) >= 3
+    assert anchors == [pytest.approx(y_frac * _CANVAS_H)] * len(anchors)
+
+
 def _assert_anchored_at(job, y_frac: float) -> None:
     """Every caption block sits at ``y_frac`` -- or a watermark lift ABOVE it, never below."""
     expected = y_frac * _CANVAS_H
@@ -220,7 +228,7 @@ def test_chat_caption_move_reaches_the_phone_recipe(monkeypatch):
     job = caption_job(monkeypatch)
 
     # Ground the repro: revision 1 really has the prod geometry, over a letterboxed band.
-    assert _anchor_ys(job) == [pytest.approx(_PROD_Y_FRAC * _CANVAS_H)] * 3
+    _assert_baseline_anchors(job, _PROD_Y_FRAC)
     band_top, band_bottom = _video_band(job)
     assert (band_top, band_bottom) == (pytest.approx(656.25), pytest.approx(1263.75))
 
@@ -279,7 +287,7 @@ def test_caption_y_save_matrix(monkeypatch, legacy, y_frac, appearance_y, expect
     """F2-F5: whichever of ``y_frac`` / ``appearance.position_y_frac`` the creator CHANGED wins."""
     job = caption_job(monkeypatch, style_geometry=not legacy)
     baseline_y_frac = 0.8 if legacy else _PROD_Y_FRAC  # legacy default margin 384 -> 0.8
-    assert _anchor_ys(job) == [pytest.approx(baseline_y_frac * _CANVAS_H)] * 3
+    _assert_baseline_anchors(job, baseline_y_frac)
 
     appearance = (
         None

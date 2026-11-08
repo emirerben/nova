@@ -206,6 +206,55 @@ final class NativeEditorMergeTests: XCTestCase {
         XCTAssertEqual(result.state?.sections["text_elements"], .array([.object(["id": .string("a"), "text": .string("mine"), "color": .string("red"), "future": .bool(true)])]))
     }
 
+    func testStableTrimMergesExistingTextWordingButKeepsTimingAndSourceConflicts() {
+        let slot: [String: JSONValue] = ["slot_id": .string("slot"), "asset_id": .string("source-a"),
+            "in_s": .number(0), "duration_s": .number(3)]
+        let row: [String: JSONValue] = ["id": .string("text"), "text": .string("before"),
+            "start_s": .number(0), "end_s": .number(2), "font_family": .string("System")]
+        let base = state(["timeline_slots": .array([.object(slot)]), "text_elements": .array([.object(row)])])
+        var trim = slot; trim["duration_s"] = .number(2.5)
+        var wording = row; wording["text"] = .string("after"); wording["font_family"] = .string("Inter")
+        var local = base, remote = base
+        local.sections["timeline_slots"] = .array([.object(trim)])
+        remote.sections["text_elements"] = .array([.object(wording)])
+        for (left, right) in [(local, remote), (remote, local)] {
+            let result = NativeEditorMerge.merge(base: base, local: left, remote: right)
+            XCTAssertEqual(result.state?.sections["timeline_slots"], local.sections["timeline_slots"])
+            XCTAssertEqual(result.state?.sections["text_elements"], remote.sections["text_elements"])
+            XCTAssertTrue(result.conflicts.isEmpty)
+        }
+        var serializedTrim = trim
+        serializedTrim["parent_segment_id"] = .null
+        serializedTrim["look_adjustments"] = .null
+        serializedTrim["transition_duration_s"] = .null
+        serializedTrim["transition_after"] = .string("cut")
+        local.sections["timeline_slots"] = .array([.object(serializedTrim)])
+        let canonical = NativeEditorMerge.merge(base: base, local: local, remote: remote)
+        XCTAssertTrue(canonical.conflicts.isEmpty, "serializing known schema defaults is not a source change")
+        XCTAssertEqual(canonical.state?.sections["timeline_slots"], local.sections["timeline_slots"])
+        XCTAssertEqual(canonical.state?.sections["text_elements"], remote.sections["text_elements"])
+        var transition = serializedTrim; transition["transition_after"] = .string("dissolve")
+        local.sections["timeline_slots"] = .array([.object(transition)])
+        XCTAssertNil(NativeEditorMerge.merge(base: base, local: local, remote: remote).state)
+        var unknownSlot = serializedTrim; unknownSlot["future_source"] = .null
+        local.sections["timeline_slots"] = .array([.object(unknownSlot)])
+        XCTAssertNil(NativeEditorMerge.merge(base: base, local: local, remote: remote).state)
+        local.sections["timeline_slots"] = .array([.object(trim)])
+        var timed = wording; timed["end_s"] = .number(2.2)
+        remote.sections["text_elements"] = .array([.object(timed)])
+        XCTAssertNil(NativeEditorMerge.merge(base: base, local: local, remote: remote).state)
+        remote.sections["text_elements"] = .array([.object(wording)])
+        var replaced = trim; replaced["asset_id"] = .string("source-b")
+        local.sections["timeline_slots"] = .array([.object(replaced)])
+        XCTAssertNil(NativeEditorMerge.merge(base: base, local: local, remote: remote).state)
+        local.sections["timeline_slots"] = .array([.object(trim)])
+        remote.sections["text_elements"] = .array([])
+        XCTAssertNil(NativeEditorMerge.merge(base: base, local: local, remote: remote).state)
+        var unknown = wording; unknown["future_timing"] = .number(1)
+        remote.sections["text_elements"] = .array([.object(unknown)])
+        XCTAssertNil(NativeEditorMerge.merge(base: base, local: local, remote: remote).state)
+    }
+
     func testTimelineChangeConflictsWithRemoteTimedEditWithoutPublishingCandidate() {
         let base = state(["timeline_slots": .array([]), "caption_cues": .array([])])
         var local = base, remote = base
@@ -214,6 +263,49 @@ final class NativeEditorMergeTests: XCTestCase {
         let result = NativeEditorMerge.merge(base: base, local: local, remote: remote)
         XCTAssertNil(result.state)
         XCTAssertFalse(result.conflicts.isEmpty)
+    }
+
+    func testRenderedWordingMirrorPreservesIndependentTrimAndRejectsUnprovenMirrorChanges() {
+        let slot: JSONValue = .object(["slot_id": .string("slot"), "asset_id": .string("source"),
+            "in_s": .number(0), "duration_s": .number(3)])
+        let first: JSONValue = .object(["id": .string("a"), "text": .string("old"), "start_s": .number(0), "end_s": .number(1)])
+        let second: JSONValue = .object(["id": .string("b"), "text": .string("other"), "start_s": .number(1), "end_s": .number(2)])
+        let firstMirror: JSONValue = .object(["id": .string("a"), "content": .string("old"), "future": .string("preserve")])
+        let secondMirror: JSONValue = .object(["id": .string("b"), "content": .string("other")])
+        let base = state(["timeline_slots": .array([slot]), "text_elements": .array([first, second]),
+            "ios_editor": .object(["text": .array([firstMirror, secondMirror]), "future": .bool(true)])])
+        var local = base, remote = base
+        var trim = slot.objectValue!; trim["duration_s"] = .number(2.5)
+        local.sections["timeline_slots"] = .array([.object(trim)])
+        var wording = first.objectValue!; wording["text"] = .string("new")
+        var mirrored = firstMirror.objectValue!; mirrored["content"] = .string("new")
+        remote.sections["text_elements"] = .array([.object(wording), second])
+        func mirror(_ rows: [JSONValue]) -> JSONValue {
+            .object(["text": .array(rows), "future": .bool(true)])
+        }
+        remote.sections["ios_editor"] = mirror([.object(mirrored), secondMirror])
+        for (left, right) in [(local, remote), (remote, local)] {
+            let merged = NativeEditorMerge.merge(base: base, local: left, remote: right)
+            XCTAssertTrue(merged.conflicts.isEmpty)
+            XCTAssertEqual(merged.state?.sections["timeline_slots"], local.sections["timeline_slots"])
+            XCTAssertEqual(merged.state?.sections["text_elements"], remote.sections["text_elements"])
+            XCTAssertEqual(merged.state?.sections["ios_editor"], right.sections["ios_editor"], "latest opaque mirror metadata stays authoritative")
+        }
+        var unknown = mirrored; unknown["future"] = .string("changed")
+        var mismatched = mirrored; mismatched["content"] = .string("not canonical")
+        var wrongID = mirrored; wrongID["id"] = .string("unknown")
+        var missing = mirrored; missing.removeValue(forKey: "content")
+        var nullContent = mirrored; nullContent["content"] = .null
+        for rows in [[.object(unknown), secondMirror], [.object(mismatched), secondMirror],
+                     [.object(wrongID), secondMirror], [secondMirror, .object(mirrored)],
+                     [.object(mirrored), .object(mirrored)], [.object(missing), secondMirror],
+                     [.object(nullContent), secondMirror]] {
+            remote.sections["ios_editor"] = mirror(rows)
+            XCTAssertNil(NativeEditorMerge.merge(base: base, local: local, remote: remote).state)
+        }
+        remote.sections["ios_editor"] = base.sections["ios_editor"]
+        XCTAssertTrue(NativeEditorMerge.merge(base: base, local: local, remote: remote).conflicts.isEmpty,
+            "an unchanged compatibility mirror must not block a canonical chat wording edit")
     }
 
     func testMotionHashIsAtomicButUnrelatedRemoteTitleSurvivesChoice() {
@@ -236,6 +328,29 @@ final class NativeEditorMergeTests: XCTestCase {
         remote.userSong = .object(["authority": .string("song-b"), "volume": .number(1)])
         XCTAssertNil(NativeEditorMerge.merge(base: base, local: local, remote: remote).state)
         XCTAssertEqual(NativeEditorMerge.merge(base: base, local: local, remote: remote, preference: .remote).state?.userSong, remote.userSong)
+    }
+
+    func testMusicRemovalMustClearItsWindowBeforeTypedMergeValidation() {
+        let track = "8c9c1e0e-2d62-4a44-8d0c-2f4d3a0a9b11"
+        let window: JSONValue = .object(["start_s": .number(1), "alignment": .string("preserve_cuts")])
+        func document(track: JSONValue, window: JSONValue) -> EditorDocument {
+            EditorDocument(snapshot: ["editor_payload": .object(["sections": .object([
+                "music_track_id": track, "music_window": window,
+            ])])])
+        }
+        let base = document(track: .string(track), window: window)
+        let inconsistent = document(track: .null, window: window)
+        let rejected = NativeEditorMerge.documents(base: base, local: inconsistent, remote: base,
+            baseSong: nil, remoteSong: nil)
+        guard case .unsupported = rejected else {
+            return XCTFail("strict validation must reject a window silently disappearing from the selected state")
+        }
+        let removed = document(track: .null, window: .null)
+        let accepted = NativeEditorMerge.documents(base: base, local: removed, remote: base,
+            baseSong: nil, remoteSong: nil)
+        guard case .resolved(let merged) = accepted else { return XCTFail("canonical explicit removal must merge") }
+        XCTAssertNil(merged.music)
+        XCTAssertEqual(merged.snapshot(for: .music), .object(["music_track_id": .null, "music_window": .null]))
     }
 
     func testExplicitEmptyAndRemoteUnknownSectionArePreserved() {

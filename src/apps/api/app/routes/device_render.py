@@ -100,6 +100,7 @@ from app.services.job_storage_paths import project_media_reference_lock_key
 from app.services.native_activity import record_native_activity
 from app.services.phone_rollout import (
     background_focus_client_supported,
+    card_style_client_supported,
     card_tilt_client_supported,
     clip_backdrop_media_client_supported,
     clip_tilt_client_supported,
@@ -109,6 +110,7 @@ from app.services.phone_rollout import (
     recipe_has_clip_tilt,
     recipe_has_freeze_frame,
     recipe_has_single_word_text,
+    recipe_has_styled_card,
     recipe_has_tilted_card,
     single_word_text_client_supported,
     speaker_background_client_supported,
@@ -556,11 +558,11 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
     """
     protocol = _caller_protocol()
     recipe = status.request.recipe
-    if "splitScreen" in recipe.required_capabilities and protocol < 43:
+    if "splitScreen" in recipe.required_capabilities and protocol < 45:
         return {
             "code": "client_update_required",
             "feature": "split_screen",
-            "minimum_client_protocol": 43,
+            "minimum_client_protocol": 45,
         }
     from app.agents._schemas.text_animation_phases import DESIGNED_TEXT_EDGES
 
@@ -692,6 +694,14 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "code": "client_update_required",
             "feature": "speaker_background_color",
             "minimum_client_protocol": settings.speaker_background_color_min_client_protocol,
+        }
+    if not card_style_client_supported() and recipe_has_styled_card(recipe):
+        # KRI-1264: a build below protocol 44 cannot decode a placed card's `editor_style` and would
+        # fail the whole recipe. Checked before the tilt gate so the answer names the newer minimum.
+        return {
+            "code": "client_update_required",
+            "feature": "card_style",
+            "minimum_client_protocol": settings.media_card_style_min_client_protocol,
         }
     if not card_tilt_client_supported() and recipe_has_tilted_card(recipe):
         # KRI-1141: a build below protocol 30 decodes the `clipTilt` token a tilted card carries

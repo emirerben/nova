@@ -30,7 +30,7 @@ async def test_manual_ai_manual_saves_reopen_independent_panels(monkeypatch, req
     if with_frames:
         from app.services.client_protocol import clear_request_context, set_client_protocol
 
-        set_client_protocol(43)
+        set_client_protocol(45)
         monkeypatch.setattr(settings, "speaker_background_enabled", True)
         request.addfinalizer(clear_request_context)
         fixture.assembly_plan["variants"][0]["speaker_background"] = {

@@ -14,8 +14,10 @@ falls back to the old measured bound (28 characters a line), fail closed.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from functools import lru_cache
 
+import regex
 import structlog
 
 log = structlog.get_logger()
@@ -35,27 +37,54 @@ _FALLBACK_LINE_CHARS = 28
 # Pillow/libass, the phone compile, iOS `AuthoredTextFit.safeWidth`) uses this rule.
 AUTHORED_SAFE_WIDTH_FRAC = 0.9
 AUTHORED_MIN_WIDTH_FRAC = 0.1
+# KRI-885: an authored line may use the room up to this inset from each frame edge, so its
+# shadow and outline ink stay off the edge (the overlay verifier fails ink within 6 px of it).
+AUTHORED_EDGE_GUARD_FRAC = 0.03
 
 
 def authored_safe_width(canvas_width: float, x_frac: float | None, anchor: str | None) -> float:
-    """Widest row an authored line may draw at, given where it is anchored (KRI-826).
+    """Widest row an authored line may draw at, given where it is anchored (KRI-826, KRI-885).
 
     The line is placed relative to ``x_frac`` (its centre, or its left/right edge for a
-    "left"/"right" anchor), so its room is the distance from that point to the safe
-    margins: a centred line at x=0.7 has 2 x (0.95 - 0.7) of the width, not 0.9. A
-    point dragged onto or past a margin keeps a tenth of the width (it cannot fit
-    there; its words wrap one a row and shrink to the floor instead of vanishing).
+    "left"/"right" anchor), so its room is the distance from that point to the frame
+    edge (inset by 3% of the width): a centred line at x=0.7 has 2 x (0.97 - 0.7) of the
+    width. Measuring to the frame edge, not to the 5% safe margins, means a legacy line the
+    creator placed off-centre that still sits inside the frame is never re-wrapped on a
+    re-render; the room is capped at the safe width (0.9 of the canvas) and a point dragged
+    onto the edge keeps a tenth of
+    the width (it cannot fit there; its words wrap one a row and shrink to the floor
+    instead of vanishing).
     """
     width = float(canvas_width)
-    margin = width * (1.0 - AUTHORED_SAFE_WIDTH_FRAC) / 2.0
+    guard = width * AUTHORED_EDGE_GUARD_FRAC
     cx = width * (0.5 if x_frac is None else min(1.0, max(0.0, float(x_frac))))
     if anchor == "left":
-        room = width - margin - cx
+        room = width - guard - cx
     elif anchor == "right":
-        room = cx - margin
+        room = cx - guard
     else:
-        room = 2.0 * min(cx - margin, width - margin - cx)
+        room = 2.0 * min(cx - guard, width - guard - cx)
     return max(width * AUTHORED_MIN_WIDTH_FRAC, min(width * AUTHORED_SAFE_WIDTH_FRAC, room))
+
+
+def break_wide_run(run: str, width_of: Callable[[str], float], max_width: float) -> list[str]:
+    """Greedy rows of ``run`` no wider than ``max_width``, broken between clusters (KRI-886).
+
+    For a run with no space to wrap at (emoji chain, CJK text, a URL). A cluster is
+    never split (ZWJ sequence, flag, skin tone, base + combining mark). A cluster wider
+    than ``max_width`` on its own stays whole on its own row, never dropped.
+    """
+    rows: list[str] = []
+    current = ""
+    for cluster in regex.findall(r"\X", run):
+        if current and width_of(current + cluster) > max_width:
+            rows.append(current)
+            current = cluster
+        else:
+            current += cluster
+    if current:
+        rows.append(current)
+    return rows or [run]
 
 
 def _fallback_lines(text: str) -> int:

@@ -1,7 +1,8 @@
 import XCTest
 
 /// Record | Upload across the footage surfaces (Paper "3 Record + Upload"): the chat stage, video-type row, the
-/// composer tray, the camera, and the review. The simulator has no camera, so the camera shows its fixture states.
+/// composer tray, the camera, and the review. The camera itself offers Record only: Upload lives on the chat and the
+/// Add media sheet. The simulator has no camera, so the camera shows its fixture states.
 @MainActor final class FootageSourcesUITests: XCTestCase {
     func testChatLeadsWithRecordAndUploadAndKeepsTheVideoTypeFirst() {
         let app = launchTalking()
@@ -49,8 +50,7 @@ import XCTest
         app.buttons["attach-record"].tap()
         let capture = app.buttons["teleprompter-record"]
         XCTAssertTrue(capture.waitForExistence(timeout: 10), "Record opens the camera with no script written")
-        XCTAssertTrue(app.buttons["camera-upload"].exists, "a labelled Upload capsule sits beside the capture button")
-        XCTAssertGreaterThanOrEqual(app.buttons["camera-upload"].frame.height, 43.9)
+        assertNoUploadOnTheCamera(app)
         XCTAssertTrue(app.buttons["teleprompter-flip"].exists)
         XCTAssertTrue(app.buttons["teleprompter-script"].exists)
         XCTAssertTrue(eventually { capture.isEnabled })
@@ -65,7 +65,6 @@ import XCTest
 
         capture.tap()
         XCTAssertTrue(app.buttons["teleprompter-cancel-countdown"].waitForExistence(timeout: 3))
-        XCTAssertFalse(app.buttons["camera-upload"].exists, "Upload hides during the countdown")
         self.capture(app, "S3.09a Kria camera, countdown")
         app.buttons["teleprompter-cancel-countdown"].tap()
     }
@@ -79,25 +78,22 @@ import XCTest
         XCTAssertTrue(app.buttons["teleprompter-no-script"].isHittable, "recording without a script is one tap away")
     }
 
-    func testRefusedCameraOffersSettingsAndUpload() {
+    func testRefusedCameraShowsTheReasonWithoutUpload() {
         let app = launchTalking()
         app.buttons["chat-attach"].tap()
         app.buttons["attach-record"].tap()
         XCTAssertTrue(app.staticTexts["teleprompter-camera-error"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["camera-upload"].exists, "a camera that cannot open still leads to Upload")
+        assertNoUploadOnTheCamera(app)
         capture(app, "S3.10 Kria camera, access off")
     }
 
-    func testCameraAccessOffOffersOpenSettingsBesideUpload() {
+    func testCameraAccessOffOffersOpenSettingsOnly() {
         let app = launchTalking(cameraRefusal: "camera_access")
         app.buttons["chat-attach"].tap()
         app.buttons["attach-record"].tap()
         XCTAssertTrue(app.staticTexts["Camera access is off"].waitForExistence(timeout: 10))
-        let settings = app.buttons["teleprompter-open-settings"], upload = app.buttons["camera-upload"]
-        XCTAssertTrue(settings.exists)
-        XCTAssertTrue(upload.exists)
-        XCTAssertEqual(settings.frame.midY, upload.frame.midY, accuracy: 2, "Open Settings | Upload sit side by side")
-        XCTAssertEqual(settings.frame.width, upload.frame.width, accuracy: 1)
+        XCTAssertTrue(app.buttons["teleprompter-open-settings"].exists)
+        assertNoUploadOnTheCamera(app)
         XCTAssertFalse(app.buttons["teleprompter-retry-camera"].exists)
         XCTAssertGreaterThanOrEqual(app.buttons["teleprompter-close"].frame.minX, 15.9, "the close disc sits 16pt in")
         capture(app, "S3.10 Kria camera, Camera access is off")
@@ -108,26 +104,129 @@ import XCTest
         app.buttons["chat-attach"].tap()
         app.buttons["attach-record"].tap()
         XCTAssertTrue(app.staticTexts["Camera access is off"].waitForExistence(timeout: 10))
-        let settings = app.buttons["teleprompter-open-settings"], upload = app.buttons["camera-upload"]
-        XCTAssertTrue(settings.isHittable)
-        XCTAssertTrue(upload.isHittable)
-        XCTAssertLessThan(settings.frame.maxY, upload.frame.minY + 1, "the two actions stack")
-        XCTAssertGreaterThan(upload.frame.width, 200, "Upload keeps its label instead of shrinking to an icon")
+        XCTAssertTrue(app.buttons["teleprompter-open-settings"].isHittable)
+        assertNoUploadOnTheCamera(app)
         capture(app, "S3.10 Camera access is off at accessibility5")
     }
 
-    func testCameraKeepsTheUploadLabelAtAccessibilitySize() {
-        let app = launchTalking(cameraReady: true, largeText: true)
+    func testLookControlsKeepTheirLabelsWholeAtAccessibilitySize() {
+        let app = launchTalking(cameraReady: true, largeText: true, cinematic: "on", speakerBackground: true)
         app.buttons["chat-attach"].tap()
         app.buttons["attach-record"].tap()
         let record = app.buttons["teleprompter-record"]
-        XCTAssertTrue(record.waitForExistence(timeout: 10))
-        let upload = app.buttons["camera-upload"]
-        XCTAssertTrue(upload.isHittable)
-        XCTAssertGreaterThan(upload.frame.width, 150, "a labelled capsule, not an icon-only circle")
+        _ = record.waitForExistence(timeout: 10)
+        capture(app, "S3.08 Camera at accessibility5")
+        XCTAssertTrue(record.exists)
+        let background = app.buttons["teleprompter-background"], cinematic = app.buttons["teleprompter-cinematic"]
+        XCTAssertTrue(background.isHittable)
+        XCTAssertTrue(cinematic.isHittable)
+        XCTAssertGreaterThan(background.frame.width, 150, "a labelled capsule, not an icon-only circle")
+        XCTAssertGreaterThan(cinematic.frame.width, 150)
         XCTAssertTrue(app.buttons["teleprompter-flip"].isHittable)
         XCTAssertTrue(record.isHittable)
-        capture(app, "S3.08 Camera at accessibility5")
+    }
+
+    func testBackgroundAndCinematicShareOneRowAboveRecordAndOffReadsAsOff() {
+        let app = launchTalking(cameraReady: true, cinematic: "on", speakerBackground: true, scene: "light")
+        app.buttons["chat-attach"].tap()
+        app.buttons["attach-record"].tap()
+        let record = app.buttons["teleprompter-record"]
+        let background = app.buttons["teleprompter-background"], cinematic = app.buttons["teleprompter-cinematic"]
+        XCTAssertTrue(record.waitForExistence(timeout: 10))
+        XCTAssertTrue(background.exists)
+        XCTAssertTrue(cinematic.exists)
+        assertNoUploadOnTheCamera(app)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'unedited'")).firstMatch.exists,
+                       "the camera makes no promise about the preview")
+        XCTAssertEqual(background.frame.midY, cinematic.frame.midY, accuracy: 2, "Background and Cinematic share one row")
+        XCTAssertLessThan(background.frame.maxY, record.frame.minY, "the row sits above the record button")
+        XCTAssertLessThan(record.frame.minY - cinematic.frame.maxY, 48, "and close to it, not up with the Script control")
+        XCTAssertLessThan(background.frame.minX, cinematic.frame.minX)
+        XCTAssertGreaterThan(background.frame.minY, app.buttons["teleprompter-script"].frame.maxY, "Script stays on top")
+        // The choice persists between launches, so start from off.
+        if cinematic.value as? String == "On" { cinematic.tap() }
+        XCTAssertTrue(eventually(timeout: 12) { cinematic.value as? String == "Off" }, "off is named, not just dimmer glass")
+        XCTAssertEqual(background.value as? String, "None")
+        cinematic.tap()
+        XCTAssertTrue(eventually(timeout: 12) { cinematic.value as? String == "On" })
+        XCTAssertTrue(cinematic.isSelected)
+    }
+
+    func testLookControlsOffAndOnOverALightScene() { captureLookControls(scene: "light") }
+    func testLookControlsOffAndOnOverADarkScene() { captureLookControls(scene: "dark") }
+
+    private func captureLookControls(scene: String) {
+        let app = launchTalking(cameraReady: true, cinematic: "on", speakerBackground: true, scene: scene)
+        app.buttons["chat-attach"].tap()
+        app.buttons["attach-record"].tap()
+        let cinematic = app.buttons["teleprompter-cinematic"]
+        XCTAssertTrue(cinematic.waitForExistence(timeout: 10))
+        if cinematic.value as? String == "On" { cinematic.tap() }
+        XCTAssertTrue(eventually(timeout: 12) { cinematic.value as? String == "Off" })
+        capture(app, "Look controls, both off, \(scene) scene")
+        cinematic.tap()
+        XCTAssertTrue(eventually(timeout: 12) { cinematic.value as? String == "On" })
+        capture(app, "Look controls, Cinematic on, \(scene) scene")
+        app.buttons["teleprompter-background"].tap()
+        app.buttons["teleprompter-background-choose"].tap()
+        XCTAssertTrue(eventually { app.buttons["teleprompter-background"].value as? String == "Photo" })
+        capture(app, "Look controls, both on, \(scene) scene")
+        cinematic.tap()
+        XCTAssertTrue(eventually(timeout: 12) { cinematic.value as? String == "Off" })
+        capture(app, "Look controls, Background on and Cinematic off, \(scene) scene")
+    }
+
+    /// A screen recording beside a talking take used to earn a "Screen recordings go in Overlays" card. The fixture still
+    /// advertises the removed capability, as an older server would: the card must not come back.
+    func testScreenRecordingInATalkingProjectGetsNoPlacementHint() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_SCREEN_RECORDING"] = "1"
+        app.launchEnvironment["KRIA_TELEPROMPTER_CAMERA_UNAVAILABLE"] = "1"
+        app.launch()
+        XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 20))
+        app.buttons["Open projects"].tap()
+        let newChat = app.buttons["drawer-new-chat"]
+        XCTAssertTrue(newChat.waitForExistence(timeout: 5))
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: newChat)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 20), .completed)
+        newChat.tap()
+        let talking = app.buttons["format-talking_to_camera"]
+        XCTAssertTrue(talking.waitForExistence(timeout: 10))
+        if !talking.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
+        talking.tap()
+        // With footage attached the stage has no Add media entry of its own: the composer + is the way in. Add script
+        // opens the camera from Add media, so closing the camera leaves the clip list open.
+        let plus = app.buttons["chat-attach"]
+        XCTAssertTrue(plus.waitForExistence(timeout: 10), "no way into Add media with footage attached")
+        plus.tap()
+        let addScript = app.buttons["attach-script"]
+        XCTAssertTrue(addScript.waitForExistence(timeout: 5), "Talk to camera offers the optional script")
+        addScript.tap()
+        let noScript = app.buttons["teleprompter-no-script"]
+        XCTAssertTrue(noScript.waitForExistence(timeout: 20))
+        noScript.tap()
+        let close = app.buttons["teleprompter-close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 20))
+        close.tap()
+        let footage = app.scrollViews["attachment-step-footage"]
+        XCTAssertTrue(footage.waitForExistence(timeout: 5), "Add media did not open on Footage")
+        let recording = footage.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH 'Screen Recording'")).firstMatch
+        XCTAssertTrue(recording.waitForExistence(timeout: 15), "the screen recording is attached to the talking project")
+        XCTAssertTrue(recording.label.contains("Video · Ready"), "it keeps the plain caption")
+        XCTAssertFalse(app.descendants(matching: .any)["footage-place-hint"].firstMatch.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'go in Overlays'")).firstMatch.exists)
+        XCTAssertFalse(app.buttons["Move to Overlays"].exists)
+        capture(app, "Screen recording in a talking project, no hint")
+    }
+
+    private func assertNoUploadOnTheCamera(_ app: XCUIApplication) {
+        XCTAssertFalse(app.buttons["camera-upload"].exists, "the camera has no Upload control")
+        XCTAssertFalse(app.buttons["review-upload"].exists)
+        XCTAssertFalse(app.buttons["Upload"].exists)
+        XCTAssertFalse(app.buttons["Upload instead"].exists)
     }
 
     func testScriptAndSpeedSheetsReachEveryControlAtAccessibilitySize() {
@@ -194,12 +293,10 @@ import XCTest
         app.buttons["chat-attach"].tap()
         app.buttons["attach-record"].tap()
         XCTAssertTrue(app.buttons["teleprompter-use-take"].waitForExistence(timeout: 10))
-        let retake = app.buttons["teleprompter-retake"], upload = app.buttons["review-upload"]
+        let retake = app.buttons["teleprompter-retake"]
         XCTAssertTrue(retake.exists)
-        XCTAssertTrue(upload.exists)
         XCTAssertGreaterThan(retake.frame.width, 200, "Record again is a full-width row, not a clipped half")
-        XCTAssertGreaterThan(upload.frame.width, 200)
-        XCTAssertGreaterThan(upload.frame.minY, retake.frame.maxY - 1, "the pair stacks")
+        assertNoUploadOnTheCamera(app)
         capture(app, "S3.12 Review take at accessibility5")
     }
 
@@ -216,13 +313,14 @@ import XCTest
         XCTAssertTrue(app.buttons["review-pause"].waitForExistence(timeout: 5), "playing offers Pause")
     }
 
-    func testReviewTakeIsOfferedWithRecordAgainAndUploadInstead() {
+    func testReviewTakeIsOfferedWithRecordAgainAndDiscard() {
         let app = launchTalking(review: true)
         app.buttons["chat-attach"].tap()
         app.buttons["attach-record"].tap()
         XCTAssertTrue(app.buttons["teleprompter-use-take"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["teleprompter-retake"].exists)
-        XCTAssertTrue(app.buttons["review-upload"].exists)
+        assertNoUploadOnTheCamera(app)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'unedited'")).firstMatch.exists)
         XCTAssertTrue(app.buttons["teleprompter-discard"].exists)
         XCTAssertTrue(app.buttons["review-play"].exists)
         capture(app, "S3.12 Review take")
@@ -248,9 +346,15 @@ import XCTest
     /// `cameraRefusal` is the camera fixture's refusal: `camera_access`, `microphone_access`, `restricted`, or `1`
     /// for hardware that is not there. `cinematic` is `on` or `fallback` and needs `cameraReady`.
     private func launchTalking(review: Bool = false, cameraReady: Bool = false,
-                               largeText: Bool = false, cameraRefusal: String = "1", cinematic: String? = nil) -> XCUIApplication {
+                               largeText: Bool = false, cameraRefusal: String = "1", cinematic: String? = nil,
+                               speakerBackground: Bool = false, scene: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
+        if speakerBackground {
+            app.launchArguments.append("-ui-testing-speaker-background")
+            app.launchEnvironment["KRIA_TELEPROMPTER_BACKGROUND_FIXTURE"] = "1"
+        }
+        if let scene { app.launchEnvironment["KRIA_TELEPROMPTER_SCENE_FIXTURE"] = scene }
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         if cameraReady { app.launchEnvironment["KRIA_TELEPROMPTER_CAMERA_READY"] = "1" }
         else { app.launchEnvironment["KRIA_TELEPROMPTER_CAMERA_UNAVAILABLE"] = cameraRefusal }

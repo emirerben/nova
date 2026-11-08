@@ -5,13 +5,13 @@ import XCTest
     private let itemID = "11111111-1111-1111-1111-111111111111"
     private var defaults: UserDefaults!
     private var suite: String!
-    override func setUp() {
-        super.setUp(); suite = "SlidePostTests.\(UUID())"; defaults = UserDefaults(suiteName: suite)
+    override func setUp() async throws {
+        try await super.setUp(); suite = "SlidePostTests.\(UUID())"; defaults = UserDefaults(suiteName: suite)
     }
-    override func tearDown() {
+    override func tearDown() async throws {
         NativeEditorURLProtocol.handler = nil
         SlidePostTestSubmissionStorage.reset(defaults: defaults); defaults.removePersistentDomain(forName: suite); defaults = nil
-        super.tearDown()
+        try await super.tearDown()
     }
     private func fixture(version: Int = 1, rendered: Bool = true) -> SlidePostState {
         let refs = (1...2).map { SlidePostSlide(id: "slide-\($0)", assetID: "asset-\($0)", kind: $0 == 2 ? "video" : "image") }

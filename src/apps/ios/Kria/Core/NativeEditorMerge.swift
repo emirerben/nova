@@ -215,6 +215,86 @@ enum NativeEditorMerge {
         })
     }
 
+    /// A rendered read regenerates this compatibility text mirror. Recognize
+    /// content only when every unique mirror ID agrees with canonical text;
+    /// compare all remaining mirror fields and ordering without normalization.
+    private static func textComparisonSections(_ state: State) -> [String: JSONValue]? {
+        var sections = state.sections
+        guard var mirror = sections["ios_editor"]?.objectValue,
+              let rows = mirror["text"]?.arrayValue,
+              let canonical = sections["text_elements"]?.arrayValue,
+              rows.count == canonical.count else { return nil }
+        var textByID: [String: JSONValue] = [:]
+        for row in canonical {
+            guard let value = row.objectValue, let id = value["id"]?.stringValue, !id.isEmpty,
+                  case .string? = value["text"], textByID[id] == nil else { return nil }
+            textByID[id] = value["text"]
+        }
+        var ids = Set<String>(), normalized: [JSONValue] = []
+        for row in rows {
+            guard var value = row.objectValue, let id = value["id"]?.stringValue,
+                  ids.insert(id).inserted, let text = textByID[id], value["content"] == text else { return nil }
+            value.removeValue(forKey: "content")
+            normalized.append(.object(value))
+        }
+        mirror["text"] = .array(normalized)
+        sections["ios_editor"] = .object(mirror)
+        return sections
+    }
+
+    /// A trim cannot invalidate wording/font changes to the same existing rows.
+    /// Unknown fields, timing, source identity, insertion, deletion and order remain
+    /// coupled. The exception deliberately recognizes a small authored vocabulary.
+    private static func independentTextEdit(_ changed: State, from base: State) -> Bool {
+        let sameOtherFields: Bool
+        if changed.sections.filter({ $0.key != "text_elements" }) == base.sections.filter({ $0.key != "text_elements" }) {
+            sameOtherFields = true
+        } else if let left = textComparisonSections(changed), let right = textComparisonSections(base) {
+            sameOtherFields = left.filter({ $0.key != "text_elements" }) == right.filter({ $0.key != "text_elements" })
+        } else { sameOtherFields = false }
+        guard changed.editorState == base.editorState, changed.deletions == base.deletions,
+              changed.userSong == base.userSong,
+              sameOtherFields,
+              case .array(let before)? = base.sections["text_elements"],
+              case .array(let after)? = changed.sections["text_elements"], before.count == after.count else { return false }
+        let allowed: Set<String> = ["text", "font_family", "font_size_px"]
+        var ids = Set<String>()
+        return zip(before, after).allSatisfy { old, new in
+            guard let a = old.objectValue, let b = new.objectValue,
+                  let id = a["id"]?.stringValue, !id.isEmpty, ids.insert(id).inserted,
+                  b["id"] == a["id"] else { return false }
+            return a.filter { !allowed.contains($0.key) } == b.filter { !allowed.contains($0.key) }
+        }
+    }
+
+    private static func hasOnlyStableTimelineTrim(_ changed: State, from base: State) -> Bool {
+        guard changed.editorState == base.editorState, changed.deletions == base.deletions,
+              changed.userSong == base.userSong,
+              changed.sections.filter({ $0.key != "timeline_slots" }) == base.sections.filter({ $0.key != "timeline_slots" }),
+              case .array(let before)? = base.sections["timeline_slots"],
+              case .array(let after)? = changed.sections["timeline_slots"],
+              !before.isEmpty, before.count == after.count else { return false }
+        let trim: Set<String> = ["in_s", "duration_s", "duration_beats"]
+        func stableFields(_ fields: [String: JSONValue]) -> [String: JSONValue] {
+            var result = fields.filter { !trim.contains($0.key) }
+            // Editing serializes these schema defaults even when the original
+            // snapshot omitted them. Preserve every unknown field and every
+            // nondefault transition/look value in the identity comparison.
+            for key in ["parent_segment_id", "look_adjustments", "transition_duration_s"] where result[key] == .null {
+                result.removeValue(forKey: key)
+            }
+            if result["transition_after"] == .string("cut") { result.removeValue(forKey: "transition_after") }
+            return result
+        }
+        var ids = Set<String>()
+        return zip(before, after).allSatisfy { old, new in
+            guard let a = old.objectValue, let b = new.objectValue,
+                  let id = (a["slot_id"] ?? a["id"])?.stringValue, !id.isEmpty,
+                  ids.insert(id).inserted else { return false }
+            return stableFields(a) == stableFields(b)
+        }
+    }
+
     static func merge(
         base: State, local: State, remote: State,
         preference: AuthoredJSONMerge.Preference? = nil
@@ -236,7 +316,9 @@ enum NativeEditorMerge {
             }
         }
         let dependent = authored.subtracting(["title"])
-        let grouped = requiresCoupledDeletion || timelineChanged
+        let independentTextAndTrim = (independentTextEdit(local, from: base) && hasOnlyStableTimelineTrim(remote, from: base))
+            || (independentTextEdit(remote, from: base) && hasOnlyStableTimelineTrim(local, from: base))
+        let grouped = requiresCoupledDeletion || (timelineChanged && !independentTextAndTrim)
         var atomicPaths: Set<[String]> = [["dependent"], ["motion"], ["music"], ["canvas"],
             ["backgroundMusic"], ["speakerBackground"], ["editorState"], ["userSong"]]
 

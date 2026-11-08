@@ -19,10 +19,11 @@ the phone. The `Action` stays server-side; a tap pins `{set_id, chip_id}`.
 | `services/suggestions/kinds/*.py` | ONE module per kind; the explicit list is `kinds/__init__.py` |
 | `services/suggestions/pinned.py` | the ring reads a tap resolves against, the lane allow-lists, the registry rebuild, the restate base |
 | `services/suggestions/brief_asks.py` | "did the creator already say something about this lane?" for the five ported editor kinds (KRI-129) |
+| `services/suggestions/commit_readiness.py` | the commit's gates composed once, pure (`commit_readiness`: mark, requirements, choice) plus the loaders for their facts; the serve and the tap both call it |
 | `services/suggestions/restate_judgment.py` | the one question the serve and a restating tap ask: would the commit approve this draft? (`restate_problem`, `plan_media`) |
 | `services/suggestion_serve.py` | the GET's read path: freeze, ring write, and the strip of cards the tap would refuse |
 | `services/clip_signals/` | per-clip measured signals, stored at `analysis["signals"]` next to `analysis["understanding"]` |
-| `app/cli/backfill_clip_signals.py` | read-only skeleton; `--write` is refused until a store is wired |
+| `app/cli/backfill_clip_signals.py` | dry run by default (downloads nothing); `--write` measures missing signals and stores them through the fenced `mutate_plan_item_media` path, idempotent and resumable via `--after-item-id` |
 
 ## Adding or changing a kind
 
@@ -37,7 +38,7 @@ still driven by the KRI-756 engine unchanged; the v2 path uses `build_action` (N
 | `captions`, `sfx`, `transition`, `music_level` | KRI-756 kinds | `EditorOpsAction` from the row's own `op`, proved by `editor_ops_witness` | ported, live in the engine and as v2 cards |
 | `default_edit`, `opener_clip`, `title_animation`, `pinned_text` | KRI-756 kinds | none | ported, legacy only |
 | `hook` | KRI-756 kind | `CopyDecisionAction`: the agent's exact text, applied as one `set_title` op; the tap records the creative-copy decision (`source="suggestion"`) | v2 card behind `KRIA_SUGGESTION_HOOK_COPY_ENABLED`; the chip stays the only first-prompt hook |
-| `mute_clip` | new | `BriefUpdateAction` (`clip_sound` off, `clip:<media_id>`) + the staged render approval | implemented but **dark by design** (`mute_clip.PINNED_TAP_APPLIES_CLIP_SOUND = False`): a pinned tap stages the typed requirement and the approval, but only a phone re-plan from the brief applies it. Run `verify-phone-render` or a device, plus the real-clip audio calibration, before the constant flips |
+| `mute_clip` | new | `BriefUpdateAction` (`clip_sound` off, `clip:<media_id>`) + the staged render approval | implemented but **dark by design** (`mute_clip.PINNED_TAP_APPLIES_CLIP_SOUND = False`): a tap stages the typed requirement and the render approval; approving it dispatches a new phone render whose writer applies the ask (`tests/e2e_suggestions/test_r8_mute_render.py`). The constant flips when the real-clip audio calibration (`scripts/clip_signal_calibration.py report --real-dir`) clears precision 0.9 |
 | `filler_words` | new | `ItemSettingAction` (`speech_cleanup_enabled`) + the staged render approval | v2 card behind `KRIA_SUGGESTION_FILLER_WORDS_ENABLED`; evidence is the speech-cleanup preflight row, no second detector |
 | `duplicates` | new | `EditorOpsAction` (`remove_clip` on the weaker take) | v2 card behind `KRIA_SUGGESTION_DUPLICATES_ENABLED`; evidence is the `near_dup_hash` signal |
 | `generated_overlay` | new | `AsyncGenerateAction` | stub, never served (last phase) |

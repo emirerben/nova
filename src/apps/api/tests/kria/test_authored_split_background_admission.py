@@ -53,7 +53,7 @@ def speaker(monkeypatch):
         ],
     )
     monkeypatch.setattr(settings, "background_focus_enabled", True)
-    set_client_protocol(43)
+    set_client_protocol(45)
     yield job, variant
     clear_request_context()
 

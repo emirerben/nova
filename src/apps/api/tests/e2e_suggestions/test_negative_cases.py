@@ -398,8 +398,8 @@ async def test_n6_mute_is_dark_as_shipped(talking_world):
     kinds = [c.kind for c in out.suggestions]
     cell = rec.cell(key, SIGNALS, "mute_clip", scn.language)
     cell.notes.append(
-        "PINNED_TAP_APPLIES_CLIP_SOUND is False: a phone editor-ops commit never re-applies a "
-        "clip_sound fact, so the kind is dark by design even though the evidence qualifies "
+        "PINNED_TAP_APPLIES_CLIP_SOUND is False: the noisy-clip thresholds are calibrated on "
+        "synthetic clips only, so the kind is dark by design even though the evidence qualifies "
         "(a measured noisy, speechless, understood clip)"
     )
     rec.negative(

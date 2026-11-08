@@ -33,7 +33,7 @@ struct KriaSourceOption: Identifiable {
 /// The Record | Upload (| third) row.
 ///
 /// - `.tiles`: 120pt-minimum tiles. Two options get 16pt padding; three get 12pt and a tighter gap.
-/// - `.compact`: a 44pt capsule pair with 15pt icons, for "Add more" once media exists.
+/// - `.compact`: a 44pt capsule pair with 15pt icons, for a choice inside a card, such as the no-speech recovery.
 ///
 /// `leadsWithFirst` is the Talk to camera lead: the first tile (Record) takes the butter fill and the rest keep
 /// the same size. A disabled tile dims to 40%; pass `disabledReason` to say why under the row.
@@ -140,39 +140,5 @@ private struct KriaSourceStyle: ButtonStyle {
         if leads { return pressed ? KriaColor.butterPressed : KriaColor.butter }
         if onFill { return pressed ? KriaColor.fillPressed : KriaColor.paper }
         return pressed ? KriaColor.fillPressed : KriaColor.fill
-    }
-}
-
-/// The camera's labelled Upload control (Paper S3.08): a 44pt translucent capsule with the photo glyph, sitting
-/// left of the capture button. It is a labelled capsule, not a bare thumbnail, so it reads as a way to leave
-/// the camera and upload instead.
-struct KriaCameraUploadButton: View {
-    var title = "Upload"
-    var identifier = "camera-upload"
-    /// Fills the row (the camera at accessibility sizes, where the label needs the width).
-    var fullWidth = false
-    let action: () -> Void
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: KriaSourceOption.uploadSymbol).font(.system(size: 18, weight: .regular))
-                Text(title).kriaType(.button).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-            }
-            .foregroundStyle(Color.white)
-            .padding(.horizontal, 16).padding(.vertical, 6)
-            .frame(maxWidth: fullWidth ? .infinity : nil, minHeight: 44)
-            .background {
-                ZStack {
-                    if !KriaTransparency.isReduced(reduceTransparency) { Capsule().fill(.ultraThinMaterial) }
-                    Capsule().fill(Color.white.opacity(KriaTransparency.isReduced(reduceTransparency) ? 0.28 : 0.2))
-                }
-            }
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(title)
-        .accessibilityIdentifier(identifier)
     }
 }

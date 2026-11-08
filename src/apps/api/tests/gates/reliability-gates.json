@@ -738,7 +738,9 @@
       "id": "talking-first-draft-and-length",
       "tickets": [
         "KRI-467",
-        "KRI-470"
+        "KRI-470",
+        "KRI-980",
+        "KRI-981"
       ],
       "symptom": "A Talking chat with a length + cleanup ask was refused ('draft unchanged... simpler version?'); then a 40 s length was pinned on a 68 s take and preflight failed on 66.13 s audio.",
       "boundary": "contract",
@@ -756,7 +758,8 @@
         "tests/kria/test_brief_talking_receipts.py",
         "tests/kria/test_runtime_talking_first_draft.py",
         "tests/services/test_creator_render_contract.py",
-        "tests/tasks/test_speech_cleanup_analysis.py"
+        "tests/tasks/test_speech_cleanup_analysis.py",
+        "tests/kria/test_talking_receipts_kri980_981_748.py"
       ],
       "harness": "real_contract",
       "kill_switch": null,

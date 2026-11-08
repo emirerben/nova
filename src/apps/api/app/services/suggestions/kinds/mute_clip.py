@@ -3,13 +3,16 @@
 The action is a typed ``BriefUpdate`` (``clip_sound: off`` scoped ``clip:<media_id>``, the shape
 ``kria/clip_sound_toggle_ask.py`` reads); there is no new editor op and no protocol bump.
 
-**Execution is not proven, so the kind never offers** (``PINNED_TAP_APPLIES_CLIP_SOUND``).
-A clip-sound fact only changes a render where the phone montage writer re-plans from the brief
-(``_run_phone_guided_job`` -> ``plan_toggle_lane``). A pinned tap runs the editor-ops route:
-``prepare_editor_commit`` recompiles the saved plan and only re-judges the receipt, so the clip
-keeps its sound; cloud renders never read the fact (``brief_checks`` says it works on a montage
-made on the iPhone). ``tests/evals/test_suggestion_kind_mute.py`` pins both halves: the re-plan
-applies the fact, the editor commit does not. Flip the constant only with a route that re-plans.
+**Dark until the real-clip calibration passes** (``PINNED_TAP_APPLIES_CLIP_SOUND``). The card is a
+restating card: a tap stages the typed ``clip_sound`` requirement and a render approval, approving
+it dispatches a NEW phone render carrying the brief binding, and ``_run_phone_guided_job`` builds
+the recipe from the binding's asks (``plan_toggle_lane``). It never runs the editor-commit route
+(``prepare_editor_commit`` recompiles a saved plan and serves editor-ops cards). The route is
+proven end to end by ``tests/e2e_suggestions/test_r8_mute_render.py`` (tap, approval, dispatched
+binding, the real writer: the clip's cuts go silent and every other cut keeps its sound). What
+keeps the constant False is the noisy-clip threshold, calibrated on synthetic clips only: flip it
+when ``scripts/clip_signal_calibration.py report --real-dir`` clears precision 0.9 on labeled real
+clips (``scripts/prod/mute_label_kit.py`` builds the set).
 
 Offered for a clip when all of these hold (each is a way a "mute" card goes wrong):
 
@@ -24,10 +27,9 @@ Offered for a clip when all of these hold (each is a way a "mute" card goes wron
 * no live brief ask already turns that clip's sound on or off (KRI-129: the creator's request wins,
   and a second mute is not a new change).
 
-Brief inputs are ``kind_inputs["mute_clip"] = loader_input(brief)``. No serve loader sets that
-key yet (``suggestion_serve`` only fills ``transcripts``), so the kind fails closed even after
-``PINNED_TAP_APPLIES_CLIP_SOUND`` flips: the flip needs that loader and a route that re-plans.
-Without the input no action can bind to a brief version.
+Brief inputs are ``kind_inputs["mute_clip"] = loader_input(brief)``, set by
+``suggestion_serve._with_v2_inputs`` while the plan is the head draft and the saved video is read;
+without the input no action can bind to a brief version.
 """
 
 from __future__ import annotations
@@ -62,7 +64,7 @@ KIND_NAME = "mute_clip"
 INPUT_KEY = "mute_clip"
 SIGNAL = "audio_quality"
 
-# See the module docstring: proven False by the editor-commit fixture, not assumed.
+# See the module docstring: the route is proven; the thresholds are not (no real-clip labels yet).
 PINNED_TAP_APPLIES_CLIP_SOUND = False
 
 # The sentence `kria_editor_ops._audio_notes` adds for a guided phone edit; the fixture builds a

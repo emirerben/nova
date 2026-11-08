@@ -243,17 +243,48 @@ struct NativeEditorRefreshIndicator: View {
 /// editor so the two stay identical. The caller owns the accessibility identifier.
 struct KriaAIButton: View {
     let identifier: String
+    var activity: NativeEditorAIStatus? = nil
+    var animatesActivity = false
     let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    private var animatesHalo: Bool {
+        animatesActivity && !KriaMotion.isReduced(reduceMotion) && !KriaTransparency.isReduced(reduceTransparency)
+    }
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 23))
-                .foregroundStyle(.white)
-                .frame(width: 52, height: 52)
-                .background(KriaColor.ink, in: Circle())
+            HStack(spacing: 10) {
+                if let activity {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(activity.title).font(KriaFont.body(13).weight(.medium))
+                        Text("Open conversation").font(KriaFont.body(11)).foregroundStyle(KriaColor.mutedInk)
+                    }
+                    .foregroundStyle(KriaColor.ink)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: 170, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 16)
+                }
+                Image(systemName: "sparkles")
+                    .font(.system(size: 23))
+                    .foregroundStyle(.white)
+                    .frame(width: 52, height: 52)
+                    .background(KriaColor.ink, in: Circle())
+            }
+            .background {
+                if activity != nil {
+                    KriaGlassBackground(shape: Capsule(), whiteness: 0.8, shadowOpacity: 0.06, shadowRadius: 6, shadowY: 2)
+                }
+            }
+            .overlay {
+                if activity != nil { NativeEditorAIHalo(animates: animatesHalo) }
+            }
         }
+        .buttonStyle(.plain)
         .accessibilityLabel("Open Kria conversation")
+        .accessibilityValue(activity?.title ?? "")
         .accessibilityIdentifier(identifier)
         .padding(.trailing, 16)
         .padding(.bottom, 14)

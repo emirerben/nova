@@ -63,7 +63,7 @@ branches = [
     for node in fn.body
     if isinstance(node, ast.If)
     and ast.unparse(node.test)
-    == "'splitScreen' in recipe.required_capabilities and protocol < 43"
+    == "'splitScreen' in recipe.required_capabilities and protocol < 45"
 ]
 assert len(branches) == 1, "Mutation must remove exactly the new floor branch"
 fn.body.remove(branches[0])
@@ -77,13 +77,13 @@ assert device_render._client_update_detail is not mutant
 expected = {
     "code": "client_update_required",
     "feature": "split_screen",
-    "minimum_client_protocol": 43,
+    "minimum_client_protocol": 45,
 }
 
 
 def observe(function):
     results = {}
-    for protocol in (42, 43):
+    for protocol in (44, 45):
         set_client_protocol(protocol)
         try:
             results[str(protocol)] = function(job, record, status)
@@ -93,7 +93,7 @@ def observe(function):
 
 
 def check(results):
-    assert results == {"42": expected, "43": None}, results
+    assert results == {"44": expected, "45": None}, results
 
 
 baseline = observe(device_render._client_update_detail)
@@ -105,7 +105,7 @@ except AssertionError:
     caught = True
 else:
     raise AssertionError("Mutation survived the identical boundary assertion")
-assert mutated == {"42": None, "43": None}, "Unrelated gate confounds isolated mutation"
+assert mutated == {"44": None, "45": None}, "Unrelated gate confounds isolated mutation"
 assert before == (job.assembly_plan, recipe.model_dump(mode="json"), record), (
     "Pure check mutated input"
 )
@@ -115,7 +115,7 @@ print(
             "source_sha256": source_hash,
             "fixture_sha256": pin["fixture_sha256"],
             "input": {
-                "protocols": [42, 43],
+                "protocols": [44, 45],
                 "required_capabilities": sorted(recipe.required_capabilities),
                 "section": raw["split_screen_sections"],
                 "member": raw["tracks"][0]["clips"][0]["split_screen"],

@@ -947,3 +947,107 @@ def test_speech_cut_writers_refuse_a_requested_sound_effect_instead_of_dropping_
     with pytest.raises(UnsupportedPhonePlan, match="cut from what you say") as excinfo:
         gb._refuse_sfx_on_speech_writer({"creator_strategy": {"licensed_sfx": {"effect_id": "x"}}})
     assert excinfo.value.capability == "soundEffects"
+
+
+# ── KRI-903: "no text on her face or on the plate" on the guided-story phone variant ────────
+
+
+_TEXT_FEATURES = [
+    "basicComposition",
+    "local1080Export",
+    "audioMix",
+    "positionedText",
+    "animatedText",
+    "authoredText",
+]
+
+
+def _ask_binding(*, marks=None) -> dict:
+    from app.kria.brief import BriefRequirement, CreativeBrief
+    from app.kria.brief_binding import BriefBinding
+
+    ask = BriefRequirement(
+        id="r8",
+        kind="style",
+        scope="global",
+        description="No text on her face or on the plate",
+        facts={"keep_text_off": [{"kind": "face"}, {"kind": "object", "label": "plate"}]},
+    )
+    return BriefBinding.create(
+        uuid.uuid4(),
+        CreativeBrief(requirements=[ask]),
+        full_creator_request="No text on her face or on the plate",
+        protected_regions=marks,
+    ).model_dump(mode="json")
+
+
+def _with_title(planner) -> None:
+    from app.agents._schemas.text_element import TextElement
+    from tests.pipeline.test_guided_story import _guided_title_row
+
+    plan, _bindings = fixture()
+    plan.text_elements = [TextElement.model_validate(_guided_title_row(end_s=3.0))]
+    planner.return_value = (plan.model_dump(mode="json"), None)
+
+
+def _keep_text_off_receipt(variant):
+    from app.kria.brief import BriefRequirement
+    from app.kria.brief_checks import build_receipts, plan_facts_from_phone_variant
+
+    ask = BriefRequirement(
+        id="r8",
+        kind="style",
+        scope="global",
+        description="No text on her face or on the plate",
+        facts={"keep_text_off": [{"kind": "face"}, {"kind": "object", "label": "plate"}]},
+    )
+    [receipt] = build_receipts(
+        [ask], plan_facts_from_phone_variant(variant), include_unchecked=True
+    )
+    return receipt
+
+
+@pytest.mark.parametrize("placement_flag", [True, False])
+def test_a_keep_text_off_ask_without_a_mark_is_reported_partial_on_the_guided_variant(
+    monkeypatch, placement_flag
+):
+    from app.kria.protected_targets import PROTECTED_TEXT_FIELD
+
+    job, snapshot, _session, planner, _cloud = setup(monkeypatch)
+    _with_title(planner)
+    snapshot["creator_brief_binding"] = _ask_binding()
+    monkeypatch.setattr(gb.settings, "phone_guided_text_face_placement_enabled", placement_flag)
+    monkeypatch.setattr(
+        "app.storage.download_to_file", Mock(side_effect=OSError("no storage in tests"))
+    )
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        _TEXT_FEATURES,
+    )
+
+    gb._run_phone_guided_job(str(job.id), snapshot, ownership_epoch=3)
+
+    variant = job.assembly_plan["variants"][0]
+    receipt = variant[PROTECTED_TEXT_FIELD]
+    statuses = {t["label"]: t["status"] for t in receipt["targets"]}
+    assert statuses == {"face": "unverified", "plate": "no_selection"}
+    review = _keep_text_off_receipt(variant)
+    assert review.status == "partial"
+    assert "Mark" in (review.reason or "") and "plate" in (review.reason or "")
+
+
+def test_a_guided_render_that_never_asked_carries_no_protected_receipt(monkeypatch):
+    from app.kria.protected_targets import PROTECTED_TEXT_FIELD
+
+    job, snapshot, _session, planner, _cloud = setup(monkeypatch)
+    _with_title(planner)
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        _TEXT_FEATURES,
+    )
+
+    gb._run_phone_guided_job(str(job.id), snapshot, ownership_epoch=3)
+
+    assert PROTECTED_TEXT_FIELD not in job.assembly_plan["variants"][0]

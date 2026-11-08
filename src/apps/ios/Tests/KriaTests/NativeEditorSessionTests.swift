@@ -8,6 +8,76 @@ import XCTest
 
 @MainActor
 final class NativeEditorSessionTests: XCTestCase {
+
+    func testRepeatedOpaqueSlotHydrationPreservesProjectScopedClipAndSourceIdentity() throws {
+        let project = UUID()
+        func hydrate(project: UUID, slotID: String?, assetID: String? = nil) throws -> EditorClip {
+            var slot: [String: JSONValue] = ["clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2)]
+            slot["slot_id"] = slotID.map(JSONValue.string)
+            slot["asset_id"] = assetID.map(JSONValue.string)
+            let snapshot = DraftSnapshot(draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 1,
+                snapshotHash: "h", etag: "e", baseJobID: nil, baseGenerationID: "g1",
+                snapshot: ["editor_payload": .object(["sections": .object(["timeline_slots": .array([.object(slot)])])])],
+                canUndo: false, createdAt: .now)
+            return try XCTUnwrap(snapshot.editorDraft(projectID: project).clips.first)
+        }
+        let first = try hydrate(project: project, slotID: "speaker-slot")
+        XCTAssertEqual(try hydrate(project: project, slotID: "speaker-slot"), first)
+        XCTAssertEqual(first.slotID, "speaker-slot")
+        let otherProject = try hydrate(project: UUID(), slotID: "speaker-slot")
+        XCTAssertNotEqual(otherProject.id, first.id)
+        XCTAssertNotEqual(otherProject.assetID, first.assetID)
+        XCTAssertNotEqual(try hydrate(project: project, slotID: "other-slot").id, first.id)
+        let explicitSource = try hydrate(project: project, slotID: "speaker-slot", assetID: "speaker-source")
+        XCTAssertEqual(try hydrate(project: project, slotID: "speaker-slot", assetID: "speaker-source"), explicitSource)
+        XCTAssertEqual(explicitSource.id, first.id)
+        XCTAssertNotEqual(try hydrate(project: project, slotID: "speaker-slot", assetID: "replacement-source").assetID, explicitSource.assetID)
+        XCTAssertEqual(try hydrate(project: project, slotID: "other-slot", assetID: "speaker-source").assetID, explicitSource.assetID)
+        XCTAssertNotEqual(try hydrate(project: UUID(), slotID: "speaker-slot", assetID: "speaker-source").assetID, explicitSource.assetID)
+        let slotUUID = UUID(), assetUUID = UUID()
+        let preserved = try hydrate(project: project, slotID: slotUUID.uuidString, assetID: assetUUID.uuidString)
+        XCTAssertEqual(preserved.id, slotUUID)
+        XCTAssertEqual(preserved.assetID, assetUUID)
+        XCTAssertNotEqual(try hydrate(project: project, slotID: nil).id, try hydrate(project: project, slotID: nil).id,
+                          "anonymous rows must not invent a canonical cross-read identity")
+    }
+
+    func testReplacementLoadDoesNotWaitForOldEpochOrInheritItsLateRetryAfter() async throws {
+        let thread = UUID(), job = UUID()
+        let draft = DraftSnapshot(draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 1,
+            snapshotHash: "h", etag: "e", baseJobID: job.uuidString, baseGenerationID: "g1",
+            snapshot: [:], canUndo: false, createdAt: .now)
+        let old = EditorCommitSpy(draftSnapshot: draft, authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
+        old.suspendNextEditorVariant = true
+        let replacement = EditorCommitSpy(draftSnapshot: draft, authoritativeVariant: Self.variant(duration: 2, generation: "g2"))
+        let session = NativeEditorSession()
+        var now = ContinuousClock.now
+        var waits: [Duration] = []
+        session.loadReadNow = { now }
+        session.loadReadSleep = { delay in waits.append(delay); now = now.advanced(by: delay); await Task.yield() }
+        let oldLoad = Task { await session.load(api: old, threadID: thread) }
+        let oldSuspended = await waitUntil(timeout: .seconds(3)) { old.editorVariantIsSuspended }
+        XCTAssertTrue(oldSuspended)
+        var replacementFinished = false
+        let replacementLoad = Task {
+            await session.load(api: replacement, threadID: thread)
+            replacementFinished = true
+        }
+        let replacedWithoutOld = await waitUntil(timeout: .seconds(3)) { replacementFinished }
+        XCTAssertTrue(replacedWithoutOld, "a new load epoch must not wait for a suspended obsolete GET")
+        old.editorVariantError = .requestFailed(status: 503, detail: .init("Old request", retryAfter: 600))
+        old.resumeEditorVariant()
+        await oldLoad.value
+        await replacementLoad.value
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        await session.load(api: replacement, threadID: thread)
+        XCTAssertEqual(session.loadState, .loaded)
+        XCTAssertFalse(waits.contains { $0 >= .seconds(600) }, "an obsolete epoch cannot install a cooldown on the replacement")
+        XCTAssertEqual(old.commitCount + replacement.commitCount, 0)
+        session.setObserversVisible(false)
+        session.loadReadSleep = { _ in }
+    }
+
     func testReadyJobReceivedDuringSaveIsRecheckedAfterSaveAndTransientReadFailure() async throws {
         try await exerciseLatestJobDuringSave(runtimeVersion: 2)
     }
@@ -701,6 +771,53 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.hasUnsavedChanges)
         await session.retryRender()
         XCTAssertNil(fake.lastRequest?.userSong, "nor does a retry after a conflict rebase")
+    }
+
+    func testChangedSongAuthorityUndoCannotReapplyOldRelativeSongEdit() async throws {
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        session.setUserSongVolume(0.4)
+        session.setUserSongStart(1.5)
+        let original = session.document
+        XCTAssertEqual(original.userSong, EditorUserSongState(volume: 0.4, windowStartS: 1.5))
+        let originalSongMetadata = fake.authoritativeVariant?["user_song"]
+        // Identical projected metadata is not proof that a relative edit belongs
+        // to the new generation's song authority.
+        fake.authoritativeVariant?["render_generation_id"] = .string("generation-2")
+        XCTAssertEqual(fake.authoritativeVariant?["user_song"], originalSongMetadata)
+        fake.commitErrorQueue = [.conflict]
+        await session.save()
+        XCTAssertNotNil(session.mergeConflictMessage)
+        XCTAssertFalse(session.canKeepLocalMergeConflicts)
+        XCTAssertEqual(session.document, original)
+        session.resolveMergeConflicts(keepingLocal: false)
+        let adopted = session.document
+        XCTAssertEqual(adopted.revision.baseGeneration, "generation-2")
+        XCTAssertNil(adopted.userSong, "the old relative song command cannot bind to the new source authority")
+        XCTAssertNil(session.mergeConflictMessage)
+        let commitsBeforeReview = fake.commitCount
+
+        session.undo()
+        XCTAssertEqual(session.document, original, "review shows the complete old document, including its own revision")
+        XCTAssertTrue(session.isReviewingPreviousMerge)
+        XCTAssertFalse(session.canKeepLocalMergeConflicts)
+        XCTAssertNil(session.exportEditorState())
+        XCTAssertNil(session.videoDownloadTarget)
+        XCTAssertFalse(session.canDownloadCurrentVideo)
+        XCTAssertThrowsError(try session.videoDownloadRoute(deviceLocalFile: nil))
+        await session.save()
+        XCTAssertEqual(fake.commitCount, commitsBeforeReview)
+        session.resolveMergeConflicts(keepingLocal: true)
+        XCTAssertEqual(session.document, original)
+        XCTAssertTrue(session.isReviewingPreviousMerge, "an unsupported old-song choice remains read-only")
+        XCTAssertNotNil(session.mergeConflictMessage)
+
+        session.resolveMergeConflicts(keepingLocal: false)
+        XCTAssertEqual(session.document, adopted)
+        XCTAssertEqual(session.document.revision.baseGeneration, "generation-2")
+        XCTAssertNil(session.document.userSong)
+        XCTAssertFalse(session.isReviewingPreviousMerge)
+        XCTAssertNil(session.mergeConflictMessage)
+        XCTAssertEqual(fake.commitCount, commitsBeforeReview, "choosing current authority does not submit an old relative song edit")
     }
 
     func testSavedSongRemovalSurvivesExactGenerationRenderRecoveryProjectionWithoutResending() async throws {
@@ -2820,6 +2937,138 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(fake.sourcePoolCallCount, 2, "Repeated authority keeps the same generation inputs")
     }
 
+    func testPromptRefreshDropsSuccessfulReadsAfterOwnerChange() async throws {
+        for stage in ["legacy-project", "legacy-project-fallback", "legacy-variant", "draft", "variant"] {
+            for owner: String? in ["replacement", nil] {
+                try await exercisePromptRefreshOwner(stage: stage, nextOwner: owner)
+            }
+        }
+    }
+
+    func testPromptRefreshDropsFailuresAfterOwnerChange() async throws {
+        for stage in ["legacy-variant", "draft", "variant"] {
+            for owner: String? in ["replacement", nil] {
+                try await exercisePromptRefreshOwner(stage: stage, nextOwner: owner, fails: true)
+            }
+        }
+    }
+
+    func testPromptRefreshStillAdoptsSameOwnerResponses() async throws {
+        for stage in ["legacy-project", "legacy-project-fallback", "legacy-variant", "draft", "variant"] {
+            try await exercisePromptRefreshOwner(stage: stage, nextOwner: "original")
+        }
+    }
+
+    func testPromptRefreshRecoveryRetainsOwnerAcrossTimerAndForegroundWake() async throws {
+        let owners: [(String?, String?)] = [("original", "replacement"), ("original", nil),
+                                            ("original", "original"), (nil, nil)]
+        for foreground in [true, false] {
+            for (initialOwner, nextOwner) in owners {
+                let job = UUID()
+                let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+                    draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 1,
+                    snapshotHash: "h", etag: "e", baseJobID: job.uuidString,
+                    baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+                    authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
+                fake.mediaLibraryOwner = initialOwner
+                let session = NativeEditorSession()
+                await session.load(api: fake, threadID: UUID())
+                XCTAssertEqual(session.loadState, .loaded)
+                session.refreshRetryDelays = [foreground ? .seconds(30) : .seconds(1)]
+                fake.draftError = .requestFailed(status: 500)
+                await session.synchronizePromptRevision()
+                let retry = try XCTUnwrap(session.refreshRetryTask)
+                let reads = fake.draftCallCount
+                let before = session.document
+                let refresh = session.refreshSync
+                fake.draftError = nil
+                fake.authoritativeVariant = Self.variant(duration: 3, generation: "g2")
+                fake.mediaLibraryOwner = nextOwner
+                if foreground { await session.resumeRefreshSync() }
+                if initialOwner == nextOwner {
+                    let recovered = await waitUntil(timeout: .seconds(3)) { fake.draftCallCount > reads }
+                    XCTAssertTrue(recovered, "same-owner recovery remains live")
+                    let applied = await waitUntil(timeout: .seconds(3)) { session.document.revision.baseGeneration == "g2" }
+                    XCTAssertTrue(applied)
+                    XCTAssertEqual(fake.draftCallCount, reads + 1)
+                } else {
+                    if !foreground { await retry.value }
+                    XCTAssertEqual(fake.draftCallCount, reads, "old-owner recovery must not start a new-account read")
+                    XCTAssertEqual(session.document, before)
+                    XCTAssertEqual(session.refreshSync, refresh)
+                }
+                XCTAssertEqual(fake.commitCount, 0)
+                retry.cancel()
+                session.setObserversVisible(false)
+            }
+        }
+    }
+
+    private func exercisePromptRefreshOwner(stage: String, nextOwner: String?, fails: Bool = false) async throws {
+        let legacy = stage.hasPrefix("legacy")
+        let thread = UUID(), job = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 1,
+            snapshotHash: "h", etag: "e", baseJobID: job.uuidString,
+            baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
+        fake.mediaLibraryOwner = "original"
+        let project = ProjectSummary(id: thread, title: "Owner fence", status: .ready, updatedAt: .now,
+            posterURL: nil, outputVariantID: "initial", runtimeVersion: legacy ? 1 : 2,
+            activeJobID: job, activePlanItemID: "item")
+        let session = NativeEditorSession(project: project)
+        await session.load(project: project, api: fake)
+        XCTAssertEqual(session.loadState, .loaded)
+        let before = session.document
+        let beforeRefresh = session.refreshSync
+        fake.authoritativeVariant = Self.variant(duration: 3, generation: "g2")
+        if stage == "legacy-project" {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            fake.refreshedThread = try decoder.decode(CreationThread.self, from: Data(#"""
+            {"id":"\#(thread.uuidString)","title":"Owner fence","status":"active","revision":2,"runtime_version":1,
+             "active_job_id":"\#(job.uuidString)","active_plan_item_id":"item",
+             "state":{"selected_variant_id":"initial"},
+             "job":{"id":"\#(job.uuidString)","status":"variants_ready","variants":[{"variant_id":"initial","render_status":"ready"}]},
+             "updated_at":"2026-09-09T08:00:00Z"}
+            """#.utf8))
+        }
+        if stage.hasPrefix("legacy-project") { fake.suspendNextProject = true }
+        else if stage == "draft" { fake.suspendNextDraft = true }
+        else { fake.suspendNextEditorVariant = true }
+        let sync = Task { await session.synchronizePromptRevision() }
+        let suspended = await waitUntil(timeout: .seconds(3)) {
+            if stage.hasPrefix("legacy-project") { return fake.projectIsSuspended }
+            if stage == "draft" { return fake.draftIsSuspended }
+            return fake.editorVariantIsSuspended
+        }
+        XCTAssertTrue(suspended, stage)
+        fake.mediaLibraryOwner = nextOwner
+        if fails {
+            if stage == "draft" { fake.draftError = .requestFailed(status: 404, detail: RequestFailureDetail(nil, code: "thread_not_found")) }
+            else { fake.editorVariantError = .requestFailed(status: 404, detail: RequestFailureDetail(nil, code: "thread_not_found")) }
+        }
+        let variantsBeforeResume = fake.editorVariantCalls
+        if stage.hasPrefix("legacy-project") { fake.resumeProject() }
+        else if stage == "draft" { fake.resumeDraft() }
+        else { fake.resumeEditorVariant() }
+        await sync.value
+        if nextOwner == "original" {
+            XCTAssertEqual(session.document.revision.baseGeneration, "g2", stage)
+            XCTAssertNotEqual(session.document, before, "same-owner refresh remains live: \(stage)")
+        } else {
+            XCTAssertEqual(session.document, before, "old-owner response cannot replace the document: \(stage)")
+            XCTAssertEqual(session.refreshSync, beforeRefresh, "old-owner failure cannot schedule current-owner recovery: \(stage)")
+            XCTAssertNil(session.mergeConflictMessage, stage)
+            if stage.hasPrefix("legacy-project") || stage == "draft" {
+                XCTAssertEqual(fake.editorVariantCalls, variantsBeforeResume,
+                    "reject the old-owner response before another account's follow-up read: \(stage)")
+            }
+        }
+        XCTAssertEqual(fake.commitCount, 0)
+        session.setObserversVisible(false)
+    }
+
     func testLegacyConversationRefreshDoesNotUseRuntimeTwoDraftOrEraseLocalEdits() async throws {
         let jobID = UUID()
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
@@ -2846,14 +3095,27 @@ final class NativeEditorSessionTests: XCTestCase {
         // KRI-935: a newer render loads by itself and the unsaved trim rides on top of it.
         fake.authoritativeVariant = Self.variant(duration: 2, generation: "g2")
         await session.synchronizePromptRevision()
-        XCTAssertEqual(session.document.clips, local.clips)
+        XCTAssertEqual(session.document.snapshot(for: .timeline), local.snapshot(for: .timeline))
         XCTAssertEqual(session.document.revision.baseGeneration, "g2")
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertEqual(session.saveState, .idle)
         XCTAssertEqual(fake.draftCallCount, 0)
+        let rebased = session.document
         session.undo()
-        XCTAssertFalse(session.hasUnsavedChanges, "one Undo drops the replayed edit, leaving the newest version")
+        XCTAssertEqual(session.document, local, "Undo restores the complete pre-application local document")
+        XCTAssertTrue(session.isReviewingPreviousMerge)
+        XCTAssertNotNil(session.mergeConflictMessage)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertNil(session.exportEditorState())
+        XCTAssertFalse(session.canDownloadCurrentVideo)
+        await session.save()
+        XCTAssertEqual(fake.commitCount, 0, "reviewing old authority cannot submit a Save")
+        session.redo()
+        XCTAssertEqual(session.document, rebased)
+        XCTAssertFalse(session.isReviewingPreviousMerge)
         XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertEqual(fake.draftCallCount, 0, "history never calls the runtime-v2 draft route")
     }
 
     /// S2-f: a legacy thread between jobs (no usable selection yet) is a normal moment. The sync
@@ -2998,43 +3260,122 @@ final class NativeEditorSessionTests: XCTestCase {
         try await exerciseLegacyRefreshAfterSave(overlappingTrim: false)
     }
 
-    private func exerciseLegacyRefreshAfterSave(overlappingTrim: Bool) async throws {
-        let jobID = UUID()
+    func testDeferredSameTargetConflictRetainsItsAdmittedPreviewWhenResolved() async throws {
+        try await exerciseLegacyRefreshAfterSave(overlappingTrim: true, retainsPreview: true)
+    }
+
+    func testRetainedPreviewStopsOnSourceFailureAndRetriesWithoutLosingTheUnsavedTrim() async throws {
+        try await exerciseLegacyRefreshAfterSave(overlappingTrim: true, retainsPreview: true, testsRetainedFailure: true)
+    }
+
+    private func exerciseLegacyRefreshAfterSave(overlappingTrim: Bool, retainsPreview: Bool = false,
+                                               testsRetainedFailure: Bool = false) async throws {
+        let jobID = UUID(), projectID = UUID()
+        var initialVariant = Self.variant(duration: 2, generation: "g1")
+        if retainsPreview { initialVariant["resolved_archetype"] = .string("montage") }
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
             draftID: "unused", itemID: "item", variantKey: "initial", draftRevision: 0,
             snapshotHash: "", etag: "", baseJobID: nil, baseGenerationID: nil,
             snapshot: [:], canUndo: false, createdAt: .now), draftError: .conflict,
-            authoritativeVariant: Self.variant(duration: 2, generation: "g1"),
+            authoritativeVariant: initialVariant,
             commitResponse: EditorCommitResponse(ok: false, generation: "g2",
                 sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false),
                 revisionNumber: nil, revisionHash: nil, expectedDuration: nil))
-        let project = ProjectSummary(id: UUID(), title: "Legacy", status: .ready, updatedAt: .now,
+        var previewSource: NativeTimelineSource?
+        var importedAssetID: String?
+        let retainedSlotID = UUID().uuidString
+        func retainingSourceIdentity(_ variant: [String: JSONValue]) -> [String: JSONValue] {
+            guard retainsPreview else { return variant }
+            guard let importedAssetID,
+                  var timeline = variant["user_timeline"]?.objectValue,
+                  var slots = timeline["slots"]?.arrayValue, slots.count == 1,
+                  var slot = slots[0].objectValue else {
+                XCTFail("The retained fixture requires its imported source and one canonical slot")
+                return variant
+            }
+            slot["slot_id"] = .string(retainedSlotID)
+            slot["id"] = .string(retainedSlotID)
+            slot["asset_id"] = .string(importedAssetID)
+            slots[0] = .object(slot)
+            timeline["slots"] = .array(slots)
+            var result = variant
+            result["user_timeline"] = .object(timeline)
+            return result
+        }
+        if retainsPreview {
+            let sourceProject = BackgroundUploadCoordinator.projectDirectory(projectID)
+            addTeardownBlock { try? FileManager.default.removeItem(at: sourceProject.root) }
+            let footage = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+            let asset = try await AssetImportCoordinator(project: sourceProject).importAsset(from: footage)
+            // MediaAsset.id is String; the importer defaults to a UUID string.
+            _ = try XCTUnwrap(UUID(uuidString: asset.id))
+            importedAssetID = asset.id
+            try SourceAssetStore(project: sourceProject).bind(mediaID: "source", original: asset)
+            let fingerprint = try XCTUnwrap(asset.fingerprint)
+            let descriptor = OriginalMediaDescriptor(sha256: fingerprint.hex, byteCount: fingerprint.byteCount,
+                durationS: 4, width: 1080, height: 1920, orientationDegrees: 0, hasAudio: true)
+            previewSource = NativeTimelineSource(mediaID: "source", sourceURL: nil,
+                original: descriptor, localRequired: true)
+        }
+        func pinPreviewSources(_ generation: String) {
+            guard let previewSource else { return }
+            fake.sourcePoolResult = NativeEditorSourcePool(
+                clips: [.init(clipIndex: 0, nativeSource: previewSource)], baseGeneration: generation)
+        }
+        fake.authoritativeVariant = retainingSourceIdentity(initialVariant)
+        pinPreviewSources("g1")
+        let project = ProjectSummary(id: projectID, title: "Legacy", status: .ready, updatedAt: .now,
             posterURL: nil, outputVariantID: "initial", runtimeVersion: 1,
             activeJobID: jobID, activePlanItemID: "item")
         let session = NativeEditorSession(project: project)
+        defer {
+            if retainsPreview {
+                session.setObserversVisible(false)
+                session.endPreviewPresentation()
+                session.pausePlayback()
+            }
+        }
+        func previewDiagnostics() -> String {
+            "generation=\(session.document.revision.baseGeneration); conflict=\(String(describing: session.mergeConflictMessage)); sourceState=\(session.sourcePreviewState); sourcePoolCalls=\(fake.sourcePoolCallCount)"
+        }
+        func awaitPreparedPreview() async throws {
+            let ready = await waitUntil {
+                session.sourcePreviewState == .ready
+                    && session.admissiblePreviewDisplayTicket != nil
+                    && session.player?.currentItem?.status == .readyToPlay
+            }
+            XCTAssertTrue(ready, "The real local-source preview must settle before admission: \(previewDiagnostics())")
+            XCTAssertEqual(session.sourcePreviewState, .ready)
+            guard ready else { throw APIError.invalidResponse }
+        }
         await session.load(project: project, api: fake)
+        if retainsPreview { try await awaitPreparedPreview() }
         session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.5)
         await session.save()
         XCTAssertEqual(fake.commitCount, 1)
         XCTAssertFalse(session.hasUnsavedChanges)
         func renderedVariant(duration: Double, generation: String, textEnd: Double = 1) -> [String: JSONValue] {
             var value = Self.variant(duration: duration, generation: generation)
+            if retainsPreview { value["resolved_archetype"] = .string("montage") }
             value["text_elements"] = .array([.object([
                 "id": .string("remote-text"), "text": .string("Original"),
                 "start_s": .number(0), "end_s": .number(textEnd),
             ])])
-            return value
+            return retainingSourceIdentity(value)
         }
         let saved = renderedVariant(duration: 1.5, generation: "g2")
         fake.authoritativeVariant = saved
+        pinPreviewSources("g2")
         XCTAssertTrue(session.rebaseCleanDraft(from: saved))
         session.saveState = .saved
+        if retainsPreview { try await awaitPreparedPreview() }
         if overlappingTrim {
             session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.2)
         } else {
             session.updateTextContent(id: "remote-text", content: "My local edit")
         }
         let afterSave = session.document
+        let expectedTimeline = retainsPreview ? try XCTUnwrap(afterSave.snapshot(for: .timeline)) : nil
         await session.synchronizePromptRevision()
         XCTAssertEqual(session.document, afterSave)
         XCTAssertTrue(session.hasUnsavedChanges)
@@ -3048,7 +3389,23 @@ final class NativeEditorSessionTests: XCTestCase {
             XCTAssertTrue(session.hasUnsavedChanges)
             XCTAssertTrue(session.canUndo)
             XCTAssertEqual(fake.commitCount, 1, "a background conflict does not save")
+            if retainsPreview {
+                try await awaitPreparedPreview()
+                XCTAssertEqual(session.sourcePreviewState, .ready)
+                session.beginPreviewPresentation()
+                let player = try XCTUnwrap(session.player)
+                XCTAssertEqual(player.currentItem?.status, .readyToPlay)
+                let ticket = try XCTUnwrap(session.admissiblePreviewDisplayTicket)
+                session.previewFrameWasShown(player: player, ticket: ticket)
+                XCTAssertFalse(session.isPreparingCurrentPreview)
+                XCTAssertNil(session.previousPreviewPresentation, "The conflict choice itself is not preview work")
+            }
+            pinPreviewSources("g3")
             session.resolveMergeConflicts(keepingLocal: true)
+            if retainsPreview {
+                XCTAssertEqual(session.previousPreviewPresentation?.status, .updating,
+                               "Resolving a deferred same-target conflict keeps its admitted picture during preparation")
+            }
         } else {
             XCTAssertNil(session.mergeConflictMessage, "remote timing and local wording merge automatically")
             XCTAssertEqual(session.document.textElements.first?.text, "My local edit")
@@ -3058,10 +3415,96 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertNil(session.mergeConflictMessage)
         XCTAssertEqual(rebased.revision.baseGeneration, "g3")
-        XCTAssertEqual(rebased.clips, afterSave.clips, "the unsaved trim survives merging or the explicit local choice")
+        if retainsPreview {
+            let resolvedTimeline = try XCTUnwrap(rebased.snapshot(for: .timeline))
+            XCTAssertEqual(resolvedTimeline, try XCTUnwrap(expectedTimeline),
+                           "The complete authored timeline, including unknown fields, survives conflict resolution")
+            let expectedClip = try XCTUnwrap(afterSave.clips.first)
+            let resolvedClip = try XCTUnwrap(rebased.clips.first)
+            let expectedAsset = try XCTUnwrap(expectedClip.raw["asset_id"])
+            XCTAssertEqual(resolvedClip.raw["asset_id"], expectedAsset)
+            XCTAssertEqual(resolvedClip.clipIndex, 0)
+            XCTAssertEqual(resolvedClip.inS, 0)
+            XCTAssertEqual(resolvedClip.durationS, 1.2)
+        } else {
+            // Compare the persisted authored lane: encoding overlays effective values onto cached
+            // wire rows while retaining source identity, tombstones and opaque fields.
+            XCTAssertEqual(rebased.snapshot(for: .timeline), afterSave.snapshot(for: .timeline),
+                           "the complete authored timeline survives merging or the explicit local choice")
+        }
         await session.synchronizePromptRevision()
         XCTAssertEqual(session.document, rebased)
         XCTAssertEqual(fake.draftCallCount, 0)
+        if retainsPreview {
+            try await awaitPreparedPreview()
+            XCTAssertEqual(session.document.revision.baseGeneration, "g3")
+            XCTAssertEqual(session.sourcePreviewState, .ready)
+            XCTAssertNotNil(session.admissiblePreviewDisplayTicket)
+            let candidate = try XCTUnwrap(session.player?.currentItem)
+            XCTAssertEqual(candidate.status, .readyToPlay)
+            XCTAssertNotNil(candidate.videoComposition)
+            let previous = try XCTUnwrap(session.previousPreviewPresentation)
+            XCTAssertEqual(previous.status, .updating)
+            XCTAssertFalse(previous.player === session.player)
+            XCTAssertFalse(session.canDownloadCurrentVideo)
+            let localCandidate = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: localCandidate.path))
+            XCTAssertThrowsError(try session.videoDownloadRoute(deviceLocalFile: localCandidate)) { error in
+                switch error as? NativeEditorVideoDownloadError {
+                case .some(.unavailable): break
+                default: XCTFail("A previous preview must refuse the local-file candidate as unavailable: \(error)")
+                }
+            }
+            do {
+                _ = try await session.exportDisplayedSourcePreview()
+                XCTFail("A previous preview must not export")
+            } catch {
+                switch error as? NativeEditorVideoDownloadError {
+                case .some(.unavailable): break
+                default: XCTFail("A previous preview must refuse source export as unavailable: \(error)")
+                }
+            }
+            XCTAssertTrue(session.isShowingPreviousPreview)
+            if testsRetainedFailure {
+                let sourceCallsBeforeFailure = fake.sourcePoolCallCount
+                fake.sourcePoolError = .requestFailed(status: 503)
+                fake.authoritativeVariant = renderedVariant(duration: 1.4, generation: "g4")
+                await session.synchronizePromptRevision()
+                let adopted = session.document.revision.baseGeneration == "g4"
+                let merged = session.mergeConflictMessage == nil
+                XCTAssertTrue(adopted, "The failure must belong to adopted g4: \(previewDiagnostics())")
+                XCTAssertTrue(merged, "A merge conflict must not substitute for the source failure: \(previewDiagnostics())")
+                guard adopted, merged else { throw APIError.invalidResponse }
+                let requested = await waitUntil(timeout: .seconds(5)) {
+                    fake.sourcePoolCallCount > sourceCallsBeforeFailure
+                }
+                XCTAssertTrue(requested, "The real g4 source request must run: \(previewDiagnostics())")
+                guard requested else { throw APIError.invalidResponse }
+                let failed = await waitUntil {
+                    if case .failed = session.sourcePreviewState { return true }
+                    return false
+                }
+                XCTAssertTrue(failed, "The real source-pool failure must reach a terminal preview state: \(previewDiagnostics())")
+                guard failed else { throw APIError.invalidResponse }
+                XCTAssertFalse(session.isPreparingCurrentPreview)
+                XCTAssertEqual(session.previousPreviewPresentation?.status, .failed)
+                XCTAssertTrue(session.hasUnsavedChanges)
+                XCTAssertNil(session.mergeConflictMessage)
+                XCTAssertEqual(session.document.snapshot(for: .timeline), expectedTimeline)
+                XCTAssertThrowsError(try session.videoDownloadRoute(deviceLocalFile: localCandidate))
+
+                fake.sourcePoolError = nil
+                pinPreviewSources("g4")
+                await session.retryPreview()
+                try await awaitPreparedPreview()
+                XCTAssertEqual(session.document.revision.baseGeneration, "g4")
+                XCTAssertEqual(session.document.snapshot(for: .timeline), expectedTimeline)
+                XCTAssertTrue(session.hasUnsavedChanges)
+                XCTAssertTrue(session.isPreparingCurrentPreview, "A ready candidate still awaits its real surface")
+                XCTAssertEqual(session.previousPreviewPresentation?.status, .updating)
+            }
+            session.endPreviewPresentation()
+        }
     }
 
     /// S2-b: a 503 during the refresh is a server hiccup. It never reaches the save banner, a quiet
@@ -5095,33 +5538,61 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.saveState, .idle)
     }
 
-    func testDraftLoadFailureIsNotReportedAsSaveFailure() async {
-        let threadID = UUID()
-        let fake = EditorCommitSpy(
-            draftSnapshot: DraftSnapshot(
-                draftID: "unused", itemID: "unused", variantKey: "initial",
-                draftRevision: 0, snapshotHash: "", etag: "", baseJobID: nil,
-                baseGenerationID: nil, snapshot: [:], canUndo: false, createdAt: .now
-            ),
-            draftError: .requestFailed(status: 500)
-        )
-        let project = ProjectSummary(
-            id: threadID, title: "Draft", status: .draft, updatedAt: .now, posterURL: nil
-        )
-        let session = NativeEditorSession(project: project)
-        session.loadRetryDelays = [.milliseconds(1)]
-
-        await session.load(project: project, api: fake)
-        // A 5xx first waits quietly behind the opening screen (L-c); only a lasting one shows.
-        XCTAssertEqual(session.loadState, .loading)
-        let deadline = ContinuousClock.now + .seconds(5)
-        while session.loadState == .loading, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }
-
-        XCTAssertEqual(
-            session.saveState,
-            .loadFailed("Kria hit a problem on its side. Your chat and footage are safe. Try again in a moment.")
-        )
-        XCTAssertEqual(fake.draftCallCount, 1 + NativeEditorSession.loadTransientRetryLimit)
+    func testDraftLoadFailureKeepsObservingUntilRecoveryAndFencesHiddenOrChangedOwner() async {
+        for outcome in ["recover", "hidden", "owner"] {
+            let threadID = UUID()
+            let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+                draftID: "draft", itemID: "item", variantKey: "initial", draftRevision: 1,
+                snapshotHash: "h", etag: "e", baseJobID: nil, baseGenerationID: nil,
+                snapshot: [:], canUndo: false, createdAt: .now), draftError: .requestFailed(status: 500))
+            fake.mediaLibraryOwner = "original"
+            let project = ProjectSummary(id: threadID, title: "Draft", status: .draft, updatedAt: .now, posterURL: nil)
+            let session = NativeEditorSession(project: project)
+            session.loadRetryDelays = [.zero]
+            var now = ContinuousClock.now
+            var reachedSlow = false
+            var readsAtSlow = 0
+            session.loadReadNow = { now }
+            session.loadReadSleep = { delay in
+                now = now.advanced(by: delay)
+                if delay >= .seconds(300), !reachedSlow {
+                    reachedSlow = true
+                    readsAtSlow = fake.draftCallCount
+                    XCTAssertEqual(session.saveState, .idle)
+                    XCTAssertEqual(session.loadState, .loading)
+                    XCTAssertTrue(session.loadWaitingMessage?.contains("automatically") == true)
+                    fake.draftError = nil
+                    if outcome == "hidden" { session.setObserversVisible(false) }
+                    if outcome == "owner" { fake.mediaLibraryOwner = "replacement" }
+                }
+                await Task.yield()
+            }
+            await session.load(project: project, api: fake)
+            let observedSlowOutcome = await waitUntil(timeout: .seconds(3)) {
+                reachedSlow && (outcome != "recover" || session.loadState == .loaded)
+            }
+            XCTAssertTrue(observedSlowOutcome, outcome)
+            XCTAssertTrue(reachedSlow, outcome)
+            XCTAssertEqual(readsAtSlow, 1 + NativeEditorSession.loadTransientRetryLimit)
+            if outcome == "recover" {
+                XCTAssertEqual(session.loadState, .loaded)
+                XCTAssertEqual(fake.draftCallCount, readsAtSlow + 1)
+            } else {
+                for _ in 0..<20 { await Task.yield() }
+                XCTAssertEqual(fake.draftCallCount, readsAtSlow, "the stale wake must not read after hiding or changing owner")
+                if outcome == "hidden" {
+                    session.setObserversVisible(true)
+                    let reopened = await waitUntil(timeout: .seconds(3)) { session.loadState == .loaded }
+                    XCTAssertTrue(reopened)
+                    XCTAssertEqual(session.loadState, .loaded)
+                    XCTAssertEqual(fake.draftCallCount, readsAtSlow + 1)
+                }
+            }
+            XCTAssertEqual(session.saveState, .idle)
+            XCTAssertEqual(fake.commitCount, 0)
+            session.setObserversVisible(false)
+            session.loadReadSleep = { _ in }
+        }
     }
 
     func testDraftLoadFailsWhenAuthoritativeVariantCannotBeFetched() async {
@@ -6820,7 +7291,10 @@ final class NativeEditorSessionTests: XCTestCase {
         let snapshot: [String: JSONValue] = ["editor_payload": .object(["base_generation": .string("g1"), "sections": .object(["timeline_slots": .array([.object(["slot_id": .string(clipID.uuidString), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2)])])])])]
         let fake = EditorCommitSpy(
             draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
-            authoritativeVariant: ["resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"), "editor_capabilities": .object(["timeline": .bool(true)])],
+            authoritativeVariant: ["resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"),
+                "render_generation_id": .string("g1"), "editor_capabilities": .object(["timeline": .bool(true)]),
+                "user_timeline": .object(["slots": .array([.object(["slot_id": .string(clipID.uuidString),
+                    "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2)])])])],
             commitError: .conflict
         )
         let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
@@ -6835,7 +7309,8 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(fake.commitCount, 2, "one automatic resend after reloading the newest version, no loop")
         guard case .failed(let message) = session.saveState else { return XCTFail("expected a Save failure, got \(session.saveState)") }
         XCTAssertFalse(message.localizedCaseInsensitiveContains("reopen"))
-        XCTAssertEqual(session.document.clips, editedDocument.clips, "the local trim is replayed on the newest version")
+        XCTAssertEqual(session.document.snapshot(for: .timeline), editedDocument.snapshot(for: .timeline),
+                       "the complete authored timeline is replayed on the newest version")
         XCTAssertEqual(session.selectedClipID, selected)
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertTrue(session.canUndo)
@@ -6950,6 +7425,34 @@ final class NativeEditorSessionTests: XCTestCase {
     /// KRI-935: a preview whose source pool answers 409 ("a newer version exists") loads the newest version on
     /// its own, keeps the unsaved edit, and rebuilds. A server that keeps answering 409 gets one reload per
     /// generation, then a Retry that reloads again: never "close and reopen", never an endless "Preparing preview".
+    func testDefaultSessionRefreshUsesLoadedThreadIdentityNamespace() async throws {
+        let thread = UUID(), job = UUID()
+        let variant = Self.variant(duration: 2, generation: "g1")
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "initial",
+            draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: job.uuidString, baseGenerationID: "g1",
+            snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: variant)
+        // The default initializer's private storage UUID is intentionally unrelated
+        // to the subsequently loaded thread. It must never namespace server slots.
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: thread)
+        let initial = try XCTUnwrap(session.timelineClips.first)
+        var rendered = variant
+        rendered["render_generation_id"] = .string("g2")
+        XCTAssertTrue(session.rebaseCleanDraft(from: rendered))
+        let refreshed = try XCTUnwrap(session.timelineClips.first)
+        XCTAssertEqual(refreshed.id, initial.id)
+        XCTAssertEqual(refreshed.assetID, initial.assetID)
+        XCTAssertEqual(session.draft.clips.first?.assetID, initial.assetID)
+
+        await session.load(api: fake, threadID: UUID())
+        let replacement = try XCTUnwrap(session.timelineClips.first)
+        XCTAssertNotEqual(replacement.id, initial.id, "the same opaque slot in a different project has different identity")
+        XCTAssertNotEqual(replacement.assetID, initial.assetID)
+        XCTAssertTrue(session.rebaseCleanDraft(from: rendered))
+        XCTAssertEqual(session.timelineClips.first?.id, replacement.id)
+        XCTAssertEqual(session.timelineClips.first?.assetID, replacement.assetID)
+    }
+
     func testPreviewConflictLoadsNewestVersionOncePerGenerationThenRetryReloads() async throws {
         let threadID = UUID(), jobID = UUID()
         let fake = EditorCommitSpy(
@@ -6974,18 +7477,129 @@ final class NativeEditorSessionTests: XCTestCase {
 
         // The creator keeps editing; meanwhile a newer version (g2) lands on the server.
         session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.5)
-        let local = session.document.clips
+        let local = try XCTUnwrap(session.document.snapshot(for: .timeline))
         fake.authoritativeVariant = Self.variant(duration: 2, generation: "g2")
         await session.retryPreview()
         let secondFailure = await settledFailure()
         XCTAssertNotNil(secondFailure, "Retry ends on the Retry card again, not an endless Preparing preview")
         XCTAssertEqual(session.document.revision.baseGeneration, "g2", "Retry loaded the newest version")
-        XCTAssertEqual(session.document.clips, local, "with the unsaved trim on top")
+        XCTAssertEqual(session.document.snapshot(for: .timeline), local, "with the complete unsaved timeline on top")
         XCTAssertTrue(session.hasUnsavedChanges)
         let calls = fake.sourcePoolCallCount
         XCTAssertEqual(calls, 4, "Retry's build, then one rebuild on g2")
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertEqual(fake.sourcePoolCallCount, calls, "no reload loop")
+    }
+
+    func testPreviewConflictNeedingChoiceStopsPreparingWithoutResolvingLocalEdits() async throws {
+        let thread = UUID(), job = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "initial",
+            draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: job.uuidString, baseGenerationID: "g1",
+            snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
+        fake.sourcePoolError = .conflict
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: thread)
+        let initialFailure = await waitUntil(timeout: .seconds(3)) { session.sourcePreviewState.isFailure }
+        XCTAssertTrue(initialFailure)
+        session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 1.5)
+        let local = session.document
+        fake.authoritativeVariant = Self.variant(duration: 1.2, generation: "g2")
+        await session.retryPreview()
+        let needsChoice = await waitUntil(timeout: .seconds(3)) {
+            session.mergeConflictMessage != nil && session.sourcePreviewState.isFailure
+        }
+        XCTAssertTrue(needsChoice, "a merge decision is actionable, not an indefinitely preparing preview")
+        guard case .failed(let message) = session.sourcePreviewState else { return XCTFail("expected a visible preview failure") }
+        XCTAssertTrue(message.contains("conflicting changes"))
+        XCTAssertEqual(session.document, local, "the preview must not choose either side of the conflict")
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertTrue(session.canUndo)
+        XCTAssertEqual(fake.commitCount, 0)
+    }
+
+    func testCrossGenerationMergeUndoReviewsOriginalWithoutExecutingItsAuthority() async throws {
+        let thread = UUID(), job = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "initial",
+            draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: job.uuidString, baseGenerationID: "g1",
+            snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: Self.variant(duration: 2, generation: "g1"))
+        fake.sourcePoolError = .conflict
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: thread)
+        let initialFailure = await waitUntil(timeout: .seconds(3)) { session.sourcePreviewState.isFailure }
+        XCTAssertTrue(initialFailure)
+        let clipID = try XCTUnwrap(session.timelineClips.first?.id)
+        session.setClipTiming(clipID: clipID, durationS: 1.5)
+        let original = session.document
+        fake.authoritativeVariant = Self.variant(duration: 1.2, generation: "g2")
+        await session.retryPreview()
+        let needsChoice = await waitUntil(timeout: .seconds(3)) { session.mergeConflictMessage != nil }
+        XCTAssertTrue(needsChoice)
+        let notificationJob = UUID()
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        fake.refreshedThread = try decoder.decode(CreationThread.self, from: Data(#"""
+        {"id":"\#(thread.uuidString)","title":"Latest","status":"active","revision":2,"runtime_version":2,
+         "active_job_id":"\#(notificationJob.uuidString)","active_plan_item_id":"item","state":{"selected_variant_id":"initial"},
+         "job":{"id":"\#(notificationJob.uuidString)","status":"failed","variants":[{"variant_id":"initial","render_status":"failed"}]},
+         "updated_at":"2026-09-09T08:00:00Z"}
+        """#.utf8))
+        let notification = try XCTUnwrap(fake.refreshedThread?.summary)
+        let readsBeforeChoice = fake.projectCallCount
+        await session.adoptLatestJob(notification, api: fake)
+        XCTAssertEqual(fake.projectCallCount, readsBeforeChoice, "the pending choice defers its queued check")
+        fake.sourcePoolError = .offline
+        session.resolveMergeConflicts(keepingLocal: false)
+        let drainedAfterChoice = await waitUntil(timeout: .seconds(3)) { fake.projectCallCount > readsBeforeChoice }
+        XCTAssertTrue(drainedAfterChoice, "choosing must rearm the queued notification without another event")
+        let adopted = session.document
+        XCTAssertEqual(adopted.revision.baseGeneration, "g2")
+        XCTAssertNil(session.mergeConflictMessage)
+
+        // Edits above the decision boundary remain normal document history.
+        session.setClipTiming(clipID: clipID, durationS: 1.0)
+        let laterEdit = session.document
+        XCTAssertNotEqual(laterEdit, adopted)
+        session.undo()
+        XCTAssertEqual(session.document, adopted)
+        session.undo()
+        XCTAssertEqual(session.document, original)
+        XCTAssertTrue(session.isReviewingPreviousMerge)
+        XCTAssertNotNil(session.mergeConflictMessage)
+        XCTAssertNil(session.exportEditorState())
+        session.setClipTiming(clipID: clipID, durationS: 0.5)
+        session.transactDocument(section: .timeline) { $0.clips.removeAll() }
+        session.togglePlayback()
+        await session.save()
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document, original, "old-authority review cannot execute edits or background adoption")
+        XCTAssertFalse(session.isPlaying)
+        XCTAssertEqual(fake.commitCount, 0)
+        let readsBeforeRedo = fake.projectCallCount
+        await session.adoptLatestJob(notification, api: fake)
+        XCTAssertEqual(fake.projectCallCount, readsBeforeRedo, "read-only review defers its queued check")
+        session.redo()
+        let drainedAfterRedo = await waitUntil(timeout: .seconds(3)) { fake.projectCallCount > readsBeforeRedo }
+        XCTAssertTrue(drainedAfterRedo, "Redo must rearm the queued notification without another event")
+        XCTAssertEqual(session.document, adopted)
+        XCTAssertFalse(session.isReviewingPreviousMerge)
+        session.redo()
+        XCTAssertEqual(session.document, laterEdit, "redo preserves the edit above the decision boundary")
+
+        session.undo()
+        session.undo()
+        XCTAssertTrue(session.isReviewingPreviousMerge)
+        session.resolveMergeConflicts(keepingLocal: false)
+        XCTAssertEqual(session.document, adopted)
+        XCTAssertFalse(session.isReviewingPreviousMerge)
+        session.undo()
+        XCTAssertEqual(session.document, original)
+        XCTAssertTrue(session.isReviewingPreviousMerge, "rechoosing cannot turn the old generation into executable document history")
+        XCTAssertNil(session.exportEditorState())
+        await session.load(api: fake, threadID: UUID())
+        let replacement = session.document
+        session.resolveMergeConflicts(keepingLocal: false)
+        session.redo()
+        XCTAssertEqual(session.document, replacement, "a replacement lifetime cannot replay the previous decision")
+        XCTAssertFalse(session.isReviewingPreviousMerge)
     }
 
     func testPreviewConflictReloadCancellationDoesNotLeavePreparationRunning() async throws {
@@ -7991,6 +8605,10 @@ final class EditorCommitSpy: KriaAPIClient {
     var editorVariantJobIDs: [UUID] = []
     var supersededJobIDs: Set<UUID> = []
     var projectCallCount = 0
+    var suspendNextDraft = false
+    private(set) var draftIsSuspended = false
+    private var draftContinuation: CheckedContinuation<Void, Never>?
+    func resumeDraft() { draftContinuation?.resume(); draftContinuation = nil }
     var suspendNextProject = false
     var projectIsSuspended = false
     private var projectContinuation: CheckedContinuation<Void, Never>?
@@ -8078,6 +8696,14 @@ final class EditorCommitSpy: KriaAPIClient {
     func threadDelta(threadID: UUID, afterSequence: Int) async throws -> ThreadDelta { throw APIError.unsupported }
     func draft(threadID: UUID) async throws -> DraftSnapshot {
         draftCallCount += 1
+        if suspendNextDraft {
+            suspendNextDraft = false
+            await withCheckedContinuation { continuation in
+                draftContinuation = continuation
+                draftIsSuspended = true
+            }
+            draftIsSuspended = false
+        }
         if let draftError { throw draftError }
         return draftSnapshot
     }

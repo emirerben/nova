@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -60,10 +60,13 @@ from app.pipeline.phone_subtitled_lanes import (
     SubtitledSoundEffect,
     sfx_path_is_playable,
 )
-from app.pipeline.render_geometry import MediaFootprint, NormalizedBox
+from app.pipeline.render_geometry import MediaFootprint, NormalizedBox, ProtectedRegion
+from app.services.phone_card_layout import CardLayoutContext
 from app.services.phone_overlay_grounding import (
     _label_for_asset,
+    _lay_out_cards,
     _load_ready_pool_assets,
+    marked_object_regions,
     resolve_phone_card_geometry,
 )
 from app.services.sfx_catalog import SfxEntry, resolve_described_effect
@@ -334,7 +337,9 @@ def _named_phrase_windows(words: list[dict], phrase: str) -> list[_Heard]:
     return out
 
 
-def _phrase_windows(stream: list[_Token], words: list[dict] | None, phrase: str) -> list[_Heard]:
+def _phrase_windows(
+    stream: list[_Token], words: list[dict] | None, phrase: str, *, joined: bool = False
+) -> list[_Heard]:
     """Every spoken occurrence of ``phrase``, in time order: the exact folded-token matches;
     only when there are none, the creator-named phrase matcher's hearings (KRI-961, when the
     caller passes the raw ``words``). A phrase heard exactly is never also placed on a
@@ -343,9 +348,43 @@ def _phrase_windows(stream: list[_Token], words: list[dict] | None, phrase: str)
     if not tokens:
         return []
     starts = _find_all([t.text for t in stream], tokens)
-    if starts or words is None:
+    if starts:
         return [(stream[i].start_s, stream[i + len(tokens) - 1].end_s, None) for i in starts]
+    # KRI-1281: for a creator's on-screen text, "SpecKit", "Spec-kit" and "Spec Kit" are one
+    # word spelled three ways. Opt-in: the background-follows-talk matcher deliberately keeps
+    # "Mero pe" from hearing "Merope".
+    spaced = _joined_spelling_windows(stream, tokens) if joined else []
+    if spaced or words is None:
+        return spaced
     return _named_phrase_windows(words, phrase)
+
+
+_MIN_JOINED_CHARS = 5
+
+
+def _joined_spelling_windows(stream: list[_Token], tokens: list[str]) -> list[_Heard]:
+    """Occurrences of ``tokens`` heard with the spaces moved: the same letters, split across
+    different word breaks ("speckit" vs "spec" + "kit"). Only runs of 2+ tokens on either
+    side count (a single token on both sides is the exact match), and the letters must be
+    long enough that a short word pair can't collide by accident."""
+    target = "".join(tokens)
+    if len(target) < _MIN_JOINED_CHARS:
+        return []
+    out: list[_Heard] = []
+    i = 0
+    while i < len(stream):
+        acc = ""
+        for j in range(i, len(stream)):
+            acc += stream[j].text
+            if acc == target:
+                if j > i or len(tokens) > 1:
+                    out.append((stream[i].start_s, stream[j].end_s, None))
+                    i = j
+                break
+            if not target.startswith(acc):
+                break
+        i += 1
+    return out
 
 
 @dataclass(frozen=True)
@@ -365,6 +404,7 @@ def _match_trigger(
     occurrence: str,
     *,
     words: list[dict] | None = None,
+    joined: bool = False,
 ) -> _MatchResult:
     """Find qualifying spoken occurrences of ``trigger`` in ``stream``.
 
@@ -379,13 +419,13 @@ def _match_trigger(
     (`_named_phrase_windows`). Without it the match stays exact.
     """
 
-    hits = _phrase_windows(stream, words, trigger)
+    hits = _phrase_windows(stream, words, trigger, joined=joined)
     if not hits:
         return _MatchResult(reason="never_heard")
 
     after_end_s: float | None = None
     if after:
-        after_hits = _phrase_windows(stream, words, after)
+        after_hits = _phrase_windows(stream, words, after, joined=joined)
         if not after_hits:
             return _MatchResult(reason="after_not_heard")
         after_end_s = after_hits[0][1]
@@ -592,6 +632,8 @@ def ground_phone_reaction_beats(
     allow_fullscreen: bool = False,
     fullscreen_hold_s_default: float | None = None,
     face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
+    protected_regions: Sequence[ProtectedRegion] = (),
+    card_layout: CardLayoutContext | None = None,
 ) -> GroundedReactionBeats:
     """Ground creator-authored reaction beats + closing media against the
     clip's raw Whisper words into phone Talking-lane cards/sounds (KRI-178).
@@ -618,6 +660,14 @@ def ground_phone_reaction_beats(
     sampled faces' eyes-nose-mouth core through a face-filled speaker crop
     before cards are placed; a card may then cover hair or background, never
     the core (`phone_overlay_grounding.resolve_phone_card_geometry`).
+
+    ``protected_regions`` (KRI-903, default none = unchanged): objects the creator marked, as
+    canvas boxes in the speaker clip's own seconds; a corner card allows no overlap with one.
+
+    ``card_layout`` (KRI-1282, default ``None`` = unchanged): Qendresa item 15's layout. When
+    open, every photo/video pop-in is laid out wide in the TOP or BOTTOM band exactly like the
+    generic cards (`phone_overlay_grounding._lay_out_cards`) instead of the small top-right
+    corner slot. Stickers/logos and the closing shot keep their own slots.
 
     Fails open at every stage: a broken face sampler leaves no face regions
     protected (`face_sampling == "failed"`), a bad DB row is skipped, and any
@@ -994,6 +1044,44 @@ def ground_phone_reaction_beats(
             }
         )
 
+    layout_clear_ids: frozenset[str] = frozenset()
+    layout_resolved: dict[str, dict[str, Any]] = {}
+    layout_reasons: dict[str, str] = {}
+    layout_sampling: str | None = None
+    if card_layout is not None and overlays_for_arbitration:
+        layout_ids = {
+            str(o["id"])
+            for o in overlays_for_arbitration
+            if cards_by_id[str(o["id"])].slot == "photo"
+            and str(o["id"]) not in ("closing-photo", "closing-badge", merged_card_id)
+        }
+        if layout_ids:
+            layout_overlays = [o for o in overlays_for_arbitration if str(o["id"]) in layout_ids]
+            overlays_for_arbitration = [
+                o for o in overlays_for_arbitration if str(o["id"]) not in layout_ids
+            ]
+            (
+                layout_resolved,
+                layout_reasons,
+                layout_sampling,
+                layout_clear_ids,
+                _order,
+            ) = _lay_out_cards(
+                {
+                    str(o["id"]): {"asset_id": str(o["asset_id"]), "overlay": o}
+                    for o in layout_overlays
+                },
+                layout_overlays,
+                footprints_by_id,
+                assets_by_id={str(a["id"]): a for a in pool_assets},
+                card_layout=card_layout,
+                clip_path=clip_path,
+                job_id=job_id,
+                face_box_to_canvas=face_box_to_canvas,
+                unplaced=[],
+                protected_regions=protected_regions,
+            )
+
     if overlays_for_arbitration:
         resolved_by_id, geometry_reason_by_id, face_sampling = resolve_phone_card_geometry(
             overlays_for_arbitration,
@@ -1003,9 +1091,18 @@ def ground_phone_reaction_beats(
             **(
                 {"face_box_to_canvas": face_box_to_canvas} if face_box_to_canvas is not None else {}
             ),
+            **(
+                {"extra_protected": marked_object_regions(protected_regions)}
+                if protected_regions
+                else {}
+            ),
         )
     else:
         resolved_by_id, geometry_reason_by_id, face_sampling = {}, {}, "skipped"
+    resolved_by_id = {**resolved_by_id, **layout_resolved}
+    geometry_reason_by_id = {**geometry_reason_by_id, **layout_reasons}
+    if layout_sampling is not None and face_sampling == "skipped":
+        face_sampling = layout_sampling
 
     cards: list[SubtitledOverlayCard] = []
     for card_id, card in cards_by_id.items():
@@ -1054,7 +1151,13 @@ def ground_phone_reaction_beats(
                         occ.failed = True
                         occ.reason = reason
             continue
-        y_frac = min(float(resolved["y_frac"]), CAPTION_BAND_TOP_FRAC)
+        # A laid-out card already clears the measured caption band (a bottom-band card sits
+        # below it), so the corner clamp must not pull it up onto the captions.
+        y_frac = (
+            float(resolved["y_frac"])
+            if card_id in layout_clear_ids
+            else min(float(resolved["y_frac"]), CAPTION_BAND_TOP_FRAC)
+        )
         cards.append(
             SubtitledOverlayCard(
                 id=card_id,
@@ -1071,6 +1174,7 @@ def ground_phone_reaction_beats(
                 # KRI-521: muted, from its first frame, like a KRI-183 PiP card.
                 kind="video" if card.asset.get("kind") == "video" else "image",
                 source_start_s=0.0,
+                caption_clear=card_id in layout_clear_ids,
             )
         )
 
