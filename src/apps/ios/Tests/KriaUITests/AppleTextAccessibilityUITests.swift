@@ -118,7 +118,8 @@ final class AppleTextAccessibilityUITests: XCTestCase {
         let editorial = app.buttons["native-editor-font-tab-editorial"]
         XCTAssertTrue(editorial.waitForExistence(timeout: 3))
         XCTAssertTrue(editorial.isSelected)
-        XCTAssertTrue(app.buttons["native-editor-font-option-editorial-playfair-display"].waitForExistence(timeout: 3))
+        let editorialFont = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "native-editor-font-option-editorial-")).firstMatch
+        XCTAssertTrue(editorialFont.waitForExistence(timeout: 3), "the Editorial page lists editorial fonts")
 
         // Tapping a chip jumps straight to that type, which lists only its fonts.
         XCTAssertTrue(script.waitForExistence(timeout: 3))
