@@ -345,30 +345,50 @@ def make_time_projector(
     window = _segment_window
     fps = GUIDED_FPS
 
-    def old_anchor(time_s: float) -> tuple[dict[str, Any], float, float | None] | None:
+    new_segment_ids = {str(s.get("segment_id") or "") for s in new_segments} | {
+        str(s.get("parent_segment_id") or "") for s in new_segments
+    }
+    new_media_ids = {str(s.get("media_id")) for s in new_segments}
+
+    def survives(segment: dict[str, Any]) -> bool:
+        segment_id = str(segment.get("segment_id") or "")
+        if segment_id:
+            return segment_id in new_segment_ids
+        return str(segment.get("media_id")) in new_media_ids
+
+    def covering(time_s: float) -> list[dict[str, Any]]:
+        found = []
         for segment in reversed(old_segments):
-            output_start, output_end, source_start, source_end = window(segment)
+            output_start, output_end, _, _ = window(segment)
             contains = (
                 output_start < time_s <= output_end
                 if interval_end
                 else output_start <= time_s < output_end
             )
             if contains and output_end > output_start:
-                hold = min(float(segment.get("freeze_hold_s") or 0), output_end - output_start)
-                moving = output_end - output_start - hold
-                held_offset = (
-                    max(0.0, time_s - (output_end - hold))
-                    if hold and time_s >= output_end - hold
-                    else None
-                )
-                source_time = min(
-                    source_end,
-                    source_start
-                    + max(0.0, time_s - output_start)
-                    * (source_end - source_start)
-                    / max(moving, 1e-9),
-                )
-                return segment, source_time, held_offset
+                found.append(segment)
+        # Split-screen panels play at once. Later segments still win, but never a panel
+        # the edit removed while another one under the same instant remains.
+        return sorted(found, key=lambda segment: not survives(segment))
+
+    def old_anchor(time_s: float) -> tuple[dict[str, Any], float, float | None] | None:
+        anchors = covering(time_s)
+        if anchors:
+            segment = anchors[0]
+            output_start, output_end, source_start, source_end = window(segment)
+            hold = min(float(segment.get("freeze_hold_s") or 0), output_end - output_start)
+            moving = output_end - output_start - hold
+            held_offset = (
+                max(0.0, time_s - (output_end - hold))
+                if hold and time_s >= output_end - hold
+                else None
+            )
+            source_time = min(
+                source_end,
+                source_start
+                + max(0.0, time_s - output_start) * (source_end - source_start) / max(moving, 1e-9),
+            )
+            return segment, source_time, held_offset
         if old_segments and abs(time_s - window(old_segments[-1])[1]) <= 1e-6:
             segment = old_segments[-1]
             return (

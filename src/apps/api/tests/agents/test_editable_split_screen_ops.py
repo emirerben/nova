@@ -1402,6 +1402,26 @@ def test_canvas_follows_section_creation_extension_and_unstack(document):
     assert variant["drawings"][0]["start_s"] == 0.2
 
 
+@pytest.mark.parametrize("duration_s", [None, 4])
+@pytest.mark.parametrize("keep_panel", [0, 1])
+def test_unstack_keeps_text_over_the_panel_that_survives(document, keep_panel, duration_s):
+    job, variant = document
+    assert [(t["text"], t["start_s"], t["end_s"]) for t in variant["text_elements"]] == [
+        ("Old hook", 0.0, 2.0)
+    ]
+    create = {"op": "create_split_screen", "slot_indexes": [0, 1], "panel_count": 2}
+    if duration_s is not None:
+        create["duration_s"] = duration_s
+    variant, payload = apply(job, variant, create)
+    section = payload["split_screen_sections"][0]["id"]
+    variant, _ = apply(
+        job,
+        variant,
+        {"op": "remove_split_screen", "section_id": section, "keep_panel": keep_panel},
+    )
+    assert [t["text"] for t in variant["text_elements"] if not t.get("removed")] == ["Old hook"]
+
+
 def test_section_extension_moves_following_canvas(document):
     job, variant = document
     variant, payload = apply(
