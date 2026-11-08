@@ -1,4 +1,5 @@
 import CoreImage
+import KriaMediaEngine
 import XCTest
 @testable import Kria
 
@@ -18,6 +19,11 @@ import XCTest
     }
 
     override func tearDown() async throws { try? FileManager.default.removeItem(at: root) }
+
+    /// These tests hand the flow a text file as a "movie", so nothing should try to transcode it.
+    private func idlePrewarmer() -> SourcePrewarmer {
+        SourcePrewarmer(directory: root.appendingPathComponent("prewarm", isDirectory: true)) { _, destination in destination }
+    }
 
     private func pickedFile(_ name: String = "picked.jpg", bytes: String = "photo") throws -> URL {
         let url = root.appendingPathComponent("picked-\(UUID().uuidString)-\(name)")
@@ -82,7 +88,7 @@ import XCTest
     // MARK: Flow
 
     private func makeFlow(enabled: Bool, project: UUID = UUID()) -> TeleprompterRecordingFlow {
-        TeleprompterRecordingFlow(accountID: "test", projectID: project, root: root, photoSaver: DiscardingSaver(), speakerBackgroundEnabled: enabled)
+        TeleprompterRecordingFlow(accountID: "test", projectID: project, root: root, photoSaver: DiscardingSaver(), prewarmer: idlePrewarmer(), speakerBackgroundEnabled: enabled)
     }
 
     func testChoiceSurvivesARelaunchAndClearingRemovesIt() async throws {
@@ -163,8 +169,9 @@ import XCTest
 
     private func finalizedFlow(enabled: Bool = true, withBackground: Bool = true, calls: Calls,
                                background: @escaping BackgroundIntake) throws -> TeleprompterRecordingFlow {
-        let flow = TeleprompterRecordingFlow(accountID: "test", projectID: UUID(), root: root, photoSaver: DiscardingSaver(),
-                                             speakerBackgroundEnabled: enabled, backgroundIntake: background)
+        let flow = TeleprompterRecordingFlow(accountID: "test", projectID: UUID(), root: root, photoSaver: DiscardingSaver(), prewarmer: idlePrewarmer(),
+                                             speakerBackgroundEnabled: enabled, backgroundIntake: background,
+                                             makeBackgroundProvider: { _, _ in FakeProvider() })
         if withBackground { flow.chooseBackground(from: try pickedFile(), kind: .image) }
         let take = TeleprompterTakeManifest(script: flow.script.draft, slot: .pending)
         try flow.store.save(manifest: take)
@@ -187,6 +194,7 @@ import XCTest
             return .queued(selection(for: reference))
         }
         await flow.useTake { _, _ in calls.order.append("clip"); return .queued }
+        await flow.finishBackgroundHandover()
         XCTAssertEqual(calls.order, ["clip", "background:true"], "the take is handed over before its background")
         let reference = try XCTUnwrap(flow.selectedTake?.speakerBackground)
         XCTAssertEqual(flow.queuedBackground, selection(for: reference))
@@ -202,6 +210,7 @@ import XCTest
         let calls = Calls()
         let flow = try finalizedFlow(calls: calls) { _, _, _ in calls.order.append("background"); return .failed("No connection.") }
         await flow.useTake { _, _ in .attached }
+        await flow.finishBackgroundHandover()
         XCTAssertTrue(flow.attachmentFinished, "the take is attached whatever happens to the background")
         XCTAssertEqual(flow.selectedTake?.status, .accepted)
         XCTAssertEqual(flow.backgroundNote, "Your take was added, but its background couldn’t be uploaded. No connection.")
@@ -216,6 +225,7 @@ import XCTest
         let calls = Calls()
         let flow = try finalizedFlow(calls: calls) { _, _, _ in calls.order.append("background"); return .failed("x") }
         await flow.useTake { _, _ in .failed("Couldn’t add this take.") }
+        await flow.finishBackgroundHandover()
         XCTAssertEqual(calls.order, [])
         XCTAssertEqual(flow.selectedTake?.status, .review, "retry stays possible and will do both")
         XCTAssertNil(flow.queuedBackground)
@@ -226,6 +236,7 @@ import XCTest
             let calls = Calls()
             let flow = try finalizedFlow(enabled: enabled, withBackground: picked, calls: calls) { _, _, _ in calls.order.append("background"); return .failed("x") }
             await flow.useTake { _, _ in .queued }
+            await flow.finishBackgroundHandover()
             XCTAssertEqual(calls.order, [], "enabled \(enabled), picked \(picked)")
             XCTAssertNil(flow.backgroundNote)
         }
@@ -237,6 +248,7 @@ import XCTest
         let reference = try XCTUnwrap(flow.selectedTake?.speakerBackground)
         try FileManager.default.removeItem(at: flow.store.backgroundFileURL(for: reference))
         await flow.useTake { _, _ in .attached }
+        await flow.finishBackgroundHandover()
         XCTAssertEqual(calls.order, [])
         XCTAssertTrue(flow.attachmentFinished)
         XCTAssertNotNil(flow.backgroundNote)
@@ -356,10 +368,11 @@ import XCTest
     }
 
     private func statedFlow(_ statements: Statements, project: UUID = UUID(), picked: Bool = true) throws -> TeleprompterRecordingFlow {
-        let flow = TeleprompterRecordingFlow(accountID: "test", projectID: project, root: root, photoSaver: DiscardingSaver(),
+        let flow = TeleprompterRecordingFlow(accountID: "test", projectID: project, root: root, photoSaver: DiscardingSaver(), prewarmer: idlePrewarmer(),
                                              speakerBackgroundEnabled: true,
                                              backgroundIntake: { [self] _, reference, _ in .queued(selection(for: reference)) },
-                                             backgroundStatement: { statements.next($0) })
+                                             backgroundStatement: { statements.next($0) },
+                                             makeBackgroundProvider: { _, _ in FakeProvider() })
         if picked { flow.chooseBackground(from: try pickedFile(), kind: .image) }
         return flow
     }
@@ -380,6 +393,7 @@ import XCTest
         try finish(flow)
         let reference = try XCTUnwrap(flow.selectedTake?.speakerBackground)
         await flow.useTake { _, _ in .attached }
+        await flow.finishBackgroundHandover()
         XCTAssertEqual(statements.sent, [.set(clientUploadID: "ios-\(reference.id.uuidString)", eventID: "speaker-bg-set-\(reference.id.uuidString)")])
         XCTAssertEqual(flow.background?.stated, true)
         await flow.syncBackgroundStatement()
@@ -392,6 +406,7 @@ import XCTest
         let flow = try statedFlow(statements, project: project)
         try finish(flow)
         await flow.useTake { _, _ in .attached }
+        await flow.finishBackgroundHandover()
         XCTAssertTrue(flow.attachmentFinished, "the take stays attached")
         XCTAssertEqual(flow.selectedTake?.status, .accepted)
         XCTAssertEqual(flow.background?.uploaded, true, "the background upload stays handed over")
@@ -412,6 +427,7 @@ import XCTest
         let flow = try statedFlow(statements)
         try finish(flow)
         await flow.useTake { _, _ in .attached }
+        await flow.finishBackgroundHandover()
         XCTAssertNil(flow.backgroundNote)
         XCTAssertEqual(flow.background?.stated, true)
         await flow.syncBackgroundStatement()
@@ -424,6 +440,7 @@ import XCTest
         flow.clearBackground()
         try finish(flow)
         await flow.useTake { _, _ in .attached }
+        await flow.finishBackgroundHandover()
         await flow.syncBackgroundStatement()
         XCTAssertEqual(statements.sent, [])
     }
@@ -434,6 +451,7 @@ import XCTest
         let flow = try statedFlow(statements, project: project)
         try finish(flow)
         await flow.useTake { _, _ in .attached }
+        await flow.finishBackgroundHandover()
         XCTAssertEqual(statements.sent.count, 1)
 
         statements.outcomes = [.failed]
@@ -455,6 +473,7 @@ import XCTest
         let flow = try statedFlow(statements)
         try finish(flow)
         await flow.useTake { _, _ in .attached }
+        await flow.finishBackgroundHandover()
         flow.clearBackground()
         flow.chooseBackground(from: try pickedFile("two.png"), kind: .image)
         let second = try XCTUnwrap(flow.background).reference

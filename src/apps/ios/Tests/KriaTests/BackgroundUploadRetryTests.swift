@@ -1,3 +1,5 @@
+import AVFoundation
+import KriaMediaEngine
 import XCTest
 import UIKit
 @testable import Kria
@@ -574,6 +576,100 @@ import UIKit
         XCTAssertTrue(stillStaged.isEmpty)
 
         await coordinator.cancel(recordID: record.id)
+    }
+
+    /// Use take on a recorded take that sits in Application Support. Run through a real `enqueue`: the proxy upload
+    /// reserved with the take's own digest, the digest and the transcode done during review rather than again after
+    /// the tap, and the take itself still there for Retake and recovery.
+    func testUseTakeReusesTheHashAndProxyMadeDuringReview() async throws {
+        PerfCounters.shared.reset()
+        let withReview = try await enqueueTake(prewarmFirst: true)
+        XCTAssertEqual(PerfCounters.shared.snapshot()["talk.use.prewarmProxyUsed"], 1, "the proxy built during review is the one uploaded, not a second transcode")
+        let without = try await enqueueTake(prewarmFirst: false)
+        XCTAssertEqual(PerfCounters.shared.snapshot()["talk.use.prewarmProxyUsed"], 1, "no prewarm, no reuse: the intake transcoded for itself")
+        defer { for run in [withReview, without] { try? FileManager.default.removeItem(at: run.take.deletingLastPathComponent()) } }
+
+        XCTAssertEqual(without.hashed, 1, "without a prewarm the intake hashes the take itself")
+        XCTAssertEqual(withReview.hashed, 0, "with one it hashes nothing: the digest from review is reused")
+        for run in [withReview, without] {
+            XCTAssertEqual(run.contractDigest, try SHA256Fingerprinter().fingerprint(file: run.take).hex, "the server is told the digest of the take's bytes")
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(at: run.project.proxies, includingPropertiesForKeys: nil).count, 1)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: run.take.path), "the take is never consumed by its own upload")
+        }
+    }
+
+    /// Returns how many files `enqueue` hashed, the digest in the reservation's contract, the take and the project folder.
+    private func enqueueTake(prewarmFirst: Bool) async throws -> (hashed: Int, contractDigest: String?, take: URL, project: ProjectDirectory) {
+        let key = "kria.test.enqueue.\(UUID().uuidString)"
+        let projectID = UUID()
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "KriaTestTakes/\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        let take = support.appending(path: "take.mov")
+        try await writeTestVideo(take)
+        let projectDirectory = BackgroundUploadCoordinator.projectDirectory(projectID)
+        addTeardownBlock {
+            UserDefaults.standard.removeObject(forKey: key)
+            UserDefaults.standard.removeObject(forKey: "\(key).preparing")
+            try? FileManager.default.removeItem(at: projectDirectory.root)
+        }
+        var contractDigest: String?
+        UploadRetryProtocol.handler = { transport in
+            if transport.request.httpMethod == "PUT" { return }
+            let body = (try? JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(transport.request))) as? [String: Any]
+            let file = (body?["files"] as? [[String: Any]])?.first
+            let proxy = (file?["upload_contract"] as? [String: Any])?["proxy"] as? [String: Any]
+            contractDigest = (proxy?["original"] as? [String: Any])?["sha256"] as? String
+            transport.finish(200, Data(#"[{"media_id":"analysis-proxy-1","upload_url":"https://uploads.test/put","gcs_path":"users/u/clip.mp4","content_type":"video/mp4","upload_headers":{}}]"#.utf8))
+        }
+        let configuration = UploadRetryProtocol.configuration()
+        let api = KriaAPI(baseURL: URL(string: "https://uploads.test")!, tokenStore: NativeEditorMemoryTokenStore(), session: URLSession(configuration: configuration))
+        let coordinator = BackgroundUploadCoordinator(api: api, defaultsKey: key, sessionConfiguration: configuration, backgroundActivity: RecordingBackgroundActivityAssertion())
+
+        if prewarmFirst {
+            let finished = expectation(description: "proxy built during review")
+            EngineSignpost.observer = { name, _, detail in if name == "talk.prewarm.proxy", detail == "ready" { finished.fulfill() } }
+            SourcePrewarmer.shared.start(key: UUID(), source: take)
+            await fulfillment(of: [finished], timeout: 60)
+            EngineSignpost.observer = nil
+            // The hash task is independent of the proxy: let it land before the tap.
+            try await Task.sleep(for: .milliseconds(300))
+        }
+        let hashed = HashCount()
+        SHA256Fingerprinter.observer = { _ in hashed.bump() }
+        defer { SHA256Fingerprinter.observer = nil }
+
+        let accepted = await coordinator.enqueue(fileURL: take, projectID: projectID, source: .files, consentGiven: true,
+                                                 purpose: .analysisProxy, role: .clip, itemID: "item-1")
+        XCTAssertTrue(accepted)
+        if let record = coordinator.records.first { await coordinator.cancel(recordID: record.id) }
+        return (hashed.count, contractDigest, take, projectDirectory)
+    }
+
+    private final class HashCount: @unchecked Sendable {
+        private let lock = NSLock(); private var value = 0
+        func bump() { lock.withLock { value += 1 } }
+        var count: Int { lock.withLock { value } }
+    }
+
+    private func writeTestVideo(_ url: URL) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 64, AVVideoHeightKey: 64])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB, kCVPixelBufferWidthKey as String: 64, kCVPixelBufferHeightKey as String: 64])
+        writer.add(input); XCTAssertTrue(writer.startWriting()); writer.startSession(atSourceTime: .zero)
+        for index in 0..<50 {
+            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(2)) }
+            var buffer: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, try XCTUnwrap(adaptor.pixelBufferPool), &buffer)
+            let pixel = try XCTUnwrap(buffer); CVPixelBufferLockBaseAddress(pixel, [])
+            let context = try XCTUnwrap(CGContext(data: CVPixelBufferGetBaseAddress(pixel), width: 64, height: 64, bitsPerComponent: 8,
+                bytesPerRow: CVPixelBufferGetBytesPerRow(pixel), space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue))
+            context.setFillColor(UIColor(hue: CGFloat(index) / 50, saturation: 1, brightness: 1, alpha: 1).cgColor); context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+            CVPixelBufferUnlockBaseAddress(pixel, [])
+            XCTAssertTrue(adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(index), timescale: 25)))
+        }
+        input.markAsFinished(); await writer.finishWriting(); XCTAssertEqual(writer.status, .completed)
     }
 
     /// KRI-114 P0-4: a background-task expiration must mark the entry `.expired`

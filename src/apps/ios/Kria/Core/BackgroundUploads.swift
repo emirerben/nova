@@ -1876,10 +1876,17 @@ struct PreparingUpload: Codable, Sendable, Equatable {
 
     private func prepare(fileURL: URL, projectID: UUID, purpose: UploadPurpose, recordID: UUID) async throws -> (URL, MediaAsset?, ProjectMediaUploadContract?) {
         let project = Self.projectDirectory(projectID)
+        // A recorded take was hashed and transcoded while the creator reviewed it. This finds that work by the file's
+        // identity (the staged file is a hardlink of the take) and waits for it instead of starting it again.
+        let prewarm = purpose == .analysisProxy ? SourcePrewarmer.shared.claim(source: fileURL) : nil
+        defer { prewarm?.discard() }
+        if purpose == .analysisProxy { Perf.count("talk.use.prewarm", prewarm == nil ? "miss" : "claimed") }
+        var known: KnownFingerprint?
+        if let prewarm { known = await Perf.measureAsync("talk.use.prewarmHashWait") { await prewarm.fingerprint() } }
         // `fileURL` is the staged file for `.clip` (ours, never edited), so the import can
         // share its bytes instead of writing them a third time. An external source stays a copy.
         let asset = try await Perf.measureAsync("talk.use.import") {
-            try await AssetImportCoordinator(project: project).importAsset(from: fileURL, preferLink: Self.isAppOwned(fileURL))
+            try await AssetImportCoordinator(project: project).importAsset(from: fileURL, preferLink: Self.isAppOwned(fileURL), reusing: known)
         }
         updatePreparationHeartbeat(recordID: recordID) // import done
         let original = project.root.appending(path: asset.relativePath)
@@ -1901,8 +1908,16 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             updatePreparationHeartbeat(recordID: recordID) // transcode started
             let proxy = project.proxies.appendingPathComponent("\(asset.id).mp4")
             proxyURL = proxy
-            let result = try await Perf.measureAsync("talk.use.proxyTranscode") {
-                try await AVFoundationProxyGenerator(preset: ProxyPreset(width: 640, height: 360)).makeProxy(for: original, destination: proxy)
+            var ready: URL?
+            if prewarm != nil { ready = await Perf.measureAsync("talk.use.prewarmProxyWait") { await Self.prewarmedProxy(prewarm, original: original, destination: proxy) } }
+            let result: URL
+            if let ready {
+                result = ready
+                Perf.event("talk.use.prewarmProxyUsed")
+            } else {
+                result = try await Perf.measureAsync("talk.use.proxyTranscode") {
+                    try await AVFoundationProxyGenerator(preset: .analysis).makeProxy(for: original, destination: proxy)
+                }
             }
             updatePreparationHeartbeat(recordID: recordID) // transcode done
             guard let fingerprint = asset.fingerprint else { throw APIError.invalidResponse }
@@ -1914,6 +1929,24 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         }
         succeeded = true
         return (original, asset, nil)
+    }
+
+    /// The pre-warmed proxy moved to `destination`, or nil when there is none to use: no claim, a failed or stale
+    /// transcode, or an original that is not the file the proxy was built from (an import that had to copy).
+    private static func prewarmedProxy(_ claim: SourcePrewarmer.Claim?, original: URL, destination: URL) async -> URL? {
+        guard let claim else { return nil }
+        guard (try? FileIdentity(of: original)) == claim.identity else { claim.discard(); return nil }
+        guard let ready = await claim.takeProxy() else { return nil }
+        let fm = FileManager.default
+        do {
+            try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
+            try fm.moveItem(at: ready, to: destination)
+            return destination
+        } catch {
+            try? fm.removeItem(at: ready)
+            return nil
+        }
     }
 
     private func remove(_ id: UUID, deleteLocalFile: Bool) {
@@ -2004,14 +2037,20 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         return url.resolvingSymlinksInPath().standardizedFileURL.path.hasPrefix(root + "/")
     }
 
-    /// Durable staging for crash-resume. Renames our own tmp file into place (no second write);
-    /// copies anything else, including every Files/iCloud pick.
+    /// Durable staging for crash-resume. Renames our own tmp file into place (no second write), hardlinks any other
+    /// file the app owns (a recorded take), and copies anything else, including every Files/iCloud pick.
+    ///
+    /// The link, not a copy (which APFS clones into a new inode), is what lets work done on the take while the creator
+    /// reviewed it (`SourcePrewarmer`) be recognised here: both names are one inode, so they have one `FileIdentity`.
+    /// The take keeps its own name, so Retake and Discard still delete it without touching the staged one, and the
+    /// staged one is only ever deleted.
     static func stageIntoRecoveryDirectory(_ source: URL) throws -> URL {
         let destination = try recoveryDestination(for: source)
         if isInTemporaryDirectory(source) {
             // A failed rename (e.g. tmp on another volume) is not an error, only a missed saving.
             if (try? FileManager.default.moveItem(at: source, to: destination)) != nil { return destination }
         }
+        if isAppOwned(source), (try? FileManager.default.linkItem(at: source, to: destination)) != nil { return destination }
         return try copy(source, to: destination)
     }
 

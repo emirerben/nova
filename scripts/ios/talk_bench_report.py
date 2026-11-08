@@ -36,6 +36,7 @@ ONE_SHOT = [
     "talk.use.spinner", "talk.use.intake", "talk.use.stageCopy", "talk.use.proxyGateWait", "talk.use.import",
     "talk.use.proxyTranscode", "talk.use.contract", "talk.use.reserve", "talk.use.put", "talk.use.attach",
     "talk.use.pollToDone", "talk.use.backgroundUpload",
+    "talk.use.prewarmHashWait", "talk.use.prewarmProxyWait", "talk.prewarm.hash", "talk.prewarm.proxy",
     "talk.save.editorCommit", "talk.save.resolveAssets", "talk.save.compose", "talk.save.loudnessPrepass",
     "talk.save.encode", "talk.save.export", "talk.save.hashOutput", "talk.save.publish", "talk.save.publishHash",
     "talk.save.publishPut", "talk.save.complete", "talk.save.serverChecking", "talk.bench.backgroundMake",
@@ -45,7 +46,7 @@ THERMAL_FACTS = ("thermal.start", "thermal.end", "thermal.max")
 FREE_SPACE_FACTS = ("disk.free_mb.start", "disk.free_mb.end")
 # A `talk.hash` is credited to the smallest of these intervals that contains it.
 HASH_OWNERS = [
-    "talk.use.import", "talk.use.contract", "talk.save.hashOutput", "talk.save.publishHash", "talk.save.resolveAssets",
+    "talk.use.import", "talk.use.contract", "talk.prewarm.hash", "talk.save.hashOutput", "talk.save.publishHash", "talk.save.resolveAssets",
 ]
 NOTES = {
     "talk.live.consume": "Whole per-frame call on the camera frame queue: background pull + Vision + composite + render + hand-off. "
@@ -61,6 +62,10 @@ NOTES = {
                              "began warm is not comparable to one that began nominal.",
     "talk.live.backgroundAttached": "When the looping video or photo was handed to the live preview. `background_attached.before_record_ms` "
                                     "is how long the creator had it on screen before Record; the idle window starts at the first live frame.",
+    "talk.prewarm.hash": "SHA-256 of the take done while the creator reviews it (not under the Use take spinner).",
+    "talk.prewarm.proxy": "640x360 analysis proxy built while the creator reviews the take (not under the Use take spinner).",
+    "talk.use.prewarmHashWait": "How long Use take waited for the review-time hash; 0-ish when the creator reviewed longer than the hash took.",
+    "talk.use.prewarmProxyWait": "How long Use take waited for the review-time proxy; replaces talk.use.proxyTranscode when it hits.",
     "talk.matte.held": "Export frames answered from the held last-good mask, counted inside the talk.save.export window.",
 }
 

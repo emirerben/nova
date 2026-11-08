@@ -1,5 +1,6 @@
 import SwiftUI
 import AVKit
+import Combine
 import PhotosUI
 
 struct TeleprompterScreen: View {
@@ -9,6 +10,9 @@ struct TeleprompterScreen: View {
     var replacementNotice: String? = nil
     let intake: (TeleprompterTakeManifest, URL) async -> TeleprompterIntakeResult
     let intakeState: (TeleprompterTakeManifest) async -> TeleprompterIntakeResult?
+    /// Fires when the upload queue's records or failures change, which is what moves a queued take to added or failed.
+    let intakeSignals: AnyPublisher<Void, Never>
+    @State private var intakeWake = IntakeWake()
     /// The creator already wrote a script in the script sheet and chose to use it.
     let startsWithScript: Bool
     @Environment(\.dismiss) private var dismiss
@@ -30,6 +34,7 @@ struct TeleprompterScreen: View {
          replacementNotice: String? = nil,
          intake: @escaping (TeleprompterTakeManifest, URL) async -> TeleprompterIntakeResult,
          intakeState: @escaping (TeleprompterTakeManifest) async -> TeleprompterIntakeResult?,
+         intakeSignals: AnyPublisher<Void, Never> = Empty().eraseToAnyPublisher(),
          speakerBackgroundEnabled: Bool = false,
          backgroundIntake: BackgroundIntake? = nil,
          backgroundStatement: BackgroundStatement? = nil,
@@ -44,6 +49,7 @@ struct TeleprompterScreen: View {
             return flow
         }())
         self.admissionMessage = admissionMessage; self.replacementNotice = replacementNotice; self.intake = intake; self.intakeState = intakeState
+        self.intakeSignals = intakeSignals
         self.startsWithScript = startsWithScript
     }
 
@@ -69,9 +75,12 @@ struct TeleprompterScreen: View {
                     // Resumes a background upload a relaunch interrupted; a no-op once it was handed over.
                     if case .failed = state {} else { await flow.uploadBackgroundIfNeeded() }
                 }
-                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+                // Woken by the upload queue the moment it changes; the timeout is the safety net for a signal that
+                // never comes (the server was unreachable when the record left the queue, a relaunch).
+                await intakeWake.wait(timeout: .seconds(3))
             }
         }
+        .onReceive(intakeSignals) { intakeWake.signal() }
         .onReceive(flow.camera.$phase) { phase in flow.cameraChanged(phase) }
         .onChange(of: scenePhase) { _, phase in flow.scenePhaseChanged(phase) }
         .onAppear { flow.viewAppeared() }

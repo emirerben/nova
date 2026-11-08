@@ -255,7 +255,7 @@ extension KriaAPI {
         let contentType: String
         let contract: ProjectMediaUploadContract
         if kind == "video" {
-            let result = try await AVFoundationProxyGenerator(preset: ProxyPreset(width: 640, height: 360)).makeProxy(for: file, destination: proxy)
+            let result = try await AVFoundationProxyGenerator(preset: .analysis).makeProxy(for: file, destination: proxy)
             contract = try await ProjectMediaUploadContract.analysisProxy(original: file, proxy: result, fingerprint: fingerprint)
             uploadFile = proxy
             contentType = "video/mp4"

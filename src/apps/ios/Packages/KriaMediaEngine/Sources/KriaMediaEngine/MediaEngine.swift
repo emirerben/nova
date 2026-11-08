@@ -92,7 +92,9 @@ public actor AssetImportCoordinator {
     /// `preferLink` lets the import share the source's bytes instead of duplicating them
     /// (see `AssetFileCoordinator.linkAsset`). Default `false`: an external source (a
     /// Files/iCloud pick, a download) must stay a snapshot the user can't alter mid-upload.
-    public func importAsset(from source: URL, id: String? = nil, preferLink: Bool = false) throws -> MediaAsset {
+    /// `reusing` is a digest someone already computed for these bytes. It is trusted only when the imported file has the
+    /// identity it was computed from, which a hardlink has and a copy never does; otherwise the file is hashed as before.
+    public func importAsset(from source: URL, id: String? = nil, preferLink: Bool = false, reusing known: KnownFingerprint? = nil) throws -> MediaAsset {
         try project.createIfNeeded()
         let rawAssetID = id ?? UUID().uuidString
         let assetID = rawAssetID.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "\\", with: "_").replacingOccurrences(of: "..", with: "_")
@@ -105,7 +107,12 @@ public actor AssetImportCoordinator {
         } else {
             try copier.copyAsset(from: source, to: destination)
         }
-        let fingerprint = try SHA256Fingerprinter().fingerprint(file: destination)
+        let fingerprint: AssetFingerprint
+        if let known, (try? FileIdentity(of: destination)) == known.identity {
+            fingerprint = known.fingerprint
+        } else {
+            fingerprint = try SHA256Fingerprinter().fingerprint(file: destination)
+        }
         return MediaAsset(id: assetID, relativePath: project.root.relativePath(to: destination), fingerprint: fingerprint)
     }
 }
@@ -173,6 +180,8 @@ public struct ProxyPreset: Equatable, Sendable {
     public var width: Int; public var height: Int; public var videoCodec: String; public var audioCodec: String
     public init(width: Int = 960, height: Int = 540, videoCodec: String = "h264", audioCodec: String = "aac") { self.width = width; self.height = height; self.videoCodec = videoCodec; self.audioCodec = audioCodec }
     public static let `default` = ProxyPreset()
+    /// The proxy the server analyses a phone-rendered clip from. The upload prepare step and the take pre-warm must agree on it.
+    public static let analysis = ProxyPreset(width: 640, height: 360)
 }
 public protocol ThumbnailSampling: Sendable { func sample(asset: URL, at times: [TimeInterval], destinationDirectory: URL) async throws -> [ThumbnailSample] }
 public protocol WaveformExtracting: Sendable { func extract(asset: URL, bucketCount: Int) async throws -> Waveform }
