@@ -1390,6 +1390,9 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var admittedPreview: AdmittedPreview?
     private var retainedPreview: AdmittedPreview?
     private var inPlacePreviewFrame: InPlacePreviewFrame?
+    private var retainedPreviewTimeout: (ticket: NativeEditorPreviewWork, task: Task<Void, Never>)?
+    /// How long a ready live item may wait for its frame report before the retained picture is dropped.
+    nonisolated static let retainedPreviewBound: Duration = .milliseconds(1500)
     /// Tests replace this to force a preroll miss; production always uses `prerolledPlayer`.
     var prerolledPlayerProvider: @MainActor (AVPlayerItem, TimeInterval) async -> AVPlayer? = { await NativeEditorSession.prerolledPlayer(for: $0, at: $1) }
     private var playbackControlEpoch: UInt64 = 0
@@ -1439,6 +1442,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         previewDisplayTicket = nil
     }
     private func retirePreviousPreview() {
+        retainedPreviewTimeout?.task.cancel()
+        retainedPreviewTimeout = nil
         if let retainedPreview, retainedPreview.player !== player {
             retainedPreview.player.pause()
             retainedPreview.player.replaceCurrentItem(with: nil)
@@ -1460,6 +1465,24 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
         retainedPreview = retained
     }
+    /// One shot per candidate, started when its live item is ready. A frame report that never lands (or is
+    /// rejected for good) must not leave the previous picture covering a playable preview.
+    private func armRetainedPreviewTimeout() {
+        let ticket = currentPreviewWork
+        guard retainedPreview != nil, previewWork.awaitingFrame, previewWork.isPending(ticket),
+              retainedPreviewTimeout?.ticket != ticket else { return }
+        retainedPreviewTimeout?.task.cancel()
+        let task = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.retainedPreviewBound)
+            guard let self, !Task.isCancelled, ticket == self.currentPreviewWork,
+                  self.previewWork.end(ticket) else { return }
+            self.previewResumeIntent = nil
+            self.retirePreviousPreview()
+            NativePreviewDiagnostics.record("retained-preview-timeout")
+        }
+        retainedPreviewTimeout = (ticket, task)
+    }
+
     private func beginPreviewWork() -> NativeEditorPreviewWork {
         sourcePreview?.cancelPendingPlaybackFrame()
         inPlacePreviewFrame = nil
@@ -4611,24 +4634,19 @@ struct NativeEditorTemporaryVideo: Sendable {
                     return
                 }
             }
-            if retainedPreview != nil, warmed == nil {
-                try Task.checkCancellation()
-                throw NativeEditorPreviewHandoffError.candidateNotReady
-            }
             if retainedPreview != nil, let candidate = warmed,
                abs(currentTime - candidate.time) > Self.warmHandoffMaxDrift {
                 let target = currentTime
-                guard await candidate.player.seek(to: CMTime(seconds: max(0, target), preferredTimescale: 600),
-                                                  toleranceBefore: .zero, toleranceAfter: .zero) else {
-                    candidate.player.replaceCurrentItem(with: nil)
-                    throw NativeEditorPreviewHandoffError.candidateNotReady
-                }
+                let reached = await candidate.player.seek(to: CMTime(seconds: max(0, target), preferredTimescale: 600),
+                                                          toleranceBefore: .zero, toleranceAfter: .zero)
                 guard workTicket == currentPreviewWork, !Task.isCancelled,
                       document == baseline, pendingText == pending else {
                     candidate.player.replaceCurrentItem(with: nil)
                     return
                 }
-                warmed = (candidate.player, target)
+                // A miss is the plain swap, not a failure: the retained picture stays until the live frame is admitted.
+                if reached { warmed = (candidate.player, target) }
+                else { candidate.player.replaceCurrentItem(with: nil); warmed = nil }
             }
             let latestTime = currentTime
             let resumePlayback = isPlaying || shouldResumeRetainedPreview
@@ -4771,16 +4789,16 @@ struct NativeEditorTemporaryVideo: Sendable {
             return
         }
         if let pending = inPlacePreviewFrame {
-            do {
-                guard let sourcePreview else { throw NativeEditorPreviewHandoffError.candidateNotReady }
-                let ticket = pending.ticket
-                try sourcePreview.observeNextPlaybackFrame { [weak self] _ in
-                    Task { @MainActor [weak self] in self?.playbackFrameWasComposed(ticket) }
-                }
-            } catch {
-                pendingPlayRequest = true
-                failSourcePreview(error)
-                return
+            let ticket = pending.ticket
+            let armed: Void? = try? sourcePreview?.observeNextPlaybackFrame { [weak self] _ in
+                Task { @MainActor [weak self] in self?.playbackFrameWasComposed(ticket) }
+            }
+            if armed == nil {
+                // No receipt will ever arrive for this edit, but the item is already on screen: play, and let
+                // the ready item complete the pending work instead of failing the preview.
+                inPlacePreviewFrame = nil
+                admitPreviewFrame(player: pending.player, ticket: ticket)
+                NativePreviewDiagnostics.record("playback-receipt-unavailable")
             }
         }
         // Scrubbing renders stills independently of AVPlayer. Only that handoff
@@ -10231,6 +10249,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// A player item that loads ends the finished render's failure streak. When it is the finished
     /// render after its failure was surfaced, the "couldn't be loaded" message goes with it (KRI-587).
     private func playerItemBecameReady() {
+        armRetainedPreviewTimeout()
         finishedRenderRetryCount = 0
         guard finishedRenderFailed else { return }
         finishedRenderFailed = false
@@ -10260,7 +10279,7 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     /// A player holding `item`, seeked to `time` with zero tolerance and prerolled to play at rate 1, or nil when it
     /// could not get there in about two seconds (the caller then takes the plain swap). Nothing is playing on it.
-    static func prerolledPlayer(for item: AVPlayerItem, at time: TimeInterval) async -> AVPlayer? {
+    private static func prerolledPlayer(for item: AVPlayerItem, at time: TimeInterval) async -> AVPlayer? {
         let candidate = AVPlayer(playerItem: item)
         candidate.automaticallyWaitsToMinimizeStalling = false
         var waited = 0
