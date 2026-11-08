@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.113.0] - 2026-11-08
+
+### Changed
+- fix(ios): repair the font picker and text danger-guide UI tests that fail on main (#2228) <!-- release-pr: 2228 -->
+
 ## [0.88.112.0] - 2026-11-08
 
 ### Fixed
