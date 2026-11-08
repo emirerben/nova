@@ -33,15 +33,19 @@ S3 = _words(
 )
 
 
-@pytest.mark.parametrize(("trigger", "start"), [("Nar", 11.5), ("café", 29.6), ("Nar lip tint", 11.5)])
+@pytest.mark.parametrize(
+    ("trigger", "start"), [("Nar", 11.5), ("café", 29.6), ("Nar lip tint", 11.5)]
+)
 def test_a_trigger_heard_with_a_plural_s_is_still_heard(trigger, start):
-    windows = _phrase_windows(_token_stream(S3), S3, trigger)
+    windows = _phrase_windows(_token_stream(S3), S3, trigger, plural=True)
     assert [round(w[0], 2) for w in windows] == [start]
 
 
 def test_an_exact_hearing_wins_over_a_plural_one():
     words = _words(("cafes", 1.0, 1.4), ("the", 5.0, 5.1), ("café", 5.1, 5.5))
-    assert [w[0] for w in _phrase_windows(_token_stream(words), words, "café")] == [5.1]
+    assert [w[0] for w in _phrase_windows(_token_stream(words), words, "café", plural=True)] == [
+        5.1
+    ]
 
 
 @pytest.mark.parametrize(
@@ -50,4 +54,9 @@ def test_an_exact_hearing_wins_over_a_plural_one():
 )
 def test_no_other_word_is_read_as_the_trigger(heard, trigger):
     words = _words(*[(w, i * 0.5, i * 0.5 + 0.4) for i, w in enumerate(heard.split())])
-    assert _phrase_windows(_token_stream(words), None, trigger) == []
+    assert _phrase_windows(_token_stream(words), None, trigger, plural=True) == []
+
+
+def test_other_callers_stay_exact():
+    """A list label or spoken text keeps its own rule ("notions" is not "Notion")."""
+    assert _phrase_windows(_token_stream(S3), None, "Nar") == []

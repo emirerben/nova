@@ -338,7 +338,12 @@ def _named_phrase_windows(words: list[dict], phrase: str) -> list[_Heard]:
 
 
 def _phrase_windows(
-    stream: list[_Token], words: list[dict] | None, phrase: str, *, joined: bool = False
+    stream: list[_Token],
+    words: list[dict] | None,
+    phrase: str,
+    *,
+    joined: bool = False,
+    plural: bool = False,
 ) -> list[_Heard]:
     """Every spoken occurrence of ``phrase``, in time order: the exact folded-token matches;
     only when there are none, the creator-named phrase matcher's hearings (KRI-961, when the
@@ -350,9 +355,11 @@ def _phrase_windows(
     starts = _find_all([t.text for t in stream], tokens)
     if starts:
         return [(stream[i].start_s, stream[i + len(tokens) - 1].end_s, None) for i in starts]
-    plural = _plural_windows(stream, tokens)
-    if plural:
-        return plural
+    # KRI-1327: a pop-in's named word heard with an "s" (opt-in: a list label's one-word item
+    # deliberately never hears "notions" for "Notion").
+    heard_plural = _plural_windows(stream, tokens) if plural else []
+    if heard_plural:
+        return heard_plural
     # KRI-1281: for a creator's on-screen text, "SpecKit", "Spec-kit" and "Spec Kit" are one
     # word spelled three ways. Opt-in: the background-follows-talk matcher deliberately keeps
     # "Mero pe" from hearing "Merope".
@@ -430,6 +437,7 @@ def _match_trigger(
     *,
     words: list[dict] | None = None,
     joined: bool = False,
+    plural: bool = False,
 ) -> _MatchResult:
     """Find qualifying spoken occurrences of ``trigger`` in ``stream``.
 
@@ -444,7 +452,7 @@ def _match_trigger(
     (`_named_phrase_windows`). Without it the match stays exact.
     """
 
-    hits = _phrase_windows(stream, words, trigger, joined=joined)
+    hits = _phrase_windows(stream, words, trigger, joined=joined, plural=plural)
     if not hits:
         return _MatchResult(reason="never_heard")
 
@@ -780,7 +788,9 @@ def ground_phone_reaction_beats(
                 # They neither use PiP slots nor face/caption-safe geometry.
                 slot = "fullscreen"
 
-            match = _match_trigger(stream, trigger, after, str(occurrence_mode), words=words)
+            match = _match_trigger(
+                stream, trigger, after, str(occurrence_mode), words=words, plural=True
+            )
             if match.reason:
                 _record_beat_failure(beat_id, trigger, match.reason)
                 continue

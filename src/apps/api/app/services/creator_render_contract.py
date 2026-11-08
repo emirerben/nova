@@ -73,6 +73,7 @@ from app.services.length_policy import (
     length_owner,
 )
 from app.services.order_mode import order_mode
+from app.services.talking_clip_anchors import talking_anchor_rows
 
 CONTRACT_FIELD = "creator_render_requirements"
 REQUIREMENT_VERSION_FIELD = "creator_render_requirements_version"
@@ -1693,6 +1694,8 @@ def build_render_contract(
         and typed.song_sync == "lipsync"
         and typed.resolved_song_takes
     )
+    edit_rows = _edit_rows(media_snapshot, typed, hidden_ids)
+    talking_edit = str(raw.get("edit_format") or "") in {"subtitled", "talking_head"}
     # The creator's described sequence ("start with X", "end on Y"), as the clip-intent
     # resolver matched it to clips; the montage planner seats exactly these rows.
     sequence = (
@@ -1700,6 +1703,14 @@ def build_render_contract(
         if brief is not None and _clip_intents_on()
         else []
     )
+    if not sequence and talking_edit and brief is not None and _clip_intents_on():
+        # S3 Yorum2 (prod thread cc0e3706, 2026-11-08): a Talking edit plans no clip intents
+        # (`CLIP_INTENT_FREE_EDIT_FORMATS`), so nothing seated the brief's first / last take
+        # and every wording ("the 20-second home clip", "the clip that starts 'Wait, the
+        # light'", "the car clip") was refused below by name. The takes' own length, words
+        # and place in the snapshot tell them apart; an end they do not single out stays
+        # unplaced and is still asked about.
+        sequence = talking_anchor_rows(stated_anchors(brief), edit_rows)
     clip_ids = {
         str(row["media_id"])
         for row in (media_snapshot or {}).get("clip_assignments") or []
@@ -1713,7 +1724,6 @@ def build_render_contract(
         for position, _name, members, status in sequence
         if position and status == "resolved" and clip_ids.intersection(members)
     }
-    talking_edit = str(raw.get("edit_format") or "") in {"subtitled", "talking_head"}
     # KRI-747: the Talking worker places a text on a spoken word only while its rollout is on
     # (`PHONE_SUBTITLED_SPOKEN_TEXT_ENABLED` and a phone that draws the text lane). Off, nothing
     # answers the ask, so the literal is pinned like any other text, as before KRI-707.
@@ -1740,7 +1750,6 @@ def build_render_contract(
         )
 
         voiceover_spoken_text = phone_voiceover_spoken_text_supported(require_client=False)
-    edit_rows = _edit_rows(media_snapshot, typed, hidden_ids)
     one_clip = one_clip_edit(edit_rows) or _one_unkeyed_clip(media_snapshot, typed, hidden_ids)
     if brief:
         for requirement in brief.live():

@@ -7717,6 +7717,23 @@ def _classify_phone_talking_clips(
     return classify_talking_clips(evidence), transcripts
 
 
+def _speakers_in_pinned_order(roles: Any, contract: Any, media_ids: Mapping[str, str]) -> Any:
+    """S3 Yorum2 (prod thread cc0e3706): the takes play in the order the approved contract pins.
+
+    The creator attached B, A, C and asked for A, B, C; the contract seats those takes
+    (`talking_clip_anchors`) and `verify_phone_recipe` refuses any other picture order, so
+    upload order could only be refused. ``media_ids`` maps clip id -> media id. A take the
+    order does not name keeps its place after the named ones; no pinned order changes nothing.
+    """
+    if contract is None or not contract.order_required or not contract.order_ids:
+        return roles
+    rank = {media_id: at for at, media_id in enumerate(contract.order_ids)}
+    speakers = tuple(
+        sorted(roles.speakers, key=lambda cid: rank.get(media_ids.get(cid, ""), len(rank)))
+    )
+    return roles if speakers == roles.speakers else replace(roles, speakers=speakers)
+
+
 def _apply_talking_mention_ask(
     snapshot: Mapping[str, Any],
     roles: Any,
@@ -8734,9 +8751,11 @@ def _multi_take_fullscreen_beats(
     for beat in beats:
         if not isinstance(beat, dict):
             continue
-        if not spine_cut and beat.get("display_mode") == "fullscreen" and beat.get(
-            "anchor"
-        ) != "title":
+        if (
+            not spine_cut
+            and beat.get("display_mode") == "fullscreen"
+            and beat.get("anchor") != "title"
+        ):
             kept.append(beat)
         else:
             held.append(
@@ -9201,13 +9220,13 @@ def _run_phone_subtitled_job(
         phone_subtitled_overlays_supported,
         phone_subtitled_reaction_beats_supported,
         phone_subtitled_spoken_text_supported,
-        phone_talking_multi_speaker_beats_supported,
         phone_subtitled_title_supported,
         phone_subtitled_video_overlays_supported,
         phone_talking_head_supported,
         phone_talking_insert_clips_supported,
         phone_talking_mention_cutaways_supported,
         phone_talking_multi_clip_supported,
+        phone_talking_multi_speaker_beats_supported,
         validate_phone_pilot_recipe,
     )
     from app.services.phone_sources import (  # noqa: PLC0415
@@ -9767,6 +9786,17 @@ def _run_phone_subtitled_job(
                                         c for c in talking_roles.footage if c != ending_clip_id
                                     ),
                                 )
+                # S3 Yorum2: last, so no re-sort above (a mention ask's upload order) undoes it;
+                # the offsets, captions and beat words below all follow `extra_speaker_ids`.
+                talking_roles = _speakers_in_pinned_order(
+                    talking_roles,
+                    _phone_pin_contract(snapshot, "subtitled"),
+                    {
+                        cid: binding_by_proxy[path].media_id
+                        for cid, path in clip_id_to_gcs.items()
+                        if path in binding_by_proxy
+                    },
+                )
                 spine_clip_id = talking_roles.speakers[0]
                 extra_speaker_ids = talking_roles.speakers[1:]
                 extra = []
@@ -11181,8 +11211,10 @@ def _run_phone_subtitled_job(
                             closing_to_ground = None
                         ground_beats = phone_reaction_grounding_mod.ground_phone_reaction_beats
                         try:
-                            if not beats_to_ground and not closing_to_ground and (
-                                title_anchored or multi_take_held
+                            if (
+                                not beats_to_ground
+                                and not closing_to_ground
+                                and (title_anchored or multi_take_held)
                             ):
                                 # Only title logos: grounding has nothing to listen for.
                                 grounded_beats = phone_reaction_grounding_mod.GroundedReactionBeats(

@@ -1,4 +1,4 @@
-"""KRI-1327 (Çiğdem S3, thread cc0e3706): "In the last part in the car, put an orange line around me".
+"""KRI-1327 (Çiğdem S3, thread cc0e3706): "put an orange line around me" in the car take.
 
 No edit draws a line around a person: the phone's person matte only cuts the speaker out for a
 background. The brief stored the ask with no facts, so no checker claimed it: every hold said "I
