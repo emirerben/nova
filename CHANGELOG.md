@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.101.0] - 2026-11-08
+
+### Changed
+- fix(phone-text): the account default decides the shadow; a plan's authored shadow no longer wins (KRI-1269) (#2210) <!-- release-pr: 2210 -->
+
 ## [0.88.100.0] - 2026-11-08
 
 ### Changed
