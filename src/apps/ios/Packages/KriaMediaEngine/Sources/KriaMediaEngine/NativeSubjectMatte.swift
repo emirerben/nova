@@ -322,10 +322,16 @@ final class VisionPersonSegmenter: PixelSegmenting {
         return buffer
     }
 
-    private func segment(_ buffer: CVPixelBuffer, quality: VNGeneratePersonSegmentationRequest.QualityLevel) throws -> CVPixelBuffer? {
+    /// The one place the request is built, so the mask cache's key names the revision this request really runs.
+    static func makeRequest(quality: VNGeneratePersonSegmentationRequest.QualityLevel) -> VNGeneratePersonSegmentationRequest {
         let request = VNGeneratePersonSegmentationRequest()
         request.qualityLevel = quality
         request.outputPixelFormat = kCVPixelFormatType_OneComponent8
+        return request
+    }
+
+    private func segment(_ buffer: CVPixelBuffer, quality: VNGeneratePersonSegmentationRequest.QualityLevel) throws -> CVPixelBuffer? {
+        let request = Self.makeRequest(quality: quality)
         try VNImageRequestHandler(cvPixelBuffer: buffer, options: [:]).perform([request])
         return request.results?.first?.pixelBuffer
     }

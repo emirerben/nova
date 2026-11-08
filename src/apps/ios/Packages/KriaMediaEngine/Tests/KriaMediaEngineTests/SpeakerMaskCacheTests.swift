@@ -124,6 +124,13 @@ import CryptoKit
         XCTAssertEqual(files(under: root, suffix: ".mask").count, 1)
     }
 
+    /// M16: the key records the revision Vision is asked for, not the newest one the OS knows.
+    func testTheKeyNamesTheRevisionTheSegmenterRequests() {
+        #if canImport(Vision)
+        XCTAssertEqual(SpeakerMaskEnvironment.current.requestRevision, VisionPersonSegmenter.makeRequest(quality: .balanced).revision)
+        #endif
+    }
+
     /// M3: export and preview write the same pack at once.
     func testConcurrentWritersOfOneKeyLeaveOneValidEntry() throws {
         let (store, root) = try makeStore()

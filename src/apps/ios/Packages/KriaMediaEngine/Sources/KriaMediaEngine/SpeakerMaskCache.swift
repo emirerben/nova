@@ -37,7 +37,7 @@ struct SpeakerMaskEnvironment: Equatable, Sendable {
 
     private static var currentRequestRevision: Int {
         #if canImport(Vision)
-        return VNGeneratePersonSegmentationRequest.currentRevision
+        return VisionPersonSegmenter.makeRequest(quality: .balanced).revision
         #else
         return 0
         #endif
