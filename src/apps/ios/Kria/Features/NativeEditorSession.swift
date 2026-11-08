@@ -181,6 +181,10 @@ struct NativeEditorTemporaryVideo: Sendable {
     @Published var isSaving = false {
         didSet { if oldValue && !isSaving { drainPendingLatestJob() } }
     }
+    /// True while an editor open or reload holds `isSaving` as its in-flight fence. The fence stays; the creator
+    /// asked for no save, so the header reads `showsSavingIndicator` instead of `isSaving`.
+    @Published private(set) var isLoadingEditor = false
+    var showsSavingIndicator: Bool { isSaving && !isLoadingEditor }
     @Published var hasUnsavedChanges = false
     @Published var saveState: NativeEditorSaveState = .idle
     @Published var splitScreenActionError: String?
@@ -1558,7 +1562,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         saveHitNewerVersion = false
         songRemovalAlreadyApplied = false
         userSongRetry = nil
-        isSaving = true
+        isSaving = true; isLoadingEditor = true
         return editorLoadEpoch
     }
 
@@ -2354,11 +2358,11 @@ struct NativeEditorTemporaryVideo: Sendable {
         conversationRuntimeVersion = 2
         resetBackgroundRefresh()
         loadObservationScope = observationScope(api: api, target: "draft:\(threadID)")
-        self.api = api; self.threadID = threadID; isSaving = true; saveState = .saving; loadState = .loading
+        self.api = api; self.threadID = threadID; isSaving = true; isLoadingEditor = true; saveState = .saving; loadState = .loading
         pendingLoadObservation = { [weak self] in
             await self?.load(api: api, threadID: threadID, variantID: variantID, allowPlaybackFallback: allowPlaybackFallback)
         }
-        defer { if editorLoadEpoch == epoch { isSaving = false } }
+        defer { if editorLoadEpoch == epoch { isSaving = false; isLoadingEditor = false } }
         do {
             let snapshot = try await readLoadObservation(epoch: epoch, target: "draft:\(threadID)") { try await api.draft(threadID: threadID) }
             guard editorLoadEpoch == epoch else { return }
@@ -3305,10 +3309,11 @@ struct NativeEditorTemporaryVideo: Sendable {
         if let previous = jobID, previous != editorJobID { discardPlaybackForNewJob() }
         jobID = editorJobID
         isSaving = true
+        isLoadingEditor = true
         saveState = .saving
         loadState = .loading
         Perf.begin("editor.open", id: editorJobID.uuidString)
-        defer { if editorLoadEpoch == epoch { isSaving = false }; Perf.end("editor.open", id: editorJobID.uuidString); Perf.mark("editor.open.done") }
+        defer { if editorLoadEpoch == epoch { isSaving = false; isLoadingEditor = false }; Perf.end("editor.open", id: editorJobID.uuidString); Perf.mark("editor.open.done") }
         // Neither of these needs the job's status, so they start now and overlap it. They used to follow it one after
         // the other, three round trips in a row before the editor could show anything. The draft is compared with the
         // resolved variant only once that is known.

@@ -4030,7 +4030,7 @@ final class NativeEditorSessionTests: XCTestCase {
 
     /// What NativeEditorProjectHeader renders for its Save button.
     private func headerSaveControl(_ session: NativeEditorSession) -> NativeEditorSaveControl {
-        NativeEditorSaveControl(isSaving: session.isSaving, hasUnsavedChanges: session.hasUnsavedChanges)
+        NativeEditorSaveControl(isSaving: session.showsSavingIndicator, hasUnsavedChanges: session.hasUnsavedChanges)
     }
 
     private func gatedLoadSpy(jobID: UUID, openReceipt: OpenInEditorResponse? = nil) -> EditorCommitSpy {
