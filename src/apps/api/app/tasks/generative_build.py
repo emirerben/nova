@@ -11683,6 +11683,26 @@ def _run_phone_subtitled_job(
                         **framed_compile,
                     )
 
+                if spoken_text_rows:
+                    # KRI-1284: a numbered list on spoken words, at one spot against her face
+                    # where the final lanes draw it (small in a corner after the opening).
+                    spoken_text_rows, spoken_text_receipt = _phone_spoken_list_on_lanes(
+                        spoken_text_rows,
+                        spoken_text_receipt,
+                        lanes=lanes,
+                        cues=cues,
+                        caption_style=caption_style,
+                        caption_look=protected_caption_look,
+                        shown_rows=title_rows,
+                        binding=binding,
+                        clip_path=clip_path,
+                        keep_segments=speaker_keep_segments,
+                        landscape_fit=framed_fit,
+                        position_x=speaker_position_x or 0.0,
+                        protected=protected_plan,
+                        **text_canvas,
+                    )
+
                 if list_label_asks:
                     # Item 19: the labels, once the lanes are final. Anchors, `timeline_words`
                     # and the rows are all on the cut timeline (the kept take's clock; the
@@ -13369,11 +13389,14 @@ def _protected_style_rows(
     # KRI-1284: her list labels keep their own look and spot too. `list_label_rows` already placed
     # each one clear of her face, the captions and the cards; the restyle took that away (grey
     # auto fill, no outline, slid under the captions, shrunk).
+    # KRI-1284 (Q2 run 2): so do the spoken-text rows drawn as a numbered list (`list_label_look`):
+    # the restyle had turned them grey (#767676) with no outline over white READMEs.
     fixed = {
         i
         for i, row in enumerate(rows)
         if "cta_part" in (row.get("source_params") or {})
         or (row.get("source_params") or {}).get("source") == "list_label"
+        or (row.get("source_params") or {}).get("list_label_look") is True
     }
     if fixed:
         rest = _style_rows_keeping_title_look(
@@ -14277,6 +14300,149 @@ def _phone_brief_live_requirements(snapshot: dict) -> tuple:
     return tuple(brief.live()) if brief is not None else ()
 
 
+def _memo_face_sampler() -> Any:
+    """`phone_subtitled_title.sample_face_regions` (looked up per call, as the placer does)
+    remembering what it saw per clip and anchor set: KRI-1284 places a list's rows again at one
+    shared spot, over the same windows."""
+    from app.pipeline import phone_subtitled_title as title_mod  # noqa: PLC0415
+
+    seen: dict[tuple, Any] = {}
+
+    def memo(clip_path: Any, anchors: Any, **kwargs: Any) -> Any:
+        key = (clip_path, tuple(anchors))
+        if key not in seen:
+            seen[key] = title_mod.sample_face_regions(clip_path, anchors, **kwargs)
+        return seen[key]
+
+    return memo
+
+
+def _phone_spoken_text_placer(
+    *,
+    binding: Any,
+    clip_path: str | None,
+    keep_segments: list[tuple[float, float]],
+    landscape_fit: str,
+    position_x: float = 0.0,
+    protected: Any = None,
+    canvas: Any,
+    speaker_frame: tuple[float, float, float] | None = None,
+    full_screen_windows: tuple[tuple[float, float], ...] = (),
+) -> Any:
+    """``place(row, avoid)`` for a KRI-707 spoken-text row: off the speaker's face where it is
+    drawn (``speaker_frame`` / ``full_screen_windows`` once the lanes know them, KRI-1284) and
+    clear of ``avoid``. ``binding`` / ``clip_path`` / ``keep_segments`` are the first speaker's,
+    so a row past its span (a KRI-719 extra speaker) protects the fallback face."""
+    from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_title import (  # noqa: PLC0415
+        picture_band,
+        place_talking_title,
+    )
+
+    display_width, display_height = display_dims(binding.original)
+    scale = fit_transform(display_width, display_height, canvas, landscape_fit).scale
+    speaker_span_s = sum(max(0.0, end - start) for start, end in keep_segments)
+    # KRI-1018: a letterboxed speaker's picture is a band of the canvas; the bars are not a place
+    # to put the text. The band is this speaker's: a row past its span plays another clip (an
+    # extra speaker), whose picture is unknown here, so that row gets no band and no claim.
+    band = picture_band(display_width, display_height, canvas, scale)
+    sample = _memo_face_sampler()
+
+    def place(row: dict, avoid: Any) -> tuple[dict, dict[str, Any]]:
+        return place_talking_title(
+            row,
+            clip_path=clip_path if float(row["start_s"]) < speaker_span_s else None,
+            keep_segments=keep_segments,
+            display_width=display_width,
+            display_height=display_height,
+            canvas=canvas,
+            scale=scale,
+            position_x=position_x,
+            avoid=avoid,
+            sample=sample,
+            picture_band=band if float(row["start_s"]) < speaker_span_s else None,
+            **({"speaker_frame": speaker_frame} if speaker_frame is not None else {}),
+            **({"full_screen_windows": full_screen_windows} if full_screen_windows else {}),
+            **_protected_placement_kwargs(protected),
+        )
+
+    return place
+
+
+def _phone_spoken_list_on_lanes(
+    rows: list[dict],
+    receipt: dict[str, Any] | None,
+    *,
+    lanes: Any,
+    cues: list[dict],
+    caption_style: str,
+    caption_look: Any,
+    shown_rows: list[dict],
+    binding: Any,
+    clip_path: str | None,
+    keep_segments: list[tuple[float, float]],
+    landscape_fit: str,
+    position_x: float = 0.0,
+    protected: Any = None,
+    canvas: Any = None,
+) -> tuple[list[dict], dict[str, Any] | None]:
+    """KRI-1284: once the lanes are final, a numbered list on spoken words is laid out again at
+    one spot against the speaker's face WHERE IT IS DRAWN (small in a corner, full-frame only in
+    the opening). Before, the face was checked full-frame and pushed "5. Claude code game
+    studio" under it while she sat in the corner. No list, or no speaker frame: unchanged."""
+    from app.pipeline.phone_spoken_text import share_list_spot  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+
+    background = lanes.background if lanes is not None else None
+    frame = background.speaker_frame if background is not None else None
+    if not rows or receipt is None or frame is None:
+        return rows, receipt
+    if not any((row.get("source_params") or {}).get("list_label_look") for row in rows):
+        return rows, receipt
+    canvas = canvas if canvas is not None else _STORY_CANVAS
+    place = _phone_spoken_text_placer(
+        binding=binding,
+        clip_path=clip_path,
+        keep_segments=keep_segments,
+        landscape_fit=landscape_fit,
+        position_x=position_x,
+        protected=protected,
+        canvas=canvas,
+        speaker_frame=(frame.width_fraction, frame.x_fraction, frame.y_fraction),
+        full_screen_windows=tuple(
+            (float(span.start_s), float(span.end_s)) for span in background.full_screen_windows
+        ),
+    )
+    rows, receipt = share_list_spot(
+        rows,
+        receipt,
+        place=place,
+        cues=cues,
+        caption_style=caption_style,
+        canvas=canvas,
+        shown_rows=shown_rows,
+        caption_look=caption_look,
+    )
+    try:
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        record_pipeline_event(
+            "phone",
+            "subtitled_spoken_list_spot",
+            {
+                "rows": [
+                    {"element_id": e.get("element_id"), **(e.get("list_spot") or {})}
+                    for e in receipt.get("rows") or []
+                    if "list_spot" in e
+                ],
+                "speaker_frame": True,
+            },
+        )
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return rows, receipt
+
+
 def _phone_talking_spoken_text_rows(
     asks: Any,
     *,
@@ -14300,39 +14466,21 @@ def _phone_talking_spoken_text_rows(
     captions and ``shown_rows`` (the title), plus the receipt of every ask.
     ``binding`` / ``clip_path`` / ``keep_segments`` are the first speaker's, so a
     row past its span (a KRI-719 extra speaker) protects the fallback face."""
-    from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
     from app.pipeline.phone_spoken_text import spoken_text_rows  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
 
     canvas = canvas if canvas is not None else _STORY_CANVAS
-    from app.pipeline.phone_subtitled_title import (  # noqa: PLC0415
-        picture_band,
-        place_talking_title,
-    )
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
-    display_width, display_height = display_dims(binding.original)
-    scale = fit_transform(display_width, display_height, canvas, landscape_fit).scale
-    speaker_span_s = sum(max(0.0, end - start) for start, end in keep_segments)
-    # KRI-1018: a letterboxed speaker's picture is a band of the canvas; the bars are not a place
-    # to put the text. The band is this speaker's: a row past its span plays another clip (an
-    # extra speaker), whose picture is unknown here, so that row gets no band and no claim.
-    band = picture_band(display_width, display_height, canvas, scale)
-
-    def place(row: dict, avoid: Any) -> tuple[dict, dict[str, Any]]:
-        return place_talking_title(
-            row,
-            clip_path=clip_path if float(row["start_s"]) < speaker_span_s else None,
-            keep_segments=keep_segments,
-            display_width=display_width,
-            display_height=display_height,
-            canvas=canvas,
-            scale=scale,
-            position_x=position_x,
-            avoid=avoid,
-            picture_band=band if float(row["start_s"]) < speaker_span_s else None,
-            **_protected_placement_kwargs(protected),
-        )
+    place = _phone_spoken_text_placer(
+        binding=binding,
+        clip_path=clip_path,
+        keep_segments=keep_segments,
+        landscape_fit=landscape_fit,
+        position_x=position_x,
+        protected=protected,
+        canvas=canvas,
+    )
 
     from app.pipeline.speech_cut_state import remap_time  # noqa: PLC0415
 
