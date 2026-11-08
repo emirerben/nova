@@ -309,6 +309,19 @@ struct NativeEditorView: View {
 
     @ViewBuilder private var topNotice: some View {
         let reduced = KriaMotion.isReduced(reduceMotion)
+        // Padding belongs to the notice: an empty inset must take no height from the editor.
+        Group {
+            if topNoticeKey != "none" {
+                noticeCard
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .transition(reduced ? .opacity : .move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(reduced ? nil : .easeOut(duration: 0.25), value: topNoticeKey)
+    }
+
+    @ViewBuilder private var noticeCard: some View {
         Group {
             if let conflict = session.mergeConflictMessage {
                 NativeEditorNoticeCard(
@@ -336,10 +349,6 @@ struct NativeEditorView: View {
                 NativeEditorNoticeCard(message: message)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .transition(reduced ? .opacity : .move(edge: .top).combined(with: .opacity))
-        .animation(reduced ? nil : .easeOut(duration: 0.25), value: topNoticeKey)
     }
 
     private var topNoticeKey: String {
