@@ -1390,6 +1390,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var admittedPreview: AdmittedPreview?
     private var retainedPreview: AdmittedPreview?
     private var inPlacePreviewFrame: InPlacePreviewFrame?
+    /// Tests replace this to force a preroll miss; production always uses `prerolledPlayer`.
+    var prerolledPlayerProvider: @MainActor (AVPlayerItem, TimeInterval) async -> AVPlayer? = { await NativeEditorSession.prerolledPlayer(for: $0, at: $1) }
     private var playbackControlEpoch: UInt64 = 0
     private var previewResumeIntent: (owner: NativeEditorPreviewOwner, epoch: UInt64)?
 
@@ -1444,7 +1446,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         retainedPreview = nil
         previousPreviewStatus = nil
     }
-    private func retainAdmittedPreview() {
+    func retainAdmittedPreview() {
         guard retainedPreview == nil, sourcePreviewSettled, let admittedPreview,
               admittedPreview.ticket == currentPreviewWork,
               NativeEditorPreviewAdmission.canRetain(shown: admittedPreview.ticket, current: previewOwner,
@@ -1477,15 +1479,16 @@ struct NativeEditorTemporaryVideo: Sendable {
         guard loadState == .loaded, sourcePreviewState == .ready, sourcePreviewSettled else { return nil }
         return previewDisplayTicket
     }
-    func previewFrameWasShown(player shownPlayer: AVPlayer, ticket: NativeEditorPreviewWork?) {
+    @discardableResult
+    func previewFrameWasShown(player shownPlayer: AVPlayer, ticket: NativeEditorPreviewWork?) -> Bool {
         if var pending = inPlacePreviewFrame, pending.ticket == ticket {
-            guard pending.player === shownPlayer else { return }
+            guard pending.player === shownPlayer else { return false }
             pending.layerReady = true
             inPlacePreviewFrame = pending
             finishInPlaceFrameIfReady()
-            return
+            return true
         }
-        admitPreviewFrame(player: shownPlayer, ticket: ticket)
+        return admitPreviewFrame(player: shownPlayer, ticket: ticket)
     }
     @discardableResult private func admitPreviewFrame(player shownPlayer: AVPlayer, ticket: NativeEditorPreviewWork?) -> Bool {
         guard previewPresentationActive, let ticket, ticket == currentPreviewWork,
@@ -4602,7 +4605,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             var warmed: (player: AVPlayer, time: TimeInterval)?
             if retainedPreview != nil || (isPlaying && player != nil && player === finishedRenderPlayer) {
                 let target = currentTime
-                if let candidate = await Self.prerolledPlayer(for: preview.preview.playerItem, at: target) { warmed = (candidate, target) }
+                if let candidate = await prerolledPlayerProvider(preview.preview.playerItem, target) { warmed = (candidate, target) }
                 guard workTicket == currentPreviewWork, sequence == sourcePreviewSequence, !Task.isCancelled, document == baseline, pendingText == pending else {
                     warmed?.player.replaceCurrentItem(with: nil)
                     return
@@ -10257,7 +10260,7 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     /// A player holding `item`, seeked to `time` with zero tolerance and prerolled to play at rate 1, or nil when it
     /// could not get there in about two seconds (the caller then takes the plain swap). Nothing is playing on it.
-    private static func prerolledPlayer(for item: AVPlayerItem, at time: TimeInterval) async -> AVPlayer? {
+    static func prerolledPlayer(for item: AVPlayerItem, at time: TimeInterval) async -> AVPlayer? {
         let candidate = AVPlayer(playerItem: item)
         candidate.automaticallyWaitsToMinimizeStalling = false
         var waited = 0
