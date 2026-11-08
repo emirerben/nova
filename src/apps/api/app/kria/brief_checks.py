@@ -15179,6 +15179,36 @@ def _label(status: str) -> str:
     return say(en=_LABEL[status], tr=_LABEL_TR[status])
 
 
+def _receipt_label(receipt: RequirementReceipt) -> str:
+    if _planned_at_render(receipt):
+        return say(en=_PLANNED_LABEL, tr=_PLANNED_LABEL_TR)
+    return _label(receipt.status)
+
+
+_PLANNED_LABEL = "Will do at render"
+_PLANNED_LABEL_TR = "Videoda yapılacak"
+
+
+def _planned_at_render(receipt: RequirementReceipt) -> bool:
+    """KRI-1285: a `partial` receipt that only states what the render will do.
+
+    Its reason is entirely `RENDER_PROMISE_REASONS` texts (English or Turkish twin, joined by
+    "; ") or the pinned spoken-text plan. It is a plan Kria carries out, not a shortfall, so the
+    reply lists it as planned and it never opens "Not everything you asked for made it in".
+    """
+    reason = receipt.full_reason
+    if receipt.status != "partial" or not reason:
+        return False
+    texts = {t for p in RENDER_PROMISE_REASONS for t in (p, _REASON_TR.get(p, p))}
+
+    def only(rest: str) -> bool:
+        if rest in texts or rest.startswith(_TALKING_SPOKEN_TEXT_PINNED):
+            return True
+        return any(rest.startswith(f"{t}; ") and only(rest[len(t) + 2 :]) for t in texts)
+
+    return only(reason)
+
+
 # What the render says about each requested group, label or chapter text
 # (`unified_montage._intent_outcomes`) is English; a Turkish reply reads these known
 # phrases in Turkish and leaves anything else (the creator's own words) as written.
@@ -15351,6 +15381,7 @@ def reply_and_lead_from_receipts(
         r
         for r in judged
         if r.status != "met"
+        and not _planned_at_render(r)
         and not (
             declines_after_summary
             and r.status == "not_possible"
@@ -15378,7 +15409,7 @@ def reply_and_lead_from_receipts(
             line += f" ({_outcome_reason(str(row['reason'])).rstrip('.')})"
         lines.append(line)
     for receipt in judged:
-        line = f"{_label(receipt.status)}: {by_id[receipt.requirement_id].text()}"
+        line = f"{_receipt_label(receipt)}: {by_id[receipt.requirement_id].text()}"
         if receipt.reason:
             line += f" ({_loc(receipt.reason).rstrip('.')})"
         lines.append(line)
@@ -15427,7 +15458,7 @@ def reply_and_lead_from_receipts(
         # Keep every requested action/status visible when its labels fit. A long
         # explanation must not consume the final action's display budget. Stored
         # receipt reasons remain complete; ellipses mark shortened display only.
-        labels = [f"{_label(r.status)}: {by_id[r.requirement_id].text()}" for r in judged]
+        labels = [f"{_receipt_label(r)}: {by_id[r.requirement_id].text()}" for r in judged]
         prefix, suffix = text.rsplit(body, 1)
         label_body = "\n".join(f"- {line}" for line in labels)
         available = MAX_REPLY_CHARS - len(prefix + label_body + suffix + "\n…")
@@ -15438,7 +15469,11 @@ def reply_and_lead_from_receipts(
                 reason = _loc(receipt.reason).rstrip(".") if receipt.reason else ""
                 if reason and reason_limit >= 2:
                     if len(reason) > reason_limit:
-                        reason = reason[: reason_limit - 1].rstrip() + "…"
+                        cut = reason[: reason_limit - 1]
+                        # KRI-1285: end on a whole word, never "nex…".
+                        if " " in cut and not reason[reason_limit - 1].isspace():
+                            cut = cut.rsplit(" ", 1)[0]
+                        reason = cut.rstrip() + "…"
                     label += f" ({reason})"
                 compact.append(f"- {label}")
             text = prefix + "\n".join(compact) + suffix + "\n…"
@@ -15492,7 +15527,8 @@ def _reply_lead(
         for row in outcomes
         if str(row.get("status") or "") in _LABEL and row.get("name")
     ]
-    statuses = [r.status for r in judged] + rows
+    # KRI-1285: a plan the render carries out is neither done nor partly done yet.
+    statuses = [r.status for r in judged if not _planned_at_render(r)] + rows
     failed = statuses.count("not_possible")
     if look_only:
         lead = say(en="Have a look at these in the video.", tr="Bunlara videoda bir göz at.")
