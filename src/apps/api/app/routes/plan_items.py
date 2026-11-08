@@ -10046,16 +10046,16 @@ async def _queue_pool_asset_analysis(
 
     prior_attempts = int(getattr(asset, "analysis_attempt_count", 0) or 0)
     dispatched_at = datetime.now(UTC)
-    # KRI-820: the claim window covers the shared queue's live backlog, so a
-    # photo that is only waiting in line never times out.
-    queue_ahead = int(
+    # KRI-820: the claim window covers the shared queue's live backlog (lane
+    # seconds), so a photo that is only waiting in line never times out.
+    backlog_s = int(
         (await db.execute(queue_backlog_stmt(dispatched_at, exclude_id=asset.id))).scalar() or 0
     )
     attempt_token = begin_attempt(
         asset,
         now=dispatched_at,
         attempt_count=1 if reset_attempts else prior_attempts + 1,
-        queue_ahead=queue_ahead,
+        backlog_s=backlog_s,
     )
     await db.commit()
     await db.refresh(asset)

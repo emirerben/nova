@@ -14,56 +14,17 @@ def test_release_requires_alembic_head_before_process_start() -> None:
     assert _fly()["deploy"]["release_command"] == "python -m alembic upgrade head"
 
 
-def _queues(process_line: str) -> list[str]:
-    return process_line.split("-Q ", 1)[1].split()[0].split(",")
-
-
-def test_topology_is_exactly_api_worker_light_visuals() -> None:
-    """Release 2 dropped the dedicated autoplace/speech_analysis groups and the
-    unified worker owns every analysis queue; KRI-1240 adds back ONE small
-    always-on group for creator-facing Visuals analysis only."""
+def test_topology_is_exactly_api_worker_light() -> None:
+    """Release 2: the dedicated autoplace/speech_analysis groups are gone and the
+    unified worker owns every analysis queue."""
     fly = _fly()
-    groups = {"api", "worker", "light", "visuals"}
-    assert set(fly["processes"]) == groups
-    assert {row["processes"][0] for row in fly["vm"]} == groups
+    assert set(fly["processes"]) == {"api", "worker", "light"}
+    assert {row["processes"][0] for row in fly["vm"]} == {"api", "worker", "light"}
     for group in ("autoplace", "speech_analysis"):
         assert not any(row.get("processes") == [group] for row in fly["services"])
 
-    worker_queues = set(_queues(fly["processes"]["worker"]))
+    worker_queues = set(fly["processes"]["worker"].split("-Q ", 1)[1].split()[0].split(","))
     assert {"autoplace-jobs", "speech-analysis", "visuals-analysis"}.issubset(worker_queues)
-
-
-def test_visuals_group_is_one_small_always_on_parallel_analysis_machine() -> None:
-    """KRI-1240: 10 Visuals were analysed one at a time on the worker's single
-    slot. The visuals group drains only visuals-analysis, several at a time, on a
-    small always-on VM, and recycles children below its own memory."""
-    fly = _fly()
-    line = fly["processes"]["visuals"]
-    assert _queues(line) == ["visuals-analysis"]
-    assert " -B" not in line  # Beat stays on light only (it does not de-duplicate)
-
-    concurrency = int(line.split("--concurrency=", 1)[1].split()[0])
-    assert concurrency >= 3, "the whole point is analysing several Visuals at once"
-
-    vm = next(row for row in fly["vm"] if row.get("processes") == ["visuals"])
-    assert vm["cpu_kind"] == "shared"
-    assert vm["memory_mb"] <= 4096
-
-    # The app-wide 3GB recycle threshold (settings.worker_max_memory_per_child_kb)
-    # can never fire on this VM, so the process line carries its own. It compares
-    # a child's peak RSS, which on Linux includes the parent's copy-on-write pages,
-    # so threshold x concurrency over-counts; the pin is that one ballooned child is
-    # recycled well before it alone could take half the machine.
-    per_child_kb = int(line.split("--max-memory-per-child=", 1)[1].split()[0])
-    assert 256 * 1024 <= per_child_kb < vm["memory_mb"] * 1024 // 2
-
-    # Always-on (no cold start for a creator's burst). A [[services]] block also
-    # makes flyctl's first-deploy HA spare a started machine instead of a
-    # stopped standby, which the Fly Deploy topology guard rejects.
-    services = [row for row in fly["services"] if row.get("processes") == ["visuals"]]
-    assert len(services) == 1
-    assert services[0]["auto_stop_machines"] is False
-    assert "ports" not in services[0]
 
 
 def test_worker_is_shared_cpu_now_cloud_render_is_retired() -> None:
@@ -83,7 +44,76 @@ def test_visuals_queue_is_consumed_before_any_dispatch_can_switch_to_it() -> Non
     from app.config import Settings
 
     fly = _fly()
-    queues = _queues(fly["processes"]["worker"])
+    queues = fly["processes"]["worker"].split("-Q ", 1)[1].split()[0].split(",")
     assert "visuals-analysis" in queues
     assert "VISUALS_ANALYSIS_QUEUE" not in fly.get("env", {})
     assert Settings.model_fields["visuals_analysis_queue"].default == ""
+
+
+# --- The Visuals deadline must describe the lane that is always there.
+# Failure modes this pins (written before the change):
+#   L1 _QUEUE_CONCURRENCY claims more parallel slots than the always-present
+#      consumer runs, so a healthy burst that is only waiting in line times out
+#      while a dedicated group is draining, restarting or removed (the
+#      2026-11-02..11-07 state: constant 2, one concurrency=1 consumer).
+#   L2 one queued analysis ahead is budgeted shorter than it can hold the slot.
+#   L3 the lane's one in-progress non-analysis task is longer than budgeted.
+
+
+def _visuals_consumers() -> dict[str, int]:
+    """fly.toml process -> --concurrency, for every process draining visuals-analysis."""
+    out: dict[str, int] = {}
+    for name, command in _fly()["processes"].items():
+        if "-Q " not in command:
+            continue
+        queues = command.split("-Q ", 1)[1].split()[0].split(",")
+        if "visuals-analysis" in queues:
+            out[name] = int(command.split("--concurrency=", 1)[1].split()[0])
+    return out
+
+
+def _worker_queues() -> set[str]:
+    command = _fly()["processes"]["worker"]
+    return set(command.split("-Q ", 1)[1].split()[0].split(","))
+
+
+def test_visuals_deadline_budgets_only_the_always_present_worker_lane() -> None:
+    """A dedicated Visuals group can be draining, restarting or removed (KRI-1240,
+    #2183), so the deadline budgets the unified worker's slots alone: the
+    consumer that is always there. Extra consumers only finish work sooner."""
+    from app.services import pool_analysis_deadline as bound
+
+    consumers = _visuals_consumers()
+    assert "worker" in consumers
+    assert bound._QUEUE_CONCURRENCY == consumers["worker"]
+    assert bound._QUEUE_CONCURRENCY <= sum(consumers.values())
+
+
+def test_visuals_queue_slot_covers_a_whole_attempt_chain() -> None:
+    from app.services import pool_analysis_deadline as bound
+    from app.tasks.autoplace import _AUTOPLACE_TASK_LIMITS
+
+    gap = _AUTOPLACE_TASK_LIMITS["time_limit"] - _AUTOPLACE_TASK_LIMITS["soft_time_limit"]
+    for kind in ("image", "video"):
+        assert bound.queue_slot_s(kind) >= bound.run_window(kind).total_seconds() + gap
+
+
+def test_lane_occupant_covers_the_longest_task_the_worker_can_be_running() -> None:
+    from app.services import pool_analysis_deadline as bound
+    from app.worker import celery_app
+
+    celery_app.loader.import_default_modules()
+    routes = celery_app.conf.task_routes or {}
+    worker_queues = _worker_queues()
+    longest = 0
+    for name, task in celery_app.tasks.items():
+        if name.startswith("celery.") or name == "tasks.analyze_pool_asset":
+            continue
+        queue = (routes.get(name) or {}).get("queue") or getattr(task, "queue", None) or "celery"
+        # Tasks dispatched with an explicit queue= kwarg may land on any worker
+        # queue; only tasks routed off the worker (maintenance, agent-control)
+        # can never occupy its slot.
+        if queue in worker_queues or queue not in {"maintenance", "agent-control"}:
+            longest = max(longest, int(task.time_limit or 0))
+    assert longest >= 1800  # the render orchestrators are on the worker
+    assert bound._LANE_OCCUPANT.total_seconds() >= longest
