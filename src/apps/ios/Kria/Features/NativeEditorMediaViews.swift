@@ -505,7 +505,7 @@ struct NativeVideoPreview: View {
            let selected = objects.first(where: { $0.item.selection == selection }),
            NativeEditorInteraction.visible([selected.item], at: clock.currentTime).isEmpty == false,
            canDirectlyPosition(selected),
-           selected.item.kind != .speaker || speakerIsDrawnNow(),
+           selected.item.kind != .speaker || speakerIsDrawnNow(selected.item.selection),
            NativeEditorInteraction.contains(point, in: frame(for: selected, in: size), rotationDegrees: selected.rotation) {
             return selected
         }
