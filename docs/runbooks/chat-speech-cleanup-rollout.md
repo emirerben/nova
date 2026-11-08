@@ -100,7 +100,10 @@ rules all keep it (Çiğdem S2 "ss2b", prod job f4f81c07, 2026-11-08). With the 
 `app/pipeline/speech_slate.py` checks the take's FIRST utterance only: after leading/trailing
 fillers it must equal a closed EN/TR list of recording / rolling / countdown / mic-check talk,
 end with a full stop, a gap or a silence, finish within 3 s and leave at least 3 words. It is
-handed to the planner as a retake span (same snapping, voice-guard exemption, receipts). Generic
+handed to the planner as a retake span (same snapping, voice-guard exemption, receipts). Because it is
+cut and counted as a retake, it also needs both retake switches (`RETAKE_CUT_ENABLED` and
+`SPEECH_CLEANUP_RETAKES_ENABLED`, both on in prod since 2026-11-04); with either off it is kept.
+The cleanup offer counts it among the "restarted sentences". Generic
 hooks ("Ready?", "Here we go", "Action!") and longer sentences ("we're recording our first album")
 never match. Failure modes and checks: `docs/reviews/cigdem-s2-failure-modes.md` (A).
 

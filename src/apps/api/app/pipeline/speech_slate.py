@@ -8,7 +8,8 @@ and receipts as an abandoned take.
 
 Precision over recall (failure modes: ``docs/reviews/cigdem-s2-failure-modes.md`` A1-A12):
 
-* only the take's FIRST utterance, starting at word 0 (after optional fillers);
+* only the take's FIRST utterance, starting at word 0 (after optional fillers, which may be
+  their own sentence: "Okay. We're recording.");
 * the whole utterance, minus leading/trailing fillers, must equal a phrase on a closed list of
   recording / rolling / countdown / mic-check talk; a longer sentence never matches, and generic
   hooks ("ready?", "here we go", "action", "let's go") are not on the list;
@@ -17,7 +18,8 @@ Precision over recall (failure modes: ``docs/reviews/cigdem-s2-failure-modes.md`
   stamps can stretch over a pause); no boundary within ``_MAX_SLATE_WORDS`` words = no cut;
 * it ends within ``_MAX_SLATE_S`` and leaves at least ``_MIN_WORDS_AFTER`` words after it.
 
-Pure: no I/O, no settings. Callers gate it on ``SPEECH_CLEANUP_SLATE_CUT_ENABLED``.
+Pure: no I/O, no settings. Callers gate it on ``SPEECH_CLEANUP_SLATE_CUT_ENABLED`` and on the
+same retake switches every other retake cut needs (it is cut and counted as a retake).
 """
 
 from __future__ import annotations
@@ -177,6 +179,11 @@ def _ends_utterance(
     )
 
 
+def _only_fillers(tokens: list[str]) -> bool:
+    folded = [_fold(token) for token in tokens]
+    return all(not token or token in _FILLER_KEYS for token in folded)
+
+
 def _is_slate(tokens: list[str]) -> bool:
     folded = [_fold(token) for token in tokens]
     folded = [token for token in folded if token]
@@ -213,8 +220,12 @@ def opening_slate_span(
             return None
         if not _ends_utterance(parsed, j, clean_silences):
             continue
-        # The first utterance ends at j: it is the slate or nothing is.
+        tokens = [text for text, _s, _e in parsed[: j + 1]]
+        if _only_fillers(tokens):
+            # "Okay." said as its own sentence before the slate: keep reading.
+            continue
+        # The first real utterance ends at j: it is the slate or nothing is.
         if len(parsed) - (j + 1) < _MIN_WORDS_AFTER:
             return None
-        return (0, j) if _is_slate([text for text, _s, _e in parsed[: j + 1]]) else None
+        return (0, j) if _is_slate(tokens) else None
     return None

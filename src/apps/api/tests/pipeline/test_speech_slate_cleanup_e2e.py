@@ -98,6 +98,8 @@ def _kept_at(result, at_s: float) -> bool:
 @pytest.mark.parametrize("mode", ["off", "apply"])
 def test_slate_is_cut_and_the_talk_starts_on_its_first_word(take, monkeypatch, mode):
     monkeypatch.setattr(settings, "speech_cleanup_slate_cut_enabled", True)
+    monkeypatch.setattr(settings, "retake_cut_enabled", True)
+    monkeypatch.setattr(settings, "speech_cleanup_retakes_enabled", True)
     result = _analyze(take, mode)
     for _text, start, end in WORDS[:3]:
         assert not _kept_at(result, (start + end) / 2), result.cut_plan.removed
@@ -110,6 +112,20 @@ def test_slate_is_cut_and_the_talk_starts_on_its_first_word(take, monkeypatch, m
 def test_flag_off_keeps_the_slate(take, monkeypatch, mode):
     # Negative control: the same take without the detector keeps every slate word.
     monkeypatch.setattr(settings, "speech_cleanup_slate_cut_enabled", False)
+    result = _analyze(take, mode)
+    for _text, start, end in WORDS[:3]:
+        assert _kept_at(result, (start + end) / 2), result.cut_plan.removed
+
+
+@pytest.mark.parametrize("mode", ["off", "apply"])
+@pytest.mark.parametrize("flag", ["retake_cut_enabled", "speech_cleanup_retakes_enabled"])
+def test_slate_waits_for_consented_retakes(take, monkeypatch, mode, flag):
+    # Review of #2230: the slate is cut as a retake, so it stays behind the same consent fence
+    # as every other retake (both retake switches on); with either off it is kept.
+    monkeypatch.setattr(settings, "speech_cleanup_slate_cut_enabled", True)
+    monkeypatch.setattr(settings, "retake_cut_enabled", True)
+    monkeypatch.setattr(settings, "speech_cleanup_retakes_enabled", True)
+    monkeypatch.setattr(settings, flag, False)
     result = _analyze(take, mode)
     for _text, start, end in WORDS[:3]:
         assert _kept_at(result, (start + end) / 2), result.cut_plan.removed

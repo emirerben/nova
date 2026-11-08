@@ -108,3 +108,22 @@ def test_a_later_silence_does_not_end_the_utterance_early():
     stretched = [dict(w) for w in _SS2B]
     stretched[2] = {"text": "recording", "start_s": 0.6, "end_s": 1.54}
     assert opening_slate_span(stretched, silences=[(1.03, 1.54)]) == (0, 2)
+
+
+@pytest.mark.parametrize(
+    ("text", "last"),
+    [
+        ("Okay. We're recording. Kervan turned ten this year.", 2),
+        ("Tamam. Kayıttayız. Fenerbahçe Kadıköy'den taşınıyor.", 1),
+    ],
+)
+def test_filler_said_as_its_own_sentence_before_the_slate(text, last):
+    # Review of #2230: Whisper often writes the leading "Okay." as its own sentence. That
+    # filler-only utterance must not end the search: the slate after it is still the opening.
+    words = _words(text)
+    assert opening_slate_span(words) == (0, last)
+
+
+def test_filler_only_opening_before_a_real_sentence_is_not_cut():
+    # Negative control for the above: "Okay." followed by the real talk cuts nothing.
+    assert opening_slate_span(_words("Okay. Kervan turned ten this year.")) is None

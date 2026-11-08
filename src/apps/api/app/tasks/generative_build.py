@@ -33609,7 +33609,8 @@ def _silence_cut_analysis(
                     source_fingerprint=source_fingerprint or cache_key or clip_path,
                 )
                 # Çiğdem S2: a production slate opening the take ("okay, we're recording").
-                if settings.speech_cleanup_slate_cut_enabled:
+                # A retake-kind cut: only where retake cuts are on, like the spans above.
+                if settings.speech_cleanup_slate_cut_enabled and settings.retake_cut_enabled:
                     from app.pipeline.speech_slate import opening_slate_span  # noqa: PLC0415
 
                     slate = opening_slate_span(transcript.words, silences=silences)

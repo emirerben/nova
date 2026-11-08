@@ -52,6 +52,10 @@ retake-span path (same snapping, voice-guard exemption, receipts). Flag
 11. Several talking clips → each clip's analysis sees its own word 0; a slate at the start of
     clip B is cut too (same rule per take).
 12. Malformed / empty words → no span, never an exception.
+13. (Review) "Okay." transcribed as its own sentence before the slate → a filler-only utterance
+    does not end the search; "Okay. We're recording." is still cut, "Okay. Kervan…" is not.
+14. (Review) Retake switches off (`RETAKE_CUT_ENABLED` / `SPEECH_CLEANUP_RETAKES_ENABLED`) → the
+    slate is a retake-kind cut, so it stays behind the same consent fence; nothing is cut.
 
 ## B. Photo on the wrong sentence (planner choice)
 

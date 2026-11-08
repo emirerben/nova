@@ -1938,7 +1938,8 @@ class Settings(BaseSettings):
         'we\'re recording", "tamam, kayıttayız", "three two one"), ends with a full stop, a '
         "gap or a silence, lasts under 3 s and leaves at least 3 words "
         "(`app/pipeline/speech_slate.py`; Çiğdem S2, docs/reviews/cigdem-s2-failure-modes.md). "
-        "It is cut like an abandoned take. Default off: no span is added and every plan and "
+        "It is cut like an abandoned take, so it also needs RETAKE_CUT_ENABLED and "
+        "SPEECH_CLEANUP_RETAKES_ENABLED. Default off: no span is added and every plan and "
         "receipt is byte-identical to before. Kill switch: `fly secrets set "
         "SPEECH_CLEANUP_SLATE_CUT_ENABLED=false --app nova-video` + api and worker restart.",
     )
