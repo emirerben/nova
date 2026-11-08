@@ -985,9 +985,13 @@ def resolve_creator_manifest(
             )
         else:
             capabilities[CAPABILITY_TIMED_CARDS] = _available()
-    from app.services.phone_rollout import split_screen_supported
+    from app.services.phone_rollout import split_screen_planned_for
 
-    if phone_rendering_allowed and has_media and split_screen_supported():
+    if (
+        phone_rendering_allowed
+        and has_media
+        and split_screen_planned_for(_sending_build_protocol())
+    ):
         capabilities["split_screen"] = _available()
     background_pick: str | None = None
     if is_phone_subtitled and not has_voiceover:

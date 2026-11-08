@@ -321,6 +321,7 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "load save reconcileOnOpen reconcilePlaybackState needsReload isBehindActiveJob "
         "loadForEditorOpen setObserversVisible "
         "beginPreviewPresentation endPreviewPresentation previewFrameWasShown "
+        "retainAdmittedPreview "
         "adoptLatestJob adoptActiveJobFromThread switchToLatestJob keepEditingCurrentJob "
         "synchronizePromptRevision resumeRefreshSync refreshDeviceRender retryRender "
         "retryDeviceRender retryPreview retryPreviewRefresh rebaseCleanDraft "
