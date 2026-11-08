@@ -15,9 +15,11 @@ from app.services.generated_media import (
     GeneratedMediaRequest,
     accept_generated_media,
     execute_generated_media,
+    generated_images_available,
     generated_media_enabled,
     get_generated_operation,
     narration_script,
+    native_generation_client,
     operation_response,
     owned_item,
     retry_generated_storage,
@@ -27,17 +29,8 @@ router = APIRouter()
 
 
 def generated_capabilities(user_id, native_client, client_protocol):
-    native = bool(
-        native_client
-        and client_protocol is not None
-        and client_protocol >= settings.kria_minimum_client_protocol
-        and (settings.phone_rendering_for(user_id) or settings.ios_native_device_only_enabled)
-    )
-    images = bool(
-        native
-        and generated_media_enabled("image")
-        and "visualBlocks" in settings.phone_render_verified_features
-    )
+    native = native_generation_client(user_id, native_client, client_protocol)
+    images = bool(native_client and generated_images_available(user_id, client_protocol))
     narration = bool(
         native
         and generated_media_enabled("narration")

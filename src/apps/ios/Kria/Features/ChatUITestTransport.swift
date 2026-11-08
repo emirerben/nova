@@ -237,6 +237,10 @@ final class CreationChatFixture: @unchecked Sendable {
     /// Threads whose stale suggestion was answered with "no longer fits" (`KRIA_SUGGESTION_CARDS=stale`); the next set they get is the refreshed one.
     private var staleSuggestionThreads: Set<String> = []
     private var dismissedSuggestions: [String: Set<String>] = [:]
+    /// Threads whose generated-image card was tapped (`KRIA_SUGGESTION_CARDS=generated`): the server spends once and the card is gone.
+    private var spentGeneratedThreads: Set<String> = []
+    /// By-event reads still to answer `pending` before the generated image is `ready`, so the card's "making" state is seen.
+    private var generatedCardPollsLeft: [String: Int] = [:]
     /// `KRIA_CHAT_SLOW_READS` (KRI-640): GETs of one chat (or anything under it) and every capabilities read but the
     /// first. The project list and the create call stay fast.
     func isSlowRead(_ request: URLRequest) -> Bool {
@@ -364,6 +368,7 @@ final class CreationChatFixture: @unchecked Sendable {
                 case "unknown": return SuggestionCardsMocks.unknown()
                 case "empty": return SuggestionCardsMocks.empty()
                 case "stale": return staleSuggestionThreads.contains(id) ? SuggestionCardsMocks.refreshed() : SuggestionCardsMocks.stale()
+                case "generated": return spentGeneratedThreads.contains(id) ? SuggestionCardsMocks.empty() : SuggestionCardsMocks.generated()
                 default: return SuggestionCardsMocks.ready()
                 }
             }
@@ -665,6 +670,10 @@ final class CreationChatFixture: @unchecked Sendable {
             let operationID = parts.count > 3 ? (parts[3] == "by-event" ? parts.last! : parts[3]) : ""
             guard let operation = generatedMediaOperations[operationID] else { return response(["detail": "Unknown fixture request"], status: 404) }
             if request.httpMethod == "GET" { generatedMediaLookupCount += 1 }
+            if request.httpMethod == "GET", parts.last == operationID, let left = generatedCardPollsLeft[operationID], left > 0 {
+                generatedCardPollsLeft[operationID] = left - 1
+                return response(["id": operationID, "state": "pending", "capability": "image", "retryable": false])
+            }
             if parts.last == "accept", request.httpMethod == "POST" {
                 if ["image", "image_edit"].contains(operation["capability"] as? String ?? "") {
                     if ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA_RECOVERED"] == "1",
@@ -771,7 +780,7 @@ final class CreationChatFixture: @unchecked Sendable {
                     return response(failure.1, status: failure.0)
                 }
                 append("draft_applied", payload: ["turn_id": turn, "draft_id": id])
-                append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turn])
+                append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turn, "draft_id": id, "draft_revision": 4])
                 thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
                 return response(["section_id": parts[4], "thread_revision": revision, "draft_revision": 4, "turn_id": turn])
             }
@@ -779,7 +788,7 @@ final class CreationChatFixture: @unchecked Sendable {
                 let turn = UUID().uuidString
                 if let failure = review.undoAll(id: id, initial: reviewInitialBlocks, turnID: turn) { return response(failure.1, status: failure.0) }
                 append("draft_undone", payload: ["draft_id": id])
-                append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turn])
+                append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turn, "draft_id": id, "draft_revision": 4])
                 thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
                 return response(["draft_id": id, "item_id": id, "variant_key": "original_text", "draft_revision": 4, "snapshot_hash": "hash", "etag": "etag-4",
                                  "snapshot": [String: Any](), "can_undo": false, "created_at": "2026-10-09T10:05:00Z"])
@@ -1110,7 +1119,23 @@ final class CreationChatFixture: @unchecked Sendable {
                 review.scopedTurn(id: id, initial: reviewInitialBlocks, scope: scope, edits: body["manual_edits"] as? [[String: Any]] ?? [], turnID: turnID)
                 append("assistant_response", text: "Your draft is ready for review.", payload: ["turn_id": turnID, "turn_value": "response"])
                 append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
-                append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])
+                append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID, "draft_id": id, "draft_revision": 4])
+            } else if ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CARDS"] == "generated",
+                      let tap = body["suggestion"] as? [String: Any],
+                      tap["chip_id"] as? String == SuggestionCardsMocks.generatedCardID {
+                // The real spending tap (`plan_pinned_suggestion_turn`): one operation keyed on the card, a reply instead of a draft,
+                // the card consumed. A second tap of the same card finds the same operation and never makes another.
+                let eventID = GeneratedCardEvent.wireID(setID: tap["set_id"] as? String ?? "", cardID: SuggestionCardsMocks.generatedCardID)
+                if generatedMediaOperations[eventID] == nil {
+                    let imageURL = "https://generated-media-image.invalid/cover.jpg"
+                    generatedMediaOperations[eventID] = ["id": eventID, "state": "ready", "capability": "image",
+                        "asset_id": "generated-" + eventID, "preview_url": imageURL, "source_url": imageURL,
+                        "retryable": false, "fixture_title": "Generated image"]
+                    generatedCardPollsLeft[eventID] = 1
+                }
+                spentGeneratedThreads.insert(id)
+                append("assistant_response", text: SuggestionCardsMocks.generatedReadyReply,
+                       payload: ["turn_id": turnID, "turn_value": "response"])
             } else if ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CARDS"] == "stale",
                       (body["suggestion"] as? [String: Any])?["chip_id"] as? String == SuggestionCardsMocks.staleCardID {
                 // The real pinned-tap refusal (`plan_pinned_suggestion_turn`): an ordinary accepted turn whose reply says the
@@ -1400,7 +1425,7 @@ final class CreationChatFixture: @unchecked Sendable {
             } else {
                 let approvalPayload = events.last(where: { $0["event_type"] as? String == "approval_requested" })?["payload"] as? [String: Any]
                 let turnID = approvalPayload?["turn_id"] as? String ?? id
-                return response(["approval_id": approvalID, "turn_id": turnID, "draft_id": id, "draft_revision": 1, "status": "pending", "consequence_summary": "Open on the laugh and keep the pacing quick.", "expires_at": ProcessInfo.processInfo.environment["KRIA_CHAT_EXPIRED_APPROVAL"] == "1" ? "2000-09-10T10:00:00Z" : "2099-09-10T10:00:00Z", "approval_fingerprint": String(repeating: "a", count: 64)])
+                return response(["approval_id": approvalID, "turn_id": turnID, "draft_id": id, "draft_revision": approvalPayload?["draft_revision"] as? Int ?? 1, "status": "pending", "consequence_summary": "Open on the laugh and keep the pacing quick.", "expires_at": ProcessInfo.processInfo.environment["KRIA_CHAT_EXPIRED_APPROVAL"] == "1" ? "2000-09-10T10:00:00Z" : "2099-09-10T10:00:00Z", "approval_fingerprint": String(repeating: "a", count: 64)])
             }
         } else if parts.last == "delta", let count = approvalDispatches[id] {
             // Ticks on the delta poll: like the server, nothing here bumps the revision until `render_queued`, so

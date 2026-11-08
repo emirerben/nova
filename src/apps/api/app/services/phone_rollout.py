@@ -2330,7 +2330,7 @@ def split_screen_client_supported(*, require_client: bool | None = None) -> bool
     if require_client is None:
         require_client = in_http_request()
     protocol = current_client_protocol()
-    return not require_client or (protocol is not None and protocol >= 45)
+    return not require_client or (protocol is not None and protocol >= 46)
 
 
 def split_screen_supported(*, require_client: bool | None = None) -> bool:

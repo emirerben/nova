@@ -27,7 +27,7 @@ Source crop remains normalized upright source space. Ordinary transforms, backdr
 
 V2 recipes add optional `split_screen_sections`. Each entry has `id`, `start`, `end`, `panel_weights`, `gutter` and `background_color`. Recipe `TimelineClip` adds optional `split_screen` with `section_id` and `panel_index`. Members remain ordinary video clips on separate panel video tracks. This keeps audio and transforms on the ordinary pipeline. The compositor renders within a panel-sized local canvas, clips all resulting pixels to that viewport and places the result in the output canvas. Section background fills gaps. Half-open section windows restore full-screen media exactly at the end.
 
-Phone protocol 45 (main took 44 for KRI-1264 first) and feature `splitScreen` protect the additive recipe. Legacy clients must not save a split timeline after discarding its sections.
+Phone protocol 46 (main took 44 and 45 first) and feature `splitScreen` protect the additive recipe. Legacy clients must not save a split timeline after discarding its sections.
 
 ## Native session API
 

@@ -1395,8 +1395,13 @@ enum KriaClientProtocolContract {
     /// `editor_capabilities.media_overlay_style` holds. The server offers that capability only to this protocol (and
     /// only with `cardStyle` verified) and answers 426 `client_update_required` (`card_style`) to an older build
     /// polling a recipe that carries a styled card.
-    /// 45 (KRI-1231) preserves editable split-screen sections and renders ordinary media in independent panel viewports.
-    static let version = 45
+    ///
+    /// 45 (KRI-1253): asks the creator before it sends a suggestion card whose action is `async_generate` (a card that spends:
+    /// it quotes `cost_usd`, the creator confirms in a sheet, and only then does the tap go out). The server offers the
+    /// `generated_overlay` card only to this protocol, because an older build would spend on one touch.
+    ///
+    /// 46 (KRI-1231) preserves editable split-screen sections and renders ordinary media in independent panel viewports.
+    static let version = 46
     static let header = "X-Kria-Client-Protocol"
 }
 

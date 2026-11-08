@@ -252,7 +252,7 @@ def test_authored_song_requires_trusted_split_origin_even_after_unstack(
     )
     from app.services.client_protocol import clear_request_context, set_client_protocol
 
-    set_client_protocol(45)
+    set_client_protocol(46)
     before = copy.deepcopy(job.assembly_plan)
     request = gj.EditorCommitRequest(
         base_generation="first", user_song=gj.EditorCommitUserSong(volume=0.5)

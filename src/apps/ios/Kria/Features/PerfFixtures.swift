@@ -461,6 +461,16 @@ extension PerfFixture {
         let schema = Schema(models)
         let directory = URL.applicationSupportDirectory.appending(path: "perf", directoryHint: .isDirectory)
         if resetRequested {
+            // An image a suggestion card was making, and the overlays handed to the review: both survive a closed app.
+            for key in UserDefaults.standard.dictionaryRepresentation().keys
+            where key.hasPrefix("generated-card.") || key.hasPrefix("generated-overlays.") {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+            // A turn the last run left waiting would keep this launch "thinking" (cards and Add media stay shut) until
+            // a reply with its id arrives, which a fresh fixture server never sends. Opt in: other tests relaunch on it.
+            if ProcessInfo.processInfo.arguments.contains("-reset-chat-drafts") {
+                UserDefaults.standard.removeObject(forKey: "kria.chat-drafts")
+            }
             try? FileManager.default.removeItem(at: directory)
             // Synchronous before AppModel creation, including in-memory fixture launches.
             let transcripts = URL.applicationSupportDirectory

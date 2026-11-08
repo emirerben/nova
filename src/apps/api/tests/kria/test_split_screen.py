@@ -138,7 +138,7 @@ def test_old_app_cannot_erase_sections(monkeypatch):
             EditorCommitRequest(text_elements=[]),
         )
     assert error.value.status_code == 426
-    assert error.value.detail["minimum_client_protocol"] == 45
+    assert error.value.detail["minimum_client_protocol"] == 46
 
 
 def test_authored_save_reopens_with_independent_panel_source_clocks(monkeypatch):
@@ -421,10 +421,10 @@ def test_drawing_and_single_subject_background_survive_split_compile():
 @pytest.mark.parametrize(
     "protocol,verified,device,expected",
     [
-        (45, True, True, True),
-        (44, True, True, False),
-        (45, False, True, False),
-        (45, True, False, False),
+        (46, True, True, True),
+        (45, True, True, False),
+        (46, False, True, False),
+        (46, True, False, False),
     ],
 )
 def test_editor_split_capability_is_explicit_and_qualified(
