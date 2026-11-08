@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.81.0] - 2026-11-08
+
+### Fixed
+- revert(fly): drop the always-on visuals process for cost (KRI-1240, reverts #2148) (#2183) <!-- release-pr: 2183 -->
+
 ## [0.88.80.0] - 2026-11-08
 
 ### Changed
