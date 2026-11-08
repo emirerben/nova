@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.91.0] - 2026-11-08
+
+### Changed
+- fix(kria): reaction-beat cards use the card layout, not the small pip (KRI-1282) (#2202) <!-- release-pr: 2202 -->
+
 ## [0.88.90.0] - 2026-11-08
 
 ### Changed
