@@ -905,6 +905,14 @@ class Settings(BaseSettings):
     # Apply: `fly secrets set CAPTION_ANIMATION_ENABLED=false` (api + worker) + restart.
     caption_animation_enabled: bool = True
     caption_animation_min_client_protocol: int = 24
+    # KRI-632: Talking/phone captions stay at most two rows per cue. A cue the Kria mark would
+    # push past two rows is shown as two consecutive pieces (`phone_captions._split_cue_in_time`,
+    # new `caption-<n>` ids), and a face band pass keeps the whole caption block off the
+    # speaker's face unless the creator placed the captions. Default TRUE. False: no splits,
+    # no face-band pass, protected-ask captions limit to faces only when one was named; the
+    # compile is byte-identical to before. Apply: `fly secrets set
+    # PHONE_CAPTION_ROW_BUDGET_ENABLED=false` (api + worker) + restart.
+    phone_caption_row_budget_enabled: bool = True
     # Prompt fidelity (animation): "with animations" / "animated text" reaches the rendered text.
     # Default TRUE. brief_view reads an animation ask at any text scope, an unnamed ask gets one
     # tasteful entrance (`animation_ask.DEFAULT_TEXT_ENTRANCE`), the creation text pass applies
@@ -1049,6 +1057,16 @@ class Settings(BaseSettings):
     # turn: a 28/29 build knows the token and would draw the card upright. So a pinned recipe
     # that carries a tilted card answers 426 `client_update_required` (`card_tilt`) below this.
     media_card_tilt_min_client_protocol: int = 30
+    # KRI-1264: a phone Talking card's Zoom and Animation (`SubtitledOverlayCard.zoom` /
+    # `.animation`, compiled to the card clip's `visual_placement.editor_style`). Gated by the
+    # rollout token `cardStyle` in PHONE_RENDER_VERIFIED_FEATURES (absent = off, the default) and
+    # a build declaring protocol >= this value: older builds cannot decode a placement style and
+    # would fail the whole recipe, so a pinned recipe that carries one answers 426
+    # `client_update_required` (`card_style`) below it. Apply: physical-iPhone check of a 2x
+    # popped card in preview and export, then add `cardStyle` to PHONE_RENDER_VERIFIED_FEATURES
+    # (api + worker) + restart. Rollback: remove the token + restart, never a code revert; cards
+    # already saved keep their zoom and animation.
+    media_card_style_min_client_protocol: int = 44
     # KRI-1139: a Visuals-pool photo or video as a clip's tilt backdrop (`backdrop.kind =
     # "media"`, capability `clipBackdropMedia`). Not a second master flag: it is offered only
     # while `media_tilt_enabled` is on, and also needs `clipBackdropMedia` in
@@ -1090,12 +1108,6 @@ class Settings(BaseSettings):
     # the mic. Audio is never stored. Apply: `fly secrets set VOICE_DICTATION_ENABLED=false`
     # (api) + restart.
     voice_dictation_enabled: bool = True
-    # Qendresa item 24: the iPhone Add media sheet hints that a screen recording placed in
-    # Footage next to a talking take belongs in Overlays, with a one-tap move. iPhone-only; the
-    # server only advertises the `upload_place_hint` capability. Default off; off = the Add media
-    # sheet is unchanged. Apply: `fly secrets set UPLOAD_PLACE_HINT_ENABLED=true` (api) + restart;
-    # no worker use.
-    upload_place_hint_enabled: bool = False
     # One word at a time for caption `Display: Word` (`karaoke.single_word`, capability
     # `singleWordText`): the layer's runs are standalone-centred words and only the active one
     # is drawn. Emitted only when `singleWordText` is in PHONE_RENDER_VERIFIED_FEATURES (fly
@@ -1917,6 +1929,20 @@ class Settings(BaseSettings):
         "Default off: no extra cuts and every receipt is byte-identical to before. "
         "Kill switch: `fly secrets set TIGHT_PAUSE_CUT_ENABLED=false --app nova-video` + api "
         "and worker restart.",
+    )
+
+    speech_cleanup_long_pauses_enabled: bool = Field(
+        default=False,
+        description="Long pauses on the phone Talking render. Whisper-1 word stamps are "
+        "contiguous and stretch over pauses, so Speech cleanup cannot see a pause between two "
+        "stamped words and leaves it in. When the creator consented to Speech cleanup on a "
+        "single iPhone-rendered clip (and did not ask for tight pauses), the render also cuts "
+        "silence spans of 0.6 s or more from their audio edges, with the tight-pause protections "
+        "(quiet-floor rule, noisy takes untouched, voice guard, keep-segment caps), and writes a "
+        "`long_pauses` report on the variant. Shorter natural pauses stay. "
+        "Default off: no extra cuts and every receipt is byte-identical to before. "
+        "Kill switch: `fly secrets set SPEECH_CLEANUP_LONG_PAUSES_ENABLED=false --app "
+        "nova-video` + api and worker restart.",
     )
 
     # Qendresa "says done but isn't", group B: four bug-fix kill switches, default ON. Each

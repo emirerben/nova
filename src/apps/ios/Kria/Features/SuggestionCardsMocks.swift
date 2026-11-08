@@ -100,7 +100,7 @@ enum SuggestionCardsMocks {
     static func generated() -> [String: Any] {
         set("sg_fixture_generated", cards: [
             card("generated_overlay", "Add a generated image", why: "The pasta is only described", evidence: ["You review it before it goes in"],
-                 prompt: "Add a generated image overlay", action: "async_generate", cost: 0.04, id: generatedCardID, requiresProtocol: 43),
+                 prompt: "Add a generated image overlay", action: "async_generate", cost: 0.04, id: generatedCardID, requiresProtocol: 45),
         ])
     }
 

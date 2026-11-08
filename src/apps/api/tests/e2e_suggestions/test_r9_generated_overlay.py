@@ -2,7 +2,7 @@
 
 Failure catalogue (written before the code; each row is a test below):
 
-  G1  served only where it can run: protocol 43+ (the build that asks first), the generated-images
+  G1  served only where it can run: protocol 45+ (the build that asks first), the generated-images
       gate (the route's own), the flag, and a thread with no image yet. The wire carries the price
       and the action type, never the prompt or the action.
   G2  a tap spends ONCE: one provider operation keyed on the card, a reply instead of a draft, the

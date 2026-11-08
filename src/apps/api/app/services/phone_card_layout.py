@@ -220,6 +220,7 @@ def blockers_for_card(
     caption_box: NormalizedBox,
     placed: Sequence[tuple[float, float, NormalizedBox]],
     complete: bool = True,
+    marked: Sequence[Any] = (),
 ) -> list[NormalizedBox]:
     """Every box a card on ``[start_s, end_s]`` must stay clear of (zero overlap).
 
@@ -231,6 +232,8 @@ def blockers_for_card(
     fallback box does. ``complete=False`` (the pass timed out) also adds the fallback box to a
     card with no sample in its window.
     ``placed`` are the ``(start_s, end_s, box)`` of cards already laid out: none may stack.
+    ``marked`` (KRI-903) are the objects the creator marked (``ProtectedRegion`` rows): while
+    one is on screen with the card, the card stays clear of it like of a face.
     """
     blockers: list[NormalizedBox] = []
     if face_sampling != "ok" or not face_regions:
@@ -252,6 +255,7 @@ def blockers_for_card(
                 blockers.append(fallback_face_box)
     blockers.append(caption_box)
     blockers.extend(box for s, e, box in placed if s < end_s and start_s < e)
+    blockers.extend(r.box for r in marked if r.start_s < end_s and start_s < r.end_s)
     return blockers
 
 

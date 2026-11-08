@@ -275,7 +275,7 @@ class TurnCancelled(BaseModel):
 
 
 class ApprovalDecisionBody(_StrictBody):
-    # Explicit original consent. Older clients grant no automatic repairs.
+    # Accepted for older builds and ignored: the server decides the repair grant (KRI-1262).
     automatic_repair_attempts: Literal[0, 2] = 0
     expected_thread_revision: int = Field(ge=0)
     expected_draft_revision: int = Field(ge=0)

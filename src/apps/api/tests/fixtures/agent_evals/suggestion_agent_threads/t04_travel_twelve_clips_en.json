@@ -1,0 +1,157 @@
+{
+ "name": "t04_travel_twelve_clips_en",
+ "description": "English first prompt. Twelve silent b-roll clips from a road trip, the large end of the footage range.",
+ "tags": [
+  "thread",
+  "english",
+  "first_prompt",
+  "many_clips"
+ ],
+ "context": {
+  "thread_id": "thread-t04",
+  "state": "first_prompt",
+  "language": "en",
+  "client_protocol": 13,
+  "media_digest": "digest-t04",
+  "runtime_version": 2,
+  "edit_format": "montage",
+  "clips": [
+   {
+    "media_id": "clip-1",
+    "ordinal": 1,
+    "kind": "video",
+    "subject": "car window with passing hills",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 6.0,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-2",
+    "ordinal": 2,
+    "kind": "video",
+    "subject": "gas station at sunrise",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 4.0,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-3",
+    "ordinal": 3,
+    "kind": "video",
+    "subject": "coast road from above",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 8.0,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-4",
+    "ordinal": 4,
+    "kind": "video",
+    "subject": "roadside fruit stand",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 5.0,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-5",
+    "ordinal": 5,
+    "kind": "video",
+    "subject": "waves on black sand",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 6.0,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-6",
+    "ordinal": 6,
+    "kind": "video",
+    "subject": "campfire at night",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 7.0,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-7",
+    "ordinal": 7,
+    "kind": "video",
+    "subject": "tent opening to a lake",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 4.0,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-8",
+    "ordinal": 8,
+    "kind": "video",
+    "subject": "feet on a wooden pier",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 3.0,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-9",
+    "ordinal": 9,
+    "kind": "video",
+    "subject": "fog over a valley",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 6.0,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-10",
+    "ordinal": 10,
+    "kind": "video",
+    "subject": "dashboard with a map",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 3.0,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-11",
+    "ordinal": 11,
+    "kind": "video",
+    "subject": "sheep crossing the road",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 5.0,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-12",
+    "ordinal": 12,
+    "kind": "video",
+    "subject": "sunset over a cliff",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 9.0,
+    "notable_moments": []
+   }
+  ],
+  "understanding": "complete"
+ },
+ "expect": {
+  "state": "first_prompt"
+ }
+}

@@ -42,9 +42,14 @@ def measure_text_block(row: dict, *, width: float | None = None) -> dict:
     wrap = (
         renderer._authored_lines if row.get("wrap_lines") is False else renderer._wrap_at_fixed_size
     )
-    font, size, lines = wrap(
-        text, face, size, width * float(row.get("max_width_frac") or 0.84), spacing, shape_text=True
-    )
+    if row.get("wrap_lines") is False:
+        # KRI-887: the burn fits a hand-authored line to the room around its anchor, not to a box.
+        from app.pipeline.text_fit import authored_safe_width  # noqa: PLC0415
+
+        wrap_width = authored_safe_width(width, row.get("x_frac"), row.get("alignment"))
+    else:
+        wrap_width = width * float(row.get("max_width_frac") or 0.84)
+    font, size, lines = wrap(text, face, size, wrap_width, spacing, shape_text=True)
     block = renderer._measure_block(
         font,
         lines,

@@ -642,6 +642,9 @@ def test_review_the_logo_keeps_off_her_captions(monkeypatch):
 
 
 def test_review_when_only_her_captions_leave_no_room_the_receipt_says_so(monkeypatch):
+    # The captions are stubbed at the top below; the KRI-632 face-band pass would move the real
+    # captions off this low face and make the stub untrue, so it is off for this scenario.
+    monkeypatch.setattr(gb.settings, "phone_caption_row_budget_enabled", False)
     low_face = NormalizedBox(0.25, 0.45, 0.80, 0.80)
     job = _logo_job(monkeypatch, face=low_face)
     _captions_at(monkeypatch, TOP_CAPTIONS)

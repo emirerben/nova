@@ -36,19 +36,6 @@ enum ChatUITestTransport {
     }
 }
 
-extension ChatUITestTransport {
-    /// Item 24: the place-hint fixture must really move a recording into Overlays, but the app's coordinator uploads
-    /// through a background session, which cannot use a URLProtocol. This scenario gets an ephemeral one.
-    @MainActor static func placeHintUploads(api: KriaAPIClient) -> BackgroundUploadCoordinator? {
-        guard ProcessInfo.processInfo.arguments.contains("-ui-testing-chat"), UploadPlaceHintFixture.mode != nil else { return nil }
-        let key = "place-hint-ui-fixture"
-        UserDefaults.standard.removeObject(forKey: key)
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [ChatUITestURLProtocol.self]
-        return BackgroundUploadCoordinator(api: api, defaultsKey: key, sessionConfiguration: configuration)
-    }
-}
-
 final class GeneratedMediaImageFixtureProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "generated-media-image.invalid" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -195,8 +182,25 @@ final class CreationChatFixture: @unchecked Sendable {
     private var generatedMediaLookupCount = 0
     private var rejectedGeneratedMediaEvent: String?
     private var loadedGeneratedMediaFixture = false
-    /// Item 24: visuals "uploaded" (reserve -> PUT -> register) per plan item, for `KRIA_CHAT_PLACE_HINT_FIXTURE`.
-    private var placeHintPools: [String: [[String: Any]]] = [:]
+
+    /// A portrait take and a landscape screen recording, as the removed Footage hint used to read them from the
+    /// cached previews (same path as `CreationMediaPreview.url(mediaID:)`, which is main-actor isolated).
+    private static func writePortraitAndLandscapePreviews(takeID: String, recordingID: String) {
+        for (id, size, color) in [(takeID, CGSize(width: 180, height: 320), UIColor.systemBlue),
+                                  (recordingID, CGSize(width: 320, height: 180), UIColor.systemOrange)] {
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            let image = UIGraphicsImageRenderer(size: size, format: format).image { context in
+                color.setFill()
+                context.fill(CGRect(origin: .zero, size: size))
+            }
+            let safeID = Data(id.utf8).base64EncodedString().replacingOccurrences(of: "/", with: "_")
+            let url = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                .appending(path: "KriaMediaPreviews", directoryHint: .isDirectory).appending(path: "\(safeID).jpg")
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? image.jpegData(compressionQuality: 0.9)?.write(to: url, options: .atomic)
+        }
+    }
     /// `KRIA_TALKING_RERECORD=busy-twice`: the first two swap attempts (the app's own automatic pair) are refused
     /// while a render runs; the creator's retry goes through.
     fileprivate var rerecordBusyRefusals = 0
@@ -374,7 +378,7 @@ final class CreationChatFixture: @unchecked Sendable {
                                  chip(4, "transition", "Add transitions", "Add transitions between the clips")])
         }
         if events.contains(where: { $0["event_type"] as? String == "user_message" }) || media.isEmpty { return set("none", []) }
-        let lead = chip(1, "default_edit", "Let Kria cut the first version", ChatSubmission.mediaOnlyMessage)
+        let lead = chip(1, "default_edit", "Let Kria decide", ChatSubmission.mediaOnlyMessage)
         suggestionAsks[id, default: 0] += 1
         let pendingMode = ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS_PENDING"]
         if pendingMode == "hold" || (suggestionAsks[id] == 1 && pendingMode != "0") {
@@ -488,6 +492,8 @@ final class CreationChatFixture: @unchecked Sendable {
             // KRIA_CHAT_CHOICE_QUESTION: "1" = server advertises choice_questions; "legacy" = it still sends the
             // choice_question payload but does not advertise the capability (old-server text fallback).
             if ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] == "1" { capabilities["choice_questions"] = true }
+            // A server that still advertises the removed place-hint capability: the app must ignore it.
+            if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_SCREEN_RECORDING"] == "1" { capabilities["upload_place_hint"] = true }
             // KRIA_CHAT_VOICEOVER_SCRIPT (KRI-815): "1" = server advertises voiceover_script_cards; "legacy" = it still
             // sends the voiceover_script payload but does not advertise the capability (old-client text fallback).
             if ProcessInfo.processInfo.environment["KRIA_CHAT_VOICEOVER_SCRIPT"] == "1" { capabilities["voiceover_script_cards"] = true }
@@ -504,32 +510,7 @@ final class CreationChatFixture: @unchecked Sendable {
             if DeviceRenderUITestFixture.scenario != nil || ProcessInfo.processInfo.environment["KRIA_TELEPROMPTER_REVIEW_FIXTURE"] == "1" {
                 capabilities["phone_rendering"] = ["enabled": true, "recipe_versions": [1, 2], "verified_features": MediaCapability.allCases.map(\.rawValue)]
             }
-            if UploadPlaceHintFixture.capabilityOn { capabilities["upload_place_hint"] = true }
             return response(capabilities)
-        }
-        if UploadPlaceHintFixture.mode != nil {
-            // The recording's re-upload: bytes go to a fixture URL, then register, then the pool read.
-            if request.httpMethod == "PUT", path.hasPrefix("/place-hint-upload/") { return response([String: Any]()) }
-            if parts0.first == "plan-items", parts0.count >= 3, parts0[2] == "assets" {
-                let item = parts0[1]
-                if request.httpMethod == "POST", parts0.last == "upload-urls" {
-                    let reservation = UUID().uuidString
-                    return response(["urls": [["reservation_id": reservation, "upload_url": "https://fixture.invalid/place-hint-upload/\(reservation)",
-                                               "gcs_path": "fixture/place-hint/\(reservation)", "upload_headers": [String: String]()]]])
-                }
-                if request.httpMethod == "POST", parts0.count == 3 {
-                    let contentType = body["content_type"] as? String ?? "video/mp4"
-                    let asset: [String: Any] = ["id": body["reservation_id"] as? String ?? UUID().uuidString,
-                                                "kind": contentType.hasPrefix("image/") ? "image" : "video", "status": "ready",
-                                                "media_status": "available", "source_filename": body["source_filename"] as? String ?? "Video"]
-                    placeHintPools[item, default: []].append(asset)
-                    return response(asset)
-                }
-                if request.httpMethod == "GET", parts0.count == 3 {
-                    let assets = placeHintPools[item] ?? []
-                    return response(["assets": assets, "max_assets": 10, "occupied_assets": assets.count])
-                }
-            }
         }
         if path.hasSuffix("/upload-urls"), ProcessInfo.processInfo.environment["KRIA_TELEPROMPTER_REVIEW_FIXTURE"] == "1" {
             return response(["detail": "This fixture deliberately rejects intake."], status: 422)
@@ -939,13 +920,7 @@ final class CreationChatFixture: @unchecked Sendable {
                 if payload["format"] as? String == "lipsync" { state["edit_format"] = "montage" }
                 // A phone-render account's clip is an analysis proxy; the original stays on the iPhone.
                 let mediaID = DeviceRenderUITestFixture.scenario == nil ? "fixture-clip" : "analysis-proxy-fixture-clip"
-                if let hintMode = UploadPlaceHintFixture.mode {
-                    let media = UploadPlaceHintFixture.media(mode: hintMode)
-                    UploadPlaceHintFixture.prepare(mode: hintMode, threadID: id)
-                    state["media"] = media
-                    append("action_select_format", role: "user", payload: payload)
-                    append("media_added", role: "system", payload: ["media": media, "media_count": media.count])
-                } else if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_MEDIA"] == "1" {
+                if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_MEDIA"] == "1" {
                     var clip: [String: Any] = ["media_id": mediaID, "kind": "video", "filename": "sample.mov"]
                     if let seconds = ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_MEDIA_DURATION"].flatMap(Double.init) {
                         clip["duration_s"] = seconds
@@ -961,6 +936,10 @@ final class CreationChatFixture: @unchecked Sendable {
                     if ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_RANGE"] != nil || ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_RANGE_Q"] != nil {
                         media.append(["media_id": "fixture-song", "kind": "audio", "role": "song", "filename": "fixture-song.mp3", "duration_s": 90])
                     }
+                    if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_SCREEN_RECORDING"] == "1" {
+                        media.append(["media_id": "fixture-screen-recording", "kind": "video", "filename": "Screen Recording 2026-11-04 at 10.12.33.mov", "duration_s": 12])
+                        Self.writePortraitAndLandscapePreviews(takeID: mediaID, recordingID: "fixture-screen-recording")
+                    }
                     if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_VOICEOVER"] == "1" {
                         media.append(["media_id": "fixture-voiceover", "kind": "audio", "filename": "existing-voiceover.m4a", "duration_s": 6])
                     }
@@ -968,8 +947,8 @@ final class CreationChatFixture: @unchecked Sendable {
                 }
                 // Match the server's user event so an intentional format choice keeps
                 // the offline project alive during background capture/recovery tests.
-                if UploadPlaceHintFixture.mode == nil { append("action_select_format", role: "user", payload: payload) }
-                if UploadPlaceHintFixture.mode == nil, ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_MEDIA"] == "1" {
+                append("action_select_format", role: "user", payload: payload)
+                if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_MEDIA"] == "1" {
                     append("media_added", role: "system", payload: [
                         "media": [[
                             "media_id": mediaID, "kind": "video", "filename": "sample.mov"
@@ -1010,9 +989,7 @@ final class CreationChatFixture: @unchecked Sendable {
                 }
                 append("generation_started")
             } else if action == "remove_media" {
-                if UploadPlaceHintFixture.mode != nil, let removed = payload["media_id"] as? String {
-                    state["media"] = (state["media"] as? [[String: Any]] ?? []).filter { $0["media_id"] as? String != removed }
-                } else { state["media"] = [] }
+                state["media"] = []
                 append("action_remove_media")
             }
         } else if parts.last == "messages" || parts.last == "turns" {

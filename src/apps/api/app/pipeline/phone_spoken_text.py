@@ -8,10 +8,13 @@ drop its word timings) -- and adds one ordinary, editable ``TextElement`` row fr
 start. It rides the KRI-467 text lane next to the title, so the server, the phone render and
 the iOS editor preview all read the same row.
 
-Look: the title's (Playfair Display, 120 px, centred), fading in on the word and held for
-`HOLD_S`. Placement: the title's face check (`phone_subtitled_title.place_talking_title`)
-over the row's own window, also kept clear of the caption lines and the title shown at the
-same time; when no spot clears both, the face wins (text never covers a face).
+Look: the title's (Playfair Display, 120 px, centred), fading in on the word and held for the
+length the creator asked for ("for about a second", `SpokenTextAsk.hold_s`, KRI-972), else
+`HOLD_S`. On a letterboxed picture the row stays inside the picture, drawn light with an outline
+(KRI-1018, `place_talking_title(picture_band=...)`). Placement: the title's face check
+(`phone_subtitled_title.place_talking_title`) over the row's own window, also kept clear of the
+caption lines and the title shown at the same time; when no spot clears both, the face wins
+(text never covers a face).
 
 Matching is the reaction-beat trigger match (`phone_reaction_grounding`, KRI-178): folded
 tokens, so "Atakan'ı" says "Atakan". Never guessed: a word the take doesn't say places nothing
@@ -31,22 +34,31 @@ from typing import Any, Protocol
 
 import structlog
 
-from app.kria.spoken_text_ask import SpokenTextAsk
+from app.kria.spoken_text_ask import SPOKEN_TEXT_ELEMENT_PREFIX, SpokenTextAsk
 from app.pipeline.narrated_title import narrated_title_placement
 from app.pipeline.render_geometry import NormalizedBox
 
 log = structlog.get_logger(__name__)
 
 SPOKEN_TEXT_SOURCE = "spoken_text"
-SPOKEN_TEXT_ELEMENT_PREFIX = "spoken-text-"
 # The variant's receipt of every spoken-text ask: placed (where and when) or why not.
 SPOKEN_TEXT_FIELD = "spoken_text_placement"
 
-# How long the text stays from the word's start, and the shortest worth drawing (a word said
-# right at the end of the take).
+# How long the text stays from the word's start when the creator named no length (KRI-972:
+# `SpokenTextAsk.hold_s` is theirs), and the shortest worth drawing (a word said right at the
+# end of the take).
 HOLD_S = 2.0
 _MIN_S = 0.3
 _MAX_CHARS = 80
+
+# KRI-1018: on a letterboxed picture the text sits on the footage, whatever it shows (bright sky
+# or a dark room), so it is drawn light with a dark outline: the outline carries the contrast
+# the unknown background cannot. The same outline the list labels draw (no new phone capability).
+PICTURE_TEXT_COLOR = "#FFFFFF"
+PICTURE_STROKE_COLOR = "#000000"
+PICTURE_STROKE_WIDTH = 8.0
+# WCAG's minimum contrast for large text, applied to fill against outline (not to the footage).
+_MIN_CONTRAST = 3.0
 
 Placer = Callable[[dict, Sequence[NormalizedBox]], tuple[dict, dict[str, Any]]]
 
@@ -90,7 +102,7 @@ def spoken_word_occurrences(
     stream = _token_stream(_word_dicts(words))
     heard: dict[float, tuple[str, float, float]] = {}
     for trigger in triggers:
-        for start, end in _match_trigger(stream, trigger, None, "every").windows:
+        for start, end in _match_trigger(stream, trigger, None, "every", joined=True).windows:
             heard.setdefault(round(float(start), 3), (trigger, float(start), float(end)))
     return [heard[key] for key in sorted(heard)]
 
@@ -109,7 +121,7 @@ def find_spoken_word(
     stream = _token_stream(_word_dicts(words))
     heard: tuple[str, float, float] | None = None
     for trigger in triggers:
-        windows = _match_trigger(stream, trigger, None, "first").windows
+        windows = _match_trigger(stream, trigger, None, "first", joined=True).windows
         if windows and (heard is None or windows[0][0] < heard[1]):
             heard = (trigger, float(windows[0][0]), float(windows[0][1]))
     return heard
@@ -256,7 +268,7 @@ def find_spoken_word_matches(
     )
     heard: list[tuple[str, float, float]] = []
     for trigger in triggers:
-        windows = _match_trigger(stream, _long_form(trigger), None, "every").windows
+        windows = _match_trigger(stream, _long_form(trigger), None, "every", joined=True).windows
         heard.extend((trigger, float(start_s), float(end_s)) for start_s, end_s in windows)
     # Different trigger spellings may resolve to the same spoken interval.  It
     # is one moment, not an ambiguous pair of moments.
@@ -277,7 +289,7 @@ def spoken_text_element(
 
     text = " ".join(ask.text.split())[:_MAX_CHARS]
     start_s = round(max(0.0, float(start_s)), 3)
-    end_s = round(min(start_s + HOLD_S, float(timeline_duration_s)), 3)
+    end_s = round(min(start_s + (ask.hold_s or HOLD_S), float(timeline_duration_s)), 3)
     if not text or end_s - start_s < _MIN_S:
         return None
     element = TextElement(
@@ -291,6 +303,24 @@ def spoken_text_element(
         source_params={"source": SPOKEN_TEXT_SOURCE, "requirement_id": ask.requirement_id},
     )
     return element.model_dump(mode="json", exclude_none=True)
+
+
+def picture_look(placement: Mapping[str, Any]) -> dict[str, Any]:
+    """The look the receipt promises for a row placed in a letterboxed picture, and whether
+    the placement check found it inside the picture. ``outline_contrast`` is the fill against
+    its outline: a fixed property of the two colours, NOT a measurement of the footage behind
+    the text (nothing here samples the frame). It only guards the look against being edited
+    into something with no outline contrast."""
+    from app.services.phone_text_styling import _contrast  # noqa: PLC0415
+
+    return {
+        "text_color": PICTURE_TEXT_COLOR,
+        "stroke_color": PICTURE_STROKE_COLOR,
+        "stroke_width": PICTURE_STROKE_WIDTH,
+        "outline_contrast": round(_contrast(PICTURE_TEXT_COLOR, PICTURE_STROKE_COLOR), 2),
+        "min_outline_contrast": _MIN_CONTRAST,
+        "inside_picture": placement.get("inside_picture") is True,
+    }
 
 
 def _overlaps(row: Mapping[str, Any], window: tuple[float, float]) -> bool:
@@ -422,6 +452,17 @@ def spoken_text_rows(
             except Exception as exc:  # noqa: BLE001 - the captions are a nicety; the face is not
                 log.warning("phone_spoken_text.caption_boxes_failed", error=str(exc)[:200])
             placed, placement = place(row, avoid)
+            look = None
+            if placement.get("picture_band") is not None:
+                # KRI-1018: a letterboxed picture. The placer kept the row inside it; the look
+                # is light with an outline, never left to a default or a restyle.
+                placed = {
+                    **placed,
+                    "color": PICTURE_TEXT_COLOR,
+                    "stroke_color": PICTURE_STROKE_COLOR,
+                    "stroke_width": PICTURE_STROKE_WIDTH,
+                }
+                look = picture_look(placement)
         except Exception as exc:  # noqa: BLE001 - one ask never fails the render
             log.warning("phone_spoken_text.failed", error=str(exc)[:200])
             receipt_rows.append({**entry, "status": "error", "error": str(exc)[:200]})
@@ -437,6 +478,24 @@ def spoken_text_rows(
                 "start_s": placed["start_s"],
                 "end_s": placed["end_s"],
                 "placement": placement,
+                # KRI-972: the length the creator asked for, and whether the take ended before
+                # the row could stay that long.
+                **(
+                    {
+                        "hold_s": ask.hold_s,
+                        "hold_clipped": float(placed["end_s"]) - float(placed["start_s"])
+                        < ask.hold_s - 1e-6,
+                    }
+                    if ask.hold_s
+                    else {}
+                ),
+                # KRI-747: a text over the row's character limit is drawn cut; say so.
+                **(
+                    {"shown_text": placed["text"], "truncated": True}
+                    if placed["text"] != " ".join(ask.text.split())
+                    else {}
+                ),
+                **({"picture_look": look} if look is not None else {}),
                 # A placement that could not look ("error") is never called clear of the face.
                 "face_collision": placement.get("face_collision") is True
                 or placement.get("status") == "error",

@@ -449,9 +449,6 @@ class CreationCapabilitiesOut(BaseModel):
     speaker_background_color: bool = False
     # KRI-742: the chat composers show a mic button (VOICE_DICTATION_ENABLED).
     voice_dictation: bool = False
-    # Qendresa item 24: the Add media sheet shows the "screen recording belongs in Overlays"
-    # hint (UPLOAD_PLACE_HINT_ENABLED). Additive key; no client protocol gate.
-    upload_place_hint: bool = False
     slide_post_extended_device_export: bool = False
     # KRI-374: the server may ask the creator to confirm the order of takes it
     # could not place against their song (`song_order_question` on a turn plan).
@@ -2250,23 +2247,10 @@ async def _duplicate(
     ).scalar_one_or_none()
 
 
-def _job_projection_in_chat_language(
-    thread: CreationThread, job: Job | None, item: Any
-) -> dict[str, Any] | None:
-    """`_job_projection` with the chat's language bound, so render notes read in it."""
-    with reply_language_for(thread_reply_language(thread)):
-        return _job_projection(job, item=item)
-
-
 def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | None:
     if job is None:
         return None
     from app.routes.generative_jobs import _variants_for_response
-    from app.services.nova_steps import (
-        render_notes_from_beat_receipt,
-        render_notes_from_overlay_receipt,
-        render_notes_from_talking_multi_clip_receipt,
-    )
     from app.tasks.content_plan_build import job_failure_message
 
     # Re-signing is authoritative. A storage/signing outage must be visible to
@@ -2281,35 +2265,6 @@ def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | No
     for value in variants:
         if isinstance(value, dict) and value.get("variant_id"):
             value["delivery_phase"] = variant_delivery_phase(job, value.get("variant_id"))
-    # KRI-178/KRI-183: same "primary variant" rule as `creator_sessions.py`
-    # -- the first variant dict that carries a `variant_id` at all (there is
-    # only ever one live variant on a phone job). Render notes are a
-    # creator-safe projection of that variant's `phone_beat_receipt` (named
-    # reaction moments) followed by its `phone_overlay_receipt` (the
-    # Visuals-as-cards matcher); each is `[]` on its own when the job never
-    # carried that lane (flag off, nothing requested, or not a
-    # phone-subtitled job at all), so either or both can contribute lines.
-    primary_variant = next(
-        (value for value in variants if isinstance(value, dict) and value.get("variant_id")),
-        None,
-    )
-    render_notes = render_notes_from_beat_receipt(
-        primary_variant.get("phone_beat_receipt") if primary_variant is not None else None
-    ) + render_notes_from_overlay_receipt(
-        primary_variant.get("phone_overlay_receipt") if primary_variant is not None else None
-    )
-    # KRI-719: which clips spoke back to back and which other clips found room.
-    render_notes += render_notes_from_talking_multi_clip_receipt(
-        primary_variant.get("phone_talking_multi_clip") if primary_variant is not None else None
-    )
-    # KRI-286: what the phone compiler repaired so this plan could render (never silent).
-    repair_notes = primary_variant.get("phone_repair_notes") if primary_variant else None
-    if isinstance(repair_notes, list):
-        render_notes += [note for note in repair_notes if isinstance(note, str) and note]
-    # What the phone's export check could not confirm (advisory; the video still shipped).
-    export_notes = primary_variant.get("export_check_notes") if primary_variant else None
-    if isinstance(export_notes, list):
-        render_notes += [note for note in export_notes if isinstance(note, str) and note]
     return {
         "id": str(job.id),
         "status": job.status,
@@ -2322,7 +2277,6 @@ def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | No
             job.failure_reason, getattr(job, "error_detail", None)
         ),
         "variants": variants,
-        "render_notes": render_notes,
     }
 
 
@@ -3495,6 +3449,49 @@ async def _keeps_original_speech_ask(
         return False
 
 
+async def _brief_answers_cleanup_ask(
+    db: AsyncSession,
+    thread: CreationThread,
+    pending: tuple[CreativeBrief | None, dict[str, Any] | None],
+) -> bool:
+    """KRI-1291: the pending brief keeps the take whole (the caller checked), so this build's
+    card, which leads with "Clean up speech", is not asked. Only for the approval whose plain
+    create `_apply_strategy_approval_media` answers with keep_original: a pending strategy
+    approval, not a render retry (a retry ignores the cleanup choice). Reads only."""
+    from app.kria.render_retry import RETRY_FIELD  # noqa: PLC0415
+    from app.services.client_protocol import cleanup_card_ignores_keep_original  # noqa: PLC0415
+
+    _brief, snapshot = pending
+    if not (
+        cleanup_card_ignores_keep_original()
+        and isinstance(snapshot, dict)
+        and snapshot.get("kind") == "strategy"
+    ):
+        return False
+    try:
+        execution_ids = (
+            await db.execute(
+                select(CreatorAgentApproval.execution_ids)
+                .where(
+                    CreatorAgentApproval.thread_id == thread.id,
+                    CreatorAgentApproval.status == "pending",
+                )
+                .order_by(CreatorAgentApproval.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        execution = (
+            await db.get(CreatorAgentExecution, uuid.UUID(str(execution_ids[0])))
+            if execution_ids
+            else None
+        )
+    except Exception:  # noqa: BLE001 - an optional projection never breaks a read
+        log.warning("creation_thread.cleanup_ask_approval_lookup_failed", exc_info=True)
+        return False
+    result = execution.result if execution is not None else None
+    return not (isinstance(result, dict) and isinstance(result.get(RETRY_FIELD), dict))
+
+
 async def _cleanup_ask_projection(
     db: AsyncSession,
     thread: CreationThread,
@@ -3716,8 +3713,14 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
                     if tight:
                         speech_cleanup["pause_style"] = "tight"
                 if await _keeps_original_speech_ask(db, thread, pending):
-                    # KRI-971: older apps ignore this and keep today's buttons.
+                    # KRI-971: apps below KEEP_ORIGINAL_CARD_PROTOCOL ignore this.
                     speech_cleanup["recommended_choice"] = "keep_original"
+                    if (
+                        in_cohort
+                        and speech_cleanup["requires_choice"]
+                        and await _brief_answers_cleanup_ask(db, thread, pending)
+                    ):
+                        speech_cleanup["requires_choice"] = False
     render_shape_projection = None
     if isinstance(db, AsyncSession) and item is not None:
         render_shape_projection = await _render_shape_projection(db, thread, item, session)
@@ -3752,7 +3755,7 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
         else None,
         active_job_id=str(response_active_job_id) if response_active_job_id else None,
         creator_agent=_creator_agent_projection(session, item=item),
-        job=_job_projection_in_chat_language(thread, job, item),
+        job=_job_projection(job, item=item),
         media_capabilities=media_capabilities,
         direction_receipt=direction_receipt,
         speech_cleanup=speech_cleanup,
@@ -4282,7 +4285,6 @@ async def capabilities(
             settings.voice_dictation_enabled
             and (settings.openai_api_key or settings.whisper_backend != "openai-api")
         ),
-        "upload_place_hint": bool(settings.upload_place_hint_enabled),
         "creation_mode": (
             "device_only" if settings.ios_device_only_mode or native_device_only else "hybrid"
         ),

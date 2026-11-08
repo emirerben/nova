@@ -28,6 +28,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from app.services.client_protocol import GENERATED_CARD_CONSENT_PROTOCOL
 from app.services.suggestions.builders import PHONE
 from app.services.suggestions.context import SuggestionContext, Target
 from app.services.suggestions.models import (
@@ -38,8 +39,7 @@ from app.services.suggestions.models import (
 )
 
 INPUT_KEY = "generated_overlay"
-# 43 (KRI-1253): the app asks the creator before it sends a card whose action is `async_generate`.
-MIN_PROTOCOL = 43
+MIN_PROTOCOL = GENERATED_CARD_CONSENT_PROTOCOL
 # What the card tells the creator it costs. A ceiling: one low-quality portrait image is metered
 # from provider usage after the fact (`generated_usage_cost`) and has to stay under it.
 QUOTED_COST_USD = 0.04

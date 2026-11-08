@@ -374,6 +374,10 @@ async def test_each_unproven_request_is_held_simplified_or_left_to_check_after_r
         "evidence_missing",
     }
     assert extra["description"] in response.content
+    # KRI-1308: a held draft made nothing, so no ask's row may read "Done".
+    receipts = (response.payload or {}).get("requirement_receipts") or []
+    assert {r["requirement_id"] for r in receipts} >= {"r1", "r2", "r3"}
+    assert not [r for r in receipts if r["status"] == "met"], receipts
     with sync_session() as db:
         assert (
             db.get(PlanItem, db.get(CreationThread, thread_id).active_plan_item_id).current_job_id

@@ -1215,8 +1215,7 @@ then spread mechanically, never at a mention.
 - **Receipt**: `variants[i].phone_talking_multi_clip.mention_cutaways` = `{version, demoted[{clip_id,
   media_id, reason}], kept, placements[{media_id, basis: mention|spread, start_s, end_s, at_s?,
   reason?}], sound?}` (only with the flag on and a full-screen ask); the roles receipt `clips` marks
-  a moved clip `{role: footage, was: speaker, reason}`. `render_notes` (nova_steps) says how many
-  clips sit at a mention, how many were spread, and a missing sound.
+  a moved clip `{role: footage, was: speaker, reason}`.
 - **Gate / apply**: `phone_rollout.phone_talking_mention_cutaways_supported()` = the flag, on top of
   `TALKING_MULTI_CLIP_ENABLED`. Apply: `fly secrets set PHONE_TALKING_MENTION_CUTAWAYS_ENABLED=true
   --app nova-video` + restart api + worker (Fly only, no Vercel twin, no app build: recipe-only, no
@@ -1328,14 +1327,8 @@ the safest corner instead of over the speaker, and the receipt records
 `face_sampling: "failed"`. A successful sample that finds no face keeps
 today's behaviour.
 
-**Chat receipt (KRI-183).** `creation_threads._job_projection` derives
-`render_notes` from BOTH the variant's `phone_beat_receipt` (KRI-178, first)
-and its `phone_overlay_receipt` (`nova_steps.render_notes_from_overlay_
-receipt`): "Showed 2 of 3 Visuals as cards", then one honest line per
-unplaced Visual by reason bucket (no spoken moment / no room without covering
-your face or the captions / is a video, which can't be a card on your iPhone
-yet / couldn't add). The iOS chat shows them under the ready job
-(`chat.job.renderNotes`, KRI-178) -- no second mechanism.
+**Chat receipt (KRI-183).** The receipt is stored on the variant only. The thread's job projection no
+longer derives `render_notes` from it, and the iOS ready screen no longer lists them (KRI-1261).
 
 **Manual override wins.** An admin-authored `phone-lanes` request (Phase 1.5,
 above) that carries `overlays` is used as-is and skips grounding entirely;
@@ -1477,10 +1470,7 @@ Traced as `("phone", "subtitled_reaction_beats")`
 and humanized by `nova_steps.py` as "Kria timed your photos and sounds to
 your words" (or "Kria listened for the moments you named"), naming each
 missed trigger IN THE CREATOR'S OWN WORDS -- safe to quote verbatim, unlike
-Phase 2's `matcher`/`face_sampling`. `creation_threads._job_projection` also
-derives `render_notes: list[str]` from the primary variant's
-`phone_beat_receipt` via `nova_steps.render_notes_from_beat_receipt`, so the
-same sentences surface on a plain job poll, not just the live activity feed.
+Phase 2's `matcher`/`face_sampling`.
 
 **Flag-off byte-identity.** `PHONE_SUBTITLED_REACTION_BEATS_ENABLED` false
 (the default), or a strategy with no `reaction_beats`/`closing_media`: no
@@ -3086,7 +3076,7 @@ to `TALKING_MULTI_CLIP_MAX_CLIPS` (10) clips.
 - **Footage** becomes muted full-frame cutaways on the KRI-136 `talking-head-cutaways`
   track, timed by `schedule_footage_cutaways` (KRI-297 rules: 2.5 s hook and title
   free, 1 s tail, 1.5-4 s windows, word-snapped, never over a full-screen Visual).
-  No room: receipt `unplaced` with upload position, shown as chat render notes.
+  No room: receipt `unplaced` with upload position (stored on the variant, not shown in chat).
 - **v1 limits**: speech cleanup refused for any multi-clip Talking (KRI-720); with
   2+ speakers the KRI-174 lanes (cards, sounds, beats) and KRI-547 face fill are
   skipped (`lanes_skipped`; a KRI-841 Visuals ending still plays); cloud Talking still uses only the first clip, so keep
@@ -3939,7 +3929,7 @@ Phone-inexpressible plans used to fail only after approval. Now:
   `_run_phone_guided_job`. Deterministic repairs, each noted (never silent):
   sequence effect outside the composite-safe set becomes `fade-in`; an unqualified
   font becomes a qualified default (Inter). Notes land in the proposal's
-  `adjustments` and the variant's `phone_repair_notes` (job `render_notes`).
+  `adjustments` and the variant's `phone_repair_notes`.
 - A genuine transition hole (outgoing source too short) is NOT repairable; the
   dry run rejects it so the draft takes the deterministic fallback.
 - `PhoneCapabilityUnavailable` (`phone_rollout.py`) is raised for gates that depend on
@@ -4050,6 +4040,45 @@ capability) + `authoredText` verified + client protocol >= `CAPTION_ANIMATION_MI
 `editor_capabilities.caption_animation`. A Save from an older build that carries caption
 phases, or replaces cues / guided `caption_meta` holding them, gets `426 client_update_required`
 (`feature: "caption_animation"`).
+
+## Caption size and spot on phone Talking edits (KRI-632)
+
+A Talking caption is at most two rows. Cues are sized by `captions.PHONE_CUE_BUDGET` (8 words, 40
+characters, 3 s). The Kria-mark re-wrap (`phone_captions._clear_of_watermark`, KRI-548) counts
+against the same two rows: when no two-row layout clears the mark, the cue is split in time at a
+pause or clause end (`_split_cue_in_time`: same words, same word times, the first piece holds until
+the second starts; up to three rounds) instead of growing a third row. A piece keeps 3 or more
+words when the cue has 6 or more (2 or more for a 4-5 word cue, whose third row was the filed
+bug); a cue of 3 words or fewer is never split. Layer ids are
+`caption-<index>` over the final list, so a split moves the ids after it. Only when splitting cannot
+help (a cue that will not split, three rounds spent) does a cue gain lines again, because ink on the
+mark is worse.
+
+The worker keeps the caption block off the speaker's face band: `_phone_face_band_caption_look`
+samples the same band the titles use (`phone_subtitled_title._face_boxes`) and, when a default
+block would cross it, moves ALL captions to one steady spot (`choose_caption_look`, the KRI-827
+ladder) and saves it as `caption_editor_style.position_y_frac`. The decision is on the variant as
+`caption_face_band_placement` (`status` `preset` / `moved` / `best_effort`, `face_band`). An
+unconfirmed sampler (no clip, error, too few frames) protects the upper fallback face only, so the
+captions stay where they were. The block still grows about its centre (the saved y is a centre, the
+editor depends on that), so one- and two-row cues differ by half a row at the top edge.
+A spot the creator placed is never moved for the band (KRI-1177: their spot wins over a face):
+`phone_text_styling.caption_spot_is_asked` is true for a position on the brief's caption ask, a
+saved caption or all-text position, or one named this turn; the receipt is then
+`caption_face_band_placement: {status: creator_spot_kept}` and, on the protected-ask path, faces
+limit the captions only when the creator named a face (as before KRI-632).
+
+Rollback: `PHONE_CAPTION_ROW_BUDGET_ENABLED=false` (default `true`; `fly secrets set
+PHONE_CAPTION_ROW_BUDGET_ENABLED=false -a nova-video`, api + worker, then restart). Off means no
+time splits (one layer per cue, ids `caption-0..n-1`, rows gained to clear the mark as before), no
+face-band sampling pass and the pre-KRI-632 face rule on the protected-ask path; the compile is
+byte-identical to origin/main (the off-state goldens run with the switch off). The switch on
+(default) changes the layer count and ids for any cue the mark forces past two rows, and adds one
+whole-take face sample per Talking render that has no protected-text ask (about what the opening
+and closing titles already cost), so a revert is not needed to turn it off.
+Guards: `tests/pipeline/test_phone_caption_face_band.py` (face band, creator spot, switch),
+`tests/pipeline/test_phone_caption_row_budget.py` (production path, switch on vs off),
+`tests/pipeline/test_phone_captions.py`.
 
 ## Caption shape on phone Talking edits (Qendresa item 12)
 
@@ -4349,8 +4378,8 @@ Talking variant with the card lane open): `MEDIA_TILT_ENABLED`, `clipTilt` verif
 >= `MEDIA_CARD_TILT_MIN_CLIENT_PROTOCOL` (30). Builds 28 and 29 decode `clipTilt` but draw a placed card upright, so a
 pinned recipe that carries a tilted card answers `426 client_update_required` (`feature: "card_tilt"`,
 `minimum_client_protocol: 30`) to them. The capability opens only the rotate gesture and the Rotation slider;
-`visual_editor_style` (zoom, fit, animation) stays closed, and Save refuses a card style that sets anything but the
-angle, and an angle on a full-screen card (422, never silently dropped). A new or changed angle while a gate is
+zoom and animation have their own gate (KRI-1264, below), `visual_editor_style` (the fit) stays closed, and Save
+refuses a fit and an angle on a full-screen card (422, never silently dropped). A new or changed angle while a gate is
 closed is a 422 `unsupported_phone_edit` ("tilting a picture isn't available on this edit yet"); keeping a stored
 angle and straightening one always work. Rollback is `MEDIA_TILT_ENABLED=false` (+ restart), never a code revert.
 
@@ -4359,6 +4388,40 @@ Chat: `patch_overlay` takes `rotation_deg` (replaces) or `rotation_delta_deg` (a
 v101). A tilted card lists `tilt=(rotation_deg=...)` in OVERLAY CARDS. Proof: `tests/routes/test_overlay_card_tilt.py`,
 `tests/routes/test_overlay_card_tilt_chat.py`, the `overlay_tilt_*` replay goldens, `PlacedCardTiltTests`
 (`tests/fixtures/card-tilt-parity/v1.json` is read by both sides) and `NativeOverlayCardTiltTests`.
+
+### Picture card zoom and animation (KRI-1264)
+
+A phone Talking card's Zoom (1 to 4: the card drawn that many times its size, about its centre) and Animation
+(entrance, exit, loop, speed) pass through the same stages as its tilt:
+
+| Stage | Where they live |
+|---|---|
+| Editor Zoom slider / Animation tab | `media_overlays[i].editor_style.zoom` / `.animation` (a plain card carries no `editor_style`) |
+| Save -> `_overlays_from_sections` | `SubtitledOverlayCard.zoom` / `.animation` (omitted from the row while default) |
+| Talking compile | the card clip's `visual_placement.editor_style` (rotation 0 there: the angle stays on `transform.rotation_degrees`) |
+| Pinned recipe -> editor read-back | `lanes_from_recipe` reads them back; `sections_from_lanes` projects one `editor_style` with the angle |
+| Device render | `VisualMediaPlacement.position` (zoom scales the card's width, `VisualEditorStyle.sample` the animation) |
+
+Where they used to be lost: Save refused both, the recipe placement had no field for them, and the device's
+`VisualEditorStyle` could not be decoded from a recipe at all (`RecipeJSON` turns `rotation_deg` into `rotationDeg`
+before the lookup; it now reads both spellings).
+
+Gates: the rollout token `cardStyle` in `PHONE_RENDER_VERIFIED_FEATURES` (no env flag) and a build declaring protocol
+>= `MEDIA_CARD_STYLE_MIN_CLIENT_PROTOCOL` (44). `editor_capabilities.media_overlay_style` is present only when both hold,
+on a device-rendered Talking variant with the card lane open; it opens Zoom and Animation for an on-top card only
+(not a full-screen card, not an added visual block). Builds below 44 fail the whole recipe on a placement
+`editor_style`, so a pinned recipe that carries a zoomed or animated card answers `426 client_update_required`
+(`feature: "card_style"`, `minimum_client_protocol: 44`). A new or changed zoom or animation while a gate is closed is a
+422 ("zooming or animating a picture isn't available on this edit yet"); keeping a stored one and resetting to plain
+always work. Chat does not set them, and a chat tilt keeps them.
+
+Apply: ship the protocol-44 build, run a physical-iPhone check (a 2x card with a Pop entrance, alone and tilted, in
+the editor preview and in the export), then add `cardStyle` to `PHONE_RENDER_VERIFIED_FEATURES` on Fly (api + worker)
+and restart. Rollback: remove the token and restart, never a code revert; cards already saved keep their style.
+
+Proof: `tests/routes/test_overlay_card_style.py`, `PlacedCardStyleTests` (`tests/fixtures/card-style-parity/v1.json` is
+read by both sides), `NativeOverlayCardStyleTests`, and the device chain `scripts/ios/card-style-e2e.py all OUT
+--simulator UDID` (writes `OUT/report.json` and `OUT/montage.png`).
 
 ### Video editor (KRI-1136, PR B)
 

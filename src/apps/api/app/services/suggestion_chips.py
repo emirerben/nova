@@ -256,7 +256,7 @@ def unavailable_set() -> SuggestionSetOut:
 _COPY: dict[ChipKind, dict[str, tuple[str, str]]] = {
     # (label, message) per language. Messages never carry quotes or Gemini words.
     ChipKind.DEFAULT_EDIT: {
-        "en": ("Let Kria cut the first version", MEDIA_ONLY_MESSAGE),
+        "en": ("Let Kria decide", MEDIA_ONLY_MESSAGE),
         "tr": ("İlk versiyonu Kria kessin", MEDIA_ONLY_MESSAGE),
     },
     ChipKind.HOOK: {

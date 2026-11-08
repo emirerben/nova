@@ -88,7 +88,7 @@ from app.kria.brief import (
     start_fresh_updates,
     wants_clip_descriptions,
 )
-from app.kria.brief_checks import spoken_text_literals, whole_line_quotes
+from app.kria.brief_checks import ask_text, spoken_text_literals, whole_line_quotes
 from app.kria.brief_route import loose_text
 from app.kria.clip_exclusions import (
     carry_forward_exclusions,
@@ -3640,6 +3640,18 @@ async def _plan_voiceover_script(
     return PlannedKriaTurn(plan=plan, **hashes)
 
 
+def _creator_asks_arrow(text: str) -> bool:
+    """KRI-1286: the creator's own message asks for an arrow (quoted words don't count)."""
+    from app.pipeline.phone_cta_text import requirement_asks_arrow  # noqa: PLC0415
+
+    class _Ask:
+        description = text
+        literal = None
+        facts = None
+
+    return requirement_asks_arrow(_Ask())
+
+
 def _with_wording_question(wording: PlannedKriaTurn, planned: PlannedKriaTurn) -> PlannedKriaTurn:
     """KRI-802: ask a held title-wording question in the same reply as a clip picker.
 
@@ -3894,7 +3906,11 @@ async def _change_request_turn(db: AsyncSession, thread_id: uuid.UUID) -> Planne
         return None
     held = {str(req_id) for req_id in question.get(SIMPLER_OMITTED_IDS_KEY) or ()}
     brief = await load_latest_brief(db, thread_id) if held else None
-    listed = "; ".join(req.text() for req in brief.live() if req.id in held) if brief else ""
+    listed = (
+        "; ".join(ask_text(req).rstrip(".") for req in brief.live() if req.id in held)
+        if brief
+        else ""
+    )
     response = (
         say(
             en=f"Nothing is made yet. Tell me what to do differently for: {listed}.",
@@ -4268,6 +4284,26 @@ async def _plan_creator_action(
                 if row.get("role") == "user"
             ],
         ]
+        # KRI-1286: the drawn arrow already points at "comment WORD"; an arrow emoji the model
+        # added to the words is not the creator's text, and would make her confirm words she
+        # gave exactly (and show two arrows). Drop it when she asked for an arrow.
+        closing = action.strategy.closing_title
+        if closing:
+            from app.pipeline.phone_cta_text import (  # noqa: PLC0415
+                cta_ending_parts,
+                strip_trailing_arrow_glyphs,
+            )
+
+            bare = strip_trailing_arrow_glyphs(closing)
+            if (
+                bare != closing
+                and cta_ending_parts(bare) is not None
+                and any(_creator_asks_arrow(source) for source in user_sources)
+            ):
+                log.info("kria_closing_arrow_glyph_dropped", thread_id=str(thread_id))
+                action = action.model_copy(
+                    update={"strategy": action.strategy.model_copy(update={"closing_title": bare})}
+                )
         for target in ("opening_title", "closing_title"):
             value = getattr(action.strategy, target)
             state = (getattr(inputs, "creative_copy_state", None) or {}).get(target)

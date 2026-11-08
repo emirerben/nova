@@ -70,7 +70,7 @@ miss, or any failure after the ownership check:
   "chips": [{
     "id": "sc_<sha12(kind|target|base_digest)>",
     "kind": "default_edit | hook | captions | music | sfx | transition | title_animation | pinned_text | opener_clip",
-    "label": "Let Kria cut the first version",
+    "label": "Let Kria decide",
     "message": "Suggest an edit.",
     "rank": 1, "default_edit": true,
     "capability": "dispatch_render",
@@ -94,8 +94,7 @@ miss, or any failure after the ownership check:
   hook, and the server also drops a chip when the client's `X-Kria-Client-Protocol` is below it.
   Text bend (protocol 9) and freehand drawing (6/7) have no chat op, so no kind carries them.
 * **Chip 1** at `first_prompt` is always `default_edit`, `message` exactly `Suggest an edit.`
-  (iOS `ChatSubmission.mediaOnlyMessage`). Its label is the template ("Let Kria cut the first
-  version" / Turkish) unless the agent's `default_label` passed validation. The message is never
+  (iOS `ChatSubmission.mediaOnlyMessage`). Its label is the template ("Let Kria decide" / "Kria karar versin") unless the agent's `default_label` passed validation. The message is never
   agent text.
 * `opener_clip` is never emitted while `CLIP_ORDINAL_PROVEN` is `False` (a replay cassette must
   first prove filename-to-hero resolution), and `pinned_text` is never emitted

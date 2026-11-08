@@ -650,6 +650,7 @@ private struct CreationWorkspaceView: View {
     /// KRI-815: the script the attachment sheet shows on its voiceover step; nil = the sheet as before.
     @State private var attachmentScript: VoiceoverScript?
     @State private var attachmentLaunch: AttachmentLaunch?
+    @State private var attachmentOrigin: AttachmentOrigin = .addMedia
     @State private var showsResult = false
     /// Live plan & review: the "Review your video" sheet, opened from the feed's CTA / Change or the project.
     @State private var reviewPresentation: ReviewPlanPresentation?
@@ -680,11 +681,16 @@ private struct CreationWorkspaceView: View {
         model.projects.first(where: { $0.id == project.id }) ?? project
     }
 
-    private var canAttachMedia: Bool {
-        selectedFormat != nil && !isSending && !isActing && !isThinking
-            && (selectedFormat != .slides || hasDedicatedSlideWorkspace)
-            && currentProject.status != .rendering
+    /// Why the composer's + cannot add media right now, in the words its tray shows. Nil = it can.
+    private var attachBlockedReason: String? {
+        if selectedFormat == nil { return "Choose a video format first." }
+        if selectedFormat == .slides, !hasDedicatedSlideWorkspace { return "This post is still being set up." }
+        if isSending || isActing || isThinking { return "Kria is replying. Add media in a moment." }
+        if currentProject.status == .rendering { return "Your video is rendering. Add media once it’s ready." }
+        return nil
     }
+
+    private var canAttachMedia: Bool { attachBlockedReason == nil }
 
     private var rerecordFacts: RerecordPhase.Facts {
         let swapping = uploadRecords.contains { $0.projectID == project.id && $0.replacesMediaID != nil && $0.uploadFailed != true }
@@ -906,7 +912,8 @@ private struct CreationWorkspaceView: View {
     }
 
     @ViewBuilder private var planFeedView: some View {
-        let feed = planFeed.paced(by: deviceBuildStage)
+        let serverFeed = planFeed
+        let feed = serverFeed.paced(by: deviceBuildStage)
         let device = deviceRenderKey
         let devicePhase = device.flatMap { model.deviceRenders.presentations[$0]?.phase } ?? .preparing
         PlanBlockFeed(
@@ -917,15 +924,18 @@ private struct CreationWorkspaceView: View {
             isStopping: isStoppingRender,
             stopMessage: stopMessage,
             stop: stopRender,
-            // The Review CTA / Change pills exist only when the server speaks live-plan contract v2.
-            openReview: capabilities?.livePlanReviewAvailable == true ? { openPlanReview(section: $0) } : nil
+            // The Change pills exist only when the server speaks live-plan contract v2.
+            openReview: capabilities?.livePlanReviewAvailable == true ? { openPlanReview(section: $0) } : nil,
+            // The server's plan, not the device-paced one: an iPhone build holds `feed` incomplete while it builds.
+            phase: serverFeed.phase(workspaceReady: currentProject.status == .ready),
+            buildStage: deviceBuildStage
         )
         .id("plan-feed")
     }
 
-    /// Opens the Review sheet (KRI-440). `section` is the card whose Change was tapped, nil for the CTA or the
-    /// project's Review row. The sheet starts from the feed's blocks so it shows at once, then loads the snapshot.
-    private func openPlanReview(section: PlanSectionID?) {
+    /// Opens the Review sheet (KRI-440). `section` is the card whose Change was tapped. The sheet starts from the
+    /// feed's blocks so it shows at once, then loads the snapshot.
+    private func openPlanReview(section: PlanSectionID) {
         let seed = planFeed.isEmpty ? [] : planFeed.paced(by: deviceBuildStage).blocks
         reviewPresentation = ReviewPlanPresentation(seed: seed, initialFlag: section)
     }
@@ -1666,6 +1676,7 @@ private struct CreationWorkspaceView: View {
     private func openVoiceoverStep(with script: VoiceoverScript) {
         guard canAttachMedia else { return }
         attachmentLaunch = nil
+        attachmentOrigin = .addMedia
         attachmentScript = script
         scrollRequest += 1
         showsAttachments = true
@@ -1788,6 +1799,7 @@ private struct CreationWorkspaceView: View {
             capabilitiesLoaded: capabilitiesAreAuthoritative,
             voiceoverScript: rerecordTarget == nil ? attachmentScript : nil,
             launch: rerecordTarget == nil ? attachmentLaunch : nil,
+            origin: rerecordTarget == nil ? attachmentOrigin : .addMedia,
             rerecordTarget: rerecordTarget,
             refresh: {
                 if !capabilitiesAreAuthoritative { await refreshCapabilities() }
@@ -1798,9 +1810,10 @@ private struct CreationWorkspaceView: View {
             .environment(\.dynamicTypeSize, dynamicTypeSize)
     }
 
-    private func openAttachments(launch: AttachmentLaunch? = nil) {
+    private func openAttachments(launch: AttachmentLaunch? = nil, origin: AttachmentOrigin = .addMedia) {
         guard canAttachMedia else { return }
         attachmentLaunch = launch
+        attachmentOrigin = origin
         attachmentScript = nil
         scrollRequest += 1
         showsAttachments = true
@@ -2234,18 +2247,32 @@ private struct CreationWorkspaceView: View {
     }
 
     /// What the composer's + offers (Paper S3.05): Record and Upload for every format, and the optional script and
-    /// voiceover rows only where they mean something.
+    /// voiceover rows only where they mean something. Every row opens Add media on the place it names; at the most
+    /// clips Record and Upload give way to the limit notice and Manage clips.
     private var attachMenu: ChatAttachMenu {
+        let takesPhotos = selectedFormat?.usesVisualPool == true
+        var replaceOffered = false
+        if selectedFormat == .talkingToCamera, case .one = RerecordOffer.resolve(thread: fullThread) { replaceOffered = true }
+        let room: AttachRoom = takesPhotos ? .open : .resolve(used: clipSlotsUsed, maximum: selectedMaximumClipCount, recordReplaces: replaceOffered)
         return ChatAttachMenu(
-            disabledReason: canAttachMedia ? nil : "Choose a video format first.",
+            disabledReason: attachBlockedReason,
             offersSaved: capabilities?.mediaLibrary == true,
-            record: selectedFormat?.usesVisualPool == true ? nil : { openAttachments(launch: .record) },
-            upload: { openAttachments(launch: .source($0)) },
+            takesPhotos: takesPhotos,
+            room: room,
+            record: takesPhotos ? nil : { openAttachments(launch: .record, origin: .composerTray) },
+            upload: { openAttachments(launch: .source($0), origin: .composerTray) },
             addScript: selectedFormat == .talkingToCamera ? { openAttachments(launch: .recordWithScript) } : nil,
             addVoiceover: selectedFormat == .narrated ? { openAttachments(launch: .voiceover) } : nil,
             addSong: capabilities?.songUploadEnabled == true && selectedFormat?.runsAsMontage == true ? { openAttachments(launch: .step(.song)) } : nil,
-            addOverlays: capabilities?.visualsEnabled == true && selectedFormat?.usesVisualPool == false ? { openAttachments(launch: .step(.overlays)) } : nil
+            addOverlays: capabilities?.visualsEnabled == true && selectedFormat?.usesVisualPool == false ? { openAttachments(launch: .step(.overlays)) } : nil,
+            manageClips: { openAttachments() }
         )
+    }
+
+    /// Clips attached plus clips still uploading or being chosen: the count the picker measures its room against.
+    private var clipSlotsUsed: Int {
+        attachedClipCount + uploadRecords.filter { $0.projectID == project.id && $0.role == .clip }.count
+            + BackgroundUploadCoordinator.reservedCount(projectID: project.id, role: .clip, inFlight: uploadInFlight, records: uploadRecords, selections: photoSelections)
     }
 
     private var editorConversation: some View {
@@ -2388,25 +2415,6 @@ private struct CreationWorkspaceView: View {
                 rerecordActions: rerecordActions
             )
             .id("ready")
-            if capabilities?.livePlanReviewAvailable == true, currentProject.runtimeVersion == 2,
-               let activeJob = fullThread?.activeJobID ?? currentProject.activeJobID?.uuidString {
-                ProjectReviewEntry(threadID: project.id, jobKey: activeJob, api: model.api) { openPlanReview(section: nil) }
-                    .id("project-review-entry")
-            }
-            // Short creator-facing sentences about one-pass render decisions
-            // (KRI-178), e.g. "Placed 9 of 10 moments you named." Only shown
-            // once the job itself is in a ready/done state, mirroring the
-            // failureMessage precedent in CreationConfirmationStage.
-            if currentProject.status == .ready, let renderNotes = fullThread?.job?.renderNotes,
-                !renderNotes.isEmpty
-            {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(renderNotes.enumerated()), id: \.offset) { _, note in
-                        Text(note).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
-                    }
-                }
-                .accessibilityIdentifier("chat.job.renderNotes")
-            }
             if let variants = fullThread?.job?.variants, variants.count > 1 {
                 ForEach(variants.compactMap { $0.variantID }, id: \.self) { variantID in
                     let variant = variants.first { $0.variantID == variantID }

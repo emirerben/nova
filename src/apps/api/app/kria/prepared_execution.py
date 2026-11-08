@@ -485,6 +485,12 @@ def build_decisions(
         # The app echoes the preselected shape back untouched: that is the server's
         # default, not an answer the creator gave.
         decisions["shape"] = Decision(digest=digest(shape), origin="model_default")
+    from app.services.speech_cleanup_decision import BRIEF_ORIGIN  # noqa: PLC0415
+
+    cleanup = result.get("speech_cleanup")
+    if isinstance(cleanup, Mapping) and cleanup.get("origin") == BRIEF_ORIGIN:
+        # The card offered no choice; the server kept the take the brief asked to keep.
+        decisions["speech_cleanup"] = Decision(digest=digest(cleanup), origin="model_default")
     return decisions
 
 

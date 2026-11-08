@@ -1334,3 +1334,109 @@ def test_a_beat_that_placed_nothing_reports_only_its_own_reason(monkeypatch):
     assert result.receipt["unplaced"] == [
         {"beat_id": "kahve-sesi", "trigger": "kahve", "reason": "sound_not_found"}
     ]
+
+
+# --- KRI-903: a reaction card never covers an object the creator marked --------------------------
+
+
+def test_a_reaction_card_keeps_off_a_marked_object_where_it_would_have_sat(monkeypatch):
+    from app.pipeline.render_geometry import (
+        MediaFootprint,
+        ProtectedRegion,
+        _box_for_overlay,
+    )
+
+    def ground(**extra):
+        _patch(monkeypatch, assets=[_asset("v-salah", filename="salah.jpg")])
+        return rg.ground_phone_reaction_beats(
+            _open_session,
+            job_id="00000000-0000-0000-0000-000000000000",
+            beats=[
+                {
+                    "beat_id": "salah-photo",
+                    "trigger": "mohamed salah",
+                    "visual_id": "v-salah",
+                    "visual_role": "photo",
+                }
+            ],
+            closing=None,
+            words=_WORDS,
+            duration_s=_DURATION_S,
+            clip_path=None,
+            **extra,
+        )
+
+    def box(card):
+        return _box_for_overlay(
+            {
+                "position": "custom",
+                "x_frac": card.x_frac,
+                "y_frac": card.y_frac,
+                "scale": card.scale,
+            },
+            footprint=MediaFootprint(aspect_ratio=1.0),
+        )
+
+    [plain] = ground().cards
+    plate = ProtectedRegion(0.0, _DURATION_S, box(plain), kind="object")
+
+    guarded = ground(protected_regions=[plate]).cards
+
+    assert guarded, "there is room elsewhere"
+    assert box(guarded[0]).intersection_area(plate.box) == 0.0
+
+
+# --- KRI-1282: reaction-beat pop-ins use the item-15 card layout -----------------------
+
+
+def _beat_cards(monkeypatch, card_layout):
+    import app.services.phone_overlay_grounding as pg
+    from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion
+
+    words = [
+        _word(w, i * 4.0, i * 4.0 + 0.5)
+        for i, w in enumerate(["alpha", "bravo", "charlie", "delta"])
+    ]
+    assets = [_asset(f"s{i}", aspect=1.5) for i in range(4)]
+    _patch(monkeypatch, assets=assets)
+    face = ProtectedRegion(0.0, float("inf"), NormalizedBox(0.35, 0.30, 0.65, 0.52), kind="face")
+    monkeypatch.setattr(
+        pg, "sample_face_regions", lambda *a, **k: ([face], {"attempted": 3, "detected": 1})
+    )
+    beats = [
+        {
+            "id": f"b{i}",
+            "trigger": w["text"],
+            "visual_id": f"s{i}",
+            "visual_role": "photo",
+            "hold_s": 3.0,
+        }
+        for i, w in enumerate(words)
+    ]
+    return rg.ground_phone_reaction_beats(
+        _open_session,
+        job_id="j1",
+        beats=beats,
+        closing=None,
+        words=words,
+        duration_s=16.0,
+        clip_path="/tmp/clip.mp4",
+        **({"card_layout": card_layout} if card_layout is not None else {}),
+    )
+
+
+def test_every_beat_card_takes_the_wide_top_or_bottom_band_not_the_small_corner(monkeypatch):
+    from app.services.phone_card_layout import CardLayoutContext
+
+    closed = _beat_cards(monkeypatch, None)
+    assert closed.cards and all(c.scale <= 0.36 for c in closed.cards), "fixture: old small pip"
+
+    result = _beat_cards(monkeypatch, CardLayoutContext(caption_band=(0.62, 0.78)))
+
+    assert len(result.cards) == 4
+    for card in result.cards:
+        assert card.scale > 0.4, "readable size, not the 0.36 corner pip"
+        assert card.caption_clear
+        top = card.y_frac - card.scale * (1080 / 1920) / 1.5 / 2
+        bottom = card.y_frac + card.scale * (1080 / 1920) / 1.5 / 2
+        assert bottom <= 0.30 or top >= 0.78 - 1e-6, "off her face (0.30-0.52) and the captions"

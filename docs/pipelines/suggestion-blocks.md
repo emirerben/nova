@@ -19,10 +19,11 @@ the phone. The `Action` stays server-side; a tap pins `{set_id, chip_id}`.
 | `services/suggestions/kinds/*.py` | ONE module per kind; the explicit list is `kinds/__init__.py` |
 | `services/suggestions/pinned.py` | the ring reads a tap resolves against, the lane allow-lists, the registry rebuild, the restate base |
 | `services/suggestions/brief_asks.py` | "did the creator already say something about this lane?" for the five ported editor kinds (KRI-129) |
+| `services/suggestions/commit_readiness.py` | the commit's gates composed once, pure (`commit_readiness`: mark, requirements, choice) plus the loaders for their facts; the serve and the tap both call it |
 | `services/suggestions/restate_judgment.py` | the one question the serve and a restating tap ask: would the commit approve this draft? (`restate_problem`, `plan_media`) |
 | `services/suggestion_serve.py` | the GET's read path: freeze, ring write, and the strip of cards the tap would refuse |
 | `services/clip_signals/` | per-clip measured signals, stored at `analysis["signals"]` next to `analysis["understanding"]` |
-| `app/cli/backfill_clip_signals.py` | read-only skeleton; `--write` is refused until a store is wired |
+| `app/cli/backfill_clip_signals.py` | dry run by default (downloads nothing); `--write` measures missing signals and stores them through the fenced `mutate_plan_item_media` path, idempotent and resumable via `--after-item-id` |
 
 ## Adding or changing a kind
 
@@ -37,10 +38,10 @@ still driven by the KRI-756 engine unchanged; the v2 path uses `build_action` (N
 | `captions`, `sfx`, `transition`, `music_level` | KRI-756 kinds | `EditorOpsAction` from the row's own `op`, proved by `editor_ops_witness` | ported, live in the engine and as v2 cards |
 | `default_edit`, `opener_clip`, `title_animation`, `pinned_text` | KRI-756 kinds | none | ported, legacy only |
 | `hook` | KRI-756 kind | `CopyDecisionAction`: the agent's exact text, applied as one `set_title` op; the tap records the creative-copy decision (`source="suggestion"`) | v2 card behind `KRIA_SUGGESTION_HOOK_COPY_ENABLED`; the chip stays the only first-prompt hook |
-| `mute_clip` | new | `BriefUpdateAction` (`clip_sound` off, `clip:<media_id>`) + the staged render approval | implemented but **dark by design** (`mute_clip.PINNED_TAP_APPLIES_CLIP_SOUND = False`): a pinned tap stages the typed requirement and the approval, but only a phone re-plan from the brief applies it. Run `verify-phone-render` or a device, plus the real-clip audio calibration, before the constant flips |
+| `mute_clip` | new | `BriefUpdateAction` (`clip_sound` off, `clip:<media_id>`) + the staged render approval | implemented but **dark by design** (`mute_clip.PINNED_TAP_APPLIES_CLIP_SOUND = False`): a tap stages the typed requirement and the render approval; approving it dispatches a new phone render whose writer applies the ask (`tests/e2e_suggestions/test_r8_mute_render.py`). The constant flips when the real-clip audio calibration (`scripts/clip_signal_calibration.py report --real-dir`) clears precision 0.9 |
 | `filler_words` | new | `ItemSettingAction` (`speech_cleanup_enabled`) + the staged render approval | v2 card behind `KRIA_SUGGESTION_FILLER_WORDS_ENABLED`; evidence is the speech-cleanup preflight row, no second detector |
 | `duplicates` | new | `EditorOpsAction` (`remove_clip` on the weaker take) | v2 card behind `KRIA_SUGGESTION_DUPLICATES_ENABLED`; evidence is the `near_dup_hash` signal |
-| `generated_overlay` | new | `AsyncGenerateAction` (prompt from the plan item's idea, quoted `cost_usd`) | v2 card behind `KRIA_SUGGESTION_GENERATED_OVERLAY_ENABLED`, offered only to protocol 43+ builds (they ask for consent first); a tap spends, it never edits (see "Generated-image card") |
+| `generated_overlay` | new | `AsyncGenerateAction` (prompt from the plan item's idea, quoted `cost_usd`) | v2 card behind `KRIA_SUGGESTION_GENERATED_OVERLAY_ENABLED`, offered only to protocol 45+ builds (they ask for consent first); a tap spends, it never edits (see "Generated-image card") |
 
 Skill: `agents/skills/edit-improver/SKILL.md` (real body, under the 6000-character budget; proven by
 `tests/evals/test_edit_improver_skill.py`).
@@ -285,10 +286,10 @@ same as a KRI-756 chip. Turning the flag off therefore means "legacy behavior fr
 The one card whose tap spends money. It is offered only while `generated_media.generated_images_available`
 holds (native client, ledger, image budget, billing organisation, `visualBlocks` in
 `PHONE_RENDER_VERIFIED_FEATURES`: the same gate as `POST generated-media`), the plan item has an idea to
-draw from, the thread has no generated image yet, and the build is protocol 43 or newer.
+draw from, the thread has no generated image yet, and the build is protocol 45 or newer.
 
 - **Consent.** The card quotes `cost_usd` (`generated_overlay.QUOTED_COST_USD`, a ceiling; the settled cost
-  is metered from provider usage). A protocol 43 build shows a consent sheet ("Costs $X") before it sends the
+  is metered from provider usage). A protocol 45 build shows a consent sheet ("Costs $X") before it sends the
   tap; a build that does not is never offered the card (`requires_protocol`). Declining sends nothing.
 - **Tap** (`planner.plan_pinned_suggestion_turn`, spend branch). The same proofs as every card (kind switch,
   witness or rebuild), then `consumed` and the generated-images gate again, then `generate_image_for_card`
@@ -313,7 +314,7 @@ Failure modes the card was written against:
 1. **Double tap / duplicate send / retried turn**: one operation per card (`event_id`), the ledger allows one
    send at a time, the reply marks the card consumed.
 2. **Consent declined**: no request leaves the phone; the card stays idle and can be dismissed.
-3. **Old build**: never offered (`requires_protocol` 43), and the tap re-checks the gate at the server.
+3. **Old build**: never offered (`requires_protocol` 45), and the tap re-checks the gate at the server.
 4. **Budget exhausted / ledger off / flag pulled**: `budget_unavailable` or `generation_unavailable`, a reply
    that says nothing changed; no provider call (`reserve_paid_call` raises before contact).
 5. **Generation fails or is rejected**: `failed` operation -> `generation_failed`, card refused, no charge

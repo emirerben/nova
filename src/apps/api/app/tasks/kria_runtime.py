@@ -38,7 +38,7 @@ from app.kria.brief import (
     removed_target_ids,
     render_brief_request,
 )
-from app.kria.brief_binding import MAX_REQUEST_CHARS, BriefBindingRequestTooLongError
+from app.kria.brief_binding import BriefBindingRequestTooLongError
 from app.kria.brief_binding import snapshot_media as _draft_media
 from app.kria.brief_checks import (
     NARRATED_ALIGNMENT_FIELD,
@@ -60,6 +60,7 @@ from app.kria.brief_checks import (
     plan_facts_from_phone_variant,
     plan_facts_from_rendered_montage,
     plan_facts_from_strategy,
+    reply_and_lead_from_receipts,
     reply_from_receipts,
     requirements_to_check_at_draft,
     speech_cleanup_review_note,
@@ -82,7 +83,6 @@ from app.kria.intent_review_repair import (
     verify_intent_repair,
 )
 from app.kria.language import is_paraphrase_only
-from app.kria.order_replacement_receipts import compiled_order_preflight_sync
 from app.kria.paid_call_scope import turn_run_epoch
 from app.kria.planner import (
     PlannedKriaTurn,
@@ -106,7 +106,7 @@ from app.kria.reply_language import (
     say,
     thread_reply_language,
 )
-from app.kria.request_budget import creator_request_text_sync
+from app.kria.request_budget import creator_request_text_sync, request_over_budget
 from app.kria.route_disclosure import (
     UNIFIED_MONTAGE,
     Disclosure,
@@ -171,7 +171,10 @@ from app.services.client_protocol import (
     bind_sending_build,
     unbind_sending_build,
 )
-from app.services.creation_thread_titles import conversation_revision_matches_sync
+from app.services.creation_thread_titles import (
+    conversation_revision_matches_sync,
+    release_deferred_title,
+)
 from app.services.creative_copy_gate import CREATIVE_COPY_PENDING, creative_copy_problem
 from app.services.creator_label_reply import LabelTextReply, label_text_reply
 from app.services.device_render import DEVICE_RENDER_FIELD, device_status
@@ -200,6 +203,21 @@ from app.services.phone_speaker_background import (
 )
 from app.services.pin_withdrawal import pin_block_coverage, unrepeated_reply
 from app.services.song_order import model_text
+from app.services.suggestions.commit_readiness import (
+    MARK_NEEDED,
+    REQUIREMENTS_NOT_READY,
+    CommitReadinessInputs,
+    assess_readiness_sync,
+    choice_blocked_sync,
+    choice_gate_open,
+    commit_readiness,
+    gate_settings,
+    load_missing_marks_sync,
+    load_protected_regions_sync,
+    mark_gate_open,
+    on_marks_route,
+    plan_blockers_sync,
+)
 from app.services.thought_summaries import (
     ThoughtSummaryPublisher,
     bind_thought_publisher,
@@ -318,7 +336,7 @@ def _text_timing_conflict_plan(exc: TextTimingConflict) -> KriaTurnPlan:
 def _full_creator_request_sync(db, *, thread_id: uuid.UUID, through_sequence: int) -> str | None:  # noqa: ANN001
     """Pin every creator instruction visible to the approved source turn."""
     request = creator_request_text_sync(db, thread_id=thread_id, through_sequence=through_sequence)
-    return request if len(request) <= MAX_REQUEST_CHARS else None
+    return None if request_over_budget(request, tap_message="", brief=None) else request
 
 
 def _marks_route_sync(  # noqa: ANN001
@@ -332,17 +350,14 @@ def _marks_route_sync(  # noqa: ANN001
     """KRI-901: this act turn came from an app that shows the mark card AND its draft renders
     on the phone Talking writer (`protected_targets.marks_route`). The gate and approval
     readiness both read this one answer, so neither asks for nor promises a mark elsewhere."""
-    from app.kria.protected_targets import marks_route  # noqa: PLC0415
-
     source = db.get(CreationThreadEvent, turn.source_event_id)
     payload = getattr(source, "payload", None)
-    return marks_route(
+    return on_marks_route(
         client_marks=isinstance(payload, dict) and payload.get("marks_protected_regions") is True,
         creator_id=thread.creator_id,
         strategy=document.strategy,
-        edit_format=getattr(item, "edit_format", None) or document.edit_format,
-        clip_paths=getattr(item, "clip_gcs_paths", None) or (),
-        voiceover_path=getattr(item, "voiceover_gcs_path", None),
+        item=item,
+        fallback_format=document.edit_format,
     )
 
 
@@ -366,38 +381,35 @@ def _protected_region_gate_sync(  # noqa: ANN001
     """
     from app.kria.protected_targets import (  # noqa: PLC0415
         build_protected_region_question,
-        clip_generations,
         mark_request_text,
-        missing_object_marks,
-        rendered_speaker_media_id,
-        speaker_candidates,
     )
 
-    if not render_requested or not marks_route:
-        return None
-    if not settings.brief_binding_for(thread.creator_id):
+    readiness, binding_on, choice_questions_on = gate_settings(thread.creator_id)
+    if not mark_gate_open(
+        binding_on=binding_on, render_requested=render_requested, marks_route=marks_route
+    ):
         return None
     source = db.get(CreationThreadEvent, turn.source_event_id)
     if source is None:
         return None
     if brief is None:
         brief = load_latest_brief_sync(db, thread.id)
-    clip_assignments = getattr(item, "clip_assignments", None) or []
-    generations = clip_generations(clip_assignments)
-    # The mark counts only on a clip the writer may put the text on; once a render of this
-    # item spoke from a clip, that clip is one of them, so a mark on another clip is asked
-    # for again instead of being promised and read back as ``other_source``.
-    job = getattr(item, "current_job", None)
-    variants = ((getattr(job, "assembly_plan", None) or {}).get("variants")) or []
-    missing = missing_object_marks(
-        brief,
-        _protected_regions_sync(db, thread_id=thread.id, through_sequence=int(source.sequence)),
-        generations,
-        render_clips=speaker_candidates(
-            clip_assignments, rendered_speaker=rendered_speaker_media_id(variants)
-        ),
+    missing = load_missing_marks_sync(
+        db,
+        thread_id=thread.id,
+        item=item,
+        brief=brief,
+        through_sequence=int(source.sequence),
     )
-    if not missing:
+    verdict = commit_readiness(
+        CommitReadinessInputs(
+            render_requested=render_requested, marks_route=marks_route, missing_marks=bool(missing)
+        ),
+        readiness=readiness,
+        binding_on=binding_on,
+        choice_questions_on=choice_questions_on,
+    )
+    if verdict != MARK_NEEDED:
         return None
     target, clips = missing[0]
     question = build_protected_region_question(
@@ -410,23 +422,6 @@ def _protected_region_gate_sync(  # noqa: ANN001
         protected_region_question=question,
     )
     return plan, question
-
-
-def _protected_regions_sync(db, *, thread_id: uuid.UUID, through_sequence: int) -> list[dict]:  # noqa: ANN001
-    """KRI-827: the creator's marks of what to keep text off, from their own turns only."""
-    from app.kria.protected_targets import fold_protected_regions  # noqa: PLC0415
-
-    return fold_protected_regions(
-        db.execute(
-            select(CreationThreadEvent.role, CreationThreadEvent.payload)
-            .where(
-                CreationThreadEvent.thread_id == thread_id,
-                CreationThreadEvent.role == "user",
-                CreationThreadEvent.sequence <= through_sequence,
-            )
-            .order_by(CreationThreadEvent.sequence)
-        ).all()
-    )
 
 
 @dataclass(frozen=True)
@@ -538,6 +533,46 @@ def _refusal_receipts(
     """The receipts judged the speculative brief, which a refused tap rolls back, so they name a
     version that is never written. Dropped for a tap; every other reply keeps them."""
     return None if planned.suggestion_pin is not None else receipts
+
+
+def _held_receipts(
+    receipts: list[dict[str, Any]] | None, readiness_report: Mapping[str, Any] | None
+) -> list[dict[str, Any]] | None:
+    """KRI-1308: a held draft made nothing, so no ask may read "Done".
+
+    The receipts judged the speculative draft the hold rolled back. A blocked ask shows its
+    readiness reason; any other is waiting. Both read partial and unchecked, never
+    done. Receipts that were never "met" keep their own words."""
+    if receipts is None or readiness_report is None or readiness_report.get("ready"):
+        return receipts
+    from app.kria.approval_readiness import APPROVABLE  # noqa: PLC0415
+
+    rows = {
+        str(row.get("requirement_id")): row
+        for row in readiness_report.get("requirements") or ()
+        if isinstance(row, Mapping)
+    }
+    held: list[dict[str, Any]] = []
+    for receipt in receipts:
+        if receipt.get("status") != "met":
+            held.append(receipt)
+            continue
+        row = rows.get(str(receipt.get("requirement_id")))
+        blocked = row is not None and row.get("disposition") not in APPROVABLE
+        held.append(
+            {
+                **receipt,
+                "status": "partial",
+                "verification": "unchecked",
+                "stage": "understood",
+                "reason": (str(row.get("reason") or "")[:300] if blocked else "")
+                or say(
+                    en="Not made yet: the draft is on hold.",
+                    tr="Henüz yapılmadı: taslak beklemede.",
+                ),
+            }
+        )
+    return held
 
 
 def _pin_refusal_for(planned: PlannedKriaTurn, reason: str) -> dict[str, Any] | None:
@@ -1179,8 +1214,9 @@ def _state_event_fields(state_id: str | None, trace: dict[str, Any]) -> dict[str
 def _receipt_lead_fields(
     lead: str | None, also_changed: Sequence[str], receipts: Sequence[Any]
 ) -> dict[str, Any]:
-    """KRI-739: the lead line + unclaimed changes shown above the receipt rows. Only an editor turn
-    that bound receipts has them; every other event stays byte-identical."""
+    """KRI-739: the lead line + unclaimed changes shown above the receipt rows. An editor turn that
+    bound receipts has them, and so does a reply that listed receipts instead of the model's
+    summary (KRI-1262); every other event stays byte-identical."""
     if not lead or not receipts:
         return {}
     return {"reply_lead": lead, **({"also_changed": list(also_changed)} if also_changed else {})}
@@ -2553,6 +2589,10 @@ def _complete_draft_turn(
         # above the receipt rows; `reply_text` keeps the full prose for older clients and the web.
         reply_lead: str | None = None
         also_changed: list[str] = []
+        # KRI-1262: a draft reply that listed receipts instead of the model's summary has a lead
+        # too. It rides the event only while the reply is still exactly that text; a later
+        # notice or a replaced reply (readiness, a simpler version) carries words the lead lacks.
+        receipt_reply: tuple[str, str] | None = None
         effective_brief_updates = planned.brief_updates
         readiness_required = render_intent is not None and settings.approval_readiness_for(
             thread.creator_id
@@ -2964,7 +3004,7 @@ def _complete_draft_turn(
                         # checker can judge yet goes under "have a look", never silence.
                         if not editor_turn and not readiness_required and not facts.phone_talking:
                             receipts = [r for r in receipts if r.verification != "unchecked"]
-                        reply_text = reply_from_receipts(
+                        reply_text, receipt_lead_line = reply_and_lead_from_receipts(
                             CreativeBrief(version=brief.version, requirements=answered),
                             receipts,
                             summary=arguments.summary,
@@ -2976,6 +3016,7 @@ def _complete_draft_turn(
                             and not editor_turn
                             and decoupled_from_readiness(),
                         )
+                        receipt_reply = (reply_text, receipt_lead_line)
                     requirement_receipts = [r.model_dump(mode="json") for r in receipts]
                 elif editor_turn:
                     phrases = describe_diff(
@@ -3014,15 +3055,8 @@ def _complete_draft_turn(
                 {**receipt, "brief_version": brief.version} for receipt in requirement_receipts
             ]
         if readiness_required:
-            from app.kria.approval_readiness import (  # noqa: PLC0415
-                APPROVABLE,
-                assess_readiness,
-                readiness_reply,
-            )
+            from app.kria.approval_readiness import APPROVABLE, readiness_reply  # noqa: PLC0415
             from app.kria.brief_binding import snapshot_media as _readiness_media  # noqa: PLC0415
-            from app.services.phone_montage_preflight import (  # noqa: PLC0415
-                readiness_plan_blockers,
-            )
 
             if brief is None:
                 brief = load_latest_brief_sync(db, thread.id)
@@ -3037,7 +3071,7 @@ def _complete_draft_turn(
             )
             # KRI-901: the marks this approval would pin, so a marked object is executable.
             _readiness_marks = (
-                _protected_regions_sync(
+                load_protected_regions_sync(
                     db, thread_id=thread.id, through_sequence=int(_readiness_source.sequence)
                 )
                 if _readiness_source is not None
@@ -3052,51 +3086,42 @@ def _complete_draft_turn(
             )
             # Leverkusen M2 run 3: a speed ask the phone montage plan can't place is said
             # before the card here too (readiness skipped the KRI-775 plan above).
+            _readiness_media_snapshot = (
+                planned.media_snapshot
+                if planned.media_snapshot is not None
+                else _readiness_media(item)
+            )
             _readiness_blockers = (
-                readiness_plan_blockers(
+                plan_blockers_sync(
                     db,
                     creator_id=thread.creator_id,
                     item=item,
                     brief=brief,
                     strategy=document.strategy,
-                    media_snapshot=planned.media_snapshot
-                    if planned.media_snapshot is not None
-                    else _readiness_media(item),
+                    media=_readiness_media_snapshot,
                     client_protocol=client_protocol,
                 )
                 if document.editor_payload is None
                 else []
             )
-            readiness_report = assess_readiness(
-                brief,
-                document.strategy or {},
-                media=planned.media_snapshot
-                if planned.media_snapshot is not None
-                else _readiness_media(item),
+            readiness_report = assess_readiness_sync(
+                db,
+                thread_id=thread.id,
+                item=item,
+                brief=brief,
+                strategy=document.strategy,
+                media=_readiness_media_snapshot,
                 manifest=planned.readiness_manifest,
+                creator_id=thread.creator_id,
+                client_protocol=client_protocol,
+                marks_route=_marks_route,
+                protected_regions=_readiness_marks,
+                plan_blockers=_readiness_blockers,
                 editor_payload=document.editor_payload,
                 editor_text_diff=document.editor_text_diff,
                 creator_request=_readiness_request,
-                protected_regions=_readiness_marks,
-                protected_marks=_marks_route,
                 prepared_collection_story=document.prepared_collection_story,
-                creator_id=thread.creator_id,
                 prepared_research=_readiness_research,
-                order_execution=compiled_order_preflight_sync(
-                    db,
-                    item=item,
-                    creator_id=thread.creator_id,
-                    brief=brief,
-                    strategy=document.strategy or {},
-                    media_snapshot=planned.media_snapshot
-                    if planned.media_snapshot is not None
-                    else _readiness_media(item),
-                    client_protocol=client_protocol,
-                ),
-                order_source_context=_order_source_context_sync(
-                    db, brief=brief, item_id=item.id, creator_id=thread.creator_id
-                ),
-                plan_blockers=_readiness_blockers,
             )
             policy_reasons = _policy_text_reasons(brief, planned.policy_omitted_texts)
             readiness_report["requirements"] = [
@@ -3310,34 +3335,22 @@ def _complete_draft_turn(
                     )
                 )
             if readiness_required:
-                readiness_report = assess_readiness(
-                    brief,
-                    document.strategy or {},
-                    media=planned.media_snapshot
-                    if planned.media_snapshot is not None
-                    else _readiness_media(item),
+                readiness_report = assess_readiness_sync(
+                    db,
+                    thread_id=thread.id,
+                    item=item,
+                    brief=brief,
+                    strategy=document.strategy,
+                    media=_readiness_media_snapshot,
                     manifest=planned.readiness_manifest,
-                    creator_request=_readiness_request,
-                    protected_regions=_readiness_marks,
-                    protected_marks=_marks_route,
-                    prepared_collection_story=document.prepared_collection_story,
                     creator_id=thread.creator_id,
-                    prepared_research=_readiness_research,
-                    order_execution=compiled_order_preflight_sync(
-                        db,
-                        item=item,
-                        creator_id=thread.creator_id,
-                        brief=brief,
-                        strategy=document.strategy or {},
-                        media_snapshot=planned.media_snapshot
-                        if planned.media_snapshot is not None
-                        else _readiness_media(item),
-                        client_protocol=client_protocol,
-                    ),
-                    order_source_context=_order_source_context_sync(
-                        db, brief=brief, item_id=item.id, creator_id=thread.creator_id
-                    ),
+                    client_protocol=client_protocol,
+                    marks_route=_marks_route,
+                    protected_regions=_readiness_marks,
                     plan_blockers=_readiness_blockers,
+                    creator_request=_readiness_request,
+                    prepared_collection_story=document.prepared_collection_story,
+                    prepared_research=_readiness_research,
                 )
             requirement_receipts = [
                 {**receipt, "brief_version": brief.version} for receipt in requirement_receipts
@@ -3428,12 +3441,20 @@ def _complete_draft_turn(
                 pinned_refusal=_pin_refusal_for(planned, _PIN_MARK_NEEDED),
             )
             return replace(completed, response_only=True)
+        _omitted = simpler_version_chosen or automatic_omission
+        _, _binding_on, _choice_questions_on = gate_settings(thread.creator_id)
         if (
-            settings.brief_binding_for(thread.creator_id)
-            and (
-                (unmet_ids and not (simpler_version_chosen or automatic_omission))
-                or (readiness_report is not None and not readiness_report["ready"])
+            commit_readiness(
+                CommitReadinessInputs(
+                    readiness_ready=None if readiness_report is None else readiness_report["ready"],
+                    readiness_unmet=() if _omitted else unmet_ids,
+                    receipts_unmet=() if _omitted else unmet_ids,
+                ),
+                readiness=readiness_required,
+                binding_on=_binding_on,
+                choice_questions_on=_choice_questions_on,
             )
+            == REQUIREMENTS_NOT_READY
             # KRI-558: an editor draft that really changed something is kept, and its
             # Partly / Couldn't lines say what is missing. Only an edit that changed
             # nothing falls back to the "different approach?" question.
@@ -3520,7 +3541,9 @@ def _complete_draft_turn(
                 brief_updates=_refusal_brief_updates(planned, planned.brief_updates),
                 brief_delegated=planned.brief_delegated,
                 brief_delegation_read_ids=planned.brief_delegation_read_ids,
-                requirement_receipts=_refusal_receipts(planned, requirement_receipts),
+                requirement_receipts=_refusal_receipts(
+                    planned, _held_receipts(requirement_receipts, readiness_report)
+                ),
                 brief_coverage={
                     **(planned.brief_coverage or {}),
                     "stage": "draft",
@@ -3577,50 +3600,30 @@ def _complete_draft_turn(
                 }
             )
             snapshot, snapshot_hash = canonical_snapshot(document)
-        choice_gate = (
-            (
-                settings.kria_choice_questions_enabled
-                or settings.brief_binding_for(thread.creator_id)
-            )
-            and apply_intent.tool_name == "draft.apply_strategy"
-            and bool(document.strategy)
+        choice_gate = apply_intent.tool_name == "draft.apply_strategy" and choice_gate_open(
+            binding_on=_binding_on,
+            choice_questions_on=_choice_questions_on,
+            has_strategy=bool(document.strategy),
         )
         if choice_gate:
             from app.kria.brief_binding import snapshot_media as _snapshot_media  # noqa: PLC0415
 
-            binding_on = settings.brief_binding_for(thread.creator_id)
             gate_brief = brief
-            if gate_brief is None and binding_on:
+            if gate_brief is None and _binding_on:
                 gate_brief = load_latest_brief_sync(db, thread.id)
                 if settings.kria_choice_questions_enabled:
                     gate_brief = answered_brief(gate_brief, document.strategy)
-            blocked = _unresolved_choice_plan(
-                document.strategy,
-                gate_brief if binding_on else None,
-                planned.media_snapshot
+            blocked = choice_blocked_sync(
+                db,
+                thread_id=thread.id,
+                strategy=document.strategy,
+                brief=gate_brief,
+                media=planned.media_snapshot
                 if planned.media_snapshot is not None
                 else _snapshot_media(item),
-                contract_brief=gate_brief if binding_on else None,
-                events=[
-                    tag_event(role, payload, event_type, content)
-                    for role, payload, event_type, content in db.execute(
-                        select(
-                            CreationThreadEvent.role,
-                            CreationThreadEvent.payload,
-                            CreationThreadEvent.event_type,
-                            CreationThreadEvent.content,
-                        )
-                        .where(
-                            CreationThreadEvent.thread_id == thread.id,
-                            CreationThreadEvent.role.in_({"user", "assistant"}),
-                        )
-                        .order_by(CreationThreadEvent.sequence)
-                    ).all()
-                ],
                 has_draft=head is not None,
-                creator_id=thread.creator_id if binding_on else None,
+                creator_id=thread.creator_id,
                 client_protocol=client_protocol,
-                allow_choices=settings.kria_choice_questions_enabled,
             )
             if blocked is not None:
                 _refuse_repair_reply(planned)
@@ -3749,7 +3752,7 @@ def _complete_draft_turn(
                             else None
                         ),
                         protected_regions=(
-                            _protected_regions_sync(
+                            load_protected_regions_sync(
                                 db,
                                 thread_id=thread.id,
                                 through_sequence=int(source_event.sequence),
@@ -3887,6 +3890,10 @@ def _complete_draft_turn(
                 )
             reply_text = f"{reply_text}\n{repair_note}"
             draft_execution.result = {**(draft_execution.result or {}), **repair_receipt}
+        if receipt_reply is not None and reply_lead is None and reply_text == receipt_reply[0]:
+            reply_lead = receipt_reply[1] or None
+        # KRI-1262: a chat that opened with the stock "Suggest an edit." is named from this plan.
+        release_deferred_title(thread, arguments.summary)
 
         if render_intent is None:
             event = _append_sync_event(
@@ -4894,6 +4901,35 @@ _TURN_FAILURE_COPY: dict[str, tuple[str, str]] = {
         "olursa her seferinde tek bir değişiklik iste.",
     ),
 }
+# KRI-1301: a timeout on a tapped answer (choice, clip, mark, moment order). The creator sent no
+# request to shrink, so never tell her to ask for "one change at a time"; the app's Try again
+# re-sends the same tap, which opens on the lighter rung (`_previous_turn_hit_provider_deadline`).
+_TAPPED_ANSWER_TIMEOUT_COPY = (
+    "The AI service ran out of time on that answer. Your choice, footage and saved draft "
+    "are safe. Tap Try again.",
+    "Yapay zekâ hizmeti bu cevabı zamanında işleyemedi. Seçimin, çekimlerin ve kayıtlı "
+    "taslağın güvende. Yeniden dene'ye dokun.",
+)
+_TAPPED_ANSWER_PAYLOAD_KEYS = (
+    "choice_selection",
+    "clip_selection",
+    "protected_region",
+    "moment_order",
+)
+
+
+def _source_is_tapped_answer(db, turn: CreatorAgentTurn) -> bool:  # noqa: ANN001
+    """Whether the creator's message behind ``turn`` was a card tap, not typed words."""
+    try:
+        source = db.get(CreationThreadEvent, turn.source_event_id)
+    except Exception:  # noqa: BLE001 - a lookup miss only costs the generic copy
+        return False
+    payload = getattr(source, "payload", None)
+    return isinstance(payload, dict) and any(
+        isinstance(payload.get(key), dict) for key in _TAPPED_ANSWER_PAYLOAD_KEYS
+    )
+
+
 _TURN_FAILURE_DEFAULT_COPY = (
     "I couldn't finish that step, but your project and saved draft are safe. "
     "Try the request again.",
@@ -4979,6 +5015,8 @@ def _project_retryable_failure(
     # the copy follows the chat's language from the thread row itself.
     with reply_language_for(thread_reply_language(thread)):
         en, tr = _TURN_FAILURE_COPY.get(code, _TURN_FAILURE_DEFAULT_COPY)
+        if code == "runtime_provider_outcome_unknown" and _source_is_tapped_answer(db, turn):
+            en, tr = _TAPPED_ANSWER_TIMEOUT_COPY
         failure_copy = say(en=en, tr=tr)
     event = _append_sync_event(
         db,
