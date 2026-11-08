@@ -167,3 +167,37 @@ def test_an_unreadable_binding_renders_with_the_quoted_asks_only(monkeypatch):
     text = _caption_text(variant)
     # As on main: nothing listed reaches the captions, and correction's spelling stays.
     assert "Ole de la Casa" in text and "Meropa" in text
+
+
+def test_kri1283_label_words_kria_wrote_are_not_creator_spellings():
+    """KRI-1283 (Q1 run 2, job 72cf0827): the brief lists a label Kria wrote from the
+    transcript ("5. Cloud Code Game Studios", a mishearing of "Claude"). Only words the
+    creator typed in the saved request become caption spellings; a request with no text
+    keeps the old behaviour."""
+    from app.kria.brief import BriefRequirement
+    from app.pipeline.caption_spelling import creator_typed_words
+
+    brief = CreativeBrief(
+        version=2,
+        requirements=[
+            BriefRequirement(
+                id="r1",
+                kind="style",
+                facts={"captions": "on"},
+                scope="global",
+                status="open",
+                description="Captions on, correct spellings: Spec-kit, Cloud Code Game Studios",
+                source_turn_id="d02b5630-d3fd-492c-a749-0a7383cf91a1",
+            )
+        ],
+    )
+    snapshot = {
+        "creator_brief_binding": BriefBinding.create(uuid.uuid4(), brief).model_dump(mode="json")
+    }
+    request = (
+        "Make a talking video with labels, like '1. Spec-kit'. Captions on, spell Spec-kit right."
+    )
+
+    kept = gb._phone_caption_spellings(snapshot, (), typed=creator_typed_words(request))
+    assert not {"Cloud", "Code", "Game", "Studios"} & {w for k in kept for w in k.split()}
+    assert gb._phone_caption_spellings(snapshot, (), typed=None) != kept  # red control
