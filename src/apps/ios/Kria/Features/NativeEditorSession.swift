@@ -2934,6 +2934,31 @@ struct NativeEditorTemporaryVideo: Sendable {
         return true
     }
 
+    /// The open path the editor view used to run inline: follow a newer job, reconcile or reload, then show a
+    /// finished device render. It lives here so it can also run while the editor is closed.
+    func openOrWarm(project: ProjectSummary, libraryJobID: UUID?, api: any KriaAPIClient,
+                    deviceRenders: DeviceRenderSessions, uploads: BackgroundUploadCoordinator) async {
+        useDeviceRendering(deviceRenders)
+        useMediaUploads(uploads)
+        if isBehindActiveJob(project) {
+            await adoptLatestJob(project, api: api)
+            return
+        }
+        guard needsReload(for: project) else {
+            // Already loaded: a chat draft may have landed while this tab was hidden.
+            if project.runtimeVersion == 2 { await synchronizePromptRevision() }
+            return
+        }
+        let lifetime = editorLifetimeID
+        if libraryJobID == nil {
+            // KRI-529: a thread revision bump alone (a chat turn) must not reload the editor.
+            if await reconcileOnOpen(project: project, api: api) { return }
+        }
+        guard let loadedLifetime = await loadForEditorOpen(project: project, libraryJobID: libraryJobID,
+            api: api, expectedLifetime: lifetime), editorLifetimeID == loadedLifetime else { return }
+        if let key = deviceRenderKey, let file = deviceRenders.presentations[key]?.localFile { showDeviceOutput(file) }
+    }
+
     func loadForEditorOpen(project: ProjectSummary, libraryJobID: UUID?, api: any KriaAPIClient,
                            expectedLifetime: UInt64) async -> UInt64? {
         guard editorLoadEpoch == expectedLifetime, !isSaving else { return nil }

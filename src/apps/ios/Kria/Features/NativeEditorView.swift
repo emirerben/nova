@@ -1100,25 +1100,8 @@ struct NativeEditorView: View {
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") || ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { return }
         #endif
-        session.useDeviceRendering(model.deviceRenders)
-        session.useMediaUploads(model.uploads)
-        if session.isBehindActiveJob(project) {
-            await session.adoptLatestJob(project, api: model.api)
-            return
-        }
-        guard session.needsReload(for: project) else {
-            // Already loaded: a chat draft may have landed while this tab was hidden.
-            if project.runtimeVersion == 2 { await session.synchronizePromptRevision() }
-            return
-        }
-        let lifetime = session.editorLifetimeID
-        if libraryJobID == nil {
-            // KRI-529: a thread revision bump alone (a chat turn) must not reload the editor.
-            if await session.reconcileOnOpen(project: project, api: model.api) { return }
-        }
-        guard let loadedLifetime = await session.loadForEditorOpen(project: project, libraryJobID: libraryJobID,
-            api: model.api, expectedLifetime: lifetime), session.editorLifetimeID == loadedLifetime else { return }
-        if let file = deviceLocalFile { session.showDeviceOutput(file) }
+        await session.openOrWarm(project: project, libraryJobID: libraryJobID, api: model.api,
+                                 deviceRenders: model.deviceRenders, uploads: model.uploads)
     }
 
     private func blockedReason(_ deletion: NativeEditorSession.TextDeletion) -> String? {
