@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.107.0] - 2026-11-08
+
+### Changed
+- feat(kria): generated-image suggestion card with a price check, dark (KRI-1253) (#2175) <!-- release-pr: 2175 -->
+
 ## [0.88.106.0] - 2026-11-08
 
 ### Changed
