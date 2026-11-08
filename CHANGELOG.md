@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.78.0] - 2026-11-08
+
+### Changed
+- fix(kria): older app builds keep the whole take when the brief asks for it (KRI-1291) (#2187) <!-- release-pr: 2187 -->
+
 ## [0.88.77.0] - 2026-11-08
 
 ### Changed
