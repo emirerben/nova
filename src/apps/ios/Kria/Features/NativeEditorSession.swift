@@ -938,6 +938,9 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var previewTalkingCutaways: [NativePhoneTalkingSource.Cutaway] = []
     private var sourcePreviewTask: Task<Void, Never>?
     private var sourcePreviewSequence = 0
+    #if DEBUG
+    private(set) var sourcePreviewBuildCountForTesting = 0
+    #endif
     /// The last `sourcePreviewSequence` a `rebuildSourcePreview` attempt
     /// actually settled (success or failure) — never a superseded/cancelled
     /// attempt. `sourcePreviewTask` itself is never reset to nil on
@@ -4012,6 +4015,9 @@ struct NativeEditorTemporaryVideo: Sendable {
     func prepareSourcePreview() async {
         guard !isReviewingPreviousMerge else { return }
         guard let api, let jobID, let variantKey else { return }
+        #if DEBUG
+        sourcePreviewBuildCountForTesting += 1
+        #endif
         Perf.begin("editor.preview", id: jobID.uuidString)
         defer { Perf.end("editor.preview", id: jobID.uuidString) }
         sourcePreviewTask?.cancel()

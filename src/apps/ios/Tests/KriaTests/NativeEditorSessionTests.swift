@@ -2350,6 +2350,198 @@ final class NativeEditorSessionTests: XCTestCase {
         return (session, fake)
     }
 
+    // MARK: - Clean reopen of a hydrated project is a no-op
+
+    private enum HydratingProject: String, CaseIterable {
+        /// Cloud speech composite: one locked base clip hydrated from the downloaded base video.
+        case talking
+        /// Phone Talking: the one source clip becomes a locked composite clip.
+        case phoneTalking
+        /// Narrated with server slots: each slot gets its slowed-to-fit source span.
+        case narrated
+        /// Phone Narrated with an empty server timeline: clips are seeded from the pinned device recipe.
+        case phoneNarrated
+        /// Phone Voiceover: same recipe seeding as phone Narrated.
+        case voiceover
+    }
+
+    private static let textRow: JSONValue = .object(["id": .string("note"), "text": .string("from the server"), "start_s": .number(0),
+        "end_s": .number(0.8), "role": .string("generative_intro"), "position": .string("custom"),
+        "x_frac": .number(0.5), "y_frac": .number(0.15), "size_px": .number(120), "size_class": .string("large"),
+        "font_family": .string("Playfair Display"), "alignment": .string("center"), "effect": .string("fade-in")])
+
+    private static func hydratedProject(_ kind: HydratingProject, legacy: Bool = false) async throws -> (NativeEditorSession, EditorCommitSpy) {
+        let threadID = UUID(), jobID = UUID()
+        let project = BackgroundUploadCoordinator.projectDirectory(threadID)
+        let montage = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        var variant: [String: JSONValue] = [
+            "variant_id": .string("variant"),
+            "render_generation_id": .string("generation-1"),
+            "render_status": .string("ready"),
+            "output_url": .string("file:///tmp/kria-clean-reopen.mp4"),
+        ]
+        var capabilities: [String: JSONValue] = ["timeline": .bool(false), "text_elements": .bool(true), "mix": .bool(false)]
+        var poolClips: [NativeEditorSourcePool.Clip] = []
+        var device = true
+        switch kind {
+        case .talking:
+            device = false
+            variant["resolved_archetype"] = .string("talking_head")
+            variant["base_video_path"] = .string("base.mp4")
+            variant["base_video_url"] = .string("https://storage.example/base.mp4")
+            let cache = NativePreviewAssetCache(project: project, jobID: jobID)
+            let remote = try XCTUnwrap(URL(string: "https://storage.example/base.mp4"))
+            let download = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+            try FileManager.default.copyItem(at: montage, to: download)
+            var base = try await NativeDownloadedMedia.importAsset(from: download, sourceURL: remote,
+                response: URLResponse(url: remote, mimeType: "video/mp4", expectedContentLength: -1, textEncodingName: nil), project: cache.project)
+            let media = AVURLAsset(url: cache.project.root.appendingPathComponent(base.relativePath))
+            let tracks = try await media.loadTracks(withMediaType: .video)
+            let track = try XCTUnwrap(tracks.first)
+            let size = try await track.load(.naturalSize)
+            base.naturalSize = MediaSize(width: abs(size.width), height: abs(size.height))
+            base.duration = try await media.load(.duration).seconds
+            try cache.store(base, for: "media:generation-1:variant-base-generation-1")
+        case .phoneTalking, .narrated, .phoneNarrated, .voiceover:
+            let input = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+            try FileManager.default.copyItem(at: montage, to: input)
+            defer { try? FileManager.default.removeItem(at: input) }
+            let asset = try await AssetImportCoordinator(project: project).importAsset(from: input)
+            try SourceAssetStore(project: project).bind(mediaID: "source", original: asset)
+            let fingerprint = try XCTUnwrap(asset.fingerprint)
+            poolClips = [.init(clipIndex: 0, nativeSource: .init(mediaID: "source", sourceURL: nil,
+                original: OriginalMediaDescriptor(sha256: fingerprint.hex, byteCount: fingerprint.byteCount, durationS: 1,
+                    width: 1080, height: 1920, orientationDegrees: 0, hasAudio: true), localRequired: true))]
+            switch kind {
+            case .phoneTalking:
+                variant["resolved_archetype"] = .string("subtitled")
+                capabilities = ["timeline": .bool(false), "text_elements": .bool(true), "mix": .bool(false),
+                                "overlays": .bool(true), "sfx": .bool(true)]
+                variant["caption_cues"] = .array([.object(["text": .string("Number three"), "start_s": .number(0.2), "end_s": .number(0.9)])])
+            case .narrated:
+                variant["resolved_archetype"] = .string("narrated")
+                capabilities["timeline"] = .bool(true)
+                variant["user_timeline"] = .object(["slots": .array([.object(["slot_id": .string("s1"), "clip_index": .number(0),
+                    "in_s": .number(0), "duration_s": .number(0.9), "source_duration_s": .number(1), "removed": .bool(false)])])])
+            case .phoneNarrated: variant["resolved_archetype"] = .string("narrated")
+            default: variant["resolved_archetype"] = .string("voiceover")
+            }
+        }
+        if device { variant["render_destination"] = .string("device") }
+        variant["editor_capabilities"] = .object(capabilities)
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
+                snapshotHash: legacy ? "" : "h", etag: legacy ? "" : "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
+                snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: variant
+        )
+        fake.sourcePoolResult = NativeEditorSourcePool(clips: poolClips, baseGeneration: "generation-1")
+        fake.deviceRenderResponse = DeviceRenderStatusResponse(
+            phase: "published", request: deviceRenderRequest(jobID: jobID, revision: 1, digest: "a"), publishedGeneration: "generation-1")
+        let session: NativeEditorSession
+        if legacy {
+            let summary = ProjectSummary(id: threadID, title: "Legacy", status: .ready, updatedAt: .now, posterURL: nil,
+                outputVariantID: "variant", runtimeVersion: 1, activeJobID: jobID, activePlanItemID: "item")
+            session = NativeEditorSession(project: summary)
+            await session.load(project: summary, api: fake)
+        } else {
+            session = NativeEditorSession()
+            await session.load(api: fake, threadID: threadID)
+        }
+        return (session, fake)
+    }
+
+    /// Everything the creator would notice from a rebuild: the preview leaving `.ready`, a new player,
+    /// playback stopping, and a second trip through `prepareSourcePreview`.
+    private func assertSyncLeavesPreviewUntouched(_ kind: HydratingProject, legacy: Bool = false,
+                                                  file: StaticString = #filePath, line: UInt = #line) async throws {
+        let (session, _) = try await Self.hydratedProject(kind, legacy: legacy)
+        XCTAssertEqual(session.sourcePreviewState, .ready, "\(kind) legacy=\(legacy)", file: file, line: line)
+        let player = try XCTUnwrap(session.player, file: file, line: line)
+        session.togglePlayback()
+        XCTAssertTrue(session.isPlaying, "\(kind) playback started", file: file, line: line)
+        var states: [NativeSourcePreviewState] = []
+        let sink = session.$sourcePreviewState.sink { states.append($0) }
+        defer { sink.cancel() }
+        let builds = session.sourcePreviewBuildCountForTesting
+        let document = session.document
+
+        await session.synchronizePromptRevision()
+        await session.synchronizePromptRevision()
+
+        XCTAssertEqual(session.sourcePreviewBuildCountForTesting - builds, 0, "\(kind) legacy=\(legacy): an unchanged server document must not rebuild", file: file, line: line)
+        XCTAssertTrue(states.allSatisfy { $0 == .ready }, "\(kind) legacy=\(legacy): preview left .ready: \(states)", file: file, line: line)
+        XCTAssertTrue(session.player === player, "\(kind) legacy=\(legacy): player replaced", file: file, line: line)
+        XCTAssertTrue(session.isPlaying, "\(kind) legacy=\(legacy): playback stopped", file: file, line: line)
+        XCTAssertEqual(session.document, document, file: file, line: line)
+        XCTAssertFalse(session.hasUnsavedChanges, file: file, line: line)
+    }
+
+    func testCleanReopenOfEveryHydratedProjectDoesNotRebuildThePreview() async throws {
+        for kind in HydratingProject.allCases { try await assertSyncLeavesPreviewUntouched(kind) }
+    }
+
+    /// A legacy v1 thread has no draft hash (`snapshotHash == ""`), so nothing keyed on it can tell a clean reopen apart.
+    func testCleanReopenOfLegacyHydratedProjectDoesNotRebuildThePreview() async throws {
+        for kind in [HydratingProject.phoneTalking, .narrated, .phoneNarrated] {
+            try await assertSyncLeavesPreviewUntouched(kind, legacy: true)
+        }
+    }
+
+    /// The skip must not hide a real change: the server document differs from the one the preview was built from
+    /// (even when the field is one hydration rewrites), so the preview rebuilds exactly once and shows it.
+    func testRealServerChangeStillRebuildsTheHydratedPreviewOnce() async throws {
+        for kind in HydratingProject.allCases {
+            let (session, fake) = try await Self.hydratedProject(kind)
+            XCTAssertEqual(session.sourcePreviewState, .ready, "\(kind)")
+            let builds = session.sourcePreviewBuildCountForTesting
+            fake.authoritativeVariant?["text_elements"] = .array([Self.textRow])
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.sourcePreviewBuildCountForTesting - builds, 1, "\(kind): a changed server document rebuilds once")
+            XCTAssertEqual(session.document.textElements.map(\.text), ["from the server"], "\(kind)")
+            XCTAssertEqual(session.sourcePreviewState, .ready, "\(kind)")
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.sourcePreviewBuildCountForTesting - builds, 1, "\(kind): the new document is now the clean no-op")
+        }
+    }
+
+    /// A save or rebase that rewrites the clean document must retire the skip, with no hook at those sites.
+    func testRewrittenCleanDocumentInvalidatesTheSkip() async throws {
+        for kind in [HydratingProject.phoneTalking, .narrated, .phoneNarrated] {
+            let (session, fake) = try await Self.hydratedProject(kind)
+            var changed = try XCTUnwrap(fake.authoritativeVariant)
+            let original = changed
+            changed["text_elements"] = .array([Self.textRow])
+            XCTAssertTrue(session.rebaseCleanDraft(from: changed), "\(kind)")
+            XCTAssertEqual(session.document.textElements.map(\.text), ["from the server"], "\(kind)")
+            let builds = session.sourcePreviewBuildCountForTesting
+            fake.authoritativeVariant = original
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.sourcePreviewBuildCountForTesting - builds, 1,
+                           "\(kind): the clean document changed since the preview was built, so the old pair must not skip")
+            XCTAssertEqual(session.document.textElements, [], "\(kind): the server's document wins again")
+        }
+    }
+
+    /// A chat edit staged in the draft head still lands as unsaved edits on a hydrated project.
+    func testStagedChatEditStillAppliesOnAHydratedProject() async throws {
+        for kind in [HydratingProject.narrated, .phoneNarrated, .phoneTalking] {
+            let (session, fake) = try await Self.hydratedProject(kind)
+            XCTAssertEqual(session.sourcePreviewState, .ready, "\(kind)")
+            let text: JSONValue = .array([Self.textRow])
+            fake.draftSnapshot = DraftSnapshot(draftID: "d3", itemID: "item", variantKey: "variant", draftRevision: 3,
+                snapshotHash: "h", etag: "e", baseJobID: fake.draftSnapshot.baseJobID, baseGenerationID: "generation-1",
+                snapshot: ["kind": .string("editor"), "schema_version": .number(2), "edit_format": .string("montage"),
+                           "editor_payload": .object(["base_generation": .string("generation-1"), "text_elements": text,
+                                                      "sections": .object(["text_elements": text])])],
+                canUndo: true, createdAt: .now)
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.document.textElements.map(\.text), ["from the server"], "\(kind)")
+            XCTAssertTrue(session.hasUnsavedChanges, "\(kind): a staged chat edit is an unsaved edit")
+            XCTAssertEqual(fake.commitCount, 0, "\(kind)")
+        }
+    }
+
     func testDeviceTimelineDurationUsesShorterOriginalAndKeepsEOFMargin() throws {
         XCTAssertEqual(try XCTUnwrap(NativeEditorSession.deviceTimelineDuration(proxyDuration: 2.2, localDuration: 2.0, minimum: 0.1)),
                        1.95, accuracy: 0.0001)
