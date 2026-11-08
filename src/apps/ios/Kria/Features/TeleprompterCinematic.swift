@@ -4,6 +4,7 @@ import Cinematic
 #endif
 import Metal
 import OSLog
+import UIKit
 import VideoToolbox
 
 /// KRI-1160: native Cinematic recording in the teleprompter.
@@ -134,6 +135,7 @@ enum CinematicTakeFinisher {
         } catch CinematicBakeError.interrupted {
             throw CancellationError()
         } catch {
+            if await shouldPause(after: error) { throw CancellationError() }
             log.error("cinematic bake failed: \(error.localizedDescription, privacy: .public)")
         }
         try Task.checkCancellation()
@@ -146,11 +148,19 @@ enum CinematicTakeFinisher {
             // A cancelled export throws this too; the movie on disk is still the raw one, so it must not be called standard.
             throw CancellationError()
         } catch {
+            if await shouldPause(after: error) { throw CancellationError() }
             // The raw Cinematic movie stays: its first video track is the sharp, playable source.
             log.error("cinematic standard copy failed: \(error.localizedDescription, privacy: .public)")
         }
         try Task.checkCancellation()
         return .standard
+    }
+
+    /// Read after the failure, on the main actor: `.inactive` counts as away too, since the failure can land during the
+    /// slide to the background, before the scene phase change cancels this task.
+    private static func shouldPause(after error: Error) async -> Bool {
+        let active = await MainActor.run { UIApplication.shared.applicationState == .active }
+        return CinematicBakeInterruption.shouldPause(after: error, taskCancelled: Task.isCancelled, appActive: active)
     }
 
     private static func hasRoomToBake(seconds: Double, in directory: URL) -> Bool {
@@ -364,9 +374,11 @@ final class CinematicBake: @unchecked Sendable {
         }
         if reader.status == .failed {
             writer.cancelWriting()
+            if CinematicBakeInterruption.isSystemInterruption(reader.error) { throw CinematicBakeError.interrupted }
             throw CinematicBakeError.couldNotRead(reader.error?.localizedDescription ?? "unknown")
         }
         await writer.finishWriting()
+        if writer.status != .completed, CinematicBakeInterruption.isSystemInterruption(writer.error) { throw CinematicBakeError.interrupted }
         guard writer.status == .completed else { throw CinematicBakeError.renderFailed(writer.error?.localizedDescription ?? "writer") }
     }
 

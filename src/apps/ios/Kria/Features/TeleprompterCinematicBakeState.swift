@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 
 /// Where a take recorded with Cinematic on is in its life, persisted on the take manifest (JSON key `cinematic`).
@@ -104,3 +105,18 @@ struct FixtureCinematicBaker: CinematicBaking {
     }
 }
 #endif
+
+/// Whether a bake that threw was really stopped from outside. Only the Metal "not permitted" error names backgrounding
+/// itself; the reader, the writer and the HEVC encoder fail with other errors when the app is suspended, and those can
+/// arrive before SwiftUI delivers `.background` and cancels the task. A paused bake starts over; a wrongly counted
+/// failure settles the take as standard for good.
+enum CinematicBakeInterruption {
+    static func isSystemInterruption(_ error: Error?) -> Bool {
+        guard let error = error as NSError? else { return false }
+        return error.domain == AVFoundationErrorDomain && error.code == AVError.Code.operationInterrupted.rawValue
+    }
+
+    static func shouldPause(after error: Error, taskCancelled: Bool, appActive: Bool) -> Bool {
+        taskCancelled || !appActive || isSystemInterruption(error)
+    }
+}

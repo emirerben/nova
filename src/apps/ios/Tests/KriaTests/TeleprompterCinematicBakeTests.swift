@@ -1,3 +1,4 @@
+import AVFoundation
 import XCTest
 @testable import Kria
 
@@ -16,6 +17,9 @@ import XCTest
 /// 8. Settled states are final: replaying an event, or a relaunch, does not change a baked take.
 /// 9. A manifest written before the bake existed still decodes (`applied` / `standard`).
 /// 10. Not enough free space: refused before a long bake starts (the finisher falls back to keeping the raw take).
+/// 11. The reader, writer or encoder fails with a non-Metal error because the app is being suspended, and the failure
+///     lands before the scene phase cancels the task: that is a pause, never the plain-copy fallback. Likewise a cancelled
+///     plain copy pauses. Only a failure with the app active, task live and no system-interruption error settles standard.
 /// Scenarios 1, 2 and 5 against real Cinematic movies need a physical iPhone; the baker is faked here, so this proves the
 /// lifecycle around it.
 @MainActor final class TeleprompterCinematicBakeTests: XCTestCase {
@@ -35,6 +39,29 @@ import XCTest
     override func tearDown() async throws {
         try? FileManager.default.removeItem(at: root)
         defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    // MARK: Telling a pause from a failed bake
+
+    func testAFailureIsAPauseWheneverTheWorkWasStoppedFromOutside() {
+        struct Other: Error {}
+        let interrupted = NSError(domain: AVFoundationErrorDomain, code: AVError.Code.operationInterrupted.rawValue)
+        let otherAV = NSError(domain: AVFoundationErrorDomain, code: AVError.Code.decodeFailed.rawValue)
+        let table: [(Error, cancelled: Bool, active: Bool, pause: Bool)] = [
+            (Other(), false, true, false),
+            (Other(), true, true, true),
+            (Other(), false, false, true),
+            (interrupted, false, true, true),
+            (otherAV, false, true, false),
+            (otherAV, false, false, true),
+        ]
+        for row in table {
+            XCTAssertEqual(CinematicBakeInterruption.shouldPause(after: row.0, taskCancelled: row.cancelled, appActive: row.active),
+                           row.pause, "\(row.0) cancelled=\(row.cancelled) active=\(row.active)")
+        }
+        XCTAssertFalse(CinematicBakeInterruption.isSystemInterruption(nil))
+        XCTAssertFalse(CinematicBakeInterruption.isSystemInterruption(NSError(domain: NSCocoaErrorDomain, code: AVError.Code.operationInterrupted.rawValue)),
+                       "the code alone is not enough: the domain must be AVFoundation's")
     }
 
     // MARK: The state machine
