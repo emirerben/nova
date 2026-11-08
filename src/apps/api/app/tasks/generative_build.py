@@ -10470,7 +10470,9 @@ def _run_phone_subtitled_job(
             )
             if talking_title_text:
 
-                def _place_title(look_caption_avoid: Any) -> tuple[list[dict], Any]:
+                def _place_title(
+                    look_caption_avoid: Any, *, logo_below_band: bool = False
+                ) -> tuple[list[dict], Any]:
                     return _phone_talking_title_rows(
                         talking_title_text,
                         duration_s=talking_title_duration_s,
@@ -10485,6 +10487,7 @@ def _run_phone_subtitled_job(
                         title_look_plan=snapshot,
                         reserve_logo=beats_enabled and _asks_title_logo(all_candidates),
                         look_caption_avoid=look_caption_avoid,
+                        logo_below_band=logo_below_band,
                         **text_canvas,
                     )
 
@@ -10835,25 +10838,34 @@ def _run_phone_subtitled_job(
                         caption_style=caption_style,
                         **text_canvas,
                     )
-            if (
-                title_rows
-                and protected_caption_look is None
-                and isinstance(title_receipt, Mapping)
-                and title_receipt.get("text_overlap") is True
-            ):
+            if title_rows:
                 # KRI-1305: the title was boxed in by a face and accepted text on text. Never
-                # render that as is: the captions step to a spot clear of the title and faces.
-                title_receipt = {
-                    **title_receipt,
-                    **_move_captions_off_title(
-                        title_rows,
-                        title_receipt,
-                        framed_compile=framed_compile,
-                        cues=cues,
-                        caption_style=caption_style,
-                        **text_canvas,
+                # render that as is: the captions step to a spot clear of the title and faces,
+                # or (her own caption spot, or no clear spot) they wait while the title shows
+                # and the title is placed again off her face alone (with her logo's room).
+                title_rows, title_receipt, cues = _title_clear_of_captions(
+                    title_rows,
+                    title_receipt,
+                    cues=cues,
+                    framed_compile=framed_compile,
+                    caption_style=caption_style,
+                    protected_caption_look=protected_caption_look,
+                    replace=(
+                        (
+                            lambda: _place_title(
+                                lambda _window: [],
+                                # A logo card under the 0.62 caption-band line keeps its spot
+                                # only in an editor that honours `caption_clear` (item 15).
+                                logo_below_band=_logo_below_band_ok(all_candidates),
+                            )
+                        )
+                        if talking_title_text
+                        and settings.title_look_enabled
+                        and protected_caption_avoid is None
+                        else None
                     ),
-                }
+                    **text_canvas,
+                )
             if not media_lanes_enabled:
                 if ending_request is not None and ending_source != "footage":
                     # KRI-841: no card / ending-clip lane on this render, so a Visuals video
@@ -13160,6 +13172,134 @@ def _move_captions_off_title(
     return {"caption_move": receipt, "text_overlap": False}
 
 
+def _logo_below_band_ok(all_candidates: Mapping[str, Any]) -> bool:
+    """KRI-1303: may a title logo card sit below the caption-band line (``caption_clear``)? Only
+    for a build whose editor keeps such a card where it is (`CARD_LAYOUT_PROTOCOL`, item 15);
+    an older editor would pull it up onto her face on the next save."""
+    from app.services.client_protocol import CARD_LAYOUT_PROTOCOL  # noqa: PLC0415
+
+    protocol = _stamped_protocol(all_candidates.get("creator_client_protocol"))
+    return protocol is not None and protocol >= CARD_LAYOUT_PROTOCOL
+
+
+def _cues_clear_of_title(cues: Any, window: tuple[float, float]) -> list[dict]:
+    """KRI-1305: the captions wait while the title shows. Every caption word that starts inside
+    ``window`` is left out; a line running past the title's end keeps its later words and starts
+    with the first of them. Lines after the title are untouched (the same dicts)."""
+    start, end = window
+    out: list[dict] = []
+    for cue in cues or []:
+        if not isinstance(cue, dict):
+            out.append(cue)
+            continue
+        cue_start, cue_end = float(cue["start_s"]), float(cue["end_s"])
+        if cue_end <= start or cue_start >= end:
+            out.append(cue)
+            continue
+        words = cue.get("words")
+        if words is None:
+            if cue_end > end:
+                out.append({**cue, "start_s": end})
+            continue
+        kept = [w for w in words if not start <= float(w.get("start_s", cue_start)) < end]
+        if not kept:
+            continue
+        out.append(
+            {
+                **cue,
+                "start_s": max(float(kept[0].get("start_s", cue_start)), end),
+                "text": " ".join(str(w.get("text") or "") for w in kept).strip(),
+                "words": kept,
+            }
+        )
+    return out
+
+
+def _title_clear_of_captions(
+    title_rows: list[dict],
+    title_receipt: Any,
+    *,
+    cues: Any,
+    framed_compile: dict[str, Any],
+    caption_style: str,
+    protected_caption_look: Any,
+    replace: Any = None,
+    canvas: Any = None,
+) -> tuple[list[dict], Any, Any]:
+    """KRI-1305: a title placed touching her captions (``text_overlap``) is never rendered as is.
+
+    1. The captions step to the first spot clear of the title and her face
+       (`_move_captions_off_title`, #2196) -- unless she placed them herself, or a face rule
+       already moved them (``protected_caption_look``).
+    2. Still touching (Q2 run 2: "near the bottom" is her spot, ``creator_spot_kept``): the
+       captions wait while the title shows (`_cues_clear_of_title`; the CTA ending does the same,
+       KRI-1306) and, with ``replace`` (the same title placement with no caption to keep clear
+       of), the title is placed again off her face alone: her full size, and room for a logo
+       she asked for between her chin and the title (KRI-1303).
+
+    Returns ``(title_rows, title_receipt, cues)``; nothing changes when nothing overlaps."""
+    if not title_rows or not isinstance(title_receipt, Mapping):
+        return title_rows, title_receipt, cues
+    if title_receipt.get("text_overlap") is not True:
+        return title_rows, title_receipt, cues
+    if protected_caption_look is None:
+        title_receipt = {
+            **title_receipt,
+            **_move_captions_off_title(
+                title_rows,
+                title_receipt,
+                framed_compile=framed_compile,
+                cues=cues,
+                caption_style=caption_style,
+                canvas=canvas,
+            ),
+        }
+        if title_receipt.get("text_overlap") is not True:
+            return title_rows, title_receipt, cues
+    before = (title_receipt.get("caption_move") or {}).get("status")
+    replaced = False
+    if replace is not None:
+        try:
+            rows, receipt = replace()
+            if (
+                rows
+                and isinstance(receipt, Mapping)
+                and receipt.get("status") != "error"
+                and receipt.get("face_collision") is not True
+            ):
+                title_rows, title_receipt, replaced = rows, receipt, True
+        except Exception as exc:  # noqa: BLE001 - the first placement still renders
+            log.warning("phone_title_caption_wait.replace_failed", error=str(exc)[:200])
+    window = (
+        min(float(row["start_s"]) for row in title_rows),
+        max(float(row["end_s"]) for row in title_rows),
+    )
+    move = {
+        "status": "captions_wait",
+        "until_s": round(window[1], 3),
+        **({"after": before} if before else {}),
+        "title_replaced": replaced,
+    }
+    try:
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        record_pipeline_event("phone", "subtitled_title_captions_wait", move)
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return (
+        title_rows,
+        {
+            **title_receipt,
+            "text_overlap": False,
+            # No caption is on screen while the title shows: nothing for the logo to avoid.
+            "caption_boxes": [],
+            "captions_hidden": True,
+            "caption_move": move,
+        },
+        _cues_clear_of_title(cues, window),
+    )
+
+
 def _is_title_anchored(beat: Any) -> bool:
     return isinstance(beat, dict) and beat.get("anchor") == "title"
 
@@ -13297,6 +13437,10 @@ def _place_title_logo_beats(
             canvas=canvas,
             alignment=alignment,
             avoid=captions,
+            # KRI-1305: her captions wait while the title shows, so the logo may sit between her
+            # chin and the title (the card is then `caption_clear`: the compiler keeps its spot).
+            below_band=(title_receipt or {}).get("captions_hidden") is True
+            and (title_receipt or {}).get("logo_below_band") is True,
         )
         if geometry is None:
             _miss(beat, miss or "no_room_above_title")
@@ -13700,6 +13844,7 @@ def _phone_talking_title_rows(
     title_look_plan: Mapping[str, Any] | None = None,
     reserve_logo: bool = False,
     look_caption_avoid: Any = None,
+    logo_below_band: bool = False,
 ) -> tuple[list[dict], dict[str, Any] | None]:
     """The phone Talking edit's opening title row (KRI-467), placed off the
     speaker's face, plus its placement receipt; ``([], None)`` when the title
@@ -13711,7 +13856,9 @@ def _phone_talking_title_rows(
     row per line in her look (`phone_title_look`), stacked as one block off her face, and
     ``reserve_logo`` (she asked for a logo above the title) places the title so the logo
     fits right above it; both keep clear of her captions (``look_caption_avoid``) whenever
-    any spot allows it. Off, or a plain title with no logo asked: today's single row."""
+    any spot allows it. Off, or a plain title with no logo asked: today's single row.
+    ``logo_below_band`` (KRI-1305): her captions wait while the title shows
+    (`_title_clear_of_captions`), so a logo may sit between her chin and the title."""
     from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
 
@@ -13793,7 +13940,11 @@ def _phone_talking_title_rows(
         if not caption_avoid and look_caption_avoid:
             common["avoid"] = look_caption_avoid(window)
         placed_rows, receipt = place_title_look(
-            rows, position=position, reserve_logo=reserve_logo, **common
+            rows,
+            position=position,
+            reserve_logo=reserve_logo,
+            logo_below_band=logo_below_band,
+            **common,
         )
     else:
         placed, receipt = place_talking_title(rows[0], **common)

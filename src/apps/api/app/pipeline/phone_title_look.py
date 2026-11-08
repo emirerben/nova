@@ -410,6 +410,14 @@ def _candidates(
         found.append(("below_face", max(f.bottom for f in faces) + _FACE_GAP))
         above = min(f.top for f in faces) - _FACE_GAP - height
         found.append(("above_face", above))
+        if logo:
+            # KRI-1303: a close selfie leaves no room for the logo beside her head. The block
+            # sits just low enough for the logo (at each of its sizes) between her chin and it.
+            chin = max(f.bottom for f in faces)
+            found.extend(
+                ("logo_below_face", chin + _LOGO_GAP + _LOGO_MAX_HEIGHT * shrink + _LOGO_GAP)
+                for shrink in _LOGO_SHRINKS
+            )
     if avoid:
         # Between her face and her captions: the block's bottom just above the captions.
         found.append(("above_captions", min(a.top for a in avoid) - _FACE_GAP - height))
@@ -454,6 +462,7 @@ def place_title_look(
     protect_all_faces: bool = False,
     position: str | None = None,
     reserve_logo: bool = False,
+    logo_below_band: bool = False,
 ) -> tuple[list[dict], dict[str, Any]]:
     """Stack ``rows`` top to bottom in line order, clear of faces, objects and the frame edge.
 
@@ -462,7 +471,9 @@ def place_title_look(
     above the title): a spot only counts when the biggest logo also fits right above the
     block off every face (her V5: the block under her face, the logo beside her head); when
     no spot at any size leaves that room, the title keeps the spot it would have had without
-    a logo and the receipt's ``logo_room`` is false. Never raises."""
+    a logo and the receipt's ``logo_room`` is false. ``logo_below_band`` (KRI-1305: her captions
+    wait while the title shows) lets the logo sit below the caption-band line, between her chin
+    and the title (its card is then ``caption_clear``). Never raises."""
     try:
         window = (min(float(r["start_s"]) for r in rows), max(float(r["end_s"]) for r in rows))
         faces, receipt = title_mod._face_boxes(
@@ -504,7 +515,12 @@ def place_title_look(
             # too: the worker places the real logo against the same boxes.
             biggest = (_LOGO_WIDTH * canvas.width) / (_LOGO_MAX_HEIGHT * canvas.height)
             geometry, _miss = place_title_logo(
-                block, aspect=biggest, faces=hard, canvas=canvas, avoid=avoid
+                block,
+                aspect=biggest,
+                faces=hard,
+                canvas=canvas,
+                avoid=avoid,
+                below_band=logo_below_band,
             )
             return geometry is not None
 
@@ -581,6 +597,7 @@ def place_title_look(
             "scale": factor,
             "objects": object_receipts,
             **({"logo_room": logo_room} if reserve_logo else {}),
+            **({"logo_below_band": True} if logo_below_band else {}),
         }
     except Exception as exc:  # noqa: BLE001 - a placement nicety never blocks a render
         log.warning("phone_title_look.placement_failed", error=str(exc)[:200])
@@ -674,6 +691,7 @@ def place_title_logo(
     canvas: _Canvas,
     alignment: str = "center",
     avoid: Sequence[NormalizedBox] = (),
+    below_band: bool = False,
 ) -> tuple[dict | None, str | None]:
     """The logo's centre and width (fraction of canvas width) right above ``block``.
 
@@ -682,7 +700,12 @@ def place_title_logo(
     narrower than a phone card can be (0.05 of the width), and never lower than the
     caption-band line the compiler pulls every card centre up to. When nothing fits:
     ``(None, "no_room_off_captions")`` if a spot off her face was there but only on her
-    captions, else ``(None, "no_room_above_title")``."""
+    captions, else ``(None, "no_room_above_title")``.
+
+    ``below_band`` (KRI-1303/1305: no caption is on screen while the title shows) lifts the
+    caption-band limit: the logo may sit between her chin and the title, and the geometry then
+    carries ``caption_clear`` so the compiler keeps its spot instead of pulling it up onto her
+    face. Its bottom still never passes the frame margin."""
     aspect = aspect if aspect > 0 else 1.0
     to_height = canvas.width / (aspect * canvas.height)  # logo height per unit of width
     width = min(_LOGO_WIDTH, _LOGO_MAX_HEIGHT / to_height)
@@ -693,7 +716,9 @@ def place_title_logo(
             w = math.floor(width * shrink * 10**_Y_DECIMALS) / 10**_Y_DECIMALS
             h = w * to_height
             top = bottom - h
-            if w < _CARD_MIN_WIDTH or top < _Y_MIN - 1e-6 or top + h / 2 > CAPTION_BAND_TOP_FRAC:
+            if w < _CARD_MIN_WIDTH or top < _Y_MIN - 1e-6:
+                continue
+            if top + h / 2 > CAPTION_BAND_TOP_FRAC and (not below_band or bottom > _Y_MAX):
                 continue
             home = block.left + w / 2 if alignment == "left" else (block.left + block.right) / 2
             edges = (_LOGO_EDGE + w / 2, 1.0 - _LOGO_EDGE - w / 2)
@@ -702,10 +727,12 @@ def place_title_logo(
                     continue
                 box = NormalizedBox(cx - w / 2, top, cx + w / 2, bottom)
                 if _worst([box], others) <= _MAX_COVERAGE:
+                    below = top + h / 2 > CAPTION_BAND_TOP_FRAC
                     return {
                         "x_frac": round(cx, _Y_DECIMALS),
                         "y_frac": round(top + h / 2, _Y_DECIMALS),
                         "scale": round(w, _Y_DECIMALS),
+                        **({"caption_clear": True} if below else {}),
                     }
         return None
 
