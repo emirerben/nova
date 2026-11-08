@@ -236,6 +236,12 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
             }
         ),
     ),
+    "services/suggestions/commit_readiness.py": (
+        "carry",
+        "assess_readiness_sync hands the request the tap pinned (the serve's restate passes "
+        "none) to assess_readiness unchanged; nothing here reads the words.",
+        frozenset({"assess_readiness_sync"}),
+    ),
     "kria/request_budget.py": (
         "content_only",
         "Measures how long the request a tap would pin is (the same bound_request the binding "

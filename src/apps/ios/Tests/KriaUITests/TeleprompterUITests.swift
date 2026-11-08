@@ -189,20 +189,19 @@ import XCTest
         XCTAssertTrue(app.buttons["teleprompter-retake"].isEnabled)
         capture(app, "Failed native proxy intake retains take")
         app.buttons["teleprompter-close"].tap()
-        app.buttons["teleprompter-open"].tap()
-        app.buttons["teleprompter-no-script"].tap()
-        XCTAssertTrue(app.buttons["teleprompter-use-take"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["attachment-close"].waitForNonExistence(timeout: 10), "closing a tray-opened camera lands in the chat")
+        openCameraFromTray(app)
+        XCTAssertTrue(app.buttons["teleprompter-use-take"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["teleprompter-use-take"].isEnabled)
         capture(app, "Previous take restored after failed intake")
     }
 
     /// KRI-1119 failure modes: the Background capsule must not exist unless the server offers the feature; a pick shows its
-    /// state and survives reopening the camera; clearing returns to None; the camera never claims the preview is the render.
+    /// state and survives reopening the camera; clearing returns to None; the camera shows no notice about the preview.
     func testBackgroundCapsuleIsHiddenWithoutTheCapability() {
         let app = launchTalking()
         openScriptCamera(app)
         XCTAssertFalse(app.buttons["teleprompter-background"].exists)
-        XCTAssertFalse(app.staticTexts["teleprompter-background-preview-notice"].exists)
     }
 
     func testBackgroundCanBePickedKeptAndCleared() {
@@ -211,15 +210,13 @@ import XCTest
         let capsule = app.buttons["teleprompter-background"]
         XCTAssertTrue(capsule.waitForExistence(timeout: 5))
         XCTAssertEqual(capsule.value as? String, "None")
-        XCTAssertFalse(app.staticTexts["teleprompter-background-preview-notice"].exists)
 
         capsule.tap()
         XCTAssertFalse(app.buttons["teleprompter-background-clear"].exists, "nothing to clear yet")
         app.buttons["teleprompter-background-choose"].tap()
         XCTAssertEqual(capsule.value as? String, "Photo")
-        let notice = app.staticTexts["teleprompter-background-preview-notice"]
-        XCTAssertTrue(notice.waitForExistence(timeout: 5))
-        XCTAssertFalse(notice.label.localizedCaseInsensitiveContains("same"), "the preview never promises identical pixels")
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'unedited'")).firstMatch.exists,
+                       "the camera adds no notice about the preview")
         capture(app, "Background picked, camera unavailable")
 
         app.buttons["teleprompter-close"].tap()
@@ -231,13 +228,14 @@ import XCTest
         app.buttons["teleprompter-background"].tap()
         app.buttons["teleprompter-background-clear"].tap()
         XCTAssertEqual(app.buttons["teleprompter-background"].value as? String, "None")
-        XCTAssertFalse(app.staticTexts["teleprompter-background-preview-notice"].exists)
     }
 
     func testReviewNamesTheBackgroundAndKeepsTheTakeUsable() {
         let app = launchTalking(review: true, speakerBackground: true)
         openCameraFromTray(app)
-        XCTAssertTrue(app.staticTexts["teleprompter-review-background"].waitForExistence(timeout: 10))
+        let note = app.staticTexts["teleprompter-review-background"]
+        XCTAssertTrue(note.waitForExistence(timeout: 10))
+        XCTAssertFalse(note.label.localizedCaseInsensitiveContains("unedited"), "the review makes no promise about the recording")
         XCTAssertTrue(app.buttons["teleprompter-use-take"].isEnabled)
         capture(app, "Review take with a background")
     }

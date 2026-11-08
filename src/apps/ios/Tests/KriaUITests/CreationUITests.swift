@@ -708,8 +708,8 @@ final class CreationUITests: XCTestCase {
     }
 
     /// The shipped composer path end to end: + opens the Record | Upload tray, Upload asks where from, and choosing
-    /// Photos opens Add media with the gallery already presented. Cancel returns to Add media; the pick is then
-    /// added from the same gallery and reaches upload.
+    /// Photos opens Add media with the gallery already presented. Cancel returns to the chat, where the + opens the
+    /// tray again; the pick is then added from the same gallery and reaches upload.
     func testComposerTrayUploadFromPhotosOpensTheGalleryAndAddsThePick() {
         let app = XCUIApplication()
         app.resetAuthorizationStatus(for: .photos)
@@ -750,10 +750,15 @@ final class CreationUITests: XCTestCase {
         tile0.tap()
         XCTAssertTrue(eventually { count.label.hasPrefix("1 of") }, count.label)
         app.buttons["gallery-cancel"].tap()
-        XCTAssertTrue(app.buttons["source-upload"].waitForExistence(timeout: 5), "Cancel lands on Add media, not back in the tray")
-        XCTAssertFalse(app.buttons["attach-upload"].exists)
+        XCTAssertTrue(app.buttons["attachment-close"].waitForNonExistence(timeout: 10), "Cancel from the tray lands in the chat, not on Add media")
+        XCTAssertFalse(app.buttons["source-upload"].exists)
+        XCTAssertFalse(app.buttons["attach-upload"].exists, "and the tray is closed")
+        XCTAssertTrue(plus.waitForExistence(timeout: 5))
+        XCTAssertTrue(plus.isHittable)
 
-        app.buttons["source-upload"].tap()
+        plus.tap()
+        XCTAssertTrue(upload.waitForExistence(timeout: 5))
+        upload.tap()
         XCTAssertTrue(photos.waitForExistence(timeout: 5))
         photos.tap()
         XCTAssertTrue(tile0.waitForExistence(timeout: 20))
@@ -763,8 +768,9 @@ final class CreationUITests: XCTestCase {
         let done = app.buttons["photos-picker-done"]
         XCTAssertTrue(done.isEnabled)
         done.tap()
-        // The offline fixture has no upload reservations: a pick READ from Photos surfaces that decode error.
-        let reachedUpload = app.staticTexts["The data couldn\u{2019}t be read because it isn\u{2019}t in the correct format."]
+        // A pick the composer's + started returns to the chat, where the offline fixture's read failure is reported.
+        XCTAssertTrue(app.buttons["attachment-close"].waitForNonExistence(timeout: 10), "the pick ends back in the chat")
+        let reachedUpload = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'couldn\u{2019}t be read'")).firstMatch
         XCTAssertTrue(reachedUpload.waitForExistence(timeout: 25), app.debugDescription)
     }
 
@@ -2270,7 +2276,7 @@ final class CreationUITests: XCTestCase {
         app.launch()
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
-        XCTAssertTrue(app.buttons["Let Kria cut the first version"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Let Kria decide"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["Add captions"].exists)
         XCTAssertFalse(app.buttons["Add sound effects"].exists)
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Add a hook to the opening")).firstMatch.exists)
@@ -2291,7 +2297,7 @@ final class CreationUITests: XCTestCase {
 
         // Pending rendering is checked separately with a held server response. Polling may
         // finish before XCUITest observes it; this journey starts with the delivered set.
-        let defaultEdit = app.buttons["Let Kria cut the first version"]
+        let defaultEdit = app.buttons["Let Kria decide"]
         XCTAssertTrue(defaultEdit.waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["Use suggestion: Try a stronger opening"].exists)
         let hook = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Add a hook to the opening")).firstMatch
@@ -2299,10 +2305,11 @@ final class CreationUITests: XCTestCase {
         XCTAssertEqual(hook.label, "Add a hook to the opening, the first shot is a quiet one")
         XCTAssertTrue(app.buttons["Add captions"].exists)
         XCTAssertTrue(app.buttons["Add sound effects"].exists)
-        XCTAssertEqual(app.descendants(matching: .any)["suggestion-chip-0"].label, "Let Kria cut the first version")
+        XCTAssertEqual(app.descendants(matching: .any)["suggestion-chip-0"].label, "Let Kria decide")
         XCTAssertLessThan(defaultEdit.frame.minX, hook.frame.minX + 1, "Chip #1 stays first")
         for chip in [defaultEdit, hook, app.buttons["Add captions"], app.buttons["Add sound effects"]] {
-            XCTAssertGreaterThanOrEqual(chip.frame.height, 44)
+            // The chips scroll with the transcript, so a fractional y can round a 44 pt chip to 43.99999.
+            XCTAssertGreaterThanOrEqual(chip.frame.height, 43.5)
         }
         // A chip is a real send, not a fill of the composer: the message is the chip's `message`, not its label.
         defaultEdit.tap()
@@ -2328,6 +2335,57 @@ final class CreationUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Use suggestion: Make it warmer"].exists)
         captions.tap()
         XCTAssertTrue(app.staticTexts["You: Add captions"].waitForExistence(timeout: 10))
+    }
+
+    /// KRI-1260: the first-prompt chips end the transcript. With the keyboard up they used to sit pinned above the
+    /// composer and cover the page; now scrolling the transcript up carries them off screen.
+    func testFirstPromptChipsScrollAwayWithTheTranscriptWhileTheKeyboardIsOpen() {
+        let app = XCUIApplication()
+        // A large text size makes the transcript taller than the space the keyboard leaves, so it can scroll.
+        app.launchArguments = ["-ui-testing-chat", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXL"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["KRIA_SUGGESTION_CHIPS"] = "1"
+        app.launchEnvironment["KRIA_SUGGESTION_CHIPS_PENDING"] = "0"
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+
+        let chip = app.buttons["Let Kria decide"]
+        XCTAssertTrue(chip.waitForExistence(timeout: 10))
+        let composer = app.textFields["Message Kria"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10), "the keyboard is open")
+        keepScreenshot(app, "First-prompt chips at the end of the transcript, keyboard open")
+
+        let transcript = app.scrollViews["Conversation history"].exists ? app.scrollViews["Conversation history"] : app.scrollViews.firstMatch
+        for _ in 0..<6 where chip.exists && chip.isHittable { transcript.swipeDown() }
+        XCTAssertTrue(eventually { !(chip.exists && chip.isHittable) }, "scrolling the transcript up carries the chips off screen")
+        XCTAssertTrue(app.keyboards.firstMatch.exists || app.textFields["Message Kria"].exists)
+        keepScreenshot(app, "Transcript scrolled up, chips gone, keyboard open")
+    }
+
+    /// KRI-1260: the lead chip carries no "Recommended" tag, so at the default text size it is one line (a capsule, not a
+    /// two-line stack). The largest text size is kept as a screenshot: a long label may wrap there by design.
+    func testLeadSuggestionChipIsOneLineAtTheDefaultTextSize() {
+        for (size, name) in [("UICTContentSizeCategoryL", "default"), ("UICTContentSizeCategoryAccessibilityXXXL", "largest")] {
+            let app = XCUIApplication()
+            app.launchArguments = ["-ui-testing-chat", "-UIPreferredContentSizeCategoryName", size]
+            app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+            app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+            app.launchEnvironment["KRIA_SUGGESTION_CHIPS"] = "1"
+            app.launchEnvironment["KRIA_SUGGESTION_CHIPS_PENDING"] = "0"
+            app.launch()
+            createFreshChat(in: app)
+            app.buttons["format-montage"].tap()
+            let chip = app.buttons["Let Kria decide"]
+            XCTAssertTrue(chip.waitForExistence(timeout: 10), name)
+            XCTAssertFalse(app.staticTexts["Recommended"].exists, "no Recommended tag on a chip (\(name))")
+            if name == "default" { XCTAssertLessThan(chip.frame.height, 60, "the lead chip is one line at the default size") }
+            keepScreenshot(app, "Lead suggestion chip, \(name) text size (height \(Int(chip.frame.height)))")
+            app.terminate()
+        }
     }
 
     /// KRI-756 wire check on the runtime-v2 turn path: a chip tap carries `suggestion {set_id, chip_id}` and the exact
@@ -2609,7 +2667,7 @@ final class CreationUITests: XCTestCase {
         let feed = app.otherElements["plan-feed"]
         XCTAssertTrue(feed.waitForExistence(timeout: 30), "the feed replaces the thinking and rendering wait")
         XCTAssertFalse(app.staticTexts["I’m shaping your video"].exists)
-        // Waiting sections show as chips under "Still to decide".
+        // Waiting sections show as chips under "Coming up".
         XCTAssertTrue(app.staticTexts["plan-feed.waiting-heading"].waitForExistence(timeout: 10))
         XCTAssertTrue(eventually(timeout: 10) { app.descendants(matching: .any)["plan-feed.chip.look"].exists || self.planBlockValue(app, "look") != "" })
         attach(app, "plan-feed-waiting")
@@ -2626,10 +2684,11 @@ final class CreationUITests: XCTestCase {
         app.buttons["plan-feed.block.title"].tap()
         XCTAssertTrue(eventually(timeout: 5) { !app.descendants(matching: .any)["plan-feed.change.title"].exists })
 
-        // Everything decided: progress, then the Review plan entry that expands every block.
+        // Everything decided: the status line turns to "Making your video" on an indeterminate track, then the
+        // Review plan entry that expands every block.
         let title = app.staticTexts["plan-feed.title"]
-        XCTAssertTrue(eventually(timeout: 60) { title.label == "Plan ready · 7 of 7 decided" })
-        XCTAssertEqual(app.otherElements["plan-feed.progress"].value as? String ?? app.descendants(matching: .any)["plan-feed.progress"].value as? String, "7 of 7 decided")
+        XCTAssertTrue(eventually(timeout: 60) { title.label == "Making your video" })
+        XCTAssertEqual(app.otherElements["plan-feed.progress"].value as? String ?? app.descendants(matching: .any)["plan-feed.progress"].value as? String, "in progress")
         let review = app.buttons["plan-feed.review"]
         XCTAssertTrue(review.waitForExistence(timeout: 5))
         XCTAssertTrue(planBlockValue(app, "overlays").contains("Not used"), "a skipped section counts as decided")
@@ -2643,19 +2702,22 @@ final class CreationUITests: XCTestCase {
         // ReadyStage is unchanged once the render finishes.
         XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 60))
         XCTAssertFalse(feed.exists)
-        // Feed only (no contract v2): no Review CTA in the feed and no Review row under the finished video.
+        // The ready stage is just the video and what to do next: no "first cut" header, no Review row, no render notes.
+        XCTAssertFalse(app.staticTexts["Your first cut is ready"].exists)
         XCTAssertFalse(app.buttons["plan-feed-review-cta"].exists)
         XCTAssertFalse(app.buttons["project-review-entry"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.descendants(matching: .any)["chat.job.renderNotes"].exists)
     }
 
     /// Contract v2: structured payloads render rich cards, a malformed payload falls back to its summary, the 8th
-    /// section (post caption) shows, and the finished feed offers the ink + butter "Review your video" CTA.
+    /// section (post caption) shows, and the finished feed says "Making your video" with no Review CTA (Review opens
+    /// from a card's Change).
     func testLivePlanFeedRendersStructuredPayloadsAndOffersReview() {
         // `review` also serves the Review sheet's server model, which the card's Change hand-off at the end needs.
         let app = launchLivePlanFeed(reduceMotion: true, review: true)
         let feed = app.otherElements["plan-feed"]
         XCTAssertTrue(feed.waitForExistence(timeout: 30))
-        XCTAssertTrue(app.staticTexts["Planning your video"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Making your video"].waitForExistence(timeout: 10))
         let stop = app.buttons["plan-feed-stop"]
         XCTAssertTrue(stop.waitForExistence(timeout: 10))
         XCTAssertGreaterThanOrEqual(stop.frame.height, 44)
@@ -2667,16 +2729,14 @@ final class CreationUITests: XCTestCase {
         attach(app, "plan-feed-v2-clips")
 
         let title = app.staticTexts["plan-feed.title"]
-        XCTAssertTrue(eventually(timeout: 90) { title.label == "Plan ready · 8 of 8 decided" }, "post_caption is the 8th section")
-        XCTAssertEqual(app.descendants(matching: .any)["plan-feed.progress"].value as? String, "8 of 8 decided")
+        XCTAssertTrue(eventually(timeout: 90) { title.label == "Making your video" }, "post_caption is the 8th section, then the video is made")
+        XCTAssertEqual(app.descendants(matching: .any)["plan-feed.progress"].value as? String, "in progress")
         XCTAssertTrue(app.staticTexts["Your plan is ready"].exists)
         XCTAssertTrue(self.planBlockValue(app, "sfx").contains("4 sound effects"), "a malformed payload falls back to the summary")
         XCTAssertTrue(self.planBlockValue(app, "post_caption").contains("Slow summer days in Bodrum"))
 
-        let review = app.buttons["plan-feed-review-cta"]
-        XCTAssertTrue(review.waitForExistence(timeout: 5))
-        XCTAssertGreaterThanOrEqual(review.frame.height, 48)
-        XCTAssertFalse(app.buttons["plan-feed.review"].exists, "v2 replaces the expand-all toggle with the Review CTA")
+        XCTAssertFalse(app.buttons["plan-feed-review-cta"].exists, "Review opens from a card's Change, not a CTA")
+        XCTAssertFalse(app.buttons["plan-feed.review"].exists, "v2 has no expand-all toggle")
         attach(app, "plan-feed-v2-ready")
 
         // Opening a collapsed row shows its structured content.
@@ -2895,12 +2955,20 @@ final class CreationUITests: XCTestCase {
         return target
     }
 
-    /// The feed finishes, "Review your video" opens the sheet. Returns once every card is on screen.
+    /// The feed finishes, a card's Change opens the sheet. The card's section arrives flagged, so it is un-flagged
+    /// again and the sheet starts idle. Returns once every card is on screen.
     private func openReviewFromFeed(_ app: XCUIApplication) {
-        let cta = app.buttons["plan-feed-review-cta"]
-        XCTAssertTrue(cta.waitForExistence(timeout: 100), "the finished feed offers the Review CTA")
-        cta.tap()
+        let status = app.staticTexts["plan-feed.title"]
+        XCTAssertTrue(status.waitForExistence(timeout: 100))
+        XCTAssertTrue(eventually(timeout: 100) { status.label == "Making your video" }, "every section decided")
+        app.buttons["plan-feed.block.look"].tap()
+        let change = element(app, "plan-feed.change.look")
+        XCTAssertTrue(change.waitForExistence(timeout: 10), "an opened card offers Change")
+        change.tap()
         XCTAssertTrue(app.otherElements["review-section-title"].waitForExistence(timeout: 15), "the Review sheet opens")
+        XCTAssertTrue(element(app, "review-chip-look").waitForExistence(timeout: 15), "the card's Change flags its section")
+        reveal(app, "review-change-look").tap()
+        XCTAssertTrue(eventually(timeout: 5) { !self.element(app, "review-chip-look").exists })
         XCTAssertTrue(element(app, "review-change-captions").waitForExistence(timeout: 15), "the snapshot makes sections changeable")
     }
 
@@ -3015,19 +3083,12 @@ final class CreationUITests: XCTestCase {
         attach(app, "review-manual-edits-updated")
     }
 
-    func testReviewPlanOpensFromTheProjectAndKeepAsIsSendsNothing() {
+    func testFinishedVideoHasNoReviewRowOrRenderNotes() {
         let app = launchLivePlanFeed(reduceMotion: true, review: true)
         XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 120))
-        let entry = app.buttons["project-review-entry"]
-        XCTAssertTrue(entry.waitForExistence(timeout: 15), "a finished video offers Review")
-        entry.tap()
-        XCTAssertTrue(app.otherElements["review-section-captions"].waitForExistence(timeout: 15))
-        XCTAssertTrue(element(app, "review-change-captions").waitForExistence(timeout: 15))
-        XCTAssertFalse(element(app, "review-undo-all").exists, "nothing has been updated yet")
-        reveal(app, "review-change-music").tap()
-        element(app, "review-keep-as-is").tap()
-        XCTAssertTrue(eventually(timeout: 10) { !app.otherElements["review-section-captions"].exists }, "Keep as is closes the sheet")
-        XCTAssertTrue(app.buttons["Open editor"].exists, "nothing was sent: still the same finished video")
+        XCTAssertFalse(app.buttons["project-review-entry"].waitForExistence(timeout: 3), "a finished video has no Review row")
+        XCTAssertFalse(app.staticTexts["Your first cut is ready"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["chat.job.renderNotes"].exists)
         XCTAssertFalse(app.otherElements["plan-feed"].exists)
     }
 

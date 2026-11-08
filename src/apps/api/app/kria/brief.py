@@ -42,7 +42,13 @@ from sqlalchemy import func, select
 
 from app.agents._schemas.text_element import _ALLOWED_FONTS, _HEX_COLOR_RE
 from app.config import settings
-from app.kria.asset_holds import Authority, resolve_clip_scope, stamp_authority
+from app.kria.asset_holds import (
+    Authority,
+    hold_seconds,
+    resolve_clip_scope,
+    same_clip_scope,
+    stamp_authority,
+)
 from app.kria.brief_route import fold_text, loose_text, wants_filming_time_text
 from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.duplicate_send import is_duplicate_answer
@@ -50,6 +56,7 @@ from app.kria.order_replacement import OrderReplacementProof
 from app.kria.removed_messages import is_removed, removed_turn_ids_sync
 from app.kria.reply_language import detect_chat_language
 from app.kria.select_asks import withdrawn_photo_asks
+from app.kria.spoken_text_ask import with_valid_hold_fact
 from app.kria.text_shape_ask import TEXT_SHAPE_FACT, with_text_shape
 from app.models import CreationThreadEvent, CreativeBriefVersion, CreatorAgentTurn
 from app.schemas.clip_intents import asks_clip_description
@@ -292,6 +299,12 @@ class BriefUpdate(_BriefModel):
         return value
 
     @model_validator(mode="after")
+    def _text_hold(self) -> BriefUpdate:
+        if self.kind == "text" and "hold_s" in self.facts:
+            self.facts = with_valid_hold_fact(self.facts)
+        return self
+
+    @model_validator(mode="after")
     def _needs_content(self) -> BriefUpdate:
         content = (self.kind, self.scope, self.literal, self.description)
         if self.operation == "remove":
@@ -515,14 +528,22 @@ def _complete_change(target: BriefRequirement, update: BriefUpdate) -> BriefUpda
     """KRI-805: a partial change keeps every field it leaves out; a complete one replaces."""
     if update.operation != "change" or (update.kind is not None and update.scope is not None):
         return update
-    facts = {**target.facts, **update.facts}
+    kind = update.kind or target.kind
+    inherited = target.facts
+    if kind != target.kind and "hold_s" in inherited:
+        # KRI-1292: `hold_s` is a text's stay or a photo's hold; it is not the new kind's.
+        inherited = {k: v for k, v in inherited.items() if k != "hold_s"}
+    facts = {**inherited, **update.facts}
+    if kind == "text" and "hold_s" in update.facts:
+        # KRI-1292: a partial change skips BriefUpdate's text check (no kind yet); same rule here.
+        facts = with_valid_hold_fact(facts)
     if "duration_s" in update.facts and "duration_bound" not in update.facts:
         # KRI-847: a new length is exact until the update says it is a ceiling again, so
         # "at most 10 seconds" then "make it 15 seconds" does not become "at most 15".
         facts.pop("duration_bound", None)
     return update.model_copy(
         update={
-            "kind": update.kind or target.kind,
+            "kind": kind,
             "scope": update.scope or target.scope,
             "literal": target.literal if update.literal is None else update.literal,
             "description": target.description if update.description is None else update.description,
@@ -714,6 +735,19 @@ def _with_cut_quote(update: BriefUpdate, *sources: str | None) -> str | None:
     return update.description
 
 
+def _holds_on_scope(
+    live: Iterable[BriefRequirement], added: BriefRequirement, known_scopes: Collection[str]
+) -> list[BriefRequirement]:
+    """The photo holds in ``live`` on the same photo as ``added``, oldest first (KRI-856/857)."""
+    if hold_seconds(added) is None:
+        return []
+    return [
+        req
+        for req in live
+        if hold_seconds(req) is not None and same_clip_scope(req.scope, added.scope, known_scopes)
+    ]
+
+
 def apply_updates(
     prior: CreativeBrief | None,
     updates: Iterable[BriefUpdate],
@@ -753,6 +787,8 @@ def apply_updates(
     incoming: list[BriefRequirement] = []
     changed: dict[str, BriefRequirement] = {}
     removed: set[str] = set()
+    replaced: set[str] = set()
+    pending: list[BriefRequirement] = []
     for update in updates:
         if update.operation == "remove":
             removed.add(update.target_requirement_id or "")
@@ -812,10 +848,32 @@ def apply_updates(
             ),
             source_turn_id=source_turn_id,
         )
-        incoming.append(
-            added.model_copy(update={"authority": stamp_authority(added, creator_text)})
-        )
+        pending.append(added)
         counter += 1
+    # KRI-856/857: an add restating a photo's hold, once every change in the batch is known.
+    # Only the creator's own turn can retire or inherit a hold: a projection (no text) never
+    # does, so a preview the editor diffs into ops cannot turn into a creator removal.
+    known_scopes = [req.scope for req in prior.requirements]
+    for added in pending:
+        earlier = (
+            _holds_on_scope(
+                [changed.get(req.id, req) for req in prior.live() if req.id not in removed],
+                added,
+                known_scopes,
+            )
+            if creator_text
+            else []
+        )
+        applied = next(
+            (r for r in reversed(earlier) if r.authority in {"explicit", "accepted", "cleared"}),
+            None,
+        )
+        added = added.model_copy(  # noqa: PLW2901 - same requirement, stamped
+            update={"authority": stamp_authority(added, creator_text, applied)}
+        )
+        if added.authority is not None:
+            replaced.update(req.id for req in earlier)
+        incoming.append(added)
     # KRI-994: a later typed "video clips only" ask withdraws an earlier typed photo ask.
     withdrawn = withdrawn_photo_asks(
         prior.live(),
@@ -845,6 +903,8 @@ def apply_updates(
                 )
             else:
                 requirements.append(req)
+        elif req.id in replaced and req.live:
+            requirements.append(req.model_copy(update={"status": "superseded"}))
         elif req.id in changed and req.live:
             requirements.append(changed[req.id])
         elif req.id in withdrawn and req.live:
@@ -1767,6 +1827,37 @@ def load_latest_brief_sync(db: Any, thread_id: uuid.UUID) -> CreativeBrief | Non
         .limit(1)
     ).scalar_one_or_none()
     return _brief_from_row(row)
+
+
+def _briefs_from_rows(rows: Iterable[Any]) -> list[CreativeBrief]:
+    history: list[CreativeBrief] = []
+    for row in rows:
+        try:
+            brief = _brief_from_row(row)
+        except ValueError:
+            continue
+        if brief is not None:
+            history.append(brief)
+    return history
+
+
+def _brief_history_stmt(thread_id: uuid.UUID):  # noqa: ANN202
+    return (
+        select(CreativeBriefVersion)
+        .where(CreativeBriefVersion.thread_id == thread_id)
+        .order_by(CreativeBriefVersion.version)
+    )
+
+
+def load_brief_history_sync(db: Any, thread_id: uuid.UUID) -> list[CreativeBrief]:
+    """Every stored brief version of a thread, oldest first. A row that no longer parses is
+    left out (the newest is still read strictly by `load_latest_brief_sync`)."""
+    return _briefs_from_rows(db.execute(_brief_history_stmt(thread_id)).scalars())
+
+
+async def load_brief_history(db: Any, thread_id: uuid.UUID) -> list[CreativeBrief]:
+    """`load_brief_history_sync` on an async session."""
+    return _briefs_from_rows((await db.execute(_brief_history_stmt(thread_id))).scalars())
 
 
 def _creator_turn_text_sync(db: Any, thread_id: uuid.UUID, turn_id: uuid.UUID) -> str | None:

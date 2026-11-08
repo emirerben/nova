@@ -39,8 +39,9 @@ from starlette.requests import Request
 
 from app.auth import get_current_user
 from app.config import settings
+from app.database import AsyncSessionLocal, sync_session
 from app.database import engine as async_engine
-from app.database import sync_session
+from app.kria.runtime import read_delta
 from app.models import CreationThread, CreationThreadEvent, CreatorAgentTurn
 from app.routes.creation_threads import RenameBody, rename_thread
 from app.services.creation_thread_titles import generate_thread_title
@@ -55,7 +56,12 @@ try:
 except OperationalError:
     pytest.skip("nova_test Postgres not reachable", allow_module_level=True)
 
-from tests.kria.test_kri552_duplicate_send_postgres import _append, _planned, _send  # noqa: E402
+from tests.kria.test_kri552_duplicate_send_postgres import (  # noqa: E402
+    _SUMMARY,
+    _append,
+    _planned,
+    _send,
+)
 from tests.kria.test_runtime_postgres_integration import _seed_runtime_project  # noqa: E402
 
 # The M1 prompt of prod rev 12, word for word.
@@ -109,6 +115,36 @@ def _untitled_chat() -> tuple[uuid.UUID, uuid.UUID]:
     return user_id, thread_id
 
 
+async def _rename(sessions, user_id: uuid.UUID, thread_id: uuid.UUID, title: str) -> None:  # noqa: ANN001
+    """The chat list renaming the chat, with the revision it last polled."""
+    async with sessions() as db:
+        thread = await db.get(CreationThread, thread_id)
+        seen = int(thread.revision)
+        await db.rollback()
+        user = await get_current_user(
+            x_user_id=str(user_id),
+            authorization=f"Bearer {settings.internal_api_key}",
+            db=db,
+        )
+        await rename_thread(
+            Request(
+                {
+                    "type": "http",
+                    "method": "PATCH",
+                    "path": "/",
+                    "headers": [],
+                    "client": (f"test-{uuid.uuid4()}", 0),
+                }
+            ),
+            str(thread_id),
+            RenameBody(
+                title=title, expected_revision=seen, client_event_id=f"kri1075-{uuid.uuid4().hex}"
+            ),
+            user,
+            db,
+        )
+
+
 async def _while_planning(user_id: uuid.UUID, thread_id: uuid.UUID, *, add_clip: bool) -> None:
     """Prod revs 13–15 from inside the planner: the auto title, then two renames.
 
@@ -127,35 +163,7 @@ async def _while_planning(user_id: uuid.UUID, thread_id: uuid.UUID, *, add_clip:
         ):
             await generate_thread_title(thread_id)
         for title in (_TYPO, _FIXED):
-            async with sessions() as db:
-                # The chat list holds the revision it last polled.
-                thread = await db.get(CreationThread, thread_id)
-                seen = int(thread.revision)
-                await db.rollback()
-                user = await get_current_user(
-                    x_user_id=str(user_id),
-                    authorization=f"Bearer {settings.internal_api_key}",
-                    db=db,
-                )
-                await rename_thread(
-                    Request(
-                        {
-                            "type": "http",
-                            "method": "PATCH",
-                            "path": "/",
-                            "headers": [],
-                            "client": (f"test-{uuid.uuid4()}", 0),
-                        }
-                    ),
-                    str(thread_id),
-                    RenameBody(
-                        title=title,
-                        expected_revision=seen,
-                        client_event_id=f"kri1075-{uuid.uuid4().hex}",
-                    ),
-                    user,
-                    db,
-                )
+            await _rename(sessions, user_id, thread_id, title)
     finally:
         await engine.dispose()
     if add_clip:
@@ -254,3 +262,148 @@ async def test_a_clip_added_alongside_the_renames_still_replans(
     assert republished == [turn.turn_id]
     with sync_session() as db:
         assert db.get(CreatorAgentTurn, uuid.UUID(turn.turn_id)).status == "pending"
+
+
+# KRI-1262: a chat that opened with the stock "Suggest an edit." is named from the plan.
+#
+# Failure modes: the stock prompt becoming the title; a title generated before any plan; the
+# plan never arriving (the placeholder stays, nothing breaks); a rename before the plan being
+# overwritten by the generated name (KRI-1075: the creator's name always wins); the generated
+# title's revision bump throwing away the plan in flight; a second draft commit renaming again.
+_STOCK = "Suggest an edit."
+
+
+async def _generate_title(summaries: list[tuple[str, bool]], thread_id: uuid.UUID) -> None:
+    """`generate_thread_title` the way the API runs it, with the model stubbed."""
+    engine = create_async_engine(settings.asyncpg_database_url, poolclass=NullPool)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def _summarize(text: str, *, from_plan: bool = False) -> str:
+        summaries.append((text, from_plan))
+        return "Whisk To Order"
+
+    try:
+        with (
+            patch("app.services.creation_thread_titles.AsyncSessionLocal", sessions),
+            patch("app.services.creation_thread_titles._summarize", _summarize),
+        ):
+            await generate_thread_title(thread_id)
+    finally:
+        await engine.dispose()
+
+
+def _title_state(thread_id: uuid.UUID) -> tuple[str, dict]:
+    with sync_session() as db:
+        thread = db.get(CreationThread, thread_id)
+        return thread.title, {
+            k: v for k, v in (thread.state or {}).items() if k.startswith("title_")
+        }
+
+
+@pytest.mark.asyncio
+async def test_a_stock_prompt_chat_is_named_from_the_plan_once_the_planner_has_one(
+    monkeypatch: pytest.MonkeyPatch, republished: list[str]
+) -> None:
+    user_id, thread_id = _untitled_chat()
+    monkeypatch.setattr(
+        "app.tasks.kria_runtime._plan_with_live_agent", lambda *_a, **_k: _async(_planned())
+    )
+    turn = await _send(user_id, thread_id, _STOCK)
+
+    title, state = _title_state(thread_id)
+    assert title == "Untitled video" and state["title_generation"] == "deferred"
+    summaries: list[tuple[str, bool]] = []
+    with patch("app.kria.runtime.start_title_generation") as started:
+        async with AsyncSessionLocal() as db:
+            await read_delta(
+                db, thread_id=thread_id, creator_id=user_id, after_sequence=-1, limit=5
+            )
+    started.assert_not_called()
+    await _generate_title(summaries, thread_id)
+    assert summaries == [] and _title_state(thread_id)[0] == "Untitled video"
+
+    result = await asyncio.to_thread(run_kria_turn.run, turn.turn_id)
+
+    assert result["status"] == "awaiting_approval"
+    title, state = _title_state(thread_id)
+    assert title == "Untitled video" and state["title_generation"] == "pending"
+    # The worker cannot run the API's naming task, so the creator's next poll starts it.
+    with patch("app.kria.runtime.start_title_generation") as started:
+        async with AsyncSessionLocal() as db:
+            await read_delta(
+                db, thread_id=thread_id, creator_id=user_id, after_sequence=-1, limit=5
+            )
+    started.assert_called_once_with(thread_id)
+    await _generate_title(summaries, thread_id)
+    assert summaries == [(_SUMMARY, True)]
+    title, state = _title_state(thread_id)
+    assert title == "Whisk To Order"
+    assert (state["title_source"], state["title_generation"]) == ("generated", "completed")
+    assert "title_plan_text" not in state
+    with sync_session() as db:
+        kinds = [
+            e.event_type
+            for e in db.scalars(
+                select(CreationThreadEvent).where(CreationThreadEvent.thread_id == thread_id)
+            )
+        ]
+    assert kinds.count("thread_title_generated") == 1
+    assert republished == []
+    # The title landing after the draft must not make the creator's next tap stale.
+    follow_up = await _send(user_id, thread_id, "Make it 20 seconds instead.")
+    assert follow_up.turn_id != turn.turn_id
+
+
+@pytest.mark.asyncio
+async def test_a_rename_while_a_stock_prompt_chat_plans_keeps_the_creators_name(
+    monkeypatch: pytest.MonkeyPatch, republished: list[str]
+) -> None:
+    user_id, thread_id = _untitled_chat()
+
+    async def _planner(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        engine = create_async_engine(settings.asyncpg_database_url, poolclass=NullPool)
+        try:
+            await _rename(
+                async_sessionmaker(engine, expire_on_commit=False), user_id, thread_id, _FIXED
+            )
+        finally:
+            await engine.dispose()
+        return _planned()
+
+    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _planner)
+    turn = await _send(user_id, thread_id, _STOCK)
+
+    result = await asyncio.to_thread(run_kria_turn.run, turn.turn_id)
+
+    assert result == {"turn_id": turn.turn_id, "status": "awaiting_approval"}
+    assert republished == []
+    title, state = _title_state(thread_id)
+    assert title == _FIXED
+    assert (state["title_source"], state["title_generation"]) == ("user", "deferred")
+    summaries: list[tuple[str, bool]] = []
+    await _generate_title(summaries, thread_id)
+    assert summaries == [] and _title_state(thread_id)[0] == _FIXED
+
+
+@pytest.mark.asyncio
+async def test_a_second_draft_does_not_rename_a_named_stock_prompt_chat(
+    monkeypatch: pytest.MonkeyPatch, republished: list[str]
+) -> None:
+    user_id, thread_id = _untitled_chat()
+    monkeypatch.setattr(
+        "app.tasks.kria_runtime._plan_with_live_agent", lambda *_a, **_k: _async(_planned())
+    )
+    first = await _send(user_id, thread_id, _STOCK)
+    await asyncio.to_thread(run_kria_turn.run, first.turn_id)
+    await _generate_title([], thread_id)
+    named = _title_state(thread_id)
+
+    second = await _send(user_id, thread_id, "Make it 20 seconds instead.")
+    await asyncio.to_thread(run_kria_turn.run, second.turn_id)
+
+    assert _title_state(thread_id) == named
+    assert named[0] == "Whisk To Order"
+
+
+async def _async(value):  # noqa: ANN001, ANN202
+    return value

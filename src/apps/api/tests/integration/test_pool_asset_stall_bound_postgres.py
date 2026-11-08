@@ -27,6 +27,18 @@ Failure modes covered (written before the fix, plan.md F1-F14):
   F18    a timeout the reaper already persisted is omitted by creator
          preparation without a second paid inline analysis
 
+#2183 (KRI-1240 revert, the unified worker is the only visuals-analysis
+consumer at --concurrency=1). Failure modes, written before the change:
+  F19    a healthy 14-photo burst that only waits on the single shared lane
+         (each predecessor 239 s, under the 240 s soft limit) times out
+  F20    the lane is already busy with one non-analysis task (a 40-min Drive
+         import / 30-min render) when the burst lands, and the burst times out
+  F21    a photo queued behind videos is budgeted as if they were photos
+  F22    a truly lost broker message no longer terminates (the cap is gone or
+         unreachable), or Retry after its timeout does not recover the asset
+  F23    the regression does not discriminate: the pre-#2183 budget (two
+         slots, no occupant, 60-min cap) passes the same burst
+
 Writes `.dev/kri-820-e2e/report.json` at the repo root.
 """
 
@@ -391,12 +403,13 @@ async def test_queue_backlog_widens_the_claim_window_not_the_run_window(env, own
     await _queue(owner, last)
     queued = _row(last)
     claim = queued.analysis_deadline_at - t0 - bound.run_window("image")
-    # 40 ahead at concurrency 2 = 20 waves of a 300 s worst-case run, capped at 60 min.
-    assert claim >= bound.claim_window("image", 40) - timedelta(seconds=5)
+    # 40 photos ahead on the one shared slot: 10 + 40 + 40 x 7 min, capped at 4 h.
+    slot = bound.queue_slot_s("image")
+    assert claim >= bound.claim_window("image", 40 * slot) - timedelta(seconds=5)
     assert claim > bound.claim_window("image")
-    assert bound.claim_window("image", 40) == timedelta(minutes=60)
-    assert bound.claim_window("image", 4) == timedelta(minutes=20)
-    assert bound.claim_window("image", 10_000) == timedelta(minutes=60)
+    assert bound.claim_window("image", 40 * slot) == timedelta(hours=4)
+    assert bound.claim_window("image", 4 * slot) == timedelta(minutes=10 + 40 + 4 * 7)
+    assert bound.claim_window("image", 10_000 * slot) == timedelta(hours=4)
 
     # Still waiting in line 30 min later: neither the read nor the reaper fails it.
     _age(last, timedelta(minutes=30))
@@ -412,6 +425,7 @@ async def test_queue_backlog_widens_the_claim_window_not_the_run_window(env, own
     _step(
         "queue_backlog_claim_window",
         queue_ahead=40,
+        backlog_s=40 * slot,
         claim_window_s=claim.total_seconds(),
         run_window_s=bound.run_window("image").total_seconds(),
         waited_min=30,
@@ -693,3 +707,118 @@ def test_media_library_redispatch_is_capped(env, owner, monkeypatch) -> None:
 def test_report_has_wall_clock(env) -> None:
     REPORT["generated_at"] = datetime.now(UTC).isoformat()
     REPORT["generated_monotonic"] = time.monotonic()
+
+
+_HEALTHY_RUN = timedelta(seconds=239)  # under the 240 s soft limit
+_DRIVE_IMPORT = timedelta(seconds=2400)  # the longest task the worker can be running
+
+
+async def _slow_burst_on_one_lane(owner, files: int, occupant: timedelta) -> dict[str, tuple]:
+    """Upload `files` photos at once, then let ONE slot work through them.
+
+    Every upload goes through the real dispatch route, so each attempt's
+    deadline is sized by the live backlog ahead of it. The lane first finishes
+    `occupant` of other work, then claims the photos in upload order, each run
+    taking `_HEALTHY_RUN`. Time moves by ageing every committed clock; the real
+    reaper sweeps after every step and the real task body claims and persists.
+    """
+    ids = [_add_asset(owner, name=f"burst-{i:02d}.jpg") for i in range(files)]
+    for aid in ids:
+        await _queue(owner, aid)
+
+    def advance(by: timedelta) -> None:
+        for aid in ids:
+            _age(aid, by)
+        maintenance.reconcile_stale_pool_assets()
+
+    advance(occupant)
+    for aid in ids:
+        row = _row(aid)
+        if row.status == "queued":
+            _run_task(aid, row.analysis_attempt_token, _ok_analysis(aid))
+        advance(_HEALTHY_RUN)
+    return {aid: (_row(aid).status, _row(aid).error_code) for aid in ids}
+
+
+async def test_slow_burst_behind_a_busy_shared_lane_never_times_out(env, owner) -> None:
+    # F19/F20: Qendresa-sized burst (14 Visuals) behind a 40-min Drive import.
+    outcomes = await _slow_burst_on_one_lane(owner, files=14, occupant=_DRIVE_IMPORT)
+    assert {status for status, _code in outcomes.values()} == {"ready"}, outcomes
+    _step(
+        "slow_burst_single_lane",
+        files=14,
+        occupant_s=_DRIVE_IMPORT.total_seconds(),
+        run_s=_HEALTHY_RUN.total_seconds(),
+        outcomes=sorted({status for status, _code in outcomes.values()}),
+    )
+
+
+async def test_pre_revert_budget_fails_the_same_burst(env, owner, monkeypatch) -> None:
+    # F23 red control: the budget #2183 replaces (two slots, 300 s per photo
+    # ahead, no occupant, 60-min cap) times the same healthy burst out, even
+    # with only a 30-min render on the lane.
+    monkeypatch.setattr(bound, "_QUEUE_CONCURRENCY", 2)
+    monkeypatch.setattr(bound, "_LANE_OCCUPANT", timedelta(0))
+    monkeypatch.setattr(bound, "_CLAIM_WINDOW_CAP", timedelta(minutes=60))
+    monkeypatch.setattr(
+        bound, "_QUEUE_SLOT", {"image": timedelta(seconds=300), "video": timedelta(seconds=720)}
+    )
+    outcomes = await _slow_burst_on_one_lane(owner, files=14, occupant=timedelta(seconds=1800))
+    timed_out = [aid for aid, (_s, code) in outcomes.items() if code == bound.TIMED_OUT_CODE]
+    assert timed_out, outcomes
+    _step("slow_burst_red_control_pre_revert_budget", files=14, timed_out=len(timed_out))
+
+
+async def test_backlog_counts_videos_ahead_at_the_video_slot(env, owner) -> None:
+    # F21: the line ahead is weighted by what is in it, not by the new file's kind.
+    far = datetime.now(UTC) + timedelta(hours=1)
+    for i in range(3):
+        _add_asset(owner, name=f"v{i}.mov", kind="video", status="queued", analysis_deadline_at=far)
+    for i in range(2):
+        _add_asset(owner, name=f"p{i}.jpg", status="analyzing", analysis_deadline_at=far)
+    expired = datetime.now(UTC) - timedelta(minutes=1)
+    _add_asset(owner, name="gone.jpg", status="queued", analysis_deadline_at=expired)
+    with sync_session() as db:
+        mine = select(PlanItemAsset.id).where(PlanItemAsset.user_id == owner.user_id)
+        others = db.execute(
+            bound.queue_backlog_stmt(datetime.now(UTC)).where(PlanItemAsset.id.not_in(mine))
+        ).scalar()
+        total = db.execute(bound.queue_backlog_stmt(datetime.now(UTC))).scalar()
+    assert total - others == 3 * bound.queue_slot_s("video") + 2 * bound.queue_slot_s("image")
+
+
+async def test_lost_message_on_a_quiet_lane_still_ends_and_retry_recovers(env, owner) -> None:
+    # F22 recovery control: a dispatch whose broker message is lost (nothing
+    # ever claims it) still becomes a retryable timeout within its bound, and
+    # Retry mints a fresh attempt that the lane then completes.
+    lost = _add_asset(owner, name="lost.jpg")
+    t0 = datetime.now(UTC)
+    await _queue(owner, lost)
+    queued = _row(lost)
+    deadline = queued.analysis_deadline_at
+    assert deadline - t0 <= bound.max_dispatch_window() + timedelta(seconds=5)
+
+    _age(lost, deadline - t0 - timedelta(minutes=1))
+    maintenance.reconcile_stale_pool_assets()
+    assert _row(lost).status == "queued"  # still inside its bound
+
+    _age(lost, timedelta(minutes=2))
+    maintenance.reconcile_stale_pool_assets()
+    failed = _row(lost)
+    assert (failed.status, failed.error_code, failed.error_retryable) == (
+        "failed",
+        bound.TIMED_OUT_CODE,
+        True,
+    )
+
+    await _reanalyze(owner, lost)
+    retried = _row(lost)
+    assert retried.status == "queued"
+    assert retried.analysis_attempt_token != queued.analysis_attempt_token
+    _run_task(lost, retried.analysis_attempt_token, _ok_analysis("found"))
+    assert _row(lost).status == "ready"
+    _step(
+        "lost_message_terminates_then_retry_recovers",
+        bound_s=(deadline - t0).total_seconds(),
+        final="ready",
+    )

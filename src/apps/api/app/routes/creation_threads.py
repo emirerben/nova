@@ -52,6 +52,7 @@ from app.kria.api_schemas import (
     SuggestionTapIn,
     ThreadDeltaOut,
 )
+from app.kria.brief import CreativeBrief
 from app.kria.device_render import DeviceRenderCapabilities
 from app.kria.http import KriaFailureRoute, problem_response
 from app.kria.language import is_status_question
@@ -448,9 +449,6 @@ class CreationCapabilitiesOut(BaseModel):
     speaker_background_color: bool = False
     # KRI-742: the chat composers show a mic button (VOICE_DICTATION_ENABLED).
     voice_dictation: bool = False
-    # Qendresa item 24: the Add media sheet shows the "screen recording belongs in Overlays"
-    # hint (UPLOAD_PLACE_HINT_ENABLED). Additive key; no client protocol gate.
-    upload_place_hint: bool = False
     slide_post_extended_device_export: bool = False
     # KRI-374: the server may ask the creator to confirm the order of takes it
     # could not place against their song (`song_order_question` on a turn plan).
@@ -2249,23 +2247,10 @@ async def _duplicate(
     ).scalar_one_or_none()
 
 
-def _job_projection_in_chat_language(
-    thread: CreationThread, job: Job | None, item: Any
-) -> dict[str, Any] | None:
-    """`_job_projection` with the chat's language bound, so render notes read in it."""
-    with reply_language_for(thread_reply_language(thread)):
-        return _job_projection(job, item=item)
-
-
 def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | None:
     if job is None:
         return None
     from app.routes.generative_jobs import _variants_for_response
-    from app.services.nova_steps import (
-        render_notes_from_beat_receipt,
-        render_notes_from_overlay_receipt,
-        render_notes_from_talking_multi_clip_receipt,
-    )
     from app.tasks.content_plan_build import job_failure_message
 
     # Re-signing is authoritative. A storage/signing outage must be visible to
@@ -2280,35 +2265,6 @@ def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | No
     for value in variants:
         if isinstance(value, dict) and value.get("variant_id"):
             value["delivery_phase"] = variant_delivery_phase(job, value.get("variant_id"))
-    # KRI-178/KRI-183: same "primary variant" rule as `creator_sessions.py`
-    # -- the first variant dict that carries a `variant_id` at all (there is
-    # only ever one live variant on a phone job). Render notes are a
-    # creator-safe projection of that variant's `phone_beat_receipt` (named
-    # reaction moments) followed by its `phone_overlay_receipt` (the
-    # Visuals-as-cards matcher); each is `[]` on its own when the job never
-    # carried that lane (flag off, nothing requested, or not a
-    # phone-subtitled job at all), so either or both can contribute lines.
-    primary_variant = next(
-        (value for value in variants if isinstance(value, dict) and value.get("variant_id")),
-        None,
-    )
-    render_notes = render_notes_from_beat_receipt(
-        primary_variant.get("phone_beat_receipt") if primary_variant is not None else None
-    ) + render_notes_from_overlay_receipt(
-        primary_variant.get("phone_overlay_receipt") if primary_variant is not None else None
-    )
-    # KRI-719: which clips spoke back to back and which other clips found room.
-    render_notes += render_notes_from_talking_multi_clip_receipt(
-        primary_variant.get("phone_talking_multi_clip") if primary_variant is not None else None
-    )
-    # KRI-286: what the phone compiler repaired so this plan could render (never silent).
-    repair_notes = primary_variant.get("phone_repair_notes") if primary_variant else None
-    if isinstance(repair_notes, list):
-        render_notes += [note for note in repair_notes if isinstance(note, str) and note]
-    # What the phone's export check could not confirm (advisory; the video still shipped).
-    export_notes = primary_variant.get("export_check_notes") if primary_variant else None
-    if isinstance(export_notes, list):
-        render_notes += [note for note in export_notes if isinstance(note, str) and note]
     return {
         "id": str(job.id),
         "status": job.status,
@@ -2321,7 +2277,6 @@ def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | No
             job.failure_reason, getattr(job, "error_detail", None)
         ),
         "variants": variants,
-        "render_notes": render_notes,
     }
 
 
@@ -3437,8 +3392,111 @@ async def _render_shape_projection(
         return None
 
 
+async def _pending_approval_brief(
+    db: AsyncSession, thread: CreationThread
+) -> tuple[CreativeBrief | None, dict[str, Any] | None]:
+    """The brief pinned to the newest pending approval's draft, with that draft snapshot."""
+    from app.services import render_shape  # noqa: PLC0415
+
+    if int(getattr(thread, "runtime_version", 1)) != 2:
+        return None, None
+    snapshot = (
+        await db.execute(
+            select(CreatorEditDraft.snapshot_json)
+            .join(CreatorAgentApproval, CreatorAgentApproval.draft_id == CreatorEditDraft.id)
+            .where(
+                CreatorAgentApproval.thread_id == thread.id,
+                CreatorAgentApproval.status == "pending",
+            )
+            .order_by(CreatorAgentApproval.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if not isinstance(snapshot, dict):
+        return None, None
+    return render_shape.readable_brief(snapshot.get("brief_binding")), snapshot
+
+
+async def _pending_approval_brief_or_none(
+    db: AsyncSession, thread: CreationThread
+) -> tuple[CreativeBrief | None, dict[str, Any] | None]:
+    """``_pending_approval_brief`` for a hot read path: unreadable is ``(None, None)``."""
+    try:
+        return await _pending_approval_brief(db, thread)
+    except Exception:  # noqa: BLE001 - an optional projection never breaks a read
+        log.warning("creation_thread.pending_approval_brief_failed", exc_info=True)
+        return None, None
+
+
+async def _keeps_original_speech_ask(
+    db: AsyncSession,
+    thread: CreationThread,
+    pending: tuple[CreativeBrief | None, dict[str, Any] | None] | None = None,
+) -> bool:
+    """KRI-971: the pending brief asks to keep the clip whole / the speech as filmed, so the
+    cleanup card should lead with "Keep original speech". Best-effort like the projection
+    above: anything unreadable is False and never breaks the thread read. ``pending`` is the
+    brief the caller already loaded, so a thread read runs the approval query once."""
+    from app.kria.tight_pause_ask import brief_wants_original_speech  # noqa: PLC0415
+
+    try:
+        brief, _snapshot = (
+            pending if pending is not None else await _pending_approval_brief(db, thread)
+        )
+        return brief_wants_original_speech(brief)
+    except Exception:  # noqa: BLE001 - an optional projection never breaks a read
+        log.warning("creation_thread.keeps_original_speech_projection_failed", exc_info=True)
+        return False
+
+
+async def _brief_answers_cleanup_ask(
+    db: AsyncSession,
+    thread: CreationThread,
+    pending: tuple[CreativeBrief | None, dict[str, Any] | None],
+) -> bool:
+    """KRI-1291: the pending brief keeps the take whole (the caller checked), so this build's
+    card, which leads with "Clean up speech", is not asked. Only for the approval whose plain
+    create `_apply_strategy_approval_media` answers with keep_original: a pending strategy
+    approval, not a render retry (a retry ignores the cleanup choice). Reads only."""
+    from app.kria.render_retry import RETRY_FIELD  # noqa: PLC0415
+    from app.services.client_protocol import cleanup_card_ignores_keep_original  # noqa: PLC0415
+
+    _brief, snapshot = pending
+    if not (
+        cleanup_card_ignores_keep_original()
+        and isinstance(snapshot, dict)
+        and snapshot.get("kind") == "strategy"
+    ):
+        return False
+    try:
+        execution_ids = (
+            await db.execute(
+                select(CreatorAgentApproval.execution_ids)
+                .where(
+                    CreatorAgentApproval.thread_id == thread.id,
+                    CreatorAgentApproval.status == "pending",
+                )
+                .order_by(CreatorAgentApproval.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        execution = (
+            await db.get(CreatorAgentExecution, uuid.UUID(str(execution_ids[0])))
+            if execution_ids
+            else None
+        )
+    except Exception:  # noqa: BLE001 - an optional projection never breaks a read
+        log.warning("creation_thread.cleanup_ask_approval_lookup_failed", exc_info=True)
+        return False
+    result = execution.result if execution is not None else None
+    return not (isinstance(result, dict) and isinstance(result.get(RETRY_FIELD), dict))
+
+
 async def _cleanup_ask_projection(
-    db: AsyncSession, thread: CreationThread, item: PlanItem
+    db: AsyncSession,
+    thread: CreationThread,
+    item: PlanItem,
+    pending: tuple[CreativeBrief | None, dict[str, Any] | None] | None = None,
 ) -> tuple[bool, bool]:
     """Qendresa 13: ``(requested_in_chat, tight)`` for the speech-cleanup card.
 
@@ -3452,27 +3510,12 @@ async def _cleanup_ask_projection(
         brief_tight_pauses,
         brief_wants_speech_cleanup,
     )
-    from app.services import render_shape  # noqa: PLC0415
 
     try:
-        if int(getattr(thread, "runtime_version", 1)) != 2:
-            return False, False
-        snapshot = (
-            await db.execute(
-                select(CreatorEditDraft.snapshot_json)
-                .join(CreatorAgentApproval, CreatorAgentApproval.draft_id == CreatorEditDraft.id)
-                .where(
-                    CreatorAgentApproval.thread_id == thread.id,
-                    CreatorAgentApproval.status == "pending",
-                )
-                .order_by(CreatorAgentApproval.created_at.desc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-        if not isinstance(snapshot, dict):
-            return False, False
-        brief = render_shape.readable_brief(snapshot.get("brief_binding"))
-        if brief is None or not brief_wants_speech_cleanup(brief):
+        brief, snapshot = (
+            pending if pending is not None else await _pending_approval_brief(db, thread)
+        )
+        if brief is None or snapshot is None or not brief_wants_speech_cleanup(brief):
             return False, False
         if not brief_tight_pauses(brief):
             return True, False
@@ -3660,12 +3703,24 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
                 # every legacy required_v1 Job. An item genuinely in the cohort
                 # still gets its card through in_cohort.
                 speech_cleanup = None
-            if settings.tight_pause_cut_enabled and isinstance(speech_cleanup, dict):
-                requested, tight = await _cleanup_ask_projection(db, thread, item)
-                if requested:
-                    speech_cleanup["requested_in_chat"] = True
-                if tight:
-                    speech_cleanup["pause_style"] = "tight"
+            if isinstance(speech_cleanup, dict):
+                # One approval query serves both projections on this polled read.
+                pending = await _pending_approval_brief_or_none(db, thread)
+                if settings.tight_pause_cut_enabled:
+                    requested, tight = await _cleanup_ask_projection(db, thread, item, pending)
+                    if requested:
+                        speech_cleanup["requested_in_chat"] = True
+                    if tight:
+                        speech_cleanup["pause_style"] = "tight"
+                if await _keeps_original_speech_ask(db, thread, pending):
+                    # KRI-971: apps below KEEP_ORIGINAL_CARD_PROTOCOL ignore this.
+                    speech_cleanup["recommended_choice"] = "keep_original"
+                    if (
+                        in_cohort
+                        and speech_cleanup["requires_choice"]
+                        and await _brief_answers_cleanup_ask(db, thread, pending)
+                    ):
+                        speech_cleanup["requires_choice"] = False
     render_shape_projection = None
     if isinstance(db, AsyncSession) and item is not None:
         render_shape_projection = await _render_shape_projection(db, thread, item, session)
@@ -3700,7 +3755,7 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
         else None,
         active_job_id=str(response_active_job_id) if response_active_job_id else None,
         creator_agent=_creator_agent_projection(session, item=item),
-        job=_job_projection_in_chat_language(thread, job, item),
+        job=_job_projection(job, item=item),
         media_capabilities=media_capabilities,
         direction_receipt=direction_receipt,
         speech_cleanup=speech_cleanup,
@@ -4230,7 +4285,6 @@ async def capabilities(
             settings.voice_dictation_enabled
             and (settings.openai_api_key or settings.whisper_backend != "openai-api")
         ),
-        "upload_place_hint": bool(settings.upload_place_hint_enabled),
         "creation_mode": (
             "device_only" if settings.ios_device_only_mode or native_device_only else "hybrid"
         ),

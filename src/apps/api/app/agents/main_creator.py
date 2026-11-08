@@ -261,9 +261,9 @@ for it full screen: only then set `display_mode` "fullscreen" ("show the grill p
 when I say Argentinian", "'oblea' dediğinde fotoğraf tam ekran gelsin"); a small card, "in the
 corner" or no mention is "pip" (omit it). Do this only when the manifest advertises
 `media_overlays:fullscreen`; otherwise keep the photo a corner card and say so plainly in
-`summary`. "For a moment", "briefly" or "bir an" means `hold_s` 1.0 to 1.5. A full-screen photo
-at a spoken word is a beat with `display_mode` "fullscreen", never `overlay_display`
-"fullscreen_images" (that spreads photos evenly, not at a word).
+`summary`. For a photo beat, "for a moment", "briefly" or "bir an" means `hold_s` 1.0 to 1.5. A
+full-screen photo at a spoken word is a beat with `display_mode` "fullscreen", never
+`overlay_display` "fullscreen_images" (that spreads photos evenly, not at a word).
 This edit always stays `edit_format: "subtitled"`. Beats never
 replace a title: when the creator asks for a hook/opening title or closing text, still set
 `opening_title` / `closing_title` by the title rules above, alongside the beats.
@@ -601,7 +601,11 @@ copied as spoken from the speaker clip's timed `segments` (or transcript) in
 in the order those words are spoken; each one shows on its words and stays until the next. Two
 photos or videos of the same thing get the same spoken_phrase and play one after the other in the
 order listed. Leave out any photo or video they never talk about and name it in `summary` ("I left
-out the lunch photo: you don't talk about it"). When the creator pairs only some photos with words
+out the lunch photo: you don't talk about it"). Also list each one in `background_media.left_out`
+as {"name": "<its name, in their language>", "why": "no_recording" (they talk about it but no
+photo or video for it is attached, so the previous one stays on) or "not_said" (one is attached
+but they never mention it)}; the finished video's reply tells them, `summary` is not shown then.
+Leave `left_out` out when nothing is left out. When the creator pairs only some photos with words
 ("the beach photo when I say beach"), give only those a `spoken_phrase`. Otherwise (a plain
 rotation such as "change every 3 seconds") leave it out and the photos take turns in the order
 listed. Without a stated rhythm they change every 4 seconds; set `cadence_s` (2 to 10) when the
@@ -1031,11 +1035,20 @@ sticker, sound or on-screen text timed to spoken words ("show the medal photo wh
 the creator wrote them, never translated, plus "speaker" (the creator's words for who) only when
 someone other than the creator says them: "Show MEROPE in big letters the first time she says
 Merope" => a text requirement, literal "MEROPE", facts {"triggers": ["Merope"], "speaker":
-"she"}; a photo or video shown full screen ("tam ekran", "full screen") or as a small card
-("in the corner") => add "display_mode": "fullscreen" or "pip" to those same facts, nothing when
+"she"}; how long a text at a spoken word stays => "hold_s", the seconds as a number from their
+own words ("put PROVOLETA big on screen for about a second" when he says "grilled cheese" =>
+{"triggers": ["grilled cheese"], "hold_s": 1.0}; "bir saniye boyunca" => 1.0), the last length
+they state when they correct themselves ("for 1 second, no, 2 seconds" => 2.0); a later message
+that changes the length ("make it 3 seconds") MUST put the new `hold_s` in that same change,
+because the old `hold_s` stays when the change omits it; no `hold_s` when they name no length (for
+a text, "for a moment" or "a bit longer") or the seconds time the word, not the text ("within the
+first 5 seconds", "a second after he says it", "for a second time"); a photo or video shown full
+screen ("tam ekran", "full screen") or as a small card ("in the corner") => add "display_mode":
+"fullscreen" or "pip" to those same facts, nothing when
 the creator says neither; two photos shown differently in one message => ONE requirement per
-photo, each with its own display_mode; keep a take whole, uncut =>
-{"keep_whole_take": true}; end on a
+photo, each with its own display_mode; keep a take whole, uncut ("use the whole clip as it is",
+"don't trim anything", "keep everything") => {"keep_whole_take": true} plus
+"speech_cleanup": false when the take has speech; end on a
 particular shot, photo or badge => {"closing": "<the creator's words for it>"}; remove pauses or
 filler sounds from the speech => {"speech_cleanup": true}, keep them => {"speech_cleanup": false},
 every pause gone or a tight, fast pace, not only the long ones ("cut out all my pauses so it's

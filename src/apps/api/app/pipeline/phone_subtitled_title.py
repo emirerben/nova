@@ -46,6 +46,7 @@ word, the closing tag) fades in unless the creator asked for another entrance;
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
@@ -345,6 +346,108 @@ def source_box_to_canvas(
     return mapped
 
 
+# A picture that stops this far (canvas height) short of the top edge is framed by bars.
+_LETTERBOX_MIN_BAR_FRAC = 0.02
+# A row placed in the picture keeps this far (canvas height) off the picture's edges.
+_PICTURE_INSET_FRAC = 0.01
+_PICTURE_SHRINK = (1.0, 0.85, 0.72, 0.6)
+_PICTURE_SCAN_STEP = 0.02
+
+
+def picture_band(
+    display_width: float, display_height: float, canvas: _Canvas, scale: float
+) -> tuple[float, float] | None:
+    """The canvas rows (top, bottom; fractions of its height) the speaker's picture covers
+    when the phone engine letterboxes it (`source_box_to_canvas`'s map of the whole frame), or
+    ``None`` when the picture reaches the top and bottom edges (a cover fill, the identity)."""
+    if display_width <= 0 or display_height <= 0:
+        return None
+    cover = max(canvas.width / display_width, canvas.height / display_height)
+    half = display_height * cover / canvas.height * scale / 2.0
+    top, bottom = 0.5 - half, 0.5 + half
+    if top <= _LETTERBOX_MIN_BAR_FRAC:
+        return None
+    return round(top, _Y_FRAC_DECIMALS), round(bottom, _Y_FRAC_DECIMALS)
+
+
+def _inside_picture(box: NormalizedBox, band: tuple[float, float]) -> bool:
+    return box.top >= band[0] - 1e-6 and box.bottom <= band[1] + 1e-6
+
+
+def _fit_row_to_picture(
+    row: dict, band: tuple[float, float], canvas: _Canvas
+) -> tuple[dict, NormalizedBox]:
+    """``row`` at the largest of its sizes whose block is shorter than the picture band, with
+    that block's box (centred on the row's y)."""
+    base = row.get("size_px")
+    room = band[1] - band[0] - 2 * _PICTURE_INSET_FRAC
+    trial = dict(row)
+    box = _measure_title_box(trial, canvas=canvas)
+    for factor in _PICTURE_SHRINK[1:] if base else ():
+        if box.height <= room:
+            break
+        trial["size_px"] = max(1, round(float(base) * factor))
+        box = _measure_title_box(trial, canvas=canvas)
+    return trial, box
+
+
+def _picture_receipt(placed: dict, band: tuple[float, float], canvas: _Canvas) -> dict[str, Any]:
+    """The receipt keys of a row placed against a letterboxed picture: the band, and whether the
+    row as placed (its measured block at its own y) is inside it."""
+    box = _translate_centered_box_to_y(
+        _measure_title_box(placed, canvas=canvas), float(placed["y_frac"])
+    )
+    return {"picture_band": list(band), "inside_picture": _inside_picture(box, band)}
+
+
+def choose_picture_y_frac(
+    probe_box: NormalizedBox,
+    band: tuple[float, float],
+    faces: Sequence[NormalizedBox],
+    *,
+    avoid: Sequence[NormalizedBox] = (),
+) -> tuple[float, dict[str, Any]]:
+    """The spot inside the picture band (nearest its centre first) where the row covers no
+    face and none of the ``avoid`` text; else the in-band spot covering the least face.
+    Mirrors `choose_title_y_frac`, whose preset (y 0.15) is the bar on a letterboxed render."""
+    half = probe_box.height / 2.0
+    low, high = band[0] + _PICTURE_INSET_FRAC + half, band[1] - _PICTURE_INSET_FRAC - half
+    centre = (band[0] + band[1]) / 2.0
+    if high < low:
+        low = high = centre
+    steps = int((high - low) / _PICTURE_SCAN_STEP + 1e-9)
+    ys = {
+        round(min(high, low + i * _PICTURE_SCAN_STEP), _Y_FRAC_DECIMALS) for i in range(steps + 1)
+    }
+    ys.add(round(min(max(centre, low), high), _Y_FRAC_DECIMALS))
+    ordered = sorted(ys, key=lambda y: (abs(y - centre), y))
+    blocked = [*faces, *avoid]
+    evaluated: list[dict[str, Any]] = []
+    for y_frac in ordered:
+        box = _translate_centered_box_to_y(probe_box, y_frac)
+        coverage = round(max((box.coverage_by(f) for f in blocked), default=0.0), 5)
+        evaluated.append({"y_frac": y_frac, "coverage": coverage})
+        if coverage <= _MAX_FACE_COVERAGE:
+            return y_frac, {
+                "status": "preset" if y_frac == ordered[0] else "moved",
+                "chosen_y_frac": y_frac,
+                "coverage": coverage,
+            }
+    # Nothing clears the face and the text: the face wins, as everywhere else.
+    face_only = [
+        (round(max((_translate_centered_box_to_y(probe_box, y).coverage_by(f) for f in faces),
+                   default=0.0), 5), i, y)
+        for i, y in enumerate(ordered)
+    ]  # fmt: skip
+    coverage, _i, y_frac = min(face_only)
+    return y_frac, {
+        "status": "best_effort",
+        "chosen_y_frac": y_frac,
+        "coverage": coverage,
+        "face_collision": coverage > _MAX_FACE_COVERAGE,
+    }
+
+
 def _measure_title_box(row: dict, *, canvas: _Canvas) -> NormalizedBox:
     from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
     from app.pipeline.generative_overlays import build_overlays_from_text_elements  # noqa: PLC0415
@@ -521,6 +624,122 @@ def _face_boxes(
     return [], receipt
 
 
+# KRI-903: caption lines are short and faces move, so faces are sampled inside every line,
+# not at six spots across the take. A line gets one sample per this many seconds (at least
+# two), up to the cap on the whole take.
+_CAPTION_FACE_STEP_S = 0.75
+_CAPTION_FACE_MIN_PER_WINDOW = 2
+_CAPTION_FACE_MAX_PER_WINDOW = 4
+_CAPTION_FACE_MAX_ANCHORS = 60
+
+
+def caption_window_faces(
+    clip_path: str | None,
+    *,
+    windows: Sequence[tuple[float, float]],
+    keep_segments: Sequence[tuple[float, float]],
+    display_width: float,
+    display_height: float,
+    canvas: _Canvas,
+    scale: float,
+    sample: FaceSampler,
+    position_x: float = 0.0,
+) -> tuple[list[NormalizedBox], list[ProtectedRegion], dict[str, Any]]:
+    """Every face the speaker clip shows during each caption window (cut-timeline seconds),
+    on the canvas, for a creator who named a face to keep text off (KRI-903).
+
+    Returns ``(boxes, bands, receipt)``: every sampled face box, and one band per window
+    (the union of the faces seen at that window's samples, so a head moving inside a line is
+    covered across it, not only where it was sampled). Fail-safe like `_face_boxes`: a
+    sampler that did not confirm the frame (no clip, error, timeout, too few decoded frames)
+    protects the conservative fallback face beside any face it did detect
+    (``receipt["faces"] == "fallback"``)."""
+    per_window: list[list[float]] = []
+    for start_s, end_s in windows:
+        span = max(float(end_s) - float(start_s), 0.0)
+        count = min(
+            _CAPTION_FACE_MAX_PER_WINDOW,
+            max(_CAPTION_FACE_MIN_PER_WINDOW, math.ceil(span / _CAPTION_FACE_STEP_S)),
+        )
+        per_window.append([float(start_s) + span * (n + 0.5) / count for n in range(count)])
+    if sum(len(times) for times in per_window) > _CAPTION_FACE_MAX_ANCHORS:
+        # Too many lines to give each several samples: one per line, then every k-th line.
+        per_window = [[times[len(times) // 2]] for times in per_window]
+        stride = math.ceil(len(per_window) / _CAPTION_FACE_MAX_ANCHORS)
+        per_window = [
+            times if index % stride == 0 else [] for index, times in enumerate(per_window)
+        ]
+    # The take's six spread samples stay too (what `_face_boxes` always took): short lines
+    # alone could leave the sampler under its decoded-frames floor, and a face between two
+    # lines is still a face.
+    timeline_s = sum(max(0.0, float(end) - float(start)) for start, end in keep_segments)
+    spread = [timeline_s * (n + 0.5) / _FACE_ANCHORS for n in range(_FACE_ANCHORS)]
+    plans = [(-1, at_s) for at_s in spread]
+    plans += [(index, at_s) for index, times in enumerate(per_window) for at_s in times]
+    anchored: dict[float, int] = {}
+    for index, at_s in plans:
+        source_at = _output_to_source_s(at_s, keep_segments)
+        if source_at is not None:
+            anchored[round(source_at, 3)] = index
+    receipt: dict[str, Any] = {
+        "face_sampling": "skipped",
+        "anchors": len(anchored),
+        "windows": len(windows),
+    }
+    if clip_path is None or not anchored:
+        receipt["faces"] = "fallback"
+        return [_FALLBACK_FACE_BOX], [], receipt
+    anchors = sorted(anchored)
+    try:
+        regions, sampled = sample(
+            clip_path,
+            anchors,
+            max_samples=len(anchors),
+            timeout_s=_FACE_TIMEOUT_BASE_S + _FACE_TIMEOUT_PER_ANCHOR_S * len(anchors),
+            count_decoded=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - fail safe: protect the fallback face
+        receipt.update(face_sampling="failed", error=str(exc)[:200], faces="fallback")
+        return [_FALLBACK_FACE_BOX], [], receipt
+    decoded = int(sampled.get("decoded") or 0)
+    receipt.update(face_sampling="ok", decoded=decoded, detected=len(regions))
+    confirmed = (
+        not sampled.get("worker_error")
+        and not (sampled.get("timed_out") and not sampled.get("partial"))
+        and decoded >= _MIN_DECODED_ANCHORS
+    )
+    boxes: list[NormalizedBox] = []
+    by_window: dict[int, list[NormalizedBox]] = {}
+    for region in regions:
+        mapped = source_box_to_canvas(
+            region.box,
+            display_width=display_width,
+            display_height=display_height,
+            canvas=canvas,
+            scale=scale,
+            position_x=position_x,
+        )
+        if mapped is None:
+            continue
+        target = max(region.start_s, region.end_s - 0.5)
+        nearest = min(anchors, key=lambda a: abs(a - target))
+        boxes.append(mapped)
+        if anchored[nearest] >= 0:
+            by_window.setdefault(anchored[nearest], []).append(mapped)
+    bands = [
+        ProtectedRegion(
+            float(windows[index][0]), float(windows[index][1]), _union_box(found), "face"
+        )
+        for index, found in sorted(by_window.items())
+    ]
+    if not confirmed:
+        # What the sampler did see stays protected, with the conservative box beside it.
+        receipt["faces"] = "fallback"
+        return [*boxes, _FALLBACK_FACE_BOX], bands, receipt
+    receipt["faces"] = "detected" if boxes else "none"
+    return boxes, bands, receipt
+
+
 def frame_face_box(box: NormalizedBox, frame: tuple[float, float, float]) -> NormalizedBox:
     """A full-frame face box where the matted speaker is drawn in a speaker frame.
 
@@ -598,6 +817,7 @@ def place_talking_title(
     protect_all_faces: bool = False,
     speaker_frame: tuple[float, float, float] | None = None,
     full_screen_windows: Sequence[tuple[float, float]] = (),
+    picture_band: tuple[float, float] | None = None,
 ) -> tuple[dict, dict[str, Any]]:
     """``row`` moved off the speaker's face (and clear of the captions), plus
     a receipt for the job debug view. Never raises: anything that goes wrong
@@ -622,7 +842,11 @@ def place_talking_title(
     small in a corner: every sampled face box is mapped there (`frame_face_box`) so a row is
     kept off the face as drawn. ``None`` (the default) leaves the placement unchanged.
     ``full_screen_windows`` (Qendresa item 16, cut-timeline seconds) are where she is drawn
-    full-frame instead: the part of the row's time inside one keeps off her full-frame face."""
+    full-frame instead: the part of the row's time inside one keeps off her full-frame face.
+
+    ``picture_band`` (KRI-1018, `picture_band`) is where a letterboxed speaker's picture sits on
+    the canvas: the row then stays inside it (the preset y 0.15 is the black bar there), and the
+    receipt carries ``picture_band`` and ``inside_picture`` (measured on the row as placed)."""
     default_y = float(row.get("y_frac") or 0.15)
     if objects or protect_all_faces:
         return place_protected_title(
@@ -640,6 +864,7 @@ def place_talking_title(
             protect_all_faces=protect_all_faces,
             speaker_frame=speaker_frame,
             full_screen_windows=full_screen_windows,
+            picture_band=picture_band,
         )
     try:
         faces, receipts = _as_drawn(
@@ -661,12 +886,19 @@ def place_talking_title(
         receipt = receipts[0]
         if len(receipts) > 1:
             receipt = {**receipt, "full_screen_parts": len(receipts)}
-        probe = _translate_centered_box_to_y(_measure_title_box(row, canvas=canvas), default_y)
-        chosen, decision = choose_title_y_frac(probe, default_y, faces, avoid=avoid)
-        if avoid:
-            if decision["status"] == "best_effort":
+        if picture_band is not None:
+            row, block = _fit_row_to_picture(row, picture_band, canvas)
+            probe = _translate_centered_box_to_y(block, default_y)
+            chosen, decision = choose_picture_y_frac(probe, picture_band, faces, avoid=avoid)
+            if avoid and decision["status"] == "best_effort":
+                chosen, decision = choose_picture_y_frac(probe, picture_band, faces)
+        else:
+            probe = _translate_centered_box_to_y(_measure_title_box(row, canvas=canvas), default_y)
+            chosen, decision = choose_title_y_frac(probe, default_y, faces, avoid=avoid)
+            if avoid and decision["status"] == "best_effort":
                 # No spot clears the face and the text: text never covers a face.
                 chosen, decision = choose_title_y_frac(probe, default_y, faces)
+        if avoid:
             box = _translate_centered_box_to_y(probe, chosen)
             decision["text_overlap"] = any(
                 box.coverage_by(other) > _MAX_FACE_COVERAGE for other in avoid
@@ -676,6 +908,8 @@ def place_talking_title(
         return dict(row), {"status": "error", "error": str(exc)[:200], "default_y_frac": default_y}
     placed = dict(row)
     placed["y_frac"] = round(chosen, _Y_FRAC_DECIMALS)
+    if picture_band is not None:
+        decision.update(_picture_receipt(placed, picture_band, canvas))
     return placed, {**receipt, **decision, "default_y_frac": default_y}
 
 
@@ -723,6 +957,8 @@ def choose_protected_y_frac(
     caption_top_frac: float = CAPTION_BAND_TOP_FRAC,
     avoid: Sequence[NormalizedBox] = (),
     relax_text: bool = True,
+    top_frac: float = _TOP_MARGIN_FRAC,
+    below_face_max_frac: float = _BELOW_FACE_BOTTOM_MAX_FRAC,
 ) -> tuple[float, dict[str, Any]] | None:
     """The first spot clear of every face and object (and, when one exists, of ``avoid``
     text), or ``None`` when none is. Faces and objects are never traded for each other.
@@ -733,11 +969,11 @@ def choose_protected_y_frac(
             candidates.append((value, caption_top_frac))
     below = _below_face_y_frac(probe_box, faces)
     if below is not None:
-        candidates.append((below, _BELOW_FACE_BOTTOM_MAX_FRAC))
+        candidates.append((below, below_face_max_frac))
     for keep_text_clear in (True, False) if avoid and relax_text else (True,):
         for y_frac, bottom_limit in candidates:
             box = _translate_centered_box_to_y(probe_box, y_frac)
-            if box.top < _TOP_MARGIN_FRAC - 1e-6 or box.bottom > bottom_limit + 1e-6:
+            if box.top < top_frac - 1e-6 or box.bottom > bottom_limit + 1e-6:
                 continue
             face = max((box.coverage_by(f) for f in faces), default=0.0)
             obj = max((object_collision(box, o) for o in objects), default=0.0)
@@ -772,6 +1008,7 @@ def place_protected_title(
     protect_all_faces: bool = False,
     speaker_frame: tuple[float, float, float] | None = None,
     full_screen_windows: Sequence[tuple[float, float]] = (),
+    picture_band: tuple[float, float] | None = None,
 ) -> tuple[dict, dict[str, Any]]:
     """KRI-827: ``row`` kept off every face and every marked object for its whole window.
 
@@ -826,6 +1063,11 @@ def place_protected_title(
         )
         base_size = row.get("size_px")
         best: tuple[float, float, float, dict] | None = None
+        if picture_band is not None:
+            top_limit = picture_band[0] + _PICTURE_INSET_FRAC
+            bottom_limit = picture_band[1] - _PICTURE_INSET_FRAC
+        else:
+            top_limit, bottom_limit = _TOP_MARGIN_FRAC, CAPTION_BAND_TOP_FRAC
         # Clear of the other text at every size first (a moved caption block included), and
         # only then a spot that touches it (``text_overlap`` in the receipt).
         ladder = [
@@ -841,7 +1083,15 @@ def place_protected_title(
                 _measure_title_box(trial, canvas=canvas), default_y
             )
             chosen = choose_protected_y_frac(
-                probe, default_y, faces, object_boxes, avoid=avoid, relax_text=not strict_text
+                probe,
+                default_y,
+                faces,
+                object_boxes,
+                avoid=avoid,
+                relax_text=not strict_text,
+                caption_top_frac=bottom_limit,
+                top_frac=top_limit,
+                below_face_max_frac=min(_BELOW_FACE_BOTTOM_MAX_FRAC, bottom_limit),
             )
             if chosen is not None:
                 y_frac, decision = chosen
@@ -849,6 +1099,8 @@ def place_protected_title(
                 placed["y_frac"] = round(y_frac, _Y_FRAC_DECIMALS)
                 if factor != 1.0:
                     decision = {**decision, "status": "shrunk", "size_factor": factor}
+                if picture_band is not None:
+                    decision = {**decision, **_picture_receipt(placed, picture_band, canvas)}
                 return placed, {
                     **receipt,
                     **decision,
@@ -860,7 +1112,7 @@ def place_protected_title(
                 }
             for y_frac in (default_y, *_FALLBACK_Y_FRACS, *_PROTECTED_SCAN_Y):
                 box = _translate_centered_box_to_y(probe, y_frac)
-                if box.top < _TOP_MARGIN_FRAC - 1e-6 or box.bottom > CAPTION_BAND_TOP_FRAC + 1e-6:
+                if box.top < top_limit - 1e-6 or box.bottom > bottom_limit + 1e-6:
                     continue
                 obj = max((object_collision(box, o) for o in object_boxes), default=0.0)
                 face = max((box.coverage_by(f) for f in faces), default=0.0)
@@ -898,6 +1150,7 @@ def place_protected_title(
         "objects": object_receipts,
         "objects_verified": verified,
         "default_y_frac": default_y,
+        **(_picture_receipt(placed, picture_band, canvas) if picture_band is not None else {}),
     }
 
 

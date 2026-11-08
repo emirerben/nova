@@ -40,3 +40,29 @@ def brief_wants_speech_cleanup(brief: CreativeBrief | None) -> bool:
 
 def brief_tight_pauses(brief: CreativeBrief | None) -> bool:
     return bool(brief) and any(wants_tight_pauses(req) for req in brief.requirements)
+
+
+def wants_original_speech(req: BriefRequirement) -> bool:
+    """A live whole-video requirement the model recorded as ``keep_whole_take`` (any kind, no
+    length of its own) or ``speech_cleanup: false``: the creator wants the speech left as filmed
+    (KRI-971). A clip-scoped row says nothing about the other clips the one card covers."""
+    from app.kria import brief_checks  # noqa: PLC0415 (brief_checks imports this package)
+
+    return bool(
+        req.live
+        and req.scope == "global"
+        and (
+            brief_checks._wants_whole_take(req)
+            or brief_checks._fact_flag(req, "speech_cleanup") is False
+        )
+    )
+
+
+def brief_wants_original_speech(brief: CreativeBrief | None) -> bool:
+    """Whether the approval card should lead with "Keep original speech". A cleanup ask in the
+    same brief wins: the creator contradicting themselves is theirs to settle on the card."""
+    return (
+        bool(brief)
+        and any(wants_original_speech(req) for req in brief.requirements)
+        and not brief_wants_speech_cleanup(brief)
+    )

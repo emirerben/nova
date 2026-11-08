@@ -1,13 +1,24 @@
 """KRI-140 / KRI-116: guided-story title placement for phone renders."""
 
+import uuid
+
 import pytest
 
+from app.agents._schemas.text_element import TextElement
+from app.kria.brief import BriefRequirement, CreativeBrief
+from app.kria.brief_binding import BriefBinding
+from app.pipeline.generative_overlays import build_overlays_from_text_elements
+from app.pipeline.guided_story import _story_canvas
+from app.pipeline.object_track import ObjectTrack, TrackAnchor, object_collision
 from app.pipeline.phone_guided_text_placement import (
     build_phone_face_sampler,
     face_box_to_canvas,
+    place_guided_text,
     place_guided_text_off_faces,
+    unplaced_guided_receipt,
 )
 from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion
+from app.pipeline.text_overlay_skia import measure_text_overlay_box
 from tests.pipeline.test_guided_story import _guided_title_row
 from tests.pipeline.test_phone_guided_plan import fixture
 
@@ -142,3 +153,224 @@ def test_nothing_to_do_without_footage_or_rows():
         )
         == []
     )
+
+
+# ── KRI-903: "no text on her face or on the plate" on a guided-story phone render ──────────
+
+KEEP_OFF = BriefRequirement(
+    id="r8",
+    kind="style",
+    scope="global",
+    description="No text on her face or on the plate",
+    facts={"keep_text_off": [{"kind": "face"}, {"kind": "object", "label": "plate"}]},
+)
+# Centre of the 16:9 frame, at the height the title (y 0.16) is authored.
+PLATE_IN_SOURCE = _box(0.45, 0.08, 0.55, 0.24)
+
+
+def _binding(*, brief_requirements=(KEEP_OFF,), marks=None) -> dict:
+    return BriefBinding.create(
+        uuid.uuid4(),
+        CreativeBrief(requirements=list(brief_requirements)),
+        full_creator_request="No text on her face or on the plate",
+        protected_regions=marks,
+    ).model_dump(mode="json")
+
+
+def _mark(**changes) -> dict:
+    box = PLATE_IN_SOURCE
+    return {
+        "label": "plate",
+        "media_id": "source",
+        "source_t_s": 3.0,
+        "box": [box.left, box.top, box.right, box.bottom],
+        "generation": "123",
+    } | changes
+
+
+def _tracker(box, calls):
+    def track(clip_path, **kw):
+        calls.append({"clip_path": clip_path, **kw})
+        count = int(round((kw["end_s"] - kw["start_s"]) / 0.1)) + 1
+        anchors = tuple(
+            TrackAnchor(round(kw["start_s"] + i * 0.1, 3), box, "tracked") for i in range(count)
+        )
+        return ObjectTrack(
+            label=kw["label"],
+            media_id=kw["media_id"],
+            generation=kw["generation"],
+            seed_t_s=kw["seed_t_s"],
+            seed_box=kw["seed_box"],
+            anchors=anchors,
+            status="tracked",
+            receipt={"anchors": count, "tracked": count, "lost": 0},
+        )
+
+    return track
+
+
+def _looked_and_saw_no_face(path, anchors, **kwargs):
+    return [], {"attempted": len(anchors), "decoded": len(anchors), "timed_out": False}
+
+
+def _run(rows, *, binding, sample=_looked_and_saw_no_face, track=None, download=lambda *_: None):
+    plan, bindings = fixture()
+    plan.resolved_duration_s = 3.0
+    calls: list = []
+    placed, receipt = place_guided_text(
+        plan,
+        rows,
+        bindings,
+        job_id="job-903",
+        download=download,
+        sample=sample,
+        raw_binding=binding,
+        track=track or _tracker(PLATE_IN_SOURCE, calls),
+    )
+    return placed, receipt, calls
+
+
+def _measured(row) -> object:
+    [overlay] = build_overlays_from_text_elements(
+        [TextElement.model_validate(row)], video_duration_s=3.0, independent_box_alignment=True
+    )
+    measured = measure_text_overlay_box(overlay, render_canvas=_story_canvas("portrait"))
+    return _box(measured["left"], measured["top"], measured["right"], measured["bottom"])
+
+
+def test_a_title_moves_off_the_marked_plate_where_no_face_is_in_view():
+    row = _guided_title_row(end_s=3.0)
+    plate_on_canvas = face_box_to_canvas(
+        PLATE_IN_SOURCE, source_width=1920, source_height=1080, **CANVAS
+    )
+    assert object_collision(_measured(row), plate_on_canvas) > 0.05, "the fixture must collide"
+
+    placed, receipt, calls = _run([row], binding=_binding(marks=[_mark()]))
+
+    assert placed[0]["y_frac"] != pytest.approx(0.16)
+    assert object_collision(_measured(placed[0]), plate_on_canvas) <= 0.05
+    # The tracker followed the mark on the moment's proxy, over the moment's source span.
+    assert calls[0]["clip_path"].endswith("proxy-0.mp4")
+    assert (calls[0]["start_s"], calls[0]["end_s"]) == (2.0, 5.0)
+    plate = next(t for t in receipt["targets"] if t["label"] == "plate")
+    assert plate["status"] == "clear" and plate["provenance"]["media_id"] == "source"
+    assert receipt["verdict"] == "clear", receipt
+
+
+def test_without_a_mark_the_plate_is_never_called_clear():
+    row = _guided_title_row(end_s=3.0)
+    placed, receipt, calls = _run([row], binding=_binding(marks=None))
+
+    assert calls == []
+    plate = next(t for t in receipt["targets"] if t["label"] == "plate")
+    assert plate["status"] == "no_selection"
+    assert receipt["verdict"] == "no_selection"
+    assert placed == [row], "nothing to keep off, so the authored spot stays"
+
+
+def test_a_mark_on_a_clip_the_story_does_not_play_is_another_source():
+    _, receipt, calls = _run(
+        [_guided_title_row(end_s=3.0)], binding=_binding(marks=[_mark(media_id="elsewhere")])
+    )
+    assert calls == []
+    assert next(t for t in receipt["targets"] if t["label"] == "plate")["status"] == "other_source"
+
+
+def test_a_mark_on_older_bytes_of_the_clip_is_not_reused():
+    _, receipt, calls = _run(
+        [_guided_title_row(end_s=3.0)], binding=_binding(marks=[_mark(generation="1")])
+    )
+    assert calls == []
+    assert next(t for t in receipt["targets"] if t["label"] == "plate")["status"] == "invalidated"
+
+
+def test_a_proxy_that_cannot_be_read_is_unverified_never_clear():
+    def broken(_src, _dst):
+        raise OSError("gcs down")
+
+    row = _guided_title_row(end_s=3.0)
+    placed, receipt, calls = _run([row], binding=_binding(marks=[_mark()]), download=broken)
+
+    assert calls == []
+    assert placed == [row]
+    assert receipt["verdict"] == "unverified"
+
+
+def test_a_face_in_one_anchor_of_six_is_still_kept_clear_when_the_creator_named_a_face():
+    row = _guided_title_row(end_s=3.0)
+    top_face = _box(0.3, 0.02, 0.7, 0.32)
+
+    def one_glimpse(path, anchors, **kwargs):
+        regions = [ProtectedRegion(anchors[0] - 0.5, anchors[0] + 0.5, top_face, kind="face")]
+        return regions, {"attempted": len(anchors), "decoded": len(anchors), "timed_out": False}
+
+    asked, receipt, _ = _run([row], binding=_binding(marks=None), sample=one_glimpse)
+    unasked, none_receipt, _ = _run(
+        [row], binding=_binding(brief_requirements=(), marks=None), sample=one_glimpse
+    )
+
+    assert asked[0]["y_frac"] != pytest.approx(0.16)
+    assert unasked == [row] and none_receipt is None, "the dominant-face rule is unchanged unasked"
+    face = next(t for t in receipt["targets"] if t["kind"] == "face")
+    assert face["status"] == "clear"
+
+
+def test_text_the_placement_never_looked_at_keeps_the_verdict_from_being_clear():
+    caption = _guided_title_row(id="guided-narration-0", text="and then the plate arrived")
+    _, receipt, _ = _run([_guided_title_row(end_s=3.0), caption], binding=_binding(marks=[_mark()]))
+    assert receipt["verdict"] == "unverified"
+    assert "other_text" in receipt["texts"]
+
+
+def test_a_render_that_never_asked_is_unchanged():
+    row = _guided_title_row(end_s=3.0)
+    calls: list = []
+    placed, receipt, _ = _run(
+        [row], binding=_binding(brief_requirements=(), marks=None), track=_tracker(None, calls)
+    )
+    assert receipt is None and calls == []
+    assert placed == [row]
+    assert unplaced_guided_receipt(_binding(brief_requirements=(), marks=None)) is None
+    assert unplaced_guided_receipt(None) is None
+
+
+def test_when_the_text_policy_places_the_text_the_ask_is_reported_not_forgotten():
+    receipt = unplaced_guided_receipt(_binding(marks=[_mark()]))
+    assert receipt["verdict"] == "unverified"
+    assert {t["label"]: t["status"] for t in receipt["targets"]} == {
+        "face": "unverified",
+        "plate": "unverified",
+    }
+
+
+def test_a_face_ask_is_unverified_when_the_sampler_could_not_look():
+    def broken(_src, _dst):
+        raise OSError("gcs down")
+
+    face_only = BriefRequirement(
+        id="r9",
+        kind="style",
+        scope="global",
+        description="No text on her face",
+        facts={"keep_text_off": [{"kind": "face"}]},
+    )
+    row = _guided_title_row(end_s=3.0)
+    placed, receipt, _ = _run(
+        [row], binding=_binding(brief_requirements=(face_only,)), download=broken
+    )
+    assert placed == [row]
+    assert receipt["targets"][0]["status"] == "unverified"
+    assert receipt["verdict"] == "unverified"
+
+
+def test_a_story_with_no_footage_to_sample_still_reports_the_ask():
+    plan, _ = fixture()
+    row = _guided_title_row(end_s=3.0)
+
+    placed, receipt = place_guided_text(
+        plan, [row], (), job_id="j", download=lambda *_: None, raw_binding=_binding(marks=None)
+    )
+    assert placed == [row] and receipt["verdict"] == "no_selection"
+
+    placed, none = place_guided_text(plan, [row], (), job_id="j", download=lambda *_: None)
+    assert placed == [row] and none is None

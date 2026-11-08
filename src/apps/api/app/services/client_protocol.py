@@ -55,6 +55,15 @@ SPEAKER_FULL_OPENING_PROTOCOL = 41
 # `windows[i].focus` (the `backgroundFocus` capability: the picture aimed at its text column).
 BACKGROUND_FOCUS_PROTOCOL = 42
 
+# KRI-1264: the first build that decodes a placed picture card's `visual_placement.editor_style`
+# (a Talking card's zoom and animation) and edits them. 43 is the split-screen build (KRI-1231).
+CARD_STYLE_PROTOCOL = 44
+
+# KRI-1291: the first protocol whose every build leads the cleanup card with "Keep original
+# speech" on `speech_cleanup.recommended_choice` (KRI-971). That card (#2164) merged while the
+# protocol was 42 and #2163 raised it to 44 after it, so a 42 build may still lead with cleanup.
+KEEP_ORIGINAL_CARD_PROTOCOL = 44
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()
@@ -98,3 +107,10 @@ def current_client_protocol() -> int | None:
 
 def in_http_request() -> bool:
     return _in_http_request.get()
+
+
+def cleanup_card_ignores_keep_original() -> bool:
+    """KRI-1291: the calling native build's cleanup card leads with "Clean up speech" whatever
+    `recommended_choice` says. The web and work outside a request declare no build: False."""
+    protocol = current_client_protocol()
+    return protocol is not None and protocol < KEEP_ORIGINAL_CARD_PROTOCOL

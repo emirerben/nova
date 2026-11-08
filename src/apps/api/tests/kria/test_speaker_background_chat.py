@@ -1018,24 +1018,26 @@ def test_flag_off_the_brief_sections_are_the_bytes_they_were_before_the_opening(
     # leaves these bytes unchanged. Re-freeze deliberately when the shared brief section changes
     # underneath item 16. Re-frozen for the says-done group E rewording (#2131: caption count /
     # one captions requirement / "all my pauses" / unnamed mistakes / one-moment holds / typed
-    # ending); the flag-off section was 14ad8c6e… before it.
+    # ending); the flag-off section was 14ad8c6e… before it. Re-frozen again for #2164 (the
+    # keep-the-take-whole line also records speech_cleanup false), and for KRI-1292 (`hold_s`
+    # for a text at a spoken word).
     assert brief_prompt_section() is _BRIEF_PROMPT_SECTION
     assert digest(brief_prompt_section()) == (
-        "001bd937bb08cea812fa52d0379a1af9ea6a81108011c563c60a543d4fdfe206"
+        "8144b6cb0f2c2223cf521d5399e0c0af2d3e2ab9d9df5063981990557abdf3f2"
     )
     assert digest(brief_prompt_section(True)) == (
-        "e4ff46099102d441e877d9f55d8f810625c9a9ad32e1af79ded325f240fa20fb"
+        "f764a879fc59c5a3edb48f731665b91e6927876946a4185bef8260d82d0ce50e"
     )
     assert digest(_narrow_brief_section(False)) == (
-        "cd6f085855e93c80412d19821fe58d021a1e67e4938073a779adaa37e0a5f892"
+        "7034ebeb275d33a9161e9a4e5505b048601e90c39a8c6d32d1a73bb9eb2ce721"
     )
     assert digest(_narrow_brief_section(True)) == (
-        "5a809b8de16c41b9ab7e9c228090ac3a4bbe887e7457b84d62b79cf66d9afc3d"
+        "3c108bc565799f78e4ecc1fc3fafe798d06e8464573a88d6353681c24ebdfedf"
     )
     # and the whole extractor prompt, byte for byte (captured from that same tree)
     for insert_open, expected in (
-        (False, "272624dc94494efbb27b71e7ab6982ab1156227d32dbbd86531b92272bac0471"),
-        (True, "c2df22186588af07bb9a882fe0bc58e8c20ca0120274cb48fc55a06e00e3c83e"),
+        (False, "e6b8ef0fd70e397a99ae85ffee1ec4e8ef5ef9a63563ef47e54ab8b0b71a9847"),
+        (True, "8bc991da8be071f49cff56e8dab4b0b70a2b351f2014b7ad2d4faefa5809427f"),
     ):
         rendered = BriefExtractorAgent(None).render_prompt(
             BriefExtractionInput(

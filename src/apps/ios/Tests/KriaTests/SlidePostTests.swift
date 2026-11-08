@@ -6,8 +6,7 @@ import XCTest
     private var defaults: UserDefaults!
     private var suite: String!
     override func setUp() async throws {
-        try await super.setUp()
-        suite = "SlidePostTests.\(UUID())"; defaults = UserDefaults(suiteName: suite)
+        try await super.setUp(); suite = "SlidePostTests.\(UUID())"; defaults = UserDefaults(suiteName: suite)
     }
     override func tearDown() async throws {
         NativeEditorURLProtocol.handler = nil

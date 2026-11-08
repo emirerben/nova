@@ -182,7 +182,8 @@ async def test_phone_preferences_persist_pin_and_reset_through_real_memory(monke
             await db.commit()
             direction = await resolver.snapshot(db, user_id)
             defaults = style_rows([row], generation().assembly_plan["phone_text_style"])[0]
-            assert defaults["stroke_width"] == 0 and defaults["shadow_enabled"] is False
+            # Reset removes the preference, so this title restores its authored shadow.
+            assert defaults["stroke_width"] == 0 and defaults["shadow_enabled"] is True
             await service.undo(
                 db, user_id, reset.id, expected_revision=3, idempotency_key="phone-undo-reset"
             )

@@ -16,7 +16,7 @@
     {
       "id": "sc_dafe025de49c",
       "kind": "default_edit",
-      "label": "Let Kria cut the first version",
+      "label": "Let Kria decide",
       "message": "Suggest an edit.",
       "rank": 1,
       "default_edit": true,

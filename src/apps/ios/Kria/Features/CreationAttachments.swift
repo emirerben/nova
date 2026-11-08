@@ -17,6 +17,16 @@ enum AttachmentLaunch: Equatable {
     case source(FootageSourceKind)
 }
 
+/// Which surface asked Add media to open a camera or a picker, and so where that presentation lands when it ends with
+/// nothing taken or chosen.
+enum AttachmentOrigin: Equatable {
+    /// The Add media step itself, the footage stage's tiles, or a tray row whose screen is the destination (script,
+    /// voiceover, song, overlays): the creator ends up on the Add media step they came from.
+    case addMedia
+    /// The composer's + tray, Record or Upload: the creator ends up back in the chat.
+    case composerTray
+}
+
 struct AttachmentSheet: View {
     let projectID: UUID
     let maximumClipCount: Int
@@ -30,6 +40,8 @@ struct AttachmentSheet: View {
     /// script to read while recording. Nil = the sheet as before.
     var voiceoverScript: VoiceoverScript? = nil
     var launch: AttachmentLaunch? = nil
+    /// Who asked for `launch`. Consumed by the first camera or picker it opens.
+    var origin: AttachmentOrigin = .addMedia
     /// Re-record from the ready video: the sheet is only a host. It opens the teleprompter at once, swaps this clip for
     /// the new take, and closes with it. Nil = the sheet as before.
     var rerecordTarget: RerecordTarget? = nil
@@ -78,16 +90,17 @@ struct AttachmentSheet: View {
     @State private var cameraStartsWithScript = false
     @State private var showsScriptEntry = false
     @State private var openCameraAfterScript = false
-    @State private var uploadAfterCamera = false
     @State private var pickerLaunch: FootageSourceKind?
     @State private var voiceoverPickerLaunch: FootageSourceKind?
     @State private var launched = false
+    /// `origin` until the presentation it launched ends; `.addMedia` after, so the sheet's own tiles keep their behavior.
+    @State private var launchOrigin: AttachmentOrigin = .addMedia
+    /// A take the camera handed to intake, so closing the camera afterwards is not a cancel.
+    @State private var cameraKeptTake = false
     /// KRI-580: the "Where in the song did you film?" sheet, and whether the server said the feature is off.
     @State private var showsSongRange = false
     @State private var songRangeUnavailable = false
     @State private var pendingSongRangeEvent: SongRangeEvent?
-    /// Item 24: a "Move to Overlays" is running; a second tap is ignored until it ends.
-    @State private var movingToOverlays = false
 
     init(
         projectID: UUID,
@@ -99,10 +112,13 @@ struct AttachmentSheet: View {
         capabilitiesLoaded: Bool = true,
         voiceoverScript: VoiceoverScript? = nil,
         launch: AttachmentLaunch? = nil,
+        origin: AttachmentOrigin = .addMedia,
         rerecordTarget: RerecordTarget? = nil,
         refresh: @escaping () async -> Void
     ) {
         self.launch = launch
+        self.origin = origin
+        _launchOrigin = State(initialValue: origin)
         self.rerecordTarget = rerecordTarget
         self.projectID = projectID
         self.maximumClipCount = maximumClipCount
@@ -298,23 +314,21 @@ struct AttachmentSheet: View {
             }
             .fullScreenCover(isPresented: $showsTeleprompter, onDismiss: {
                 Task { await refresh() }
-                if uploadAfterCamera {
-                    uploadAfterCamera = false
-                    pickerLaunch = .sources
-                }
-                if rerecordTarget != nil { dismiss() }
+                let backToChat = launchOrigin == .composerTray && !cameraKeptTake
+                launchOrigin = .addMedia
+                cameraKeptTake = false
+                if rerecordTarget != nil || backToChat { dismiss() }
             }) {
                 if let accountID = auth.localStorageIdentity {
                     TeleprompterScreen(accountID: accountID, projectID: projectID,
                         admissionMessage: teleprompterAdmission,
                         replacementNotice: replacementNotice,
-                        intake: useCameraTake,
-                        intakeState: cameraTakeState,
+                        intake: { take, url in noteKept(await useCameraTake(take, url)) },
+                        intakeState: { take in await cameraTakeState(take).map(noteKept) },
                         speakerBackgroundEnabled: speakerBackgroundAvailable,
                         backgroundIntake: useCameraBackground,
                         backgroundStatement: stateSpeakerBackground,
                         startsWithScript: cameraStartsWithScript,
-                        onUpload: { uploadAfterCamera = true },
                         reportDiagnostic: { report in Task { try? await model.api.reportRecorderDiagnostic(report) } })
                         .environment(\.dynamicTypeSize, dynamicTypeSize)
                 }
@@ -443,14 +457,11 @@ struct AttachmentSheet: View {
     }
 
     private var footageStep: some View {
-        let hint = footageHint
-        return VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 20) {
             AttachmentHeading(title: "Add footage", subtitle: FootageStageCopy.attachmentSubtitle(talking: isTalkingToCamera, maximumClipCount: maximumClipCount))
-            // First thing on the step: under the clip rows it sat below the fold, behind Next.
-            if let hint { placeHintNotice(hint) }
             FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximumClipCount, attachedClipCount: existing(for: .clip), attachedMediaIDs: attachedMediaIDs(for: .clip), role: .clip, itemID: itemID, limit: capabilities?.media?["clips"], destination: uploadDestination(for: .clip), onPickerFilled: nil, onSelectionCompleted: advanceAfterFootageSelection, showsHeading: false, libraryEnabled: capabilities?.mediaLibrary == true,
                               controls: .tiles(record: auth.localStorageIdentity == nil ? nil : { openCamera(withScript: false) }),
-                              launchSource: $pickerLaunch)
+                              launchSource: $pickerLaunch, onLaunchedSourceCancelled: launchedPickerCancelled)
                 .id(AttachmentStep.footage)
             if isTalkingToCamera, auth.localStorageIdentity != nil {
                 Button { showsScriptEntry = true } label: {
@@ -470,139 +481,8 @@ struct AttachmentSheet: View {
                 }
                 .buttonStyle(.plain).accessibilityIdentifier("teleprompter-open")
             }
-            attachedList(role: .clip, flaggedClips: Dictionary(uniqueKeysWithValues: (hint?.flagged ?? []).map { ($0.key, $0.isScreenRecording) }))
+            attachedList(role: .clip)
         }
-    }
-
-    // MARK: Item 24: screen recordings in Footage
-
-    /// The clips the hint is about, or nil when it should not show. Everything is gated on the server switch first,
-    /// so with it off no preview file is read and the step is unchanged.
-    private var footageHint: FootageHint? {
-        guard capabilities?.uploadPlaceHintEnabled == true, isTalkingToCamera, hasOverlaysStep, !usesVisualPoolOnly else { return nil }
-        let ledger = model.uploads.photoSelections[projectID.uuidString]?.entries.values.filter { $0.role == .clip } ?? []
-        let version = model.uploads.previewVersion
-        func screenRecording(name: String, photosID: String?) -> Bool {
-            FootagePlacement.looksLikeScreenRecording(filename: name)
-                || (photosID.map { PhotosScreenRecording.isScreenRecording(assetIdentifier: $0) } ?? false)
-        }
-        var clips: [FootageHintClip] = []
-        let attached = attachedMedia(for: .clip)
-        for attachment in attached {
-            let photosID = ledger.first { $0.mediaID == attachment.id }?.assetIdentifier
-            clips.append(FootageHintClip(mediaID: attachment.id, recordID: nil, name: attachment.displayName, attachment: attachment,
-                                         shape: FootageShapeReader.shape(of: CreationMediaPreview.url(mediaID: attachment.id), version: version),
-                                         isScreenRecording: screenRecording(name: attachment.displayName, photosID: photosID),
-                                         photosID: photosID, projectID: projectID, originalMediaID: attachment.id, uploadFilePath: nil))
-        }
-        let attachedIDs = Set(attached.map(\.id))
-        for record in pendingRecords where record.projectID == projectID && record.role == .clip && !attachedIDs.contains(record.mediaID ?? "") {
-            let name = BackgroundUploadCoordinator.displayFilename(record.filename)
-            let photosID = ledger.first { $0.recordID == record.id }?.assetIdentifier
-            clips.append(FootageHintClip(mediaID: nil, recordID: record.id, name: name, attachment: nil,
-                                         shape: FootageShapeReader.shape(of: CreationMediaPreview.url(recordID: record.id), version: version),
-                                         isScreenRecording: screenRecording(name: name, photosID: photosID),
-                                         photosID: photosID, projectID: projectID, originalMediaID: record.mediaID,
-                                         uploadFilePath: record.localFilePath))
-        }
-        let ids = Set(FootagePlacement.belongsInOverlays(clips.map(\.placementItem)))
-        let flagged = clips.filter { ids.contains($0.key) }
-        return flagged.isEmpty ? nil : FootageHint(flagged: flagged)
-    }
-
-    /// Whether the Move button may show: Overlays takes video, has room, and every flagged clip can be re-sent.
-    private func canMoveToOverlays(_ hint: FootageHint) -> Bool {
-        let destination = uploadDestination(for: .visual)
-        guard destination.canUpload, destination.visualKinds?.contains(.video) ?? true, pool != nil else { return false }
-        let free = maximum(for: .visual) - existing(for: .visual) - model.uploads.reservedCount(projectID: projectID, role: .visual)
-        return free >= hint.flagged.count && hint.flagged.allSatisfy(\.canMove)
-    }
-
-    @ViewBuilder private func placeHintNotice(_ hint: FootageHint) -> some View {
-        let title = AttachmentStep.overlays.title
-        let action: KriaNoticeAction? = movingToOverlays || !canMoveToOverlays(hint) ? nil
-            : KriaNoticeAction(title: hint.flagged.count == 1 ? "Move to \(title)" : hint.flagged.count == 2 ? "Move both to \(title)" : "Move all \(hint.flagged.count) to \(title)") {
-                Task { await moveToOverlays(hint.flagged) }
-            }
-        KriaNoticeCard(tone: .info, title: "Screen recordings go in \(title), so you stay on screen.", action: action)
-            .accessibilityIdentifier("footage-place-hint")
-    }
-
-    /// Starts each clip as an overlay first and drops it from Footage only once that was accepted, so the file is
-    /// never lost and never uploaded twice. Every clip takes the same path: a source file, then `enqueue`.
-    private func moveToOverlays(_ clips: [FootageHintClip]) async {
-        guard !movingToOverlays else { return }
-        movingToOverlays = true
-        mediaRemovalError = nil
-        defer { movingToOverlays = false }
-        let purpose: UploadPurpose = uploadDestination(for: .visual) == .phone ? .analysisProxy : .cloudRenderSource
-        let limit = capabilities?.media?["visuals"]
-        for clip in clips {
-            let failureText = "Couldn’t move \(clip.name). It stays in Footage."
-            var file: URL?
-            var source: UploadSource = .files
-            // The temp folder made here, the only one a failed move may delete (a Photos export's folder is shared).
-            var madeFolder: URL?
-            if let original = clip.localSource {
-                let name = clip.name.isEmpty ? original.lastPathComponent : clip.name
-                // Its own folder, so the overlay keeps the clip's name: the server shows the uploaded file name as is.
-                let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
-                let copy = folder.appending(path: name)
-                do {
-                    try await Task.detached {
-                        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-                        try FileManager.default.copyItem(at: original, to: copy)
-                    }.value
-                    file = copy
-                    madeFolder = folder
-                } catch { try? FileManager.default.removeItem(at: folder) }
-            }
-            if file == nil, let photosID = clip.photosID {
-                // The loader hands back a private temp file, which the coordinator then owns.
-                file = try? await PhotoItemFileLoader().load(item: PhotosPickerItem(itemIdentifier: photosID), identifier: photosID)
-                source = .photos
-            }
-            guard let file else { mediaRemovalError = failureText; continue }
-            let accepted = await model.uploads.enqueue(fileURL: file, projectID: projectID, source: source, consentGiven: true,
-                                                       purpose: purpose, role: .visual, itemID: itemID, limit: limit)
-            guard accepted else {
-                try? FileManager.default.removeItem(at: file)
-                if let madeFolder { try? FileManager.default.removeItem(at: madeFolder) }
-                mediaRemovalError = model.uploads.failures.last(where: { $0.role == .visual })?.message ?? failureText
-                continue
-            }
-            if !(await removeFromFootage(clip)) {
-                mediaRemovalError = "\(clip.name) is in Overlays now. Remove it from Footage."
-            }
-        }
-        await loadVisuals()
-        await refresh()
-    }
-
-    /// Drops the clip from Footage after its overlay was accepted. False when it could not be removed.
-    private func removeFromFootage(_ clip: FootageHintClip) async -> Bool {
-        if let photosID = clip.photosID {
-            // Keeps the picker's ledger in step with the project.
-            switch await model.uploads.deselect(assetIdentifier: photosID, projectID: projectID, role: .clip, itemID: nil) {
-            case .discarded, .cancelledUpload, .detached, .alreadyInProgress: return true
-            case .refused: return false
-            case .notTracked: break
-            }
-        }
-        if let attachment = clip.attachment {
-            mediaRemovalError = nil
-            await removeAttached(attachment)
-            return mediaRemovalError == nil
-        }
-        if let recordID = clip.recordID {
-            // Still uploading when the hint showed: it may have finished and attached while the overlay was started,
-            // so cancel or detach it, whichever it needs. A plain cancel then found no record and left it in Footage.
-            switch await model.uploads.withdraw(recordID: recordID, mediaID: clip.originalMediaID, projectID: projectID) {
-            case .discarded, .cancelledUpload, .detached, .alreadyInProgress, .notTracked: return true
-            case .refused: return false
-            }
-        }
-        return true
     }
 
     private func openCamera(withScript: Bool) {
@@ -655,6 +535,11 @@ struct AttachmentSheet: View {
 
     private var isTalkingToCamera: Bool {
         (format ?? thread.map { CreationFormat(thread: $0) }) == .talkingToCamera
+    }
+
+    private func noteKept(_ result: TeleprompterIntakeResult) -> TeleprompterIntakeResult {
+        if result == .queued || result == .attached { cameraKeptTake = true }
+        return result
     }
 
     private func useCameraTake(_ take: TeleprompterTakeManifest, _ url: URL) async -> TeleprompterIntakeResult {
@@ -881,7 +766,7 @@ struct AttachmentSheet: View {
                                     ? KriaSourceOption(id: "generate", symbol: "sparkles", title: "Generate", caption: "Make with AI", identifier: "generate-image") {
                                         openOverlaySet()
                                     } : nil),
-                                  launchSource: $pickerLaunch)
+                                  launchSource: $pickerLaunch, onLaunchedSourceCancelled: launchedPickerCancelled)
                     .id(AttachmentStep.overlays)
                 if let summary = VisualPreparationSummary(assets: pool?.assets ?? [], uploading: uploadingVisualCount, online: network.isOnline, slowIDs: preparation.slowIDs, surface: .addMediaSheet, nounOverride: usesVisualPoolOnly ? SlideMediaCopy.preparingNoun : nil) {
                     VisualPreparationSummaryView(summary: summary)
@@ -967,20 +852,14 @@ struct AttachmentSheet: View {
         }
         return result
     }
-    /// Shape alone never earns the "Screen recording" label.
-    private func footageCaption(_ flaggedScreenRecording: Bool?) -> String {
-        guard let flaggedScreenRecording else { return "Video · Ready" }
-        return flaggedScreenRecording ? "Screen recording · Ready" : "Wide video · Ready"
-    }
-    /// `flaggedClips`: Footage clips the Overlays hint points at (key -> is a screen recording by name or Photos).
-    private func attachedList(role: CreationMediaRole, flaggedClips: [String: Bool] = [:]) -> some View {
+    private func attachedList(role: CreationMediaRole) -> some View {
         let locked = removingMedia || !pendingRecords.filter { $0.projectID == projectID }.isEmpty || replacementUnderway
         return VStack(spacing: 8) {
             ForEach(attachedMedia(for: role)) { attachment in
                 VStack(spacing: 8) {
                     KriaMediaRow(name: attachment.displayName,
                                  status: .ready(role == .voiceover ? "Voiceover · Ready" : role == .song ? "Song · Ready"
-                                    : footageCaption(flaggedClips[FootageHintClip.key(mediaID: attachment.id)])),
+                                    : "Video · Ready"),
                                  trailing: .remove(label: "Remove \(attachment.displayName)") { Task { await removeAttached(attachment) } },
                                  onFill: !offersSongRange(for: attachment)) {
                         CreationAttachmentThumbnail(media: attachment)
@@ -1061,7 +940,17 @@ struct AttachmentSheet: View {
         guard let footage = footageDurationSummary.exactDuration, recorder.duration > footage else { return nil }
         return "Your voiceover is \(DurationFormatter.seconds(recorder.duration - footage)) longer than your footage. Add more footage, or use it anyway."
     }
-    private func advanceAfterFootageSelection() { guard step == .footage else { return }; advance() }
+    /// A pick the composer's + started ends back in the chat; from the sheet's own picker it moves on to the next step.
+    private func advanceAfterFootageSelection() {
+        guard step == .footage else { return }
+        if launchOrigin == .composerTray { launchOrigin = .addMedia; requestDismiss() } else { advance() }
+    }
+    /// A picker the composer's + started was cancelled: back to the chat, not the Add media step behind it.
+    private func launchedPickerCancelled() {
+        guard launchOrigin == .composerTray else { return }
+        launchOrigin = .addMedia
+        requestDismiss()
+    }
     private func advance() { guard stepIndex + 1 < steps.count else { requestDismiss(); return }; let next = steps[stepIndex + 1]; step = next; role = next.role }
     private func goBack() { guard !recorder.isRecording, stepIndex > 0 else { return }; let previous = steps[stepIndex - 1]; step = previous; role = previous.role }
     private func requestDismiss() {
@@ -1164,38 +1053,6 @@ struct AttachmentSheet: View {
             self.error = "Couldn’t retry this visual. \(error.localizedDescription)"
         }
     }
-}
-
-/// One Footage clip the item 24 hint looks at: attached (`mediaID`) or still uploading (`recordID`).
-private struct FootageHintClip {
-    let mediaID: String?
-    let recordID: UUID?
-    let name: String
-    let attachment: CreationAttachedMedia?
-    let shape: FootageShape
-    let isScreenRecording: Bool
-    /// The Photos asset it came from, when the picker ledger knows it.
-    let photosID: String?
-    let projectID: UUID
-    /// The server media id the device original is bound to: the attachment's, or an upload's once it is reserved.
-    let originalMediaID: String?
-    /// The file an upload still holds. On a phone project that is the smaller analysis copy, so it is only the fallback.
-    let uploadFilePath: String?
-
-    static func key(mediaID: String) -> String { "m:\(mediaID)" }
-    var key: String { mediaID.map(Self.key(mediaID:)) ?? "r:\(recordID?.uuidString ?? "")" }
-    var placementItem: FootagePlacementItem { FootagePlacementItem(id: key, shape: shape, isScreenRecording: isScreenRecording) }
-    /// A device copy to send again as an overlay, full quality first. Looked up only when the hint shows, never per row.
-    @MainActor var localSource: URL? {
-        if let originalMediaID, let original = CreationMediaPreview.localOriginal(mediaID: originalMediaID, projectID: projectID) { return original }
-        guard let uploadFilePath, FileManager.default.fileExists(atPath: uploadFilePath) else { return nil }
-        return URL(fileURLWithPath: uploadFilePath)
-    }
-    @MainActor var canMove: Bool { photosID != nil || localSource != nil }
-}
-
-private struct FootageHint {
-    let flagged: [FootageHintClip]
 }
 
 /// Thumbnail of a clip that is still being prepared or uploaded, keyed by its upload id, so it is

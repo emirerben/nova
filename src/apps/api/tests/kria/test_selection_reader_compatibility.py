@@ -16,6 +16,8 @@ def test_new_contract_readers_leave_legacy_capability_digest_unchanged(monkeypat
             "selection_reconciliation",
             "clip_intents[].source_kind",
             "resolved_clip_intents[].source_kind",
+            "clip_intents[].source_quote",
+            "resolved_clip_intents[].source_quote",
         }
     }
     legacy = CreativeStrategy().model_dump(mode="json")
@@ -64,3 +66,29 @@ def test_schema_matrix_walks_dataclass_references():
 def test_server_reconciliation_is_not_a_model_or_tool_schema_field():
     assert "selection_reconciliation" not in CreativeStrategy.model_json_schema()["properties"]
     assert "selection_reconciliation" not in CreativeStrategy().model_dump(mode="json")
+
+
+def test_an_intent_quote_changes_the_digest_only_when_one_is_stored():
+    legacy = CreativeStrategy().model_dump(mode="json")
+    plain = {
+        **legacy,
+        "clip_intents": [{"intent_id": "t", "op": "label", "attribute": "bowls"}],
+    }
+    quoted = {
+        **legacy,
+        "clip_intents": [
+            {
+                "intent_id": "t",
+                "op": "label",
+                "attribute": "bowls",
+                "source_quote": "Put salsa on the bowls",
+            }
+        ],
+    }
+
+    def digest(strategy):
+        return assess_readiness(None, strategy, media={}, manifest=None)["capabilities_digest"]
+
+    assert "clip_intents[].source_quote" not in contracts.field_matrix_for_strategy(plain)
+    assert "clip_intents[].source_quote" in contracts.field_matrix_for_strategy(quoted)
+    assert digest(plain) != digest(quoted)

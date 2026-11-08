@@ -16,17 +16,17 @@
     {
       "text": "İlk durak Moda'da, deniz kenarında küçücük bir yer.",
       "start_s": 0.0,
-      "end_s": 0.9
+      "end_s": 2.8
     },
     {
       "text": "Üçüncü ve en sevdiğim yer Yeldeğirmeni'nde.",
-      "start_s": 1.0,
-      "end_s": 1.9
+      "start_s": 3.0,
+      "end_s": 5.8
     },
     {
       "text": "Bakın, ben günde 4 kahve içiyorum, o yüzden bu konuda biraz uzmanım.",
-      "start_s": 2.0,
-      "end_s": 2.9
+      "start_s": 6.0,
+      "end_s": 8.8
     }
   ],
   "asset_manifest": {
@@ -49,17 +49,17 @@
     {
       "id": "caption-0",
       "start": 0.0,
-      "end": 0.9,
+      "end": 0.988235294117647,
       "anchor_x": 540.0,
       "anchor_y": 1536.0,
       "rotation_degrees": 0.0,
       "runs": [
         {
-          "text": "İlk durak",
+          "text": "İlk durak Moda'da,",
           "font_asset_id": "font-TikTokSans-Regular.ttf",
           "font_size": 78.0,
-          "x": 385.677001953125,
-          "baseline_y": 1447.5,
+          "x": 203.93701171875,
+          "baseline_y": 1563.5,
           "letter_spacing": 0.0,
           "shaped": false,
           "glyphs": [
@@ -107,6 +107,51 @@
               "glyph_id": 155,
               "x": 266.4480037689209,
               "y": 0.0
+            },
+            {
+              "glyph_id": 3,
+              "x": 308.64600563049316,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 16,
+              "x": 330.0960063934326,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 159,
+              "x": 397.8000087738037,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 148,
+              "x": 444.8340091705322,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 145,
+              "x": 492.80401039123535,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 351,
+              "x": 535.938009262085,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 148,
+              "x": 556.9200096130371,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 145,
+              "x": 604.8900108337402,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 305,
+              "x": 648.0240097045898,
+              "y": 0.0
             }
           ],
           "fill": {
@@ -137,134 +182,110 @@
             }
           ],
           "gradient": null
-        },
+        }
+      ],
+      "effect": "pop-in",
+      "motion": null,
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": null,
+      "smooth_reveal": null,
+      "staggered": null,
+      "karaoke": null,
+      "fade": null,
+      "giant_title": null,
+      "dissolve_seed": null
+    },
+    {
+      "id": "caption-1",
+      "start": 0.988235294117647,
+      "end": 2.8,
+      "anchor_x": 540.0,
+      "anchor_y": 1536.0,
+      "rotation_degrees": 0.0,
+      "runs": [
         {
-          "text": "Moda'da, deniz kenarında",
+          "text": "deniz kenarında",
           "font_asset_id": "font-TikTokSans-Regular.ttf",
           "font_size": 78.0,
-          "x": 69.07504272460938,
-          "baseline_y": 1563.5,
+          "x": 250.81500244140625,
+          "baseline_y": 1505.5,
           "letter_spacing": 0.0,
           "shaped": false,
           "glyphs": [
             {
-              "glyph_id": 16,
+              "glyph_id": 148,
               "x": 0.0,
               "y": 0.0
             },
             {
-              "glyph_id": 159,
-              "x": 67.7040023803711,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 148,
-              "x": 114.73800277709961,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 145,
-              "x": 162.70800399780273,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 351,
-              "x": 205.84200286865234,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 148,
-              "x": 226.8240032196045,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 145,
-              "x": 274.7940044403076,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 305,
-              "x": 317.9280033111572,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 3,
-              "x": 342.03000259399414,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 148,
-              "x": 363.4800033569336,
-              "y": 0.0
-            },
-            {
               "glyph_id": 149,
-              "x": 411.4500045776367,
+              "x": 47.970001220703125,
               "y": 0.0
             },
             {
               "glyph_id": 158,
-              "x": 456.3000030517578,
+              "x": 92.81999969482422,
               "y": 0.0
             },
             {
               "glyph_id": 153,
-              "x": 501.61800384521484,
+              "x": 138.13800048828125,
               "y": 0.0
             },
             {
               "glyph_id": 170,
-              "x": 520.5720043182373,
+              "x": 157.0920009613037,
               "y": 0.0
             },
             {
               "glyph_id": 3,
-              "x": 561.600004196167,
+              "x": 198.1200008392334,
               "y": 0.0
             },
             {
               "glyph_id": 155,
-              "x": 583.0500049591064,
+              "x": 219.57000160217285,
               "y": 0.0
             },
             {
               "glyph_id": 149,
-              "x": 625.2480068206787,
+              "x": 261.7680034637451,
               "y": 0.0
             },
             {
               "glyph_id": 158,
-              "x": 670.0980052947998,
+              "x": 306.6180019378662,
               "y": 0.0
             },
             {
               "glyph_id": 145,
-              "x": 715.4160060882568,
+              "x": 351.93600273132324,
               "y": 0.0
             },
             {
               "glyph_id": 162,
-              "x": 758.5500049591064,
+              "x": 395.07000160217285,
               "y": 0.0
             },
             {
               "glyph_id": 214,
-              "x": 786.4740047454834,
+              "x": 422.9940013885498,
               "y": 0.0
             },
             {
               "glyph_id": 158,
-              "x": 805.4280052185059,
+              "x": 441.94800186157227,
               "y": 0.0
             },
             {
               "glyph_id": 148,
-              "x": 850.7460060119629,
+              "x": 487.2660026550293,
               "y": 0.0
             },
             {
               "glyph_id": 145,
-              "x": 898.716007232666,
+              "x": 535.2360038757324,
               "y": 0.0
             }
           ],
@@ -302,7 +323,7 @@
           "font_asset_id": "font-TikTokSans-Regular.ttf",
           "font_size": 78.0,
           "x": 251.32199096679688,
-          "baseline_y": 1679.5,
+          "baseline_y": 1621.5,
           "letter_spacing": 0.0,
           "shaped": false,
           "glyphs": [
@@ -430,9 +451,9 @@
       "dissolve_seed": null
     },
     {
-      "id": "caption-1",
-      "start": 1.0,
-      "end": 1.9,
+      "id": "caption-2",
+      "start": 3.0,
+      "end": 3.781395348837209,
       "anchor_x": 540.0,
       "anchor_y": 1536.0,
       "rotation_degrees": 0.0,
@@ -442,7 +463,7 @@
           "font_asset_id": "font-TikTokSans-Regular.ttf",
           "font_size": 78.0,
           "x": 294.18296813964844,
-          "baseline_y": 1447.5,
+          "baseline_y": 1563.5,
           "letter_spacing": 0.0,
           "shaped": false,
           "glyphs": [
@@ -535,13 +556,34 @@
             }
           ],
           "gradient": null
-        },
+        }
+      ],
+      "effect": "pop-in",
+      "motion": null,
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": null,
+      "smooth_reveal": null,
+      "staggered": null,
+      "karaoke": null,
+      "fade": null,
+      "giant_title": null,
+      "dissolve_seed": null
+    },
+    {
+      "id": "caption-3",
+      "start": 3.781395348837209,
+      "end": 5.8,
+      "anchor_x": 540.0,
+      "anchor_y": 1536.0,
+      "rotation_degrees": 0.0,
+      "runs": [
         {
           "text": "sevdiğim yer",
           "font_asset_id": "font-TikTokSans-Regular.ttf",
           "font_size": 78.0,
           "x": 308.885986328125,
-          "baseline_y": 1563.5,
+          "baseline_y": 1505.5,
           "letter_spacing": 0.0,
           "shaped": false,
           "glyphs": [
@@ -640,7 +682,7 @@
           "font_asset_id": "font-TikTokSans-Regular.ttf",
           "font_size": 78.0,
           "x": 209.59201049804688,
-          "baseline_y": 1679.5,
+          "baseline_y": 1621.5,
           "letter_spacing": 0.0,
           "shaped": false,
           "glyphs": [
@@ -773,9 +815,9 @@
       "dissolve_seed": null
     },
     {
-      "id": "caption-2",
-      "start": 2.0,
-      "end": 2.9,
+      "id": "caption-4",
+      "start": 6.0,
+      "end": 7.4,
       "anchor_x": 540.0,
       "anchor_y": 1536.0,
       "rotation_degrees": 0.0,
@@ -785,7 +827,7 @@
           "font_asset_id": "font-TikTokSans-Regular.ttf",
           "font_size": 78.0,
           "x": 222.18902587890625,
-          "baseline_y": 1389.5,
+          "baseline_y": 1505.5,
           "letter_spacing": 0.0,
           "shaped": false,
           "glyphs": [
@@ -904,7 +946,7 @@
           "font_asset_id": "font-TikTokSans-Regular.ttf",
           "font_size": 78.0,
           "x": 217.50897216796875,
-          "baseline_y": 1505.5,
+          "baseline_y": 1621.5,
           "letter_spacing": 0.0,
           "shaped": false,
           "glyphs": [
@@ -1022,13 +1064,34 @@
             }
           ],
           "gradient": null
-        },
+        }
+      ],
+      "effect": "pop-in",
+      "motion": null,
+      "reveal_bounds": null,
+      "handwriting": null,
+      "discrete_reveal": null,
+      "smooth_reveal": null,
+      "staggered": null,
+      "karaoke": null,
+      "fade": null,
+      "giant_title": null,
+      "dissolve_seed": null
+    },
+    {
+      "id": "caption-5",
+      "start": 7.4,
+      "end": 8.8,
+      "anchor_x": 540.0,
+      "anchor_y": 1536.0,
+      "rotation_degrees": 0.0,
+      "runs": [
         {
-          "text": "o yüzden bu konuda",
+          "text": "o yüzden bu",
           "font_asset_id": "font-TikTokSans-Regular.ttf",
           "font_size": 78.0,
-          "x": 170.39700317382812,
-          "baseline_y": 1621.5,
+          "x": 316.1009826660156,
+          "baseline_y": 1505.5,
           "letter_spacing": 0.0,
           "shaped": false,
           "glyphs": [
@@ -1086,41 +1149,6 @@
               "glyph_id": 165,
               "x": 403.49400329589844,
               "y": 0.0
-            },
-            {
-              "glyph_id": 3,
-              "x": 447.7980041503906,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 155,
-              "x": 469.2480049133301,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 159,
-              "x": 511.44600677490234,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 158,
-              "x": 558.4800071716309,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 165,
-              "x": 603.7980079650879,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 148,
-              "x": 648.1020088195801,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 145,
-              "x": 696.0720100402832,
-              "y": 0.0
             }
           ],
           "fill": {
@@ -1153,82 +1181,117 @@
           "gradient": null
         },
         {
-          "text": "biraz uzmanım.",
+          "text": "konuda biraz uzmanım.",
           "font_asset_id": "font-TikTokSans-Regular.ttf",
           "font_size": 78.0,
-          "x": 264.1920166015625,
-          "baseline_y": 1737.5,
+          "x": 118.48797607421875,
+          "baseline_y": 1621.5,
           "letter_spacing": 0.0,
           "shaped": false,
           "glyphs": [
             {
-              "glyph_id": 146,
+              "glyph_id": 155,
               "x": 0.0,
               "y": 0.0
             },
             {
-              "glyph_id": 153,
-              "x": 47.970001220703125,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 162,
-              "x": 66.92400169372559,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 145,
-              "x": 94.84800148010254,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 170,
-              "x": 137.98200035095215,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 3,
-              "x": 179.01000022888184,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 165,
-              "x": 200.4600009918213,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 170,
-              "x": 244.76400184631348,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 157,
-              "x": 285.79200172424316,
-              "y": 0.0
-            },
-            {
-              "glyph_id": 145,
-              "x": 352.9499988555908,
+              "glyph_id": 159,
+              "x": 42.198001861572266,
               "y": 0.0
             },
             {
               "glyph_id": 158,
-              "x": 396.08399772644043,
+              "x": 89.23200225830078,
               "y": 0.0
             },
             {
-              "glyph_id": 214,
-              "x": 441.40199851989746,
+              "glyph_id": 165,
+              "x": 134.5500030517578,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 148,
+              "x": 178.85400390625,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 145,
+              "x": 226.82400512695312,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 3,
+              "x": 269.95800399780273,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 146,
+              "x": 291.4080047607422,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 153,
+              "x": 339.3780059814453,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 162,
+              "x": 358.3320064544678,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 145,
+              "x": 386.2560062408447,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 170,
+              "x": 429.39000511169434,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 3,
+              "x": 470.418004989624,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 165,
+              "x": 491.8680057525635,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 170,
+              "x": 536.1720066070557,
               "y": 0.0
             },
             {
               "glyph_id": 157,
-              "x": 460.3559989929199,
+              "x": 577.2000064849854,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 145,
+              "x": 644.358003616333,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 158,
+              "x": 687.4920024871826,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 214,
+              "x": 732.8100032806396,
+              "y": 0.0
+            },
+            {
+              "glyph_id": 157,
+              "x": 751.7640037536621,
               "y": 0.0
             },
             {
               "glyph_id": 308,
-              "x": 527.5139961242676,
+              "x": 818.9220008850098,
               "y": 0.0
             }
           ],
@@ -1279,7 +1342,7 @@
     {
       "id": "caption-0",
       "start": 0.0,
-      "end": 0.9,
+      "end": 2.8,
       "anchor_x": 540.0,
       "anchor_y": 1536.0,
       "rotation_degrees": 0.0,
@@ -1627,8 +1690,8 @@
     },
     {
       "id": "caption-1",
-      "start": 1.0,
-      "end": 1.9,
+      "start": 3.0,
+      "end": 5.8,
       "anchor_x": 540.0,
       "anchor_y": 1536.0,
       "rotation_degrees": 0.0,
@@ -1936,8 +1999,8 @@
     },
     {
       "id": "caption-2",
-      "start": 2.0,
-      "end": 2.9,
+      "start": 6.0,
+      "end": 8.8,
       "anchor_x": 540.0,
       "anchor_y": 1536.0,
       "rotation_degrees": 0.0,
