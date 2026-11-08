@@ -303,22 +303,19 @@ import XCTest
             return
         }
 
+        // The camera's Cinematic capsule is a Button whose accessibility value reads On or Off.
+        let cinematic = app.buttons["teleprompter-cinematic"]
         if cinematicWanted {
-            let cinematic = app.switches["teleprompter-cinematic"]
             XCTAssertTrue(cinematic.waitForExistence(timeout: 5))
             guard cinematic.isEnabled else { throw XCTSkip("This iPhone cannot record Cinematic with the front camera.") }
-            if (cinematic.value as? String) != "1" { cinematic.switches.firstMatch.tap() }
-            XCTAssertEqual(cinematic.value as? String, "1")
+            if (cinematic.value as? String) != "On" { cinematic.tap() }
+            XCTAssertEqual(cinematic.value as? String, "On")
             guard waitUntilEnabled(record, timeout: Self.graphRebuildTimeout) else { XCTFail("Record is enabled again after switching to Cinematic."); return }
-        }
-        // The Cinematic choice is saved per device, so a previous scenario's "on" survives into this launch.
-        if !cinematicWanted {
-            let cinematic = app.switches["teleprompter-cinematic"]
-            if cinematic.waitForExistence(timeout: 5), cinematic.isEnabled, (cinematic.value as? String) == "1" {
-                cinematic.switches.firstMatch.tap()
-                XCTAssertEqual(cinematic.value as? String, "0")
-                guard waitUntilEnabled(record, timeout: Self.graphRebuildTimeout) else { XCTFail("Record is enabled again after switching Cinematic off."); return }
-            }
+        } else if cinematic.waitForExistence(timeout: 5), cinematic.isEnabled, (cinematic.value as? String) == "On" {
+            // The Cinematic choice is saved per device, so a previous scenario's "on" survives into this launch.
+            cinematic.tap()
+            XCTAssertEqual(cinematic.value as? String, "Off")
+            guard waitUntilEnabled(record, timeout: Self.graphRebuildTimeout) else { XCTFail("Record is enabled again after switching Cinematic off."); return }
         }
         if background != "none" {
             let live = app.descendants(matching: .any).matching(identifier: "teleprompter-live-background").firstMatch
