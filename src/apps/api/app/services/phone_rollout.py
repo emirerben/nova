@@ -2325,12 +2325,32 @@ def phone_voiceover_source_audio_supported(*, require_client: bool = True) -> bo
 
 
 def split_screen_client_supported(*, require_client: bool | None = None) -> bool:
-    from app.services.client_protocol import current_client_protocol, in_http_request
+    from app.services.client_protocol import (  # noqa: PLC0415
+        SPLIT_SCREEN_PROTOCOL,
+        current_client_protocol,
+        in_http_request,
+    )
 
     if require_client is None:
         require_client = in_http_request()
     protocol = current_client_protocol()
-    return not require_client or (protocol is not None and protocol >= 46)
+    return not require_client or (protocol is not None and protocol >= SPLIT_SCREEN_PROTOCOL)
+
+
+def split_screen_planned_for(client_protocol: int | None) -> bool:
+    """May a plan for the app build ``client_protocol`` offer split screens?
+
+    The manifest feeds the approval readiness digest, which the draft turn (a worker) saves and
+    the approve request re-checks, so this reads the sender's stamp and never the request
+    context: both sides must agree for the same build (KRI-1321). No stamp is an old build.
+    """
+    from app.services.client_protocol import SPLIT_SCREEN_PROTOCOL  # noqa: PLC0415
+
+    return (
+        "splitScreen" in set(settings.phone_render_verified_features)
+        and client_protocol is not None
+        and client_protocol >= SPLIT_SCREEN_PROTOCOL
+    )
 
 
 def split_screen_supported(*, require_client: bool | None = None) -> bool:
