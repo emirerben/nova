@@ -5,12 +5,26 @@ import Foundation
 ///
 /// Work is keyed by the file's identity (`FileIdentity`), never by its path. The upload stages the take under a new name
 /// (a hardlink, so the same inode), and a take that was replaced or edited since it was prewarmed has a different
-/// identity and simply misses. A miss costs nothing but the work the upload would have done anyway.
+/// identity and simply misses. The upload then does the work itself, and `cancel(source:)` stops the orphaned job.
+///
+/// The proxy export waits for the same admission as the upload's own export (`Admission`): more than one
+/// `AVAssetExportSession` at a time invites `AVError.operationInterrupted` on older devices, and a take's prewarm must
+/// not run next to a Photos clip's proxy or another take's.
 ///
 /// `claim` hands the running work to exactly one caller and forgets it, so the upload waits for what is already in
 /// flight rather than starting a second copy, and a retry after a failure starts clean.
 public final class SourcePrewarmer: @unchecked Sendable {
     public typealias ProxyMaker = @Sendable (_ source: URL, _ destination: URL) async throws -> URL
+
+    /// One slot of the app's export limit. `acquire` throws when the waiting task is cancelled; `release` must follow
+    /// every `acquire` that returned.
+    public struct Admission: Sendable {
+        public let acquire: @Sendable () async throws -> Void
+        public let release: @Sendable () -> Void
+        public init(acquire: @escaping @Sendable () async throws -> Void, release: @escaping @Sendable () -> Void) {
+            self.acquire = acquire; self.release = release
+        }
+    }
 
     fileprivate final class Job: @unchecked Sendable {
         let source: URL
@@ -20,12 +34,15 @@ public final class SourcePrewarmer: @unchecked Sendable {
         var proxy: Task<URL?, Never>!
         private let lock = NSLock()
         private var delivered = false
+        private var admitted: Bool
 
-        init(source: URL, identity: FileIdentity, proxyURL: URL) {
-            self.source = source; self.identity = identity; self.proxyURL = proxyURL
+        init(source: URL, identity: FileIdentity, proxyURL: URL, gated: Bool) {
+            self.source = source; self.identity = identity; self.proxyURL = proxyURL; admitted = !gated
         }
 
         func markDelivered() { lock.lock(); delivered = true; lock.unlock() }
+        func markAdmitted() { lock.lock(); admitted = true; lock.unlock() }
+        var isAdmitted: Bool { lock.lock(); defer { lock.unlock() }; return admitted }
 
         /// Stops both tasks and deletes a proxy nobody took.
         func cancel() {
@@ -49,6 +66,9 @@ public final class SourcePrewarmer: @unchecked Sendable {
 
         /// The finished proxy, or nil when the transcode failed, was cancelled, or the file changed while it ran.
         public func takeProxy() async -> URL? {
+            // A claimant holds the export slot a still-queued prewarm waits for, so waiting on it would never end;
+            // the claimant transcodes in its own slot instead.
+            if !job.isAdmitted { job.proxy.cancel() }
             let url = await withTaskCancellationHandler { await job.proxy.value } onCancel: { job.cancel() }
             if url != nil { job.markDelivered() }
             return url
@@ -60,13 +80,15 @@ public final class SourcePrewarmer: @unchecked Sendable {
 
     private let directory: URL
     private let makeProxy: ProxyMaker
+    private let admission: Admission?
     private let lock = NSLock()
     private var jobs: [UUID: Job] = [:]
 
     /// `directory` is wiped here. Nothing in it can belong to a live job (this instance has none yet) and a previous
     /// process's proxies are unreachable after a relaunch, so keeping them would only leak disk.
-    public init(directory: URL, makeProxy: @escaping ProxyMaker) {
+    public init(directory: URL, admission: Admission? = nil, makeProxy: @escaping ProxyMaker) {
         self.directory = directory
+        self.admission = admission
         self.makeProxy = makeProxy
         try? FileManager.default.removeItem(at: directory)
     }
@@ -82,8 +104,9 @@ public final class SourcePrewarmer: @unchecked Sendable {
             jobs[key] = nil
         }
         let job = Job(source: source, identity: identity,
-                      proxyURL: directory.appendingPathComponent("\(UUID().uuidString).mp4"))
+                      proxyURL: directory.appendingPathComponent("\(UUID().uuidString).mp4"), gated: admission != nil)
         let proxyMaker = makeProxy
+        let admission = admission
         job.hash = Task.detached(priority: .utility) {
             guard !Task.isCancelled else { return nil }
             let fingerprint = try? EngineSignpost.measure("talk.prewarm.hash") { try SHA256Fingerprinter().fingerprint(file: source) }
@@ -93,8 +116,14 @@ public final class SourcePrewarmer: @unchecked Sendable {
             return KnownFingerprint(identity: identity, fingerprint: fingerprint)
         }
         let proxyURL = job.proxyURL
-        job.proxy = Task.detached(priority: .utility) {
+        job.proxy = Task.detached(priority: .utility) { [job] in
             guard !Task.isCancelled else { return nil }
+            if let admission {
+                // Cancelled while queued (Retake, or a claimant that transcodes itself): leaves the queue, holds nothing.
+                do { try await admission.acquire() } catch { return nil }
+            }
+            defer { admission?.release() }
+            job.markAdmitted()
             let interval = EngineSignpost.begin("talk.prewarm.proxy")
             do {
                 let output = try await proxyMaker(source, proxyURL)
@@ -120,6 +149,16 @@ public final class SourcePrewarmer: @unchecked Sendable {
         job?.cancel()
     }
 
+    /// Drops the job prewarming the file at `source`, for an upload that staged a copy and so can never claim it.
+    public func cancel(source: URL) {
+        let path = source.standardizedFileURL.path
+        lock.lock()
+        let doomed = jobs.filter { $0.value.source.standardizedFileURL.path == path }
+        doomed.keys.forEach { jobs[$0] = nil }
+        lock.unlock()
+        doomed.values.forEach { $0.cancel() }
+    }
+
     public func cancelAll() {
         lock.lock(); let all = Array(jobs.values); jobs.removeAll(); lock.unlock()
         all.forEach { $0.cancel() }
@@ -138,14 +177,3 @@ public final class SourcePrewarmer: @unchecked Sendable {
     /// For tests: how many jobs are held.
     public var heldCount: Int { lock.lock(); defer { lock.unlock() }; return jobs.count }
 }
-
-#if canImport(AVFoundation)
-public extension SourcePrewarmer {
-    /// The app's instance: proxies at the analysis preset, in the caches directory (the system may reclaim it).
-    static let shared = SourcePrewarmer(
-        directory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("KriaTakePrewarm", isDirectory: true),
-        makeProxy: { source, destination in
-            try await AVFoundationProxyGenerator(preset: .analysis).makeProxy(for: source, destination: destination)
-        })
-}
-#endif

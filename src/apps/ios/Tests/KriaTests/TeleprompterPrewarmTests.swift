@@ -7,7 +7,8 @@ import XCTest
 /// 2. Retake / Discard / replacing a pending take leaves the transcode running or a proxy on disk;
 /// 3. a take re-recorded into the same slot reuses the previous take's hash or proxy;
 /// 4. the Use take spinner stays up for the second (background) upload;
-/// 5. Use take and a failed intake leave no way to retry with fresh work.
+/// 5. Use take and a failed intake leave no way to retry with fresh work;
+/// 6. a second take's export runs beside the first's (the app allows one export at a time).
 @MainActor final class TeleprompterPrewarmTests: XCTestCase {
     private var root: URL!
 
@@ -39,8 +40,11 @@ import XCTest
 
     private struct Saver: PhotoLibrarySaving { func saveVideo(at url: URL) async throws {} }
 
-    private func makeFlow(_ transcodes: Transcodes, background: BackgroundIntake? = nil) -> (TeleprompterRecordingFlow, SourcePrewarmer) {
-        let prewarmer = SourcePrewarmer(directory: root.appendingPathComponent("prewarm", isDirectory: true)) { try await transcodes.make($0, $1) }
+    private func makeFlow(_ transcodes: Transcodes, background: BackgroundIntake? = nil, gate: UploadAdmissionGate? = nil) -> (TeleprompterRecordingFlow, SourcePrewarmer) {
+        let admission = gate.map { gate in
+            SourcePrewarmer.Admission(acquire: { try await gate.acquire() }, release: { Task { @MainActor in gate.release() } })
+        }
+        let prewarmer = SourcePrewarmer(directory: root.appendingPathComponent("prewarm", isDirectory: true), admission: admission) { try await transcodes.make($0, $1) }
         let flow = TeleprompterRecordingFlow(accountID: "test", projectID: UUID(), root: root, photoSaver: Saver(), prewarmer: prewarmer,
                                              speakerBackgroundEnabled: background != nil, backgroundIntake: background)
         return (flow, prewarmer)
@@ -84,23 +88,26 @@ import XCTest
         XCTAssertEqual(transcodes.started, [])
     }
 
-    func testDiscardingACandidateStopsItsTranscodeAndKeepsThePendingTakesWork() async throws {
+    func testDiscardingACandidateDropsItsQueuedExportAndKeepsThePendingTakesWork() async throws {
         let transcodes = Transcodes()
-        let (flow, prewarmer) = makeFlow(transcodes)
+        let gate = UploadAdmissionGate(limit: 1)
+        let (flow, prewarmer) = makeFlow(transcodes, gate: gate)
         let first = try finalize(flow)
         try await waitFor { transcodes.started.count == 1 }
-        _ = first
         // The second take is a candidate beside the pending first; going back to the first discards it.
         let candidate = try finalize(flow)
-        try await waitFor { transcodes.started.count == 2 }
+        try await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(flow.selectedTake?.id, candidate.id)
+        XCTAssertEqual(transcodes.started.count, 1, "the candidate waits for the pending take's export")
+        XCTAssertEqual(prewarmer.heldCount, 2)
 
         flow.previousTake()
 
-        try await waitFor { transcodes.cancelled == 1 }
         XCTAssertEqual(prewarmer.heldCount, 1, "only the kept pending take is still being prepared")
         XCTAssertNil(prewarmer.claim(source: flow.store.fileURL(for: candidate)))
         transcodes.holds = false
+        try await waitFor { gate.activeCount == 0 && gate.waitingCount == 0 }
+        XCTAssertEqual(transcodes.started, [flow.store.fileURL(for: first).lastPathComponent], "the dropped candidate never exported")
     }
 
     func testDiscardingTheOnlyTakeStopsItsWork() async throws {

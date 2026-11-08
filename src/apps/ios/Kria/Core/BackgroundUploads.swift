@@ -279,7 +279,8 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     private let defaultsKey: String
     /// Bounds concurrent import/transcode work. Cloud is I/O-bound (a couple of overlapping
     /// clips saturate the disk); the phone-render proxy runs a live `AVAssetExportSession`, and
-    /// more than one at once invites `AVError.operationInterrupted` on older devices.
+    /// more than one at once invites `AVError.operationInterrupted` on older devices. The proxy gate is
+    /// shared with a recorded take's prewarm (`SourcePrewarmer.shared`).
     private let cloudGate: UploadAdmissionGate
     private let proxyGate: UploadAdmissionGate
     /// One per asset the user is currently choosing (debounce → load → enqueue), so un-choosing it
@@ -320,12 +321,12 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     /// legitimately still running just because `openWorkspace()` was re-entered.
     private var activePreparationIDs: Set<UUID> = []
 
-    init(api: KriaAPIClient, defaultsKey: String = "kria.background-upload-recovery.v1", sessionConfiguration: URLSessionConfiguration? = nil, backgroundActivity: any BackgroundActivityAssertion = UIKitBackgroundActivityAssertion(), maxConcurrentCloudPreparations: Int = 2, maxConcurrentProxyPreparations: Int = 1) {
+    init(api: KriaAPIClient, defaultsKey: String = "kria.background-upload-recovery.v1", sessionConfiguration: URLSessionConfiguration? = nil, backgroundActivity: any BackgroundActivityAssertion = UIKitBackgroundActivityAssertion(), maxConcurrentCloudPreparations: Int = 2, proxyGate: UploadAdmissionGate = .proxyExports) {
         self.api = api
         self.defaultsKey = defaultsKey
         self.backgroundActivity = backgroundActivity
         self.cloudGate = UploadAdmissionGate(limit: maxConcurrentCloudPreparations)
-        self.proxyGate = UploadAdmissionGate(limit: maxConcurrentProxyPreparations)
+        self.proxyGate = proxyGate
         super.init()
         records = Self.restoreRecords(key: defaultsKey)
         pendingEditorPlacements = Self.restoreEditorPlacements(key: defaultsKey)
@@ -509,7 +510,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 try await Perf.measureAsync("talk.use.proxyGateWait") { try await gate.acquire() }
                 holdsSlot = true
             }
-            let prepared = role == .clip ? try await prepare(fileURL: stagedURL ?? fileURL, projectID: projectID, purpose: purpose, recordID: recordID) : (fileURL, nil, nil)
+            let prepared = role == .clip ? try await prepare(fileURL: stagedURL ?? fileURL, prewarmedFrom: fileURL, projectID: projectID, purpose: purpose, recordID: recordID) : (fileURL, nil, nil)
             if role == .clip { preparedToDiscard = (prepared.0, prepared.1) }
             // Cancellation checkpoint 1 of 2. `prepare()` itself cannot be interrupted mid-import (a
             // synchronous copy + hash); a cancel during it only lands here, so it still costs that
@@ -1874,12 +1875,15 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         return ProjectDirectory(root: root)
     }
 
-    private func prepare(fileURL: URL, projectID: UUID, purpose: UploadPurpose, recordID: UUID) async throws -> (URL, MediaAsset?, ProjectMediaUploadContract?) {
+    private func prepare(fileURL: URL, prewarmedFrom origin: URL? = nil, projectID: UUID, purpose: UploadPurpose, recordID: UUID) async throws -> (URL, MediaAsset?, ProjectMediaUploadContract?) {
         let project = Self.projectDirectory(projectID)
         // A recorded take was hashed and transcoded while the creator reviewed it. This finds that work by the file's
         // identity (the staged file is a hardlink of the take) and waits for it instead of starting it again.
         let prewarm = purpose == .analysisProxy ? SourcePrewarmer.shared.claim(source: fileURL) : nil
         defer { prewarm?.discard() }
+        // A staged copy (the link was refused) has another identity and can never claim the take's job, which would
+        // keep exporting beside the transcode below.
+        if purpose == .analysisProxy, prewarm == nil, let origin { SourcePrewarmer.shared.cancel(source: origin) }
         if purpose == .analysisProxy { Perf.count("talk.use.prewarm", prewarm == nil ? "miss" : "claimed") }
         var known: KnownFingerprint?
         if let prewarm { known = await Perf.measureAsync("talk.use.prewarmHashWait") { await prewarm.fingerprint() } }

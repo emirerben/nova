@@ -7,7 +7,9 @@ import XCTest
 /// Retake lands while the work is still running (it must stop and leave no file); the staged copy is a clone rather than
 /// a link (the identity differs, so the work must not be reused); the work is claimed twice or started twice (duplicate
 /// transcodes); the transcode fails or the process was killed (the upload must still do the work itself); the
-/// importer is handed a digest for bytes it did not import.
+/// importer is handed a digest for bytes it did not import. The export limit adds: two prewarms exporting at once, a
+/// cancelled queued prewarm that keeps or leaks the slot, a claimant that holds the slot a queued prewarm waits for
+/// (it would wait forever), and a failed export that never gives its slot back.
 final class SourcePrewarmerTests: XCTestCase {
     private var root: URL!
 
@@ -54,6 +56,22 @@ final class SourcePrewarmerTests: XCTestCase {
 
     private func prewarmer(_ probe: Probe) -> SourcePrewarmer {
         SourcePrewarmer(directory: root.appendingPathComponent("prewarm", isDirectory: true)) { try await probe.make(source: $0, destination: $1) }
+    }
+
+    /// The app's one-at-a-time export limit, polling so a cancelled waiter leaves at once.
+    private final class Slots: @unchecked Sendable {
+        private let lock = NSLock()
+        private var taken = 0
+        func tryTake() -> Bool { lock.withLock { if taken == 0 { taken = 1; return true }; return false } }
+        var isFree: Bool { lock.withLock { taken == 0 } }
+        var admission: SourcePrewarmer.Admission {
+            .init(acquire: { while !self.tryTake() { try Task.checkCancellation(); try await Task.sleep(for: .milliseconds(2)) } },
+                  release: { self.lock.withLock { self.taken -= 1 } })
+        }
+    }
+
+    private func gatedPrewarmer(_ probe: Probe, _ slots: Slots) -> SourcePrewarmer {
+        SourcePrewarmer(directory: root.appendingPathComponent("prewarm", isDirectory: true), admission: slots.admission) { try await probe.make(source: $0, destination: $1) }
     }
 
     private func files(in directory: URL) -> [String] {
@@ -316,5 +334,86 @@ final class SourcePrewarmerTests: XCTestCase {
             if ContinuousClock.now > deadline { return XCTFail("timed out waiting for condition") }
             try await Task.sleep(for: .milliseconds(5))
         }
+    }
+
+    // MARK: Export limit
+
+    func testTwoPrewarmsNeverExportAtTheSameTime() async throws {
+        let probe = Probe(); probe.holds = true
+        let slots = Slots(), warm = gatedPrewarmer(probe, slots)
+        warm.start(key: UUID(), source: try take("first", name: "a.mov"))
+        warm.start(key: UUID(), source: try take("second", name: "b.mov"))
+        try await waitFor { probe.started == 1 }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(probe.started, 1, "the second waits for the first's slot")
+        probe.release()
+        try await waitFor { probe.started == 2 }
+    }
+
+    func testAnotherExportHoldingTheSlotKeepsAPrewarmWaiting() async throws {
+        let probe = Probe(), slots = Slots(), warm = gatedPrewarmer(probe, slots)
+        XCTAssertTrue(slots.tryTake(), "a Photos clip's proxy export")
+        warm.start(key: UUID(), source: try take())
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(probe.started, 0)
+        slots.admission.release()
+        try await waitFor { probe.started == 1 }
+    }
+
+    func testACancelledQueuedPrewarmLeavesTheQueueAndTheSlotStaysUsable() async throws {
+        let probe = Probe(); probe.holds = true
+        let slots = Slots(), warm = gatedPrewarmer(probe, slots)
+        let queued = UUID()
+        warm.start(key: UUID(), source: try take("first", name: "a.mov"))
+        try await waitFor { probe.started == 1 }
+        warm.start(key: queued, source: try take("second", name: "b.mov"))
+        warm.cancel(key: queued)
+        probe.release()
+        try await waitFor { slots.isFree }
+        XCTAssertEqual(probe.started, 1, "the cancelled prewarm never exported")
+        XCTAssertEqual(files(in: root.appendingPathComponent("prewarm")).filter { $0.hasSuffix(".mp4") }.count, 1)
+    }
+
+    func testAClaimantThatHoldsTheSlotIsNotMadeToWaitForAQueuedPrewarm() async throws {
+        let probe = Probe(), slots = Slots(), warm = gatedPrewarmer(probe, slots)
+        XCTAssertTrue(slots.tryTake(), "the upload's own slot")
+        let url = try take("the creator's take")
+        warm.start(key: UUID(), source: url)
+        let claim = try XCTUnwrap(warm.claim(source: url))
+        let outcome = expectation(description: "claim answered")
+        Task {
+            let known = await claim.fingerprint()
+            let proxy = await claim.takeProxy()
+            XCTAssertNotNil(known, "the hash does not need the slot")
+            XCTAssertNil(proxy, "the claimant transcodes in its own slot")
+            outcome.fulfill()
+        }
+        await fulfillment(of: [outcome], timeout: 5)
+        XCTAssertEqual(probe.started, 0)
+        slots.admission.release()
+        XCTAssertTrue(slots.isFree)
+    }
+
+    func testAFailedExportGivesItsSlotBack() async throws {
+        let probe = Probe(); probe.failure = CocoaError(.fileWriteUnknown)
+        let slots = Slots(), warm = gatedPrewarmer(probe, slots)
+        warm.start(key: UUID(), source: try take())
+        try await waitFor { probe.started == 1 }
+        try await waitFor { slots.isFree }
+    }
+
+    func testCancellingBySourceStopsAnOrphanedExport() async throws {
+        let probe = Probe(); probe.holds = true
+        let warm = prewarmer(probe)
+        let url = try take()
+        warm.start(key: UUID(), source: url)
+        try await waitFor { probe.started == 1 }
+        let clone = root.appendingPathComponent("clone.mov")
+        try FileManager.default.copyItem(at: url, to: clone)
+        warm.cancel(source: clone)
+        XCTAssertEqual(warm.heldCount, 1, "a different file's cancel leaves it")
+        warm.cancel(source: url)
+        try await waitFor { probe.cancelled == 1 }
+        XCTAssertEqual(warm.heldCount, 0)
     }
 }
