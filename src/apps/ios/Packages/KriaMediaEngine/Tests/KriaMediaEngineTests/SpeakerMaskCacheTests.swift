@@ -124,6 +124,35 @@ import CryptoKit
         XCTAssertEqual(files(under: root, suffix: ".mask").count, 1)
     }
 
+    /// M2b: the matte rejects a mask over `maxCoverage` (it swallowed the frame), so such an answer is not worth pinning on disk;
+    /// an empty mask (nobody in frame) is an accepted answer and is stored.
+    func testOnlyMasksTheMatteAcceptsAreStored() throws {
+        let (store, root) = try makeStore()
+        let stub = Stub()
+        let segmenter = try caching(stub, store)
+        func uniformMask(_ value: UInt8) -> CVPixelBuffer {
+            let buffer = Self.makeMask(seed: 0)
+            CVPixelBufferLockBaseAddress(buffer, [])
+            memset(CVPixelBufferGetBaseAddress(buffer)!, Int32(value), CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer))
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            return buffer
+        }
+        stub.answer = { _ in uniformMask(255) }
+        _ = try segmenter.personMask(for: frame, canvas: canvas, config: .shipping)
+        store.flush()
+        XCTAssertEqual(files(under: root, suffix: ".mask").count, 0, "a mask over the coverage ceiling is never stored")
+        _ = try segmenter.personMask(for: frame, canvas: canvas, config: .shipping)
+        XCTAssertEqual(stub.calls, 2, "the rejected frame asks Vision again, as it always did")
+
+        stub.answer = { _ in uniformMask(0) }
+        stub.fill = 20
+        _ = try segmenter.personMask(for: frame, canvas: canvas, config: .shipping)
+        store.flush()
+        XCTAssertEqual(files(under: root, suffix: ".mask").count, 1, "nobody in frame is an accepted answer")
+        _ = try segmenter.personMask(for: frame, canvas: canvas, config: .shipping)
+        XCTAssertEqual(stub.calls, 3, "and the second ask is a hit")
+    }
+
     /// M16: the key records the revision Vision is asked for, not the newest one the OS knows.
     func testTheKeyNamesTheRevisionTheSegmenterRequests() {
         #if canImport(Vision)

@@ -341,7 +341,8 @@ final class CachingPersonSegmenter: NativePersonSegmenting {
         }
         // A throw or nil passes up untouched, so the matte's hold logic runs as it always did and nothing is stored.
         let mask = try base.segmentationMask(forInput: input, config: config)
-        if let mask { pack.store(key, mask: mask) }
+        // Only what the matte will use: a mask it rejects (coverage over the ceiling) is rebuilt by Vision each Save, as before.
+        if let mask, SpeakerMaskReading(mask, config: config)?.isUsable(by: config) == true { pack.store(key, mask: mask) }
         return mask
     }
 }
