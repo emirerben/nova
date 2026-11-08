@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.99.0] - 2026-11-08
+
+### Changed
+- fix(ios): plan feed no longer says "Still to decide" after approval (KRI-1290) (#2209) <!-- release-pr: 2209 -->
+
 ## [0.88.98.0] - 2026-11-08
 
 ### Changed
