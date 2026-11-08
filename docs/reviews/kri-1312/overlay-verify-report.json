@@ -1,0 +1,2679 @@
+{
+ "fixture": "src/apps/api/tests/fixtures/overlay_verify/kri1312_new_fonts.json",
+ "command": "make verify-overlays (prod image, full --fixtures run)",
+ "run_overall": "PASS",
+ "run_counts": {
+  "PASS": 241,
+  "FAIL": 0,
+  "WARN": 0,
+  "SKIPPED": 0
+ },
+ "kri1312_overlays": 78,
+ "kri1312_non_pass": 0,
+ "overlays": [
+  {
+   "slot_index": 27,
+   "overlay_index": 0,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    98,
+    768,
+    981,
+    974
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Newsreader",
+    "requested_font_style": "display",
+    "name": "Newsreader",
+    "file": "Newsreader-Medium.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 1,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    101,
+    757,
+    975,
+    973
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Newsreader",
+    "requested_font_style": "display",
+    "name": "Newsreader",
+    "file": "Newsreader-Medium.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 2,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    162,
+    754,
+    918,
+    996
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Young Serif",
+    "requested_font_style": "display",
+    "name": "Young Serif",
+    "file": "YoungSerif-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 3,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    118,
+    754,
+    955,
+    998
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Young Serif",
+    "requested_font_style": "display",
+    "name": "Young Serif",
+    "file": "YoungSerif-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 4,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    171,
+    768,
+    910,
+    991
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Libre Caslon Display",
+    "requested_font_style": "display",
+    "name": "Libre Caslon Display",
+    "file": "LibreCaslonDisplay-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 5,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    72,
+    807,
+    1003,
+    939
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Libre Caslon Display",
+    "requested_font_style": "display",
+    "name": "Libre Caslon Display",
+    "file": "LibreCaslonDisplay-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 6,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    70,
+    757,
+    1007,
+    996
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Hedvig Letters Serif",
+    "requested_font_style": "display",
+    "name": "Hedvig Letters Serif",
+    "file": "HedvigLettersSerif-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 7,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    87,
+    749,
+    990,
+    994
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Hedvig Letters Serif",
+    "requested_font_style": "display",
+    "name": "Hedvig Letters Serif",
+    "file": "HedvigLettersSerif-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 8,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    158,
+    758,
+    923,
+    1008
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Literata",
+    "requested_font_style": "display",
+    "name": "Literata",
+    "file": "Literata-SemiBold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 9,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    120,
+    758,
+    956,
+    1007
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Literata",
+    "requested_font_style": "display",
+    "name": "Literata",
+    "file": "Literata-SemiBold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 10,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    112,
+    768,
+    975,
+    986
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Italiana",
+    "requested_font_style": "display",
+    "name": "Italiana",
+    "file": "Italiana-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 11,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)",
+    "glyph fallback 'Italiana' -> 'Libre Caslon Display' (font lacks characters of this text)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    72,
+    807,
+    1003,
+    939
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Italiana",
+    "requested_font_style": "display",
+    "name": "Libre Caslon Display",
+    "file": "LibreCaslonDisplay-Regular.ttf",
+    "source": "glyph_fallback",
+    "fallback": false,
+    "glyph_fallback": true
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 12,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    102,
+    756,
+    977,
+    976
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Cinzel",
+    "requested_font_style": "display",
+    "name": "Cinzel",
+    "file": "Cinzel-SemiBold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 13,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)",
+    "glyph fallback 'Cinzel' -> 'Literata' (font lacks characters of this text)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    120,
+    758,
+    956,
+    1007
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Cinzel",
+    "requested_font_style": "display",
+    "name": "Literata",
+    "file": "Literata-SemiBold.ttf",
+    "source": "glyph_fallback",
+    "fallback": false,
+    "glyph_fallback": true
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 14,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    156,
+    768,
+    925,
+    984
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Yeseva One",
+    "requested_font_style": "display",
+    "name": "Yeseva One",
+    "file": "YesevaOne-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 15,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    116,
+    769,
+    962,
+    982
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Yeseva One",
+    "requested_font_style": "display",
+    "name": "Yeseva One",
+    "file": "YesevaOne-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 16,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    69,
+    756,
+    1010,
+    992
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Rozha One",
+    "requested_font_style": "display",
+    "name": "Rozha One",
+    "file": "RozhaOne-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 17,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    84,
+    753,
+    994,
+    992
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Rozha One",
+    "requested_font_style": "display",
+    "name": "Rozha One",
+    "file": "RozhaOne-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 18,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    59,
+    763,
+    1018,
+    996
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Lora",
+    "requested_font_style": "display",
+    "name": "Lora",
+    "file": "Lora-SemiBold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 19,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    65,
+    750,
+    1013,
+    994
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Lora",
+    "requested_font_style": "display",
+    "name": "Lora",
+    "file": "Lora-SemiBold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 20,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    138,
+    751,
+    949,
+    995
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Shrikhand",
+    "requested_font_style": "display",
+    "name": "Shrikhand",
+    "file": "Shrikhand-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 21,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    97,
+    750,
+    989,
+    998
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Shrikhand",
+    "requested_font_style": "display",
+    "name": "Shrikhand",
+    "file": "Shrikhand-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 22,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    83,
+    760,
+    998,
+    1004
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Bagel Fat One",
+    "requested_font_style": "display",
+    "name": "Bagel Fat One",
+    "file": "BagelFatOne-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 23,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)",
+    "glyph fallback 'Bagel Fat One' -> 'Nunito ExtraBold' (font lacks characters of this text)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    73,
+    745,
+    1007,
+    991
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Bagel Fat One",
+    "requested_font_style": "display",
+    "name": "Nunito ExtraBold",
+    "file": "Nunito-ExtraBold.ttf",
+    "source": "glyph_fallback",
+    "fallback": false,
+    "glyph_fallback": true
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 24,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    98,
+    755,
+    983,
+    1008
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Dela Gothic One",
+    "requested_font_style": "display",
+    "name": "Dela Gothic One",
+    "file": "DelaGothicOne-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 25,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    58,
+    758,
+    1024,
+    1009
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Dela Gothic One",
+    "requested_font_style": "display",
+    "name": "Dela Gothic One",
+    "file": "DelaGothicOne-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 26,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    112,
+    756,
+    968,
+    1003
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Gasoek One",
+    "requested_font_style": "display",
+    "name": "Gasoek One",
+    "file": "GasoekOne-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 27,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)",
+    "glyph fallback 'Gasoek One' -> 'Dela Gothic One' (font lacks characters of this text)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    58,
+    758,
+    1024,
+    1009
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Gasoek One",
+    "requested_font_style": "display",
+    "name": "Dela Gothic One",
+    "file": "DelaGothicOne-Regular.ttf",
+    "source": "glyph_fallback",
+    "fallback": false,
+    "glyph_fallback": true
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 28,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    83,
+    707,
+    996,
+    1048
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Climate Crisis",
+    "requested_font_style": "display",
+    "name": "Climate Crisis",
+    "file": "ClimateCrisis-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 29,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    124,
+    754,
+    954,
+    1003
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Climate Crisis",
+    "requested_font_style": "display",
+    "name": "Climate Crisis",
+    "file": "ClimateCrisis-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 30,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    77,
+    760,
+    1003,
+    979
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Bungee",
+    "requested_font_style": "display",
+    "name": "Bungee",
+    "file": "Bungee-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 31,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    167,
+    743,
+    912,
+    987
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Bungee",
+    "requested_font_style": "display",
+    "name": "Bungee",
+    "file": "Bungee-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 32,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    99,
+    760,
+    981,
+    980
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Basteleur",
+    "requested_font_style": "display",
+    "name": "Basteleur",
+    "file": "Basteleur-Bold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 33,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    185,
+    761,
+    894,
+    980
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Basteleur",
+    "requested_font_style": "display",
+    "name": "Basteleur",
+    "file": "Basteleur-Bold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 34,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    68,
+    720,
+    1012,
+    1020
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Anybody",
+    "requested_font_style": "display",
+    "name": "Anybody",
+    "file": "Anybody-ExpandedExtraBold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 35,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    122,
+    763,
+    954,
+    978
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Anybody",
+    "requested_font_style": "display",
+    "name": "Anybody",
+    "file": "Anybody-ExpandedExtraBold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 36,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    53,
+    762,
+    1026,
+    989
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Geist",
+    "requested_font_style": "display",
+    "name": "Geist",
+    "file": "Geist-SemiBold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 37,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    56,
+    750,
+    1025,
+    992
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Geist",
+    "requested_font_style": "display",
+    "name": "Geist",
+    "file": "Geist-SemiBold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 38,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    162,
+    759,
+    917,
+    996
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Mona Sans",
+    "requested_font_style": "display",
+    "name": "Mona Sans",
+    "file": "MonaSans-Bold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 39,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    59,
+    746,
+    1021,
+    1001
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Mona Sans",
+    "requested_font_style": "display",
+    "name": "Mona Sans",
+    "file": "MonaSans-Bold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 40,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    53,
+    768,
+    1026,
+    992
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Funnel Display",
+    "requested_font_style": "display",
+    "name": "Funnel Display",
+    "file": "FunnelDisplay-SemiBold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 41,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    70,
+    755,
+    1010,
+    992
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Funnel Display",
+    "requested_font_style": "display",
+    "name": "Funnel Display",
+    "file": "FunnelDisplay-SemiBold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 42,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    63,
+    764,
+    1017,
+    990
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Instrument Sans",
+    "requested_font_style": "display",
+    "name": "Instrument Sans",
+    "file": "InstrumentSans-SemiBold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 43,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    74,
+    750,
+    1006,
+    990
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Instrument Sans",
+    "requested_font_style": "display",
+    "name": "Instrument Sans",
+    "file": "InstrumentSans-SemiBold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 44,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    55,
+    761,
+    1024,
+    990
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Schibsted Grotesk",
+    "requested_font_style": "display",
+    "name": "Schibsted Grotesk",
+    "file": "SchibstedGrotesk-Bold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 45,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    52,
+    749,
+    1028,
+    989
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Schibsted Grotesk",
+    "requested_font_style": "display",
+    "name": "Schibsted Grotesk",
+    "file": "SchibstedGrotesk-Bold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 46,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    96,
+    772,
+    984,
+    992
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Familjen Grotesk",
+    "requested_font_style": "display",
+    "name": "Familjen Grotesk",
+    "file": "FamiljenGrotesk-SemiBold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 47,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    103,
+    760,
+    976,
+    988
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Familjen Grotesk",
+    "requested_font_style": "display",
+    "name": "Familjen Grotesk",
+    "file": "FamiljenGrotesk-SemiBold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 48,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    73,
+    760,
+    1010,
+    996
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Host Grotesk",
+    "requested_font_style": "display",
+    "name": "Host Grotesk",
+    "file": "HostGrotesk-SemiBold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 49,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    82,
+    747,
+    997,
+    998
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Host Grotesk",
+    "requested_font_style": "display",
+    "name": "Host Grotesk",
+    "file": "HostGrotesk-SemiBold.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 50,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    137,
+    700,
+    943,
+    1059
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Homemade Apple",
+    "requested_font_style": "display",
+    "name": "Homemade Apple",
+    "file": "HomemadeApple-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 51,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)",
+    "glyph fallback 'Homemade Apple' -> 'Zeyada' (font lacks characters of this text)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    135,
+    800,
+    948,
+    934
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Homemade Apple",
+    "requested_font_style": "display",
+    "name": "Zeyada",
+    "file": "Zeyada-Regular.ttf",
+    "source": "glyph_fallback",
+    "fallback": false,
+    "glyph_fallback": true
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 52,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    130,
+    762,
+    952,
+    989
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Geist Mono",
+    "requested_font_style": "display",
+    "name": "Geist Mono",
+    "file": "GeistMono-Medium.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 53,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    170,
+    763,
+    906,
+    992
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Geist Mono",
+    "requested_font_style": "display",
+    "name": "Geist Mono",
+    "file": "GeistMono-Medium.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 54,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    130,
+    767,
+    950,
+    975
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Courier Prime",
+    "requested_font_style": "display",
+    "name": "Courier Prime",
+    "file": "CourierPrime-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 55,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    171,
+    766,
+    907,
+    976
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Courier Prime",
+    "requested_font_style": "display",
+    "name": "Courier Prime",
+    "file": "CourierPrime-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 56,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    175,
+    760,
+    912,
+    990
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Instrument Serif Italic",
+    "requested_font_style": "display",
+    "name": "Instrument Serif Italic",
+    "file": "InstrumentSerif-Italic.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 57,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    120,
+    803,
+    965,
+    937
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Instrument Serif Italic",
+    "requested_font_style": "display",
+    "name": "Instrument Serif Italic",
+    "file": "InstrumentSerif-Italic.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 58,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    66,
+    814,
+    1012,
+    932
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Reenie Beanie",
+    "requested_font_style": "display",
+    "name": "Reenie Beanie",
+    "file": "ReenieBeanie-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 59,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)",
+    "glyph fallback 'Reenie Beanie' -> 'Just Me Again Down Here' (font lacks characters of this text)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    156,
+    801,
+    920,
+    947
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Reenie Beanie",
+    "requested_font_style": "display",
+    "name": "Just Me Again Down Here",
+    "file": "JustMeAgainDownHere-Regular.ttf",
+    "source": "glyph_fallback",
+    "fallback": false,
+    "glyph_fallback": true
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 60,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    79,
+    756,
+    1008,
+    996
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Nothing You Could Do",
+    "requested_font_style": "display",
+    "name": "Nothing You Could Do",
+    "file": "NothingYouCouldDo-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 61,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)",
+    "glyph fallback 'Nothing You Could Do' -> 'Zeyada' (font lacks characters of this text)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    135,
+    800,
+    948,
+    934
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Nothing You Could Do",
+    "requested_font_style": "display",
+    "name": "Zeyada",
+    "file": "Zeyada-Regular.ttf",
+    "source": "glyph_fallback",
+    "fallback": false,
+    "glyph_fallback": true
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 62,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    172,
+    758,
+    911,
+    1001
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Covered By Your Grace",
+    "requested_font_style": "display",
+    "name": "Covered By Your Grace",
+    "file": "CoveredByYourGrace-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 63,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)",
+    "glyph fallback 'Covered By Your Grace' -> 'Just Me Again Down Here' (font lacks characters of this text)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    156,
+    801,
+    920,
+    947
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Covered By Your Grace",
+    "requested_font_style": "display",
+    "name": "Just Me Again Down Here",
+    "file": "JustMeAgainDownHere-Regular.ttf",
+    "source": "glyph_fallback",
+    "fallback": false,
+    "glyph_fallback": true
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 64,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    155,
+    728,
+    935,
+    1033
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "La Belle Aurore",
+    "requested_font_style": "display",
+    "name": "La Belle Aurore",
+    "file": "LaBelleAurore-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 65,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)",
+    "glyph fallback 'La Belle Aurore' -> 'Over the Rainbow' (font lacks characters of this text)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    77,
+    707,
+    1002,
+    1035
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "La Belle Aurore",
+    "requested_font_style": "display",
+    "name": "Over the Rainbow",
+    "file": "OvertheRainbow-Regular.ttf",
+    "source": "glyph_fallback",
+    "fallback": false,
+    "glyph_fallback": true
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 66,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    96,
+    726,
+    990,
+    1029
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Over the Rainbow",
+    "requested_font_style": "display",
+    "name": "Over the Rainbow",
+    "file": "OvertheRainbow-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 67,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    77,
+    707,
+    1002,
+    1035
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Over the Rainbow",
+    "requested_font_style": "display",
+    "name": "Over the Rainbow",
+    "file": "OvertheRainbow-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 68,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    73,
+    814,
+    1012,
+    943
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Zeyada",
+    "requested_font_style": "display",
+    "name": "Zeyada",
+    "file": "Zeyada-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 69,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    135,
+    800,
+    948,
+    934
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Zeyada",
+    "requested_font_style": "display",
+    "name": "Zeyada",
+    "file": "Zeyada-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 70,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    156,
+    744,
+    927,
+    1016
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Waiting for the Sunrise",
+    "requested_font_style": "display",
+    "name": "Waiting for the Sunrise",
+    "file": "WaitingfortheSunrise-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 71,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)",
+    "glyph fallback 'Waiting for the Sunrise' -> 'Over the Rainbow' (font lacks characters of this text)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    77,
+    707,
+    1002,
+    1035
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Waiting for the Sunrise",
+    "requested_font_style": "display",
+    "name": "Over the Rainbow",
+    "file": "OvertheRainbow-Regular.ttf",
+    "source": "glyph_fallback",
+    "fallback": false,
+    "glyph_fallback": true
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 72,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    122,
+    818,
+    966,
+    950
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Just Me Again Down Here",
+    "requested_font_style": "display",
+    "name": "Just Me Again Down Here",
+    "file": "JustMeAgainDownHere-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 73,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    156,
+    801,
+    920,
+    947
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Just Me Again Down Here",
+    "requested_font_style": "display",
+    "name": "Just Me Again Down Here",
+    "file": "JustMeAgainDownHere-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 74,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    158,
+    801,
+    928,
+    962
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Sue Ellen Francisco",
+    "requested_font_style": "display",
+    "name": "Sue Ellen Francisco",
+    "file": "SueEllenFrancisco-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 75,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)",
+    "glyph fallback 'Sue Ellen Francisco' -> 'Just Me Again Down Here' (font lacks characters of this text)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    156,
+    801,
+    920,
+    947
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Sue Ellen Francisco",
+    "requested_font_style": "display",
+    "name": "Just Me Again Down Here",
+    "file": "JustMeAgainDownHere-Regular.ttf",
+    "source": "glyph_fallback",
+    "fallback": false,
+    "glyph_fallback": true
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 76,
+   "text": "The morning that changed everything",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    95,
+    701,
+    1003,
+    1033
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Rock Salt",
+    "requested_font_style": "display",
+    "name": "Rock Salt",
+    "file": "RockSalt-Regular.ttf",
+    "source": "font_family",
+    "fallback": false,
+    "glyph_fallback": false
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  },
+  {
+   "slot_index": 27,
+   "overlay_index": 77,
+   "text": "Güneş ışığı, çok güzel! İŞĞ ÇÖÜ",
+   "effect": "static",
+   "text_anchor": "center",
+   "text_color": "#FFFFFF",
+   "verdict": "PASS",
+   "clipping": "PASS",
+   "content": "SKIPPED",
+   "reasons": [
+    "text fully inside frame",
+    "content OCR not run (render-only stage)",
+    "glyph fallback 'Rock Salt' -> 'Just Me Again Down Here' (font lacks characters of this text)"
+   ],
+   "ocr_text": null,
+   "similarity": null,
+   "bbox": [
+    156,
+    801,
+    920,
+    947
+   ],
+   "resolved_typeface": {
+    "requested_font_family": "Rock Salt",
+    "requested_font_style": "display",
+    "name": "Just Me Again Down Here",
+    "file": "JustMeAgainDownHere-Regular.ttf",
+    "source": "glyph_fallback",
+    "fallback": false,
+    "glyph_fallback": true
+   },
+   "expected_failure": null,
+   "expectation_matched": false
+  }
+ ]
+}

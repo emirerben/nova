@@ -1,0 +1,10 @@
+Test Case '-[KriaTests.NativeFontCatalogTests testEveryPickerFontResolvesToItsOwnBundledFace]' passed
+Test Case '-[KriaTests.NativeFontCatalogTests testMissingDirectoryFallsBackToTheLegacyList]' passed
+Test Case '-[KriaTests.NativeFontCatalogTests testOutfitIsOfferedAndResolvesToTheLiveVariableFont]' passed
+Test Case '-[KriaTests.NativeFontCatalogTests testPickerFontsAreTheNonDeprecatedRegistryKeysSorted]' passed
+Test Case '-[KriaTests.NativeFontCatalogTests testPickerGroupsComeFromTheRegistryVibe]' passed
+Test Case '-[KriaTests.NativeFontCatalogTests testRegistryReaderKeepsTheLastDuplicateLikeThePythonAndJSParsers]' passed
+Test Case '-[KriaTests.NativeFontCatalogTests testUnknownAndDeprecatedNamesFallBackWithoutCrashing]' passed
+Test Case '-[KriaUITests.AppleTextAccessibilityUITests testFontPickerGroupsFontsByTypeUnderSidewaysTabs]' passed
+Test Case '-[KriaUITests.AppleTextAccessibilityUITests testTextFontPickerListsWebFontsAndAppliesTheChoice]' passed
+** TEST SUCCEEDED **

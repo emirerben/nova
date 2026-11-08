@@ -267,6 +267,17 @@ class SpeakerBackgroundLayer(BaseModel):
         return self.focus is not None or any(w.focus is not None for w in self.windows or ())
 
     @property
+    def all_pictures_zoomed(self) -> bool:
+        """KRI-1307: every picture drawn (a media fill and each window) is zoomed in (> 1x).
+
+        Any focus at all is not enough: a recording drawn at 1x, or one window left with no focus,
+        is not zoomed onto its text. A recipe with no picture at all is False.
+        """
+        pictures = [] if self.media_kind == "color" else [self.focus]
+        pictures += [w.focus for w in self.windows or ()]
+        return bool(pictures) and all(f is not None and f.zoom > 1.0 for f in pictures)
+
+    @property
     def uses_color(self) -> bool:
         """True when the fill is a flat colour (needs the ``speakerBackgroundColor`` capability)."""
         return self.media_kind == "color"

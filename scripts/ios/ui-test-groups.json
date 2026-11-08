@@ -368,6 +368,7 @@
       "KriaUITests/NativeCaptionVisualUITests/testVisualControlsEditAndPlaybackRemainAvailable",
       "KriaUITests/AppleTextAccessibilityUITests/testTextInspectorKeepsEditingAndStyleControlsReachableAtAccessibilityTextSize",
       "KriaUITests/AppleTextAccessibilityUITests/testTextFontPickerListsWebFontsAndAppliesTheChoice",
+      "KriaUITests/AppleTextAccessibilityUITests/testFontPickerGroupsFontsByTypeUnderSidewaysTabs",
       "KriaUITests/NativeEditorInspectorUITests/testConnectedPanelsKeepRailAndPreviewStableAndCollapseActiveTool",
       "KriaUITests/NativeEditorInspectorUITests/testConnectedTextPresetAndAnimationPreviewControls",
       "KriaUITests/NativeEditorInspectorUITests/testKeyboardKeepsSourcePreviewVisibleAboveConnectedPanel",

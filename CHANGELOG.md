@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.105.0] - 2026-11-08
+
+### Changed
+- feat(fonts): add 39 editorial, display, sans, handwriting and mono fonts (KRI-1312) (#2212) <!-- release-pr: 2212 -->
+
+## [0.88.104.0] - 2026-11-08
+
+### Changed
+- fix(kria): judge the 'zoom into the recordings' ask on its own in the receipt (KRI-1307) (#2201) <!-- release-pr: 2201 -->
+
+## [0.88.103.0] - 2026-11-08
+
+### Changed
+- feat(ios): group the font picker by type under sideways tabs (KRI-1314) (#2213) <!-- release-pr: 2213 -->
+
+## [0.88.102.0] - 2026-11-08
+
+### Changed
+- v0.88.42.0 feat(ios): show AI editing activity and retain the previous preview (#2145) <!-- release-pr: 2145 -->
+
 ## [0.88.101.0] - 2026-11-08
 
 ### Changed

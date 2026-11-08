@@ -428,7 +428,7 @@ def _extractor_prompt(**kw) -> str:
 # 14ad8c6e284569817ed3c380fea76ae35b5983b1fe42a2f53c42a6c14bcaa6d7.
 # KRI-971 (keep-a-take-whole also records speech_cleanup false) moves it from 001bd937bb08cea8….
 # KRI-1292 (`hold_s` for a text at a spoken word) moves it from 5d020e50a866f3d4….
-_BRIEF_SECTION_BEFORE_INSERTS = "8144b6cb0f2c2223cf521d5399e0c0af2d3e2ab9d9df5063981990557abdf3f2"
+_BRIEF_SECTION_BEFORE_INSERTS = "57f3bdbfedf269939ba49d61c102e96f30565c6cf91d89665eb20264d7ca94fb"
 
 
 def test_a_closed_rollout_leaves_the_brief_section_byte_identical_to_before_inserts():

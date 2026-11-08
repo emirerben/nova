@@ -1011,7 +1011,10 @@ behind them, "speaker_small": true when they want to be small in a corner and "b
 "<the colour as said, or its hex>" for a plain colour instead of a photo or video ("a plain white
 background", "arkam düz yeşil olsun"). Sound that merely
 plays in the background ("background music", "arka plan müziği") is NOT this and records no such
-fact. How on-screen text should look goes in the
+fact. When they also ask to zoom into the recordings behind them so the text can be
+read ("zoom into the recordings so the text is readable", "kayıtlara yakınlaş, yazılar
+okunsun"), add "background_zoom": true to that same requirement. How on-screen text should look
+goes in the
 `facts` of its text requirement, only what the creator said: `animation` (an id from
 {{TEXT_ANIMATION_EDGES}}, never none or the name in brackets) for "animated with typewriter";
 `position` ("top_left", "top", "top_right", "middle", "bottom_left", "bottom", "bottom_right")

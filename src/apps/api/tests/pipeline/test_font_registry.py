@@ -84,16 +84,18 @@ class TestFontRegistryFile:
         KRI-648 restores Inter Medium without changing the bundled font count.
         KRI-1192 adds 4 script-fallback faces (Noto Sans KR / Arabic, Regular + Bold):
         deprecated so nothing offers them, drawn only by the whole-run glyph fallback.
+        KRI-1312 adds 39 active fonts (editorial serifs, display, characterful sans,
+        pen handwriting, mono, Instrument Serif Italic).
         """
         fonts = _FONT_REGISTRY.get("fonts", {})
         script_faces = sum(1 for entry in fonts.values() if entry.get("script_fallback") is True)
         assert script_faces == 4
-        assert len(fonts) == 52 + script_faces
+        assert len(fonts) == 91 + script_faces
         assert (
             sum(1 for entry in fonts.values() if entry.get("deprecated") is True)
             == 7 + script_faces
         )
-        assert sum(1 for entry in fonts.values() if entry.get("deprecated") is not True) == 45
+        assert sum(1 for entry in fonts.values() if entry.get("deprecated") is not True) == 84
 
     def test_expected_styles(self):
         """All 5 font styles should have defaults."""

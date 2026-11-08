@@ -65,6 +65,25 @@ final class NativeFontCatalogTests: XCTestCase {
         XCTAssertEqual(NativeFontCatalog.shared.fontURL(for: "Outfit")?.lastPathComponent, "Outfit-VF.ttf")
     }
 
+    /// KRI-1312: the sideways tabs come from the registry's vibe (and mono category), not a hand list.
+    func testPickerGroupsComeFromTheRegistryVibe() throws {
+        let catalog = NativeFontCatalog.shared
+        XCTAssertTrue(catalog.fonts(in: .editorial).contains("Playfair Display"))
+        XCTAssertTrue(catalog.fonts(in: .headlines).contains("Bebas Neue"))
+        XCTAssertTrue(catalog.fonts(in: .script).contains("Pacifico"))
+        XCTAssertTrue(catalog.fonts(in: .handwriting).contains("Patrick Hand"))
+        // A font is on at most one tab, and every tab font is a picker font.
+        let grouped = NativeFontGroup.allCases.flatMap { catalog.fonts(in: $0) }
+        XCTAssertEqual(grouped.count, Set(grouped).count)
+        XCTAssertTrue(Set(grouped).isSubset(of: Set(catalog.pickerFonts)))
+        // A mono face lands on Mono whatever its vibe says; a vibe the app does not know has no tab.
+        XCTAssertEqual(NativeFontGroup(vibe: "clean_captions", category: "mono"), .mono)
+        XCTAssertNil(NativeFontGroup(vibe: "something_new", category: "sans"))
+        XCTAssertNil(NativeFontGroup(vibe: nil, category: nil))
+        // Without the bundled registry there is nothing to group, so the picker shows only "All".
+        XCTAssertTrue(NativeFontCatalog(directory: nil).populatedGroups.isEmpty)
+    }
+
     func testMissingDirectoryFallsBackToTheLegacyList() {
         let catalog = NativeFontCatalog(directory: nil)
         XCTAssertEqual(catalog.pickerFonts, NativeFontCatalog.fallbackFonts)
