@@ -1130,9 +1130,11 @@
     {
       "id": "qendresa-19-list-labels",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_phone_list_labels.py tests/tasks/test_qendresa_list_labels_worker.py tests/tasks/test_qendresa_spoken_list_worker.py tests/kria/test_item19_list_label_receipts.py tests/services/test_item19_list_label_contract.py",
+      "api_tests": "tests/pipeline/test_phone_list_labels.py tests/pipeline/test_spoken_list_labels_one_look.py tests/tasks/test_qendresa_list_labels_worker.py tests/tasks/test_qendresa_spoken_list_worker.py tests/kria/test_item19_list_label_receipts.py tests/services/test_item19_list_label_contract.py",
       "paths": [
-        "src/apps/api/app/pipeline/phone_list_labels.py"
+        "src/apps/api/app/pipeline/phone_list_labels.py",
+        "src/apps/api/tests/pipeline/test_spoken_list_labels_one_look.py",
+        "src/apps/api/tests/fixtures/kri1284_q2_run2_cues.json"
       ]
     },
     {
@@ -3384,7 +3386,7 @@
     {
       "id": "qendresa-13-tight-pauses",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_tight_pause_cut.py tests/pipeline/test_voice_guard_cleanup_e2e.py tests/kria/test_tight_pause_ask.py tests/kria/test_tight_pause_receipts.py tests/tasks/test_phone_tight_pauses.py tests/routes/test_creation_thread_cleanup_requested.py",
+      "api_tests": "tests/pipeline/test_tight_pause_cut.py tests/pipeline/test_tight_pause_cut_gated_take.py tests/pipeline/test_voice_guard_cleanup_e2e.py tests/kria/test_tight_pause_ask.py tests/kria/test_tight_pause_receipts.py tests/tasks/test_phone_tight_pauses.py tests/routes/test_creation_thread_cleanup_requested.py",
       "paths": [
         "src/apps/api/app/pipeline/tight_pause_cut.py",
         "src/apps/api/app/kria/tight_pause_ask.py",
@@ -3393,7 +3395,10 @@
         "src/apps/api/tests/kria/test_tight_pause_receipts.py",
         "src/apps/api/tests/tasks/test_phone_tight_pauses.py",
         "src/apps/api/tests/routes/test_creation_thread_cleanup_requested.py",
-        "scripts/ios/qendresa-13-tight-pauses-e2e.py"
+        "scripts/ios/qendresa-13-tight-pauses-e2e.py",
+        "src/apps/api/tests/pipeline/test_tight_pause_cut_gated_take.py",
+        "src/apps/api/tests/fixtures/kri1288_q2_run2_take.m4a",
+        "src/apps/api/tests/fixtures/kri1288_q2_run2_tight_pauses.json"
       ]
     },
     {
