@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.100.0] - 2026-11-08
+
+### Changed
+- fix(kria): list labels that take turns are not pinned text (KRI-1302) (#2192) <!-- release-pr: 2192 -->
+
 ## [0.88.99.0] - 2026-11-08
 
 ### Changed
