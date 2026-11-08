@@ -226,7 +226,8 @@ final class CreationUITests: XCTestCase {
             XCTAssertTrue(app.buttons["native-editor-play-pause"].isEnabled)
             attach(app, opaque ? "Editor AI activity - reduce transparency" : "Editor AI activity - soft moving glass edge")
             control.tap()
-            XCTAssertTrue(app.descendants(matching: .any)["native-editor-project-conversation"].firstMatch.waitForExistence(timeout: 5))
+            // While a turn is held the sheet container exposes no identifier of its own; its composer does.
+            XCTAssertTrue(app.buttons["chat-send-message"].waitForExistence(timeout: 5), "tapping the working control opens the conversation")
             app.terminate()
         }
     }
