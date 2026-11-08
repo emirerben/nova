@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.85.0] - 2026-11-08
+
+### Changed
+- fix(kria): firm up TikTok-look shadow over light footage (KRI-1298) (#2194) <!-- release-pr: 2194 -->
+
 ## [0.88.84.0] - 2026-11-08
 
 ### Changed
