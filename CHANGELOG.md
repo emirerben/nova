@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.80.0] - 2026-11-08
+
+### Changed
+- test(kria): prove a tapped mute card silences the clip in the phone recipe (KRI-1252) (#2155) <!-- release-pr: 2155 -->
+
 ## [0.88.79.0] - 2026-11-08
 
 ### Changed
