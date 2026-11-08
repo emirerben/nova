@@ -2356,7 +2356,7 @@ final class CreationUITests: XCTestCase {
         let feed = app.otherElements["plan-feed"]
         XCTAssertTrue(feed.waitForExistence(timeout: 30), "the feed replaces the thinking and rendering wait")
         XCTAssertFalse(app.staticTexts["I’m shaping your video"].exists)
-        // Waiting sections show as chips under "Still to decide".
+        // Waiting sections show as chips under "Coming up".
         XCTAssertTrue(app.staticTexts["plan-feed.waiting-heading"].waitForExistence(timeout: 10))
         XCTAssertTrue(eventually(timeout: 10) { app.descendants(matching: .any)["plan-feed.chip.look"].exists || self.planBlockValue(app, "look") != "" })
         attach(app, "plan-feed-waiting")
@@ -2406,7 +2406,7 @@ final class CreationUITests: XCTestCase {
         let app = launchLivePlanFeed(reduceMotion: true, review: true)
         let feed = app.otherElements["plan-feed"]
         XCTAssertTrue(feed.waitForExistence(timeout: 30))
-        XCTAssertTrue(app.staticTexts["Planning your video"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Making your video"].waitForExistence(timeout: 10))
         let stop = app.buttons["plan-feed-stop"]
         XCTAssertTrue(stop.waitForExistence(timeout: 10))
         XCTAssertGreaterThanOrEqual(stop.frame.height, 44)
