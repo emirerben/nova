@@ -309,6 +309,7 @@
       "KriaUITests/EditorUITests/testNativeEditorStagesLocalEditsAndGatesUnavailableTools",
       "KriaUITests/EditorUITests/testTextTabListsEveryTextBlockAndOpensOneForEditing",
       "KriaUITests/EditorUITests/testBendSliderCurvesAVideoTextOnlyWhenTheServerOffersIt",
+      "KriaUITests/EditorUITests/testOpeningTheEditorFromChatNeverShowsSaving",
       "KriaUITests/EditorUITests/testNativeEditorBackButtonReturnsToPreviousSurface",
       "KriaUITests/EditorUITests/testNativeEditorFixturePlaysAndAdvancesTheClock",
       "KriaUITests/EditorUITests/testNativeEditorPlaysTheRenderedAssetThroughItsRealEndAndReplays",
