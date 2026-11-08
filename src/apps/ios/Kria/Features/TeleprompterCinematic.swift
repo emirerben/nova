@@ -142,10 +142,14 @@ enum CinematicTakeFinisher {
             try await standardCopy(of: asset, to: staging)
             try await verify(staging, against: asset)
             _ = try FileManager.default.replaceItemAt(url, withItemAt: staging)
+        } catch is CancellationError {
+            // A cancelled export throws this too; the movie on disk is still the raw one, so it must not be called standard.
+            throw CancellationError()
         } catch {
             // The raw Cinematic movie stays: its first video track is the sharp, playable source.
             log.error("cinematic standard copy failed: \(error.localizedDescription, privacy: .public)")
         }
+        try Task.checkCancellation()
         return .standard
     }
 
