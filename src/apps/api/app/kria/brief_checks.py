@@ -5343,6 +5343,11 @@ def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> Requir
     full-screen start is judged too: a missing opening makes a "met" background at most "partial",
     and a made one is reported beside it.
     """
+    return _with_zoom_promise_only(req, facts, _speaker_background_receipt(req, facts))
+
+
+def _speaker_background_receipt(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """`_check_speaker_background` before a zoom-only draft row becomes its promise."""
     receipt = _check_speaker_background_core(req, facts)
     receipt = _with_zoom_verdict(
         req, receipt, facts.speaker_background, rendered=bool(facts.rendered_variant)
@@ -5362,9 +5367,38 @@ def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> Requir
     return _receipt(req, "partial", f"{receipt.full_reason or ''} {gap}".strip())
 
 
+def _with_zoom_promise_only(
+    req: BriefRequirement, facts: PlanFacts, receipt: RequirementReceipt
+) -> RequirementReceipt:
+    """KRI-1285 kept (KRI-1304 leftover follow-up): a draft row short only of the zoom, which the
+    render does, is exactly the render promise, so the reply lists it as planned ("Will do at
+    render") and keeps its lead. A recording left out, or anything else short, keeps the full
+    Partly sentence. Judged by re-checking with the zoom made: met then means nothing else is
+    short."""
+    fact = facts.speaker_background
+    if (
+        receipt.status != "partial"
+        or facts.rendered_variant
+        or fact is None
+        or fact.status != "planned"
+        or fact.aimed is not None
+        or fact.left_out
+        or _fact_flag(req, "background_zoom") is not True
+    ):
+        return receipt
+    zoomed = dataclasses.replace(facts, speaker_background=dataclasses.replace(fact, aimed=True))
+    if _check_speaker_background(req, zoomed).status != "met":
+        return receipt
+    return _receipt(req, "partial", _BACKGROUND_ZOOM_PLAN)
+
+
 def _zoomed(focus: object) -> bool:
-    zoom = focus.get("zoom") if isinstance(focus, Mapping) else None
-    return isinstance(zoom, int | float) and not isinstance(zoom, bool) and zoom > 1.0
+    """KRI-1307: the render's own rule (`focus_zooms_onto_text`): zoomed past the cover fit, or
+    filled to the frame and aimed off-centre at the text (Q2 run 2: her recordings at 1.0x,
+    x ≈ 0.26). A centred 1.0x is a plain crop, never zoomed."""
+    from app.kria.portable_speaker_background import focus_zooms_onto_text  # noqa: PLC0415
+
+    return isinstance(focus, Mapping) and focus_zooms_onto_text(dict(focus))
 
 
 def _document_all_zoomed(doc: Mapping[str, Any]) -> bool:
@@ -5408,13 +5442,19 @@ def _with_zoom_verdict(
             tr="Kayıtların hepsine yakınlaşamadım, küçük yazılar küçük kalabilir.",
         )
         status = "partial"
-    else:
+    elif rendered:
+        # A render recorded before the worker wrote ``aimed``: no claim either way.
         extra = say(
             en="I'll zoom in on the text when it's made; I can't confirm it before then.",
             tr="Video yapılınca yazılara yakınlaşacağım; öncesinde doğrulayamıyorum.",
         )
-        # KRI-1304 leftover: a draft never says Done for what only the render can show.
-        status = receipt.status if rendered else "partial"
+        status = receipt.status
+    else:
+        # KRI-1304 leftover: a draft never says Done for what only the render can show; the
+        # zoom is said as planned (`_BACKGROUND_ZOOM_PLAN`), and a row short of nothing else is
+        # only that promise (`_check_speaker_background`).
+        extra = _loc(_BACKGROUND_ZOOM_PLAN) + "."
+        status = "partial"
     return _receipt(req, status, f"{receipt.full_reason or ''} {extra}".strip())
 
 
@@ -6934,6 +6974,12 @@ _CLOSING_ARROW_PLAN = "I'll draw a curly arrow next to your ending text"
 # KRI-1322: a logo / sticker the planner anchored to the opening title. Whether it fits above
 # the title without covering her face or captions is the render's call (KRI-1303's
 # `no_room_above_title`), so a draft never says Done for it; the finished video says which.
+# KRI-1304 leftover (KRI-1285 kept): "zoom into the recordings so the text is readable" on a
+# draft. Whether every recording is aimed at its text is the render's (`aimed`), so a draft says
+# it as planned; the finished video says made or not.
+_BACKGROUND_ZOOM_PLAN = (
+    "I'll zoom onto the text when the video is made; I can't confirm it before then"
+)
 _TITLE_PICTURE_PLAN = (
     "I'll put it above your title when the video is made; if there's no room without covering "
     "your face or captions, I'll tell you"
@@ -6980,6 +7026,8 @@ RENDER_PROMISE_REASONS: tuple[str, ...] = (
     _CLOSING_ARROW_PLAN,
     # KRI-1322: the picture above the opening title.
     _TITLE_PICTURE_PLAN,
+    # KRI-1304 leftover: the zoom onto the recordings' text.
+    _BACKGROUND_ZOOM_PLAN,
     # KRI-707: a text shown at the word it is said; Qendresa 19: a list label at its part.
     _TALKING_SPOKEN_TEXT_PLAN,
     _TALKING_LIST_LABEL_PLAN,
@@ -7297,6 +7345,7 @@ _REASON_TR: dict[str, str] = {
     ),
     _NOISE_REDUCTION_MISSED: "Motor gürültüsünü azaltamadım",
     _CLOSING_ARROW_PLAN: "Kapanış yazının yanına kıvrımlı bir ok çizeceğim",
+    _BACKGROUND_ZOOM_PLAN: ("Video yapılınca yazılara yakınlaşacağım; öncesinde doğrulayamıyorum"),
     _TITLE_PICTURE_PLAN: (
         "Video yapılınca onu başlığının üstüne koyacağım; yüzünü ya da altyazılarını kapatmadan "
         "yer yoksa sana söyleyeceğim"

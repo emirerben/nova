@@ -26,7 +26,13 @@ import pytest
 
 from app.kria.approval_readiness import APPROVABLE, assess_readiness
 from app.kria.brief import BriefRequirement, CreativeBrief
-from app.kria.brief_checks import plan_facts_from_phone_variant
+from app.kria.brief_checks import (
+    RENDER_PROMISE_REASONS,
+    plan_facts_from_phone_variant,
+    reply_and_lead_from_receipts,
+)
+from app.kria.portable_speaker_background import SPEAKER_FRAME_PRESETS
+from app.kria.reply_language import reply_language_for
 from tests.kria.test_brief_checks_speaker_background import (
     CREATOR,
     OTHER,
@@ -168,3 +174,125 @@ def test_f5_the_finished_video_is_unchanged():
 def test_f6_nothing_left_out_and_no_zoom_stays_met_and_executable():
     assert _draft(NO_ZOOM, _background()).status == "met"
     assert _row(NO_ZOOM, _background())["disposition"] == "executable"
+
+
+# ---- follow-up: a pending zoom is a render promise (KRI-1285 kept), a left-out recording is not --
+# Ways this can fail, written before the change:
+#  G1 a draft whose only shortfall is the pending zoom opens with "Not everything you asked for
+#     made it in" (the KRI-1285 regression this follow-up removes);
+#  G2 the zoom-only row's reason is not exactly a promise (plan sentences around it), so neither
+#     the reply label nor readiness reads it as planned;
+#  G3 a left-out recording hides behind "Will do at render" (a real shortfall called a plan);
+#  G4 with both, the zoom is phrased as an uncertain shortfall, or the left-out part is dropped;
+#  G5 a real shortfall beside the zoom (still full size) turns into a promise;
+#  G6 the Turkish draft does not read the zoom promise as planned.
+
+SUMMARY = "Here is your green screen edit."
+ZOOM_PLAN_WORDS = "I'll zoom onto the text when the video is made"
+
+
+def _reply(req: BriefRequirement, background: dict) -> tuple[str, str]:
+    receipt = _draft(req, background)
+    return reply_and_lead_from_receipts(
+        CreativeBrief(version=1, requirements=[req]), [receipt], summary=SUMMARY
+    )
+
+
+def test_g1_g2_zoom_only_is_a_render_promise_and_keeps_the_planned_lead():
+    receipt = _draft(R3, _background())
+    assert receipt.reason in RENDER_PROMISE_REASONS
+    assert ZOOM_PLAN_WORDS in receipt.reason
+    text, lead = _reply(R3, _background())
+    assert text.startswith(SUMMARY)
+    assert "Not everything you asked for made it in" not in text
+    assert f"Will do at render: {R3.text()}" in text
+    assert lead == ""
+    assert _row(R3, _background())["disposition"] == "unverified"
+
+
+def test_g3_g4_the_incident_shape_is_partly_naming_the_trending_page_with_the_zoom_planned():
+    receipt = _draft(R3, _background(left_out=[TRENDING]))
+    assert receipt.status == "partial"
+    assert receipt.reason not in RENDER_PROMISE_REASONS
+    assert "trending page" in receipt.reason
+    assert ZOOM_PLAN_WORDS in receipt.reason
+    text, lead = _reply(R3, _background(left_out=[TRENDING]))
+    assert text.startswith("Not everything you asked for made it in:")
+    assert f"Partly: {R3.text()}" in text
+    assert lead
+    assert _row(R3, _background(left_out=[TRENDING]))["disposition"] == "unverified"
+
+
+def test_g3_a_left_out_recording_alone_is_partly_not_planned():
+    text, _lead = _reply(NO_ZOOM, _background(left_out=[TRENDING]))
+    assert f"Partly: {NO_ZOOM.text()}" in text
+    assert "Will do at render" not in text
+
+
+def test_g5_a_real_shortfall_beside_the_zoom_is_no_promise():
+    receipt = _draft(R3, _background(frame="full"))
+    assert receipt.reason not in RENDER_PROMISE_REASONS
+    assert _row(R3, _background(frame="full"))["disposition"] not in APPROVABLE
+
+
+def test_g6_the_turkish_zoom_promise_is_planned_too():
+    with reply_language_for("tr"):
+        receipt = _draft(R3, _background())
+        text, _lead = reply_and_lead_from_receipts(
+            CreativeBrief(version=1, requirements=[R3]), [receipt], summary=SUMMARY
+        )
+    assert "Videoda yapılacak" in text
+    assert "İstediklerinin hepsi videoya giremedi" not in text
+
+
+# ---- KRI-1307 after an editor Save: her 1.0x recordings aimed at their text are zoomed --------
+# Q2 run 2: the measured zoom floors at the cover fit, so a 16:9 recording filling the 9:16 frame
+# is zoom 1.0 aimed off-centre (x ≈ 0.26) at its text column. The render's own flag reads that as
+# zoomed (`portable_speaker_background.focus_zooms_onto_text`, e39c13ec0); the receipt read off
+# the editor document must agree. Ways this fails: the document check still wants zoom > 1.0 (her
+# aimed recordings "not zoomed"); a centred 1.0x plain crop is called zoomed; one un-aimed
+# picture among aimed ones is missed.
+
+
+def _saved(*focuses: dict) -> dict:
+    variant = {
+        "variant_id": "subtitled",
+        "render_destination": "device",
+        "resolved_archetype": "subtitled",
+        "edit_format": "subtitled",
+        "caption_cues": [{"text": "Five repos.", "start_s": 0.0, "end_s": 1.6}],
+        "text_elements": [],
+        "phone_lane_receipt": {
+            "applied": ["background"],
+            "dropped": [],
+            "background": {"windows": 2, "media": 2, "speaker_frame": "small_bottom_right"},
+        },
+        "speaker_background": {
+            "media_id": "m1",
+            "speaker_frame": dict(SPEAKER_FRAME_PRESETS["small_bottom_right"]),
+            "focus": focuses[0],
+            "windows": [{"media_id": f"m{i}", "focus": f} for i, f in enumerate(focuses, 1)],
+        },
+    }
+    return variant
+
+
+AIMED = {"x": 0.26, "y": 0.5, "zoom": 1.0}
+CENTRED = {"x": 0.5, "y": 0.5, "zoom": 1.0}
+
+
+def test_her_aimed_1x_recordings_read_as_zoomed_after_a_save():
+    receipt = _receipt(R3, plan_facts_from_phone_variant(_saved(AIMED, AIMED)))
+    assert receipt.status == "met", receipt
+    assert "zoomed in on their text" in receipt.reason
+
+
+def test_a_centred_1x_crop_is_not_zoomed():
+    receipt = _receipt(R3, plan_facts_from_phone_variant(_saved(CENTRED, CENTRED)))
+    assert receipt.status == "partial"
+    assert "small text may stay small" in receipt.reason
+
+
+def test_one_centred_recording_among_aimed_ones_is_not_zoomed():
+    receipt = _receipt(R3, plan_facts_from_phone_variant(_saved(AIMED, CENTRED)))
+    assert receipt.status == "partial"
