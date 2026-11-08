@@ -177,9 +177,26 @@ def test_each_lyric_signal_alone_classifies_as_lyric(overrides):
     assert text_role(row) == expected
 
 
-def test_guided_plan_shadow_survives_when_nothing_asks_for_a_different_one():
+def test_a_plan_authored_shadow_does_not_beat_the_account_default():
     result = resolve_phone_text_style([title()])
-    assert result[0]["shadow_enabled"] is True
+    assert result[0]["shadow_enabled"] is False
+
+
+def test_an_explicit_ask_for_a_shadow_wins_over_the_default():
+    by_preference = resolve_phone_text_style(
+        [title()], preferences={"title": {"shadow_enabled": True}}
+    )
+    by_request = resolve_phone_text_style(
+        [{**title(), "shadow_enabled": False}], requested={"all_text": {"shadow_enabled": True}}
+    )
+    assert by_preference[0]["shadow_enabled"] is True
+    assert by_request[0]["shadow_enabled"] is True
+
+
+def test_a_shadow_the_creator_added_in_the_editor_survives():
+    row = title()
+    row["source_params"] = {"creator_style_fields": ["shadow_enabled"]}
+    assert resolve_phone_text_style([row])[0]["shadow_enabled"] is True
 
 
 def test_explicit_shadow_off_still_beats_the_rows_own_shadow():
@@ -201,10 +218,10 @@ def test_rows_without_a_shadow_stay_without_one(own):
     assert resolve_phone_text_style([missing])[0]["shadow_enabled"] is False
 
 
-# Only a title keeps the shadow its writer authored (KRI-1050). Every other role is still
-# restyled to the account default, so pins, labels, captions and lyrics do not change size or
-# spot because a writer asked for a shadow the app never advertised for them.
+# No role keeps a shadow its writer authored: the account default says no shadow, and only the
+# creator's own ask (chat request, saved preference) or an editor edit turns one on.
 AUTHORED_SHADOW_ROWS = {
+    "title": {},
     "pinned": {"id": "guided-pinned-0", "x_frac": 0.92, "y_frac": 0.12, "alignment": "right"},
     "pin_prefix": {"id": "pin-1", "x_frac": 0.92, "y_frac": 0.12, "alignment": "right"},
     "guided_label": {"id": "guided-label-1"},
@@ -215,7 +232,7 @@ AUTHORED_SHADOW_ROWS = {
 
 
 @pytest.mark.parametrize("name", sorted(AUTHORED_SHADOW_ROWS))
-def test_non_title_rows_do_not_keep_an_authored_shadow(name):
+def test_no_row_keeps_an_authored_shadow(name):
     row = {**title("Day 1"), "size_px": 60, **AUTHORED_SHADOW_ROWS[name]}
     assert row["shadow_enabled"] is True
     (resolved,) = resolve_phone_text_style([row])
