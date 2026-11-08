@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.90.0] - 2026-11-08
+
+### Changed
+- fix(kria): finished-video reply names recordings the planner left out (KRI-1304) (#2200) <!-- release-pr: 2200 -->
+
 ## [0.88.89.0] - 2026-11-08
 
 ### Changed
