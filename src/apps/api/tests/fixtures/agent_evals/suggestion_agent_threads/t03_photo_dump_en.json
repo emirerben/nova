@@ -1,0 +1,142 @@
+{
+ "name": "t03_photo_dump_en",
+ "description": "English first prompt. Eight stills and two short videos from a weekend city trip, nothing spoken.",
+ "tags": [
+  "thread",
+  "english",
+  "first_prompt",
+  "images"
+ ],
+ "context": {
+  "thread_id": "thread-t03",
+  "state": "first_prompt",
+  "language": "en",
+  "client_protocol": 13,
+  "media_digest": "digest-t03",
+  "runtime_version": 2,
+  "edit_format": "montage",
+  "clips": [
+   {
+    "media_id": "clip-1",
+    "ordinal": 1,
+    "kind": "image",
+    "subject": "tram on a cobbled street",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": null,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-2",
+    "ordinal": 2,
+    "kind": "image",
+    "subject": "tiled building front",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": null,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-3",
+    "ordinal": 3,
+    "kind": "image",
+    "subject": "plate of grilled fish",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": null,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-4",
+    "ordinal": 4,
+    "kind": "image",
+    "subject": "view from a hilltop",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": null,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-5",
+    "ordinal": 5,
+    "kind": "video",
+    "subject": "street musician",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 6.0,
+    "notable_moments": [
+     {
+      "start_s": 1.0,
+      "end_s": 4.0,
+      "label": "guitar solo"
+     }
+    ]
+   },
+   {
+    "media_id": "clip-6",
+    "ordinal": 6,
+    "kind": "video",
+    "subject": "yellow tram climbing a hill",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 5.0,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-7",
+    "ordinal": 7,
+    "kind": "image",
+    "subject": "cat on a window sill",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": null,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-8",
+    "ordinal": 8,
+    "kind": "image",
+    "subject": "river at dusk",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": null,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-9",
+    "ordinal": 9,
+    "kind": "image",
+    "subject": "friends laughing at a table",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": null,
+    "notable_moments": []
+   },
+   {
+    "media_id": "clip-10",
+    "ordinal": 10,
+    "kind": "video",
+    "subject": "walking down steps",
+    "setting": "",
+    "has_speech": false,
+    "to_camera": false,
+    "duration_s": 4.0,
+    "notable_moments": []
+   }
+  ],
+  "understanding": "complete",
+  "brief_headline": "Weekend in the city"
+ },
+ "expect": {
+  "state": "first_prompt"
+ }
+}
