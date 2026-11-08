@@ -2203,6 +2203,21 @@ async def _copilot_clip_context(
         log.warning(
             "kria_copilot_background_pool_unavailable", thread_id=str(thread_id), exc_info=True
         )
+    try:
+        # KRI-1253: the generated images the creator accepted, which chat may place as a picture
+        # card. No query unless the card's flag is on and this is a phone Talking edit.
+        from app.services import generated_overlay_pool  # noqa: PLC0415
+
+        if generated_overlay_pool.enabled_for(variant):
+            generated = await generated_overlay_pool.load_pool(db, item.id, thread.creator_id)
+            if generated:
+                context["generated_overlay_pool"] = generated
+    except Exception:  # noqa: BLE001 - fail closed: empty pool => no add_overlay
+        log.warning(
+            "kria_copilot_generated_overlay_pool_unavailable",
+            thread_id=str(thread_id),
+            exc_info=True,
+        )
     return context
 
 

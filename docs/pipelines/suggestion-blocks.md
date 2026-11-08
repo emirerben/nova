@@ -301,11 +301,18 @@ draw from, the thread has no generated image yet, and the build is protocol 45 o
 - **Outcome record.** `suggestion_pin.outcome` is `generated` (with `operation_id`, `state`, `event_id`) or
   `refused` with `generation_failed`, `budget_unavailable` or `generation_unavailable`. A refusal marks the
   card refused (not transient): a failed operation is keyed on the card and would only answer the same failure.
-- **Review is native.** The phone previews the image in `GeneratedOverlaySet` and the creator accepts it (the
-  existing `accept` route puts it in the pool). No `add_overlay` compile handler exists on purpose: no phone
-  Save accepts a photo the edit did not pin (`phone_subtitled_editor._overlays_from_sections`, the empty
-  `overlays.asset_pool`), so a server-side placement could never survive a Save. The parity row
-  `generated_overlay_approval` keeps saying chat does not accept or place a generated asset.
+- **Review is native, placement is shared.** The phone previews the image in `GeneratedOverlaySet` and the
+  creator accepts it (the existing `accept` route marks the operation accepted; the image is a ready row in
+  the pool). Placement then has two routes. The native editor places it as before. Chat places it with
+  `add_overlay` on a phone Talking edit, only while the flag is on: `generated_overlay_pool` lists the
+  accepted generated images as `overlays.asset_pool` (ids and labels, never paths), the `add_overlay` handler
+  (`agents/editor_ops_v2/overlays.py`) takes the card's path from the server's rows (`compile_editor_ops(...,
+  pool_assets=)`, built only for a turn that carries an `add_overlay`), and the Save pins the image
+  (`pin_generated_overlays_for_commit`, called from `pin_background_for_commit`) before
+  `phone_subtitled_editor._overlays_from_sections` accepts the card. Any other new photo is still refused
+  there. The parity row `generated_overlay_approval` is `agent_ops` for that reason: the approval stays
+  native, chat only places an image the creator already accepted. Proof:
+  `tests/e2e_suggestions/test_r9_place_generated_image.py`.
 - **Serve and tap agree.** The card skips the creative-copy and request-length gates (no draft is committed;
   `suggestion_serve.SPEND_KINDS`) and keeps the kind switch, the witness/rebuild proof and the consumed mark.
 

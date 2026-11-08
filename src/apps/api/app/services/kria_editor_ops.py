@@ -14,7 +14,7 @@ import hashlib
 import json
 import math
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any, Literal, NamedTuple
@@ -880,13 +880,16 @@ def _sfx_base_missing(variant: dict[str, Any]) -> bool:
 _OVERLAY_SNAPSHOT_FIELDS = ("start_s", "end_s", "x_frac", "y_frac", "scale", "z")
 
 
-def _overlay_snapshot(variant: dict[str, Any], *, tilt: bool = False) -> dict[str, Any]:
+def _overlay_snapshot(
+    variant: dict[str, Any], *, tilt: bool = False, pool: list[dict] | None = None
+) -> dict[str, Any]:
     """The picture cards the copilot may address (KRI-661): path-free, indexed.
 
     ``counts`` is the whole picture even when the prompt can only list the first few
     rows, so "put all my photos on top" is answerable with ONE bulk op instead of
-    thirty patches. ``asset_pool`` stays empty on purpose: a Talking Save refuses a
-    photo Kria did not pin for this edit, so ``add_overlay`` fails closed in the parser.
+    thirty patches. ``asset_pool`` lists only the generated images the creator accepted
+    (``pool``, built by the planner): a Talking Save refuses any other photo Kria did not pin
+    for this edit, so with no accepted image ``add_overlay`` fails closed in the parser.
 
     ``tilt`` (KRI-1141, ``editor_capabilities.media_overlay_tilt``) opens ``patch_overlay``'s
     ``rotation_deg`` / ``rotation_delta_deg`` and lists a tilted card's angle. It is present only
@@ -921,7 +924,11 @@ def _overlay_snapshot(variant: dict[str, Any], *, tilt: bool = False) -> dict[st
             "videos": sum(1 for c in cards if c["kind"] == "video"),
             "fullscreen": sum(1 for c in cards if c["display_mode"] == "fullscreen"),
         },
-        "asset_pool": [],
+        "asset_pool": [
+            {key: row[key] for key in ("id", "kind", "label") if key in row}
+            for row in pool or []
+            if isinstance(row, dict)
+        ],
         "pending_suggestions": [],
         **({"tilt": True} if tilt else {}),
     }
@@ -1609,7 +1616,9 @@ def build_editor_snapshot(
         }
     if "overlay" in snapshot["allowed_op_families"]:
         snapshot["overlays"] = _overlay_snapshot(
-            variant, tilt=caps.get("media_overlay_tilt") is True
+            variant,
+            tilt=caps.get("media_overlay_tilt") is True,
+            pool=clip_context.get("generated_overlay_pool"),
         )
     background = _background_snapshot(job, variant, clip_context)
     if background is not None:
@@ -2305,6 +2314,8 @@ class _DraftState:
     post: dict[str, Any] = field(default_factory=dict)
     # Phone Talking picture cards (KRI-661); reaches the payload as `media_overlays`.
     media_overlays: list[dict[str, Any]] = field(default_factory=list)
+    # Accepted generated images by pool id -> storage path (KRI-1253). Only `add_overlay` reads it.
+    pool_assets: dict[str, str] = field(default_factory=dict)
     # Phone Talking background (KRI-1117): the document `set_background` chose, None once
     # `remove_background` cleared it. Reaches the payload only when "speaker_background" is in
     # `changed`, so an untouched lane is absent (leave unchanged), never an explicit clear.
@@ -2906,7 +2917,12 @@ def _load_lane_handlers() -> None:
 
 
 def compile_editor_ops(
-    job: Any, variant: dict[str, Any], ops: list[dict], *, preserve_text: bool = False
+    job: Any,
+    variant: dict[str, Any],
+    ops: list[dict],
+    *,
+    preserve_text: bool = False,
+    pool_assets: Mapping[str, str] | None = None,
 ) -> CompiledEditorDraft:
     """Compile one all-or-nothing portable operation bundle.
 
@@ -3001,6 +3017,7 @@ def compile_editor_ops(
             [row for row in variant.get("media_overlays") or [] if isinstance(row, dict)]
         ),
     )
+    state.pool_assets = dict(pool_assets or {})
     state.initial_slots = copy.deepcopy(state.slots)
     state.slot_targets = list(state.slots)
     initial_text = copy.deepcopy(state.text)

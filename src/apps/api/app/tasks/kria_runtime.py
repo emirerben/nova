@@ -2454,8 +2454,21 @@ def _complete_draft_turn(
             timing_plan = sequence_timing_plan_from_operations(
                 arguments.operations, timing_snapshot, preserve_text=preserve_text
             )
+            pool_assets = None
+            if any(op.get("op") == "add_overlay" for op in arguments.operations):
+                from app.services import generated_overlay_pool  # noqa: PLC0415
+
+                pool_assets = generated_overlay_pool.paths_by_asset_id(
+                    generated_overlay_pool.load_pool_sync(db, item.id, thread.creator_id)
+                    if generated_overlay_pool.enabled_for(variant)
+                    else []
+                )
             compiled = compile_editor_ops(
-                job, editor_base.projected, arguments.operations, preserve_text=preserve_text
+                job,
+                editor_base.projected,
+                arguments.operations,
+                preserve_text=preserve_text,
+                pool_assets=pool_assets,
             )
             verify_intent_repair(
                 planned.intent_repair, before=compiled.before, payload=compiled.payload

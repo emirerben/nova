@@ -253,13 +253,14 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     ),
     # --------------------------------------------------------------- history
     "history": _g("agent_ops", "undo redo", ("undo_last_edit", "repeat_last_edit")),
+    # The creator's approval of a generated image stays native (the preview review). Chat places
+    # one the creator already accepted: `overlays.asset_pool` lists only those, and a Save pins the
+    # image before it accepts the card (`generated_overlay_pool`).
     "generated_overlay_approval": _g(
-        "agent_unsupported",
+        "agent_ops",
         "applyOverlayProposal",
-        reason="A generated image enters the edit only after the creator's native preview "
-        "approval. Chat starts one at most: the generated_overlay suggestion card spends on the "
-        "creator's consent and the phone reviews the result, but no chat op accepts or places it "
-        "(a phone Save refuses a photo the edit did not pin).",
+        ("add_overlay",),
+        fields=("asset_id",),
     ),
     "overlay_planning_and_queries": _g(
         "not_an_edit",

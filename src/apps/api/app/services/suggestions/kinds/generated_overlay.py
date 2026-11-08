@@ -4,9 +4,9 @@ The action is ``AsyncGenerateAction``: a prompt the server derived from the crea
 and the price the card shows first. A tap spends (``planner.plan_pinned_suggestion_turn`` ->
 ``generated_media.execute_generated_media``, idempotent on ``event_id``) and never edits the
 video. The phone previews the image and the creator accepts it in the editor, so a wrong image
-costs the quoted price and nothing else. There is no ``add_overlay`` compile here on purpose: a
-phone Save refuses a photo Kria did not pin for the edit
-(``phone_subtitled_editor._overlays_from_sections``), and placement belongs to the native editor.
+costs the quoted price and nothing else. Placement is not this kind's job: once the creator has
+accepted the image, the native editor places it, or chat does with ``add_overlay``
+(``generated_overlay_pool``, which also pins the image for the Save that accepts the card).
 
 **Loader input** (``ctx.kind_inputs["generated_overlay"]``, built in ``suggestion_serve``):
 
