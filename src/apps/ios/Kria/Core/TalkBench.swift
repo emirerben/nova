@@ -293,7 +293,7 @@ enum TalkBenchFixtures {
     /// then goes to `.failed` and `isReadyForMoreMediaData` stays false for good, so a loop that only waits on that flag never
     /// returns. Every attempt is therefore bounded, checks the writer's status while it waits, and leaves its outcome in the
     /// `bench.video.make` fact so a stalled encode is named in `summary.json` instead of looking like a missing permission.
-    static func makeVideo(attempts: Int = 3, timeout: Duration = .seconds(45)) async throws -> URL {
+    static func makeVideo(attempts: Int = 3, timeout: Duration = .seconds(150)) async throws -> URL {
         var outcomes: [String] = []
         for attempt in 1...attempts {
             let began = DispatchTime.now().uptimeNanoseconds
