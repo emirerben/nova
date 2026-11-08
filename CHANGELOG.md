@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.92.0] - 2026-11-08
+
+### Fixed
+- fix(kria): spoken triggers match joined, hyphenated and spaced spellings (KRI-1281) (#2203) <!-- release-pr: 2203 -->
+
 ## [0.88.91.0] - 2026-11-08
 
 ### Changed
