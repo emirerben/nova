@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.103.0] - 2026-11-08
+
+### Changed
+- feat(ios): group the font picker by type under sideways tabs (KRI-1314) (#2213) <!-- release-pr: 2213 -->
+
 ## [0.88.102.0] - 2026-11-08
 
 ### Changed
