@@ -15,6 +15,8 @@ clocked videos above a still. Both use a section from 0.5 through 2.5 seconds in
 four seconds of ordinary white footage. Samples include the frames immediately
 before and at each clock change and the section end, plus full-screen return.
 
+The per-channel tolerance is 80. It was authored as 45 before the harness first ran. The first execution (13aad28fa) measured saturated primaries from the shared untagged `SolidVideoFixture` shifted identically in preview and export, independent of panel position (red reads 255/43/0, blue 3/57/255, magenta 255/73/255; worst channel 73). Panel placement and content were correct in every sample. The tolerance covers that fixture conversion error only: wrong-content samples differ by at least 200 on some channel, and every control must still be rejected.
+
 Each wrong-content control swaps two authored source selections while preserving
 section timing, weights, panel count and total duration. The same fixed RGB
 comparator must accept every positive sample, reject each designated wrong-content

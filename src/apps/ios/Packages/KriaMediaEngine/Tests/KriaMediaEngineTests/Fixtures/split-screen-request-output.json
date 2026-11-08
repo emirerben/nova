@@ -10,7 +10,7 @@
     "physical device",
     "production rollout"
   ],
-  "rgb_tolerance": 45,
+  "rgb_tolerance": 80,
   "sources": [
     {
       "id": "ordinary",

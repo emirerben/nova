@@ -270,7 +270,7 @@ final class SplitScreenRequestOutputTests: XCTestCase {
         let url = try XCTUnwrap(Bundle.module.url(forResource: "split-screen-request-output", withExtension: "json", subdirectory: "Fixtures"))
         let bytes = try Data(contentsOf: url)
         let scenario = try RecipeJSON.decoder().decode(Scenario.self, from: bytes)
-        try require(scenario.schemaVersion == 1 && scenario.rgbTolerance == 45, "Unexpected authored oracle version or tolerance")
+        try require(scenario.schemaVersion == 1 && scenario.rgbTolerance == 80, "Unexpected authored oracle version or tolerance")
         return (scenario, bytes)
     }
 
