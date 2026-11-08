@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.110.0] - 2026-11-08
+
+### Changed
+- fix(ios): opening the editor no longer shows Saving (#2222) <!-- release-pr: 2222 -->
+
 ## [0.88.109.0] - 2026-11-08
 
 ### Changed
