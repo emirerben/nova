@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-01-research-20",
+  "version": "2026-11-08-research-21",
   "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. Bumping `version` requires bumping PERSONA_PROMPT_VERSION, CONTENT_PLAN_PROMPT_VERSION, and IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
   "factors": [
     {
@@ -245,6 +245,18 @@
       "provenance": "corpus",
       "evidence": "In our Nov 2026 fetched city-lifestyle set, an 'always come back to [specific café]' post indexed ~3.9x the account median at 0.116 engagement — notably stronger engagement than the broader city-guide posts in the same sample",
       "source": "tiktok market research 2026-11-01 (city-lifestyle account)"
+    },
+    {
+      "id": "community-ownership-decision-corpus-16",
+      "factor": "Give your community a real stake in a product or creative decision — frame it as 'the fate is yours' and let them feel they influenced the outcome",
+      "why": "Shared ownership compels engagement and investment; people comment and share when the outcome depends on their response, not just their opinion",
+      "applies_to": [
+        "plan",
+        "persona"
+      ],
+      "provenance": "corpus",
+      "evidence": "In our Nov 2026 fetched founder set, a 'fate of [product] is in your hands' community-decision post indexed ~3.7x the account median at 3.4% engagement — stronger than the same account's typical product-reveal posts",
+      "source": "tiktok market research 2026-11-08 (founder account)"
     }
   ]
 }
