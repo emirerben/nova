@@ -806,7 +806,8 @@ enum DeviceRenderGate: Equatable {
         if requests[key] != request {
             settle(key)
             acceptedRenderBindings[key] = nil
-            presentations[key] = DeviceRenderPresentation(phase: .preparing)
+            // A published request has nothing left to prepare; `.synced` replaces the old presentation below.
+            if status.phase != "published" { presentations[key] = DeviceRenderPresentation(phase: .preparing) }
             if let previousIdentity = requests[key]?.identity {
                 keyOperations[key] = UUID()
                 initiation.invalidate(identity: previousIdentity)
