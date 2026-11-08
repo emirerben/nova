@@ -186,3 +186,41 @@ def test_color_family_buckets() -> None:
     assert color_family("#FFD24A") == "yellow"
     assert color_family("#FFD700") == "yellow"
     assert color_family("nope") is None
+
+
+def test_split_receipt_uses_section_duration_and_reports_layout(monkeypatch):
+    from app.services import kria_editor_ops as editor
+
+    monkeypatch.setattr(editor, "split_screen_available", lambda *args: True)
+    slots = [{"slot_id": "a", "clip_index": 0, "in_s": 0, "duration_s": 4, "playback_rate": 2}]
+    variant = _variant([], slots)
+    created = editor.compile_editor_ops(
+        _job(), variant, [{"op": "create_split_screen", "slot_indexes": [0], "panel_count": 2}]
+    )
+    assert "timeline.total_duration" not in _fields(created)
+    assert "timeline.split_screen" in _fields(created)
+    projected = editor.project_editor_draft(
+        variant, created.payload.model_dump(mode="json", exclude_none=True), _job()
+    )
+    section_id = projected["user_timeline"]["split_screen_sections"][0]["id"]
+    resized = editor.compile_editor_ops(
+        _job(),
+        projected,
+        [{"op": "update_split_screen", "section_id": section_id, "duration_s": 6}],
+    )
+    duration = next(e for e in resized.diff.entries if e.field == "total_duration").targets[0]
+    assert (duration.before, duration.after) == (4, 6)
+    layout = editor.compile_editor_ops(
+        _job(), projected, [{"op": "update_split_screen", "section_id": section_id, "gutter": 0.05}]
+    )
+    assert "timeline.split_screen" in _fields(layout)
+    assert not layout.diff.empty()
+
+
+def test_receipt_output_duration_is_not_divided_by_playback_rate():
+    slots = [{"slot_id": "a", "clip_index": 0, "in_s": 0, "duration_s": 4, "playback_rate": 2}]
+    compiled = _compile([], [{"op": "set_clip_duration", "slot_index": 0, "duration_s": 3}], slots)
+    duration = next(e for e in compiled.diff.entries if e.field == "duration_s").targets[0]
+    total = next(e for e in compiled.diff.entries if e.field == "total_duration").targets[0]
+    assert (duration.before, duration.after) == (4, 3)
+    assert (total.before, total.after) == (4, 3)

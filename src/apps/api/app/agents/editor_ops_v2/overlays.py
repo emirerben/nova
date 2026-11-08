@@ -8,7 +8,10 @@ family was never offered for a phone edit and no handler compiled the legacy
 * ``set_overlay_display``: one op that flips every card (or every photo, every
   video, or one card) between ``pip`` and ``fullscreen`` -- "put all my photos on
   top" must not cost thirty ``patch_overlay`` ops.
-* compile handlers for ``patch_overlay`` and ``remove_overlay``.
+* compile handlers for ``add_overlay``, ``patch_overlay`` and ``remove_overlay``.
+  ``add_overlay`` places one accepted generated image (KRI-1253): the snapshot's
+  ``overlays.asset_pool`` lists only those, and the card's path comes from the server's rows
+  (``state.pool_assets``), never from the model.
 
 Cards are addressed by ``overlay_index`` into ``snapshot.overlays.cards``. The Save
 (`phone_subtitled_editor._overlays_from_sections`) is the authority on what a card
@@ -23,6 +26,7 @@ level (circular); import lazily inside functions.
 from __future__ import annotations
 
 import math
+import uuid
 from typing import Any
 
 from pydantic import ValidationError
@@ -251,6 +255,42 @@ def _op_set_overlay_display(state: Any, op: dict[str, Any]) -> None:
     state.changed.add("media_overlays")
 
 
+def _op_add_overlay(state: Any, op: dict[str, Any]) -> None:
+    from app.services.kria_editor_ops import KriaEditorOpError  # noqa: PLC0415
+
+    path = state.pool_assets.get(str(op.get("asset_id")))
+    if not path:
+        raise KriaEditorOpError(
+            "That picture isn't ready to place -- accept it in the editor first"
+        )
+    start, end = float(op["start_s"]), float(op["end_s"])
+    if end <= start:
+        raise KriaEditorOpError("A picture needs to stay on screen for some time")
+    mode = op.get("display_mode") or "pip"
+    if mode not in DISPLAY_MODES:
+        raise KriaEditorOpError("Overlay display must be on top or full screen")
+    geometry = {
+        key: float(op[key]) if op.get(key) is not None else PIP_DEFAULT_GEOMETRY[key]
+        for key in PIP_DEFAULT_GEOMETRY
+    }
+    card: dict[str, Any] = {
+        "id": uuid.uuid4().hex,
+        "kind": "image",
+        "src_gcs_path": path,
+        "display_mode": "pip",
+        "position": "custom",
+        "start_s": start,
+        "end_s": end,
+        "z": max((int(row.get("z") or 0) for row in state.media_overlays), default=-1) + 1,
+        **geometry,
+    }
+    if mode == "fullscreen":
+        _to_fullscreen(card)
+    state.media_overlays.append(card)
+    _check_fullscreen(state, [card])
+    state.changed.add("media_overlays")
+
+
 def _op_patch_overlay(state: Any, op: dict[str, Any]) -> None:
     from app.services.kria_editor_ops import KriaEditorOpError, _require_index  # noqa: PLC0415
 
@@ -308,5 +348,6 @@ def register_handlers() -> None:
     from app.services import kria_editor_ops  # noqa: PLC0415
 
     kria_editor_ops.register_handler("set_overlay_display", _op_set_overlay_display)
+    kria_editor_ops.register_handler("add_overlay", _op_add_overlay)
     kria_editor_ops.register_handler("patch_overlay", _op_patch_overlay)
     kria_editor_ops.register_handler("remove_overlay", _op_remove_overlay)

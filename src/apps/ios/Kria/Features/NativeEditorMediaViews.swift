@@ -119,6 +119,7 @@ struct NativeVideoPreview: View {
     @State private var liveMediaTranslation = CGPoint.zero
     /// The speaker's frame when the current gesture began: the live still moves relative to it (SF4).
     @State private var speakerGestureBaseline: EditorSpeakerFrame?
+    @State private var speakerGestureSelection: EditorSelection?
     /// The speaker's width when a corner drag began (any of the four corners resizes about the centre).
     @State private var speakerCornerStartWidth: Double?
     @State private var speakerSnapX = false
@@ -148,17 +149,18 @@ struct NativeVideoPreview: View {
     }
 
     private func makeObjects() -> [NativeEditorPreviewObject] {
-        (speakerObject().map { [$0] } ?? []) + makeLaneObjects()
+        speakerObjects() + makeLaneObjects()
     }
 
     /// The framed Talk-to-camera speaker: the LOWEST object, so every caption, title and card over it wins a tap
     /// (SF1). Whole-edit; where no speaker clip is drawn its box is empty (`frame(for:)`, SF2).
-    private func speakerObject() -> NativeEditorPreviewObject? {
-        guard session.canMoveSpeakerOnPreview, let frame = session.speakerFrame else { return nil }
-        return NativeEditorPreviewObject(
-            item: NativeEditorTimelineItem(selection: .speaker, start: 0, end: SpeakerBackgroundLimits.maxTimeline, zIndex: -1_000),
-            text: nil, position: CGPoint(x: frame.xFraction, y: frame.yFraction), style: nil, title: "You",
-            render: .speaker, scale: CGFloat(frame.widthFraction))
+    private func speakerObjects() -> [NativeEditorPreviewObject] {
+        return session.previewSpeakerItems.compactMap { item in
+            guard let frame = session.speakerFrame(for: item.selection) else { return nil }
+            return NativeEditorPreviewObject(item: item, text: nil,
+                position: CGPoint(x: frame.xFraction, y: frame.yFraction), style: nil, title: "You",
+                render: .speaker, scale: CGFloat(frame.widthFraction))
+        }
     }
 
     /// Where a pip card is actually drawn. A device-rendered variant pulls a card whose centre is below
@@ -320,7 +322,7 @@ struct NativeVideoPreview: View {
     }
 
     private func frame(for object: NativeEditorPreviewObject, in size: CGSize) -> CGRect {
-        if object.item.kind == .speaker { return speakerBox(in: size) }
+        if object.item.kind == .speaker { return speakerBox(for: object.item.selection, in: size) }
         if object.item.kind == .drawing {
             guard let drawing = session.drawing(id: object.item.id) else { return .zero }
             let box = NativeDrawingTransformLayer.boxSize(of: drawing, in: size)
@@ -352,24 +354,19 @@ struct NativeVideoPreview: View {
 
     /// The framed speaker's box on the canvas: the document's frame (it follows every gesture sample), clipped to the
     /// canvas so the handles stay reachable (SF10). Empty while the editable preview is not showing.
-    private func speakerBox(in size: CGSize) -> CGRect {
-        guard let frame = session.speakerFrame, session.hasSourcePreview else { return .zero }
-        let visible = frame.layerFrame.canvasRect.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-        guard !visible.isNull else { return .zero }
-        return CGRect(x: visible.minX * size.width, y: visible.minY * size.height,
-                      width: visible.width * size.width, height: visible.height * size.height)
+    private func speakerBox(for selection: EditorSelection, in size: CGSize) -> CGRect {
+        guard session.hasSourcePreview,
+              let rect = session.speakerFrameRect(for: selection, at: clock.currentTime), !rect.isNull else { return .zero }
+        return NativeSpeakerPanelGeometry.pixelRect(rect, canvas: size)
     }
 
-    /// A tap or drag can land on the speaker only where the composition draws one now: not over the ending clip (SF2).
-    /// Asked at the moment of the touch (the composition is not observable, so a rendered box could be stale).
-    private func speakerIsDrawnNow() -> Bool {
-        session.previewSelectionBounds(for: .speaker, at: clock.currentTime) != nil
+    private func speakerIsDrawnNow(_ selection: EditorSelection) -> Bool {
+        session.previewSelectionBounds(for: selection, at: clock.currentTime) != nil
     }
 
-    /// The four corners of the speaker's box: any of them resizes about the centre.
-    private func speakerCorners(in size: CGSize) -> [CGPoint] {
-        let box = speakerBox(in: size)
-        guard box.width > 0, speakerIsDrawnNow() else { return [] }
+    private func speakerCorners(for selection: EditorSelection, in size: CGSize) -> [CGPoint] {
+        let box = speakerBox(for: selection, in: size)
+        guard box.width > 0, speakerIsDrawnNow(selection) else { return [] }
         return [CGPoint(x: box.minX, y: box.minY), CGPoint(x: box.maxX, y: box.minY),
                 CGPoint(x: box.minX, y: box.maxY), CGPoint(x: box.maxX, y: box.maxY)]
     }
@@ -377,7 +374,8 @@ struct NativeVideoPreview: View {
     /// The prepared stills, when they show the speaker exactly where the document has it now. A still prepared for
     /// an older frame (a second gesture before the preview caught up) is not used: it would jump (SF4).
     private func preparedSpeakerFrame() -> NativeEditorSession.MediaInteractionFrame? {
-        guard let prepared = session.mediaInteractionFrame, prepared.selection == .speaker,
+        guard session.selection == .speaker, session.document.splitScreenSections.isEmpty,
+              let prepared = session.mediaInteractionFrame, prepared.selection == .speaker,
               abs(prepared.time - clock.currentTime) < 0.01,
               let rect = session.speakerFrame?.layerFrame.canvasRect,
               abs(prepared.rect.minX - rect.minX) < 0.0005, abs(prepared.rect.minY - rect.minY) < 0.0005,
@@ -404,10 +402,11 @@ struct NativeVideoPreview: View {
     }
 
     /// Starts moving or resizing the speaker: pins the baseline frame and the live still (when prepared for it).
-    private func beginSpeakerGesture() {
+    private func beginSpeakerGesture(_ selection: EditorSelection) {
         guard speakerGestureBaseline == nil else { return }
         releaseSpeakerStill()
-        speakerGestureBaseline = session.speakerFrame
+        speakerGestureBaseline = session.speakerFrame(for: selection)
+        speakerGestureSelection = selection
         if liveMediaFrame == nil { liveMediaFrame = preparedSpeakerFrame() }
         textAlignmentHaptic.prepare()
     }
@@ -415,7 +414,8 @@ struct NativeVideoPreview: View {
     /// The live still follows the STORED (clamped, snapped) frame, never the raw finger, so what is shown at release is
     /// what Save sends (SF3, SF4).
     private func followSpeakerFrame() {
-        guard let baseline = speakerGestureBaseline, let frame = session.speakerFrame else { return }
+        guard let baseline = speakerGestureBaseline, let target = speakerGestureSelection,
+              let frame = session.speakerFrame(for: target) else { return }
         liveMediaScale = CGFloat(frame.widthFraction / max(0.0001, baseline.widthFraction))
         liveMediaTranslation = CGPoint(x: frame.xFraction - baseline.xFraction, y: frame.yFraction - baseline.yFraction)
     }
@@ -425,19 +425,21 @@ struct NativeVideoPreview: View {
         let x = NativeSpeakerFrameGesture.snappedToCenter(point.x), y = NativeSpeakerFrameGesture.snappedToCenter(point.y)
         if (x.snapped && !speakerSnapX) || (y.snapped && !speakerSnapY) { textAlignmentHaptic.selectionChanged() }
         speakerSnapX = x.snapped; speakerSnapY = y.snapped
-        session.setSpeakerFrameCenter(x: x.value, y: y.value)
+        guard let target = speakerGestureSelection else { return }
+        session.setSpeakerFrameCenter(x: x.value, y: y.value, for: target)
         followSpeakerFrame()
     }
 
     private func resizeSpeaker(to width: Double) {
-        session.setSpeakerFrameWidth(width)
+        guard let target = speakerGestureSelection else { return }
+        session.setSpeakerFrameWidth(width, for: target)
         followSpeakerFrame()
     }
 
     /// SF9: the safe-zone guide tests the speaker's FACE (found on the prepared still) moved with the frame; without a
     /// face, the visible speaker box.
     private func speakerDangerFootprint(in canvas: CGSize) -> (footprint: NativePreviewFootprint, face: Bool)? {
-        guard let frame = session.speakerFrame else { return nil }
+        guard let target = speakerGestureSelection, let frame = session.speakerFrame(for: target) else { return nil }
         if let baseline = speakerGestureBaseline, let face = liveMediaFrame?.face {
             let k = frame.widthFraction / max(0.0001, baseline.widthFraction)
             let moved = CGRect(x: frame.xFraction + (face.minX - baseline.xFraction) * k,
@@ -446,7 +448,8 @@ struct NativeVideoPreview: View {
             return (NativePreviewFootprint(frame: CGRect(x: moved.minX * canvas.width, y: moved.minY * canvas.height,
                 width: moved.width * canvas.width, height: moved.height * canvas.height), rotation: 0, canvas: canvas), true)
         }
-        return (NativePreviewFootprint(frame: speakerBox(in: canvas), rotation: 0, canvas: canvas), false)
+        guard let selection = speakerGestureSelection else { return nil }
+        return (NativePreviewFootprint(frame: speakerBox(for: selection, in: canvas), rotation: 0, canvas: canvas), false)
     }
 
     private func selectPreviewObject(at point: CGPoint, in size: CGSize) {
@@ -454,7 +457,7 @@ struct NativeVideoPreview: View {
             NativeEditorInteraction.visible(objects.map(\.item), at: clock.currentTime)
         ).reversed().filter { item in
             guard let object = objects.first(where: { $0.item.selection == item.selection }) else { return false }
-            if object.item.kind == .speaker, !speakerIsDrawnNow() { return false }
+            if object.item.kind == .speaker, !speakerIsDrawnNow(object.item.selection) { return false }
             return NativeEditorInteraction.contains(point, in: frame(for: object, in: size), rotationDegrees: object.rotation)
         }
         guard !candidates.isEmpty else {
@@ -487,7 +490,7 @@ struct NativeVideoPreview: View {
         guard let selection = session.selection,
               let selected = objects.first(where: { $0.item.selection == selection }) else { return false }
         if selection.kind == .speaker {
-            return speakerCorners(in: size).contains { NativeTextTransformMath.inGrabZone(point, corner: $0) }
+            return speakerCorners(for: selection, in: size).contains { NativeTextTransformMath.inGrabZone(point, corner: $0) }
         }
         let bounds = frame(for: selected, in: size)
         let reach = selected.item.kind == .text
@@ -502,7 +505,7 @@ struct NativeVideoPreview: View {
            let selected = objects.first(where: { $0.item.selection == selection }),
            NativeEditorInteraction.visible([selected.item], at: clock.currentTime).isEmpty == false,
            canDirectlyPosition(selected),
-           selected.item.kind != .speaker || speakerIsDrawnNow(),
+           selected.item.kind != .speaker || speakerIsDrawnNow(selected.item.selection),
            NativeEditorInteraction.contains(point, in: frame(for: selected, in: size), rotationDegrees: selected.rotation) {
             return selected
         }
@@ -513,7 +516,7 @@ struct NativeVideoPreview: View {
         .compactMap { item in objects.first(where: { $0.item.selection == item.selection }) }
         .first { object in
             canDirectlyPosition(object)
-                && (object.item.kind != .speaker || speakerIsDrawnNow())
+                && (object.item.kind != .speaker || speakerIsDrawnNow(object.item.selection))
                 && NativeEditorInteraction.contains(point, in: frame(for: object, in: size), rotationDegrees: object.rotation)
         }
     }
@@ -585,15 +588,16 @@ struct NativeVideoPreview: View {
             }
         }
         // The framed speaker: any corner resizes about the centre (no rotation; the wire has none).
-        if directMoveObjectID == nil, session.selection == .speaker,
-           let speaker = objects.first(where: { $0.item.kind == .speaker }), canDirectlyPosition(speaker),
-           let frame = session.speakerFrame,
-           speakerCorners(in: size).contains(where: { NativeTextTransformMath.inGrabZone(value.startLocation, corner: $0) }) {
+        if directMoveObjectID == nil, let selection = session.selection, selection.kind == .speaker,
+           let speaker = objects.first(where: { $0.item.selection == selection }), canDirectlyPosition(speaker),
+           let frame = session.speakerFrame(for: selection),
+           speakerCorners(for: selection, in: size).contains(where: { NativeTextTransformMath.inGrabZone(value.startLocation, corner: $0) }) {
             beginDangerGuide(for: speaker, in: size)
             directMoveObjectID = speaker.id
-            beginSpeakerGesture()
+            beginSpeakerGesture(selection)
             speakerCornerStartWidth = frame.widthFraction
-            let center = CGPoint(x: frame.xFraction * size.width, y: frame.yFraction * size.height)
+            let viewport = session.speakerViewport(for: selection, at: clock.currentTime) ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+            let center = NativeSpeakerPanelGeometry.canvasPoint(CGPoint(x: frame.xFraction, y: frame.yFraction), viewport: viewport, canvas: size)
             transformCenter = center
             transformStartVector = CGVector(dx: value.startLocation.x - center.x, dy: value.startLocation.y - center.y)
             session.beginDirectManipulation()
@@ -649,7 +653,7 @@ struct NativeVideoPreview: View {
             directMoveObjectID = object.id
             directMoveBaseline = position
             session.select(object.item, seekToStart: false)
-            if object.item.kind == .speaker { beginSpeakerGesture() }
+            if object.item.kind == .speaker { beginSpeakerGesture(object.item.selection) }
             else if object.item.kind != .text, let prepared = session.mediaInteractionFrame,
                prepared.selection == object.item.selection,
                abs(prepared.time - clock.currentTime) < 0.01 { liveMediaFrame = prepared }
@@ -667,7 +671,8 @@ struct NativeVideoPreview: View {
             liveText.move(to: position)
             updateTextAlignment(in: size)
         } else if object.item.kind == .speaker {
-            onMove(position)
+            guard let viewport = session.speakerViewport(for: object.item.selection, at: clock.currentTime) else { return }
+            onMove(NativeSpeakerPanelGeometry.movedPosition(from: baseline, translation: value.translation, canvas: size, viewport: viewport))
         } else {
             var landed = position
             if object.item.kind == .mediaOverlay || object.item.kind == .visualBlock {
@@ -700,7 +705,8 @@ struct NativeVideoPreview: View {
         visualTransformBaseline = nil
         transformCenter = nil
         transformStartVector = nil
-        if speakerGestureBaseline != nil, liveMediaFrame != nil, session.speakerFrame != speakerGestureBaseline {
+        if let target = speakerGestureSelection, speakerGestureBaseline != nil, liveMediaFrame != nil,
+           session.speakerFrame(for: target) != speakerGestureBaseline {
             holdSpeakerStill()
         } else {
             liveMediaFrame = nil
@@ -709,6 +715,7 @@ struct NativeVideoPreview: View {
         }
         liveMediaRotation = 0
         speakerGestureBaseline = nil
+        speakerGestureSelection = nil
         speakerCornerStartWidth = nil
         speakerSnapX = false; speakerSnapY = false
         liveTextBaseline = nil
@@ -745,7 +752,7 @@ struct NativeVideoPreview: View {
                         directResizeTextBaseline = session.document.textElements.first { $0.id == object.item.id }
                     }
                     speakerCornerStartWidth = nil
-                    if object.item.kind == .speaker { beginSpeakerGesture() }
+                    if object.item.kind == .speaker { beginSpeakerGesture(object.item.selection) }
                     else if object.item.kind != .text, let prepared = session.mediaInteractionFrame,
                        prepared.selection == object.item.selection,
                        abs(prepared.time - clock.currentTime) < 0.01 { liveMediaFrame = prepared }
@@ -785,7 +792,8 @@ struct NativeVideoPreview: View {
                   let block = session.document.visualBlocks.first(where: { $0.id == object.item.id }) else { return false }
             return block.kind == "media" && block.raw["display_mode"]?.stringValue == "overlay"
         case .speaker:
-            return session.canMoveSpeakerOnPreview && session.hasSourcePreview
+            return session.canEditSpeakerFrame(for: object.item.selection)
+                && session.speakerFrame(for: object.item.selection) != nil && session.hasSourcePreview
         default:
             return false
         }
@@ -848,6 +856,7 @@ struct NativeVideoPreview: View {
     }
 
     var body: some View {
+        let displayTicket = session.admissiblePreviewDisplayTicket
         ZStack(alignment: .topLeading) {
             Color.black
             if session.document.editorState == "empty" {
@@ -875,14 +884,49 @@ struct NativeVideoPreview: View {
                 }
                 .foregroundStyle(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityElement(children: .contain)
-            } else if session.canDisplayCurrentPlayer, let player = session.player {
+            } else if let player = session.player, session.canDisplayCurrentPlayer || session.isShowingPreviousPreview {
                 ZStack {
-                    NativeEditorPlayerSurface(player: player)
+                    NativeEditorPlayerSurface(player: player, readinessID: displayTicket,
+                        onReadyForDisplay: { session.previewFrameWasShown(player: player, ticket: displayTicket) })
                         .aspectRatio(session.previewAspectRatio, contentMode: .fit)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .accessibilityLabel("Video preview")
-                        .accessibilityAction(named: "Expand preview") { onEmptyTap?() }
-                    if let frame = session.scrubPreviewFrame {
+                        .accessibilityHidden(session.isShowingPreviousPreview)
+                        .accessibilityAction(named: "Expand preview") {
+                            if !session.isShowingPreviousPreview { onEmptyTap?() }
+                        }
+                    if let previous = session.previousPreviewPresentation {
+                        Group {
+                            if let frame = previous.frame {
+                                Image(uiImage: frame).resizable()
+                            } else {
+                                NativeEditorPlayerSurface(player: previous.player)
+                            }
+                        }
+                        .aspectRatio(previous.aspectRatio, contentMode: .fit)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(.black)
+                        .overlay(alignment: .top) {
+                            VStack(spacing: 4) {
+                                Text(previous.status.message)
+                                    .font(KriaFont.body(12)).foregroundStyle(.white)
+                                    .multilineTextAlignment(.center)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .accessibilityIdentifier("native-editor-previous-preview-status")
+                                if previous.status != .updating {
+                                    Button("Retry preview") { Task { await session.retryPreview() } }
+                                        .foregroundStyle(.white).frame(minHeight: 44)
+                                        .accessibilityIdentifier("native-editor-previous-preview-retry")
+                                }
+                            }
+                            .padding(8)
+                            .frame(maxWidth: .infinity)
+                            .background(.black, in: RoundedRectangle(cornerRadius: 8))
+                            .padding(8)
+                        }
+                        .accessibilityElement(children: .contain)
+                    }
+                    if !session.isShowingPreviousPreview, let frame = session.scrubPreviewFrame {
                         Image(uiImage: frame)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
@@ -981,9 +1025,16 @@ struct NativeVideoPreview: View {
                             followsFace: speakerGestureBaseline != nil && liveMediaFrame?.face != nil)
                     }
                     if speakerGestureBaseline != nil || directMoveObjectID != nil {
-                        // The middle lines the speaker's centre snapped to.
-                        if speakerSnapX { Rectangle().fill(KriaColor.sky).frame(width: 1, height: proxy.size.height).offset(x: proxy.size.width / 2) }
-                        if speakerSnapY { Rectangle().fill(KriaColor.sky).frame(width: proxy.size.width, height: 1).offset(y: proxy.size.height / 2) }
+                        // The middle lines the dragged object's centre snapped to: its own panel for a speaker, else the canvas.
+                        let rect: CGRect = {
+                            if speakerGestureBaseline != nil, let selection = speakerGestureSelection,
+                               let viewport = session.speakerViewport(for: selection, at: clock.currentTime) {
+                                return NativeSpeakerPanelGeometry.pixelRect(viewport, canvas: proxy.size)
+                            }
+                            return CGRect(origin: .zero, size: proxy.size)
+                        }()
+                        if speakerSnapX { Rectangle().fill(KriaColor.sky).frame(width: 1, height: rect.height).offset(x: rect.midX, y: rect.minY) }
+                        if speakerSnapY { Rectangle().fill(KriaColor.sky).frame(width: rect.width, height: 1).offset(x: rect.minX, y: rect.midY) }
                     }
                     ForEach(visible.compactMap { item in objects.first(where: { $0.item == item }) }) { object in
                         NativePreviewObjectView(
@@ -1027,7 +1078,9 @@ struct NativeVideoPreview: View {
             // message sits underneath and the canvas has nothing to interact with. When the finished
             // render still plays, the fallback card below is drawn above the canvas instead, so its
             // buttons work and tap-to-fullscreen on the empty canvas keeps working.
-            .allowsHitTesting(session.document.editorState != "empty" && !(session.sourcePreviewState.isFailure && !session.isShowingRenderedFallback))
+            .opacity(session.isShowingPreviousPreview ? 0 : 1)
+            .accessibilityHidden(session.isShowingPreviousPreview)
+            .allowsHitTesting(!session.isShowingPreviousPreview && session.document.editorState != "empty" && !(session.sourcePreviewState.isFailure && !session.isShowingRenderedFallback))
 
             if session.showsEditApplied {
                 Label("Edit applied", systemImage: "checkmark.circle.fill")
@@ -1157,19 +1210,28 @@ struct NativeEditorFullscreenPreview: View {
     @State private var ready = false
 
     var body: some View {
+        let previous = session.previousPreviewPresentation
         ZStack {
             Color.black
-            if let player = session.player {
+            if let player = previous?.player ?? session.player {
                 NativeEditorPlayerSurface(player: player, onReadyForDisplay: { ready = true })
-                    .aspectRatio(session.previewAspectRatio, contentMode: .fit)
+                    .aspectRatio(previous?.aspectRatio ?? Double(session.previewAspectRatio), contentMode: .fit)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                if let frame = session.scrubPreviewFrame {
+                if let frame = previous?.frame ?? (previous == nil ? session.scrubPreviewFrame : nil) {
                     Image(uiImage: frame)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .allowsHitTesting(false)
                 }
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if let previous {
+                Text(previous.status.message)
+                    .font(KriaFont.body(12)).foregroundStyle(.white)
+                    .multilineTextAlignment(.center).padding(12)
+                    .background(.black.opacity(0.8))
             }
         }
         .frame(width: size.width, height: size.height)
@@ -1184,6 +1246,7 @@ struct NativeEditorFullscreenPreview: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Video preview, fullscreen")
+        .accessibilityValue(previous?.status.message ?? "")
         .accessibilityIdentifier("native-editor-preview-fullscreen")
     }
 }
@@ -1198,17 +1261,17 @@ struct NativeEditorFullscreenPreview: View {
 private struct NativeEditorPlayerSurface: UIViewRepresentable {
     let player: AVPlayer
     /// Fires once the layer has a frame to show (immediately if it already does).
-    var onReadyForDisplay: (() -> Void)? = nil
+    var readinessID: NativeEditorPreviewWork? = nil
+    var onReadyForDisplay: (@MainActor () -> Void)? = nil
 
     func makeUIView(context: Context) -> Surface {
         let view = Surface()
-        view.playerLayer.player = player
-        view.observeReadiness(onReadyForDisplay)
+        view.configure(player: player, ticket: readinessID, onReady: onReadyForDisplay)
         return view
     }
 
     func updateUIView(_ view: Surface, context: Context) {
-        if view.playerLayer.player !== player { view.playerLayer.player = player }
+        view.configure(player: player, ticket: readinessID, onReady: onReadyForDisplay)
     }
 
     final class Surface: UIView {
@@ -1216,11 +1279,28 @@ private struct NativeEditorPlayerSurface: UIViewRepresentable {
         var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
         private var readiness: NSKeyValueObservation?
 
-        func observeReadiness(_ onReady: (() -> Void)?) {
+        private weak var observedPlayer: AVPlayer?
+        private weak var observedItem: AVPlayerItem?
+        private var observedTicket: NativeEditorPreviewWork?
+        private var reportedReady = false
+
+        func configure(player: AVPlayer, ticket: NativeEditorPreviewWork?, onReady: (@MainActor () -> Void)?) {
+            let item = player.currentItem
+            guard observedPlayer !== player || observedItem !== item || observedTicket != ticket else { return }
+            readiness?.invalidate()
+            observedPlayer = player; observedItem = item; observedTicket = ticket; reportedReady = false
+            if playerLayer.player !== player { playerLayer.player = player }
             guard let onReady else { return }
-            readiness = playerLayer.observe(\.isReadyForDisplay, options: [.initial, .new]) { layer, _ in
+            readiness = playerLayer.observe(\.isReadyForDisplay, options: [.initial, .new]) { [weak self, weak player, weak item] layer, _ in
                 guard layer.isReadyForDisplay else { return }
-                DispatchQueue.main.async(execute: onReady)
+                DispatchQueue.main.async { [weak self, weak player, weak item] in
+                    guard let self, let player, let item, !self.reportedReady,
+                          self.observedPlayer === player, self.observedItem === item,
+                          self.observedTicket == ticket, self.playerLayer.player === player,
+                          self.playerLayer.isReadyForDisplay, player.currentItem === item else { return }
+                    self.reportedReady = true
+                    onReady()
+                }
             }
         }
 
@@ -1432,15 +1512,61 @@ private struct NativePreviewObjectView: View {
     }
 }
 
-/// One clip block lifted for reorder. `windows` are the committed clip windows, `preview` where each position
-/// lands once the lifted clip sits at `target`; `travel` is the lifted block's timeline displacement (seconds).
+struct NativeSplitScreenReorderUnit {
+    var clipIDs: [UUID]
+    let start: TimeInterval
+    let end: TimeInterval
+
+    static func make(document: EditorDocument, clips: [EditorClip]) -> [Self] {
+        var result: [Self] = []
+        var sectionIndices: [String: Int] = [:]
+        for clip in clips {
+            let slot = document.clips.first { $0.id == clip.slotID }
+            if let section = document.splitScreenSections.first(where: { $0.id == slot?.splitSectionID }), let slot {
+                if let index = sectionIndices[section.id] {
+                    result[index].clipIDs.append(clip.id)
+                } else {
+                    let start = clip.start - slot.splitOffsetS
+                    sectionIndices[section.id] = result.count
+                    result.append(Self(clipIDs: [clip.id], start: start, end: start + section.durationS))
+                }
+            } else {
+                result.append(Self(clipIDs: [clip.id], start: clip.start, end: clip.end))
+            }
+        }
+        return result
+    }
+
+    static func reorderedWindows(document: EditorDocument, clips: [EditorClip], moving id: UUID, to targetID: UUID) -> [(start: TimeInterval, end: TimeInterval)] {
+        guard let source = clips.first(where: { $0.id == id }), let target = clips.first(where: { $0.id == targetID }),
+              let from = document.clips.firstIndex(where: { $0.id == source.slotID }),
+              let to = document.clips.firstIndex(where: { $0.id == target.slotID }) else { return [] }
+        var reordered = document
+        reordered.clips = NativeEditorInteraction.reorderedSlots(document.clips, from: from, to: to)
+        let projection = NativeEditorInteraction.timelineProjection(slots: reordered.clips, carousel: reordered.carouselMoment,
+                                                                   splitSections: reordered.splitScreenSections)
+        let projected = projection.clipWindows.compactMap { window -> EditorClip? in
+            let slot = reordered.clips[window.sourceIndex]
+            guard var clip = clips.first(where: { $0.slotID == slot.id }) else { return nil }
+            clip.start = window.start
+            clip.end = window.end
+            return clip
+        }
+        return make(document: reordered, clips: projected).map { ($0.start, $0.end) }
+    }
+}
+
+/// A split section moves as one unit while its panel clips keep their relative source windows.
 private struct ClipReorderDrag {
     let clipID: UUID
+    let units: [NativeSplitScreenReorderUnit]
     let from: Int
     var travel: TimeInterval
     var target: Int
     let windows: [(start: TimeInterval, end: TimeInterval)]
     var preview: [(start: TimeInterval, end: TimeInterval)]
+
+    func isLifted(_ id: UUID) -> Bool { units[from].clipIDs.contains(id) }
 
     /// The position a clip originally at `index` occupies once `from` has moved to `target`.
     func previewPosition(of index: Int) -> Int {
@@ -1520,6 +1646,40 @@ final class NativeTimelineEdgeScroller {
     }
 }
 
+struct NativeSplitScreenRows {
+    let titles: [String]
+    private let rowsBySlot: [String: Int]
+
+    static func panelTitle(index: Int, count: Int) -> String {
+        index == 0 ? "Top" : index == count - 1 ? "Bottom" : "Middle"
+    }
+
+    init(document: EditorDocument) {
+        let sections = document.splitScreenSections
+        guard !sections.isEmpty else {
+            titles = ["Video"]
+            rowsBySlot = [:]
+            return
+        }
+        let ordinary = document.clips.contains { !$0.removed && $0.splitSectionID == nil }
+        var labels = ordinary ? ["Video"] : []
+        labels.append("Top")
+        if sections.contains(where: { $0.panelCount == 3 }) { labels.append("Middle") }
+        labels.append("Bottom")
+        titles = labels
+        var indices: [String: Int] = [:]
+        for slot in document.clips where !slot.removed {
+            guard let id = slot.id,
+                  let section = sections.first(where: { $0.id == slot.splitSectionID }),
+                  let panel = slot.splitPanelIndex else { continue }
+            indices[id] = labels.firstIndex(of: Self.panelTitle(index: panel, count: section.panelCount))
+        }
+        rowsBySlot = indices
+    }
+
+    func row(slotID: String?) -> Int { slotID.flatMap { rowsBySlot[$0] } ?? 0 }
+}
+
 /// The playhead stays fixed in the viewport while every track moves beneath it.
 /// Horizontal panning seeks the preview to the time underneath the playhead.
 struct NativeMiniStrip: View {
@@ -1554,6 +1714,7 @@ struct NativeMiniStrip: View {
     @State private var alignmentHaptic = UIImpactFeedbackGenerator(style: .medium)
     @State private var lastBoundaryFeedbackAt = Date.distantPast
     @State private var cachedClips: [EditorClip] = []
+    @State private var footageRows = NativeSplitScreenRows(document: EditorDocument())
     @State private var didCacheItems = false
     @State private var isPresentingAddClip = false
     /// Non-nil only while an auto-scroll-eligible drag (timed-block move,
@@ -1585,6 +1746,9 @@ struct NativeMiniStrip: View {
     private let maximumZoom: CGFloat = 24
     private var basePixelsPerSecond: CGFloat { max(1, viewportWidth) / 6 }
     private let filmstripHeight: CGFloat = 44
+    private var filmstripContentHeight: CGFloat {
+        CGFloat(footageRows.titles.count) * filmstripHeight + CGFloat(footageRows.titles.count - 1) * rowGap
+    }
     private let secondaryLaneHeight: CGFloat = 44
     private let rowGap: CGFloat = 6
     private let quickAddSpring = Animation.spring(response: 0.34, dampingFraction: 0.88)
@@ -1669,7 +1833,7 @@ struct NativeMiniStrip: View {
     }
     private var laneCount: Int { 1 + rows.reduce(0) { $0 + rowCount($1) } + (clips.isEmpty ? 0 : 1) }
     private var timelineHeight: CGFloat {
-        18 + filmstripHeight + CGFloat(laneCount - 1) * secondaryLaneHeight + CGFloat(laneCount) * rowGap
+        18 + filmstripContentHeight + CGFloat(laneCount - 1) * secondaryLaneHeight + CGFloat(laneCount) * rowGap
     }
     /// The wrapper can use this when it needs an explicit height; leaving the
     /// view unframed is preferred so optional lanes stay visible.
@@ -1718,15 +1882,15 @@ struct NativeMiniStrip: View {
             }
             GeometryReader { viewport in
                 ScrollViewReader { proxy in
-                    ScrollView(.vertical, showsIndicators: laneCount > 4) {
+                    ScrollView(.vertical, showsIndicators: laneCount + footageRows.titles.count - 1 > 4) {
                         HStack(alignment: .top, spacing: 6) {
                             laneLabels
                                 .frame(width: laneLabelWidth, alignment: .leading)
                             timeline
+                                .simultaneousGesture(timelinePanGesture)
                         }
                         .frame(maxWidth: .infinity, minHeight: max(0, viewport.size.height - bottomClearance), alignment: .topLeading)
                         .contentShape(Rectangle())
-                        .simultaneousGesture(timelinePanGesture)
                     }
                     .contentMargins(.bottom, bottomClearance, for: .scrollContent)
                     .contentMargins(.bottom, bottomClearance, for: .scrollIndicators)
@@ -2005,11 +2169,15 @@ struct NativeMiniStrip: View {
         let hasAudioLane = !clips.isEmpty
         return VStack(spacing: rowGap) {
             Color.clear.frame(height: 18)
-            Text("Video")
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(height: filmstripHeight)
-                .accessibilityIdentifier(rowsList.isEmpty && !hasAudioLane ? "native-editor-lane-label-last" : "native-editor-lane-label-video")
+            ForEach(footageRows.titles, id: \.self) { title in
+                Text(title)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(height: filmstripHeight)
+                    .accessibilityIdentifier(title == "Video"
+                        ? (rowsList.isEmpty && !hasAudioLane ? "native-editor-lane-label-last" : "native-editor-lane-label-video")
+                        : "native-editor-lane-label-split-\(title.lowercased())")
+            }
             ForEach(Array(rowsList.enumerated()), id: \.element.id) { index, row in
                 laneLabel(Self.laneDisplayName(row.title))
                     .frame(height: CGFloat(rowCount(row)) * secondaryLaneHeight + CGFloat(rowCount(row) - 1) * rowGap, alignment: .top)
@@ -2098,6 +2266,12 @@ struct NativeMiniStrip: View {
                 }
             )
             .background(TimelinePinchCapture { scale, ended in
+                session.setTimelinePinching(!ended)
+                if !ended, !isPinching {
+                    endAutoScroll(); endTrimHaptics()
+                    endClipReorder(commit: false)
+                    moveAlignment = nil; movePreviousEdges = nil
+                }
                 if ended {
                     pinchAnchor = zoom
                     isPinching = false
@@ -2197,7 +2371,7 @@ struct NativeMiniStrip: View {
                     }
                 }
             }
-            .frame(height: filmstripHeight)
+            .frame(height: filmstripContentHeight)
             .allowsHitTesting(false)
 
             ForEach(visibleClips(playheadX: playheadX), id: \.element.id) { index, clip in
@@ -2205,8 +2379,9 @@ struct NativeMiniStrip: View {
                 // start is fixed by slot order, so the leading handle never
                 // tracks the finger and clock-delta compensation would
                 // un-trim it. See NativeMiniStrip's design note above.
-                let applyTrailingTrim: (TimeInterval) -> TimeInterval? = { raw in
-                    session.updateTrim(by: raw)
+                let applyTrailingTrim: (TimeInterval, NativeTimelineGestureID) -> TimeInterval? = { raw, token in
+                    guard session.ownsTimingGesture(token) else { return nil }
+                    session.updateTrim(by: raw, gestureID: token)
                     guard let trimmed = session.timelineClips.first(where: { $0.id == clip.id }) else { return nil }
                     updateTrimHaptics(start: trimmed.start, end: trimmed.end)
                     return trimmed.end
@@ -2216,36 +2391,47 @@ struct NativeMiniStrip: View {
                     index: index,
                     frame: displayClipFrame(clip, index: index, playheadX: playheadX),
                     isSelected: session.selectedClipID == clip.id,
-                    isLifted: clipReorder?.clipID == clip.id,
+                    isLifted: clipReorder?.isLifted(clip.id) == true,
                     canReorder: session.canReorderClips,
                     pixelsPerSecond: pixelsPerSecond,
                     onSelect: { select(clip) },
                     onReorderStart: { beginClipReorder(clip, index: index, viewportGlobalRange: viewportGlobalRange) },
                     onReorderChange: { travel, x in updateClipReorder(travel: travel, globalX: x) },
                     onReorderEnd: { commit in endClipReorder(commit: commit) },
-                    onTrimStart: { edge in
+                    onTrimStart: { edge, token in
+                        guard session.beginTrim(clipID: clip.id, edge: edge, gestureID: token) else { return false }
                         beginTrimHaptics(selection: EditorSelection(kind: .clip, id: clip.id.uuidString), edge: edge, start: clip.start, end: clip.end)
-                        session.beginTrim(clipID: clip.id, edge: edge)
                         if edge == .trailing {
-                            beginAutoScroll(viewportGlobalRange: viewportGlobalRange, applyRaw: applyTrailingTrim)
+                            beginAutoScroll(viewportGlobalRange: viewportGlobalRange, applyRaw: { applyTrailingTrim($0, token) })
                         }
+                        return true
                     },
-                    onTrimChange: { edge, translation in
+                    onTrimChange: { edge, translation, token in
+                        guard session.ownsTimingGesture(token) else { return }
                         if edge == .trailing {
-                            applyCompensatedDrag(raw: translation, applyRaw: applyTrailingTrim)
+                            applyCompensatedDrag(raw: translation, applyRaw: { applyTrailingTrim($0, token) })
                         } else {
-                            session.updateTrim(by: translation)
+                            session.updateTrim(by: translation, gestureID: token)
                             if let trimmed = session.timelineClips.first(where: { $0.id == clip.id }) {
                                 updateTrimHaptics(start: trimmed.start, end: trimmed.end)
                             }
                         }
                     },
-                    onTrimEnd: { session.endTrim(); endTrimHaptics(); endAutoScroll() },
+                    onTrimEnd: { token, commit in
+                        guard session.ownsTimingGesture(token) else { return }
+                        if commit { session.endTrim(gestureID: token) } else { session.cancelTimingGesture(gestureID: token) }
+                        endTrimHaptics(); endAutoScroll()
+                    },
                     onMove: { offset in
                         session.selectClip(clip.id)
-                        session.moveSelected(by: offset)
+                        if session.selectedSplitScreenSectionID != nil {
+                            session.moveSelectedSplitScreenClip(by: offset < 0 ? -1 : 1)
+                        } else {
+                            session.moveSelected(by: offset)
+                        }
                     },
-                    onTrailingDragXChange: { x in updateAutoScrollX(x) }
+                    onTrailingDragXChange: { x in updateAutoScrollX(x) },
+                    panelTitle: footageRows.titles[footageRows.row(slotID: clip.slotID)]
                 )
             }
             if clips.isEmpty {
@@ -2262,7 +2448,7 @@ struct NativeMiniStrip: View {
                 outroPlaceholder(range: outro, playheadX: playheadX, width: width)
             }
         }
-        .frame(height: filmstripHeight)
+        .frame(height: filmstripContentHeight)
     }
 
     /// KRI-166: the end of the editable content, before the branded outro
@@ -2301,6 +2487,7 @@ struct NativeMiniStrip: View {
 
     private func refreshItems() {
         cachedClips = session.timelineClips
+        footageRows = NativeSplitScreenRows(document: session.document)
         cachedItems = makeItems()
         didCacheItems = true
         if session.isTimingGestureActive, !cachedRows.isEmpty {
@@ -2345,14 +2532,14 @@ struct NativeMiniStrip: View {
             let hitWidth = max(44, frame.width)
             let hitFrame = CGRect(
                 x: frame.midX - hitWidth / 2,
-                y: filmstripOriginY,
+                y: filmstripOriginY + frame.minY,
                 width: hitWidth,
                 height: filmstripHeight
             )
             frames.append(hitFrame)
         }
 
-        var rowOriginY = filmstripOriginY + filmstripHeight + rowGap
+        var rowOriginY = filmstripOriginY + filmstripContentHeight + rowGap
         for row in rows {
             let packed = row.title == "TEXT" ? NativeEditorInteraction.packLanes(row.items) : []
             let lanes = Dictionary(uniqueKeysWithValues: packed.map { ($0.item.selection, $0.lane) })
@@ -2579,8 +2766,9 @@ struct NativeMiniStrip: View {
                     moveAlignment = aligned
                     return moved.start
                 }
-                let applyTrim: (TimeInterval) -> TimeInterval? = { raw in
-                    session.updateTimedEdgeTrim(by: raw)
+                let applyTrim: (TimeInterval, NativeTimelineGestureID) -> TimeInterval? = { raw, token in
+                    guard session.ownsTimingGesture(token) else { return nil }
+                    session.updateTimedEdgeTrim(by: raw, gestureID: token)
                     guard let trimmed = session.timelineItems.first(where: { $0.selection == item.selection }) else { return nil }
                     updateTrimHaptics(start: trimmed.start, end: trimmed.end)
                     return trimEdge == .leading ? trimmed.start : trimmed.end
@@ -2592,7 +2780,7 @@ struct NativeMiniStrip: View {
                     color: color,
                     isSelected: session.selection == item.selection,
                     canMove: !isPinching && panStartTime == nil && canEditTimedOperation(item, operation: "timing"),
-                    canTrim: canEditTimedOperation(item, operation: "trim"),
+                    canTrim: !isPinching && canEditTimedOperation(item, operation: "trim"),
                     pixelsPerSecond: pixelsPerSecond,
                     onSelect: { select(item) },
                     onMoveStart: {
@@ -2616,13 +2804,21 @@ struct NativeMiniStrip: View {
                         endAutoScroll()
                         refreshItems()
                     },
-                    onTrimStart: { edge in
+                    onTrimStart: { edge, token in
+                        guard session.beginTimedEdgeTrim(kind: item.kind, id: item.id, edge: edge, gestureID: token) else { return false }
                         beginTrimHaptics(selection: item.selection, edge: edge, start: item.start, end: item.end)
-                        session.beginTimedEdgeTrim(kind: item.kind, id: item.id, edge: edge)
-                        beginAutoScroll(viewportGlobalRange: viewportGlobalRange, applyRaw: applyTrim)
+                        beginAutoScroll(viewportGlobalRange: viewportGlobalRange, applyRaw: { applyTrim($0, token) })
+                        return true
                     },
-                    onTrimChange: { raw in applyCompensatedDrag(raw: raw, applyRaw: applyTrim) },
-                    onTrimEnd: { session.endTimedEdgeTrim(); endTrimHaptics(); endAutoScroll() },
+                    onTrimChange: { raw, token in
+                        guard session.ownsTimingGesture(token) else { return }
+                        applyCompensatedDrag(raw: raw, applyRaw: { applyTrim($0, token) })
+                    },
+                    onTrimEnd: { token, commit in
+                        guard session.ownsTimingGesture(token) else { return }
+                        if commit { session.endTimedEdgeTrim(gestureID: token) } else { session.cancelTimingGesture(gestureID: token) }
+                        endTrimHaptics(); endAutoScroll()
+                    },
                     onDragXChange: { x in updateAutoScrollX(x) }
                 )
             }
@@ -2719,38 +2915,47 @@ struct NativeMiniStrip: View {
             for: clip, playheadX: playheadX, currentTime: clock.currentTime,
             pixelsPerSecond: pixelsPerSecond, height: filmstripHeight
         )
+        .offsetBy(dx: 0, dy: CGFloat(footageRows.row(slotID: clip.slotID)) * (filmstripHeight + rowGap))
     }
 
     /// What the filmstrip draws: the committed frame, or — while a clip is lifted — the lifted block under the
     /// finger and every other block where it will sit after the drop.
     private func displayClipFrame(_ clip: EditorClip, index: Int, playheadX: CGFloat) -> CGRect {
         let base = clipFrame(clip, playheadX: playheadX)
-        guard let drag = clipReorder, drag.preview.indices.contains(index) else { return base }
-        if clip.id == drag.clipID { return base.offsetBy(dx: CGFloat(drag.travel) * pixelsPerSecond, dy: 0) }
-        let slot = drag.previewPosition(of: index)
-        let x = playheadX + CGFloat(drag.preview[slot].start - clock.currentTime) * pixelsPerSecond
-        return CGRect(x: x, y: base.minY, width: base.width, height: base.height)
+        guard let drag = clipReorder,
+              let unit = drag.units.firstIndex(where: { $0.clipIDs.contains(clip.id) }) else { return base }
+        if unit == drag.from { return base.offsetBy(dx: CGFloat(drag.travel) * pixelsPerSecond, dy: 0) }
+        let destination = drag.previewPosition(of: unit)
+        let displacement = drag.preview[destination].start - drag.windows[unit].start
+        return base.offsetBy(dx: CGFloat(displacement) * pixelsPerSecond, dy: 0)
     }
 
     // MARK: - Clip reorder (long press, then drag)
 
-    /// The lifted block's raw travel is clamped so the block stays inside the video; the returned centre time is
-    /// the auto-scroll pin marker (it stops changing once the block meets either end).
+    /// Keep the lifted block inside the video, but choose its destination from the requested centre.
+    /// The scroll pin follows that centre to the timeline edge so unequal widths cannot stop it early.
     private func applyClipReorder(raw: TimeInterval) -> TimeInterval? {
         guard var drag = clipReorder, drag.windows.indices.contains(drag.from) else { return nil }
         let origin = drag.windows[drag.from]
         let lower = (drag.windows.first?.start ?? origin.start) - origin.start
         let upper = (drag.windows.last?.end ?? origin.end) - origin.end
         drag.travel = min(max(raw, lower), max(lower, upper))
-        let center = (origin.start + origin.end) / 2 + drag.travel
-        let target = NativeEditorInteraction.clipReorderTarget(windows: drag.windows, from: drag.from, liftedCenter: center)
+        let requestedCenter = (origin.start + origin.end) / 2 + raw
+        let target = NativeEditorInteraction.clipReorderTarget(windows: drag.windows, from: drag.from, liftedCenter: requestedCenter)
         if target != drag.target {
             drag.target = target
-            drag.preview = NativeEditorInteraction.reorderedClipWindows(windows: drag.windows, from: drag.from, to: target)
+            if !session.document.splitScreenSections.isEmpty, let targetID = drag.units[target].clipIDs.first {
+                let preview = NativeSplitScreenReorderUnit.reorderedWindows(document: session.document, clips: clips,
+                                                                            moving: drag.clipID, to: targetID)
+                guard preview.count == drag.units.count else { return nil }
+                drag.preview = preview
+            } else {
+                drag.preview = NativeEditorInteraction.reorderedClipWindows(windows: drag.windows, from: drag.from, to: target)
+            }
             reorderTickHaptic.selectionChanged()
         }
         clipReorder = drag
-        return center
+        return min(max(requestedCenter, drag.windows.first?.start ?? origin.start), drag.windows.last?.end ?? origin.end)
     }
 
     private func beginClipReorder(_ clip: EditorClip, index: Int, viewportGlobalRange: ClosedRange<CGFloat>) {
@@ -2758,8 +2963,10 @@ struct NativeMiniStrip: View {
               panStartTime == nil, clips.indices.contains(index) else { return }
         session.pausePlayback()
         session.selectClip(clip.id)
-        let windows = clips.map { (start: $0.start, end: $0.end) }
-        clipReorder = ClipReorderDrag(clipID: clip.id, from: index, travel: 0, target: index, windows: windows, preview: windows)
+        let units = NativeSplitScreenReorderUnit.make(document: session.document, clips: clips)
+        guard let from = units.firstIndex(where: { $0.clipIDs.contains(clip.id) }) else { return }
+        let windows = units.map { (start: $0.start, end: $0.end) }
+        clipReorder = ClipReorderDrag(clipID: clip.id, units: units, from: from, travel: 0, target: from, windows: windows, preview: windows)
         reorderHaptic.impactOccurred()
         beginAutoScroll(viewportGlobalRange: viewportGlobalRange, applyRaw: { applyClipReorder(raw: $0) })
     }
@@ -2777,7 +2984,9 @@ struct NativeMiniStrip: View {
         clipReorder = nil
         endAutoScroll()
         guard commit, drag.target != drag.from else { return }
-        session.moveClip(id: drag.clipID, toIndex: drag.target)
+        guard let targetID = drag.units[drag.target].clipIDs.first,
+              let target = clips.firstIndex(where: { $0.id == targetID }) else { return }
+        session.moveClip(id: drag.clipID, toIndex: target)
         reorderDropHaptic.impactOccurred()
         refreshItems()
     }
@@ -2957,9 +3166,9 @@ private struct NativeTimelineBar: View {
     let onMoveStart: () -> Void
     let onMoveChange: (TimeInterval) -> Void
     let onMoveEnd: () -> Void
-    let onTrimStart: (NativeTrimEdge) -> Void
-    let onTrimChange: (TimeInterval) -> Void
-    let onTrimEnd: () -> Void
+    let onTrimStart: (NativeTrimEdge, NativeTimelineGestureID) -> Bool
+    let onTrimChange: (TimeInterval, NativeTimelineGestureID) -> Void
+    let onTrimEnd: (NativeTimelineGestureID, Bool) -> Void
     var onDragXChange: ((CGFloat) -> Void)? = nil
     @State private var isMoving = false
     /// Global x of the finger when the long press was recognized. The move is
@@ -3059,7 +3268,7 @@ private struct NativeTimelineBar: View {
                     visualOffset: -min(44, hitWidth / 3) / 2 + 6,
                     touchWidth: min(44, hitWidth / 3),
                     onTrimStart: onTrimStart,
-                    onTrimChange: { _, seconds in onTrimChange(seconds) },
+                    onTrimChange: { _, seconds, token in onTrimChange(seconds, token) },
                     onTrimEnd: onTrimEnd,
                     onDragXChange: onDragXChange
                 )
@@ -3071,7 +3280,7 @@ private struct NativeTimelineBar: View {
                     visualOffset: min(44, hitWidth / 3) / 2 - 6,
                     touchWidth: min(44, hitWidth / 3),
                     onTrimStart: onTrimStart,
-                    onTrimChange: { _, seconds in onTrimChange(seconds) },
+                    onTrimChange: { _, seconds, token in onTrimChange(seconds, token) },
                     onTrimEnd: onTrimEnd,
                     onDragXChange: onDragXChange
                 )
@@ -3115,9 +3324,9 @@ private struct NativeClipSurface: View {
     let onReorderStart: () -> Void
     let onReorderChange: (TimeInterval, CGFloat) -> Void
     let onReorderEnd: (Bool) -> Void
-    let onTrimStart: (NativeTrimEdge) -> Void
-    let onTrimChange: (NativeTrimEdge, TimeInterval) -> Void
-    let onTrimEnd: () -> Void
+    let onTrimStart: (NativeTrimEdge, NativeTimelineGestureID) -> Bool
+    let onTrimChange: (NativeTrimEdge, TimeInterval, NativeTimelineGestureID) -> Void
+    let onTrimEnd: (NativeTimelineGestureID, Bool) -> Void
     let onMove: (TimeInterval) -> Void
     /// Only the trailing handle forwards drag position — a clip's timeline
     /// `start` is fixed by slot order (reflowSlots is a no-op), so a leading
@@ -3125,11 +3334,17 @@ private struct NativeClipSurface: View {
     /// delta back into that translation would un-trim the clip with no
     /// finger movement. See NativeMiniStrip's design note.
     var onTrailingDragXChange: ((CGFloat) -> Void)? = nil
+    var panelTitle: String? = nil
 
     private let minimumDuration: TimeInterval = 0.1
 
     private var duration: TimeInterval {
         NativeClipBlockGeometry.windowDuration(clip, minimum: minimumDuration)
+    }
+
+    private var accessibilityPrefix: String {
+        guard let panelTitle, panelTitle != "Video" else { return "" }
+        return panelTitle + " panel, "
     }
 
     // Same press-then-drag recipe as NativeTimelineBar: the travel is measured from the finger's global x at the
@@ -3181,7 +3396,7 @@ private struct NativeClipSurface: View {
                         }
                 )
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Clip \(index + 1), \(duration, specifier: "%.1f") seconds")
+                .accessibilityLabel("\(accessibilityPrefix)Clip \(index + 1), \(duration, specifier: "%.1f") seconds")
                 .accessibilityValue(String(format: "%.3f", duration))
                 .accessibilityIdentifier("native-editor-clip-\(index + 1)")
                 .accessibilityAddTraits(isSelected ? AccessibilityTraits.isSelected : [])
@@ -3243,11 +3458,12 @@ private struct NativeTrimHandle: View {
     let pixelsPerSecond: CGFloat
     let visualOffset: CGFloat
     var touchWidth: CGFloat = 44
-    let onTrimStart: (NativeTrimEdge) -> Void
-    let onTrimChange: (NativeTrimEdge, TimeInterval) -> Void
-    let onTrimEnd: () -> Void
+    let onTrimStart: (NativeTrimEdge, NativeTimelineGestureID) -> Bool
+    let onTrimChange: (NativeTrimEdge, TimeInterval, NativeTimelineGestureID) -> Void
+    let onTrimEnd: (NativeTimelineGestureID, Bool) -> Void
     var onDragXChange: ((CGFloat) -> Void)? = nil
-    @State private var isDragging = false
+    @State private var gestureID: NativeTimelineGestureID?
+    @State private var rejected = false
     // SwiftUI never calls onEnded for a cancelled gesture (a system gesture,
     // Control Center, or the outer vertical ScrollView stealing the touch).
     // @GestureState resets to its initial value on both a normal end AND a
@@ -3272,43 +3488,51 @@ private struct NativeTrimHandle: View {
                 DragGesture(minimumDistance: 0, coordinateSpace: .global)
                     .updating($dragActive) { _, active, _ in active = true }
                     .onChanged { value in
-                        if !isDragging {
-                            isDragging = true
-                            onTrimStart(edge)
+                        guard !rejected else { return }
+                        if gestureID == nil {
+                            let token = NativeTimelineGestureID()
+                            guard onTrimStart(edge, token) else { rejected = true; return }
+                            gestureID = token
                         }
-                        // DragGesture.translation is cumulative from pointer
-                        // down. The session applies it to one captured baseline.
+                        guard let token = gestureID else { return }
                         let seconds = TimeInterval(value.translation.width / max(1, pixelsPerSecond))
-                        onTrimChange(edge, seconds)
+                        onTrimChange(edge, seconds, token)
                         onDragXChange?(value.location.x)
                     }
                     .onEnded { value in
-                        if !isDragging { onTrimStart(edge) }
+                        guard let token = gestureID else { rejected = false; return }
+                        gestureID = nil
                         let seconds = TimeInterval(value.translation.width / max(1, pixelsPerSecond))
-                        onTrimChange(edge, seconds)
-                        onTrimEnd()
-                        isDragging = false
+                        onTrimChange(edge, seconds, token)
+                        onTrimEnd(token, true)
+                        rejected = false
                     }
             )
             .onChange(of: dragActive) { _, active in
-                if !active && isDragging {
-                    isDragging = false
-                    onTrimEnd()
+                if !active {
+                    // Normal completion clears the token in onEnded; system cancellation does not.
+                    // Defer to let a normal final sample commit before observing a reset.
+                    let token = gestureID
+                    Task { @MainActor in
+                        await Task.yield()
+                        guard !dragActive, gestureID == token else { return }
+                        if let token { gestureID = nil; onTrimEnd(token, false) }
+                        rejected = false
+                    }
                 }
             }
             .onDisappear {
-                if isDragging {
-                    isDragging = false
-                    onTrimEnd()
-                }
+                if let token = gestureID { gestureID = nil; onTrimEnd(token, false) }
+                rejected = false
             }
             .accessibilityLabel(edge == .leading ? "Trim block start" : "Trim block end")
             .accessibilityIdentifier(edge == .leading ? "native-editor-trim-leading" : "native-editor-trim-trailing")
             .accessibilityHint("Drag to adjust the selected block")
             .accessibilityAdjustableAction { direction in
-                onTrimStart(edge)
-                onTrimChange(edge, direction == .increment ? 0.1 : -0.1)
-                onTrimEnd()
+                let token = NativeTimelineGestureID()
+                guard onTrimStart(edge, token) else { return }
+                onTrimChange(edge, direction == .increment ? 0.1 : -0.1, token)
+                onTrimEnd(token, true)
             }
     }
 }
@@ -3353,7 +3577,10 @@ private struct TimelinePinchCapture: UIViewRepresentable {
             host = scroll
             scroll.addGestureRecognizer(pinch)
         }
-        func detach() { host?.removeGestureRecognizer(pinch); host = nil }
+        func detach() {
+            if pinch.state == .began || pinch.state == .changed { changed(pinch.scale, true) }
+            host?.removeGestureRecognizer(pinch); host = nil
+        }
         @objc private func handle(_ gesture: UIPinchGestureRecognizer) {
             switch gesture.state {
             case .began, .changed: changed(gesture.scale, false)

@@ -2402,6 +2402,22 @@
               ],
               "default": null
             },
+            "split_screen_sections": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/SplitScreenSection"
+                  },
+                  "maxItems": 100,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Split Screen Sections"
+            },
             "text_elements": {
               "anyOf": [
                 {
@@ -2499,6 +2515,34 @@
         "EditorStateTimelineSlot": {
           "description": "A Save timeline row plus the media identity of an UNSAVED added clip.\n\nA saved row's media is recoverable from ``clip_index`` against the persisted\nsources; a clip the creator just added is not in them yet, so the client names it\nhere (all optional, ignored by the Save route which uses ``TimelineSlotEdit``).",
           "properties": {
+            "audio_fade_in": {
+              "anyOf": [
+                {
+                  "maximum": 60,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Audio Fade In"
+            },
+            "audio_fade_out": {
+              "anyOf": [
+                {
+                  "maximum": 60,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Audio Fade Out"
+            },
             "clip_index": {
               "title": "Clip Index",
               "type": "integer"
@@ -2526,6 +2570,34 @@
               ],
               "default": null,
               "title": "Duration S"
+            },
+            "freeze_frame_s": {
+              "anyOf": [
+                {
+                  "maximum": 1800,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Freeze Frame S"
+            },
+            "freeze_hold_s": {
+              "anyOf": [
+                {
+                  "maximum": 1800,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Freeze Hold S"
             },
             "in_s": {
               "title": "In S",
@@ -2607,6 +2679,17 @@
               "default": null,
               "title": "Media Kind"
             },
+            "media_transform": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/app__kria__recipes__MediaTransform"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "muted": {
               "anyOf": [
                 {
@@ -2662,6 +2745,20 @@
               "default": null,
               "title": "Slot Id"
             },
+            "source_audio_volume": {
+              "anyOf": [
+                {
+                  "maximum": 2,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Source Audio Volume"
+            },
             "source_crop": {
               "anyOf": [
                 {
@@ -2715,6 +2812,70 @@
               ],
               "default": null,
               "title": "Source Start Locked"
+            },
+            "speaker_frame_override": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SpeakerFrameOverride"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "speaker_subject": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Speaker Subject"
+            },
+            "split_offset_s": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Split Offset S"
+            },
+            "split_panel_index": {
+              "anyOf": [
+                {
+                  "maximum": 2,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Split Panel Index"
+            },
+            "split_section_id": {
+              "anyOf": [
+                {
+                  "maxLength": 160,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Split Section Id"
             },
             "tilt": {
               "anyOf": [
@@ -3137,7 +3298,7 @@
               "type": "string"
             },
             "transform": {
-              "$ref": "#/$defs/MediaTransform"
+              "$ref": "#/$defs/app__agents___schemas__visual_block__MediaTransform"
             },
             "transition_in": {
               "default": "cut",
@@ -3219,43 +3380,6 @@
             "media_kind"
           ],
           "title": "MediaBlock",
-          "type": "object"
-        },
-        "MediaTransform": {
-          "description": "Shared fullscreen transform mirrored by the editor preview.",
-          "properties": {
-            "fit_mode": {
-              "default": "contain",
-              "enum": [
-                "contain",
-                "cover"
-              ],
-              "title": "Fit Mode",
-              "type": "string"
-            },
-            "focal_x": {
-              "default": 0.5,
-              "maximum": 1.0,
-              "minimum": 0.0,
-              "title": "Focal X",
-              "type": "number"
-            },
-            "focal_y": {
-              "default": 0.5,
-              "maximum": 1.0,
-              "minimum": 0.0,
-              "title": "Focal Y",
-              "type": "number"
-            },
-            "zoom": {
-              "default": 1.0,
-              "maximum": 4.0,
-              "minimum": 1.0,
-              "title": "Zoom",
-              "type": "number"
-            }
-          },
-          "title": "MediaTransform",
           "type": "object"
         },
         "MomentOrderAnswerIn": {
@@ -3722,6 +3846,122 @@
           "title": "SourceCrop",
           "type": "object"
         },
+        "SpeakerFrame": {
+          "additionalProperties": false,
+          "description": "Where the matted speaker is drawn: uniformly scaled so its width is\n``width_fraction`` of the canvas width, centred at (``x_fraction``, ``y_fraction``).\nThe person mask is computed on the full-size speaker layer first (S27).",
+          "properties": {
+            "width_fraction": {
+              "maximum": 1.0,
+              "minimum": 0.2,
+              "title": "Width Fraction",
+              "type": "number"
+            },
+            "x_fraction": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "X Fraction",
+              "type": "number"
+            },
+            "y_fraction": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Y Fraction",
+              "type": "number"
+            }
+          },
+          "required": [
+            "width_fraction",
+            "x_fraction",
+            "y_fraction"
+          ],
+          "title": "SpeakerFrame",
+          "type": "object"
+        },
+        "SpeakerFrameOverride": {
+          "additionalProperties": false,
+          "description": "Occurrence frame: inherit the global frame, disable inset, or supply custom geometry.",
+          "properties": {
+            "frame": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SpeakerFrame"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "mode": {
+              "enum": [
+                "inherit",
+                "full",
+                "custom"
+              ],
+              "title": "Mode",
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "title": "SpeakerFrameOverride",
+          "type": "object"
+        },
+        "SplitScreenSection": {
+          "additionalProperties": false,
+          "properties": {
+            "background_color": {
+              "default": "#000000",
+              "pattern": "^#[0-9a-fA-F]{6}$",
+              "title": "Background Color",
+              "type": "string"
+            },
+            "duration_s": {
+              "maximum": 1800,
+              "minimum": 0.1,
+              "title": "Duration S",
+              "type": "number"
+            },
+            "gutter": {
+              "default": 0,
+              "maximum": 0.1,
+              "minimum": 0,
+              "title": "Gutter",
+              "type": "number"
+            },
+            "id": {
+              "maxLength": 160,
+              "minLength": 1,
+              "title": "Id",
+              "type": "string"
+            },
+            "panel_count": {
+              "enum": [
+                2,
+                3
+              ],
+              "title": "Panel Count",
+              "type": "integer"
+            },
+            "panel_weights": {
+              "items": {
+                "type": "number"
+              },
+              "maxItems": 3,
+              "minItems": 2,
+              "title": "Panel Weights",
+              "type": "array"
+            }
+          },
+          "required": [
+            "id",
+            "duration_s",
+            "panel_count"
+          ],
+          "title": "SplitScreenSection",
+          "type": "object"
+        },
         "SuggestionTapIn": {
           "additionalProperties": false,
           "description": "KRI-756: which offered suggestion chip this message came from (optional, additive).\n\nValidated against the offered-set ring on the thread; absent or invalid falls back to\nmatching the message text against the offered chips. Never changes what the turn does.",
@@ -4152,6 +4392,78 @@
             "duration_s"
           ],
           "title": "VisualShot",
+          "type": "object"
+        },
+        "app__agents___schemas__visual_block__MediaTransform": {
+          "description": "Shared fullscreen transform mirrored by the editor preview.",
+          "properties": {
+            "fit_mode": {
+              "default": "contain",
+              "enum": [
+                "contain",
+                "cover"
+              ],
+              "title": "Fit Mode",
+              "type": "string"
+            },
+            "focal_x": {
+              "default": 0.5,
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Focal X",
+              "type": "number"
+            },
+            "focal_y": {
+              "default": 0.5,
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Focal Y",
+              "type": "number"
+            },
+            "zoom": {
+              "default": 1.0,
+              "maximum": 4.0,
+              "minimum": 1.0,
+              "title": "Zoom",
+              "type": "number"
+            }
+          },
+          "title": "MediaTransform",
+          "type": "object"
+        },
+        "app__kria__recipes__MediaTransform": {
+          "additionalProperties": false,
+          "properties": {
+            "position_x": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": -100000,
+              "title": "Position X",
+              "type": "number"
+            },
+            "position_y": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": -100000,
+              "title": "Position Y",
+              "type": "number"
+            },
+            "rotation_degrees": {
+              "default": 0,
+              "maximum": 3600,
+              "minimum": -3600,
+              "title": "Rotation Degrees",
+              "type": "number"
+            },
+            "scale": {
+              "default": 1,
+              "exclusiveMinimum": 0,
+              "maximum": 20,
+              "title": "Scale",
+              "type": "number"
+            }
+          },
+          "title": "MediaTransform",
           "type": "object"
         }
       },
@@ -5079,6 +5391,17 @@
                 "description": "Confirmed exact per-shot label copy in on-screen order; each label is burned verbatim on its own shot and never rewritten by a specialist.",
                 "title": "Shot Labels"
               },
+              "split_screen": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/InitialSplitScreen"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "story_structure": {
                 "items": {
                   "type": "string"
@@ -5219,6 +5542,81 @@
               "beats"
             ],
             "title": "EditorialPlan",
+            "type": "object"
+          },
+          "InitialSplitScreen": {
+            "additionalProperties": false,
+            "properties": {
+              "background_color": {
+                "default": "#000000",
+                "pattern": "^#[0-9a-fA-F]{6}$",
+                "title": "Background Color",
+                "type": "string"
+              },
+              "duration_s": {
+                "anyOf": [
+                  {
+                    "maximum": 1800,
+                    "minimum": 0.1,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Duration S"
+              },
+              "gutter": {
+                "default": 0,
+                "maximum": 0.1,
+                "minimum": 0,
+                "title": "Gutter",
+                "type": "number"
+              },
+              "panel_weights": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "number"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Panel Weights"
+              },
+              "panels": {
+                "items": {
+                  "$ref": "#/$defs/SplitPanelSource"
+                },
+                "maxItems": 3,
+                "minItems": 2,
+                "title": "Panels",
+                "type": "array"
+              },
+              "start_s": {
+                "anyOf": [
+                  {
+                    "maximum": 1800,
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Start S"
+              }
+            },
+            "required": [
+              "panels"
+            ],
+            "title": "InitialSplitScreen",
             "type": "object"
           },
           "LicensedSfxIntent": {
@@ -5396,6 +5794,36 @@
               "cut_duration_s"
             ],
             "title": "MontageCadenceConstraint",
+            "type": "object"
+          },
+          "SplitPanelSource": {
+            "additionalProperties": false,
+            "properties": {
+              "media_id": {
+                "maxLength": 160,
+                "minLength": 1,
+                "title": "Media Id",
+                "type": "string"
+              },
+              "source_start_s": {
+                "anyOf": [
+                  {
+                    "maximum": 36000,
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Start S"
+              }
+            },
+            "required": [
+              "media_id"
+            ],
+            "title": "SplitPanelSource",
             "type": "object"
           }
         },

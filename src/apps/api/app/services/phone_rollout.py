@@ -292,6 +292,12 @@ def qualified_default_font_family() -> str | None:
 
 
 def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: bool = False) -> None:
+    if "splitScreen" in recipe.required_capabilities and not split_screen_supported(
+        require_client=False
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Split screen awaits native qualification", capability="splitScreen"
+        )
     placements = [
         clip.visual_placement
         for track in recipe.tracks
@@ -2316,3 +2322,18 @@ def phone_voiceover_source_audio_supported(*, require_client: bool = True) -> bo
         protocol is not None
         and protocol >= settings.phone_voiceover_source_audio_min_client_protocol
     )
+
+
+def split_screen_client_supported(*, require_client: bool | None = None) -> bool:
+    from app.services.client_protocol import current_client_protocol, in_http_request
+
+    if require_client is None:
+        require_client = in_http_request()
+    protocol = current_client_protocol()
+    return not require_client or (protocol is not None and protocol >= 46)
+
+
+def split_screen_supported(*, require_client: bool | None = None) -> bool:
+    return "splitScreen" in set(
+        settings.phone_render_verified_features
+    ) and split_screen_client_supported(require_client=require_client)

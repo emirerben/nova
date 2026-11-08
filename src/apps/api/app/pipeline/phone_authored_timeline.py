@@ -18,6 +18,7 @@ from app.kria.recipes import (
 )
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import RenderAssetManifest
+from app.kria.split_screen import SplitScreenMembership, layout_split_timeline
 from app.pipeline.authored_timeline import render_presentation
 from app.pipeline.editor_render_window import phone_source_window
 from app.pipeline.phone_captions import (
@@ -53,19 +54,21 @@ from app.services.phone_subtitled_editor import lanes_from_editor_sections, lane
 def compile_phone_authored_timeline(
     job: Any, variant: dict, previous: EditRecipeV2
 ) -> EditRecipeV2:
-    """The previous recipe contributes immutable independent audio receipts only.
+    """Compile saved placements against immutable source and audio receipts.
 
-    It never supplies visual placements, caption/text layers, cutaways, ending
-    clips or missing lane values. Saved editor sections are authoritative.
+    Explicit editor sections own their lanes, including an empty section.
+    An absent optional global lane retains the previous portable layer.
     """
     from app.pipeline.portable_text_layout import compile_text_overlay
     from app.services.user_song_projection import user_song_for_variant
     from app.tasks.generative_build import _text_element_burn_dicts, canvas_for_orientation
 
-    if user_song_for_variant(job, variant, song_filename=None) is not None:
-        # This compiler keeps only voiceover + library music; a creator's own song
-        # would be dropped and the render would ship silent. Refuse instead.
-        raise ValueError("authored phone timeline cannot carry a creator's own song")
+    user_song = user_song_for_variant(job, variant, song_filename=None)
+    if user_song is not None and (
+        not isinstance(previous, EditRecipeV2)
+        or not any(asset.kind == "song" for asset in previous.asset_manifest.assets)
+    ):
+        raise ValueError("authored phone timeline has no receipt for the creator's own song")
     if not isinstance(previous, EditRecipeV2):
         raise ValueError("authored phone restore requires immutable source receipts")
     if variant.get("speech_timing_unresolved"):
@@ -89,6 +92,19 @@ def compile_phone_authored_timeline(
     clips = []
     cursor = 0.0
     rows = explicit_authored_slots(variant)
+    split_sections = (variant.get("user_timeline") or {}).get("split_screen_sections") or []
+    split_starts, recipe_sections, split_duration = layout_split_timeline(rows, split_sections)
+    panel_rows = {}
+    for row in rows:
+        if row.get("split_section_id"):
+            panel_rows.setdefault((row["split_section_id"], row["split_panel_index"]), []).append(
+                row
+            )
+    panel_predecessors = {}
+    for members in panel_rows.values():
+        ordered = sorted(members, key=lambda row: row["split_offset_s"])
+        for left, right in zip(ordered, ordered[1:]):
+            panel_predecessors[id(right)] = left
     for index, row in enumerate(rows):
         if not 0 <= row["clip_index"] < len(catalog):
             raise ValueError("authored source index is outside the source catalog")
@@ -175,31 +191,63 @@ def compile_phone_authored_timeline(
             else visual.orientation_degrees,
             is_proxy_available=binding is not None,
         )
+        if split_sections:
+            cursor = split_starts[index]
         transition = None
-        if index and rows[index - 1].get("transition_after", "cut") != "cut":
-            prior = rows[index - 1]
-            overlap = min(
-                float(prior.get("transition_duration_s") or 0.3),
-                duration * 0.3,
-                float(prior["duration_s"]) * 0.3,
-                0.3,
-            )
+        member_key = (row.get("split_section_id"), row.get("split_panel_index"))
+        prior = (
+            panel_predecessors.get(id(row))
+            if member_key[0]
+            else (rows[index - 1] if index else None)
+        )
+        if prior is not None and prior.get("transition_after", "cut") != "cut":
+            from app.kria.split_screen import transition_overlap
+
+            overlap = transition_overlap(prior, row)
+            if bool(prior.get("split_section_id")) != bool(row.get("split_section_id")):
+                overlap = 0.0
             if overlap >= 0.1:
-                transition = Transition(
-                    kind={
-                        "crossfade": "crossfade",
-                        "dip_to_black": "fade_black",
-                        "flash": "fade_white",
-                    }[prior["transition_after"]],
-                    duration=overlap,
+                if member_key[0]:
+                    actual = (
+                        float(prior["split_offset_s"])
+                        + float(prior["duration_s"])
+                        - float(row["split_offset_s"])
+                    )
+                    if actual > overlap + 1e-6:
+                        raise ValueError("panel transition exceeds its next clip overlap")
+                    overlap = max(0.0, actual)
+                transition = (
+                    Transition(
+                        kind={
+                            "crossfade": "crossfade",
+                            "dip_to_black": "fade_black",
+                            "flash": "fade_white",
+                        }[prior["transition_after"]],
+                        duration=overlap,
+                    )
+                    if overlap > 0
+                    else None
                 )
-                cursor -= overlap
-        tilt_patch, backdrop = clip_tilt_fields(row)
+                if not split_sections:
+                    cursor -= overlap
+        transform = dict(row.get("media_transform") or {})
+        tilt_patch, backdrop = clip_tilt_fields(row, fit_scale=float(transform.get("scale", 1)))
+        if row.get("tilt") is not None:
+            transform["rotation_degrees"] = float(row["tilt"].get("rotation_deg") or 0)
+        transform.update(tilt_patch)
         card = still and row.get("layout") == "supporting_card"
         if card:
-            tilt_patch.pop("scale", None)
+            transform.pop("scale", None)
         clips.append(
             TimelineClip(
+                speaker_frame_override=row.get("speaker_frame_override"),
+                split_screen=(
+                    SplitScreenMembership(
+                        section_id=row["split_section_id"], panel_index=row["split_panel_index"]
+                    )
+                    if row.get("split_section_id")
+                    else None
+                ),
                 id=row["slot_id"],
                 source_asset_id=asset.id,
                 source_start=start,
@@ -208,14 +256,25 @@ def compile_phone_authored_timeline(
                 rate=rate,
                 hold_duration=hold_duration,
                 transition=transition,
-                volume=0 if still or row.get("muted") else 1,
+                volume=0
+                if still or row.get("muted")
+                else (
+                    row.get("source_audio_volume")
+                    if row.get("source_audio_volume") is not None
+                    else 1
+                ),
+                audio_fade_in=row.get("audio_fade_in"),
+                audio_fade_out=row.get("audio_fade_out"),
                 source_crop=row.get("source_crop"),
+                look="golden_hour" if row.get("look_preset") == "golden_hour" else None,
                 still_layout="supporting_card" if card else None,
-                transform=MediaTransform(**tilt_patch),
+                transform=MediaTransform(**transform),
                 backdrop=None if card else backdrop,
             )
         )
         cursor += duration
+    if split_sections:
+        cursor = split_duration
     register_backdrop_visuals(clips, visuals=visuals, assets=assets, manifest=manifest)
     presentation = render_presentation(variant, cursor)
     for key in ("carousel_moment", "motion_scenes", "camera_effects", "custom_effects"):
@@ -246,7 +305,7 @@ def compile_phone_authored_timeline(
     # leaves a text that ends there ~0.1 ms past the clips, and `EditRecipeV2` compares
     # strictly, so the Save hard-failed `unsupported_phone_edit` ("text layer exceeds the
     # timeline"). Every other phone compiler snaps this; a real overrun still fails.
-    snap_text_overshoot(layers, timeline_end_s(clips))
+    snap_text_overshoot(layers, cursor if split_sections else timeline_end_s(clips))
     for font_id, font in caption_font_assets(layers).items():
         manifest[font_id] = font
         assets[font_id] = MediaAsset(
@@ -256,7 +315,17 @@ def compile_phone_authored_timeline(
                 hex=font.fingerprint.sha256, byte_count=font.fingerprint.byte_count
             ),
         )
-    tracks = [TimelineTrack(id="authored", kind="video", clips=clips)]
+    by_track = {}
+    for clip in clips:
+        member = clip.split_screen
+        track_id = f"split-{member.section_id}-{member.panel_index}" if member else "authored"
+        by_track.setdefault(track_id, []).append(clip)
+    tracks = [
+        TimelineTrack(
+            id=key, kind="video", clips=sorted(value, key=lambda clip: clip.timeline_start)
+        )
+        for key, value in by_track.items()
+    ]
     if presentation.get("visual_blocks"):
         tracks.append(
             compile_editor_media_track(
@@ -272,8 +341,8 @@ def compile_phone_authored_timeline(
     )
     lanes = lanes_from_editor_sections(
         previous=previous_lanes,
-        sound_effects=variant.get("sound_effects") or [],
-        media_overlays=variant.get("media_overlays") or [],
+        sound_effects=variant.get("sound_effects"),
+        media_overlays=variant.get("media_overlays"),
         visuals=visuals,
     )
     # No ending-clip carryover: main footage comes exclusively from rows above.
@@ -302,6 +371,7 @@ def compile_phone_authored_timeline(
         for clip in track.clips:
             asset = old_manifest[clip.source_asset_id]
             is_voice = asset.kind == "voiceover"
+            is_song = asset.kind == "song" and user_song is not None
             is_music = (
                 asset.kind == "library"
                 and asset.catalog == "music"
@@ -311,12 +381,25 @@ def compile_phone_authored_timeline(
                     or variant.get("smart_music_treatment")
                 )
             )
-            if not (is_voice or is_music) or clip.timeline_start >= cursor:
+            if not (is_voice or is_music or is_song) or clip.timeline_start >= cursor:
                 continue
             projected = copy.deepcopy(clip.model_dump(mode="json"))
             projected["source_duration"] = min(
                 clip.source_duration, (cursor - clip.timeline_start) * clip.rate
             )
+            if is_song:
+                start = float(user_song["window_start_s"])
+                projected.update(
+                    source_start=start,
+                    source_duration=min(
+                        float(user_song["window_end_s"]) - start,
+                        cursor - clip.timeline_start,
+                        old_assets[asset.id].duration - start,
+                    ),
+                    volume=float(user_song.get("volume", clip.volume)),
+                )
+                if projected["source_duration"] <= 0:
+                    raise ValueError("creator song window has no playable audio")
             if is_music and isinstance(variant.get("mix"), (int, float)):
                 # The music level lives on the bed's own track clip. `mix` means two
                 # things: on a voiceover variant it is the VOICE-prominence slider and the
@@ -351,7 +434,74 @@ def compile_phone_authored_timeline(
     # Old mute windows target old clip IDs; current visual placements carry
     # their own audio policy and must not inherit removed footage's windows.
     audio["mute_windows"] = []
-    return EditRecipeV2(
+    background = None
+    if "speaker_background" in variant:
+        from app.pipeline.phone_subtitled_plan import _compile_background
+        from app.services.phone_editor import _background_lane
+
+        background_lane = _background_lane(variant.get("speaker_background"), visuals)
+        if background_lane is not None:
+            background = _compile_background(
+                background_lane,
+                visuals=visuals,
+                assets=assets,
+                manifest=manifest,
+                timeline_duration_s=cursor,
+            )
+    elif previous.speaker_background is not None:
+        background = previous.speaker_background.model_copy(deep=True)
+        for field in ("windows", "full_screen_windows"):
+            windows = getattr(background, field) or []
+            bounded = [
+                window.model_copy(update={"end": min(window.end, cursor)})
+                for window in windows
+                if window.start < cursor and min(window.end, cursor) - window.start >= 0.1
+            ]
+            setattr(background, field, bounded or None)
+        references = {background.asset_id} | {
+            window.asset_id for window in background.windows or []
+        }
+        for asset_id in references - {None}:
+            assets[asset_id] = old_assets[asset_id]
+            manifest[asset_id] = old_manifest[asset_id]
+    if background is not None:
+        prior_background = previous.speaker_background
+        original_subject_id = (
+            prior_background.subject_track_id if prior_background else background.subject_track_id
+        )
+        exact_ids = prior_background.subject_clip_ids if prior_background else None
+        subject_assets = {
+            clip.source_asset_id
+            for track in previous.tracks
+            for clip in track.clips
+            if (clip.id in exact_ids if exact_ids is not None else track.id == original_subject_id)
+        }
+        provenance = {row["slot_id"]: row.get("speaker_subject") for row in rows}
+        subjects = [
+            clip.id
+            for track in tracks
+            if track.kind == "video"
+            for clip in track.clips
+            if (
+                provenance.get(clip.id)
+                if provenance.get(clip.id) is not None
+                else clip.source_asset_id in subject_assets
+            )
+            and getattr(manifest.get(clip.source_asset_id), "kind", None) == "original"
+        ]
+        if split_sections or exact_ids is not None:
+            background.subject_clip_ids = subjects
+        else:
+            owners = [
+                track.id for track in tracks if any(clip.id in subjects for clip in track.clips)
+            ]
+            if len(owners) == 1:
+                background.subject_track_id = owners[0]
+            else:
+                background = None
+    recipe = EditRecipeV2(
+        speaker_background=background,
+        split_screen_sections=recipe_sections,
         canvas=Canvas(width=canvas.width, height=canvas.height),
         assets=list(assets.values()),
         asset_manifest=RenderAssetManifest(assets=tuple(manifest.values())),
@@ -361,8 +511,52 @@ def compile_phone_authored_timeline(
         required_capabilities={"basicComposition", "local1080Export", "audioMix"}
         | ({"positionedText", "animatedText"} if layers else set())
         | ({"narrationAudio"} if narration_id else set())
+        | ({"musicBed"} if user_song is not None else set())
         | ({"soundEffects"} if lanes.sound_effects else set())
         | ({"visualBlocks", "alphaOverlay"} if lanes.overlays else set())
         | ({"crossfade"} if any(clip.transition for clip in clips) else set())
         | ({"variableSpeed"} if any(clip.rate != 1 for clip in clips) else set()),
     )
+
+    from app.pipeline.phone_recipe_shared import with_drawings
+
+    if "drawings" in variant:
+        recipe = with_drawings(recipe, variant["drawings"])
+    elif previous.drawing_layers:
+        layers = [
+            layer.model_copy(
+                update={
+                    "end": min(layer.end, recipe.duration),
+                    "draw_duration": min(layer.draw_duration, recipe.duration - layer.start),
+                }
+            )
+            for layer in previous.drawing_layers
+            if min(layer.end, recipe.duration) - layer.start >= 0.1
+        ]
+        recipe = EditRecipeV2.model_validate(
+            {
+                **recipe.model_dump(mode="json"),
+                "drawing_layers": [layer.model_dump(mode="json") for layer in layers],
+            }
+        )
+    if any(asset.kind == "processed_audio" for asset in previous.asset_manifest.assets):
+        from app.pipeline.phone_processed_audio import (
+            processed_audio_receipt_for,
+            replace_audio_with_processed_segments,
+        )
+
+        required = {
+            asset.source_media_id
+            for asset in previous.asset_manifest.assets
+            if asset.kind == "processed_audio"
+        }
+        receipts = {
+            media_id: processed_audio_receipt_for(
+                job.assembly_plan, variant_id=variant["variant_id"], source_media_id=media_id
+            )
+            for media_id in required
+        }
+        if any(receipt is None for receipt in receipts.values()):
+            raise ValueError("saved processed audio receipt is unavailable")
+        recipe = replace_audio_with_processed_segments(recipe, receipts_by_source=receipts)
+    return recipe

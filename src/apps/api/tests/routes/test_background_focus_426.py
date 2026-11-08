@@ -25,7 +25,7 @@ def _detail(uses_focus: bool, protocol: int):
         uses_color=False,
         uses_focus=uses_focus,
     )
-    recipe = SimpleNamespace(speaker_background=layer)
+    recipe = SimpleNamespace(speaker_background=layer, required_capabilities=[])
     status = SimpleNamespace(request=SimpleNamespace(recipe=recipe))
     set_client_protocol(protocol)
     return device_render._client_update_detail(SimpleNamespace(assembly_plan={}), {}, status)

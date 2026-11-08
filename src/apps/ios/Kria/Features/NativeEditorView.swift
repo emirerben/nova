@@ -11,6 +11,7 @@ struct NativeEditorView: View {
     private let conversationCloseID: UUID?
     /// AI suggestion blocks for this edit, read from the chat that owns the set. Nil = nothing to improve (or no chat).
     private let improve: SuggestionCardsPresentation?
+    private let conversationActivity: NativeEditorAIActivity?
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -40,6 +41,7 @@ struct NativeEditorView: View {
     @State private var showsImprove = false
     /// A card was tapped in the Improve sheet: once it has closed, the conversation opens so the creator sees the message land.
     @State private var opensConversationAfterImprove = false
+    @State private var reviewsGeneratedAfterImprove = false
     /// KRI-589: Draw mode. `appendingTo` is the drawing "Draw more" adds to; nil starts a new drawing.
     @State private var drawMode: DrawMode?
     @StateObject private var sketch = NativeDrawingSketch()
@@ -85,6 +87,7 @@ struct NativeEditorView: View {
         sharedSession: NativeEditorSession? = nil,
         conversationAcceptedID: UUID? = nil,
         conversationCloseID: UUID? = nil,
+        conversationActivity: NativeEditorAIActivity? = nil,
         conversation: (() -> AnyView)? = nil,
         improve: SuggestionCardsPresentation? = nil,
         onBack: @escaping () -> Void
@@ -96,6 +99,7 @@ struct NativeEditorView: View {
         self.conversationAcceptedID = conversationAcceptedID
         self.conversationCloseID = conversationCloseID
         self.improve = improve
+        self.conversationActivity = conversationActivity
         _session = StateObject(
             wrappedValue: sharedSession ?? initialDraft.map {
                 NativeEditorSession(
@@ -116,7 +120,31 @@ struct NativeEditorView: View {
         GeometryReader { viewport in
             editorLifecycle(editorExitControls(editorPresentations(editorSurface(viewport: viewport))))
         }
+        .overlay(alignment: .topLeading) {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-document-snapshot") {
+                Text("Editor document snapshot")
+                    .font(.system(size: 1))
+                    .frame(width: 1, height: 1)
+                    .clipped()
+                    .opacity(0.01)
+                    .allowsHitTesting(false)
+                    .accessibilityLabel("Editor document snapshot")
+                    .accessibilityValue(testDocumentSnapshot)
+                    .accessibilityIdentifier("native-editor-test-document")
+            }
+            #endif
+        }
     }
+
+    #if DEBUG
+    private var testDocumentSnapshot: String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(session.document.encodeSnapshot()) else { return "" }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+    #endif
 
     private func editorSurface(viewport: GeometryProxy) -> some View {
         Group {
@@ -220,6 +248,12 @@ struct NativeEditorView: View {
                 if let file { session.showDeviceOutput(file) }
             }
             .sheet(isPresented: $showsImprove, onDismiss: {
+                if reviewsGeneratedAfterImprove {
+                    // The chat owns the review sheet; it opens once this one is gone.
+                    reviewsGeneratedAfterImprove = false
+                    improve?.reviewGenerated()
+                    return
+                }
                 guard opensConversationAfterImprove else { return }
                 opensConversationAfterImprove = false
                 showsConversation = true
@@ -234,7 +268,13 @@ struct NativeEditorView: View {
                                 showsImprove = false
                                 return true
                             },
-                            dismiss: improve.dismiss, refresh: improve.refresh, sendingID: improve.sendingID
+                            dismiss: improve.dismiss, refresh: improve.refresh, sendingID: improve.sendingID,
+                            generated: improve.generated,
+                            reviewGenerated: {
+                                reviewsGeneratedAfterImprove = true
+                                showsImprove = false
+                            },
+                            dismissGenerated: improve.dismissGenerated
                         ),
                         close: { showsImprove = false }
                     )
@@ -333,6 +373,13 @@ struct NativeEditorView: View {
                     VStack {
                         Text(session.gamedayFixtureSummary).font(.system(size: 1)).frame(height: 1)
                             .accessibilityIdentifier("gameday-fixture-state")
+                        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-import") {
+                            SwiftUI.TimelineView(.periodic(from: .now, by: 0.2)) { _ in
+                                Button("Release registered import") { NativeEditorUITestCommitTransport.releaseSplitImport() }
+                                    .disabled(!NativeEditorUITestCommitTransport.splitImportWaiting)
+                                    .accessibilityIdentifier("split-import-release")
+                            }
+                        }
                         Button("Retain fixture edit") { Task { await session.saveGamedayFixture() } }
                             .accessibilityIdentifier("gameday-fixture-save")
                     }
@@ -361,8 +408,10 @@ struct NativeEditorView: View {
             .onReceive(NetworkReachability.shared.$isOnline.removeDuplicates()) { online in
                 if online { Task { await session.resumeRefreshSync() } }
             }
+            .onAppear { session.beginPreviewPresentation() }
             .onDisappear {
                 session.setObserversVisible(false)
+                session.endPreviewPresentation()
                 finishPanelEditing()
                 session.suspendEditorImports()
                 session.pausePlayback()
@@ -472,22 +521,29 @@ struct NativeEditorView: View {
                 .overlay {
                     // KRI-589: the finger canvas in Draw mode, else the selected drawing's move / scale / rotate layer.
                     // After the preview's identifier: a parent's identifier masks its children's.
-                    if drawMode != nil {
+                    if !session.isShowingPreviousPreview, drawMode != nil {
                         NativeDrawingCanvas(sketch: sketch)
-                    } else if let selection = session.selection, selection.kind == .drawing {
+                    } else if !session.isShowingPreviousPreview, let selection = session.selection, selection.kind == .drawing {
                         NativeDrawingTransformLayer(session: session, id: selection.id)
                     }
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 5)
-                .overlay(alignment: .bottomTrailing) {
-                    if conversation != nil, session.pendingText == nil, !lineEditing {
-                        KriaAIButton(identifier: "native-editor-conversation") { showsConversation = true }
-                    }
-                }
-                .overlay(alignment: .bottomLeading) {
-                    if let improve, session.pendingText == nil, !lineEditing {
-                        ImproveEntryButton(count: improve.cards.count) { showsImprove = true }
+                .overlay(alignment: .bottom) {
+                    if session.pendingText == nil, !lineEditing {
+                        HStack(alignment: .bottom, spacing: 0) {
+                            if let improve {
+                                ImproveEntryButton(count: improve.cards.count) { showsImprove = true }
+                                    .layoutPriority(1)
+                            }
+                            Spacer(minLength: 8)
+                            if conversation != nil {
+                                KriaAIButton(
+                                    identifier: "native-editor-conversation", activity: aiStatus,
+                                    animatesActivity: scenePhase == .active && !showsConversation && !showsImprove && !previewFullscreen
+                                ) { showsConversation = true }
+                            }
+                        }
                     }
                 }
                 // The centered preview leaves horizontal editor margins on
@@ -1030,6 +1086,17 @@ struct NativeEditorView: View {
     private var deviceLocalFile: URL? {
         guard let key = session.deviceRenderKey else { return nil }
         return model.deviceRenders.presentations[key]?.localFile
+    }
+
+    private var aiStatus: NativeEditorAIStatus? {
+        let render = session.deviceRenderKey.flatMap { key in
+            key.projectID == project.id ? model.deviceRenders.presentations[key] : nil
+        }
+        return NativeEditorAIStatus.current(
+            projectID: project.id, conversation: conversationActivity,
+            refresh: session.refreshSync, preview: session.sourcePreviewState,
+            previewIsUpdating: session.isPreparingCurrentPreview, render: render
+        )
     }
 
     private func loadEditor() async {

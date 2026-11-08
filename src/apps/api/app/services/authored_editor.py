@@ -41,7 +41,13 @@ def explicit_authored_slots(variant: dict) -> list[dict]:
 
 
 def sync_talking_source_lanes(
-    job: Any, variant: dict, payload: Any, resolved: list[dict], old_slots: list[dict]
+    job: Any,
+    variant: dict,
+    payload: Any,
+    resolved: list[dict],
+    old_slots: list[dict],
+    *,
+    old_sections: list[dict] | None = None,
 ) -> tuple[Any, bool]:
     """Re-anchor a Talking take's speech lanes to ``resolved`` slot rows (KRI-852).
 
@@ -51,15 +57,40 @@ def sync_talking_source_lanes(
     submitted output clock and is never remapped a second time. Returns the payload (its text
     lane stripped of caption mirrors) and whether newly exposed speech has no caption timing.
     """
+    from app.kria.split_screen import layout_split_timeline
     from app.pipeline.speech_cut_state import (
         SPEECH_EDITOR_LANES,
         authored_speech_texts,
+        canvas_speech_slots,
         project_speech_basis,
         speech_basis_entry,
         sync_speech_basis,
     )
     from app.services.editor_deletions import canonical_caption_rows
 
+    new_sections = (variant.get("user_timeline") or {}).get("split_screen_sections") or []
+    if old_sections or new_sections:
+        old_slots = [row for row in old_slots if not row.get("removed")]
+        resolved = [row for row in resolved if not row.get("removed")]
+        old_starts, _, _ = layout_split_timeline(old_slots, old_sections or [])
+        old_slots = [
+            {**row, "_speech_output_start_s": start}
+            for row, start in zip(old_slots, old_starts, strict=True)
+        ]
+        new_starts, _, _ = layout_split_timeline(resolved, new_sections)
+        resolved = [
+            {**row, "_speech_output_start_s": start}
+            for row, start in zip(resolved, new_starts, strict=True)
+        ]
+    use_canvas = bool(old_sections or new_sections) or any(
+        entry.get("anchor_space") == "canvas"
+        for entries in (variant.get("speech_timing_basis") or {}).values()
+        if isinstance(entries, list)
+        for entry in entries
+        if isinstance(entry, dict)
+    )
+    old_canvas = canvas_speech_slots(old_slots, old_sections or []) if use_canvas else None
+    new_canvas = canvas_speech_slots(resolved, new_sections) if use_canvas else None
     basis = speech_timing_basis_for_job(job, variant, old_slots)
     captions_enabled = variant.get("captions_enabled", True)
     if payload.caption_meta is not None and payload.caption_meta.enabled is not None:
@@ -108,7 +139,11 @@ def sync_talking_source_lanes(
         if field == "caption_cues":
             current = canonical_caption_rows(current)
         entries = sync_speech_basis(
-            basis.get(field), current, old_slots, captions=field == "caption_cues"
+            basis.get(field),
+            current,
+            old_slots,
+            captions=field == "caption_cues",
+            canvas_slots=old_canvas,
         )
         supplied = getattr(payload, field, None)
         if supplied is not None:
@@ -119,6 +154,7 @@ def sync_talking_source_lanes(
                 supplied,
                 resolved,
                 captions=field == "caption_cues",
+                canvas_slots=new_canvas,
                 deleted_ids={
                     row.id
                     for row in payload.deletions
@@ -140,10 +176,42 @@ def sync_talking_source_lanes(
         # authored replacement on the submitted output clock, never remap twice.
         if supplied is None:
             variant[field] = project_speech_basis(
-                entries, resolved, captions=field == "caption_cues"
+                entries,
+                resolved,
+                captions=field == "caption_cues",
+                canvas_slots=new_canvas,
             )
     variant["speech_timing_basis"] = basis
     return payload, unresolved
+
+
+def reset_removed_background_frames(payload, baseline):
+    """Removing the whole background explicitly resets occurrence policies in the same Save."""
+    if (
+        "speaker_background" not in payload.model_fields_set
+        or payload.speaker_background is not None
+    ):
+        return payload
+    from app.kria.portable_speaker_background import SpeakerFrameOverride
+    from app.routes.generative_jobs import TimelineSlotEdit
+
+    old = {row.get("slot_id"): row for row in baseline}
+    slots = payload.timeline_slots
+    if slots is None:
+        if not any(row.get("speaker_frame_override") is not None for row in baseline):
+            return payload
+        slots = [TimelineSlotEdit.model_validate(row) for row in baseline]
+    reset = []
+    for slot in slots:
+        if (
+            slot.speaker_frame_override is not None
+            or old.get(slot.slot_id, {}).get("speaker_frame_override") is not None
+        ):
+            slot = slot.model_copy(
+                update={"speaker_frame_override": SpeakerFrameOverride(mode="inherit")}
+            )
+        reset.append(slot)
+    return payload.model_copy(update={"timeline_slots": reset})
 
 
 def prepare_authored_editor_commit(
@@ -179,6 +247,16 @@ def prepare_authored_editor_commit(
     if payload.base_generation != variant_render_baseline(variant):
         raise HTTPException(409, detail="baseline_conflict")
     require_editor_clock_reader(job, variant)
+    old_sections = copy.deepcopy(
+        (variant.get("user_timeline") or {}).get("split_screen_sections") or []
+    )
+    if payload.split_screen_sections is not None:
+        variant["user_timeline"] = {
+            **(variant.get("user_timeline") or {}),
+            "split_screen_sections": [
+                section.model_dump(mode="json") for section in payload.split_screen_sections
+            ],
+        }
     _require_caption_animation_client(job, variant, payload)
     _require_clip_tilt_gates(job, variant, payload)
     if not is_authored_timeline(variant) and (
@@ -195,6 +273,7 @@ def prepare_authored_editor_commit(
     from app.routes.generative_jobs import editor_deletion_timeline
 
     canonical = {row.get("slot_id"): row for row in editor_deletion_timeline(job, variant)}
+    payload = reset_removed_background_frames(payload, list(canonical.values()))
     for row in payload.timeline_slots or []:
         if row.removed or not row.slot_id:
             continue
@@ -204,6 +283,22 @@ def prepare_authored_editor_commit(
             baseline = canonical.get(row.slot_id)
             if baseline is None or row.clip_index != baseline["clip_index"]:
                 raise HTTPException(409, detail={"code": "TIMELINE_STALE"})
+    new_sections = (variant.get("user_timeline") or {}).get("split_screen_sections") or []
+    if (
+        payload.timeline_slots is not None
+        and (old_sections or new_sections)
+        and "speaker_background" not in payload.model_fields_set
+        and isinstance(variant.get("speaker_background"), dict)
+    ):
+        from app.pipeline.speech_cut_state import project_canvas_background
+
+        variant["speaker_background"] = project_canvas_background(
+            variant["speaker_background"],
+            list(canonical.values()),
+            old_sections,
+            resolve_authored_phone_slots(job, variant, payload.timeline_slots),
+            new_sections,
+        )
     if (payload.timeline_slots is not None or variant.get("speech_timing_basis")) and any(
         str(key).startswith("native-phone-talking-source") for key in canonical
     ):
@@ -214,8 +309,19 @@ def prepare_authored_editor_commit(
             else list(canonical.values())
         )
         old_slots = list(canonical.values())
-        payload, _unresolved = sync_talking_source_lanes(job, variant, payload, resolved, old_slots)
+        payload, _unresolved = sync_talking_source_lanes(
+            job, variant, payload, resolved, old_slots, old_sections=old_sections
+        )
     variant["editor_timeline_mode"] = AUTHORED_TIMELINE_MODE
+    if new_sections:
+        # Establish origin only after source and grouped-clock validation succeeds.
+        from app.routes.generative_jobs import TimelineSlotEdit
+
+        origin_slots = payload.timeline_slots
+        if origin_slots is None:
+            origin_slots = [TimelineSlotEdit.model_validate(row) for row in canonical.values()]
+        resolve_authored_phone_slots(job, variant, origin_slots)
+        variant["editor_split_screen_origin"] = True
     if variant.get("render_destination") == "device":
         from app.services.phone_editor import prepare_phone_editor_commit
 
@@ -279,6 +385,11 @@ def _source_end_for_authored_slot(
         and math.isclose(rate, float(old.get("playback_rate") or 1), abs_tol=1e-6)
     )
     source_end = slot.source_end_s if supplied else old.get("source_end_s") if unchanged else None
+    freeze_hold = slot.freeze_hold_s or 0
+    if freeze_hold:
+        source_end = slot.freeze_frame_s
+        if source_end is None or freeze_hold >= duration:
+            raise HTTPException(422, detail={"code": "TIMELINE_INVALID_WINDOW"})
     if source_end is None:
         return duration, None
     if source.get("kind") != "video":
@@ -293,6 +404,12 @@ def _source_end_for_authored_slot(
     ):
         raise HTTPException(422, detail={"code": "TIMELINE_INVALID_WINDOW"})
     exact_output = (source_end - slot.in_s) / rate
+    if freeze_hold:
+        if abs(exact_output + freeze_hold - duration) > _TIMELINE_FRAME_S + 1e-9:
+            raise HTTPException(422, detail={"code": "TIMELINE_INVALID_WINDOW"})
+        return duration, source_end
+    if slot.split_section_id is not None and duration <= exact_output + _TIMELINE_FRAME_S:
+        return duration, source_end
     if (
         below_editor_minimum(exact_output, minimum_duration)
         or abs(exact_output - duration) > _TIMELINE_FRAME_S + 1e-9
@@ -421,7 +538,11 @@ def resolve_authored_phone_slots(
         if slot.removed:
             continue
         if slot.slot_id is not None and slot.slot_id not in known:
-            if not is_legacy_minted_slot_id(slot.slot_id):
+            try:
+                client_occurrence_id = str(uuid.UUID(slot.slot_id)) == slot.slot_id.lower()
+            except (ValueError, AttributeError):
+                client_occurrence_id = False
+            if not client_occurrence_id and not is_legacy_minted_slot_id(slot.slot_id):
                 log.warning(
                     "editor_commit_stale_slot",
                     slot_id=slot.slot_id,
@@ -429,11 +550,49 @@ def resolve_authored_phone_slots(
                     known_slots=len(known),
                 )
                 raise HTTPException(409, detail={"code": "TIMELINE_STALE"})
-            slot = slot.model_copy(update={"slot_id": None})  # a new placement (KRI-773)
+            if not client_occurrence_id:
+                slot = slot.model_copy(update={"slot_id": None})  # a new placement (KRI-773)
         if not 0 <= slot.clip_index < len(catalog):
             raise HTTPException(422, detail={"code": "TIMELINE_UNKNOWN_CLIP"})
         source = catalog[slot.clip_index]
         old = baseline.get(slot.slot_id) or baseline.get(slot.parent_segment_id) or {}
+        inherited_freeze = {
+            key: old[key]
+            for key in ("freeze_hold_s", "freeze_frame_s")
+            if key not in slot.model_fields_set and old.get(key) is not None
+        }
+        if inherited_freeze:
+            slot = slot.model_copy(update=inherited_freeze)
+        if (
+            "speaker_frame_override" not in slot.model_fields_set
+            and old.get("speaker_frame_override") is not None
+        ):
+            from app.kria.portable_speaker_background import SpeakerFrameOverride
+
+            slot = slot.model_copy(
+                update={
+                    "speaker_frame_override": SpeakerFrameOverride.model_validate(
+                        old["speaker_frame_override"]
+                    )
+                }
+            )
+        if slot.speaker_frame_override is not None:
+            from app.services.phone_rollout import (
+                split_screen_client_supported,
+                split_screen_supported,
+            )
+
+            if not split_screen_client_supported(require_client=True):
+                raise HTTPException(
+                    426,
+                    detail={
+                        "code": "client_update_required",
+                        "feature": "split_screen",
+                        "minimum_client_protocol": 43,
+                    },
+                )
+            if not split_screen_supported(require_client=False):
+                raise HTTPException(422, detail={"code": "split_screen_unavailable"})
         duration = slot.duration_s
         # A partial stale Save may omit newer speed fields. Preserve a saved
         # authored rate in that case; explicit null remains the creator's 1x
@@ -480,7 +639,10 @@ def resolve_authored_phone_slots(
                 bound=bound,
                 minimum_duration=minimum_duration,
             )
-        if slot.look_preset not in (None, "none") or slot.look_adjustments is not None:
+        if (
+            slot.look_preset not in (None, "none", "golden_hour")
+            or slot.look_adjustments is not None
+        ):
             raise HTTPException(422, detail={"code": "phone_edit_unsupported"})
         total += duration
         tilt = slot.tilt if "tilt" in slot.model_fields_set else old.get("tilt")
@@ -509,6 +671,15 @@ def resolve_authored_phone_slots(
         )
     if not resolved:
         raise HTTPException(422, detail={"code": "TIMELINE_EMPTY"})
+    sections = (variant.get("user_timeline") or {}).get("split_screen_sections") or []
+    if sections:
+        from app.kria.split_screen import layout_split_timeline
+
+        starts, _, total = layout_split_timeline(resolved, sections)
+        for row, start in zip(resolved, starts, strict=True):
+            row["output_start_s"] = start
+            row["output_end_s"] = start + row["duration_s"]
+            row["_speech_output_start_s"] = start
     if len(resolved) > _TIMELINE_MAX_SLOTS or total > TIMELINE_MAX_TOTAL_S:
         raise HTTPException(422, detail={"code": "TIMELINE_TOO_LONG"})
     return resolved

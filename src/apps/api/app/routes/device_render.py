@@ -558,6 +558,12 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
     """
     protocol = _caller_protocol()
     recipe = status.request.recipe
+    if "splitScreen" in recipe.required_capabilities and protocol < 46:
+        return {
+            "code": "client_update_required",
+            "feature": "split_screen",
+            "minimum_client_protocol": 46,
+        }
     from app.agents._schemas.text_animation_phases import DESIGNED_TEXT_EDGES
 
     if protocol < 23 and any(

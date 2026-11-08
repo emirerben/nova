@@ -128,10 +128,11 @@ describe("FontLibraryBrowser", () => {
     //            +Alte Haas Grotesk → clean_captions=11
     //            +Rascal → handwritten=3
     //            +Big Curls → script=4
-    expect(grouped.viral_headlines).toHaveLength(14);
-    expect(grouped.clean_captions).toHaveLength(11);
-    expect(grouped.editorial).toHaveLength(12);
-    expect(grouped.handwritten).toHaveLength(3);
+    // KRI-1312: +39 fonts → viral_headlines=22, clean_captions=21, editorial=23, handwritten=14
+    expect(grouped.viral_headlines).toHaveLength(22);
+    expect(grouped.clean_captions).toHaveLength(21);
+    expect(grouped.editorial).toHaveLength(23);
+    expect(grouped.handwritten).toHaveLength(14);
     expect(grouped.script).toHaveLength(4);
     // Deprecated fonts must be excluded; Caveat Brush is deprecated.
     expect(Object.values(grouped).flat()).not.toContain("Caveat Brush");

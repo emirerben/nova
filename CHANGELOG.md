@@ -2,6 +2,51 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.108.0] - 2026-11-08
+
+### Changed
+- feat(ios): add editable two- and three-panel split screens (KRI-1231) (#2147) <!-- release-pr: 2147 -->
+
+## [0.88.107.0] - 2026-11-08
+
+### Changed
+- feat(kria): generated-image suggestion card with a price check, dark (KRI-1253) (#2175) <!-- release-pr: 2175 -->
+
+## [0.88.106.0] - 2026-11-08
+
+### Changed
+- fix(ios): song timeline drag after chat scroll; repair stale UI tests and review fixture (KRI-1276) (#2211) <!-- release-pr: 2211 -->
+
+## [0.88.105.0] - 2026-11-08
+
+### Changed
+- feat(fonts): add 39 editorial, display, sans, handwriting and mono fonts (KRI-1312) (#2212) <!-- release-pr: 2212 -->
+
+## [0.88.104.0] - 2026-11-08
+
+### Changed
+- fix(kria): judge the 'zoom into the recordings' ask on its own in the receipt (KRI-1307) (#2201) <!-- release-pr: 2201 -->
+
+## [0.88.103.0] - 2026-11-08
+
+### Changed
+- feat(ios): group the font picker by type under sideways tabs (KRI-1314) (#2213) <!-- release-pr: 2213 -->
+
+## [0.88.102.0] - 2026-11-08
+
+### Changed
+- v0.88.42.0 feat(ios): show AI editing activity and retain the previous preview (#2145) <!-- release-pr: 2145 -->
+
+## [0.88.101.0] - 2026-11-08
+
+### Changed
+- fix(phone-text): the account default decides the shadow; a plan's authored shadow no longer wins (KRI-1269) (#2210) <!-- release-pr: 2210 -->
+
+## [0.88.100.0] - 2026-11-08
+
+### Changed
+- fix(kria): list labels that take turns are not pinned text (KRI-1302) (#2192) <!-- release-pr: 2192 -->
+
 ## [0.88.99.0] - 2026-11-08
 
 ### Changed

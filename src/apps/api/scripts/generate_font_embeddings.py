@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
-import hashlib
 import io
 import json
 import os
@@ -124,6 +123,7 @@ def main() -> int:
     import open_clip  # noqa: PLC0415
     import torch  # noqa: PLC0415
 
+    from app.pipeline.font_identification import registry_sha256  # noqa: PLC0415
     from app.services.clip_font_matcher import (  # noqa: PLC0415
         MODEL_ARCHITECTURE,
         MODEL_ID,
@@ -132,9 +132,9 @@ def main() -> int:
     )
 
     registry_data = json.loads(_REGISTRY_JSON.read_text())
-    registry_sha = hashlib.sha256(
-        json.dumps(registry_data, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    # The runtime owns the canonical hash (it leaves script-fallback faces out), so the
+    # committed .npz can never be stamped with a different recipe than the one it checks.
+    registry_sha = registry_sha256()
     all_fonts = registry_data["fonts"]
     registry = {
         family: entry

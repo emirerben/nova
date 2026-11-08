@@ -171,6 +171,7 @@ def copilot_schema():
         "enabled",
         "fit_to_video",
         "preserve_text",
+        "muted",
     }
     numbers = {
         "at_s",
@@ -200,6 +201,7 @@ def copilot_schema():
         "letter_spacing",
         "line_spacing",
         "playback_rate",
+        "source_audio_volume",
         "transition_duration_s",
         "max_width_frac",
         "opacity",
@@ -221,6 +223,10 @@ def copilot_schema():
     }
 
     def field(name):
+        if name == "frame":
+            from app.kria.portable_speaker_background import SpeakerFrame
+
+            return SpeakerFrame.model_json_schema()
         if name == "gap_policy":
             return enum("scale", "close", "fixed")
         if name == "pace":
@@ -366,6 +372,8 @@ def copilot_schema():
             "playback_rate",
             "tilt",
             "rotation_delta_deg",
+            "muted",
+            "source_audio_volume",
         }
     )
     patch = obj(
@@ -379,7 +387,18 @@ def copilot_schema():
         }
     )
     ops = []
+    from app.agents.editor_ops_v2.split_screen import _MODELS as split_screen_models
+
     for name in sorted(_OP_FIELDS):
+        if name in split_screen_models:
+            schema = split_screen_models[name].model_json_schema()
+            ops.append(
+                obj(
+                    {"op": {"type": "string", "const": name}, **schema["properties"]},
+                    ["op", *schema.get("required", [])],
+                )
+            )
+            continue
         fields = _op_fields(name)
         ops.append(
             obj(
@@ -389,6 +408,14 @@ def copilot_schema():
                         k: (
                             {"type": "string"}
                             if name == "replace_caption_text" and k == "replace"
+                            else enum(
+                                "small_bottom_right",
+                                "small_bottom_left",
+                                "small_top_right",
+                                "small_top_left",
+                                "inherit",
+                            )
+                            if name == "set_speaker_frame" and k == "preset"
                             else field(k)
                         )
                         for k in sorted(set(fields) - {"integrity"})

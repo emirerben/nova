@@ -33,7 +33,15 @@ from typing import Any
 from app.agents.prompt_vocab import render_vocab_tokens
 
 EDITOR_OPS_VERSION = 2
-LANES: tuple[str, ...] = ("text", "timeline", "audio", "slides", "overlays", "background")
+LANES: tuple[str, ...] = (
+    "text",
+    "timeline",
+    "audio",
+    "slides",
+    "overlays",
+    "background",
+    "split_screen",
+)
 # Lanes whose prompt fragment is appended ONLY on the named surface, so video
 # prompts stay byte-identical (KRI-301).
 SURFACE_ONLY_LANES: dict[str, str] = {"slides": "slide_post"}
@@ -54,6 +62,7 @@ FAMILY_FRAGMENTS: dict[str, str] = {
 # patch_slots field (and the `clip` family is offered), so a closed gate leaves every prompt
 # byte-identical.
 FIELD_FRAGMENTS: dict[str, str] = {
+    "muted": "clip_audio.txt",
     "tilt": "clip_tilt.txt",
     # KRI-1139: appended after `clip_tilt.txt` only while the pool-photo backdrop is open too, so
     # a tilt-open edit without it keeps its exact prompt.
@@ -180,6 +189,8 @@ def family_fragments(snapshot: object) -> str:
     post = snapshot.get("post") if surface_of(snapshot) == "slide_post" else None
     if isinstance(post, dict) and post.get("tilt_zoom_enabled") is True:
         names.append(SLIDE_TILT_ZOOM_FRAGMENT)
+    if snapshot.get("split_screen_available") is True:
+        names.append("split_screen.txt")
     parts: list[str] = []
     for name in names:
         try:
@@ -196,7 +207,11 @@ def prompt_fragments(surface: str | None = None) -> str:
 
     Surface-only lanes (``SURFACE_ONLY_LANES``) contribute only on their surface.
     """
-    names = [f"{lane}.txt" for lane in LANES if SURFACE_ONLY_LANES.get(lane) in (None, surface)]
+    names = [
+        f"{lane}.txt"
+        for lane in LANES
+        if lane != "split_screen" and SURFACE_ONLY_LANES.get(lane) in (None, surface)
+    ]
     for spec in lane_specs():
         if spec.prompt_fragment and spec.prompt_fragment not in names:
             names.append(spec.prompt_fragment)

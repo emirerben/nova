@@ -52,15 +52,20 @@ enum GuidedLabelRebase {
         let end: Double
         let sourceStart: Double
         let sourceEnd: Double
+        var sourceRate: Double? = nil
+        var holdDuration: Double = 0
+        var sectionID: String? = nil
+        var sectionStart: Double? = nil
+        var sectionEnd: Double? = nil
     }
 
     /// `mediaByClipIndex` fills in the media id for slots that carry none: the editor's guided
     /// timeline slots name their source by `clip_index` only, so `clip-label-media-<media_id>`
     /// bars could not be matched to a clip without it.
-    static func windows(of slots: [EditorTimelineSlot], mediaByClipIndex: [Int: String] = [:]) -> [SlotWindow] {
-        NativeEditorInteraction.timelineProjection(slots: slots, carousel: nil).baseClipWindows.map { window in
+    static func windows(of slots: [EditorTimelineSlot], mediaByClipIndex: [Int: String] = [:], splitSections: [EditorSplitScreenSection] = []) -> [SlotWindow] {
+        NativeEditorInteraction.timelineProjection(slots: slots, carousel: nil, splitSections: splitSections).baseClipWindows.map { window in
             let slot = slots[window.sourceIndex]
-            return SlotWindow(
+            var result = SlotWindow(
                 id: slot.id ?? "", parentID: slot.parentSegmentID ?? "",
                 mediaID: slot.raw["media_id"]?.stringValue ?? mediaByClipIndex[slot.clipIndex],
                 start: window.start, end: window.end,
@@ -72,6 +77,26 @@ enum GuidedLabelRebase {
                     ?? slot.inS + (slot.raw["native_source_span_s"]?.numberValue
                         ?? (window.end - window.start) * (slot.raw["playback_rate"]?.numberValue ?? 1))
             )
+            if slot.raw["freeze_frame_s"]?.numberValue != nil {
+                let clock = NativeClipSourceClock(slot: slot)
+                result = SlotWindow(id: result.id, parentID: result.parentID, mediaID: result.mediaID,
+                                    start: result.start, end: result.end, sourceStart: clock.start, sourceEnd: clock.end,
+                                    sourceRate: clock.rate, holdDuration: clock.hold)
+            }
+            if let id = slot.splitSectionID, let section = splitSections.first(where: { $0.id == id }) {
+                result.sectionID = id; result.sectionStart = window.start - slot.splitOffsetS
+                result.sectionEnd = result.sectionStart! + section.durationS
+            }
+            return result
+        }
+    }
+
+    private static func canvasWindows(_ windows: [SlotWindow]) -> [SlotWindow] {
+        var seen = Set<String>()
+        return windows.compactMap { window in
+            guard let id = window.sectionID, let start = window.sectionStart, let end = window.sectionEnd else { return window }
+            guard seen.insert(id).inserted else { return nil }
+            return SlotWindow(id: "split-section:" + id, parentID: "", mediaID: nil, start: start, end: end, sourceStart: 0, sourceEnd: end - start)
         }
     }
 
@@ -115,14 +140,16 @@ enum GuidedLabelRebase {
         oldSlots: [EditorTimelineSlot],
         newSlots: [EditorTimelineSlot],
         mediaByClipIndex: [Int: String] = [:],
-        includeFreeText: Bool
+        includeFreeText: Bool,
+        oldSplitSections: [EditorSplitScreenSection] = [],
+        newSplitSections: [EditorSplitScreenSection] = []
     ) -> [EditorTextElement] {
-        let old = windows(of: oldSlots, mediaByClipIndex: mediaByClipIndex)
-        let new = windows(of: newSlots, mediaByClipIndex: mediaByClipIndex)
+        let old = windows(of: oldSlots, mediaByClipIndex: mediaByClipIndex, splitSections: oldSplitSections)
+        let new = windows(of: newSlots, mediaByClipIndex: mediaByClipIndex, splitSections: newSplitSections)
         // Never wipe every label because the new timeline is momentarily empty.
         guard !new.isEmpty, !old.isEmpty else { return elements }
-        let oldTotal = old.map(\.end).max() ?? 0
-        let newTotal = new.map(\.end).max() ?? 0
+        let oldTotal = NativeEditorInteraction.timelineProjection(slots: oldSlots, carousel: nil, splitSections: oldSplitSections).totalDuration
+        let newTotal = NativeEditorInteraction.timelineProjection(slots: newSlots, carousel: nil, splitSections: newSplitSections).totalDuration
         var result: [EditorTextElement] = []
         for element in elements {
             guard !isUntouched(element) else { result.append(element); continue }
@@ -228,6 +255,15 @@ enum GuidedLabelRebase {
         _ element: EditorTextElement, old: [SlotWindow], new: [SlotWindow], oldTotal: Double, newTotal: Double,
         anchoredByID: Bool
     ) -> EditorTextElement? {
+        let owner = element.raw["segment_id"]?.stringValue
+        let ownedOld = owner.map { id in old.filter { $0.id == id || $0.parentID == id } } ?? []
+        let ownedNew = owner.map { id in new.filter { $0.id == id || $0.parentID == id } } ?? []
+        // Serial titles can retain an old segment_id after being manually inset.
+        // Their actual output window remains authoritative. Only simultaneous
+        // panel ownership requires selecting one source clock explicitly.
+        let panelOwned = ownedOld.contains { $0.sectionID != nil }
+        let old = panelOwned ? ownedOld : canvasWindows(old)
+        let new = panelOwned ? ownedNew : canvasWindows(new)
         let start = element.startS, end = element.endS
         let opening = start <= edgeS
         let closing = oldTotal > 0 && end >= oldTotal - edgeS
@@ -273,7 +309,7 @@ enum GuidedLabelRebase {
                 newEnd = min(newTotal, newStart + minBarS)
                 newStart = max(0, newEnd - minBarS)
             }
-            updated.raw["segment_id"] = .string(a.id)
+            if !a.id.hasPrefix("split-section:") { updated.raw["segment_id"] = .string(a.id) }
         }
         updated.startS = round6(newStart)
         updated.endS = round6(newEnd)
@@ -289,12 +325,12 @@ enum GuidedLabelRebase {
         if let window = old.reversed().first(where: { $0.start <= time && time < $0.end }) {
             anchor = window
             let outputSpan = window.end - window.start
-            anchorRate = outputSpan > 0 ? (window.sourceEnd - window.sourceStart) / outputSpan : 1
+            anchorRate = window.sourceRate ?? (outputSpan > 0 ? (window.sourceEnd - window.sourceStart) / outputSpan : 1)
             sourceTime = min(window.sourceEnd, window.sourceStart + max(0, time - window.start) * anchorRate)
         } else if let last = old.last, abs(time - last.end) <= 0.000001 {
             anchor = last
             let outputSpan = last.end - last.start
-            anchorRate = outputSpan > 0 ? (last.sourceEnd - last.sourceStart) / outputSpan : 1
+            anchorRate = last.sourceRate ?? (outputSpan > 0 ? (last.sourceEnd - last.sourceStart) / outputSpan : 1)
             sourceTime = last.sourceEnd
         } else { return nil }
         let candidates = new.filter {
@@ -308,8 +344,16 @@ enum GuidedLabelRebase {
         guard let target else { return nil }
         let clamped = min(target.sourceEnd, max(target.sourceStart, sourceTime))
         let targetOutputSpan = target.end - target.start
-        let targetRate = targetOutputSpan > 0 ? (target.sourceEnd - target.sourceStart) / targetOutputSpan : 1
-        let projected = min(target.end, max(target.start, target.start + (clamped - target.sourceStart) / targetRate))
+        let targetRate = target.sourceRate ?? (targetOutputSpan > 0 ? (target.sourceEnd - target.sourceStart) / targetOutputSpan : 1)
+        let anchorMoving = (anchor.sourceEnd - anchor.sourceStart) / anchorRate
+        let heldOffset = anchor.holdDuration > 0 ? max(0, time - anchor.start - anchorMoving) : 0
+        let targetMoving = (target.sourceEnd - target.sourceStart) / targetRate
+        let projected: Double
+        if heldOffset > 0, target.holdDuration > 0, abs(anchor.sourceEnd - target.sourceEnd) < 0.000001 {
+            projected = min(target.end, target.start + targetMoving + heldOffset)
+        } else {
+            projected = min(target.end, max(target.start, target.start + (clamped - target.sourceStart) / targetRate))
+        }
         // Preserve the legacy 30fps snap for unit-speed documents. Retime
         // anchors stay in source time so repeated speed changes do not accrue
         // a frame of rounding error on each assignment.

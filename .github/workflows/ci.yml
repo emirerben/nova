@@ -1311,6 +1311,7 @@ jobs:
             -only-testing:KriaUITests/CreationUITests/testSuggestionCardsInChatAndTheEditorImproveSheetShareOneSet \
             -only-testing:KriaUITests/CreationUITests/testDeclinedSuggestionCardRepliesNoLongerFitsThenTheRefreshedSet \
             -only-testing:KriaUITests/CreationUITests/testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize \
+            -only-testing:KriaUITests/CreationUITests/testGeneratedImageCardAsksFirstThenMakesOneImageAndHandsItToReview \
             -resultBundlePath ../../../test-results/kri-559/suggestion-chips-native.xcresult test-without-building
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/suggestion-chips-native.xcresult \
             > ../../../test-results/kri-559/suggestion-chips-native-tests.json
@@ -1321,7 +1322,8 @@ jobs:
             --xctest CreationUITests/testLeadSuggestionChipIsOneLineAtTheDefaultTextSize \
             --xctest CreationUITests/testSuggestionCardsInChatAndTheEditorImproveSheetShareOneSet \
             --xctest CreationUITests/testDeclinedSuggestionCardRepliesNoLongerFitsThenTheRefreshedSet \
-            --xctest CreationUITests/testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize
+            --xctest CreationUITests/testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize \
+            --xctest CreationUITests/testGeneratedImageCardAsksFirstThenMakesOneImageAndHandsItToReview
       - name: Verify both answer orders use one creation turn
         if: matrix.leg == 'screens' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-802-question-batch')
         working-directory: src/apps/ios

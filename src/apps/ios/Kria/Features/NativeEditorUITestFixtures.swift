@@ -64,6 +64,20 @@ enum NativeEditorUITestFixtures {
     }
 
     static func fixture(arguments: [String]) -> Fixture {
+        if arguments.contains("-ui-testing-editor-split-mixed-media") {
+            var value = splitScreenControls
+            value.clips = Array(value.clips.prefix(1))
+            var document = EditorDocument(snapshot: value.serverSnapshot)
+            document.clips = Array(document.clips.prefix(1))
+            value.serverSnapshot = document.encodeSnapshot()
+            return Fixture(shape: .reorderClips, draft: value)
+        }
+        if arguments.contains("-ui-testing-editor-split-speaker") {
+            return Fixture(shape: .speakerBackground, draft: splitSpeaker)
+        }
+        if arguments.contains("-ui-testing-editor-split-screen") {
+            return Fixture(shape: .reorderClips, draft: splitScreenControls)
+        }
         if arguments.contains("-ui-testing-editor-speed") {
             return Fixture(shape: .reorderClips, draft: speedControls)
         }
@@ -213,6 +227,8 @@ enum NativeEditorUITestFixtures {
 
     /// The `speaker_background` value the stub commit transport last saved (UserDefaults; JSON `null` = cleared).
     static let savedSpeakerBackgroundKey = "kria.ui-test.saved-speaker-background.v1"
+    static let savedSplitSpeakerTimelineKey = "kria.ui-test.saved-split-speaker-timeline.v1"
+    static let savedSplitControlsTimelineKey = "kria.ui-test.saved-split-controls-timeline.v1"
 
     /// The two pool visuals the Background fixture offers; no URLs, so the tiles show their placeholders offline.
     static let speakerBackgroundVisuals: [CreationVisual] = [
@@ -766,6 +782,127 @@ enum NativeEditorUITestFixtures {
         catch { preconditionFailure("KRI-524 captured editor fixture is invalid: \(error)") }
     }()
 
+    static let splitScreenControls: EditorDraft = {
+        let clips = [clip(989, start: 0, duration: 4, sourceDuration: 20),
+                     clip(990, start: 4, duration: 2, sourceDuration: 20)]
+        var value = draft(clips: clips, text: [], captions: false, music: false,
+                     sections: ["timeline_slots": slots(for: clips),
+                                "mix": .object(["original_level": .number(0.8), "music_level": .number(0.3)])], rootExtras: [
+                        "render_destination": .string("device"),
+                        "editor_timeline_mode": .string("authored"),
+                        "editor_capabilities": .object([
+                            "timeline": .bool(true),
+                            "split_screen": .object(["editable": .bool(true)]),
+                            "original_audio": .object(["editable": .bool(true)]),
+                            "clips": .object([
+                                "audio": .object(["editable": .bool(true)]),
+                                "source_crop": .object(["editable": .bool(true)]),
+                                "playback_rate": .object(["editable": .bool(true)])
+                            ])
+                        ])
+                     ])
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-global-layers") {
+            let label = text(1299, content: "GLOBAL", x: 0.5, y: 0.2)
+            var payload = value.serverSnapshot["editor_payload"]?.objectValue ?? [:]
+            var sections = payload["sections"]?.objectValue ?? [:]
+            sections["text_elements"] = .array([textRecord(label, start: 0, end: 6, z: 1,
+                extra: ["font_family": .string("Inter"), "size_px": .number(80), "color": .string("#FFFFFF")])])
+            sections["visual_blocks"] = .array([.object([
+                "id": .string("boundary-green"), "kind": .string("media"), "version": .number(1),
+                "start_s": .number(0), "end_s": .number(6), "media_kind": .string("image"),
+                "asset_id": .string("boundary-green"), "src_gcs_path": .string("boundary-green.png"),
+                "display_mode": .string("overlay"), "scale": .number(0.2),
+                "x_frac": .number(0.2), "y_frac": .number(0.5)
+            ])])
+            let drawing = EditorDrawing(id: "boundary-magenta", startS: 0, endS: 6,
+                canvasAspect: 9.0 / 16, centerX: 0.8, centerY: 0.5, entrance: .none,
+                strokes: [DrawingStroke(color: "#FF00FF", widthFrac: 0.06,
+                    points: [[0.72, 0.5], [0.88, 0.5]])])
+            sections["drawings"] = .array([drawing.json])
+            payload["sections"] = .object(sections)
+            value.serverSnapshot["editor_payload"] = .object(payload)
+            value.text = [label]
+        }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-persistence") {
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-persistence-reset") {
+                UserDefaults.standard.removeObject(forKey: savedSplitControlsTimelineKey)
+            }
+            if let data = UserDefaults.standard.data(forKey: savedSplitControlsTimelineKey),
+               let saved = try? JSONDecoder().decode([String: JSONValue].self, from: data) {
+                var payload = value.serverSnapshot["editor_payload"]?.objectValue ?? [:]
+                var sections = payload["sections"]?.objectValue ?? [:]
+                for (key, lane) in saved { sections[key] = lane }
+                payload["sections"] = .object(sections)
+                value.serverSnapshot["editor_payload"] = .object(payload)
+                let document = EditorDocument(snapshot: value.serverSnapshot)
+                let projection = NativeEditorInteraction.timelineProjection(
+                    slots: document.clips, carousel: document.carouselMoment, splitSections: document.splitScreenSections)
+                value.clips = projection.baseClipWindows.map { window in
+                    let slot = document.clips[window.sourceIndex]
+                    let clipID = slot.id.flatMap(UUID.init(uuidString:)) ?? clips.first { $0.slotID == slot.id }?.id ?? id(1200 + window.sourceIndex)
+                    let assetID = slot.raw["asset_id"]?.stringValue.flatMap(UUID.init(uuidString:)) ?? clipID
+                    return EditorClip(id: clipID, assetID: assetID, sourceClipIndex: slot.clipIndex,
+                        start: window.start, end: window.end, trimIn: slot.inS,
+                        trimOut: slot.raw["source_end_s"]?.numberValue ?? slot.inS + (slot.durationS ?? 0),
+                        sourceDuration: slot.raw["source_duration_s"]?.numberValue,
+                        muted: slot.raw["muted"] == .bool(true), slotID: slot.id)
+                }
+            }
+        }
+        return value
+    }()
+
+    static var splitSpeaker: EditorDraft { makeSplitSpeaker(restoringSavedState: true) }
+
+    static func makeSplitSpeaker(restoringSavedState: Bool) -> EditorDraft {
+        var value = speakerBackground
+        var caps = value.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
+        for key in ["split_screen", "speaker_background", "speaker_background_windows"] {
+            caps[key] = .object(["editable": .bool(true)])
+        }
+        value.serverSnapshot["editor_capabilities"] = .object(caps)
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background-reset") {
+            UserDefaults.standard.removeObject(forKey: savedSplitSpeakerTimelineKey)
+        }
+        var document = EditorDocument(snapshot: value.serverSnapshot)
+        if !restoringSavedState || UserDefaults.standard.data(forKey: savedSpeakerBackgroundKey) == nil {
+            document.speakerBackground = EditorSpeakerBackground(json: seededSpeakerFrame)
+        }
+        guard var top = document.clips.first else { return value }
+        top.id = "split-speaker-top"
+        top.durationS = 4
+        top.raw["speaker_subject"] = .bool(true)
+        top.setSplitMembership(sectionID: "speaker-panels", panelIndex: 0, offset: 0)
+        var bottom = top
+        bottom.id = "split-speaker-bottom"
+        bottom.setSplitMembership(sectionID: "speaker-panels", panelIndex: 1, offset: 0)
+        document.clips = [top, bottom]
+        document.splitScreenSections = [EditorSplitScreenSection(id: "speaker-panels", durationS: 4, panelCount: 2)]
+        document.captionCues = []
+        document.textElements = []
+        document.captionMeta["enabled"] = .bool(false)
+        document.capabilities["split_screen"] = EditorCapability(editable: true)
+        if restoringSavedState, let data = UserDefaults.standard.data(forKey: savedSplitSpeakerTimelineKey),
+           let saved = try? JSONDecoder().decode([String: JSONValue].self, from: data) {
+            var snapshot = document.encodeSnapshot()
+            var payload = snapshot["editor_payload"]?.objectValue ?? [:]
+            var sections = payload["sections"]?.objectValue ?? [:]
+            for (key, lane) in saved { sections[key] = lane }
+            payload["sections"] = .object(sections)
+            snapshot["editor_payload"] = .object(payload)
+            document = EditorDocument(snapshot: snapshot)
+        }
+        if let original = value.clips.first {
+            value.clips = document.clips.enumerated().map { index, slot in
+                EditorClip(id: id(1100 + index), assetID: original.assetID, sourceClipIndex: slot.clipIndex,
+                           start: 0, end: 4, trimIn: 0, trimOut: 4, sourceDuration: original.sourceDuration,
+                           muted: false, slotID: slot.id)
+            }
+        }
+        value.serverSnapshot = document.encodeSnapshot()
+        return value
+    }
+
     static let speedControls: EditorDraft = {
         let clips = [clip(960, start: 0, duration: 6, sourceDuration: 20)]
         return draft(clips: clips, text: [], captions: false, music: false,
@@ -879,6 +1016,48 @@ enum NativeEditorUITestFixtures {
 /// KRI-589: answers `editor-commit` for the drawing fixture. The request is the one production sends; the
 /// drawings it carries are kept so the next launch reopens them, and every section it names is acknowledged.
 enum NativeEditorUITestCommitTransport {
+    private static let splitImportRunID: String = {
+        let key = "native-editor-split-import-run-id"
+        if !ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-persistence-reset"),
+           let existing = UserDefaults.standard.string(forKey: key) { return existing }
+        let id = UUID().uuidString
+        UserDefaults.standard.set(id, forKey: key)
+        return id
+    }()
+    static var splitImportMediaID: String { "analysis-proxy-split-import-" + splitImportRunID }
+    static var splitImportRecoveryKey: String { "split-import-fixture-placement-" + splitImportRunID }
+    static func uploadConfiguration() -> URLSessionConfiguration {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [CommitURLProtocol.self]
+        return configuration
+    }
+    static var splitImportWaiting: Bool { CommitURLProtocol.registrationGate.isWaiting }
+    static func releaseSplitImport() { CommitURLProtocol.registrationGate.release() }
+
+    private final class RegistrationGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var responses: [UUID: @Sendable () -> Void] = [:]
+        var isWaiting: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return !responses.isEmpty
+        }
+        func hold(_ id: UUID, response: @escaping @Sendable () -> Void) {
+            lock.lock(); defer { lock.unlock() }
+            responses[id] = response
+        }
+        func cancel(_ id: UUID) {
+            lock.lock(); defer { lock.unlock() }
+            responses.removeValue(forKey: id)
+        }
+        func release() {
+            lock.lock()
+            let pending = Array(responses.values)
+            responses.removeAll()
+            lock.unlock()
+            pending.forEach { $0() }
+        }
+    }
+
     static func api() -> KriaAPI {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [CommitURLProtocol.self]
@@ -907,6 +1086,35 @@ enum NativeEditorUITestCommitTransport {
 
     private final class CommitURLProtocol: URLProtocol, @unchecked Sendable {
         static let capabilityFailures = FailOnce()
+        static let registrationGate = RegistrationGate()
+        private let responseLock = NSRecursiveLock()
+        private var cancelled = false
+        private var gateID: UUID?
+
+        private func deliver(_ response: HTTPURLResponse, body: Data) {
+            responseLock.lock(); defer { responseLock.unlock() }
+            guard !cancelled else { return }
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            guard !cancelled else { return }
+            client?.urlProtocol(self, didLoad: body)
+            guard !cancelled else { return }
+            client?.urlProtocolDidFinishLoading(self)
+        }
+
+        private func requestFields() -> [String: JSONValue] {
+            var data = request.httpBody ?? Data()
+            if data.isEmpty, let stream = request.httpBodyStream {
+                stream.open(); defer { stream.close() }
+                var buffer = [UInt8](repeating: 0, count: 4096)
+                while stream.hasBytesAvailable {
+                    let count = stream.read(&buffer, maxLength: buffer.count)
+                    if count <= 0 { break }
+                    data.append(buffer, count: count)
+                }
+            }
+            return (try? JSONDecoder().decode([String: JSONValue].self, from: data)) ?? [:]
+        }
+
         override class func canInit(with request: URLRequest) -> Bool { true }
         override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
@@ -914,7 +1122,33 @@ enum NativeEditorUITestCommitTransport {
             guard let url = request.url else { client?.urlProtocol(self, didFailWithError: URLError(.badURL)); return }
             var status = 404
             var body = Data(#"{"detail":"not stubbed"}"#.utf8)
-            if url.path.hasSuffix("/capabilities"), ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
+            let splitImport = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-import")
+            if splitImport, url.path.hasSuffix("/upload-urls"), request.httpMethod == "POST" {
+                let files = requestFields()["files"]?.arrayValue ?? []
+                let file = files.first?.objectValue ?? [:]
+                let contract = file["upload_contract"]?.objectValue ?? [:]
+                if files.count == 1, contract["purpose"]?.stringValue == "analysis_proxy",
+                   contract["proxy"]?.objectValue?["original"]?.objectValue != nil,
+                   (file["file_size_bytes"]?.numberValue ?? 0) > 0,
+                   file["client_upload_id"]?.stringValue?.hasPrefix("ios-") == true {
+                    let reservation: JSONValue = .array([.object([
+                        "media_id": .string(NativeEditorUITestCommitTransport.splitImportMediaID),
+                        "upload_url": .string("https://editor-ui-testing.invalid/split-import-proxy-put"),
+                        "gcs_path": .string("fixture/split-import-proxy.mp4"),
+                        "content_type": .string("video/mp4"), "upload_headers": .object([:])
+                    ])])
+                    status = 200; body = try! JSONEncoder().encode(reservation)
+                }
+            } else if splitImport, url.path == "/split-import-proxy-put", request.httpMethod == "PUT" {
+                status = 200; body = Data()
+            } else if splitImport, url.path.contains("/editor-sources/"), request.httpMethod == "GET",
+                      let importID = UUID(uuidString: url.lastPathComponent) {
+                status = 200
+                body = try! JSONEncoder().encode(JSONValue.object([
+                    "import_id": .string(importID.uuidString), "status": .string("preparing"),
+                    "source_id": .string(NativeEditorUITestCommitTransport.splitImportMediaID), "retryable": .bool(true)
+                ]))
+            } else if url.path.hasSuffix("/capabilities"), ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
                 // KRIA_OVERLAY_CAPABILITY_FAIL_ONCE: the first account check of this launch fails, the retry succeeds.
                 if ProcessInfo.processInfo.environment["KRIA_OVERLAY_CAPABILITY_FAIL_ONCE"] == "1", Self.capabilityFailures.takeFailure() {
                     client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
@@ -997,9 +1231,19 @@ enum NativeEditorUITestCommitTransport {
                         return
                     }
                 }
+                if splitImport {
+                    guard fields["source_id"]?.stringValue == NativeEditorUITestCommitTransport.splitImportMediaID,
+                          let importID = fields["client_import_id"]?.stringValue,
+                          UUID(uuidString: importID) != nil else {
+                        let failure = HTTPURLResponse(url: url, statusCode: 409, httpVersion: nil, headerFields: nil)!
+                        deliver(failure, body: Data(#"{"detail":"unexpected_import_identity"}"#.utf8))
+                        return
+                    }
+                }
+                let importedMediaID = splitImport ? NativeEditorUITestCommitTransport.splitImportMediaID : "gameday-istanbul-source-4"
                 let response: [String: JSONValue] = ["import_id": fields["client_import_id"] ?? .string(UUID().uuidString),
-                    "status": .string("ready"), "source_id": .string("gameday-istanbul-source-4"), "source_index": .number(4),
-                    "source": .object(["media_id": .string("gameday-istanbul-source-4"), "duration_s": .number(4)]), "retryable": .bool(false)]
+                    "status": .string("ready"), "source_id": .string(importedMediaID), "source_index": .number(4),
+                    "source": .object(["media_id": .string(importedMediaID), "duration_s": .number(4)]), "retryable": .bool(false)]
                 status = 200; body = (try? JSONEncoder().encode(response)) ?? body
             } else if url.path.hasSuffix("/editor-commit") {
                 var data = request.httpBody ?? Data()
@@ -1028,6 +1272,26 @@ enum NativeEditorUITestCommitTransport {
                    let saved = try? JSONEncoder().encode(JSONValue.object(["timeline_slots": .array(slots), "caption_cues": fields["caption_cues"] ?? .null])) {
                     UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedTalkingRangeKey)
                 }
+                let splitTimelineKey: String? = if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-speaker") {
+                    NativeEditorUITestFixtures.savedSplitSpeakerTimelineKey
+                } else if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-persistence") {
+                    NativeEditorUITestFixtures.savedSplitControlsTimelineKey
+                } else { nil }
+                if let splitTimelineKey, fields["timeline_slots"] != nil {
+                    var saved: [String: JSONValue] = [:]
+                    if let previous = UserDefaults.standard.data(forKey: splitTimelineKey) {
+                        saved = (try? JSONDecoder().decode([String: JSONValue].self, from: previous)) ?? [:]
+                    }
+                    let splitKeys = ["timeline_slots", "split_screen_sections"] +
+                        (ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-global-layers")
+                            ? ["text_elements", "visual_blocks", "drawings"] : [])
+                    for key in splitKeys {
+                        if let lane = fields[key] { saved[key] = lane }
+                    }
+                    if let encoded = try? JSONEncoder().encode(saved) {
+                        UserDefaults.standard.set(encoded, forKey: splitTimelineKey)
+                    }
+                }
                 if let lane = fields["speaker_background"], let saved = try? JSONEncoder().encode(lane) {
                     UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedSpeakerBackgroundKey)
                 }
@@ -1036,7 +1300,15 @@ enum NativeEditorUITestCommitTransport {
                 // The real response acknowledges the timeline section, not
                 // the request's timeline_slots field name.
                 if fields["timeline_slots"] != nil { flags["timeline"] = .bool(true); flags.removeValue(forKey: "timeline_slots") }
-                let gamedayDuration = fields["timeline_slots"]?.arrayValue?.compactMap { $0.objectValue?["duration_s"]?.numberValue }.reduce(0, +) ?? 6
+                let serialDuration = fields["timeline_slots"]?.arrayValue?.compactMap { $0.objectValue?["duration_s"]?.numberValue }.reduce(0, +) ?? 6
+                let gamedayDuration: Double
+                if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-import") {
+                    let rows = fields["timeline_slots"]?.arrayValue?.compactMap(\.objectValue) ?? []
+                    let sections = fields["split_screen_sections"]?.arrayValue?.compactMap(\.objectValue) ?? []
+                    gamedayDuration = rows.filter { $0["split_section_id"]?.stringValue == nil }
+                        .compactMap { $0["duration_s"]?.numberValue }.reduce(0, +)
+                        + sections.compactMap { $0["duration_s"]?.numberValue }.reduce(0, +)
+                } else { gamedayDuration = serialDuration }
                 // A deleted drawing is saved by the lane being sent (possibly empty).
                 if fields["deletions"] != nil, fields["drawings"] == nil { flags["drawings"] = .bool(true) }
                 let response: [String: JSONValue] = ["ok": .bool(true), "generation": url.path.contains("fixture-gameday-item") ? fields["base_generation"] ?? .string("fixture-generation") : .string("fixture-generation-2"), "sections": .object(flags),
@@ -1048,12 +1320,23 @@ enum NativeEditorUITestCommitTransport {
                 NSLog("KRI669 fixture transport %@ status=%d bytes=%d", url.path, status, body.count)
             }
             guard let http = HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"]) else { return }
-            client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: body)
-            client?.urlProtocolDidFinishLoading(self)
+            if splitImport, url.path.hasSuffix("/editor-sources"), request.httpMethod == "POST", status == 200 {
+                responseLock.lock(); defer { responseLock.unlock() }
+                guard !cancelled else { return }
+                let id = UUID(), responseBody = body
+                gateID = id
+                Self.registrationGate.hold(id) { [weak self] in self?.deliver(http, body: responseBody) }
+            } else { deliver(http, body: body) }
         }
 
-        override func stopLoading() {}
+        override func stopLoading() {
+            responseLock.lock()
+            cancelled = true
+            let id = gateID
+            gateID = nil
+            responseLock.unlock()
+            if let id { Self.registrationGate.cancel(id) }
+        }
     }
 }
 #endif

@@ -93,6 +93,7 @@ MAIN_CREATOR_PROMPT_SOURCES = (
     "app/agents/skills/grounded-hook/SKILL.md",
     "app/agents/skills/meaningful-moment/SKILL.md",
     "prompts/main_creator.txt",
+    "prompts/main_creator_split_screen.txt",
     "prompts/main_creator_turn.txt",
 )
 MAIN_CREATOR_PROMPT_VERSION = prompt_fingerprint("mc", MAIN_CREATOR_PROMPT_SOURCES)
@@ -1010,7 +1011,10 @@ behind them, "speaker_small": true when they want to be small in a corner and "b
 "<the colour as said, or its hex>" for a plain colour instead of a photo or video ("a plain white
 background", "arkam düz yeşil olsun"). Sound that merely
 plays in the background ("background music", "arka plan müziği") is NOT this and records no such
-fact. How on-screen text should look goes in the
+fact. When they also ask to zoom into the recordings behind them so the text can be
+read ("zoom into the recordings so the text is readable", "kayıtlara yakınlaş, yazılar
+okunsun"), add "background_zoom": true to that same requirement. How on-screen text should look
+goes in the
 `facts` of its text requirement, only what the creator said: `animation` (an id from
 {{TEXT_ANIMATION_EDGES}}, never none or the name in brackets) for "animated with typewriter";
 `position` ("top_left", "top", "top_right", "middle", "bottom_left", "bottom", "bottom_right")
@@ -1610,6 +1614,9 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 "\n" + _VOICEOVER_SCRIPT_PROMPT_SECTION if input.voiceover_script_available else ""
             ),
         )
+        split_capability = input.capability_manifest.capabilities.get("split_screen")
+        if split_capability is not None and split_capability.available:
+            prompt += "\n" + load_prompt("main_creator_split_screen")
         turn = load_prompt(
             "main_creator_turn",
             creator_context=input.creator_context or "(not available)",

@@ -985,6 +985,10 @@ def resolve_creator_manifest(
             )
         else:
             capabilities[CAPABILITY_TIMED_CARDS] = _available()
+    from app.services.phone_rollout import split_screen_supported
+
+    if phone_rendering_allowed and has_media and split_screen_supported():
+        capabilities["split_screen"] = _available()
     background_pick: str | None = None
     if is_phone_subtitled and not has_voiceover:
         # Advertised only when open (like `timed_cards`): a closed gate leaves the dict, both
@@ -2088,6 +2092,18 @@ def compile_strategy_to_plan(
     if an agent asks for one.
     """
 
+    if strategy.split_screen is not None:
+        capability = manifest.capabilities.get("split_screen")
+        if capability is None or not capability.available:
+            raise CreatorCapabilityError(
+                "Split screen is unavailable for this edit",
+                code="split_screen_unavailable",
+                edit_format=strategy.edit_format,
+            )
+        media_ids = {media.media_id for media in manifest.media}
+        if any(panel.media_id not in media_ids for panel in strategy.split_screen.panels):
+            raise CreatorStrategyError("A split panel source is not in the approved media")
+
     # KRI-118 item 2: repair a chat-picked story shape (day_vlog/single_hero)
     # and any stale/hidden-format strategy BEFORE the render program is
     # resolved below, so this function never raises over those specific
@@ -2248,20 +2264,6 @@ def compile_strategy_to_plan(
         and phone_capability.available
         and phone_subtitled_closing_title_supported()
     )
-    # KRI-526: the strategy parses up to 12 lines / 400 characters so an over-limit ask lands
-    # here and becomes a question about the pins (strategy_policy), not a schema failure.
-    if len(strategy.pinned_texts or ()) > MAX_CREATOR_PINNED_TEXTS:
-        raise CreatorStrategyError(
-            "pinned_texts_too_many: more corner lines than fit",
-            code="unsupported_treatment",
-            edit_format=strategy.edit_format,
-        )
-    if any(not pin.fits_a_corner for pin in strategy.pinned_texts or ()):
-        raise CreatorStrategyError(
-            "pinned_texts_too_long: a corner line is longer than one line",
-            code="unsupported_treatment",
-            edit_format=strategy.edit_format,
-        )
     # A recorded voiceover makes the item's program "native", which no cloud renderer draws
     # pins for; the phone montage-family voiceover writer does (KRI-527), so a phone cohort
     # keeps its pins there.
@@ -2280,6 +2282,23 @@ def compile_strategy_to_plan(
         # recorded-voiceover montage - KRI-527). A subtitled talking edit has no free text lane.
         raise CreatorStrategyError(
             f"pinned_texts is not supported by the {strategy.edit_format} renderer",
+            code="unsupported_treatment",
+            edit_format=strategy.edit_format,
+        )
+    # KRI-1302: the count/length questions come AFTER the renderer check above. A Talking edit
+    # has no pin lane at all, so asking which of five lines to keep offered a choice that
+    # was refused on the next turn.
+    # KRI-526: the strategy parses up to 12 lines / 400 characters so an over-limit ask lands
+    # here and becomes a question about the pins (strategy_policy), not a schema failure.
+    if len(strategy.pinned_texts or ()) > MAX_CREATOR_PINNED_TEXTS:
+        raise CreatorStrategyError(
+            "pinned_texts_too_many: more corner lines than fit",
+            code="unsupported_treatment",
+            edit_format=strategy.edit_format,
+        )
+    if any(not pin.fits_a_corner for pin in strategy.pinned_texts or ()):
+        raise CreatorStrategyError(
+            "pinned_texts_too_long: a corner line is longer than one line",
             code="unsupported_treatment",
             edit_format=strategy.edit_format,
         )
