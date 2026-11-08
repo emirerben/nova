@@ -140,5 +140,8 @@ def test_pin_limits_do_not_erase_all_valid_pins(prod_profile):
         _talking(pinned_texts=[{"text": "x" * 121, "corner": "top_left"}]),
         simplify_unsupported=True,
     )
-    assert isinstance(checked, RefusedStrategy)
-    assert checked.code == "pinned_text_too_long"
+    # KRI-1302: a Talking edit has no pin lane at all, so "shorten it" would be a choice it
+    # cannot carry out; the pin is left out and the notice names it instead.
+    assert isinstance(checked, CheckedStrategy)
+    assert not checked.strategy.pinned_texts
+    assert checked.notices
