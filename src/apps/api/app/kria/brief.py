@@ -646,6 +646,7 @@ def merge_requirements(
 # (`speaker_small`).
 # KRI-1029: and the text's shape ("curved title"), which "make the title just X" restates
 # without.
+# KRI-1307: and that the recordings behind them be zoomed to read (`background_zoom`).
 # Qendresa item 16: and that the speaker starts full screen in their own take before the
 # background / corner (`speaker_full_opening`, with `speaker_full_opening_s` for a named length).
 STICKY_FACTS = frozenset(
@@ -666,6 +667,7 @@ STICKY_FACTS = frozenset(
         "speaker_small",
         "speaker_full_opening",
         "speaker_full_opening_s",
+        "background_zoom",
         APPROVED_COPY_FACT,
         TEXT_SHAPE_FACT,
     }

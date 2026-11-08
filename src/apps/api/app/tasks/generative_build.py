@@ -11900,6 +11900,16 @@ def _run_phone_subtitled_job(
                                 lane_receipt["background"]["focus"] = _side
                         if _named is not None and _named.zoom is not None:
                             lane_receipt["background"]["focus_zoom"] = _named.zoom
+                        # KRI-1307: whether EVERY recording drawn is zoomed in (> 1x) in the
+                        # compiled recipe; one focused or unzoomed recording is not enough for the
+                        # receipt to say a "zoom in so the text is readable" ask was made.
+                        lane_receipt["background"]["aimed"] = bool(
+                            getattr(
+                                getattr(recipe, "speaker_background", None),
+                                "all_pictures_zoomed",
+                                False,
+                            )
+                        )
                 try:
                     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
