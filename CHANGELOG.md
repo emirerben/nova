@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.86.0] - 2026-11-08
+
+### Fixed
+- fix(kria): a title ask with a dropped logo is never met (KRI-1303) (#2197) <!-- release-pr: 2197 -->
+
 ## [0.88.85.0] - 2026-11-08
 
 ### Changed
