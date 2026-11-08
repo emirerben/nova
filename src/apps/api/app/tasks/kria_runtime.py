@@ -535,6 +535,46 @@ def _refusal_receipts(
     return None if planned.suggestion_pin is not None else receipts
 
 
+def _held_receipts(
+    receipts: list[dict[str, Any]] | None, readiness_report: Mapping[str, Any] | None
+) -> list[dict[str, Any]] | None:
+    """KRI-1308: a held draft made nothing, so no ask may read "Done".
+
+    The receipts judged the speculative draft the hold rolled back. A blocked ask shows its
+    readiness reason; any other is waiting. Both read partial and unchecked, never
+    done. Receipts that were never "met" keep their own words."""
+    if receipts is None or readiness_report is None or readiness_report.get("ready"):
+        return receipts
+    from app.kria.approval_readiness import APPROVABLE  # noqa: PLC0415
+
+    rows = {
+        str(row.get("requirement_id")): row
+        for row in readiness_report.get("requirements") or ()
+        if isinstance(row, Mapping)
+    }
+    held: list[dict[str, Any]] = []
+    for receipt in receipts:
+        if receipt.get("status") != "met":
+            held.append(receipt)
+            continue
+        row = rows.get(str(receipt.get("requirement_id")))
+        blocked = row is not None and row.get("disposition") not in APPROVABLE
+        held.append(
+            {
+                **receipt,
+                "status": "partial",
+                "verification": "unchecked",
+                "stage": "understood",
+                "reason": (str(row.get("reason") or "")[:300] if blocked else "")
+                or say(
+                    en="Not made yet: the draft is on hold.",
+                    tr="Henüz yapılmadı: taslak beklemede.",
+                ),
+            }
+        )
+    return held
+
+
 def _pin_refusal_for(planned: PlannedKriaTurn, reason: str) -> dict[str, Any] | None:
     """The typed refusal for a tap that ends in a reply instead of a draft; None for any turn
     that is not a pinned tap (so every other reply is exactly what it was)."""
@@ -3471,7 +3511,9 @@ def _complete_draft_turn(
                 brief_updates=_refusal_brief_updates(planned, planned.brief_updates),
                 brief_delegated=planned.brief_delegated,
                 brief_delegation_read_ids=planned.brief_delegation_read_ids,
-                requirement_receipts=_refusal_receipts(planned, requirement_receipts),
+                requirement_receipts=_refusal_receipts(
+                    planned, _held_receipts(requirement_receipts, readiness_report)
+                ),
                 brief_coverage={
                     **(planned.brief_coverage or {}),
                     "stage": "draft",
