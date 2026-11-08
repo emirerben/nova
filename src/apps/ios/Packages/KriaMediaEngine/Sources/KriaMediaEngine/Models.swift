@@ -196,7 +196,9 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                       assetManifest?.assets.contains(where: { asset in
                           guard asset.id == clip.sourceAssetID else { return false }
                           switch asset.source {
-                          case .original, .visual(_, _, .image): return true
+                          case .visual(_, _, .image): return true
+                          // A device photo may be a supporting card only inside a split-screen panel.
+                          case .original: return clip.splitScreen != nil
                           default: return false
                           }
                       }) == true else {
