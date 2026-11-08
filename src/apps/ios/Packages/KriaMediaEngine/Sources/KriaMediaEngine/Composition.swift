@@ -509,7 +509,9 @@ public struct PreviewComposition: @unchecked Sendable {
         // Text behind people: one segmenter per composition, only when a layer asks for it (F7).
         let subjectMatte = recipe.textLayers.contains(where: { $0.behindSubject == true }) ? NativeSubjectMatte() : nil
         // Speaker background: one matte per composition, shared by the player and the exporter (S15).
-        let speakerMatte = recipe.speakerBackground == nil ? nil : SpeakerMatte()
+        let speakerMatte = recipe.speakerBackground == nil ? nil : SpeakerMatte(segmenter: SpeakerMaskCaching.wrap(
+            SpeakerMatte.segmenterFactory(), store: SpeakerMaskStore.installed,
+            sources: SpeakerMaskCaching.speakerSources(in: recipe, speakerClipIDs: speakerClipIDs)))
         speakerMatte?.trace.noteBuilt(speakerClips: speakerClipIDs.count)
         // Instructions must span the whole asset: when the asset outlasts them AVPlayer renders no
         // video at all (audio over black, no error), while scrubbing and export stay correct.

@@ -277,7 +277,7 @@ final class NativeSubjectMatte: @unchecked Sendable {
 
 #if canImport(Vision)
 /// `VNGeneratePersonSegmentationRequest` on a downscaled sRGB render of the canvas frame.
-final class VisionPersonSegmenter: NativePersonSegmenting {
+final class VisionPersonSegmenter: PixelSegmenting {
     private let context = CIContext(options: [.cacheIntermediates: false,
                                               .workingColorSpace: CGColorSpace(name: CGColorSpace.linearSRGB)!,
                                               .outputColorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
@@ -299,8 +299,16 @@ final class VisionPersonSegmenter: NativePersonSegmenting {
 
     /// Vision's buffer as is: no `[Float]` copy and no downsample (the speaker matte scales it in Core Image).
     func personMask(for frame: CIImage, canvas: CGRect, config: SpeakerMatteConfig) throws -> CVPixelBuffer? {
-        guard let buffer = render(frame, canvas: canvas, maxSide: config.inputMaxSide) else { return nil }
-        return try segment(buffer, quality: config.quality.vision)
+        guard let buffer = segmentationInput(for: frame, canvas: canvas, config: config) else { return nil }
+        return try segmentationMask(forInput: buffer, config: config)
+    }
+
+    func segmentationInput(for frame: CIImage, canvas: CGRect, config: SpeakerMatteConfig) -> CVPixelBuffer? {
+        render(frame, canvas: canvas, maxSide: config.inputMaxSide)
+    }
+
+    func segmentationMask(forInput input: CVPixelBuffer, config: SpeakerMatteConfig) throws -> CVPixelBuffer? {
+        try segment(input, quality: config.quality.vision)
     }
 
     private func render(_ frame: CIImage, canvas: CGRect, maxSide: Int) -> CVPixelBuffer? {
