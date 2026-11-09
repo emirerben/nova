@@ -231,6 +231,37 @@ def test_a_creators_own_text_without_a_clip_link_keeps_its_seconds():
     _assert_on_its_event(edited, EVENTS)
 
 
+def test_a_linked_title_the_creator_moved_off_its_clip_keeps_its_seconds():
+    """The link names the clip the title was put on; a title dragged elsewhere is the
+    creator's own placement and must not be pulled back by a duration edit."""
+    job, saved = _phone_variant(_incident_plan())
+    row = next(r for r in saved["text_elements"] if r["text"] == "dodgeball")
+    row["start_s"], row["end_s"] = 30.0, 31.5
+    edited = _chat(job, saved, [(SIXTY_SECONDS, "make it 60 seconds")])
+    moved = _texts(edited)["dodgeball"]
+    assert (moved["start_s"], moved["end_s"]) == (30.0, 31.5)
+    _assert_on_its_event(edited, {k: v for k, v in EVENTS.items() if k != "dodgeball"})
+
+
+def test_the_event_check_refuses_a_title_on_the_wrong_clip():
+    """Wrong-content control: the same words and length on the event's second clip, or on
+    the next event's first clip, fail the check every other test relies on."""
+    job, saved = _phone_variant(_incident_plan())
+    edited = _chat(job, saved, [(SIXTY_SECONDS, "make it 60 seconds")])
+    windows = _clip_windows(edited)
+    for text, clip in (
+        ("beach volleyball", EVENTS["beach volleyball"][1]),
+        ("Football", EVENTS["dodgeball"][0]),
+    ):
+        wrong = copy.deepcopy(edited)
+        row = _texts(wrong)[text]
+        length = row["end_s"] - row["start_s"]
+        row["start_s"] = windows[TIMELINE[clip]["moment_id"]][0]
+        row["end_s"] = row["start_s"] + length
+        with pytest.raises(AssertionError):
+            _assert_on_its_event(wrong, EVENTS)
+
+
 def test_several_titles_on_one_clip_all_follow_it():
     """Prod's own resolution (KRI-1330): Football, dodgeball and pub all on the clip at 34."""
     planner = [
