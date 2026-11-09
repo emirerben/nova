@@ -277,6 +277,8 @@ final class CreationChatFixture: @unchecked Sendable {
     /// (and so the streaming thought) open for the whole test. This is the client request id of the latest turn.
     private var thoughtsEnabled: Bool { ["1", "hold"].contains(ProcessInfo.processInfo.environment["KRIA_CHAT_THOUGHTS"] ?? "") }
     private var thoughtRequestIDs: [String: String] = [:]
+    /// KRI-1239 (`KRIA_CHAT_REPLAY=held-draft`): the turn Kria is still thinking about, and how many polls it has seen.
+    private var replayTurns: [String: (turnID: String, ticks: Int)] = [:]
     private static let fixtureThoughtText = """
     **Reading your direction**
 
@@ -492,6 +494,7 @@ final class CreationChatFixture: @unchecked Sendable {
             // KRIA_CHAT_CHOICE_QUESTION: "1" = server advertises choice_questions; "legacy" = it still sends the
             // choice_question payload but does not advertise the capability (old-server text fallback).
             if ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] == "1" { capabilities["choice_questions"] = true }
+            if HeldDraftReplayFixture.isEnabled { capabilities["choice_questions"] = true }
             // A server that still advertises the removed place-hint capability: the app must ignore it.
             if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_SCREEN_RECORDING"] == "1" { capabilities["upload_place_hint"] = true }
             // KRIA_CHAT_VOICEOVER_SCRIPT (KRI-815): "1" = server advertises voiceover_script_cards; "legacy" = it still
@@ -557,6 +560,8 @@ final class CreationChatFixture: @unchecked Sendable {
                     (seededEvents, seededState) = Self.realShapeClipQuestionHistory()
                 } else if ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] == "photo" {
                     (seededEvents, seededState) = Self.realShapeClipQuestionHistory(poolPhoto: true)
+                } else if HeldDraftReplayFixture.isEnabled {
+                    (seededEvents, seededState) = HeldDraftReplayFixture.seededThread()
                 }
                 let thread: [String: Any] = ["id": id, "title": "Untitled project", "status": "active", "revision": seededEvents.count, "runtime_version": runtime, "state": seededState, "events": seededEvents, "active_plan_item_id": id, "updated_at": "2026-09-10T10:00:00Z"]
                 threads[id] = thread
@@ -709,7 +714,10 @@ final class CreationChatFixture: @unchecked Sendable {
         }
         guard parts.count >= 2, var thread = threads[parts[1]] else { return response(["detail": "Fixture route missing"], status: 404) }
         let id = parts[1]
-        if parts.count == 3, parts[2] == "brief" { return response(Self.fixtureBrief(threadID: id)) }
+        if parts.count == 3, parts[2] == "brief" {
+            if HeldDraftReplayFixture.isEnabled { return response(HeldDraftReplayFixture.brief(threadID: id)) }
+            return response(Self.fixtureBrief(threadID: id))
+        }
         // KRI-756 (`KRIA_SUGGESTION_CHIPS=1`): the server's chip sets, shaped like `SuggestionSetOut`. Unset = a server without the route.
         if parts.count == 3, parts[2] == "suggestions" {
             guard ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS"] == "1" else { return response(["detail": "Not Found"], status: 404) }
@@ -793,6 +801,22 @@ final class CreationChatFixture: @unchecked Sendable {
                 return response(["draft_id": id, "item_id": id, "variant_key": "original_text", "draft_revision": 4, "snapshot_hash": "hash", "etag": "etag-4",
                                  "snapshot": [String: Any](), "can_undo": false, "created_at": "2026-10-09T10:05:00Z"])
             }
+        }
+        if parts.last == "thought-summaries", HeldDraftReplayFixture.isEnabled {
+            // Every earlier turn has finished thoughts; the running one streams a little more on every poll.
+            let queried = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "client_request_id" })?.value
+            var rows: [[String: Any]] = []
+            for (turn, requestID) in HeldDraftReplayFixture.finishedRequestIDs.enumerated() where queried == nil || queried == requestID {
+                rows += HeldDraftReplayFixture.thoughts(requestID: requestID, turn: turn, running: false)
+            }
+            if let requestID = queried, let running = replayTurns[id], running.turnID == requestID {
+                let progress = min(1, Double(running.ticks + 1) / Double(max(1, HeldDraftReplayFixture.polls)))
+                rows += HeldDraftReplayFixture.thoughts(requestID: requestID, turn: 9, running: true, progress: progress)
+            } else if let requestID = queried, !HeldDraftReplayFixture.finishedRequestIDs.contains(requestID),
+                      events.contains(where: { $0["client_event_id"] as? String == requestID }) {
+                rows += HeldDraftReplayFixture.thoughts(requestID: requestID, turn: 9, running: false)
+            }
+            return response(["client_request_id": queried.map { $0 as Any } ?? NSNull(), "summaries": rows])
         }
         if parts.last == "thought-summaries", thoughtsEnabled {
             // Streaming while the follow-up editor turn is still running, completed (3s) once its reply has landed.
@@ -1299,6 +1323,9 @@ final class CreationChatFixture: @unchecked Sendable {
                         ] as [String: Any],
                     ])
                 }
+            } else if runtime == 2, HeldDraftReplayFixture.isEnabled {
+                // KRI-1239: Kria thinks (and streams thoughts) for a while, then lands the recorded reply.
+                replayTurns[id] = (turnID: turnID, ticks: 0)
             } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] != nil {
                 if let selection = body["choice_selection"] as? [String: Any] {
                     // Echo what the server received so the UI test can pin the structured payload.
@@ -1481,6 +1508,13 @@ final class CreationChatFixture: @unchecked Sendable {
                 }
                 planStages[id] = stage + 1
             }
+        }
+        if parts.last == "delta", let turn = replayTurns[id] {
+            if turn.ticks >= HeldDraftReplayFixture.polls {
+                revision += 1
+                events.append(HeldDraftReplayFixture.answer(turnID: turn.turnID, sequence: events.count, revision: revision))
+                replayTurns[id] = nil
+            } else { replayTurns[id] = (turnID: turn.turnID, ticks: turn.ticks + 1) }
         }
         if parts.last == "delta", let tick = editorTurnTicks[id], let turnID = editorTurnIDs[id] {
             if tick == 0 {
