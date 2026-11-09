@@ -144,3 +144,18 @@ def test_an_old_build_save_keeps_every_takes_cut(monkeypatch, protocol):
     assert take2(after) == take2(before)
     assert main(after).model_dump_json() == main(before).model_dump_json()
     assert after.duration == pytest.approx(before.duration)
+
+
+@pytest.mark.parametrize(
+    ("protocol", "hidden"), [(45, True), (None, True), (SPEAKER_REMOVED_PROTOCOL, False)]
+)
+def test_the_thread_projection_serves_the_same_gate(monkeypatch, protocol, hidden):
+    # The chat thread carries the job's variants to the phone too (`_job_projection`).
+    from app.routes.creation_threads import _job_projection
+
+    job = _job(monkeypatch, RECEIPT)
+    job.failure_reason = None
+    job.created_at = job.updated_at = None
+    set_client_protocol(protocol)
+    (variant,) = _job_projection(job)["variants"]
+    assert (variant["phone_talking_multi_clip"]["speaker_media_ids"] == []) is hidden
