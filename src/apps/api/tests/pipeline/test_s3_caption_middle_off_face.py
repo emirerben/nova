@@ -34,6 +34,9 @@ _LINES = (
 )
 # S3 home take: her face, chin included, on the 9:16 canvas.
 _FACE = NormalizedBox(0.36, 0.28, 0.64, 0.48)
+# A chin two points lower meets a 42 px "small" block centred at 0.5 (KRI-1326 shrank it from
+# 52 px, which met the measured chin above).
+_CHIN_ON_MIDDLE = NormalizedBox(0.36, 0.30, 0.64, 0.50)
 _MIDDLE_ASK = {
     "preferences": {},
     "requested": {"caption": {"color": "#FFFFFF", "position": "middle"}},
@@ -96,13 +99,21 @@ def _choose(policy: dict | None, face: NormalizedBox):
 
 
 def test_an_asked_middle_spot_moves_just_under_a_named_face_not_to_the_lower_third():
-    look, receipt = _choose(_MIDDLE_ASK, _FACE)
+    look, receipt = _choose(_MIDDLE_ASK, _CHIN_ON_MIDDLE)
 
     y = receipt["position_y_frac"]
+    assert receipt["evaluated"][0]["face_lines"] > 0, "the asked spot meets the chin"
     assert receipt["status"] == "moved"
     assert 0.5 <= y <= 0.64, f"middle row, just under the face (D1/D2); got {y}"
     assert look is not None and look.position_y_frac == y
     assert receipt["evaluated"][-1]["face_lines"] == 0
+
+
+def test_a_small_block_clear_of_her_measured_chin_stays_on_the_asked_spot():
+    _look, receipt = _choose(_MIDDLE_ASK, _FACE)
+
+    assert receipt["position_y_frac"] == 0.5
+    assert receipt["evaluated"][0]["face_lines"] == 0
 
 
 def test_a_face_filling_the_middle_row_still_wins_over_the_spot():
