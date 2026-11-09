@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sys
 import tempfile
@@ -86,6 +87,79 @@ class UISelectionTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue((ui.ROOT / path).is_file(), "Mapping is stale")
                 self.assertEqual(ui.select_groups([path])[0], f"smoke,{group}")
+
+    def test_a_ui_test_file_selects_the_group_that_owns_its_tests(self):
+        # #2243 edited NativeCaptionAnimationUITests.swift, an editor test file
+        # with no `sources` entry: selection fell back to `full`, which PRs run
+        # as smoke, so the edited tests never ran before merge. A test file's
+        # group comes from the groups' own inventory, never a hand mapping.
+        data = ui.manifest()
+        owners = {}
+        for group in ui.FEATURES:
+            for test in data["groups"][group]:
+                owners.setdefault(test, set()).add(group)
+        checked = 0
+        for path in sorted((ui.ROOT / ui.UI_TEST_ROOT).rglob("*.swift")):
+            relative = str(path.relative_to(ui.ROOT))
+            source = path.read_text()
+            classes = re.findall(r"\bclass\s+(\w+)\s*:\s*XCTestCase\b", source)
+            methods = re.findall(r"\bfunc\s+(test\w+)\s*\(", source)
+            if not methods or relative in data["sources"]:
+                continue
+            groups = set().union(
+                *(owners[f"KriaUITests/{classes[0]}/{name}"] for name in methods)
+            )
+            if len(groups) != 1:
+                continue
+            with self.subTest(path=relative):
+                self.assertEqual(
+                    ui.select_groups([relative])[0], f"smoke,{groups.pop()}"
+                )
+                checked += 1
+        self.assertGreater(checked, 0)
+        self.assertEqual(
+            ui.select_groups(
+                ["src/apps/ios/Tests/KriaUITests/NativeCaptionAnimationUITests.swift"]
+            )[0],
+            "smoke,editor",
+        )
+
+    def test_test_file_groups_stay_conservative(self):
+        # Failure modes: a file whose tests span groups runs only one of them; a
+        # file-scope helper other files call changes their tests unseen; an
+        # explicit mapping is overridden.
+        files = {
+            "AUITests.swift": "import XCTest\n\n@MainActor\nfinal class AUITests: XCTestCase {\n    func testA() {}\n}\n\nextension AUITests {\n    func helper() {}\n}\n",
+            "BUITests.swift": "import XCTest\n\nfinal class BUITests: XCTestCase {\n    func testB() {}\n}\n\nstruct Harness {}\n",
+            "CUITests.swift": "import XCTest\n\nfinal class CUITests: XCTestCase {\n    func testC() {}\n    func testD() {}\n}\n",
+            "DUITests.swift": "import XCTest\n\nfinal class DUITests: XCTestCase {\n    func testE() {}\n}\n",
+        }
+        data = {
+            "groups": {
+                "smoke": ["KriaUITests/AUITests/testA"],
+                "editor": ["KriaUITests/AUITests/testA", "KriaUITests/BUITests/testB", "KriaUITests/CUITests/testC"],
+                "creation": ["KriaUITests/CUITests/testD"],
+                "projects": ["KriaUITests/DUITests/testE"],
+            },
+            "sources": {f"{ui.UI_TEST_ROOT}DUITests.swift": "creation"},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ui.UI_TEST_ROOT).mkdir(parents=True)
+            for name, source in files.items():
+                (root / ui.UI_TEST_ROOT / name).write_text(source)
+            with patch.object(ui, "manifest", return_value=data):
+                for name, expected in (
+                    ("AUITests.swift", "smoke,editor"),
+                    ("BUITests.swift", "full"),
+                    ("CUITests.swift", "full"),
+                    ("DUITests.swift", "smoke,creation"),
+                ):
+                    with self.subTest(name=name):
+                        self.assertEqual(
+                            ui.select_groups([ui.UI_TEST_ROOT + name], root)[0],
+                            expected,
+                        )
 
     def test_mixed_shared_and_unknown_inputs_require_full(self):
         editor = "src/apps/ios/Kria/Features/NativeEditorView.swift"
@@ -376,6 +450,28 @@ class ShardOverheadTests(unittest.TestCase):
         self.assertLessEqual(max(loads) - min(loads), 120)
         self.assertLess(len(parts[0]), len(parts[1]))
         self.assertEqual(ui.shard_tests(tests, "1/1", durations), tests)
+
+
+    def test_shards_without_unit_work_balance_every_leg(self):
+        # PR UI legs run no unit tests, so no leg reserves time for them.
+        tests = {f"test{i}" for i in range(24)}
+        durations = dict.fromkeys(tests, 120)
+        parts = [
+            ui.shard_tests(tests, f"{i}/3", durations, overhead=0) for i in range(1, 4)
+        ]
+        self.assertEqual(set.union(*parts), tests)
+        self.assertEqual([len(part) for part in parts], [8, 8, 8])
+
+    def test_pr_editor_selection_fits_its_legs(self):
+        # Each PR UI leg targets PR_SHARD_TARGET_SECONDS of recorded time.
+        tests = ui.expected_tests("smoke,editor")
+        shards = ui.shard_count("smoke,editor", target=ui.PR_SHARD_TARGET_SECONDS)
+        self.assertGreater(shards, 1)
+        loads = [
+            sum(ui.weights(ui.shard_tests(tests, f"{i}/{shards}", overhead=0)).values())
+            for i in range(1, shards + 1)
+        ]
+        self.assertLessEqual(max(loads), ui.PR_SHARD_TARGET_SECONDS)
 
 
 class ResultCoverageTests(unittest.TestCase):
