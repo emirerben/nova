@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.119.0] - 2026-11-09
+
+### Fixed
+- fix(dictation): detect the spoken language instead of forcing the phone's (KRI-1328) (#2233) <!-- release-pr: 2233 -->
+
 ## [0.88.118.0] - 2026-11-09
 
 ### Changed
