@@ -4,6 +4,7 @@ import KriaMediaEngine
 
 /// KRI-1350: the editor preview reads the server-owned colour-moments lane and clamps it to the edit's length
 /// exactly like the server's `compile_color_moments`, so the preview never refuses a recipe the export accepts.
+@MainActor
 final class ColorMomentsEditorPreviewTests: XCTestCase {
     private func lane(_ json: String) throws -> JSONValue {
         try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8))
@@ -43,6 +44,7 @@ final class ColorMomentsEditorPreviewTests: XCTestCase {
             "color_moments": try lane(#"{"moments":[{"id":"cm1","start":1,"end":2,"tone":"mono"}]}"#),
         ])
         XCTAssertNotNil(document.colorMoments)
-        XCTAssertFalse(EditorSection.allCases.map(\.wireKey).contains("color_moments"))
+        XCTAssertNil(EditorSection(rawValue: "color_moments"), "no Save section: the server owns the lane")
+        XCTAssertFalse(EditorSection.allCases.map(\.rawValue).contains { $0.contains("color") })
     }
 }
