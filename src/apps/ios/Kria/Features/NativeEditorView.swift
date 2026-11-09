@@ -9,8 +9,6 @@ struct NativeEditorView: View {
     private let conversationAcceptedID: UUID?
     /// Changes when the conversation asks to close its sheet (its "Open editor" while this editor is open).
     private let conversationCloseID: UUID?
-    /// AI suggestion blocks for this edit, read from the chat that owns the set. Nil = nothing to improve (or no chat).
-    private let improve: SuggestionCardsPresentation?
     private let conversationActivity: NativeEditorAIActivity?
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -38,10 +36,6 @@ struct NativeEditorView: View {
     @State private var opensRetryConversation = false
     @State private var showsOriginalsRecovery = false
     @State private var showsConversation = false
-    @State private var showsImprove = false
-    /// A card was tapped in the Improve sheet: once it has closed, the conversation opens so the creator sees the message land.
-    @State private var opensConversationAfterImprove = false
-    @State private var reviewsGeneratedAfterImprove = false
     /// KRI-589: Draw mode. `appendingTo` is the drawing "Draw more" adds to; nil starts a new drawing.
     @State private var drawMode: DrawMode?
     @StateObject private var sketch = NativeDrawingSketch()
@@ -89,7 +83,6 @@ struct NativeEditorView: View {
         conversationCloseID: UUID? = nil,
         conversationActivity: NativeEditorAIActivity? = nil,
         conversation: (() -> AnyView)? = nil,
-        improve: SuggestionCardsPresentation? = nil,
         onBack: @escaping () -> Void
     ) {
         self.project = project
@@ -98,7 +91,6 @@ struct NativeEditorView: View {
         self.conversation = conversation
         self.conversationAcceptedID = conversationAcceptedID
         self.conversationCloseID = conversationCloseID
-        self.improve = improve
         self.conversationActivity = conversationActivity
         _session = StateObject(
             wrappedValue: sharedSession ?? initialDraft.map {
@@ -246,41 +238,6 @@ struct NativeEditorView: View {
             .sheet(item: $emptyAddClip) { NativeEditorAddClipSheet(session: session, launch: $0) }
             .onChange(of: deviceLocalFile) { _, file in
                 if let file { session.showDeviceOutput(file) }
-            }
-            .sheet(isPresented: $showsImprove, onDismiss: {
-                if reviewsGeneratedAfterImprove {
-                    // The chat owns the review sheet; it opens once this one is gone.
-                    reviewsGeneratedAfterImprove = false
-                    improve?.reviewGenerated()
-                    return
-                }
-                guard opensConversationAfterImprove else { return }
-                opensConversationAfterImprove = false
-                showsConversation = true
-            }) {
-                if let improve {
-                    ImproveSheet(
-                        presentation: SuggestionCardsPresentation(
-                            cards: improve.cards,
-                            tap: { card in
-                                guard improve.tap(card) else { return false }
-                                opensConversationAfterImprove = true
-                                showsImprove = false
-                                return true
-                            },
-                            dismiss: improve.dismiss, refresh: improve.refresh, sendingID: improve.sendingID,
-                            generated: improve.generated,
-                            reviewGenerated: {
-                                reviewsGeneratedAfterImprove = true
-                                showsImprove = false
-                            },
-                            dismissGenerated: improve.dismissGenerated
-                        ),
-                        close: { showsImprove = false }
-                    )
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
-                }
             }
             .sheet(isPresented: $showsConversation) {
                 if let conversation {
@@ -544,15 +501,11 @@ struct NativeEditorView: View {
                 .overlay(alignment: .bottom) {
                     if session.pendingText == nil, !lineEditing {
                         HStack(alignment: .bottom, spacing: 0) {
-                            if let improve {
-                                ImproveEntryButton(count: improve.cards.count) { showsImprove = true }
-                                    .layoutPriority(1)
-                            }
                             Spacer(minLength: 8)
                             if conversation != nil {
                                 KriaAIButton(
                                     identifier: "native-editor-conversation", activity: aiStatus,
-                                    animatesActivity: scenePhase == .active && !showsConversation && !showsImprove && !previewFullscreen
+                                    animatesActivity: scenePhase == .active && !showsConversation && !previewFullscreen
                                 ) { showsConversation = true }
                             }
                         }

@@ -236,7 +236,6 @@ final class CreationChatFixture: @unchecked Sendable {
     private var suggestionAsks: [String: Int] = [:]
     /// Threads whose stale suggestion was answered with "no longer fits" (`KRIA_SUGGESTION_CARDS=stale`); the next set they get is the refreshed one.
     private var staleSuggestionThreads: Set<String> = []
-    private var dismissedSuggestions: [String: Set<String>] = [:]
     /// Threads whose generated-image card was tapped (`KRIA_SUGGESTION_CARDS=generated`): the server spends once and the card is gone.
     private var spentGeneratedThreads: Set<String> = []
     /// By-event reads still to answer `pending` before the generated image is `ready`, so the card's "making" state is seen.
@@ -721,17 +720,7 @@ final class CreationChatFixture: @unchecked Sendable {
         // KRI-756 (`KRIA_SUGGESTION_CHIPS=1`): the server's chip sets, shaped like `SuggestionSetOut`. Unset = a server without the route.
         if parts.count == 3, parts[2] == "suggestions" {
             guard ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS"] == "1" else { return response(["detail": "Not Found"], status: 404) }
-            var served = fixtureSuggestions(id: id, thread: thread)
-            // A dismissed card is never offered again (the server keeps them in the thread's ring).
-            if let cards = served["suggestions"] as? [[String: Any]], let gone = dismissedSuggestions[id] {
-                served["suggestions"] = cards.filter { !gone.contains($0["id"] as? String ?? "") }
-            }
-            return response(served)
-        }
-        if parts.count == 4, parts[2] == "suggestions", parts[3] == "dismiss", request.httpMethod == "POST" {
-            guard ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS"] == "1" else { return response(["detail": "Not Found"], status: 404) }
-            if let card = body["chip_id"] as? String { dismissedSuggestions[id, default: []].insert(card) }
-            return response([String: Any]())
+            return response(fixtureSuggestions(id: id, thread: thread))
         }
         // KRI-561: the signed song URL. The fixture hands out a generated tone as a file URL (no network).
         if parts.count == 3, parts[2] == "song-audio", ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] == "1" {

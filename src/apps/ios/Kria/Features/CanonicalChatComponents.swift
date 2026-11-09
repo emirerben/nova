@@ -1052,7 +1052,7 @@ struct ReadyStage: View {
                 if !suggestionCards.isEmpty {
                     Text("Ways to improve it")
                         .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
-                    SuggestionCardList(presentation: suggestionCards, idPrefix: "suggestion-card")
+                    SuggestionCardChips(presentation: suggestionCards, idPrefix: "suggestion-card")
                 }
             } else {
                 // KRI-769: no chips to offer (capability on, set empty or still loading) = no dangling question either.
