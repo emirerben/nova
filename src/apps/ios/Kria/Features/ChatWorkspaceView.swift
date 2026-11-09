@@ -585,6 +585,10 @@ private struct CreationWorkspaceView: View {
     @State private var afterSequence = -1
     @State private var threadRevision: Int
     @State private var projectionOrder = ThreadProjectionOrder()
+    /// Ticks once a second while the speech check runs, so it lives in a box: a plain `@State` struct
+    /// would re-render this view every tick. Only the timed-out flag below is observed.
+    @State private var speechCheckClock = SpeechCheckClock()
+    @State private var speechCheckTimedOut = false
     @State private var ownsSendAttempt = false
     @State private var hasActivatedDraftStorage = false
     private var isSending: Bool { ownsSendAttempt || chatDrafts.isSubmitting(for: project.id) }
@@ -2361,6 +2365,7 @@ private struct CreationWorkspaceView: View {
                     approval: approval,
                     format: selectedFormat,
                     speechCleanup: approval.retryOfExecutionID == nil ? fullThread?.speechCleanup : nil,
+                    speechCheckTimedOut: speechCheckTimedOut,
                     renderShape: approval.retryOfExecutionID == nil ? renderShapePicker : nil,
                     researchPreview: ResearchPreview.parse(activeProposalEvent?.payload?["research_preview"]),
                     replyLanguage: ClipAnswerLanguage(threadState: threadState),
@@ -2384,6 +2389,7 @@ private struct CreationWorkspaceView: View {
                     conflict: visibleConfirmationConflict(for: thread),
                     renderShape: renderShapePicker,
                     refreshDirection: refreshDirection,
+                    speechCheckTimedOut: speechCheckTimedOut,
                     action: performAction
                 )
             }
@@ -2474,6 +2480,7 @@ private struct CreationWorkspaceView: View {
                     responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },
                     conflict: visibleConfirmationConflict(for: thread),
                     refreshDirection: refreshDirection,
+                    speechCheckTimedOut: speechCheckTimedOut,
                     action: performAction
                 )
             } else {
@@ -3155,8 +3162,9 @@ private struct CreationWorkspaceView: View {
                 let deviceSettled = serverDeviceRenderKey.map { model.deviceRenders.isSettled($0) } ?? false
                 if changed || !deviceSettled || currentProject.status == .rendering { await refreshDeviceRender() }
                 if let routedKey = routedDeviceRenderKey { await refreshDeviceRender(routedKey) }
+                await refreshWhileCheckingSpeech()
                 delay = changed || isSending || isActing || isThinking || currentProject.status == .rendering
-                    || fullThread?.preparationIsActive == true || speechCleanupIsChecking
+                    || fullThread?.preparationIsActive == true || (speechCleanupIsChecking && !speechCheckTimedOut)
                     ? 1_000_000_000 : min(delay * 2, 8_000_000_000)
             } catch is CancellationError {
                 return
@@ -3170,6 +3178,20 @@ private struct CreationWorkspaceView: View {
             }
             try? await Task.sleep(nanoseconds: delay)
         }
+    }
+
+    /// The analysis task never bumps the thread revision or appends an event, so `/delta` cannot
+    /// announce it finishing. While the card says "Checking speech…", re-read the full thread on
+    /// `SpeechCheckWatch`'s schedule. This loop awaits it, so reads never overlap each other.
+    private func refreshWhileCheckingSpeech() async {
+        let resolution = SpeechCleanupOffer.resolve(fullThread?.speechCleanup)
+        let shouldRefetch = speechCheckClock.watch.observe(resolution.offer, analysisID: resolution.analysisID, now: .now)
+        let timedOut = speechCheckClock.watch.hasTimedOut
+        if timedOut != speechCheckTimedOut { speechCheckTimedOut = timedOut }
+        guard shouldRefetch else { return }
+        let requestSequence = projectionOrder.begin()
+        guard let thread = try? await model.api.project(threadID: project.id), !Task.isCancelled else { return }
+        apply(thread, requestSequence: requestSequence)
     }
 
     /// True while the v2 approval card's speech-check analysis is queued,
