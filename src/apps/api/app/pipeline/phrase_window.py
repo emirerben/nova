@@ -233,8 +233,15 @@ def phrase_window(
         if grown is not None:
             end = grown
         else:
+            # No whole sentence fits: end at the last clause break (comma, pause) that does,
+            # else at the minimum.
             extended = 0
-            end = start + min_s
+            breaks = [
+                _end_at(i)
+                for i in range(sentence_end_idx + 1, len(timed))
+                if _boundary_after(timed, i) is not None and min_s <= _end_at(i) - start <= max_s
+            ]
+            end = max(breaks) if breaks else start + min_s
     elif end - start > max_s:
         # Too long: end at the last word end that fits (never under the minimum).
         fits = [

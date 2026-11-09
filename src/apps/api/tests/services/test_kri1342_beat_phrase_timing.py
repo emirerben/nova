@@ -168,15 +168,20 @@ def test_a_word_the_creator_named_keeps_its_exact_word_timing(monkeypatch):
     assert windows["post2"][0] < 13.72  # the others still follow their phrase
 
 
-def test_creator_named_cues_reads_brief_trigger_facts():
+def test_creator_named_cues_reads_picture_and_sound_asks_not_text_asks():
     class Req:
-        def __init__(self, facts):
-            self.facts = facts
+        def __init__(self, kind, facts):
+            self.kind, self.facts = kind, facts
 
     cues = grounding.creator_named_cues(
-        [Req({"triggers": ["Billboards", "kahve"]}), Req({"display_mode": "fullscreen"})]
+        [
+            Req("style", {"triggers": ["Billboards", "kahve"]}),
+            Req("timing", {"trigger": "kano"}),  # the cabin T2 brief's singular key
+            Req("text", {"triggers": ["SpecKit"]}),  # Qendresa Q1's list label
+            Req("style", {"display_mode": "fullscreen"}),
+        ]
     )
-    assert cues == frozenset({"billboards", "kahve"})
+    assert cues == frozenset({"billboards", "kahve", "kano"})
 
 
 def test_after_cue_sticker_and_sound_stay_on_the_word(monkeypatch):
@@ -312,3 +317,21 @@ def test_worker_passes_nothing_while_the_flag_is_off(monkeypatch):
     kwargs = generative_build._beat_phrase_timing_kwargs(grounding.TALKING_PHRASE_TIMING, [Req()])  # noqa: SLF001
     assert kwargs["phrase_timing"].word_cued == frozenset({"billboards"})
     assert kwargs["phrase_timing"].max_s == grounding.TALKING_PHRASE_TIMING.max_s
+
+
+def test_a_corner_screenshot_stays_through_the_explanation_after_its_name(monkeypatch):
+    """Qendresa Q1 shape: "Number one, Spec Kit. You write ... from it." The corner screenshot
+    used to leave 3 s in, mid-way through the explanation; it now stays until it ends."""
+    words = _timed(
+        "Number@7.52-7.72 one,@7.72-8.08 Spec@8.48-8.54 Kit.@8.54-8.80 You@9.26-9.42 "
+        "write@9.42-9.62 the@9.62-9.94 spec@9.94-9.94 first,@9.94-10.44 and@10.46-10.64 "
+        "your@10.64-11.08 agent@11.08-11.08 builds@11.08-11.38 it.@11.38-12.84 "
+        "Number@14.48-14.62 two.@14.62-15.04"
+    )
+    beats = [{"beat_id": "repo", "trigger": "Spec Kit", "visual_id": "shot"}]
+    before = _windows(_ground(monkeypatch, beats, words, fullscreen=False, timing=None))["repo"]
+    after = _windows(_ground(monkeypatch, beats, words, fullscreen=False))["repo"]
+
+    assert before == (8.48, 11.48)  # leaves inside "and your agent builds it."
+    assert abs(after[0] - 8.48) <= 0.1
+    assert 12.84 <= after[1] <= 14.48

@@ -595,12 +595,16 @@ class PhraseTiming:
 
     Passed by a worker with ``BEAT_PHRASE_TIMING_ENABLED`` on; ``None`` (the default) keeps
     every window on its cue word, byte for byte. ``min_s``/``max_s`` bound a full-screen
-    photo's phrase-sized hold. ``word_cued`` holds the folded spoken words the creator NAMED
-    ("when I say X", the brief's ``facts.triggers``): those beats keep their exact word timing.
+    photo's phrase-sized hold, ``pip_min_s``/``pip_max_s`` a corner photo's (it covers less of
+    the speaker, so it may stay through the explanation after a name). ``word_cued`` holds the
+    folded spoken words the creator NAMED ("when I say X", the brief's ``facts.triggers``):
+    those beats keep their exact word timing.
     """
 
     min_s: float
     max_s: float
+    pip_min_s: float = 2.0
+    pip_max_s: float = 5.5
     word_cued: frozenset[str] = frozenset()
 
 
@@ -611,18 +615,24 @@ VOICEOVER_PHRASE_TIMING = PhraseTiming(min_s=2.0, max_s=4.0)
 
 
 def creator_named_cues(requirements: Sequence[Any]) -> frozenset[str]:
-    """The folded spoken words the creator named in live brief asks (``facts.triggers``)."""
+    """The folded spoken words the creator named for a picture or sound in live brief asks
+    ("when I say X", "'kano' dediğimde"): the trigger facts of every ask but a ``text`` one
+    (Qendresa Q1: the "1. Spec-kit" list labels name the repos too, but they time a TEXT;
+    the screenshots for those repos were asked "when I talk about something")."""
+    from app.kria.spoken_text_ask import SPOKEN_TEXT_CUE_KEYS  # noqa: PLC0415
+
     out: set[str] = set()
     for req in requirements or ():
         facts = getattr(req, "facts", None)
-        if not isinstance(facts, dict):
+        if not isinstance(facts, dict) or getattr(req, "kind", None) == "text":
             continue
-        raw = facts.get("triggers")
-        values = raw if isinstance(raw, list | tuple) else [raw] if isinstance(raw, str) else []
-        for value in values:
-            folded = " ".join(fold_tokens(value))
-            if folded:
-                out.add(folded)
+        for key in SPOKEN_TEXT_CUE_KEYS:
+            raw = facts.get(key)
+            values = raw if isinstance(raw, list | tuple) else [raw] if isinstance(raw, str) else []
+            for value in values:
+                folded = " ".join(fold_tokens(value))
+                if folded:
+                    out.add(folded)
     return frozenset(out)
 
 
@@ -943,15 +953,16 @@ def ground_phone_reaction_beats(
                     if phrase_timing is not None and _phrase_cued(
                         phrase_timing, trigger=trigger, after=after, slot=slot
                     ):
-                        sized = (
-                            display_mode == "fullscreen"
-                            and hold_s is None
-                            and not is_video
-                            and following_clip_id is None
+                        sized = hold_s is None and not is_video and following_clip_id is None
+                        full = display_mode == "fullscreen"
+                        bounds = (
+                            (phrase_timing.min_s, phrase_timing.max_s)
+                            if full
+                            else (phrase_timing.pip_min_s, phrase_timing.pip_max_s)
                         )
                         phrase_args = {
-                            "min_s": phrase_timing.min_s if sized else hold,
-                            "max_s": phrase_timing.max_s if sized else hold,
+                            "min_s": bounds[0] if sized else hold,
+                            "max_s": bounds[1] if sized else hold,
                             "size_to_phrase": sized,
                             "hold_s": hold,
                             "duration_s": duration_s,
