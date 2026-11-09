@@ -1,0 +1,1280 @@
+{
+ "about": "KRI-1331 prod job 84082ce4 (2026-11): trimmed approved strategy, brief, clip capture times, the montage timeline the composer saw, and the composer's six text operations. Media ids are the phone's opaque analysis-proxy names; no media.",
+ "creator_request": "Full creator request (chronological):\nUse good parts from my speech, create a fast paced edit from the rest. Show the video chronologically. Add a title at the beginning of each event. Football, dodgeball, beach volleyball and pub. Also add an initial intro title saying Emir Olympics London Edition\nThe dodgeball event: clip 17\n\nCreative brief v1 (everything the creator has asked for, still in force):\n- [r1] [audio/global] Use good parts from my speech\n- [r2] [order/global] Show the video chronologically facts={key: capture_time}\n- [r3] [text/title] initial intro title (\"Emir Olympics London Edition\")\n- [r4] [text/per_clip] title at the beginning of the football event (\"Football\")\n- [r5] [text/per_clip] title at the beginning of the dodgeball event (\"dodgeball\")\n- [r6] [text/per_clip] title at the beginning of the beach volleyball event (\"beach volleyball\")\n- [r7] [text/per_clip] title at the beginning of the pub event (\"pub\")\nLatest message: The dodgeball event: clip 17",
+ "brief": {
+  "version": 1,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "audio",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Use good parts from my speech",
+    "source_turn_id": "aac466ed-548e-4aba-ba7b-c069f11e22e7"
+   },
+   {
+    "id": "r2",
+    "kind": "order",
+    "facts": {
+     "key": "capture_time"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Show the video chronologically",
+    "source_turn_id": "aac466ed-548e-4aba-ba7b-c069f11e22e7"
+   },
+   {
+    "id": "r3",
+    "kind": "text",
+    "facts": {},
+    "scope": "title",
+    "status": "open",
+    "literal": "Emir Olympics London Edition",
+    "description": "initial intro title",
+    "source_turn_id": "aac466ed-548e-4aba-ba7b-c069f11e22e7"
+   },
+   {
+    "id": "r4",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "open",
+    "literal": "Football",
+    "description": "title at the beginning of the football event",
+    "source_turn_id": "aac466ed-548e-4aba-ba7b-c069f11e22e7"
+   },
+   {
+    "id": "r5",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "open",
+    "literal": "dodgeball",
+    "description": "title at the beginning of the dodgeball event",
+    "source_turn_id": "aac466ed-548e-4aba-ba7b-c069f11e22e7"
+   },
+   {
+    "id": "r6",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "open",
+    "literal": "beach volleyball",
+    "description": "title at the beginning of the beach volleyball event",
+    "source_turn_id": "aac466ed-548e-4aba-ba7b-c069f11e22e7"
+   },
+   {
+    "id": "r7",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "open",
+    "literal": "pub",
+    "description": "title at the beginning of the pub event",
+    "source_turn_id": "aac466ed-548e-4aba-ba7b-c069f11e22e7"
+   }
+  ]
+ },
+ "strategy": {
+  "edit_format": "montage",
+  "render_program": "guided",
+  "direction": "fast_montage",
+  "pacing": "fast",
+  "archetype": "day_vlog",
+  "voice_mode": "excerpts",
+  "audio_strategy": "licensed_music",
+  "montage_audio": {
+   "source_media_ids": [],
+   "preview_source_beds": false,
+   "preserve_source_audio": true
+  },
+  "opening_title": "Emir Olympics London Edition",
+  "clip_intents": [
+   {
+    "op": "order",
+    "order_by": "capture_time",
+    "attribute": "the video",
+    "intent_id": "order_chronological",
+    "source_quote": "Show the video chronologically."
+   },
+   {
+    "op": "caption",
+    "attribute": "initial intro title",
+    "intent_id": "caption_intro_title",
+    "creator_text": "Emir Olympics London Edition",
+    "source_quote": "add an initial intro title saying Emir Olympics London Edition"
+   },
+   {
+    "op": "caption",
+    "attribute": "the football event",
+    "intent_id": "caption_football",
+    "creator_text": "Football",
+    "source_quote": "Football"
+   },
+   {
+    "op": "caption",
+    "attribute": "the dodgeball event",
+    "intent_id": "caption_dodgeball",
+    "creator_text": "dodgeball",
+    "source_quote": "dodgeball"
+   },
+   {
+    "op": "caption",
+    "attribute": "the beach volleyball event",
+    "intent_id": "caption_beach_volleyball",
+    "creator_text": "beach volleyball",
+    "source_quote": "beach volleyball"
+   },
+   {
+    "op": "caption",
+    "attribute": "the pub event",
+    "intent_id": "caption_pub",
+    "creator_text": "pub",
+    "source_quote": "pub"
+   }
+  ],
+  "resolved_clip_intents": [
+   {
+    "op": "order",
+    "status": "resolved",
+    "order_by": "capture_time",
+    "attribute": "the video",
+    "intent_id": "order_chronological",
+    "assignments": [
+     {
+      "media_id": "analysis-proxy-ios-391D6396-D39C-4127-AEB0-B71DEE673078.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-75105383-F79E-41E0-AB6D-2C404CA3EF89.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-8E08FD6F-4F29-49E5-B7D7-A85DB7B9E095.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-53B9FD93-CE05-4DE4-9A84-D8FB524BB99E.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-62E3BFDF-071C-4E06-B337-CC4D9F9E57EB.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-082BD511-8BEC-44E6-A63D-564DBA35B7A4.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-D9FA3ED3-2101-4BA7-AEA1-6E08EC283FDB.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-7C85CED1-4C5A-4003-9E76-49BDCFE72348.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-4FFA052D-93C9-4999-8E3C-CF2911590C64.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-E75A2141-73FA-4ED9-8934-038E92147D7A.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-9AD90CFF-7D89-4F68-9CB2-23E0CEDEF716.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-B74F7FA0-9D86-4310-982C-180211FD5A8B.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-C6E892EF-6C13-49D3-9D1B-6A43017C25E4.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-A91D1F17-8EC6-4A75-AC8E-A44A3C2EA23B.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-BB80A35E-7969-4F4F-90BA-701C3C71D2AF.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-6741935C-3B8B-4CB9-ABFB-2C787F7C56F8.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-9BFEFBF8-1DB0-4B1B-AAA1-A933BB5DDB1E.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-06CC635A-8872-44EA-B8AE-60FFCF587142.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-1CA6BDC8-B760-4112-A6C7-A7A379781DA8.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-4714B45A-7D3B-4497-9115-6BCDAF58E538.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-51C9C071-2EF3-45B6-8522-126B77B1DA50.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-99022B95-5F5D-4B3A-A7A5-21AFE15E618C.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-D5F0DB24-F977-4572-B100-4CB8B53E657D.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-B244F70C-6297-4B43-922A-A554E6B7B132.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-67E2CF5D-F4D9-497D-828B-14C62770844A.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-FD684BF0-4AF0-49E0-8435-8AB87098762D.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-595B27E5-1EF7-484C-BD70-F1BD35D38804.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-23B3B41C-9171-40C1-8D9B-E43B38E163C9.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-ACD61889-56ED-49A5-8DEB-CCA0BB354EB0.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-61F3087D-653A-4DF1-A116-C515F5B75452.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-FAB9BE20-2E81-4C5E-9BC1-B8231623C9BD.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-810C7FB7-57B0-4AF5-A19A-F04C483DA61B.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-444E4FA5-CFCA-4D0A-BDC2-63C532942E4D.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-799CDC97-A9C9-4EFC-80A5-1F044BEFB578.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-4A9A975E-D703-465C-8318-4A59F24404DC.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-3D750BB2-8558-4F0E-9E10-8DE225F81734.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-3945FB4B-BCDB-464F-8816-C14681FFF68F.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-16D89C88-3C8E-41EB-BDC5-F9533FD9AF87.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-96B346F6-160A-49D3-A077-160DD32D2829.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-040C4A4A-EFDF-4AF5-BB84-3D5EB748FBC2.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-B7AAACBB-DB20-4B5D-81F0-762D81B7EB6F.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-1F4D1EE4-D2D0-48AD-B5CD-D82F137DFCD1.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-AC2B9B50-432D-4E79-9A84-B855F39A65B1.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-9C4A387E-F1BF-4C2D-8BE4-EF0EA5EF42E0.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-733E9998-E474-43D7-B067-3961E05CEF73.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-F77BCEDF-E37F-4C30-B1F9-3F77A9216E04.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-33C6A54E-A540-4E3D-AFCC-8F52667B19A8.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-2446D0B2-6BE3-4808-A10D-31B4BE4FB05B.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-8084C42D-3FBF-4491-AF5F-54B7AA8E04D2.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-55EFE36D-78E8-472A-8678-88FBB9687FFC.mp4",
+      "confidence": 1.0
+     }
+    ],
+    "source_quote": "Show the video chronologically."
+   },
+   {
+    "op": "caption",
+    "status": "resolved",
+    "attribute": "initial intro title",
+    "intent_id": "caption_intro_title",
+    "assignments": [],
+    "caption_text": "Emir Olympics London Edition",
+    "creator_text": "Emir Olympics London Edition",
+    "source_quote": "add an initial intro title saying Emir Olympics London Edition",
+    "caption_grounding": "creator_text"
+   },
+   {
+    "op": "caption",
+    "status": "resolved",
+    "attribute": "the football event",
+    "intent_id": "caption_football",
+    "assignments": [
+     {
+      "media_id": "analysis-proxy-ios-9BFEFBF8-1DB0-4B1B-AAA1-A933BB5DDB1E.mp4",
+      "confidence": 1.0
+     }
+    ],
+    "caption_text": "Football",
+    "creator_text": "Football",
+    "source_quote": "Football",
+    "caption_grounding": "creator_text"
+   },
+   {
+    "op": "caption",
+    "status": "resolved",
+    "attribute": "the dodgeball event",
+    "intent_id": "caption_dodgeball",
+    "assignments": [
+     {
+      "media_id": "analysis-proxy-ios-9BFEFBF8-1DB0-4B1B-AAA1-A933BB5DDB1E.mp4",
+      "confidence": 1.0
+     }
+    ],
+    "caption_text": "dodgeball",
+    "creator_text": "dodgeball",
+    "source_quote": "dodgeball",
+    "caption_grounding": "creator_text"
+   },
+   {
+    "op": "caption",
+    "status": "resolved",
+    "attribute": "the beach volleyball event",
+    "intent_id": "caption_beach_volleyball",
+    "assignments": [
+     {
+      "media_id": "analysis-proxy-ios-799CDC97-A9C9-4EFC-80A5-1F044BEFB578.mp4",
+      "confidence": 0.9
+     },
+     {
+      "media_id": "analysis-proxy-ios-810C7FB7-57B0-4AF5-A19A-F04C483DA61B.mp4",
+      "confidence": 0.9
+     },
+     {
+      "media_id": "analysis-proxy-ios-61F3087D-653A-4DF1-A116-C515F5B75452.mp4",
+      "confidence": 0.9
+     },
+     {
+      "media_id": "analysis-proxy-ios-FAB9BE20-2E81-4C5E-9BC1-B8231623C9BD.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-ACD61889-56ED-49A5-8DEB-CCA0BB354EB0.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-23B3B41C-9171-40C1-8D9B-E43B38E163C9.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-FD684BF0-4AF0-49E0-8435-8AB87098762D.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-595B27E5-1EF7-484C-BD70-F1BD35D38804.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-67E2CF5D-F4D9-497D-828B-14C62770844A.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-D5F0DB24-F977-4572-B100-4CB8B53E657D.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-99022B95-5F5D-4B3A-A7A5-21AFE15E618C.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-51C9C071-2EF3-45B6-8522-126B77B1DA50.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-B244F70C-6297-4B43-922A-A554E6B7B132.mp4",
+      "confidence": 1.0
+     },
+     {
+      "media_id": "analysis-proxy-ios-4714B45A-7D3B-4497-9115-6BCDAF58E538.mp4",
+      "confidence": 0.95
+     }
+    ],
+    "caption_text": "beach volleyball",
+    "creator_text": "beach volleyball",
+    "source_quote": "beach volleyball",
+    "caption_grounding": "creator_text"
+   },
+   {
+    "op": "caption",
+    "status": "resolved",
+    "attribute": "the pub event",
+    "intent_id": "caption_pub",
+    "assignments": [
+     {
+      "media_id": "analysis-proxy-ios-9BFEFBF8-1DB0-4B1B-AAA1-A933BB5DDB1E.mp4",
+      "confidence": 1.0
+     }
+    ],
+    "caption_text": "pub",
+    "creator_text": "pub",
+    "source_quote": "pub",
+    "caption_grounding": "creator_text"
+   }
+  ],
+  "target_duration_s": 66.798,
+  "video_reuse_policy": "once",
+  "selected_media_ids": [],
+  "caption_style": "auto"
+ },
+ "media": [
+  {
+   "media_id": "analysis-proxy-ios-33C6A54E-A540-4E3D-AFCC-8F52667B19A8.mp4",
+   "capture_time": "2026-08-30T12:21:17Z",
+   "duration_s": 6.7
+  },
+  {
+   "media_id": "analysis-proxy-ios-8084C42D-3FBF-4491-AF5F-54B7AA8E04D2.mp4",
+   "capture_time": "2026-08-30T12:21:37Z",
+   "duration_s": 2.5
+  },
+  {
+   "media_id": "analysis-proxy-ios-55EFE36D-78E8-472A-8678-88FBB9687FFC.mp4",
+   "capture_time": "2026-08-30T12:21:41Z",
+   "duration_s": 1.833333
+  },
+  {
+   "media_id": "analysis-proxy-ios-2446D0B2-6BE3-4808-A10D-31B4BE4FB05B.mp4",
+   "capture_time": "2026-08-30T12:21:44Z",
+   "duration_s": 1.933333
+  },
+  {
+   "media_id": "analysis-proxy-ios-733E9998-E474-43D7-B067-3961E05CEF73.mp4",
+   "capture_time": "2026-08-30T12:31:57Z",
+   "duration_s": 5.8
+  },
+  {
+   "media_id": "analysis-proxy-ios-9C4A387E-F1BF-4C2D-8BE4-EF0EA5EF42E0.mp4",
+   "capture_time": "2026-08-30T12:33:25Z",
+   "duration_s": 2.833333
+  },
+  {
+   "media_id": "analysis-proxy-ios-F77BCEDF-E37F-4C30-B1F9-3F77A9216E04.mp4",
+   "capture_time": "2026-08-30T12:40:22Z",
+   "duration_s": 3.733333
+  },
+  {
+   "media_id": "analysis-proxy-ios-040C4A4A-EFDF-4AF5-BB84-3D5EB748FBC2.mp4",
+   "capture_time": "2026-08-30T12:44:06Z",
+   "duration_s": 13.166667
+  },
+  {
+   "media_id": "analysis-proxy-ios-96B346F6-160A-49D3-A077-160DD32D2829.mp4",
+   "capture_time": "2026-08-30T12:47:23Z",
+   "duration_s": 18.266667
+  },
+  {
+   "media_id": "analysis-proxy-ios-AC2B9B50-432D-4E79-9A84-B855F39A65B1.mp4",
+   "capture_time": "2026-08-30T12:50:09Z",
+   "duration_s": 11.2
+  },
+  {
+   "media_id": "analysis-proxy-ios-1F4D1EE4-D2D0-48AD-B5CD-D82F137DFCD1.mp4",
+   "capture_time": "2026-08-30T12:51:50Z",
+   "duration_s": 11.3
+  },
+  {
+   "media_id": "analysis-proxy-ios-3945FB4B-BCDB-464F-8816-C14681FFF68F.mp4",
+   "capture_time": "2026-08-30T13:06:44Z",
+   "duration_s": 8.733333
+  },
+  {
+   "media_id": "analysis-proxy-ios-16D89C88-3C8E-41EB-BDC5-F9533FD9AF87.mp4",
+   "capture_time": "2026-08-30T13:20:53Z",
+   "duration_s": 21.0
+  },
+  {
+   "media_id": "analysis-proxy-ios-3D750BB2-8558-4F0E-9E10-8DE225F81734.mp4",
+   "capture_time": "2026-08-30T13:24:29Z",
+   "duration_s": 5.066667
+  },
+  {
+   "media_id": "analysis-proxy-ios-B7AAACBB-DB20-4B5D-81F0-762D81B7EB6F.mp4",
+   "capture_time": "2026-08-30T13:25:21Z",
+   "duration_s": 7.6
+  },
+  {
+   "media_id": "analysis-proxy-ios-4A9A975E-D703-465C-8318-4A59F24404DC.mp4",
+   "capture_time": "2026-08-30T14:29:29Z",
+   "duration_s": 6.466667
+  },
+  {
+   "media_id": "analysis-proxy-ios-444E4FA5-CFCA-4D0A-BDC2-63C532942E4D.mp4",
+   "capture_time": "2026-08-30T14:30:21Z",
+   "duration_s": 2.533333
+  },
+  {
+   "media_id": "analysis-proxy-ios-799CDC97-A9C9-4EFC-80A5-1F044BEFB578.mp4",
+   "capture_time": "2026-08-30T14:35:46Z",
+   "duration_s": 2.4
+  },
+  {
+   "media_id": "analysis-proxy-ios-810C7FB7-57B0-4AF5-A19A-F04C483DA61B.mp4",
+   "capture_time": "2026-08-30T14:37:20Z",
+   "duration_s": 1.1667
+  },
+  {
+   "media_id": "analysis-proxy-ios-61F3087D-653A-4DF1-A116-C515F5B75452.mp4",
+   "capture_time": "2026-08-30T14:39:26Z",
+   "duration_s": 3.4
+  },
+  {
+   "media_id": "analysis-proxy-ios-FAB9BE20-2E81-4C5E-9BC1-B8231623C9BD.mp4",
+   "capture_time": "2026-08-30T14:39:41Z",
+   "duration_s": 5.3
+  },
+  {
+   "media_id": "analysis-proxy-ios-ACD61889-56ED-49A5-8DEB-CCA0BB354EB0.mp4",
+   "capture_time": "2026-08-30T14:47:40Z",
+   "duration_s": 3.4
+  },
+  {
+   "media_id": "analysis-proxy-ios-23B3B41C-9171-40C1-8D9B-E43B38E163C9.mp4",
+   "capture_time": "2026-08-30T14:53:40Z",
+   "duration_s": 5.8
+  },
+  {
+   "media_id": "analysis-proxy-ios-FD684BF0-4AF0-49E0-8435-8AB87098762D.mp4",
+   "capture_time": "2026-08-30T14:53:58Z",
+   "duration_s": 4.933333
+  },
+  {
+   "media_id": "analysis-proxy-ios-595B27E5-1EF7-484C-BD70-F1BD35D38804.mp4",
+   "capture_time": "2026-08-30T14:54:46Z",
+   "duration_s": 5.833333
+  },
+  {
+   "media_id": "analysis-proxy-ios-67E2CF5D-F4D9-497D-828B-14C62770844A.mp4",
+   "capture_time": "2026-08-30T14:55:09Z",
+   "duration_s": 4.633333
+  },
+  {
+   "media_id": "analysis-proxy-ios-D5F0DB24-F977-4572-B100-4CB8B53E657D.mp4",
+   "capture_time": "2026-08-30T14:58:31Z",
+   "duration_s": 19.133333
+  },
+  {
+   "media_id": "analysis-proxy-ios-99022B95-5F5D-4B3A-A7A5-21AFE15E618C.mp4",
+   "capture_time": "2026-08-30T15:07:26Z",
+   "duration_s": 9.033333
+  },
+  {
+   "media_id": "analysis-proxy-ios-51C9C071-2EF3-45B6-8522-126B77B1DA50.mp4",
+   "capture_time": "2026-08-30T15:07:37Z",
+   "duration_s": 39.266667
+  },
+  {
+   "media_id": "analysis-proxy-ios-B244F70C-6297-4B43-922A-A554E6B7B132.mp4",
+   "capture_time": "2026-08-30T15:08:20Z",
+   "duration_s": 9.533333
+  },
+  {
+   "media_id": "analysis-proxy-ios-4714B45A-7D3B-4497-9115-6BCDAF58E538.mp4",
+   "capture_time": "2026-08-30T15:08:36Z",
+   "duration_s": 10.266667
+  },
+  {
+   "media_id": "analysis-proxy-ios-1CA6BDC8-B760-4112-A6C7-A7A379781DA8.mp4",
+   "capture_time": "2026-08-30T16:27:21Z",
+   "duration_s": 5.0
+  },
+  {
+   "media_id": "analysis-proxy-ios-06CC635A-8872-44EA-B8AE-60FFCF587142.mp4",
+   "capture_time": "2026-08-30T16:27:30Z",
+   "duration_s": 7.033333
+  },
+  {
+   "media_id": "analysis-proxy-ios-6741935C-3B8B-4CB9-ABFB-2C787F7C56F8.mp4",
+   "capture_time": "2026-08-30T16:27:59Z",
+   "duration_s": 6.3
+  },
+  {
+   "media_id": "analysis-proxy-ios-9BFEFBF8-1DB0-4B1B-AAA1-A933BB5DDB1E.mp4",
+   "capture_time": "2026-08-30T16:49:24Z",
+   "duration_s": 4.666667
+  },
+  {
+   "media_id": "analysis-proxy-ios-BB80A35E-7969-4F4F-90BA-701C3C71D2AF.mp4",
+   "capture_time": "2026-08-30T17:16:54Z",
+   "duration_s": 7.866667
+  },
+  {
+   "media_id": "analysis-proxy-ios-A91D1F17-8EC6-4A75-AC8E-A44A3C2EA23B.mp4",
+   "capture_time": "2026-08-30T17:17:04Z",
+   "duration_s": 3.733333
+  },
+  {
+   "media_id": "analysis-proxy-ios-C6E892EF-6C13-49D3-9D1B-6A43017C25E4.mp4",
+   "capture_time": "2026-08-30T17:17:08Z",
+   "duration_s": 3.766667
+  },
+  {
+   "media_id": "analysis-proxy-ios-B74F7FA0-9D86-4310-982C-180211FD5A8B.mp4",
+   "capture_time": "2026-08-30T17:17:13Z",
+   "duration_s": 2.0
+  },
+  {
+   "media_id": "analysis-proxy-ios-9AD90CFF-7D89-4F68-9CB2-23E0CEDEF716.mp4",
+   "capture_time": "2026-08-30T17:17:16Z",
+   "duration_s": 1.866667
+  },
+  {
+   "media_id": "analysis-proxy-ios-7C85CED1-4C5A-4003-9E76-49BDCFE72348.mp4",
+   "capture_time": "2026-08-30T17:17:19Z",
+   "duration_s": 2.166667
+  },
+  {
+   "media_id": "analysis-proxy-ios-D9FA3ED3-2101-4BA7-AEA1-6E08EC283FDB.mp4",
+   "capture_time": "2026-08-30T17:17:24Z",
+   "duration_s": 1.433333
+  },
+  {
+   "media_id": "analysis-proxy-ios-082BD511-8BEC-44E6-A63D-564DBA35B7A4.mp4",
+   "capture_time": "2026-08-30T17:40:19Z",
+   "duration_s": 1.666667
+  },
+  {
+   "media_id": "analysis-proxy-ios-4FFA052D-93C9-4999-8E3C-CF2911590C64.mp4",
+   "capture_time": "2026-08-30T17:40:22Z",
+   "duration_s": 2.566667
+  },
+  {
+   "media_id": "analysis-proxy-ios-62E3BFDF-071C-4E06-B337-CC4D9F9E57EB.mp4",
+   "capture_time": "2026-08-30T17:40:27Z",
+   "duration_s": 3.766667
+  },
+  {
+   "media_id": "analysis-proxy-ios-53B9FD93-CE05-4DE4-9A84-D8FB524BB99E.mp4",
+   "capture_time": "2026-08-30T18:19:09Z",
+   "duration_s": 1.266667
+  },
+  {
+   "media_id": "analysis-proxy-ios-E75A2141-73FA-4ED9-8934-038E92147D7A.mp4",
+   "capture_time": "2026-08-30T18:37:05Z",
+   "duration_s": 4.533333
+  },
+  {
+   "media_id": "analysis-proxy-ios-8E08FD6F-4F29-49E5-B7D7-A85DB7B9E095.mp4",
+   "capture_time": "2026-08-30T19:11:19Z",
+   "duration_s": 8.0
+  },
+  {
+   "media_id": "analysis-proxy-ios-75105383-F79E-41E0-AB6D-2C404CA3EF89.mp4",
+   "capture_time": "2026-08-30T19:11:36Z",
+   "duration_s": 8.9
+  },
+  {
+   "media_id": "analysis-proxy-ios-391D6396-D39C-4127-AEB0-B71DEE673078.mp4",
+   "capture_time": "2026-08-30T19:11:46Z",
+   "duration_s": 10.1
+  }
+ ],
+ "timeline": [
+  {
+   "moment_id": "unified-cut-1",
+   "media_id": "analysis-proxy-ios-33C6A54E-A540-4E3D-AFCC-8F52667B19A8.mp4",
+   "source_start_s": 4.0,
+   "source_end_s": 5.5,
+   "output_start_s": 0.0,
+   "output_end_s": 1.5,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-2",
+   "media_id": "analysis-proxy-ios-8084C42D-3FBF-4491-AF5F-54B7AA8E04D2.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.5,
+   "output_start_s": 1.5,
+   "output_end_s": 3.0,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-3",
+   "media_id": "analysis-proxy-ios-55EFE36D-78E8-472A-8678-88FBB9687FFC.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.5,
+   "output_start_s": 3.0,
+   "output_end_s": 4.5,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-4",
+   "media_id": "analysis-proxy-ios-2446D0B2-6BE3-4808-A10D-31B4BE4FB05B.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.0,
+   "output_start_s": 4.5,
+   "output_end_s": 5.5,
+   "duration_s": 1.0
+  },
+  {
+   "moment_id": "unified-cut-5",
+   "media_id": "analysis-proxy-ios-733E9998-E474-43D7-B067-3961E05CEF73.mp4",
+   "source_start_s": 3.0,
+   "source_end_s": 4.5,
+   "output_start_s": 5.5,
+   "output_end_s": 7.0,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-6",
+   "media_id": "analysis-proxy-ios-9C4A387E-F1BF-4C2D-8BE4-EF0EA5EF42E0.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.5,
+   "output_start_s": 7.0,
+   "output_end_s": 8.5,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-7",
+   "media_id": "analysis-proxy-ios-F77BCEDF-E37F-4C30-B1F9-3F77A9216E04.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.2,
+   "output_start_s": 8.5,
+   "output_end_s": 9.7,
+   "duration_s": 1.2
+  },
+  {
+   "moment_id": "unified-cut-8",
+   "media_id": "analysis-proxy-ios-040C4A4A-EFDF-4AF5-BB84-3D5EB748FBC2.mp4",
+   "source_start_s": 10.3,
+   "source_end_s": 11.8,
+   "output_start_s": 9.7,
+   "output_end_s": 11.2,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-9",
+   "media_id": "analysis-proxy-ios-96B346F6-160A-49D3-A077-160DD32D2829.mp4",
+   "source_start_s": 14.5,
+   "source_end_s": 16.0,
+   "output_start_s": 11.2,
+   "output_end_s": 12.7,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-10",
+   "media_id": "analysis-proxy-ios-AC2B9B50-432D-4E79-9A84-B855F39A65B1.mp4",
+   "source_start_s": 3.0,
+   "source_end_s": 4.5,
+   "output_start_s": 12.7,
+   "output_end_s": 14.2,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-11",
+   "media_id": "analysis-proxy-ios-1F4D1EE4-D2D0-48AD-B5CD-D82F137DFCD1.mp4",
+   "source_start_s": 3.7,
+   "source_end_s": 5.2,
+   "output_start_s": 14.2,
+   "output_end_s": 15.7,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-12",
+   "media_id": "analysis-proxy-ios-3945FB4B-BCDB-464F-8816-C14681FFF68F.mp4",
+   "source_start_s": 4.5,
+   "source_end_s": 6.0,
+   "output_start_s": 15.7,
+   "output_end_s": 17.2,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-13",
+   "media_id": "analysis-proxy-ios-16D89C88-3C8E-41EB-BDC5-F9533FD9AF87.mp4",
+   "source_start_s": 4.12,
+   "source_end_s": 5.62,
+   "output_start_s": 17.2,
+   "output_end_s": 18.7,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-14",
+   "media_id": "analysis-proxy-ios-3D750BB2-8558-4F0E-9E10-8DE225F81734.mp4",
+   "source_start_s": 3.4,
+   "source_end_s": 4.5,
+   "output_start_s": 18.7,
+   "output_end_s": 19.8,
+   "duration_s": 1.1
+  },
+  {
+   "moment_id": "unified-cut-15",
+   "media_id": "analysis-proxy-ios-B7AAACBB-DB20-4B5D-81F0-762D81B7EB6F.mp4",
+   "source_start_s": 0.54,
+   "source_end_s": 1.54,
+   "output_start_s": 19.8,
+   "output_end_s": 20.8,
+   "duration_s": 1.0
+  },
+  {
+   "moment_id": "unified-cut-16",
+   "media_id": "analysis-proxy-ios-4A9A975E-D703-465C-8318-4A59F24404DC.mp4",
+   "source_start_s": 2.0,
+   "source_end_s": 3.5,
+   "output_start_s": 20.8,
+   "output_end_s": 22.3,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-17",
+   "media_id": "analysis-proxy-ios-444E4FA5-CFCA-4D0A-BDC2-63C532942E4D.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.5,
+   "output_start_s": 22.3,
+   "output_end_s": 23.8,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-18",
+   "media_id": "analysis-proxy-ios-799CDC97-A9C9-4EFC-80A5-1F044BEFB578.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.5,
+   "output_start_s": 23.8,
+   "output_end_s": 25.3,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-19",
+   "media_id": "analysis-proxy-ios-810C7FB7-57B0-4AF5-A19A-F04C483DA61B.mp4",
+   "source_start_s": 0.099,
+   "source_end_s": 1.166,
+   "output_start_s": 25.3,
+   "output_end_s": 26.367,
+   "duration_s": 1.067
+  },
+  {
+   "moment_id": "unified-cut-20",
+   "media_id": "analysis-proxy-ios-61F3087D-653A-4DF1-A116-C515F5B75452.mp4",
+   "source_start_s": 0.09,
+   "source_end_s": 1.15,
+   "output_start_s": 26.367,
+   "output_end_s": 27.427,
+   "duration_s": 1.06
+  },
+  {
+   "moment_id": "unified-cut-21",
+   "media_id": "analysis-proxy-ios-FAB9BE20-2E81-4C5E-9BC1-B8231623C9BD.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.5,
+   "output_start_s": 27.427,
+   "output_end_s": 28.927,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-22",
+   "media_id": "analysis-proxy-ios-ACD61889-56ED-49A5-8DEB-CCA0BB354EB0.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.5,
+   "output_start_s": 28.927,
+   "output_end_s": 30.427,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-23",
+   "media_id": "analysis-proxy-ios-23B3B41C-9171-40C1-8D9B-E43B38E163C9.mp4",
+   "source_start_s": 0.3,
+   "source_end_s": 1.5,
+   "output_start_s": 30.427,
+   "output_end_s": 31.627,
+   "duration_s": 1.2
+  },
+  {
+   "moment_id": "unified-cut-24",
+   "media_id": "analysis-proxy-ios-FD684BF0-4AF0-49E0-8435-8AB87098762D.mp4",
+   "source_start_s": 4.5,
+   "source_end_s": 4.903,
+   "output_start_s": 31.627,
+   "output_end_s": 32.03,
+   "duration_s": 0.403
+  },
+  {
+   "moment_id": "unified-cut-25",
+   "media_id": "analysis-proxy-ios-595B27E5-1EF7-484C-BD70-F1BD35D38804.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.5,
+   "output_start_s": 32.03,
+   "output_end_s": 33.53,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-26",
+   "media_id": "analysis-proxy-ios-67E2CF5D-F4D9-497D-828B-14C62770844A.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.5,
+   "output_start_s": 33.53,
+   "output_end_s": 35.03,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-27",
+   "media_id": "analysis-proxy-ios-D5F0DB24-F977-4572-B100-4CB8B53E657D.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.5,
+   "output_start_s": 35.03,
+   "output_end_s": 36.53,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-28",
+   "media_id": "analysis-proxy-ios-99022B95-5F5D-4B3A-A7A5-21AFE15E618C.mp4",
+   "source_start_s": 7.999,
+   "source_end_s": 9.031,
+   "output_start_s": 36.53,
+   "output_end_s": 37.562,
+   "duration_s": 1.032
+  },
+  {
+   "moment_id": "unified-cut-29",
+   "media_id": "analysis-proxy-ios-51C9C071-2EF3-45B6-8522-126B77B1DA50.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.5,
+   "output_start_s": 37.562,
+   "output_end_s": 39.062,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-30",
+   "media_id": "analysis-proxy-ios-B244F70C-6297-4B43-922A-A554E6B7B132.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.5,
+   "output_start_s": 39.062,
+   "output_end_s": 40.562,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-31",
+   "media_id": "analysis-proxy-ios-4714B45A-7D3B-4497-9115-6BCDAF58E538.mp4",
+   "source_start_s": 7.09,
+   "source_end_s": 8.59,
+   "output_start_s": 40.562,
+   "output_end_s": 42.062,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-32",
+   "media_id": "analysis-proxy-ios-1CA6BDC8-B760-4112-A6C7-A7A379781DA8.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.5,
+   "output_start_s": 42.062,
+   "output_end_s": 43.562,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-33",
+   "media_id": "analysis-proxy-ios-06CC635A-8872-44EA-B8AE-60FFCF587142.mp4",
+   "source_start_s": 5.83,
+   "source_end_s": 7.0,
+   "output_start_s": 43.562,
+   "output_end_s": 44.732,
+   "duration_s": 1.17
+  },
+  {
+   "moment_id": "unified-cut-34",
+   "media_id": "analysis-proxy-ios-6741935C-3B8B-4CB9-ABFB-2C787F7C56F8.mp4",
+   "source_start_s": 2.76,
+   "source_end_s": 4.26,
+   "output_start_s": 44.732,
+   "output_end_s": 46.232,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-35",
+   "media_id": "analysis-proxy-ios-9BFEFBF8-1DB0-4B1B-AAA1-A933BB5DDB1E.mp4",
+   "source_start_s": 2.5,
+   "source_end_s": 3.7,
+   "output_start_s": 46.232,
+   "output_end_s": 47.432,
+   "duration_s": 1.2
+  },
+  {
+   "moment_id": "unified-cut-36",
+   "media_id": "analysis-proxy-ios-BB80A35E-7969-4F4F-90BA-701C3C71D2AF.mp4",
+   "source_start_s": 6.499,
+   "source_end_s": 7.866,
+   "output_start_s": 47.432,
+   "output_end_s": 48.799,
+   "duration_s": 1.367
+  },
+  {
+   "moment_id": "unified-cut-37",
+   "media_id": "analysis-proxy-ios-A91D1F17-8EC6-4A75-AC8E-A44A3C2EA23B.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.5,
+   "output_start_s": 48.799,
+   "output_end_s": 50.299,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-38",
+   "media_id": "analysis-proxy-ios-C6E892EF-6C13-49D3-9D1B-6A43017C25E4.mp4",
+   "source_start_s": 2.499,
+   "source_end_s": 3.766,
+   "output_start_s": 50.299,
+   "output_end_s": 51.566,
+   "duration_s": 1.267
+  },
+  {
+   "moment_id": "unified-cut-39",
+   "media_id": "analysis-proxy-ios-B74F7FA0-9D86-4310-982C-180211FD5A8B.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.0,
+   "output_start_s": 51.566,
+   "output_end_s": 52.566,
+   "duration_s": 1.0
+  },
+  {
+   "moment_id": "unified-cut-40",
+   "media_id": "analysis-proxy-ios-9AD90CFF-7D89-4F68-9CB2-23E0CEDEF716.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.5,
+   "output_start_s": 52.566,
+   "output_end_s": 54.066,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-41",
+   "media_id": "analysis-proxy-ios-7C85CED1-4C5A-4003-9E76-49BDCFE72348.mp4",
+   "source_start_s": 1.099,
+   "source_end_s": 2.166,
+   "output_start_s": 54.066,
+   "output_end_s": 55.133,
+   "duration_s": 1.067
+  },
+  {
+   "moment_id": "unified-cut-42",
+   "media_id": "analysis-proxy-ios-D9FA3ED3-2101-4BA7-AEA1-6E08EC283FDB.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.0,
+   "output_start_s": 55.133,
+   "output_end_s": 56.133,
+   "duration_s": 1.0
+  },
+  {
+   "moment_id": "unified-cut-43",
+   "media_id": "analysis-proxy-ios-082BD511-8BEC-44E6-A63D-564DBA35B7A4.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.0,
+   "output_start_s": 56.133,
+   "output_end_s": 57.133,
+   "duration_s": 1.0
+  },
+  {
+   "moment_id": "unified-cut-44",
+   "media_id": "analysis-proxy-ios-4FFA052D-93C9-4999-8E3C-CF2911590C64.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.4,
+   "output_start_s": 57.133,
+   "output_end_s": 58.533,
+   "duration_s": 1.4
+  },
+  {
+   "moment_id": "unified-cut-45",
+   "media_id": "analysis-proxy-ios-62E3BFDF-071C-4E06-B337-CC4D9F9E57EB.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.0,
+   "output_start_s": 58.533,
+   "output_end_s": 59.533,
+   "duration_s": 1.0
+  },
+  {
+   "moment_id": "unified-cut-46",
+   "media_id": "analysis-proxy-ios-53B9FD93-CE05-4DE4-9A84-D8FB524BB99E.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.265,
+   "output_start_s": 59.533,
+   "output_end_s": 60.798,
+   "duration_s": 1.265
+  },
+  {
+   "moment_id": "unified-cut-47",
+   "media_id": "analysis-proxy-ios-E75A2141-73FA-4ED9-8934-038E92147D7A.mp4",
+   "source_start_s": 0.0,
+   "source_end_s": 1.5,
+   "output_start_s": 60.798,
+   "output_end_s": 62.298,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-48",
+   "media_id": "analysis-proxy-ios-8E08FD6F-4F29-49E5-B7D7-A85DB7B9E095.mp4",
+   "source_start_s": 2.25,
+   "source_end_s": 3.75,
+   "output_start_s": 62.298,
+   "output_end_s": 63.798,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-49",
+   "media_id": "analysis-proxy-ios-75105383-F79E-41E0-AB6D-2C404CA3EF89.mp4",
+   "source_start_s": 3.7,
+   "source_end_s": 5.2,
+   "output_start_s": 63.798,
+   "output_end_s": 65.298,
+   "duration_s": 1.5
+  },
+  {
+   "moment_id": "unified-cut-50",
+   "media_id": "analysis-proxy-ios-391D6396-D39C-4127-AEB0-B71DEE673078.mp4",
+   "source_start_s": 5.9,
+   "source_end_s": 7.4,
+   "output_start_s": 65.298,
+   "output_end_s": 66.798,
+   "duration_s": 1.5
+  }
+ ],
+ "title": {
+  "z": null,
+  "id": "guided-title",
+  "role": "generative_intro",
+  "text": "Emir Olympics London Edition",
+  "color": "#FFF8F0",
+  "end_s": 2.2,
+  "effect": "static",
+  "motion": null,
+  "x_frac": 0.5,
+  "y_frac": 0.16,
+  "removed": false,
+  "size_px": 76.0,
+  "start_s": 0.0,
+  "position": "custom",
+  "reveal_s": null,
+  "alignment": "center",
+  "text_case": null,
+  "glow_color": null,
+  "size_class": null,
+  "fade_out_ms": null,
+  "font_family": "Alte Haas Grotesk",
+  "line_spacing": null,
+  "rotation_deg": null,
+  "shadow_color": null,
+  "shadow_style": "standard",
+  "stroke_color": null,
+  "stroke_width": 0.0,
+  "word_timings": null,
+  "editor_preset": null,
+  "glow_strength": null,
+  "source_params": null,
+  "behind_subject": false,
+  "letter_spacing": null,
+  "max_width_frac": 0.84,
+  "shadow_enabled": true,
+  "shadow_opacity": null,
+  "highlight_color": "#D9FF70",
+  "visual_block_id": null,
+  "animation_phases": null,
+  "background_color": null,
+  "theme_transition": null
+ },
+ "composer_operations": [
+  {
+   "op": "remove_texts",
+   "selector": {
+    "group": "free"
+   },
+   "target_ids": [
+    "group-title-caption_beach_volleyball-1"
+   ],
+   "expected_count": 1
+  },
+  {
+   "op": "remove_texts",
+   "selector": {
+    "group": "labels"
+   },
+   "target_ids": [
+    "clip-label-unified-cut-35"
+   ],
+   "expected_count": 1
+  },
+  {
+   "op": "add_text",
+   "text": "Football",
+   "end_s": 4.5,
+   "start_s": 2.2,
+   "style_from": "title"
+  },
+  {
+   "op": "add_text",
+   "text": "dodgeball",
+   "end_s": 23.8,
+   "start_s": 22.3,
+   "style_from": "title"
+  },
+  {
+   "op": "add_text",
+   "text": "beach volleyball",
+   "end_s": 25.3,
+   "start_s": 23.8,
+   "style_from": "title"
+  },
+  {
+   "op": "add_text",
+   "text": "pub",
+   "end_s": 48.8,
+   "start_s": 47.43,
+   "style_from": "title"
+  }
+ ]
+}
