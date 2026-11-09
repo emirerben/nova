@@ -253,3 +253,30 @@ def test_the_hour_labels_every_clip_and_leaves_bound_texts_as_written(monkeypatc
         if f"clip-label-media-{media}" in texts
     }
     assert hours == {"m0": "14:32", "m1": "09:05", "m2": "10:05", "m3": "11:47"}
+
+
+@pytest.mark.parametrize(
+    "bound",
+    [
+        _event_title("m1", "s2", 2.0, 6.0),
+        _participant("m1", "s2", 2.0, 4.0),
+    ],
+    ids=["event_title", "participant"],
+)
+def test_a_clip_with_a_bound_text_still_takes_a_label_of_its_own(monkeypatch, bound):
+    from app.agents.edit_copilot import _parse_op, _ParseState
+
+    job, variant = _guided(monkeypatch, [copy.deepcopy(_GLOBAL_TITLE), copy.deepcopy(bound)])
+    snapshot = build_editor_snapshot(job, variant)
+    state = _ParseState(0.9)
+    state.utterance = "label this clip 'the bridge'"
+    parsed = _parse_op(
+        {"op": "add_text", "text": "the bridge", "start_s": 2.0, "end_s": 4.0, "clip_id": "m1"},
+        snapshot,
+        state,
+    )
+    assert parsed is not None, (state.rejection_reasons, state.selector_clarification)
+    compiled = compile_editor_ops(job, variant, [parsed])
+    texts = {row["id"]: row["text"] for row in compiled.payload.text_elements}
+    assert texts["clip-label-media-m1"] == "the bridge"
+    assert texts[bound["id"]] == bound["text"]
