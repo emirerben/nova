@@ -107,3 +107,72 @@ Findings:
 - NOT met: Çiğdem's format rule "no pause > 0.4 s". Default cleanup removes pauses >= 0.6 s
   (long-pause pass) for every take; 0.42-0.61 s pauses stay, exactly as on a single take. Tight
   0.3 s pauses run only on an explicit ask and only on a single take (follow-up).
+
+## Follow-up: the four gaps (2026-11-09, second pass)
+
+Decisions:
+- G1 tight pauses: on a video made of several takes, the tight pass (every pause down to ~0.3 s)
+  runs for a plain "cut the pauses" too, not only for "cut ALL my pauses" (Yasin, 2026-11-09:
+  Çiğdem's real S3 message says plain "Cut the pauses" and her format allows no pause > 0.4 s).
+  One-take videos keep today's rule (plain = pauses >= 0.6 s). Joins between takes are always
+  trimmed to the same tight target, with word stamps + the voice guard.
+- G2 "oh sorry, again": reproduced with the live whisper-1 words of job 7416c94b (caption cue
+  words, raw source times). The relisten guard (`_relistened_plan`) re-listens any removal that
+  overlaps a lexical filler ("oh"), and judges every word inside the cut; a restart's abandoned
+  words ("sorry", "again", even the redelivery "and" via pool matching) are lost by design, so
+  the restart was dropped: `relisten.dropped=[{13.94-17.54, lost: [sorry, again, and]}]`.
+  Not a loose-stamp problem. Fix: a restart removal is judged only on the words just OUTSIDE its
+  own word span (by word index, aligned times when the aligner ran), so the safety net still
+  catches a cut that eats a neighbour word.
+- G3 named line in several takes: grounded in each take's own preflight words; cut only when
+  exactly one take (and one place in it, or the creator's pick) says it; then the joins/offsets/
+  captions/photos follow from that take's plan.
+- G4 older app builds: see below.
+
+Failure modes written before code:
+
+G1 tight pauses on several takes + joins
+- T1 a tight ask on several takes gets LESS than plain today (long pass skips tight briefs,
+  tight pass skips several takes) -> every take must get the tight pass.
+- T2 the join trim cuts a soft word ending / onset (no word stamps, no voice guard, keeps 0.15 s
+  < the tight pass's attach/soft-ending margins).
+- T3 join gap = tail kept + lead kept; 0.15 + 0.15 = 0.30 s sits on the limit -> use the tight
+  pass's pad per side.
+- T4 clip budget: each kept segment is a clip on one shared main track (<= 100); three tight
+  takes can exceed it -> shared budget across takes.
+- T5 a noisy take gets no tight cuts but the draft promised ~0.3 s -> per-take "noisy" surfaced.
+- T6 a measurement failure on one take silently summed away.
+- T7 captions/photos/cutaways: tight cuts must land in the take plans before words are remapped.
+- T8 receipts/counts only see the first take (`silence_cut`, `tight_pauses`) -> "found no
+  pauses" while later takes were cut; finished-video review must read every take + joins.
+- T9 draft says "only the long pauses" for several takes while the render cuts tight (or the
+  reverse); Turkish twin missing.
+- T10 non-adjacent joins: an uncut take (no speech / ending clip) between two cut takes.
+- T11 flag off / one take: byte-identical.
+
+G2 restart kept by the relisten guard
+- R1 exempting restarts entirely removes the only acoustic net: a wrong restart span would cut
+  real speech -> keep relistening, judge only the neighbours.
+- R2 word index vs time mismatch after alignment re-timing (zero-length whisper-1 words).
+- R3 left edge eats the tail of the word before (whisper-1 late stamps) -> neighbour judged.
+- R4 right edge leaves 0.12 s before the redelivery; a quiet onset could be clipped.
+- R5 aligner unavailable / non-English -> raw stamps; behaviour must stay safe (neighbour check
+  still runs on the relisten transcript).
+- R6 pool matching mismatches repeated words ("and ... and") -> judge by index window.
+- R7 a filler-only removal must still be judged exactly as today (no regression in the guard).
+- R8 paid budget: relisten calls per take multiply with several takes (RELISTEN_MAX_CUTS).
+
+G3 named line in several takes
+- N1 the line is said in two takes -> refuse (no guess), receipt names it.
+- N2 said twice in one take with no pick -> refuse as today (`said_more_than_once`).
+- N3 never said -> `not_found`, honest receipt.
+- N4 transcriber spelling differs -> no fuzzy for 1-2 word quotes (unchanged).
+- N5 cut touches a neighbour word -> midpoint clamps (unchanged) + join re-trim after the cut.
+- N6 wrong take: words of take 1 used for a line in take B (today's spine-only call) -> each
+  take's own words, keyed by clip id / storage path.
+- N7 later takes, captions, photos, cutaways not shifted -> cut must be in the take plan before
+  remapping.
+- N8 editor Save reverts the cut / preview shows it uncut.
+- N9 start/end quotes in several takes stay refused (out of scope) and say so.
+- N10 cleanup declined -> no per-take words -> named line still refused honestly.
+- N11 flag off byte-identical; draft promise matches the render.
