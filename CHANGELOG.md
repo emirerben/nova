@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.115.0] - 2026-11-09
+
+### Fixed
+- fix(ios): talk-bench video background no longer blocks Record (KRI-1180) (#2219) <!-- release-pr: 2219 -->
+
 ## [0.88.114.0] - 2026-11-09
 
 ### Changed
