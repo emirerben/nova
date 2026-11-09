@@ -62,6 +62,7 @@ from app.services.job_cancel import (
     lock_and_cancel_job,
     revoke_and_cleanup_job,
 )
+from app.services.job_status import JOB_CANCELLABLE_STATUSES
 from app.services.kria_trace import find_thread_link
 from app.services.public_assembly_plan import (
     project_admin_debug_candidates,
@@ -91,14 +92,7 @@ router = APIRouter()
 # whether to show the Cancel button; if the two lists drift, the
 # button can show for a status the backend rejects with 409 (or
 # hide for a status it would accept).
-_CANCELLABLE_STATUSES = (
-    "importing",
-    "queued",
-    "processing",
-    "matching",
-    "rendering",
-    "posting",
-)
+_CANCELLABLE_STATUSES = JOB_CANCELLABLE_STATUSES
 
 # Paired with src/apps/web/src/lib/admin-jobs-api.ts. Bump both if changed.
 CONTEXT_RUNS_CAP = 200
