@@ -1153,9 +1153,7 @@ def analysis_snapshot(row: SpeechCleanupAnalysis) -> dict[str, Any]:
     return {
         # KRI-720: a several-take row's snapshot is schema 2 (its ``analysis`` is the
         # several-take payload); the ``source`` block is the row's first take either way.
-        "schema_version": (
-            2 if row.analysis_payload.get("schema_version") == 2 else 1
-        ),
+        "schema_version": (2 if row.analysis_payload.get("schema_version") == 2 else 1),
         "analysis_id": str(row.id),
         "engine_version": row.engine_version,
         "detector_version": row.detector_version,
