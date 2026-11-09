@@ -74,12 +74,12 @@ def manifests(run_dir: Path) -> list[dict]:
 
 
 def listing(path: Path) -> dict[str, str]:
-    """name -> size text for every cinematic-*.mov row of a devicectl file listing."""
+    """name -> size text for every staging movie row of a devicectl file listing: cinematic-<uuid>.mov (old layout) or <uuid>.mov (tmp/CinematicBake)."""
     rows = {}
     if not path.exists():
         return rows
     for line in path.read_text().splitlines():
-        match = re.match(r"^(\S*cinematic-[0-9A-Fa-f-]+\.mov)\s+.*?(\d+(?:\.\d+)?\s*(?:bytes|KB|MB|GB))\s", line)
+        match = re.match(r"^((?:\S*cinematic-)?[0-9A-Fa-f]{8}-[0-9A-Fa-f-]{27}\.mov)\s+.*?(\d+(?:\.\d+)?\s*(?:bytes|KB|MB|GB))\s", line)
         if match:
             rows[match.group(1)] = match.group(2)
     return rows
@@ -96,8 +96,9 @@ def bake_intervals(run_dir: Path) -> list[dict]:
 
 def main() -> int:
     run_dir = Path(sys.argv[1])
-    before, after = listing(run_dir / "tmp-before.txt"), listing(run_dir / "tmp-after.txt")
-    staging = [probe(movie) for movie in sorted((run_dir / "tmp-staging").glob("cinematic-*.mov"))]
+    before = {**listing(run_dir / "tmp-before.txt"), **listing(run_dir / "tmp-before-bake.txt")}
+    after = {**listing(run_dir / "tmp-after.txt"), **listing(run_dir / "tmp-after-bake.txt")}
+    staging = [probe(movie) for movie in sorted((run_dir / "tmp-staging").glob("*.mov"))]
     report = {
         "takes": manifests(run_dir),
         "bake_intervals": bake_intervals(run_dir),

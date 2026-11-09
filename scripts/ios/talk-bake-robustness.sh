@@ -70,7 +70,10 @@ wait_for_unlocked() {
   done
 }
 
-list_tmp() { xcrun devicectl device info files --device "$DEVICE_ID" --domain-type appDataContainer --domain-identifier "$BUNDLE_ID" --subdirectory tmp >"$1" 2>&1 || true; }
+list_tmp() { # <file>: the app's tmp folder (the old staging layout) and tmp/CinematicBake (the current one, in <file minus .txt>-bake.txt)
+  xcrun devicectl device info files --device "$DEVICE_ID" --domain-type appDataContainer --domain-identifier "$BUNDLE_ID" --subdirectory tmp >"$1" 2>&1 || true
+  xcrun devicectl device info files --device "$DEVICE_ID" --domain-type appDataContainer --domain-identifier "$BUNDLE_ID" --subdirectory tmp/CinematicBake >"${1%.txt}-bake.txt" 2>&1 || true
+}
 
 copy_from() { # <source> <destination> <log>
   xcrun devicectl device copy from --device "$DEVICE_ID" --domain-type appDataContainer --domain-identifier "$BUNDLE_ID" --source "$1" --destination "$2" >>"$3" 2>&1
@@ -94,6 +97,11 @@ pull_run() { # <run-dir>
   for name in $(grep -o 'cinematic-[0-9A-Fa-f-]*\.mov' "$run_dir/tmp-after.txt" | sort -u); do
     scratch="$(mktemp -d)"
     copy_from "tmp/$name" "$scratch" "$run_dir/devicectl-pull.log" && cp -R "$scratch/." "$run_dir/tmp-staging/" 2>/dev/null || true
+    rm -rf "$scratch"
+  done
+  for name in $(grep -oE '[0-9A-Fa-f]{8}-[0-9A-Fa-f-]{27}\.mov' "$run_dir/tmp-after-bake.txt" | sort -u); do
+    scratch="$(mktemp -d)"
+    copy_from "tmp/CinematicBake/$name" "$scratch" "$run_dir/devicectl-pull.log" && cp -R "$scratch/." "$run_dir/tmp-staging/" 2>/dev/null || true
     rm -rf "$scratch"
   done
 }
