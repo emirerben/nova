@@ -574,7 +574,7 @@ enum WorkspaceDestination: Equatable, Sendable {
             }
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") {
-                let project = ProjectSummary(id: UUID(), title: "Untitled project", status: .draft, updatedAt: .now, posterURL: nil)
+                let project = ProjectSummary(id: TalkBench.fixedProjectID ?? UUID(), title: "Untitled project", status: .draft, updatedAt: .now, posterURL: nil)
                 projects.insert(project, at: 0); pendingNewChat = nil; selectedProject = project; destination = .chat(project.id); projectsState = .loaded
                 return
             }

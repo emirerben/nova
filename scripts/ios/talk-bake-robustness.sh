@@ -6,6 +6,9 @@
 #   scripts/ios/talk-bake-robustness.sh --scenario background --runs 3
 #   scripts/ios/talk-bake-robustness.sh --scenario kill --runs 3 --kill-delay 1     # also 3 and 6 to hit the replace window
 #   scripts/ios/talk-bake-robustness.sh --scenario retake --runs 3 --skip-build
+#   scripts/ios/talk-bake-robustness.sh --scenario relaunch --runs 3   # kill mid-bake, relaunch (KRIA_TALK_BENCH_KEEP_TAKES), reopen the take
+#   scripts/ios/talk-bake-robustness.sh --scenario usewait --runs 3    # Use take while the bake runs; pulls the staged upload copy
+#   scripts/ios/talk-bake-robustness.sh --scenario previous --runs 3   # retake mid-bake, record take 2, Go back to previous take
 #
 # Per run it writes .talk-bake/<label>/<scenario>--run<N>/ with result.xcresult, xcodebuild.log, bench/ (Documents/talk-bench,
 # the talk.bake.run intervals), teleprompter/ (manifests and movies), tmp-before/after.txt, tmp-staging/ (leftover
@@ -14,7 +17,9 @@
 # Same conventions as talk-bench.sh: Debug build, device-only, opt-in through TEST_RUNNER_KRIA_TELEPROMPTER_HARDWARE_TEST=1 and
 # KRIA_TALK_BENCH=1, wait for an unlocked phone, no uninstall between runs (a fresh install breaks the scripted paste). The bench
 # wipes KriaTeleprompter and Documents/talk-bench when the app launches with KRIA_TALK_BENCH=1, so every run starts empty, and
-# nothing here launches the app again between the test and the pull.
+# nothing here launches the app again between the test and the pull. The relaunch scenario sets KRIA_TALK_BENCH_KEEP_TAKES=1 and
+# KRIA_PERF_DISK_STORE=1 itself so its second launch keeps the take and the chat. The usewait scenario also pulls
+# Library/Application Support/KriaUploads (uploads/): the copy Use take staged for the upload queue.
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
@@ -40,11 +45,11 @@ while [[ $# -gt 0 ]]; do
     --device-id) DEVICE_ID="$2"; shift 2 ;;
     --skip-build) SKIP_BUILD=1; shift ;;
     --retry-failed-runs) TEST_RETRIES="$2"; shift 2 ;;
-    -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
-[[ "$SCENARIO" =~ ^(background|kill|retake)$ ]] || { echo "--scenario is background, kill or retake" >&2; exit 2; }
+[[ "$SCENARIO" =~ ^(background|kill|retake|relaunch|usewait|previous)$ ]] || { echo "--scenario is background, kill, retake, relaunch, usewait or previous" >&2; exit 2; }
 [[ -n "$DEVICE_ID" ]] || { echo "Pass --device-id <udid> or set KRIA_DEVICE_ID" >&2; exit 2; }
 [[ -n "$LABEL" ]] || LABEL="$(git -C "$REPO_ROOT" rev-parse --short HEAD)-$(date +%Y%m%d-%H%M%S)"
 RUN_ROOT="$OUT_ROOT/$LABEL"
@@ -75,6 +80,10 @@ list_tmp() { # <file>: the app's tmp folder (the old staging layout) and tmp/Cin
   xcrun devicectl device info files --device "$DEVICE_ID" --domain-type appDataContainer --domain-identifier "$BUNDLE_ID" --subdirectory tmp/CinematicBake >"${1%.txt}-bake.txt" 2>&1 || true
 }
 
+list_uploads() { # <file>: the upload queue's staging folder (what Use take copies a take into)
+  xcrun devicectl device info files --device "$DEVICE_ID" --domain-type appDataContainer --domain-identifier "$BUNDLE_ID" --subdirectory "Library/Application Support/KriaUploads" >"$1" 2>&1 || true
+}
+
 copy_from() { # <source> <destination> <log>
   xcrun devicectl device copy from --device "$DEVICE_ID" --domain-type appDataContainer --domain-identifier "$BUNDLE_ID" --source "$1" --destination "$2" >>"$3" 2>&1
 }
@@ -82,6 +91,18 @@ copy_from() { # <source> <destination> <log>
 # devicectl may put the files in the destination or in a folder named like the source; flatten either way.
 flatten_into() { # <scratch> <inner-name> <dest>
   if [[ -d "$1/$2" ]]; then cp -R "$1/$2"/. "$3"/; elif [[ -d "$1" ]]; then cp -R "$1"/. "$3"/; fi
+}
+
+# Use take's staged copy lives only a few seconds when no backend takes the upload (the failed reserve deletes it at once), so
+# the usewait scenario copies KriaUploads in a loop while the test runs and keeps any movie it catches in <run-dir>/uploads.
+poll_uploads() { # <dest>
+  local scratch
+  while :; do
+    scratch="$(mktemp -d)"
+    copy_from "Library/Application Support/KriaUploads" "$scratch" /dev/null || true
+    find "$scratch" -name '*.mov' -size +1M -exec cp -n {} "$1"/ \; 2>/dev/null || true
+    rm -rf "$scratch"
+  done
 }
 
 pull_run() { # <run-dir>
@@ -93,6 +114,11 @@ pull_run() { # <run-dir>
   scratch="$(mktemp -d)"
   copy_from "Library/Application Support/KriaTeleprompter" "$scratch" "$run_dir/devicectl-pull.log" || echo "talk-bake: no KriaTeleprompter folder" >&2
   flatten_into "$scratch" KriaTeleprompter "$run_dir/teleprompter"; rm -rf "$scratch"
+  mkdir -p "$run_dir/uploads"
+  scratch="$(mktemp -d)"
+  copy_from "Library/Application Support/KriaUploads" "$scratch" "$run_dir/devicectl-pull.log" || echo "talk-bake: no KriaUploads folder" >&2
+  flatten_into "$scratch" KriaUploads "$run_dir/uploads"; rm -rf "$scratch"
+  list_uploads "$run_dir/uploads-after.txt"
   list_tmp "$run_dir/tmp-after.txt"
   for name in $(grep -o 'cinematic-[0-9A-Fa-f-]*\.mov' "$run_dir/tmp-after.txt" | sort -u); do
     scratch="$(mktemp -d)"
@@ -121,7 +147,10 @@ for run in $(seq 1 "$RUNS"); do
     attempts=$((attempts + 1))
     wait_for_unlocked || { echo "talk-bake: the phone stayed locked for 180 s" >&2; exit 75; }
     list_tmp "$run_dir/tmp-before.txt"
+    list_uploads "$run_dir/uploads-before.txt"
     exit_code=0
+    poller=""
+    if [[ "$SCENARIO" == usewait ]]; then mkdir -p "$run_dir/uploads"; poll_uploads "$run_dir/uploads" & poller=$!; fi
     TEST_RUNNER_KRIA_TELEPROMPTER_HARDWARE_TEST=1 TEST_RUNNER_KRIA_TALK_BENCH=1 \
     TEST_RUNNER_KRIA_TALK_BAKE_SCENARIO="$SCENARIO" TEST_RUNNER_KRIA_TALK_BAKE_SECONDS="$SECONDS_PER_TAKE" \
     TEST_RUNNER_KRIA_TALK_BAKE_AWAY_SECONDS="$AWAY" TEST_RUNNER_KRIA_TALK_BAKE_KILL_DELAY="$KILL_DELAY" \
@@ -129,6 +158,7 @@ for run in $(seq 1 "$RUNS"); do
       xcodebuild test-without-building -project "$IOS_ROOT/Kria.xcodeproj" -scheme "$SCHEME" -configuration Debug \
         -destination "platform=iOS,id=$DEVICE_ID" -derivedDataPath "$DERIVED_DATA" -enableCodeCoverage NO \
         -resultBundlePath "$run_dir/result.xcresult" -only-testing "$TEST_ID" >"$run_dir/xcodebuild.log" 2>&1 || exit_code=$?
+    if [[ -n "$poller" ]]; then kill "$poller" 2>/dev/null || true; wait "$poller" 2>/dev/null || true; fi
     [[ "$exit_code" -eq 0 ]] && break
     [[ "$attempts" -le "$TEST_RETRIES" ]] || break
     echo "talk-bake:   attempt $attempts failed (exit $exit_code), retrying in 20 s" >&2

@@ -379,7 +379,8 @@ import XCTest
         }
         continueAfterFailure = false
         let scenario = environment["KRIA_TALK_BAKE_SCENARIO"] ?? ""
-        XCTAssertTrue(["background", "kill", "retake"].contains(scenario), "KRIA_TALK_BAKE_SCENARIO is background, kill or retake.")
+        XCTAssertTrue(["background", "kill", "retake", "relaunch", "usewait", "previous"].contains(scenario),
+                      "KRIA_TALK_BAKE_SCENARIO is background, kill, retake, relaunch, usewait or previous.")
         let seconds = TimeInterval(environment["KRIA_TALK_BAKE_SECONDS"] ?? "") ?? 30
         let away = TimeInterval(environment["KRIA_TALK_BAKE_AWAY_SECONDS"] ?? "") ?? 25
         let killDelay = TimeInterval(environment["KRIA_TALK_BAKE_KILL_DELAY"] ?? "") ?? 1
@@ -391,7 +392,11 @@ import XCTest
             return true
         }
         defer { removeUIInterruptionMonitor(removePermissionMonitor) }
-        let app = launchTalking(bench: ["KRIA_TALK_BENCH": "1", "KRIA_TALK_BENCH_BACKGROUND": "none", "KRIA_TALK_BENCH_CINEMATIC": "1"])
+        var bench = ["KRIA_TALK_BENCH": "1", "KRIA_TALK_BENCH_BACKGROUND": "none", "KRIA_TALK_BENCH_CINEMATIC": "1"]
+        // A relaunch must reach the same teleprompter store: the fixture chat opens a fixed project id both times, and only the
+        // second launch keeps the takes the first one left (the first still starts empty).
+        if scenario == "relaunch" { bench["KRIA_TALK_BENCH_PROJECT_ID"] = "0A1B2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C4D" }
+        let app = launchTalking(bench: bench)
         openScriptFromTray(app)
         let script = app.textViews["teleprompter-script-editor"]
         XCTAssertTrue(script.waitForExistence(timeout: 8))
@@ -449,6 +454,48 @@ import XCTest
             wait(seconds: killDelay)
             screenshot(app, named: "Review just before the kill")
             app.terminate()
+        case "relaunch":
+            XCTAssertTrue(waitForBakeProgress(), "The bake reports progress before the kill.")
+            wait(seconds: killDelay)
+            app.terminate()
+            app.launchEnvironment["KRIA_TALK_BENCH_KEEP_TAKES"] = "1"
+            app.launch()
+            XCTAssertTrue(reopenTeleprompter(app), "The relaunched app opens the killed take's project again.")
+            XCTAssertTrue(useTake.waitForExistence(timeout: 30), "The killed take is back in Review, not lost.")
+            screenshot(app, named: "Review after relaunch")
+            XCTAssertTrue(waitForBakeToSettle(bakeNote, timeout: 300), "The bake restarts on the reopened Review and finishes.")
+            XCTAssertEqual(bakeNote.label, "Recorded in Cinematic.")
+            screenshot(app, named: "Review after relaunch, bake finished")
+            finishAndFlush()
+        case "usewait":
+            XCTAssertTrue(waitForBakeProgress(), "The bake reports progress before Use take.")
+            useTake.tap()
+            wait(seconds: 1)
+            screenshot(app, named: "Use take while the bake runs")
+            XCTAssertFalse(useTake.isEnabled, "Use take is disabled while it waits for the bake.")
+            XCTAssertTrue(waitForBakeToSettle(bakeNote, timeout: 300), "The bake finishes while Use take waits.")
+            screenshot(app, named: "After the bake finished under Use take")
+            // No backend takes the upload: whatever the screen shows afterwards is recorded, not asserted.
+            wait(seconds: 20)
+            screenshot(app, named: "20 s after Use take")
+            finishAndFlush()
+        case "previous":
+            XCTAssertTrue(waitForBakeProgress(), "The bake reports progress before Record again.")
+            app.buttons["teleprompter-retake"].tap()
+            guard waitUntilEnabled(record, timeout: Self.graphRebuildTimeout) else { XCTFail("Record again returns to the camera."); return }
+            wait(seconds: 3)
+            recordTake(seconds: secondSeconds)
+            XCTAssertTrue(waitForBakeToSettle(bakeNote, timeout: 300), "The second take's bake finishes.")
+            screenshot(app, named: "Second take settled, first take is the previous one")
+            let previous = app.buttons["teleprompter-previous-take"]
+            XCTAssertTrue(previous.waitForExistence(timeout: 5), "The first take is offered as the previous take.")
+            previous.tap()
+            XCTAssertTrue(waitForBakeProgress(), "The first take's bake restarts when it comes back.")
+            screenshot(app, named: "Previous take back, baking")
+            XCTAssertTrue(waitForBakeToSettle(bakeNote, timeout: 300), "The first take's bake finishes.")
+            XCTAssertEqual(bakeNote.label, "Recorded in Cinematic.")
+            screenshot(app, named: "Previous take settled")
+            finishAndFlush()
         default:
             XCTAssertTrue(waitForBakeProgress(), "The bake reports progress before Record again.")
             let retake = app.buttons["teleprompter-retake"]
@@ -470,6 +517,17 @@ import XCTest
     }
 
     #if !targetEnvironment(simulator)
+    /// After a relaunch: the project the first launch recorded in, then its script, until Review shows the saved take.
+    private func reopenTeleprompter(_ app: XCUIApplication) -> Bool {
+        enterTalking(app)
+        openScriptFromTray(app)
+        // The script sheet comes first again; the saved take waits behind it.
+        let useScript = app.buttons["teleprompter-use-script"]
+        guard useScript.waitForExistence(timeout: 8) else { return false }
+        useScript.tap()
+        return true
+    }
+
     /// The Review note says "Applying your Cinematic look..." while the bake owes or runs, then turns final.
     private func waitForBakeToSettle(_ note: XCUIElement, timeout: TimeInterval) -> Bool {
         let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "NOT (label CONTAINS 'Applying your Cinematic look')"), object: note)
@@ -524,6 +582,12 @@ import XCTest
         // Do not set KRIA_TELEPROMPTER_CAMERA_UNAVAILABLE or the review fixture here: this
         // test exercises the device's real camera/microphone path.
         app.launch()
+        enterTalking(app)
+        return app
+    }
+
+    /// From a fresh launch to the Talk to camera chat: permission prompts, the drawer's New chat, the format card.
+    private func enterTalking(_ app: XCUIApplication) {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         for _ in 0..<2 where springboard.alerts.firstMatch.waitForExistence(timeout: 4) {
             springboard.alerts.firstMatch.buttons.allElementsBoundByIndex.first { isAffirmativePermissionAction($0.label) }?.tap()
@@ -539,7 +603,6 @@ import XCTest
         if !talking.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
         talking.tap()
         XCTAssertTrue(app.buttons["chat-attach"].waitForExistence(timeout: 8))
-        return app
     }
 
     /// The composer's + tray, then Add script: the camera opens with the script sheet first. Closing the camera leaves
