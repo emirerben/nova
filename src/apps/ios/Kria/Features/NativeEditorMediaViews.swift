@@ -135,6 +135,7 @@ struct NativeVideoPreview: View {
     @State private var dangerGuideLast = ""
     @State private var textAlignmentFeedback = NativeTextAlignmentFeedback()
     @State private var textAlignmentHaptic = UISelectionFeedbackGenerator()
+    @State private var splitPanelPick: NativeSplitPanelPick?
 
     init(session: NativeEditorSession, onEmptyTap: (() -> Void)? = nil, onFindOriginals: (() -> Void)? = nil, onAddClip: ((AddClipLaunch) -> Void)? = nil) {
         self.session = session
@@ -463,6 +464,12 @@ struct NativeVideoPreview: View {
         guard !candidates.isEmpty else {
             lastTapIDs = []
             lastTapPoint = nil
+            // Inside a split section a tap on a panel selects it. Only a tap outside every panel falls through.
+            if !session.isPlaying, let context = session.splitContextAtPlayhead,
+               let panel = NativeSplitPreviewOverlay.panel(at: point, in: size, section: context.section) {
+                NativeSplitPreviewOverlay.choose(panel: panel, context: context, session: session, pick: $splitPanelPick)
+                return
+            }
             // A near-miss on the selected object's rotate/scale corner (its 22pt
             // zone extends outside the frame) must not open fullscreen.
             if !isNearSelectedCorner(point, in: size),
@@ -1082,6 +1089,11 @@ struct NativeVideoPreview: View {
             .opacity(session.isShowingPreviousPreview ? 0 : 1)
             .accessibilityHidden(session.isShowingPreviousPreview)
             .allowsHitTesting(!session.isShowingPreviousPreview && session.document.editorState != "empty" && !(session.sourcePreviewState.isFailure && !session.isShowingRenderedFallback))
+
+            // Above the canvas gesture surface: a touch on a divider band never reaches the canvas move or empty tap.
+            if session.document.editorState != "empty" {
+                NativeSplitPreviewOverlay(session: session, pick: $splitPanelPick)
+            }
 
             if session.showsEditApplied {
                 Label("Edit applied", systemImage: "checkmark.circle.fill")
@@ -2198,10 +2210,13 @@ struct NativeMiniStrip: View {
         return VStack(spacing: rowGap) {
             Color.clear.frame(height: 18)
             ForEach(footageRows.titles, id: \.self) { title in
+                // Split rows carry no visible name: the preview is the control surface. VoiceOver keeps it.
                 Text(title)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .frame(height: filmstripHeight)
+                    .foregroundStyle(title == "Video" ? KriaColor.zinc : Color.clear)
+                    .accessibilityLabel(title)
                     .accessibilityIdentifier(title == "Video"
                         ? (rowsList.isEmpty && !hasAudioLane ? "native-editor-lane-label-last" : "native-editor-lane-label-video")
                         : "native-editor-lane-label-split-\(title.lowercased())")

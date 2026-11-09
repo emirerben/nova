@@ -101,10 +101,13 @@ extension NativeSplitScreenTests {
             captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0,
             serverSnapshot: ["render_destination": .string("device"), "editor_capabilities": .object(["timeline": .bool(true), "split_screen": .bool(true)])]))
         session.selectClip(id)
-        session.createSplitScreen(panelCount: 2)
+        session.createSplitScreen(panelCount: 2, scope: .selectedClip)
+        XCTAssertEqual(session.document.clips.count, 1)
+        let sectionID = try XCTUnwrap(session.selectedSplitScreenSectionID)
+        session.addSplitPanelClip(sectionID: sectionID, panel: 1, sourceClipIndex: 0)
         XCTAssertEqual(session.document.clips.count, 2)
         XCTAssertEqual(session.timelineProjection.totalDuration, 4)
-        let sectionID = try XCTUnwrap(session.selectedSplitScreenSectionID)
+        session.selectClip(id)
         session.currentTime = 2
         session.splitSelectedClip()
         XCTAssertEqual(session.document.clips.count, 3)
@@ -247,7 +250,9 @@ extension NativeSplitScreenTests {
                 serverSnapshot: ["render_destination": .string(destination), "editor_capabilities": .object(["timeline": .bool(true)])]))
             session.selectClip(id)
             XCTAssertFalse(session.canCreateSplitScreen)
-            session.createSplitScreen(panelCount: 2)
+            XCTAssertFalse(session.canCreateWholeVideoSplit)
+            session.createSplitScreen(panelCount: 2, scope: .selectedClip)
+            session.createSplitScreen(panelCount: 2, scope: .wholeVideo)
             XCTAssertTrue(session.document.splitScreenSections.isEmpty)
         }
     }
@@ -398,10 +403,14 @@ extension NativeSplitScreenTests {
             XCTAssertNil(copy.parentSegmentID)
             XCTAssertEqual(copy.raw["speaker_subject"], .bool(testCase.expected))
             session.select(.init(kind: .clip, id: try XCTUnwrap(copy.id)), seekToStart: false)
-            session.createSplitScreen(panelCount: 2)
+            session.createSplitScreen(panelCount: 2, scope: .selectedClip)
             let members = session.document.clips.filter { $0.splitSectionID != nil }
-            XCTAssertEqual(members.count, 2)
+            XCTAssertEqual(members.count, 1)
             XCTAssertTrue(members.allSatisfy { $0.raw["speaker_subject"] == .bool(testCase.expected) && $0.parentSegmentID == nil })
+            session.undo()
+            session.createSplitScreen(panelCount: 2, scope: .wholeVideo)
+            XCTAssertEqual(session.document.clips.filter { $0.splitSectionID != nil }.count, 2)
+            XCTAssertTrue(session.document.clips.allSatisfy { $0.raw["speaker_subject"] == .bool(testCase.expected) })
         }
     }
 }
@@ -1179,25 +1188,26 @@ extension NativeSplitScreenTests {
         await session.load(libraryJobID: jobID, api: fake)
         XCTAssertTrue(session.document.splitScreenSections.isEmpty)
         session.selectClip(try XCTUnwrap(session.timelineClips.first?.id))
-        session.createSplitScreen(panelCount: 2)
+        session.createSplitScreen(panelCount: 2, scope: .selectedClip)
         XCTAssertEqual(session.document.splitScreenSections.count, 1)
+        let sectionID = try XCTUnwrap(session.document.splitScreenSections.first?.id)
+        session.addSplitPanelClip(sectionID: sectionID, panel: 1, sourceClipIndex: 0)
+        XCTAssertEqual(session.document.clips.count, 2)
         let top = EditorSelection(kind: .speaker, id: try XCTUnwrap(session.document.clips.first?.id))
-        let bottom = EditorSelection(kind: .speaker, id: try XCTUnwrap(session.document.clips.last?.id))
-        XCTAssertTrue(session.setSpeakerFrame(preset: "small_top_left", for: bottom))
-        let peer = session.document.clips.first
+        XCTAssertTrue(session.setSpeakerFrame(preset: "small_top_left", for: top))
+        let peer = session.document.clips.last
         await session.save()
         XCTAssertEqual(fake.commitCount, 1)
         XCTAssertFalse(session.hasUnsavedChanges)
         if unstack {
-            session.select(.init(kind: .clip, id: bottom.id), seekToStart: false)
+            session.select(.init(kind: .clip, id: top.id), seekToStart: false)
             session.removeSelectedSplitScreen()
             XCTAssertTrue(session.document.splitScreenSections.isEmpty)
             await session.save()
             XCTAssertEqual(fake.commitCount, 2)
             XCTAssertEqual(fake.lastRequest?.splitScreenSections, [])
         } else {
-            XCTAssertEqual(session.document.clips.first, peer)
-            XCTAssertEqual(session.speakerFrame(for: top), session.speakerFrame)
+            XCTAssertEqual(session.document.clips.last, peer)
         }
         guard case .renderRetryNeeded = session.saveState else { return XCTFail("Durable save must expose failed-render retry") }
         XCTAssertFalse(session.hasUnsavedChanges)

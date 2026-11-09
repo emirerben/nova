@@ -751,7 +751,7 @@ struct NativeEditorView: View {
                                     .transition(panelTransition)
                             }
                             if !keyboardVisible && !lineEditing {
-                                NativeEditorToolRail(selected: panel?.tool, connected: true, showsDraw: session.canAddDrawing, showsBackground: session.canEditSpeakerBackground, onSelect: selectTool)
+                                NativeEditorToolRail(selected: panel?.tool, connected: true, showsDraw: session.canAddDrawing, showsBackground: session.canEditSpeakerBackground, showsSplit: session.canEditSplitScreen, onSelect: selectTool)
                             }
                         }
                         .frame(width: panelIsOpen ? max(0, area.size.width - 24) : min(328, max(0, area.size.width - 24)))
@@ -825,6 +825,8 @@ struct NativeEditorView: View {
             NativeSoundsPanel(session: session, panelDrafts: panelDrafts) { changePanel(to: nil) }
         case .drawing(let id):
             NativeDrawingPanel(session: session, id: id, onDrawMore: { enterDrawMode(appendingTo: id) }, onDone: { changePanel(to: nil) }).id(id)
+        case .split:
+            NativeSplitPanel(session: session) { changePanel(to: nil) }
         case nil:
             EmptyView()
         }
@@ -849,7 +851,7 @@ struct NativeEditorView: View {
             // An empty draft returns nil and the pending-text observer closes the panel.
             if let selection = session.finishTextCreation() { textCreated(selection) }
         case .text: textEditingDone()
-        case .captions, .visuals, .background, .sounds, .drawing: changePanel(to: nil)
+        case .captions, .visuals, .background, .sounds, .drawing, .split: changePanel(to: nil)
         case .speaker:
             if session.selection?.kind == .speaker { session.select(nil, seekToStart: false) }
             changePanel(to: nil)
@@ -904,6 +906,7 @@ struct NativeEditorView: View {
             session.select(nil)
         case .background: changePanel(to: .background)
         case .sounds: changePanel(to: .sounds)
+        case .split: changePanel(to: .split)
         case .draw: enterDrawMode()
         default:
             changePanel(to: nil)
@@ -1024,6 +1027,8 @@ struct NativeEditorView: View {
             return
         }
         selectedTextForActions = nil
+        // The Split panel selects clips itself (this clip, a panel's member); that must not close it.
+        if panel == .split, selection.kind == .clip { return }
         changePanel(to: nil)
         if selection.kind != .clip { inspector = .selection(selection) }
     }
