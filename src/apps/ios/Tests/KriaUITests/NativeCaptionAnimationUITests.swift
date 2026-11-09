@@ -137,42 +137,49 @@ final class NativeCaptionAnimationUITests: XCTestCase {
 
     /// Display Word keeps the chosen animation (founder report): the Animation tab still shows it after
     /// Sentence, Word, Sentence, Word, for a Text motion entrance and for an Animation-tab choice. The playing
-    /// burst is the visual evidence that each word enters.
-    func testWordDisplayKeepsTheChosenAnimation() {
-        for (fixture, row, prefix) in [("-ui-testing-editor-talking-captions", "native-editor-caption-row-native-caption-0", "word-cue"),
-                                       ("-ui-testing-editor-song-captions", "native-editor-caption-row-song-caption-0-0", "word-lyrics")] {
-            let app = launch([fixture, "-ui-testing-editor-caption-animation", "-ui-testing-editor-caption-text-motion",
-                              "-ui-testing-editor-live-preview"])
-            app.buttons["native-editor-captions-tab-Animation"].tap()
-            let silk = app.buttons["In animation Silk Reveal"]
-            scrollTo(app, silk)
-            XCTAssertTrue(silk.isSelected)
-            display(app, "word")
-            scrollTo(app, silk)
-            XCTAssertTrue(silk.isSelected, "\(prefix): Word display keeps the Text motion entrance")
-            shot(app, "\(prefix)-1-word-keeps-silk")
+    /// burst is the visual evidence that each word enters. One test per fixture keeps each under the CI
+    /// runner's 3-minute per-test allowance.
+    private func assertWordDisplayKeepsTheChosenAnimation(fixture: String, row: String, prefix: String) {
+        let app = launch([fixture, "-ui-testing-editor-caption-animation", "-ui-testing-editor-caption-text-motion",
+                          "-ui-testing-editor-live-preview"])
+        app.buttons["native-editor-captions-tab-Animation"].tap()
+        let silk = app.buttons["In animation Silk Reveal"]
+        scrollTo(app, silk)
+        XCTAssertTrue(silk.isSelected)
+        display(app, "word")
+        scrollTo(app, silk)
+        XCTAssertTrue(silk.isSelected, "\(prefix): Word display keeps the Text motion entrance")
+        shot(app, "\(prefix)-1-word-keeps-silk")
 
-            let pop = app.buttons["In animation Pop"]
-            for _ in 0..<4 where !pop.isHittable { app.scrollViews["native-editor-captions-scroll"].swipeDown() }
-            pop.tap()
-            app.buttons["Out"].tap()
-            let fade = app.buttons["Out animation Fade"]
-            XCTAssertTrue(fade.waitForExistence(timeout: 3))
-            fade.tap()
-            display(app, "sentence")
-            display(app, "word")
-            XCTAssertTrue(app.buttons["In animation Pop"].isSelected, "\(prefix): switching Display keeps In")
-            app.buttons["Out"].tap()
-            XCTAssertTrue(fade.waitForExistence(timeout: 3))
-            XCTAssertTrue(fade.isSelected, "\(prefix): switching Display keeps Out")
-            shot(app, "\(prefix)-2-word-keeps-pop")
+        let pop = app.buttons["In animation Pop"]
+        for _ in 0..<4 where !pop.isHittable { app.scrollViews["native-editor-captions-scroll"].swipeDown() }
+        pop.tap()
+        app.buttons["Out"].tap()
+        let fade = app.buttons["Out animation Fade"]
+        XCTAssertTrue(fade.waitForExistence(timeout: 3))
+        fade.tap()
+        display(app, "sentence")
+        display(app, "word")
+        XCTAssertTrue(app.buttons["In animation Pop"].isSelected, "\(prefix): switching Display keeps In")
+        app.buttons["Out"].tap()
+        XCTAssertTrue(fade.waitForExistence(timeout: 3))
+        XCTAssertTrue(fade.isSelected, "\(prefix): switching Display keeps Out")
+        shot(app, "\(prefix)-2-word-keeps-pop")
 
-            pickLine(app, row: row)
-            app.buttons["native-editor-play-pause"].firstMatch.tap()
-            for frame in 0..<10 { shot(app, "\(prefix)-3-burst-\(frame)") }
-            app.buttons["native-editor-play-pause"].firstMatch.tap()
-            app.terminate()
-        }
+        pickLine(app, row: row)
+        app.buttons["native-editor-play-pause"].firstMatch.tap()
+        for frame in 0..<10 { shot(app, "\(prefix)-3-burst-\(frame)") }
+        app.buttons["native-editor-play-pause"].firstMatch.tap()
+    }
+
+    func testWordDisplayKeepsTheChosenAnimationOnCueCaptions() {
+        assertWordDisplayKeepsTheChosenAnimation(fixture: "-ui-testing-editor-talking-captions",
+                                                 row: "native-editor-caption-row-native-caption-0", prefix: "word-cue")
+    }
+
+    func testWordDisplayKeepsTheChosenAnimationOnLyricCaptions() {
+        assertWordDisplayKeepsTheChosenAnimation(fixture: "-ui-testing-editor-song-captions",
+                                                 row: "native-editor-caption-row-song-caption-0-0", prefix: "word-lyrics")
     }
 
     func testWithoutTheCapabilityThereIsNoAnimationTab() {
