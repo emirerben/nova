@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.124.0] - 2026-11-09
+
+### Changed
+- fix(ios): a staged chat edit never leaves the editor unable to play (#2240) <!-- release-pr: 2240 -->
+
 ## [0.88.123.0] - 2026-11-09
 
 ### Changed
