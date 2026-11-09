@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.129.0] - 2026-11-09
+
+### Fixed
+- fix(kria): Çiğdem S2 green screen — cut the recording-check opening, honest rhythm reply, smaller small captions (KRI-1326) (#2230) <!-- release-pr: 2230 -->
+
 ## [0.88.128.0] - 2026-11-09
 
 ### Changed
