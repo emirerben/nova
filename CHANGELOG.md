@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.117.0] - 2026-11-09
+
+### Changed
+- fix(kria): chat tells generated images apart and places them where asked (KRI-1253) (#2218) <!-- release-pr: 2218 -->
+
 ## [0.88.116.0] - 2026-11-09
 
 ### Changed
