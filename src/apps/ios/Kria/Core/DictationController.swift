@@ -19,6 +19,28 @@ struct DictationTranscript: Sendable, Equatable {
     let text: String
     /// The server heard no speech in the recording (it returns no text rather than invented words).
     let isNoSpeech: Bool
+    /// ISO-639-1 code of the language the server heard ("en", "tr"); nil when it didn't say.
+    var language: String?
+}
+
+/// The language the creator last spoke, as the server heard it (KRI-1328). The phone's settings say
+/// what the creator reads, not what they speak, so the live preview follows this instead.
+enum DictationLanguage {
+    private static let key = "kria.dictation.lastLanguage"
+
+    static func remember(_ code: String?, defaults: UserDefaults = .standard) {
+        guard let code = code?.trimmingCharacters(in: .whitespaces).lowercased(), !code.isEmpty else { return }
+        defaults.set(code, forKey: key)
+    }
+
+    static func recognizerLocale(defaults: UserDefaults = .standard, preferred: [String] = Locale.preferredLanguages) -> Locale {
+        resolve(stored: defaults.string(forKey: key), preferred: preferred)
+    }
+
+    static func resolve(stored: String?, preferred: [String]) -> Locale {
+        if let stored, !stored.isEmpty { return Locale(identifier: stored) }
+        return preferred.first.map { Locale(identifier: $0) } ?? Locale.current
+    }
 }
 
 enum DictationEngineError: Error, Equatable {
@@ -264,7 +286,8 @@ struct APIDictationTranscriber: DictationTranscriber {
     func transcribe(_ recording: DictationRecording, contextTerms: [String]) async throws -> DictationTranscript {
         let audio = try Data(contentsOf: recording.url)
         let response = try await api.transcribeDictation(audio: audio, contextTerms: contextTerms)
-        return DictationTranscript(text: response.text, isNoSpeech: response.reason == "no_speech")
+        DictationLanguage.remember(response.language)
+        return DictationTranscript(text: response.text, isNoSpeech: response.reason == "no_speech", language: response.language)
     }
 }
 
@@ -466,8 +489,7 @@ private final class DictationTapSink: @unchecked Sendable {
     }
 
     private static func makeRecognizer() -> SFSpeechRecognizer? {
-        let preferred = Locale.preferredLanguages.first.map { Locale(identifier: $0) } ?? Locale.current
-        return SFSpeechRecognizer(locale: preferred) ?? SFSpeechRecognizer()
+        SFSpeechRecognizer(locale: DictationLanguage.recognizerLocale()) ?? SFSpeechRecognizer()
     }
 }
 

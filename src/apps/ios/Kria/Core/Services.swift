@@ -420,6 +420,8 @@ struct ProjectPage: Sendable {
 struct DictationTranscriptResponse: Decodable, Equatable, Sendable {
     let text: String
     let reason: String?
+    /// The language the server heard (KRI-1328). Absent from older servers.
+    let language: String?
 }
 
 extension KriaAPIClient {
