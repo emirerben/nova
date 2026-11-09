@@ -6,19 +6,20 @@ Two decisions, both measured on the pixels the caption will actually sit on:
    pixels under each line where it is finally drawn (take frames, full-screen photos and B-roll
    while it is up) decides whether the look needs help. Below 7:1 on the sampled frames (4.5:1
    with headroom for unsampled moments) the look gains an outline in the ink that reads against
-   the fill (black under white, white under black), sized to the text. A creator who set the outline keeps
-   it; then a firm shadow is the treatment; a creator who set both gets neither (their call,
-   recorded on the receipt). The fill colour is never changed: "small, white" is size and colour,
-   not a request to drop legibility.
+   the fill (black under white, white under black), sized to the text. A creator who set the
+   outline keeps it; then a firm shadow is the treatment; a creator who set both gets neither
+   (their call, recorded on the receipt). The fill colour is never changed: "small, white" is
+   size and colour, not a request to drop legibility.
 
 2. **Placement during a full-screen picture** (per caption line). While a full-screen photo or
    video card is up, the line moves to the nearest calm band of that picture (no edges: no text,
-   no busy texture), or, when the picture has none and its least busy band is still dense with
-   strong edges (a page of text, a cluttered ad), the line is hidden for that window.
+   no busy texture), else to its least busy band; when even that is packed with strong edges (a
+   page of text) the line is hidden for that window.
 
 The measures are deliberately simple (no model, no paid call): a morphological gradient on a
-270x480 grey cover-fit of the picture. Text always produces strong edges, so a band with no
-edges holds no text; validated against Apple Vision OCR boxes on the test-kit photos.
+270x480 grey cover-fit of the picture. Text produces edges, so a band with no edges holds no
+text. Calibrated against Apple Vision OCR boxes on the 89 test-kit photos (2026-11-09): one
+photo (large brand lettering on a busy product shot) still has no band clear of its text.
 """
 
 from __future__ import annotations
@@ -40,10 +41,13 @@ GRID_W, GRID_H = 270, 480
 # Gradient strengths (0-255 grey steps across 3 px): any visible edge / a hard, text-like edge.
 _WEAK_EDGE = 28
 _STRONG_EDGE = 90
-# A band is calm when at most this share of it touches an edge.
-_CALM_COVERAGE = 0.02
-# With no calm band, a band whose strong-edge share stays above this is text-dense: hide there.
-_TEXT_DENSE_COVERAGE = 0.08
+# A band is calm when no slice of it (`_SLICE_FRAC` of the canvas wide, half-overlapping) has more
+# than this share of edge pixels: a single word at one end of the line counts, not its average.
+_CALM_COVERAGE = 0.04
+_SLICE_FRAC = 0.12
+# With no calm band the line takes the least busy band; only a picture whose least busy band is
+# still this dense with strong edges (a page of text, a packed poster) hides the line there.
+_TEXT_DENSE_COVERAGE = 0.5
 # Clear space kept above and below the caption block, canvas fraction.
 _BAND_MARGIN = 0.02
 # Where a moved line may sit (block centre, canvas fraction): inside the phone's caption frame.
@@ -212,17 +216,29 @@ def edge_maps(pixels: bytes, width: int = GRID_W, height: int = GRID_H) -> EdgeM
 
 
 def _coverage(table, box: Sequence[float], width: int, height: int) -> float:
+    """The densest slice of ``box``: edge share of each `_SLICE_FRAC`-wide window (step half a
+    window) across the box, the maximum."""
     x0, y0 = max(0, int(box[0] * width)), max(0, int(box[1] * height))
     x1, y1 = min(width, int(box[2] * width + 0.999)), min(height, int(box[3] * height + 0.999))
     if x1 <= x0 or y1 <= y0:
         return 0.0
-    total = table[y1][x1] - table[y0][x1] - table[y1][x0] + table[y0][x0]
-    return float(total) / ((x1 - x0) * (y1 - y0))
+    win = max(4, min(x1 - x0, int(_SLICE_FRAC * width)))
+    step = max(2, win // 2)
+    starts = list(range(x0, x1 - win + 1, step))
+    if not starts or starts[-1] != x1 - win:
+        starts.append(x1 - win)
+    best = 0.0
+    for left in starts:
+        right = left + win
+        total = table[y1][right] - table[y0][right] - table[y1][left] + table[y0][left]
+        best = max(best, float(total) / (win * (y1 - y0)))
+    return best
 
 
 def band_coverage(maps: Sequence[EdgeMaps], box: Sequence[float]) -> tuple[float, float]:
-    """(weak, strong) edge share of ``box`` (canvas fractions, margin included), worst over the
-    pictures in ``maps`` (several when one line spans more than one full-screen card)."""
+    """(weak, strong) edge share of the densest slice of ``box`` (canvas fractions, margin
+    included), worst over the pictures in ``maps`` (several when one line spans more than one
+    full-screen card)."""
     padded = (box[0], box[1] - _BAND_MARGIN, box[2], box[3] + _BAND_MARGIN)
     weak = max((_coverage(m.weak, padded, m.width, m.height) for m in maps), default=0.0)
     strong = max((_coverage(m.strong, padded, m.width, m.height) for m in maps), default=0.0)
@@ -247,8 +263,8 @@ def place_line(
 ) -> LinePlacement:
     """Where a caption block ``box`` (canvas fractions, as drawn) goes while ``maps``' pictures
     are up. ``blocked`` are boxes the moved block may not touch (a face during the part of the
-    line outside the picture). Nearest calm band first; else the least text-dense band unless
-    even that is dense, then hide."""
+    line outside the picture). Nearest calm band first; else the least busy band, unless even
+    that is packed with strong edges, then hide."""
     from app.pipeline.phone_text_style import _overlap
 
     centre = (box[1] + box[3]) / 2
@@ -272,12 +288,10 @@ def place_line(
         return LinePlacement("move", y, w, s)
     if not candidates:
         return LinePlacement("hide", centre, weak, strong)
-    floor = min(c[2] for c in candidates)
-    if floor > _TEXT_DENSE_COVERAGE:
+    floor = min(c[1] for c in candidates)
+    y, w, s = min((c for c in candidates if c[1] <= floor + 0.01), key=lambda c: abs(c[0] - centre))
+    if s > _TEXT_DENSE_COVERAGE:
         return LinePlacement("hide", centre, weak, strong)
-    y, w, s = min(
-        (c for c in candidates if c[2] <= floor + 0.005), key=lambda c: abs(c[0] - centre)
-    )
     if abs(y - centre) < 0.005:
         return LinePlacement("keep", centre, w, s)
     return LinePlacement("move", y, w, s)
