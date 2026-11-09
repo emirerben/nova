@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.133.0] - 2026-11-09
+
+### Changed
+- fix(ios): re-read the thread while Checking speech so a finished check resolves (KRI-1341) (#2248) <!-- release-pr: 2248 -->
+
 ## [0.88.132.0] - 2026-11-09
 
 ### Changed
