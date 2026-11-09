@@ -2177,7 +2177,6 @@ private struct CreationWorkspaceView: View {
                     conversationCloseID: editorConversationCloseID,
                     conversationActivity: editorAIActivity,
                     conversation: { AnyView(editorConversation) },
-                    improve: readyCardsPresentation,
                     onBack: close
                 )
                 .environmentObject(model)
@@ -2232,7 +2231,7 @@ private struct CreationWorkspaceView: View {
                     dictation: dictationForComposer,
                     dictationTerms: dictationContextTerms,
                     attach: { openAttachments() },
-                    send: { Task { await send() } },
+                    send: { Task { await sendComposerDraft() } },
                     attachMenu: attachMenu
                 )
             }
@@ -2301,7 +2300,7 @@ private struct CreationWorkspaceView: View {
                 waitingBar
                 ChatComposer(
                     text: promptBinding, isSending: isSending || isActing,
-                    canAttach: false, blocksSubmission: (isThinking && !steerNowEnabled) || sendReceipt != nil || pendingUploadCount > 0, isFocused: $composerFocused, dictation: dictationForComposer, dictationTerms: dictationContextTerms, attach: {}, send: { Task { await send() } }
+                    canAttach: false, blocksSubmission: (isThinking && !steerNowEnabled) || sendReceipt != nil || pendingUploadCount > 0, isFocused: $composerFocused, dictation: dictationForComposer, dictationTerms: dictationContextTerms, attach: {}, send: { Task { await sendComposerDraft() } }
                 )
             }
         }
@@ -2609,7 +2608,7 @@ private struct CreationWorkspaceView: View {
     }
 
     /// The v2 cards for the finished video, or nil when the chat is not on the ready surface or the server's set has
-    /// none (then the chips stay in charge). The same value feeds the ready stage and the editor's Improve sheet.
+    /// none (then the chips stay in charge). The same value feeds the ready stage in the chat and in the editor's chat sheet.
     private var readyCardsPresentation: SuggestionCardsPresentation? {
         guard SuggestionChipsPolicy.isEnabled(capabilities) else { return nil }
         // A spent paid card leaves the set at once, but its image does not: the row outlives the set it came from, and
@@ -2624,9 +2623,8 @@ private struct CreationWorkspaceView: View {
         }
         return SuggestionCardsPresentation(
             cards: suggestionLedger.visible(served),
-            tap: { sendSuggestionCard($0) }, dismiss: { dismissSuggestionCard($0) },
-            refresh: { suggestionLedger.requestRefresh() },
-            sendingID: served.first { suggestionLedger.phase(of: $0.id) == .sending }?.id,
+            isSelected: { SuggestionDraft.isSelected($0, in: promptDraft.text) },
+            toggle: { promptDraft.set(SuggestionDraft.toggle($0, in: promptDraft.text)) },
             generated: generatedCards.result,
             reviewGenerated: { reviewGeneratedCard() },
             dismissGenerated: { generatedCards.dismiss() }
@@ -2646,7 +2644,16 @@ private struct CreationWorkspaceView: View {
         attachmentLaunch = .generatedOverlays
         attachmentScript = nil
         scrollRequest += 1
-        showsAttachments = true
+        guard showsResult else {
+            showsAttachments = true
+            return
+        }
+        // The editor's chat sheet is up: it closes first, because a sheet cannot open while another is still leaving.
+        editorConversationCloseID = UUID()
+        Task {
+            try? await Task.sleep(for: .milliseconds(450))
+            showsAttachments = true
+        }
     }
 
     /// The chips to draw for one surface; empty unless the chat is on that surface right now.
@@ -2678,17 +2685,17 @@ private struct CreationWorkspaceView: View {
         )
     }
 
-    /// A card tap is the creator's chat message (`prompt`) pinned to the card it came from. It rides the ordinary
-    /// send path, so the bubble, idempotency key and revision handling are shared. The pin names the set the creator
-    /// SAW, not whatever set the chat holds by the time the request goes out; the server decides if it still fits.
-    /// A refused pin comes back as an ordinary accepted turn whose reply says the card no longer fits, so the card
-    /// is handled either way and the reply in the chat is the notice.
-    /// Returns whether the tap started, so the editor's Improve sheet closes only for a tap that is going out.
-    private func sendSuggestionCard(_ card: SuggestionCard) -> Bool {
-        guard !isSending, !isActing, !isThinking, let setID = suggestionSet?.setID, suggestionLedger.begin(card) else { return false }
-        let tap = SuggestionTap(setID: setID, chipID: card.id)
-        Task {
-            await send(message: card.prompt, suggestion: tap, keepsDraft: true) { _ in
+    /// Send from either composer. A draft that is exactly one offered card's prompt goes out pinned to that card, so the
+    /// server runs the action it proved (the exact hook text, the image the creator asked for). The pin names the set the
+    /// creator SAW; the server decides if it still fits, and a refused pin comes back as an ordinary accepted turn whose
+    /// reply says the card no longer fits. Anything else (other words, several prompts) is a plain message the planner
+    /// reads, and every card whose prompt it carried is handled for this set.
+    private func sendComposerDraft() async {
+        let cards = readyCardsPresentation?.cards ?? []
+        if let card = SuggestionDraft.pinnedCard(for: promptDraft.text, among: cards),
+           !isSending, !isActing, !isThinking, let setID = suggestionSet?.setID, suggestionLedger.begin(card) {
+            let tap = SuggestionTap(setID: setID, chipID: card.id)
+            await send(message: card.prompt, suggestion: tap) { _ in
                 suggestionLedger.finish(card, accepted: true)
                 // The tap spends on the server; this only watches for the image it makes.
                 if card.needsSpendConsent, let itemID = fullThread?.activePlanItemID {
@@ -2697,15 +2704,10 @@ private struct CreationWorkspaceView: View {
             }
             // Nothing reached the server (offline, rejected, blocked): the card is tappable again.
             suggestionLedger.finish(card, accepted: false)
+            return
         }
-        return true
-    }
-
-    private func dismissSuggestionCard(_ card: SuggestionCard) {
-        guard let setID = suggestionSet?.setID else { return }
-        suggestionLedger.dismiss(card)
-        let api = model.api, threadID = project.id
-        Task { await api.dismissSuggestion(threadID: threadID, setID: setID, suggestionID: card.id) }
+        let carried = SuggestionDraft.cards(in: promptDraft.text, among: cards)
+        await send(suggestionOutcome: carried.isEmpty ? nil : { _ in carried.forEach { suggestionLedger.markApplied($0) } })
     }
 
     /// A chip tap is a real send of the chip's `message` (the old fixed chips only filled the composer), tagged
