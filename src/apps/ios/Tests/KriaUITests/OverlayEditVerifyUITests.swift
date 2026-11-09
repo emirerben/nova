@@ -78,6 +78,21 @@ final class OverlayEditVerifyUITests: XCTestCase {
         transform(h).exists || h.isSelected("draw-wide")
     }
 
+    /// An empty preview tap opens fullscreen and starts playback (KRI-170). On a slow runner playback passes the drawing's
+    /// 0-4 s window before the next query, and the drawing leaves the preview. Close fullscreen and scrub back to the start.
+    private func closeFullscreenAndRewind(_ h: Harness) -> Bool {
+        let fullscreen = h.app.descendants(matching: .any)["native-editor-preview-fullscreen"].firstMatch
+        guard fullscreen.waitForExistence(timeout: 5) else { return false }
+        fullscreen.tap()
+        XCTAssertTrue(fullscreen.waitForNonExistence(timeout: 5), "fullscreen closes")
+        let lanes = h.app.descendants(matching: .any)["native-editor-lane-scroll"].firstMatch
+        let start = lanes.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: lanes.frame.width * 0.75, dy: 0)))
+        XCTAssertEqual(h.app.descendants(matching: .any)["native-editor-current-time"].firstMatch.value as? String, "0:00.0",
+                       "scrubbed back to the start")
+        return true
+    }
+
     /// A 16:9 drawing on the 9:16 canvas: its transform frame sits in the letterboxed band, a tap on the ink selects it, a tap on the
     /// empty top or bottom bar does not, and a drag still moves it by about the drag distance.
     func testDrawingOnAWideCanvasStaysInItsBand() {
@@ -90,11 +105,13 @@ final class OverlayEditVerifyUITests: XCTestCase {
         for (label, y) in [("top bar", 0.12), ("bottom bar", 0.88)] {
             let c = h.canvas.frame
             h.canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: y)).tap()
-            let selected = drawingIsSelected(h)
             h.shot("wide-1-tap-\(label.replacingOccurrences(of: " ", with: "-"))")
-            Verify.record(name, "tap on the empty \(label) does not select", !selected,
-                          "tapped (50%, \(Int(y * 100))%) of the \(Int(c.width))x\(Int(c.height))pt canvas; drawing selected: \(selected)")
+            let openedFullscreen = closeFullscreenAndRewind(h)
+            let selected = drawingIsSelected(h)
+            Verify.record(name, "tap on the empty \(label) does not select", !selected && openedFullscreen,
+                          "tapped (50%, \(Int(y * 100))%) of the \(Int(c.width))x\(Int(c.height))pt canvas; drawing selected: \(selected); opened fullscreen: \(openedFullscreen)")
             XCTAssertFalse(selected, "tap on the \(label) selected the drawing")
+            XCTAssertTrue(openedFullscreen, "an empty tap on the \(label) opens fullscreen")
         }
         h.canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         let selected = drawingIsSelected(h)

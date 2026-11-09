@@ -195,5 +195,7 @@
   "KriaUITests/SavedUploadsUITests/testRelinkedOriginalFinishesTheVisualsAdd": 30,
   "KriaUITests/SavedUploadsUITests/testPhotoOnlyVisualsSendVideosToFootage": 30,
   "KriaUITests/SavedUploadsUITests/testPhoneFootageAttachesProxyWithoutUploadingTheOriginal": 30,
-  "KriaUITests/SavedUploadsUITests/testSelectTwoThenDoneAddsBoth": 30
+  "KriaUITests/SavedUploadsUITests/testSelectTwoThenDoneAddsBoth": 30,
+  "KriaUITests/NativeCaptionAnimationUITests/testWordDisplayKeepsTheChosenAnimationOnCueCaptions": 100.0,
+  "KriaUITests/NativeCaptionAnimationUITests/testWordDisplayKeepsTheChosenAnimationOnLyricCaptions": 100.0
 }

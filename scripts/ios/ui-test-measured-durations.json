@@ -200,5 +200,7 @@
   "KriaUITests/SpeakerBackgroundUITests/testPickingAColourSwatchMakesTheEditSaveable": 30.8,
   "KriaUITests/SpeakerBackgroundUITests/testPickingAPhotoSelectsItAndMakesTheEditSaveable": 15.0,
   "KriaUITests/SpeakerBackgroundUITests/testPickingNoneOnAnEditWithoutABackgroundIsNotAnEdit": 11.2,
-  "KriaUITests/SpeakerBackgroundUITests/testToolIsHiddenWhenTheServerDoesNotOpenTheCapability": 5.0
+  "KriaUITests/SpeakerBackgroundUITests/testToolIsHiddenWhenTheServerDoesNotOpenTheCapability": 5.0,
+  "KriaUITests/NativeCaptionAnimationUITests/testWordDisplayKeepsTheChosenAnimationOnCueCaptions": 100.0,
+  "KriaUITests/NativeCaptionAnimationUITests/testWordDisplayKeepsTheChosenAnimationOnLyricCaptions": 100.0
 }
