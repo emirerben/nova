@@ -6857,6 +6857,8 @@ async def plan_pinned_suggestion_turn(
         )
         if rebuilt is None or type(rebuilt) is not type(action):
             return _no_longer_fits(pinned.BASE_MOVED)
+        if spends and getattr(rebuilt, "cost_usd", None) != getattr(action, "cost_usd", None):
+            return _no_longer_fits(pinned.BASE_MOVED)
         action = rebuilt
         ops = pinned.editor_ops(action)
         if ops is None:

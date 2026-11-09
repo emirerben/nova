@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-11-07-v119",
+  "prompt_version": "2026-11-08-v120",
   "input": {
     "utterance": "make the captions shorter",
     "prior_turns": [],
@@ -92,7 +92,7 @@
     "plan_review_scope_eval": true,
     "replay_revalidation": {
       "previous_prompt_version": "2026-11-05-v116",
-      "validated_prompt_version": "2026-11-07-v119",
+      "validated_prompt_version": "2026-11-08-v120",
       "method": "Offline cassette replay through current EditCopilotAgent parser and plan-review compile/filter/repair checks; no live model capture.",
       "notes": "Hand-authored golden originating in f7b1e7427. Input, raw_text, output and scope assertions unchanged. v117 adds gated split-screen and clip-audio controls; v118 adds gated speaker framing; v119 adds timeline duplicate/source replacement and atomic split clip/section moves. These snapshots enable no split-screen or speaker-framing controls. The unchanged answers use none of the new operation names and replay caption/text/mix/clip-duration scope isolation against the expanded current contract. prompt_version identifies the revalidated replay contract, not a model generation version."
     }

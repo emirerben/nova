@@ -110,7 +110,10 @@ log = structlog.get_logger()
 # family (flag + verified token + protocol 42), so every other prompt is byte-identical.
 # v117: editable split-screen sections and per-clip audio gain on top of v116.
 # v118: occurrence speaker framing (custom/full/inherit) on verified split-origin edits.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-07-v119"
+# v120 (KRI-1253): PICTURE CARDS teaches add_overlay for an ASSET POOL row (the generated image the
+# creator accepted, listed by its title); with no row the lane still says a new picture can't be
+# added from chat.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-08-v120"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -2023,8 +2026,8 @@ def _format_snapshot(snapshot: dict) -> str:
                 lines.append(
                     f"- id={_field(asset.get('id'), max_chars=80)!r} "
                     f"kind={_field(asset.get('kind'), max_chars=40)!r} "
-                    f"subject={_field(asset.get('subject'), max_chars=60)!r} "
-                    f"duration={_fmt_round3(_first_number(asset, ('duration_s',)))}s"
+                    f"subject={_field(asset.get('subject'), max_chars=60)!r}"
+                    f"{_pool_duration(asset)}"
                     f"{_context_row_suffix(asset, component_context_enabled)}"
                 )
         else:
@@ -2372,6 +2375,11 @@ def _fmt_round3(value: float | None) -> str:
     if value is None:
         return "unknown"
     return f"{_round_snapshot_float(value):.3f}"
+
+
+def _pool_duration(asset: dict) -> str:
+    seconds = _first_number(asset, ("duration_s",))
+    return "" if seconds is None else f" duration={_fmt_round3(seconds)}s"
 
 
 def _font_catalog() -> str:
