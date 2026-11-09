@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.130.0] - 2026-11-09
+
+### Fixed
+- fix(kria): Talking videos made of several takes — clip names, one-reply holds, photos on words, honest cleanup/captions/outline (KRI-1327) (#2231) <!-- release-pr: 2231 -->
+
 ## [0.88.129.0] - 2026-11-09
 
 ### Fixed
