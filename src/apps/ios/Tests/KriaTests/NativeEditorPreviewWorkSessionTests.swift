@@ -138,6 +138,29 @@ import XCTest
         session.pausePlayback()
     }
 
+    /// #2221's bound only started once the live item was ready. A rebuild stuck before that left
+    /// "Updating preview" over the old frame for good, with no Retry.
+    func testRetainedPreviewOffersRetryWhenTheUpdateIsStuckBeforeItsItemIsReady() async throws {
+        let file = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let session = try await session(retainingAdmittedPreviewOf: file)
+        defer { session.endPreviewPresentation() }
+        session.retainedPreviewPreparationBound = .milliseconds(50)
+
+        let stuck = Task { await session.prepareFixtureSourcePreview(url: file, delayedLoad: true) }
+        for _ in 0..<50 where session.sourcePreviewState != .preparing { await Task.yield() }
+        XCTAssertEqual(session.previousPreviewPresentation?.status, .updating)
+
+        var offersRetry = false
+        for _ in 0..<20 where !offersRetry {
+            try await Task.sleep(for: .milliseconds(20))
+            offersRetry = session.previousPreviewPresentation.map { $0.status != .updating } ?? false
+        }
+        XCTAssertTrue(offersRetry, "past the bound the old frame must offer Retry instead of updating forever")
+        XCTAssertEqual(session.sourcePreviewState, .preparing, "checked before the slow build lands")
+        await stuck.value
+        XCTAssertEqual(session.sourcePreviewState, .ready, "a late build still takes over")
+    }
+
     func testRejectedFrameReportIsNotConsumedAndTheMatchingReportStillAdmits() async throws {
         let file = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
         let session = try await session(retainingAdmittedPreviewOf: file)

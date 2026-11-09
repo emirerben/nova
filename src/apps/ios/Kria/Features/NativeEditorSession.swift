@@ -954,7 +954,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// The fallback card offers Retry: the live preview failed for a reason a rebuild can fix. A permanent
     /// failure (no video track, an unsupported effect, a missing font) would fail the same way again.
     var fallbackOffersRetry: Bool {
-        guard isShowingRenderedFallback, case .failed = sourcePreviewState else { return false }
+        guard isShowingRenderedFallback || isShowingVersionBeforeStagedEdit, case .failed = sourcePreviewState else { return false }
         return !sourcePreviewFailureIsPermanent
     }
 
@@ -969,6 +969,24 @@ struct NativeEditorTemporaryVideo: Sendable {
               !hasUnsavedChanges, chatStagedDocument == nil else { return false }
         return player != nil && player === finishedRenderPlayer
     }
+
+    /// The creator pressed Play while a staged AI edit's live preview was still building (KRI-1230).
+    private var playsVersionBeforeStagedEdit = false
+
+    /// The canvas shows the last finished video while a staged AI edit's live preview is building (after the
+    /// creator pressed Play) or failed. The canvas labels it as the version before that edit. It is never
+    /// current: `canDisplayCurrentPlayer`, export and Save still refuse it.
+    var isShowingVersionBeforeStagedEdit: Bool {
+        guard chatStagedDocument != nil, !finishedRenderFailed, !isShowingPreviousPreview,
+              let player, player === finishedRenderPlayer else { return false }
+        switch sourcePreviewState {
+        case .failed, .originalsUnavailable: return true
+        case .preparing: return playsVersionBeforeStagedEdit
+        case .idle, .ready: return false
+        }
+    }
+
+    private var canPlayCanvasVideo: Bool { canDisplayCurrentPlayer || isShowingVersionBeforeStagedEdit }
 
     var canDisplayCurrentPlayer: Bool {
         guard player != nil else { return false }
@@ -1398,6 +1416,10 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var retainedPreviewTimeout: (ticket: NativeEditorPreviewWork, task: Task<Void, Never>)?
     /// How long a ready live item may wait for its frame report before the retained picture is dropped.
     nonisolated static let retainedPreviewBound: Duration = .milliseconds(1500)
+    /// How long a retained picture may say "Updating preview" while the new preview has no ready item yet.
+    /// Past it the picture offers Retry. Internal so tests can shorten it.
+    var retainedPreviewPreparationBound: Duration = .seconds(8)
+    private var retainedPreviewPreparationTask: Task<Void, Never>?
     /// Tests replace this to force a preroll miss; production always uses `prerolledPlayer`.
     var prerolledPlayerProvider: @MainActor (AVPlayerItem, TimeInterval) async -> AVPlayer? = { await NativeEditorSession.prerolledPlayer(for: $0, at: $1) }
     private var playbackControlEpoch: UInt64 = 0
@@ -1449,6 +1471,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     private func retirePreviousPreview() {
         retainedPreviewTimeout?.task.cancel()
         retainedPreviewTimeout = nil
+        retainedPreviewPreparationTask?.cancel()
+        retainedPreviewPreparationTask = nil
         if let retainedPreview, retainedPreview.player !== player {
             retainedPreview.player.pause()
             retainedPreview.player.replaceCurrentItem(with: nil)
@@ -1493,8 +1517,24 @@ struct NativeEditorTemporaryVideo: Sendable {
         inPlacePreviewFrame = nil
         let ticket = currentPreviewWork
         previewWork.begin(ticket)
-        if retainedPreview != nil { previousPreviewStatus = .updating }
+        if retainedPreview != nil {
+            previousPreviewStatus = .updating
+            armRetainedPreviewPreparationBound(ticket)
+        }
         return ticket
+    }
+    /// `armRetainedPreviewTimeout` starts only once the live item is ready. A build stuck before that (a source
+    /// that never resolves) kept "Updating preview" over the old picture for good, with no Retry (KRI-1230).
+    private func armRetainedPreviewPreparationBound(_ ticket: NativeEditorPreviewWork) {
+        retainedPreviewPreparationTask?.cancel()
+        let bound = retainedPreviewPreparationBound
+        retainedPreviewPreparationTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: bound)
+            guard let self, !Task.isCancelled, self.previewWork.isPending(ticket), !self.previewWork.awaitingFrame,
+                  self.previousPreviewStatus == .updating else { return }
+            self.previousPreviewStatus = .slow
+            NativePreviewDiagnostics.record("retained-preview-slow")
+        }
     }
     private func abandonPreviewWork(_ ticket: NativeEditorPreviewWork) {
         guard previewWork.end(ticket) else { return }
@@ -1585,6 +1625,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         promptRefreshSequence &+= 1; sourcePreviewSequence &+= 1
         pendingDeviceRenderIdentity = nil
         pendingDeviceRenderGeneration = nil
+        playsVersionBeforeStagedEdit = false
         activeSaveAttemptID = nil
         saveHitNewerVersion = false
         songRemovalAlreadyApplied = false
@@ -4781,7 +4822,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         invalidatePreviewResumeIntent()
         guard !isReviewingPreviousMerge else { return }
         guard document.editorState != "empty" else { return }
-        guard canDisplayCurrentPlayer, let player else {
+        if !isPlaying, !canDisplayCurrentPlayer, sourcePreviewState == .preparing { showVersionBeforeStagedEdit() }
+        guard canPlayCanvasVideo, let player else {
             // While the editable preview is still building there is nothing to play yet. Remember the tap
             // instead of dropping it, so play starts the moment the preview (or its fallback) is ready.
             pendingPlayRequest = sourcePreviewState == .preparing && !isPlaying
@@ -4848,6 +4890,16 @@ struct NativeEditorTemporaryVideo: Sendable {
             guard let self, self.player === player, self.isPlaying else { return }
             self.activatePreviewAudio()
         }
+    }
+
+    /// Play while a staged AI edit is still being applied plays the last finished video, labelled, until the live
+    /// preview takes over (its warm handoff follows a playing finished render). The old frozen frame goes first.
+    private func showVersionBeforeStagedEdit() {
+        guard chatStagedDocument != nil, !finishedRenderFailed,
+              let url = playableDeviceOutputURL ?? finishedRenderURL else { return }
+        retirePreviousPreview()
+        if player !== finishedRenderPlayer { reinstallFinishedRender(url: url, preferredDuration: finishedRenderDuration) }
+        playsVersionBeforeStagedEdit = true
     }
 
     func pausePlayback() {
@@ -9992,19 +10044,19 @@ struct NativeEditorTemporaryVideo: Sendable {
         if (reloadsLatestOnConflict && reloadLatestAfterPreviewConflict(error)) || retrySourcePreviewQuietly(after: error) {
             // KRI-535: while the quiet rebuild runs, a render older than a staged edit stays hidden.
             finishedRenderIsCurrent = finishedWasCurrent
-            if canDisplayCurrentPlayer { startPendingPlaybackIfPossible() }
+            if canPlayCanvasVideo { startPendingPlaybackIfPossible() }
             return
         }
         sourcePreviewState = Self.isMissingOriginals(error)
             ? .originalsUnavailable
             : .failed(Self.sourcePreviewMessage(for: error))
         // A queued play tap follows the fallback; with nothing to show it is dropped, not left armed.
-        if canDisplayCurrentPlayer { startPendingPlaybackIfPossible() } else { pendingPlayRequest = false }
+        if canPlayCanvasVideo { startPendingPlaybackIfPossible() } else { pendingPlayRequest = false }
     }
 
     private func startPendingPlaybackIfPossible() {
         guard !isReviewingPreviousMerge else { return }
-        guard pendingPlayRequest, canDisplayCurrentPlayer, !isPlaying else { return }
+        guard pendingPlayRequest, canPlayCanvasVideo, !isPlaying else { return }
         togglePlayback()
     }
 
@@ -10269,10 +10321,11 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     private func restoreFinishedRenderFallback() {
-        guard let finishedRenderURL, finishedRenderIsCurrent,
-              !hasUnsavedChanges, chatStagedDocument == nil else { return }
+        // A staged AI edit keeps the finished video too, shown as the version before that edit (KRI-1230).
+        guard let finishedRenderURL,
+              chatStagedDocument != nil || (finishedRenderIsCurrent && !hasUnsavedChanges) else { return }
         guard player === finishedRenderPlayer else {
-            installFinishedRenderPlayer(url: finishedRenderURL, preferredDuration: finishedRenderDuration)
+            reinstallFinishedRender(url: finishedRenderURL, preferredDuration: finishedRenderDuration)
             return
         }
         // KRI-587: a finished render that died while the editable preview was building (its message was

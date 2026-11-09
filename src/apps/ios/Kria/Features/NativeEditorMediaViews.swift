@@ -884,7 +884,8 @@ struct NativeVideoPreview: View {
                 }
                 .foregroundStyle(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityElement(children: .contain)
-            } else if let player = session.player, session.canDisplayCurrentPlayer || session.isShowingPreviousPreview {
+            } else if let player = session.player,
+                      session.canDisplayCurrentPlayer || session.isShowingPreviousPreview || session.isShowingVersionBeforeStagedEdit {
                 ZStack {
                     NativeEditorPlayerSurface(player: player, readinessID: displayTicket,
                         onReadyForDisplay: { session.previewFrameWasShown(player: player, ticket: displayTicket) })
@@ -1117,7 +1118,25 @@ struct NativeVideoPreview: View {
                 .accessibilityIdentifier("native-editor-preview-skipped-media")
             }
 
-            if session.sourcePreviewState.isFailure, session.isShowingRenderedFallback {
+            if session.sourcePreviewState == .preparing, session.isShowingVersionBeforeStagedEdit {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("This is the version before your AI edit.")
+                        .font(KriaFont.body(12).weight(.semibold))
+                    Text("Your edit is still being applied.")
+                        .font(KriaFont.body(11))
+                }
+                .foregroundStyle(.white)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(10)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .allowsHitTesting(false)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("native-editor-version-before-staged-edit")
+            }
+
+            if session.sourcePreviewState.isFailure, session.isShowingRenderedFallback || session.isShowingVersionBeforeStagedEdit {
                 VStack(alignment: .leading, spacing: 4) {
                     if session.fallbackOffersRetry {
                         // The live preview is what shows edits; until it rebuilds, nothing the creator
@@ -1130,7 +1149,7 @@ struct NativeVideoPreview: View {
                         Text("Showing your last finished video")
                             .font(KriaFont.body(12).weight(.semibold))
                     }
-                    if session.hasOnlyChatStagedChanges {
+                    if session.isShowingVersionBeforeStagedEdit {
                         // KRI-535: without this the old video reads as "the AI did nothing".
                         Text("This is the version before your AI edit.")
                             .font(KriaFont.body(11))
