@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.127.0] - 2026-11-09
+
+### Changed
+- refactor(api): one owner for the Job.status vocabulary (KRI-1336) (#2242) <!-- release-pr: 2242 -->
+
 ## [0.88.126.0] - 2026-11-09
 
 ### Changed
