@@ -6939,8 +6939,10 @@ _TIGHT_STATIC_LINES: tuple[str, ...] = (
 # (even one with a retake) cannot prove it, so it says "may still be", never "stays". One
 # static string for every speech format: `_loc` translates exact keys only and the
 # review-note dedupe compares text.
-# KRI-720: with several-take cleanup on, pauses are cut in every take, but a named line,
-# opening or ending is still never cut from several takes (`_phone_opening_cut(multiple_takes=)`).
+# KRI-720: with several-take cleanup on, pauses are cut in every take. A named line is cut from
+# the one take that says it when cleanup is on / offered (G3, `_NAMED_CUT_AT_RENDER`); this
+# string is for cleanup declined or unavailable. An opening or ending quote is never cut from
+# several takes (`_phone_opening_cut(multiple_takes=)`).
 _NAMED_CUTS_SEVERAL_TAKES = (
     "I can't cut one exact line out of a video made of several takes yet, so it stays in"
 )
@@ -8837,6 +8839,11 @@ _NAMED_CUT_MISSED = {
         "bunu birden fazla kez söylüyorsun, hangisini keseyim söyle: ilkini, ikincisini ya da"
         " sonuncusunu",
     ),
+    # KRI-720: said in two takes with no pick; never guessed.
+    "said_in_several_takes": (
+        "you say it in more than one take, so I left it in; tell me which take to cut it from",
+        "bunu birden fazla çekimde söylüyorsun, o yüzden dokunmadım; hangi çekimden keseyim söyle",
+    ),
     "occurrence_not_found": (
         "you don't say it that many times",
         "bunu o kadar çok kez söylemiyorsun",
@@ -8883,6 +8890,17 @@ def _named_cut_notes(req: BriefRequirement, facts: PlanFacts) -> tuple[list[str]
         quote = str(row.get("quote") or "")
         if row.get("status") == "applied":
             removed = _finite_number(row.get("removed_s")) or 0.0
+            take = row.get("take")
+            take_index = take.get("index") if isinstance(take, Mapping) else None
+            if isinstance(take_index, int) and not isinstance(take_index, bool):
+                # KRI-720: a video made of several takes says which one the line was cut from.
+                notes.append(
+                    say(
+                        en=f'Cut "{quote}" ({_round_s(removed)}s, take {take_index})',
+                        tr=f'"{quote}" kesildi ({_round_s(removed)} sn, {take_index}. çekim)',
+                    )
+                )
+                continue
             notes.append(
                 say(
                     en=f'Cut "{quote}" ({_round_s(removed)}s)',
@@ -9075,8 +9093,12 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     if _wants_named_cuts(req):
         from app.kria.opening_cut_ask import named_cut_asks  # noqa: PLC0415
 
-        if several_takes:
-            # KRI-720: every take's pauses are cut, but no named line is cut from several takes.
+        cleanup_consentable = bool(
+            facts.speech_cleanup_enabled or facts.speech_cleanup_offered is True
+        )
+        if several_takes and not cleanup_consentable:
+            # KRI-720: with cleanup declined or unavailable the takes play whole, so a named
+            # line is never cut from them (N10).
             notes.append(_loc(_NAMED_CUTS_SEVERAL_TAKES))
             status = "partial"
         elif (facts.phone_talking or _cuts_named_voiceover_lines(facts)) and named_cut_asks([req]):

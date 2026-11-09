@@ -9991,6 +9991,7 @@ def _run_phone_subtitled_job(
             extra_tight_pauses: list[dict[str, Any]] = []
             take_join_trims: list[dict[str, Any]] = []
             take_join_gaps: list[dict[str, Any]] = []
+            multi_take_named_receipts: list[dict[str, Any]] | None = None
             if cleanup_required:
                 try:
                     job_cleanup_snapshot = hydrate_job_speech_cleanup_snapshot(snapshot)
@@ -10031,6 +10032,33 @@ def _run_phone_subtitled_job(
                 speech_cleanup_outcome_context = speech_cleanup_snapshot.outcome_context(
                     analysis_view="full_clip"
                 )
+                if multi_take_cleanup:
+                    # KRI-720 (G3): a named line is cut from the one take that says it, now,
+                    # so the pause passes, join trims, captions and photos all follow it.
+                    _named_ids = [i for i in extra_speaker_ids if i in extra_take_plans]
+                    _named_takes = [
+                        (
+                            binding.media_id,
+                            cut_plan,
+                            speech_cleanup_snapshot.source_words(),
+                            float(probe.duration_s),
+                        ),
+                        *(
+                            (
+                                extra_speaker_bindings[extra_speaker_ids.index(i)].media_id,
+                                extra_take_plans[i],
+                                extra_take_snapshots[i].source_words(),
+                                float(probe_map[clip_id_to_local[i]].duration_s),
+                            )
+                            for i in _named_ids
+                        ),
+                    ]
+                    _named_plans, multi_take_named_receipts = _phone_multi_take_named_cuts(
+                        snapshot, _named_takes
+                    )
+                    cut_plan = _named_plans[0]
+                    for _i, _plan in zip(_named_ids, _named_plans[1:], strict=True):
+                        extra_take_plans[_i] = _plan
                 if not multi_clip or multi_take_cleanup:
                     # Qendresa 13: "cut all my pauses so it's tight" -- extra pause cuts on top
                     # of the consented plan, before the opening cut and before the outcome
@@ -10240,6 +10268,7 @@ def _run_phone_subtitled_job(
                 duration_s=float(probe.duration_s),
                 off_words=explicit_words,
                 multiple_takes=multi_clip,
+                multi_take_named=multi_take_named_receipts,
             )
             cut_plan, explicit_cut_receipts = _phone_explicit_speech_cuts(
                 explicit_asks,
@@ -13092,6 +13121,46 @@ def _missed_named_cuts(
     ]
 
 
+def _phone_multi_take_named_cuts(
+    snapshot: dict,
+    takes: Sequence[tuple[str, CutPlan, Sequence[Any], float]],
+) -> tuple[list[CutPlan], list[dict[str, Any]] | None]:
+    """KRI-720 (G3): the lines the approved brief names to cut, cut from the ONE take that says
+    each (``takes`` = ``(media id, plan, own words, duration)`` in play order).
+
+    Runs before the join trim / caption remap so later takes, captions and photos follow the
+    cut. ``(plans, None)`` without a named-line ask; never raises (a failure leaves every plan
+    untouched and reports the lines ``not_found``)."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.opening_cut_ask import brief_named_cuts  # noqa: PLC0415
+    from app.pipeline.phone_opening_cut import (  # noqa: PLC0415
+        apply_named_line_cuts_across_takes,
+    )
+
+    plans = [take[1] for take in takes]
+    raw_binding = snapshot.get("creator_brief_binding")
+    if not raw_binding:
+        return plans, None
+    try:
+        bound = BriefBinding.model_validate(raw_binding)
+        named = [
+            (cut.quote, cut.requirement_ids, cut.occurrence, cut.pin)
+            for cut in brief_named_cuts(bound.resolve(), bound.choice_answers)
+        ]
+    except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
+        log.warning("phone_opening_cut.binding_unreadable", error=str(exc)[:200])
+        return plans, None
+    if not named:
+        return plans, None
+    try:
+        return apply_named_line_cuts_across_takes(takes, named)
+    except Exception as exc:  # noqa: BLE001 - a missed cut is reported, never fatal
+        log.warning("phone_opening_cut.failed", error=str(exc)[:200])
+        return plans, _missed_named_cuts(
+            [(q, ids, occ) for q, ids, occ, _pin in named], "not_found"
+        )
+
+
 def _phone_opening_cut(
     snapshot: dict,
     cut_plan: CutPlan | None,
@@ -13100,6 +13169,7 @@ def _phone_opening_cut(
     duration_s: float,
     off_words: Any = None,
     multiple_takes: bool = False,
+    multi_take_named: list[dict[str, Any]] | None = None,
 ) -> tuple[CutPlan | None, dict[str, Any] | None]:
     """KRI-628 / KRI-790: cut the phone Talking take to the lines the creator quoted.
 
@@ -13170,7 +13240,19 @@ def _phone_opening_cut(
         return missed
 
     source_words = words if cut_plan is not None else off_words
-    if source_words is None:
+    if multiple_takes and cut_plan is not None:
+        # KRI-720 (G3): several cut takes. Named lines were already cut from the take that says
+        # each (`multi_take_named`, `_phone_multi_take_named_cuts`); the first take's words are
+        # never searched for another take's line. A start / end quote is still refused (N9),
+        # never applied to the first take alone.
+        receipts = _missed("several_takes")
+        if named:
+            receipts["named_cuts"] = (
+                multi_take_named
+                if multi_take_named is not None
+                else _missed("not_found")["named_cuts"]
+            )
+    elif source_words is None:
         # Cleanup was declined and the job carries no word timings to ground the lines in;
         # KRI-720: several takes play whole, so no line is grounded in any of them.
         receipts = _missed("several_takes" if multiple_takes else "cleanup_off")
@@ -13219,7 +13301,10 @@ def _merged_removal_count(removed: Sequence[Any], *, join_s: float = 0.001) -> i
     """Removals counted as the creator sees them: ones touching within ``join_s`` are one cut."""
     count = 0
     last_end: float | None = None
-    for row in sorted(removed, key=lambda r: r.start_s):
+    # KRI-720 (G3): a named line is the creator's own cut, not cleanup's (as on one take).
+    for row in sorted(
+        (r for r in removed if getattr(r, "reason", None) != "named_cut"), key=lambda r: r.start_s
+    ):
         if last_end is None or row.start_s > last_end + join_s:
             count += 1
         last_end = row.end_s if last_end is None else max(last_end, row.end_s)
