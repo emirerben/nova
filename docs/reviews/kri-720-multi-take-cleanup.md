@@ -50,7 +50,7 @@ Editor
 
 Rollout
 - F20 Flag off not byte-identical (single-take path touched).
-- F21 Old iPhone builds can't play a per-speaker keep-segment recipe → needs a protocol/capability gate.
+- F21 Old iPhone builds preview the later takes uncut (the render itself is plain clips and plays) → old builds must show the finished video.
 
 ## Negative controls
 - Wrong-take control: swap take B's plan onto take C (same counts) → the word-diff / caption check must fail.
@@ -127,7 +127,13 @@ Decisions:
 - G3 named line in several takes: grounded in each take's own preflight words; cut only when
   exactly one take (and one place in it, or the creator's pick) says it; then the joins/offsets/
   captions/photos follow from that take's plan.
-- G4 older app builds: see below.
+- G4 older app builds: prod jobs of 2026-10-26..11-09 were approved on client protocols 22..46
+  (62 jobs; only the last two days on 44-46). The several-take render is plain timeline clips, so
+  old builds export it; the hole is the editor PREVIEW (old builds cut only the first take, so
+  takes B/C preview uncut and captions/cards/sounds sit on the wrong words). A protocol gate would
+  lock out every build in use, so: protocol 47 = understands `speaker_removed`; callers below 47
+  (or with no protocol) get the variant served so they take their existing finished-video
+  fallback; Save keeps every take's cut either way. F21 below is reworded accordingly.
 
 Failure modes written before code:
 
@@ -176,3 +182,12 @@ G3 named line in several takes
 - N9 start/end quotes in several takes stay refused (out of scope) and say so.
 - N10 cleanup declined -> no per-take words -> named line still refused honestly.
 - N11 flag off byte-identical; draft promise matches the render.
+
+G4 older builds
+- O1 an old build still previews uncut (fallback condition not present in every build 22..46).
+- O2 the fallback hides something else old builds need (finished video URL, poster, Save).
+- O3 old-build Save drops the later takes' cuts.
+- O4 new build (47) wrongly falls back; single-take / uncut several-take variants change.
+- O5 variants rendered with cuts while the flag is later turned off stay exposed.
+- O6 a job approved on 47 reopened on an old device.
+- O7 Swift and server protocol numbers drift.

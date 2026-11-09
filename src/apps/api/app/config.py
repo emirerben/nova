@@ -1944,6 +1944,8 @@ class Settings(BaseSettings):
         "creator consented to Speech cleanup and the take is a single iPhone-rendered clip, "
         "the render adds extra pause cuts so no kept pause is over about 0.3 s, writes a "
         "`tight_pauses` report on the variant, and the receipt states what was measured. "
+        "With TALKING_MULTI_TAKE_CLEANUP_ENABLED a Talking video of several takes gets the pass on "
+        "every take and every join whatever the ask says (KRI-720). "
         "Default off: no extra cuts and every receipt is byte-identical to before. "
         "Kill switch: `fly secrets set TIGHT_PAUSE_CUT_ENABLED=false --app nova-video` + api "
         "and worker restart.",

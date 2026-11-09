@@ -333,8 +333,14 @@ def _candidates(
     all_words: list[tuple[float, float]],
     loud: list[tuple[float, float]],
     min_pause_s: float | None = None,
+    trim_head: bool = False,
+    trim_tail: bool = False,
 ) -> list[Removal]:
     """Cuts inside Kria silence spans that lie within the talk, clear of audible sound.
+
+    ``trim_head`` / ``trim_tail`` (KRI-720, the joins between several takes) also cut the
+    silence before the first / after the last kept word, down to ``PAD_S`` beside the word's
+    protected span; the take's own edge needs no pad. Same protections as every other cut.
 
     ``min_pause_s`` only SKIPS shorter spans as cut sources; they still protect sound (the
     protected set is built from every span), so it can never add a cut tight mode would not."""
@@ -346,11 +352,13 @@ def _candidates(
     edges = [r.start_s for r in consented] + [r.end_s for r in consented]
     out: list[Removal] = []
     for s0, s1 in silences:
-        if not (s0 > talk_lo and s1 < talk_hi):
+        head = trim_head and s0 <= talk_lo and s1 < talk_hi
+        tail = trim_tail and s1 >= talk_hi and s0 > talk_lo
+        if not (head or tail or (s0 > talk_lo and s1 < talk_hi)):
             continue
         if min_pause_s is not None and s1 - s0 < min_pause_s - _EPS:
             continue
-        lo, hi = s0 + PAD_S, s1 - PAD_S
+        lo, hi = (s0 if head else s0 + PAD_S), (s1 if tail else s1 - PAD_S)
         if hi - lo <= _SLIVER_MIN_S:
             continue
         for k0, k1 in keep:
@@ -504,6 +512,9 @@ def tighten_pauses(
     measure_silences: Sequence[tuple[float, float]] | None = None,
     measurable: bool = True,
     min_pause_s: float | None = None,
+    trim_head: bool = False,
+    trim_tail: bool = False,
+    max_keep_segments: int = TIGHT_MAX_KEEP_SEGMENTS,
 ) -> tuple[CutPlan, TightPauseReport]:
     long_mode = min_pause_s is not None
     mode: Literal["tight", "long"] = "long" if long_mode else "tight"
@@ -544,7 +555,9 @@ def tighten_pauses(
         loud = _drop_detached_faint(
             loud, samples, sr, floor_db, _soft_zones(normalized, spans, "ending")
         )
-        candidates = _candidates(kept, keep, plan.removed, spans, normalized, loud, min_pause_s)
+        candidates = _candidates(
+            kept, keep, plan.removed, spans, normalized, loud, min_pause_s, trim_head, trim_tail
+        )
     else:
         candidates = []
     before_longest = kept_pause_stats(plan, words, measure, duration_s, limit_s)[0]
@@ -575,7 +588,7 @@ def tighten_pauses(
     def over_budget() -> bool:
         return (
             len(consented) + len(new) > MAX_REMOVALS
-            or len(_complement([*consented, *new], duration_s)) > TIGHT_MAX_KEEP_SEGMENTS
+            or len(_complement([*consented, *new], duration_s)) > max_keep_segments
         )
 
     while new and over_budget():
@@ -629,6 +642,9 @@ def apply_tight_pauses(
     silence_detect: Callable[..., Any] | None = None,
     pcm_loader: Callable[[str], np.ndarray] | None = None,
     min_pause_s: float | None = None,
+    trim_head: bool = False,
+    trim_tail: bool = False,
+    max_keep_segments: int = TIGHT_MAX_KEEP_SEGMENTS,
 ) -> tuple[CutPlan, TightPauseReport]:
     """``tighten_pauses`` for the media the plan was built from (detects + decodes itself)."""
 
@@ -659,4 +675,7 @@ def apply_tight_pauses(
         measure_silences=measured,
         measurable=measured is not None,
         min_pause_s=min_pause_s,
+        trim_head=trim_head,
+        trim_tail=trim_tail,
+        max_keep_segments=max_keep_segments,
     )

@@ -673,6 +673,10 @@ class PlanFacts:
     # Qendresa 13: the phone Talking render's ``variant["tight_pauses"]`` report (status,
     # pauses_over_limit, longest_pause_s ...). None = the render wrote none (flag off, no ask).
     speech_cleanup_tight: dict[str, Any] | None = None
+    # KRI-720 G1: a several-take render's tight reports, ``{"reports": [first take, *later takes],
+    # "gaps": [join gap rows]}`` (``variant["tight_pauses"]``, ``["tight_pauses_other_takes"]``,
+    # ``["take_join_gaps"]``). None = a one-take render or a draft.
+    speech_cleanup_tight_takes: dict[str, Any] | None = None
     # KRI-1189: restarted sentences that cleanup's cut record holds (``retake`` rows) on a
     # rendered variant where cleanup ran; None = unknown or a draft.
     speech_cleanup_retakes: int | None = None
@@ -3236,6 +3240,16 @@ def _rendered_speech_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
         tight = variant.get("tight_pauses")
         if isinstance(tight, Mapping):
             facts["speech_cleanup_tight"] = dict(tight)
+        others = variant.get("tight_pauses_other_takes")
+        if isinstance(others, list) and others:
+            gaps = variant.get("take_join_gaps")
+            facts["speech_cleanup_tight_takes"] = {
+                "reports": [
+                    *([dict(tight)] if isinstance(tight, Mapping) else []),
+                    *(dict(row) for row in others if isinstance(row, Mapping)),
+                ],
+                "gaps": [dict(row) for row in gaps or () if isinstance(row, Mapping)],
+            }
         counts = _cleanup_counts(variant)
         facts["speech_cleanup_retakes"] = counts[2] if counts else 0
     elif outcome is None and device:
@@ -6896,6 +6910,14 @@ _TIGHT_UNMEASURED = (
     "I couldn't measure the quiet parts of your take, so I didn't shorten the shorter pauses"
 )
 _TIGHT_NOISY = "There's background sound in your take, so I only cut the long pauses"
+# KRI-720 G1: several takes, each reported on its own (never summed into one).
+_TIGHT_TAKES_NOISY = (
+    "There's background sound in some of your takes, so I only cut the long pauses in those"
+)
+_TIGHT_TAKES_UNMEASURED = (
+    "I couldn't measure the quiet parts of some of your takes, so I didn't shorten their "
+    "shorter pauses"
+)
 # Start of the measured "some pauses are still long" reason (dynamic tail, so prefix-matched).
 _TIGHT_OVER_LIMIT = "Speech cleanup cut your pauses tight, but"
 _TIGHT_STATIC_LINES: tuple[str, ...] = (
@@ -6906,6 +6928,8 @@ _TIGHT_STATIC_LINES: tuple[str, ...] = (
     _TIGHT_RENDER_LONG_ONLY,
     _TIGHT_UNMEASURED,
     _TIGHT_NOISY,
+    _TIGHT_TAKES_NOISY,
+    _TIGHT_TAKES_UNMEASURED,
     _TIGHT_OVER_LIMIT,
 )
 # KRI-846: said as a plain limit, never as editor work: no editor action cuts one exact spoken
@@ -7373,6 +7397,14 @@ _REASON_TR: dict[str, str] = {
         "Çekimindeki sessiz kısımları ölçemedim, o yüzden kısa duraklamaları kısaltmadım"
     ),
     _TIGHT_NOISY: ("Çekiminde arka plan sesi var, o yüzden yalnızca uzun duraklamaları kestim"),
+    _TIGHT_TAKES_NOISY: (
+        "Çekimlerinin bazılarında arka plan sesi var, o yüzden onlarda yalnızca uzun "
+        "duraklamaları kestim"
+    ),
+    _TIGHT_TAKES_UNMEASURED: (
+        "Bazı çekimlerindeki sessiz kısımları ölçemedim, o yüzden onların kısa duraklamalarını "
+        "kısaltmadım"
+    ),
     _TIGHT_OVER_LIMIT: "Konuşma temizliği duraklamaları sıkılaştırdı ama",
     _NAMED_CUT_STILL_IN: "Videonda hâlâ var",
     _NAMED_CUT_AT_RENDER: (
@@ -8895,8 +8927,12 @@ def _tight_draft_lead(facts: PlanFacts, lead: str) -> str:
     """The draft line for a tight ask: only a phone Talking edit cuts pauses down to 0.3 s."""
     if facts.speech_cleanup_enabled is not True and facts.speech_cleanup_offered is False:
         return lead  # cleanup unavailable: today's line
-    if not facts.phone_talking or facts.video_clip_count != 1:
-        # The render cuts a single-clip Talking take only (cutaways and inserts skip it).
+    several_tight = bool(
+        facts.phone_talking and (facts.video_clip_count or 0) > 1 and _multi_take_tight_on()
+    )
+    if not facts.phone_talking or (facts.video_clip_count != 1 and not several_tight):
+        # The render cuts a single-clip Talking take only (cutaways and inserts skip it), or,
+        # with several-take cleanup and the tight pass on, every take (KRI-720 G1).
         return _TIGHT_KIND_LONG_ONLY
     if facts.speech_cleanup_enabled:
         return _TIGHT_PLANNED
@@ -8908,6 +8944,11 @@ def _tight_draft_lead(facts: PlanFacts, lead: str) -> str:
 def _tight_rendered_lead(facts: PlanFacts, lead: str, status: str) -> tuple[str, str]:
     """The finished-video line for a tight ask, off the render's own ``tight_pauses`` report."""
     report = facts.speech_cleanup_tight
+    if facts.speech_cleanup_tight_takes is not None:
+        report_or_line = _several_takes_tight_report(facts.speech_cleanup_tight_takes)
+        if isinstance(report_or_line, str):
+            return _loc(report_or_line), "partial"
+        report = report_or_line
     if not isinstance(report, Mapping):
         return _loc(_TIGHT_RENDER_LONG_ONLY), "partial"
     if report.get("reason") == "noisy_take":
@@ -8945,6 +8986,56 @@ def _tight_rendered_lead(facts: PlanFacts, lead: str, status: str) -> tuple[str,
     return say(en=en, tr=tr), "partial"
 
 
+def _several_takes_tight_report(takes: Mapping[str, Any]) -> dict[str, Any] | str:
+    """KRI-720 G1: one report for the finished-video line of a several-take render, read off every
+    take's own report and every join gap; a take that was not tightened is named (a line to
+    say), never summed away."""
+    reports = [r for r in takes.get("reports") or () if isinstance(r, Mapping)]
+    if not reports:
+        return _TIGHT_TAKES_UNMEASURED
+    if any(r.get("reason") == "noisy_take" for r in reports):
+        return _TIGHT_TAKES_NOISY
+    over = 0
+    longest: float | None = None
+    for r in reports:
+        count = r.get("pauses_over_limit")
+        if (
+            r.get("reason") == "unmeasured"
+            or r.get("status") not in ("applied", "no_change")
+            or not isinstance(count, int)
+            or isinstance(count, bool)
+        ):
+            return _TIGHT_TAKES_UNMEASURED
+        over += count
+        value = r.get("longest_pause_s")
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            longest = max(longest or 0.0, float(value))
+    limit = next((r.get("limit_s") for r in reports if r.get("limit_s")), 0.35)
+    for gap in takes.get("gaps") or ():
+        value = gap.get("gap_s") if isinstance(gap, Mapping) else None
+        if value is None:
+            return _TIGHT_TAKES_UNMEASURED
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            longest = max(longest or 0.0, float(value))
+            if float(value) > float(limit) + 0.005:
+                over += 1
+    applied = any(r.get("status") == "applied" for r in reports)
+    return {
+        "status": "applied" if applied else "no_change",
+        "pauses_over_limit": over,
+        "longest_pause_s": longest,
+        "limit_s": limit,
+    }
+
+
+def _multi_take_tight_on() -> bool:
+    """KRI-720 G1: whether a several-take Talking render cuts every pause tight (plain ask
+    too): several-take cleanup and the tight pass are both on (the worker reads the same)."""
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(settings.tight_pause_cut_enabled) and _multi_take_cleanup_on()
+
+
 def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Pauses, retakes and filler the creator asked to cut, against the draft.
 
@@ -8978,7 +9069,7 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     else:
         # Unknown whether approval offers the choice: never promise it.
         lead, status = _CLEANUP_IF_OFFERED, "partial"
-    if _tight_pauses_ask(req):
+    if _tight_pauses_ask(req) or (several_takes and _multi_take_tight_on()):
         lead, status = _tight_draft_lead(facts, lead), "partial"
     notes = [_loc(lead)]
     if _wants_named_cuts(req):
@@ -9053,7 +9144,9 @@ def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requirem
             # KRI-821: cleanup off (no cleanup record), but the named lines were cut on their own.
             return _receipt(req, "met" if named[1] else "partial", "; ".join(named[0]))
         return _receipt(req, "partial", _CANT_CHECK_CLEANUP)
-    if outcome in ("applied", "no_change") and _tight_pauses_ask(req):
+    if outcome in ("applied", "no_change") and (
+        _tight_pauses_ask(req) or facts.speech_cleanup_tight_takes is not None
+    ):
         tight_lead, status = _tight_rendered_lead(facts, lead, status)
         notes = [tight_lead]
     else:
@@ -9116,11 +9209,20 @@ def _cleanup_counts(variant: Mapping[str, Any]) -> tuple[int, int, int, float | 
     """
     record = variant.get("silence_cut")
     rows = record.get("removed") if isinstance(record, Mapping) else None
-    if not isinstance(rows, list) or not rows:
+    groups: list[list[Any]] = [rows] if isinstance(rows, list) and rows else []
+    # KRI-720: what cleanup cut from each later take (its own source time, so never merged
+    # with another take's rows).
+    multi = variant.get("phone_talking_multi_clip")
+    others = multi.get("speaker_removed") if isinstance(multi, Mapping) else None
+    for take in others if isinstance(others, list) else ():
+        take_rows = take.get("removed") if isinstance(take, Mapping) else None
+        if isinstance(take_rows, list) and take_rows:
+            groups.append(take_rows)
+    if not groups:
         return None
     pauses = fillers = retakes = 0
     seconds = 0.0
-    for row in _merge_touching_silences(rows):
+    for row in (merged for group in groups for merged in _merge_touching_silences(group)):
         reason = row.get("reason") if isinstance(row, Mapping) else None
         if reason == "silence":
             pauses += 1
@@ -9175,9 +9277,17 @@ def speech_cleanup_review_note(
         pauses, fillers, retakes, seconds = counts
         parts_en: list[str] = []
         parts_tr: list[str] = []
-        tight = variant.get("tight_pauses")
-        added = tight.get("added_cuts") if isinstance(tight, Mapping) else None
-        if isinstance(added, int) and not isinstance(added, bool) and added > 0:
+        tight_reports = [
+            variant.get("tight_pauses"),
+            *(variant.get("tight_pauses_other_takes") or ()),
+        ]
+        if any(
+            isinstance(report, Mapping)
+            and isinstance(report.get("added_cuts"), int)
+            and not isinstance(report.get("added_cuts"), bool)
+            and report["added_cuts"] > 0
+            for report in tight_reports
+        ):
             # Qendresa 13: tight cuts added short pauses, so none of them is a "long" pause.
             pause_one, pause_many, pause_tr = "pause", "pauses", "duraklama"
         else:

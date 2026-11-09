@@ -9987,7 +9987,10 @@ def _run_phone_subtitled_job(
             extra_take_plans: dict[str, CutPlan] = {}
             extra_take_snapshots: dict[str, HydratedSpeechCleanupSnapshot] = {}
             extra_long_pauses: list[dict[str, Any]] = []
+            # KRI-720 G1: the tight pass report of each later take (several-take renders only).
+            extra_tight_pauses: list[dict[str, Any]] = []
             take_join_trims: list[dict[str, Any]] = []
+            take_join_gaps: list[dict[str, Any]] = []
             if cleanup_required:
                 try:
                     job_cleanup_snapshot = hydrate_job_speech_cleanup_snapshot(snapshot)
@@ -10033,13 +10036,27 @@ def _run_phone_subtitled_job(
                     # of the consented plan, before the opening cut and before the outcome
                     # bookkeeping below, so they count as cleanup.
                     consented_plan = cut_plan
-                    if not multi_clip:
+                    # KRI-720 G1: a several-take video's pauses are all cut tight (plain ask
+                    # too), every take and every join; one take keeps today's rules.
+                    take_order: list[str | None] = [None, *extra_speaker_ids]
+                    tight_takes = bool(multi_take_cleanup and settings.tight_pause_cut_enabled)
+                    first_take_tight: dict[str, Any] = {}
+                    if tight_takes:
+                        first_take_tight = {
+                            "multi_take": True,
+                            "trim_tail": len(take_order) > 1,
+                            "max_keep_segments": _take_clip_budget(
+                                {None: cut_plan, **extra_take_plans}, take_order, None
+                            ),
+                        }
+                    if not multi_clip or tight_takes:
                         cut_plan, tight_pauses_report = _phone_tight_pause_cut(
                             snapshot,
                             cut_plan,
                             speech_cleanup_snapshot.source_words(),
                             clip_path=clip_path,
                             duration_s=float(probe.duration_s),
+                            **first_take_tight,
                         )
                     if tight_pauses_report is None:
                         # Emir's camera take: the cleanup default also cuts pauses the word
@@ -10062,15 +10079,40 @@ def _run_phone_subtitled_job(
                     if multi_take_cleanup:
                         # KRI-720: the same default long-pause pass on every other take, and
                         # the public counts cover every take that was cut.
+                        pre_join_plans = {None: cut_plan, **extra_take_plans}
                         for extra_id, extra_plan in list(extra_take_plans.items()):
                             extra_local = clip_id_to_local[extra_id]
-                            extra_plan, extra_report = _phone_long_pause_cut(
-                                snapshot,
-                                extra_plan,
-                                extra_take_snapshots[extra_id].source_words(),
-                                clip_path=extra_local,
-                                duration_s=float(probe_map[extra_local].duration_s),
-                            )
+                            extra_words = extra_take_snapshots[extra_id].source_words()
+                            extra_duration = float(probe_map[extra_local].duration_s)
+                            if tight_takes:
+                                position = take_order.index(extra_id)
+                                extra_plan, extra_report = _phone_tight_pause_cut(
+                                    snapshot,
+                                    extra_plan,
+                                    extra_words,
+                                    clip_path=extra_local,
+                                    duration_s=extra_duration,
+                                    multi_take=True,
+                                    trim_head=True,
+                                    trim_tail=position < len(take_order) - 1,
+                                    max_keep_segments=_take_clip_budget(
+                                        {None: cut_plan, **extra_take_plans},
+                                        take_order,
+                                        extra_id,
+                                    ),
+                                )
+                                if extra_report is not None:
+                                    extra_tight_pauses.append({"take": position, **extra_report})
+                            else:
+                                extra_plan, extra_report = _phone_long_pause_cut(
+                                    snapshot,
+                                    extra_plan,
+                                    extra_words,
+                                    clip_path=extra_local,
+                                    duration_s=extra_duration,
+                                )
+                                if extra_report is not None:
+                                    extra_long_pauses.append(extra_report)
                             if not extra_plan.keep_segments or all(
                                 end <= start for start, end in extra_plan.keep_segments
                             ):
@@ -10078,15 +10120,13 @@ def _run_phone_subtitled_job(
                                     "apply_failed", "speech cleanup removed a whole take"
                                 )
                             extra_take_plans[extra_id] = extra_plan
-                            if extra_report is not None:
-                                extra_long_pauses.append(extra_report)
-                        # The joins between consecutive cut takes (the first take, then every
-                        # later take that has a plan, in play order).
-                        join_ids = [None, *(i for i in extra_speaker_ids if i in extra_take_plans)]
-                        joined, take_join_trims = _trim_take_joins(
-                            [
+                        if tight_takes:
+                            # The tight pass trimmed each cut take's join edges with the take's
+                            # own words and the voice guard; say what was trimmed and measure
+                            # what is left between every pair of neighbours (play order).
+                            take_specs = [
                                 (
-                                    cut_plan if cid is None else extra_take_plans[cid],
+                                    cut_plan if cid is None else extra_take_plans.get(cid),
                                     clip_path if cid is None else clip_id_to_local[cid],
                                     float(
                                         probe.duration_s
@@ -10094,14 +10134,54 @@ def _run_phone_subtitled_job(
                                         else probe_map[clip_id_to_local[cid]].duration_s
                                     ),
                                 )
-                                for cid in join_ids
+                                for cid in take_order
                             ]
-                        )
-                        for cid, plan in zip(join_ids, joined, strict=True):
-                            if cid is None:
-                                cut_plan = plan
-                            else:
-                                extra_take_plans[cid] = plan
+                            for position, cid in enumerate(take_order):
+                                before = pre_join_plans.get(cid)
+                                after = cut_plan if cid is None else extra_take_plans.get(cid)
+                                if before is None or after is None:
+                                    continue
+                                head_s = after.keep_segments[0][0] - before.keep_segments[0][0]
+                                tail_s = before.keep_segments[-1][1] - after.keep_segments[-1][1]
+                                for edge, removed in (("start", head_s), ("end", tail_s)):
+                                    if removed > 0.005 and (
+                                        (edge == "start" and position > 0)
+                                        or (edge == "end" and position < len(take_order) - 1)
+                                    ):
+                                        take_join_trims.append(
+                                            {
+                                                "take": position,
+                                                "edge": edge,
+                                                "removed_s": round(removed, 3),
+                                            }
+                                        )
+                            take_join_gaps = _measure_take_join_gaps(take_specs)
+                        else:
+                            # The joins between consecutive cut takes (the first take, then
+                            # every later take that has a plan, in play order).
+                            join_ids = [
+                                None,
+                                *(i for i in extra_speaker_ids if i in extra_take_plans),
+                            ]
+                            joined, take_join_trims = _trim_take_joins(
+                                [
+                                    (
+                                        cut_plan if cid is None else extra_take_plans[cid],
+                                        clip_path if cid is None else clip_id_to_local[cid],
+                                        float(
+                                            probe.duration_s
+                                            if cid is None
+                                            else probe_map[clip_id_to_local[cid]].duration_s
+                                        ),
+                                    )
+                                    for cid in join_ids
+                                ]
+                            )
+                            for cid, plan in zip(join_ids, joined, strict=True):
+                                if cid is None:
+                                    cut_plan = plan
+                                else:
+                                    extra_take_plans[cid] = plan
                         speech_cleanup_outcome_context["output_removal_count"] = sum(
                             _merged_removal_count(plan.removed)
                             for plan in (cut_plan, *extra_take_plans.values())
@@ -12701,7 +12781,11 @@ def _run_phone_subtitled_job(
                             {
                                 "media_id": extra_binding.media_id,
                                 "removed": [
-                                    {"start_s": row["start_s"], "end_s": row["end_s"]}
+                                    {
+                                        "start_s": row["start_s"],
+                                        "end_s": row["end_s"],
+                                        "reason": row["reason"],
+                                    }
                                     for row in _phone_cut_summary(
                                         extra_take_plans[extra_id],
                                         probe_s=float(
@@ -12780,15 +12864,25 @@ def _run_phone_subtitled_job(
         if extra_long_pauses:
             # KRI-720: the default long-pause pass on each later take (admin/debug evidence).
             new_entry["long_pauses_other_takes"] = list(extra_long_pauses)
+        if extra_tight_pauses:
+            # KRI-720 G1: the tight pass on each later take, one row per take (`take` = play
+            # order), so a noisy or unmeasured take is reported, never summed away.
+            new_entry["tight_pauses_other_takes"] = list(extra_tight_pauses)
         if take_join_trims:
             # KRI-720: silence trimmed where two cut takes meet (take index in play order).
             new_entry["take_join_trims"] = list(take_join_trims)
+        if take_join_gaps:
+            # KRI-720 G1: the silence left where each take meets the next (acceptance
+            # definition, null = unmeasured).
+            new_entry["take_join_gaps"] = list(take_join_gaps)
         if cut_plan is not None and not opening_cut_only:
             # The source `_speech_cleanup_outcome_context` the device-export completion route
             # (`app.routes.device_render._device_speech_cleanup_outcome`) reads to publish the
             # public "applied"/"checked_no_change" receipt once the device uploads.
             # A start/end cut is not speech cleanup: only cleanup's own removals count.
-            cleanup_removed = cleanup_cut_plan is not None and bool(cleanup_cut_plan.removed)
+            cleanup_removed = (
+                cleanup_cut_plan is not None and bool(cleanup_cut_plan.removed)
+            ) or any(plan.removed for plan in extra_take_plans.values())
             new_entry["silence_cut_outcome"] = "applied" if cleanup_removed else "no_change"
             new_entry["_speech_cleanup_outcome_context"] = speech_cleanup_outcome_context
         if existing_index is not None:
@@ -13139,8 +13233,17 @@ def _phone_tight_pause_cut(
     *,
     clip_path: str,
     duration_s: float,
+    multi_take: bool = False,
+    trim_head: bool = False,
+    trim_tail: bool = False,
+    max_keep_segments: int | None = None,
 ) -> tuple[CutPlan, dict[str, Any] | None]:
     """Qendresa 13: layer tight-pause cuts on the consented speech-cleanup plan.
+
+    ``multi_take`` (KRI-720 G1, a video made of several takes) runs the pass whatever the ask
+    says, and ``trim_head`` / ``trim_tail`` also tighten the silence where this take meets its
+    neighbours, within ``max_keep_segments`` clips (the share of the one main track this take
+    may use).
 
     Runs only with ``TIGHT_PAUSE_CUT_ENABLED`` and an approved brief (``creator_brief_binding``)
     that asks to cut every pause (``brief_tight_pauses``). Otherwise ``(cut_plan, None)`` with the
@@ -13155,19 +13258,31 @@ def _phone_tight_pause_cut(
     if not settings.tight_pause_cut_enabled:
         return cut_plan, None
     raw_binding = snapshot.get("creator_brief_binding")
-    if not raw_binding:
-        return cut_plan, None
-    try:
-        brief = BriefBinding.model_validate(raw_binding).resolve()
-        if not brief_tight_pauses(brief):
+    if not multi_take:
+        if not raw_binding:
             return cut_plan, None
-    except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
-        log.warning("phone_tight_pauses.binding_unreadable", error=str(exc)[:200])
-        return cut_plan, None
+        try:
+            brief = BriefBinding.model_validate(raw_binding).resolve()
+            if not brief_tight_pauses(brief):
+                return cut_plan, None
+        except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
+            log.warning("phone_tight_pauses.binding_unreadable", error=str(exc)[:200])
+            return cut_plan, None
     try:
         from app.pipeline.tight_pause_cut import apply_tight_pauses  # noqa: PLC0415
 
-        new_plan, report = apply_tight_pauses(cut_plan, clip_path, list(words), duration_s)
+        take_kwargs: dict[str, Any] = (
+            {
+                "trim_head": trim_head,
+                "trim_tail": trim_tail,
+                "max_keep_segments": max_keep_segments,
+            }
+            if multi_take and max_keep_segments is not None
+            else {}
+        )
+        new_plan, report = apply_tight_pauses(
+            cut_plan, clip_path, list(words), duration_s, **take_kwargs
+        )
         receipt = report.to_variant()
     except Exception as exc:  # noqa: BLE001 - the consented plan stands
         log.warning("phone_tight_pauses.failed", error=str(exc)[:200])
@@ -13192,6 +13307,76 @@ def _phone_tight_pause_cut(
     except Exception:  # noqa: BLE001 - observability only
         pass
     return new_plan, receipt
+
+
+# KRI-720 G1: every kept segment of every take is one clip on the ONE main track (100 max,
+# `phone_speech_montage_plan._MAX_MAIN_CLIPS`): the tight pass of all takes shares this many
+# (the per-take `TIGHT_MAX_KEEP_SEGMENTS` of one take), leaving headroom for the named /
+# opening / explicit cuts that come after.
+TAKE_TIGHT_MAX_CLIPS = 85
+
+
+def _take_clip_budget(
+    plans: Mapping[str | None, CutPlan | None],
+    order: Sequence[str | None],
+    current: str | None,
+) -> int:
+    """Clips the tight pass may leave on ``current``'s take: the shared budget less what every
+    other take already plays (its kept segments; a take with no plan plays as one clip)."""
+    others = sum(
+        len(plan.keep_segments) if (plan := plans.get(cid)) is not None else 1
+        for cid in order
+        if cid != current
+    )
+    return max(0, TAKE_TIGHT_MAX_CLIPS - others)
+
+
+def _kept_edge_silence(
+    plan: CutPlan | None,
+    spans: Sequence[tuple[float, float]],
+    duration_s: float,
+    *,
+    edge: str,
+) -> float:
+    """Seconds of silence (acceptance definition) a take still plays at its kept start/end."""
+    keep = list(plan.keep_segments) if plan is not None else [(0.0, duration_s)]
+    if not keep:
+        return 0.0
+    tol = 0.005
+    if edge == "end":
+        lo, end = keep[-1]
+        for s, e in spans:
+            if s < end and e >= end - tol:
+                return max(0.0, end - max(s, lo))
+        return 0.0
+    start, hi = keep[0]
+    for s, e in spans:
+        if s - tol <= start < e:
+            return max(0.0, min(e, hi) - start)
+    return 0.0
+
+
+def _measure_take_join_gaps(
+    takes: Sequence[tuple[CutPlan | None, str, float]],
+) -> list[dict[str, Any]]:
+    """KRI-720 G1: the silence left where each take meets the next, in play order.
+
+    One row per pair of neighbours: ``gap_s`` = the tail the first still plays + the lead-in the
+    next still plays (``None`` when either take's audio could not be measured). An uncut take
+    (``plan`` None) plays whole."""
+    from app.pipeline.tight_pause_cut import measure_silence_spans  # noqa: PLC0415
+
+    spans = [measure_silence_spans(path, duration_s=duration) for _plan, path, duration in takes]
+    rows: list[dict[str, Any]] = []
+    for index in range(len(takes) - 1):
+        left, right = spans[index], spans[index + 1]
+        gap: float | None = None
+        if left is not None and right is not None:
+            tail = _kept_edge_silence(takes[index][0], left, takes[index][2], edge="end")
+            lead = _kept_edge_silence(takes[index + 1][0], right, takes[index + 1][2], edge="start")
+            gap = round(tail + lead, 3)
+        rows.append({"after_take": index, "gap_s": gap})
+    return rows
 
 
 def _phone_extra_take_plans(

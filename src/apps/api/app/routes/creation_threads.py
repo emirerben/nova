@@ -3502,13 +3502,17 @@ async def _cleanup_ask_projection(
 
     Read off the newest pending approval's pinned brief, the same way ``_render_shape_projection``
     does. ``requested_in_chat``: the creator's own words ask for speech cleanup. ``tight``: they
-    ask for EVERY pause to go AND the draft is a phone Talking single-clip edit (the only render
-    that cuts pauses tight). Best-effort: anything unreadable is ``(False, False)``; it must never
+    ask for EVERY pause to go AND the draft is a phone Talking single-clip edit, or the draft is a
+    several-take phone Talking edit with several-take cleanup on (it cuts every pause tight for
+    any ask, KRI-720). Best-effort: anything unreadable is ``(False, False)``; it must never
     break the thread read."""
     from app.kria.brief_checks import defers_caption_words_to_phone_render  # noqa: PLC0415
     from app.kria.tight_pause_ask import (  # noqa: PLC0415
         brief_tight_pauses,
         brief_wants_speech_cleanup,
+    )
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_talking_multi_take_cleanup_supported,
     )
 
     try:
@@ -3517,14 +3521,18 @@ async def _cleanup_ask_projection(
         )
         if brief is None or snapshot is None or not brief_wants_speech_cleanup(brief):
             return False, False
-        if not brief_tight_pauses(brief):
+        tight_ask = brief_tight_pauses(brief)
+        clip_paths = tuple(getattr(item, "clip_gcs_paths", None) or ())
+        # KRI-720 G1: several takes cut every pause tight for a plain ask too, so the card says
+        # so; a one-take video is tight only when the creator asked.
+        several_takes = len(clip_paths) > 1 and phone_talking_multi_take_cleanup_supported()
+        if not tight_ask and not several_takes:
             return True, False
         raw_strategy = snapshot.get("strategy")
         strategy = raw_strategy if isinstance(raw_strategy, dict) else {}
         edit_format = strategy.get("edit_format") or getattr(item, "edit_format", None)
-        clip_paths = tuple(getattr(item, "clip_gcs_paths", None) or ())
         phone_talking = (
-            len(clip_paths) == 1
+            (len(clip_paths) == 1 or several_takes)
             and edit_format in {"subtitled", "talking_head"}
             and defers_caption_words_to_phone_render(
                 creator_id=thread.creator_id,
