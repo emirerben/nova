@@ -424,6 +424,12 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
             rule["color"] = _readable_on(ask.box)
         if ask.position is not None:
             rule["position"] = ask.position
+    # KRI-1343: what the creator (or her account rule) set herself; the legibility pass never
+    # overrides those.
+    policy["_caption_explicit"] = {
+        "outline": "stroke_width" in rule,
+        "shadow": "shadow_enabled" in rule,
+    }
     if (
         float(rule.get("stroke_width", 0)) > 12
         or not float(rule.get("stroke_width", 0)).is_integer()
@@ -614,6 +620,292 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
         }
     policy["caption_look"] = resolved
     return resolved
+
+
+def register_generation_fullscreen(cards=(), cutaways=()) -> None:
+    """KRI-1343/1344: the pictures that cover the whole canvas while captions are up -- full-screen
+    photo/video cards (``display_mode == "fullscreen"``) and footage cutaways -- recorded for
+    `caption_legibility_pass`. Each compile registers its own (none: an empty list). No policy or
+    the switch off records nothing (byte-identical)."""
+    from app.config import settings
+
+    policy = _POLICY.get()
+    if not policy or not settings.caption_legibility_enabled:
+        return
+    pictures = []
+    for card in cards or ():
+        if getattr(card, "display_mode", None) != "fullscreen":
+            continue
+        pictures.append(
+            {
+                "path": card.gcs_path,
+                "kind": card.kind,
+                "source_start": float(card.source_start_s or 0.0),
+                "start_s": float(card.start_s),
+                "end_s": float(card.end_s),
+                "place": True,
+            }
+        )
+    for cutaway in cutaways or ():
+        pictures.append(
+            {
+                "path": cutaway.binding.proxy_path,
+                "kind": "video",
+                "source_start": float(cutaway.source_start_s or 0.0),
+                "start_s": float(cutaway.start_s),
+                "end_s": float(cutaway.end_s),
+                # B-roll: judged for contrast; its footage moves, so lines are not moved on it.
+                "place": False,
+            }
+        )
+    policy["_fullscreen_pictures"] = pictures
+
+
+def _fullscreen_grey(policy: dict) -> list[dict]:
+    """Each registered picture with its grey cover-fit (cached by path + time on the policy).
+    Bounded: at most 12 pictures, 12 s in all; a picture that fails to load is skipped."""
+    import tempfile
+    import time
+    from pathlib import Path
+
+    from app.pipeline.caption_legibility import sample_grey
+    from app.storage import download_to_file
+
+    cache = policy.setdefault("_fullscreen_grey_cache", {})
+    out = []
+    started = time.monotonic()
+    with tempfile.TemporaryDirectory(prefix="caption-legibility-") as directory:
+        for index, picture in enumerate((policy.get("_fullscreen_pictures") or [])[:12]):
+            at = (
+                None
+                if picture["kind"] == "image"
+                else picture["source_start"] + (picture["end_s"] - picture["start_s"]) / 2
+            )
+            key = f"{picture['path']}@{at}"
+            if key not in cache:
+                cache[key] = None
+                if time.monotonic() - started < 12:
+                    try:
+                        local = str(Path(directory) / f"picture-{index}")
+                        download_to_file(
+                            picture["path"],
+                            local,
+                            timeout_s=max(0.1, 12 - (time.monotonic() - started)),
+                        )
+                        cache[key] = sample_grey(local, at)
+                    except Exception:  # noqa: BLE001 - legibility never blocks a render
+                        cache[key] = None
+            if cache[key]:
+                out.append({**picture, "pixels": cache[key]})
+    return out
+
+
+def _caption_block(look, text: str, canvas, *, y_frac: float | None = None):
+    """The block (canvas fractions) ``text`` draws in ``look``, centred where the look puts it."""
+    from app.agents._schemas.text_element import TextElement
+    from app.pipeline.phone_text_style import measure_box
+
+    row = TextElement(
+        id="caption-legibility",
+        text=text,
+        start_s=0.0,
+        end_s=1.0,
+        font_family=look.font_family,
+        size_px=look.text_size_px,
+        color=look.text_color,
+        stroke_width=look.outline_px,
+        shadow_enabled=look.shadow_enabled,
+        max_width_frac=look.max_width_frac or 0.68,
+        effect="pop-in",
+    ).model_dump(mode="json", exclude_none=True)
+    x0, y0, x1, y1 = measure_box(dict(row), canvas)
+    width, height = x1 - x0, y1 - y0
+    cx = float(look.position_x_frac)
+    cy = float(look.position_y_frac if y_frac is None else y_frac)
+    left = (
+        cx
+        if look.text_anchor == "left"
+        else cx - width
+        if look.text_anchor == "right"
+        else (cx - width / 2)
+    )
+    return (left, cy - height / 2, left + width, cy + height / 2)
+
+
+def caption_legibility_pass(cues: list[dict], look, *, canvas) -> tuple[object, list[dict]]:
+    """KRI-1343/1344 (`app.pipeline.caption_legibility`): the generated caption ``look`` with the
+    treatment its measured backgrounds need, and ``cues`` with each line placed clear of a
+    full-screen picture's text (moved: a ``line_overrides`` entry keyed by the cue id; hidden: the
+    cue's time cut around that picture). Runs on every compile from the look as first resolved, so
+    a later compile that knows the full-screen pictures decides again with them.
+
+    Only a look this policy generated is treated: an editor-authored look (a Save, a chat edit)
+    is the creator's and passes through, as does everything with no policy or the switch off."""
+    from dataclasses import replace
+
+    from app.config import settings
+
+    policy = _POLICY.get()
+    if (
+        not policy
+        or not settings.caption_legibility_enabled
+        or look is None
+        or look is not policy.get("caption_look")
+        or not cues
+    ):
+        return look, cues
+    from app.pipeline import caption_legibility as legibility
+    from app.pipeline.phone_text_background import HEIGHT, WIDTH
+    from app.services.pipeline_trace import record_pipeline_event
+
+    # Decide from the look before this pass: on a later compile that is the base this pass last
+    # treated, unless another step has since replaced the look (a face band lift, a corner
+    # frame): then that new look is the base.
+    base = (
+        policy["_caption_look_base"]
+        if look is policy.get("_caption_look_treated") and "_caption_look_base" in policy
+        else look
+    )
+    policy["_caption_look_base"] = base
+    timed = [c for c in cues if str(c.get("text") or "").strip()]
+    if not timed:
+        return look, cues
+    take_frames = [
+        legibility.GreyFrame(f["pixels"], WIDTH, HEIGHT, f["start_s"], f["end_s"])
+        for f in policy.get("_background_frames") or []
+    ]
+    pictures = _fullscreen_grey(policy)
+    picture_frames = [
+        legibility.GreyFrame(
+            p["pixels"], legibility.GRID_W, legibility.GRID_H, p["start_s"], p["end_s"]
+        )
+        for p in pictures
+    ]
+    # 1. Lines over a full-screen picture: moved to its calm band, or hidden there.
+    overrides = dict(base.line_overrides or {})
+    moved, hidden = [], []
+    out_cues = []
+    maps_by_picture = [
+        (p, legibility.edge_maps(p["pixels"], legibility.GRID_W, legibility.GRID_H))
+        for p in pictures
+        if p.get("place")
+    ]
+    faces = policy.get("_face_boxes") or []
+    for index, cue in enumerate(cues):
+        start, end = float(cue.get("start_s", 0)), float(cue.get("end_s", 0))
+        over = [
+            (p, m)
+            for p, m in maps_by_picture
+            if p["start_s"] < end and start < p["end_s"] and str(cue.get("text") or "").strip()
+        ]
+        if not over:
+            out_cues.append(cue)
+            continue
+        cue_id = cue.get("id") if isinstance(cue.get("id"), str) else f"native-caption-{index}"
+        cue = {**cue, "id": cue_id}
+        own = overrides.get(cue_id) or {}
+        try:
+            box = _caption_block(base, str(cue["text"]), canvas, y_frac=own.get("position_y_frac"))
+        except Exception:  # noqa: BLE001 - an unmeasurable line stays where it is
+            out_cues.append(cue)
+            continue
+        windows = [(p["start_s"], p["end_s"]) for p, _ in over]
+        # The part of the line outside the pictures is drawn over the take: the moved spot must
+        # keep off a face there (text never covers a face). Inside them the picture hides her.
+        uncovered = (
+            end
+            - start
+            - sum(max(0.0, min(end, w_end) - max(start, w_start)) for w_start, w_end in windows)
+        )
+        outside = (
+            [
+                face["box"] if isinstance(face, dict) else face
+                for face in faces
+                if not isinstance(face, dict)
+                or (float(face.get("start_s", 0)) < end and start < float(face.get("end_s", 0)))
+            ]
+            if uncovered > 0.05
+            else []
+        )
+        placement = legibility.place_line(box, [m for _, m in over], blocked=outside)
+        if placement.action == "move":
+            overrides[cue_id] = {**own, "position_y_frac": placement.y_frac}
+            moved.append({"cue": cue_id, "y_frac": placement.y_frac})
+            out_cues.append(cue)
+        elif placement.action == "hide":
+            pieces = legibility.trim_cue_out_of(cue, windows)
+            hidden.append({"cue": cue_id, "windows": [list(w) for w in windows]})
+            out_cues.extend(
+                {**piece, "id": cue_id if n == 0 else f"{cue_id}-{n}"}
+                for n, piece in enumerate(pieces)
+            )
+        else:
+            out_cues.append(cue)
+    # 2. Every drawn line, where it is finally drawn, against what is behind it while it is up.
+    contrast: float | None = None
+    measured = 0
+    for index, cue in enumerate(out_cues):
+        if not str(cue.get("text") or "").strip():
+            continue
+        start, end = float(cue.get("start_s", 0)), float(cue.get("end_s", 0))
+        own = overrides.get(cue.get("id") or f"native-caption-{index}") or {}
+        try:
+            box = _caption_block(base, str(cue["text"]), canvas, y_frac=own.get("position_y_frac"))
+        except Exception:  # noqa: BLE001
+            continue
+        under = [f for f in (*take_frames, *picture_frames) if f.start_s < end and start < f.end_s]
+        value = legibility.worst_contrast(base.text_color, box, under)
+        if value is not None:
+            measured += 1
+            contrast = value if contrast is None else min(contrast, value)
+    # 3. The treatment the worst line needs.
+    explicit = policy.get("_caption_explicit") or {}
+    treatment = legibility.choose_treatment(
+        fill=base.text_color,
+        size_px=base.text_size_px,
+        outline_px=base.outline_px,
+        shadow_enabled=base.shadow_enabled,
+        has_box=base.box_color is not None,
+        contrast=contrast,
+        outline_asked=bool(explicit.get("outline")),
+        shadow_asked=bool(explicit.get("shadow")),
+    )
+    treated = base
+    after = contrast
+    if treatment.kind == "outline":
+        treated = replace(
+            base, outline_px=treatment.outline_px, stroke_color=treatment.stroke_color
+        )
+        after = legibility.contrast_ratio(
+            legibility.relative_luminance(base.text_color),
+            legibility.relative_luminance(treatment.stroke_color),
+        )
+    elif treatment.kind == "shadow":
+        treated = replace(
+            base,
+            shadow_enabled=True,
+            shadow_color=treatment.shadow_color,
+            shadow_opacity=treatment.shadow_opacity,
+        )
+    if overrides != (base.line_overrides or {}):
+        treated = replace(treated, line_overrides=overrides)
+    frames = take_frames + picture_frames
+    receipt = {
+        "version": legibility.CAPTION_LEGIBILITY_VERSION,
+        "contrast_before": None if contrast is None else round(contrast, 2),
+        "contrast_after": None if after is None else round(after, 2),
+        "treatment": treatment.kind,
+        "frames": len(frames),
+        "lines_measured": measured,
+        "pictures": len(pictures),
+        "moved": moved,
+        "hidden": hidden,
+    }
+    if receipt != policy.get("_caption_legibility_receipt"):
+        record_pipeline_event("text", "caption_legibility", receipt)
+    policy["_caption_legibility_receipt"] = receipt
+    policy["caption_look"] = policy["_caption_look_treated"] = treated
+    return treated, out_cues
 
 
 def _apply_caption_shape(resolved, ask, over_face: bool, cues: list[dict], canvas):
@@ -808,9 +1100,18 @@ def _caption_over_face(row: dict, rows: list[dict], faces: list, canvas) -> bool
 def generation_caption_cues(cues: list[dict], *, language: str | None = None) -> list[dict]:
     """KRI-1177: ``cues`` in the case the creator asked for, in the cue text itself (the editor
     shows it and a Save keeps it); ``cues`` unchanged when no case was asked."""
+    from app.config import settings
     from app.kria.caption_look_ask import CaptionLookAsk, apply_caption_case
 
     policy = _POLICY.get() or {}
+    if policy and settings.caption_legibility_enabled:
+        # KRI-1344: a line moved off a picture's text is keyed by its cue id; the id the iPhone
+        # editor would derive for an id-less row (`native-caption-<index>`), made explicit so it
+        # survives every later split, merge or reorder of the persisted cues.
+        cues = [
+            cue if isinstance(cue.get("id"), str) else {**cue, "id": f"native-caption-{index}"}
+            for index, cue in enumerate(cues)
+        ]
     ask = CaptionLookAsk.from_dict(policy.get("caption_ask"))
     if ask is None:
         return cues
@@ -1462,8 +1763,18 @@ def generation_style_fields() -> dict:
                 # box's legibility outline), so every other variant keeps its exact fields; a Save
                 # and the editor keep it.
                 **({"stroke_color": look.stroke_color} if look.stroke_color is not None else {}),
+                # KRI-1343/1344: only the legibility pass sets these on a generated look.
+                **({"shadow_color": look.shadow_color} if look.shadow_color is not None else {}),
+                **(
+                    {"shadow_opacity": look.shadow_opacity}
+                    if look.shadow_opacity is not None
+                    else {}
+                ),
+                **({"line_overrides": look.line_overrides} if look.line_overrides else {}),
             },
         )
+    if policy.get("_caption_legibility_receipt") is not None:
+        result["caption_legibility"] = copy.deepcopy(policy["_caption_legibility_receipt"])
     return result
 
 

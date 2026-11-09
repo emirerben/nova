@@ -558,10 +558,16 @@ def compile_caption_layers(
     exactly as it always has.
     """
     from app.pipeline.canvas import Canvas as PipelineCanvas
-    from app.services.phone_text_styling import generation_caption_look, remember_caption_bounds
+    from app.services.phone_text_styling import (
+        caption_legibility_pass,
+        generation_caption_look,
+        remember_caption_bounds,
+    )
 
     canvas = PipelineCanvas(width=canvas_width, height=canvas_height)
     look = generation_caption_look(cues, look, canvas=canvas)
+    # KRI-1343/1344: readable on what is behind it; lines clear of a full-screen picture's text.
+    look, cues = caption_legibility_pass(cues, look, canvas=canvas)
     resolved_look = look if look is not None else _DEFAULT_CAPTION_LOOK
     if not resolved_look.captions_enabled:
         return []

@@ -2879,6 +2879,15 @@ class Settings(BaseSettings):
     # captions are white with a black outline. Edits without a background are unchanged. Default
     # TRUE; false + worker restart = byte-identical (`phone_text_styling._background_frames`).
     caption_background_contrast_enabled: bool = True
+    # KRI-1343 / KRI-1344 (2026-11-09): captions stay readable on any background. The worst
+    # contrast under the caption (take frames, full-screen photos/videos, B-roll) below 4.5:1 adds
+    # an outline sized to the text in the readable ink, even when the creator chose the colour
+    # (unless they set the outline / shadow themselves); while a full-screen picture is up a line
+    # moves to its nearest calm band, or hides there when the picture is text-dense. Default
+    # FALSE; false = byte-identical (`pipeline/caption_legibility.py`,
+    # `phone_text_styling.caption_legibility_pass`). Apply: fly secret
+    # `CAPTION_LEGIBILITY_ENABLED=true` (api + worker) + restart.
+    caption_legibility_enabled: bool = False
     # Qendresa case 1 (2026-11-06): on a speaker-background edit with the speaker in a corner
     # frame, caption and text placement dodge her face where the phone DRAWS it (the take scaled
     # into the frame), not where it sits in the full-frame take; inside a full-screen window
