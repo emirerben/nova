@@ -298,3 +298,30 @@ def test_realign_leaves_titles_that_already_sit_on_their_clips():
     parsed, state = _parse(job, copy.deepcopy(saved), {"op": "realign_labels"}, "fix the titles")
     assert parsed is None
     assert any("already line up" in message for message in state.no_effect_clarifications)
+
+
+def test_a_reorder_moves_a_title_with_its_clip_without_stretching_it(monkeypatch):
+    """A guided story re-times its text on every timeline edit: moving a title's first clip
+    to the front must not stretch the title back to the footage it ran on over."""
+    from tests.services._guided_timeline_fixtures import arm_guided, guided_job, guided_revision
+
+    monkeypatch.setattr(settings, "kria_guided_timeline_ops", True, raising=False)
+    job_id = str(uuid.uuid4())
+    revision = guided_revision(job_id)
+    title = {
+        "id": "kria-day-two",
+        "text": "Day two",
+        "start_s": 2.0,
+        "end_s": 5.0,
+        "role": "generative_intro",
+        "source_params": {"source_asset_id": "m1", "source_timeline_id": "s2"},
+    }
+    job, variant = guided_job(revision, [title], job_id)
+    arm_guided(monkeypatch, revision)
+
+    compiled = compile_editor_ops(
+        job, variant, [{"op": "reorder_clip", "from_index": 1, "to_index": 0}]
+    )
+    [row] = compiled.payload.text_elements
+    assert row["start_s"] == pytest.approx(0.0, abs=FRAME)
+    assert 2.0 - FRAME <= row["end_s"] <= 3.0 + FRAME
