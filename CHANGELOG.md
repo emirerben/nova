@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.118.0] - 2026-11-09
+
+### Changed
+- fix(kria): Qendresa Q2 run 2 fixes: title logo, hold card, freeze, title on captions, labels, black bars, pauses (KRI-1320) (#2229) <!-- release-pr: 2229 -->
+
 ## [0.88.117.0] - 2026-11-09
 
 ### Changed
