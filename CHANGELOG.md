@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.122.0] - 2026-11-09
+
+### Changed
+- test(ios): DurationTextPreservationTests runs in seconds, not ten minutes (#2237) <!-- release-pr: 2237 -->
+
 ## [0.88.121.0] - 2026-11-09
 
 ### Changed
