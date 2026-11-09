@@ -1308,10 +1308,12 @@ jobs:
             -only-testing:KriaUITests/CreationUITests/testServerSuggestionChipsSendOnTapAndReplaceFixedChips \
             -only-testing:KriaUITests/CreationUITests/testFirstPromptChipsScrollAwayWithTheTranscriptWhileTheKeyboardIsOpen \
             -only-testing:KriaUITests/CreationUITests/testLeadSuggestionChipIsOneLineAtTheDefaultTextSize \
-            -only-testing:KriaUITests/CreationUITests/testSuggestionCardsInChatAndTheEditorImproveSheetShareOneSet \
+            -only-testing:KriaUITests/CreationUITests/testSuggestionChipsFillTheComposerOneAfterAnotherAndSendOnePlainMessage \
+            -only-testing:KriaUITests/CreationUITests/testALoneHookChipIsSentPinnedToTheSetAndCard \
             -only-testing:KriaUITests/CreationUITests/testDeclinedSuggestionCardRepliesNoLongerFitsThenTheRefreshedSet \
-            -only-testing:KriaUITests/CreationUITests/testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize \
-            -only-testing:KriaUITests/CreationUITests/testGeneratedImageCardAsksFirstThenMakesOneImageAndHandsItToReview \
+            -only-testing:KriaUITests/CreationUITests/testSuggestionChipsKeepTurkishHookTextWholeAtAccessibilityTextSize \
+            -only-testing:KriaUITests/CreationUITests/testGeneratedImageChipMakesOneImageAndHandsItToReview \
+            -only-testing:KriaUITests/CreationUITests/testGeneratedImageReviewOpensFromTheEditorsChatSheet \
             -resultBundlePath ../../../test-results/kri-559/suggestion-chips-native.xcresult test-without-building
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/suggestion-chips-native.xcresult \
             > ../../../test-results/kri-559/suggestion-chips-native-tests.json
@@ -1320,10 +1322,12 @@ jobs:
             --xctest CreationUITests/testServerSuggestionChipsSendOnTapAndReplaceFixedChips \
             --xctest CreationUITests/testFirstPromptChipsScrollAwayWithTheTranscriptWhileTheKeyboardIsOpen \
             --xctest CreationUITests/testLeadSuggestionChipIsOneLineAtTheDefaultTextSize \
-            --xctest CreationUITests/testSuggestionCardsInChatAndTheEditorImproveSheetShareOneSet \
+            --xctest CreationUITests/testSuggestionChipsFillTheComposerOneAfterAnotherAndSendOnePlainMessage \
+            --xctest CreationUITests/testALoneHookChipIsSentPinnedToTheSetAndCard \
             --xctest CreationUITests/testDeclinedSuggestionCardRepliesNoLongerFitsThenTheRefreshedSet \
-            --xctest CreationUITests/testSuggestionCardsKeepTurkishHookTextWholeAtAccessibilityTextSize \
-            --xctest CreationUITests/testGeneratedImageCardAsksFirstThenMakesOneImageAndHandsItToReview
+            --xctest CreationUITests/testSuggestionChipsKeepTurkishHookTextWholeAtAccessibilityTextSize \
+            --xctest CreationUITests/testGeneratedImageChipMakesOneImageAndHandsItToReview \
+            --xctest CreationUITests/testGeneratedImageReviewOpensFromTheEditorsChatSheet
       - name: Verify both answer orders use one creation turn
         if: matrix.leg == 'screens' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-802-question-batch')
         working-directory: src/apps/ios
