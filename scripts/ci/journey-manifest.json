@@ -3592,6 +3592,33 @@
         "src/apps/ios/Tests/KriaTests/DeviceTalkingCardStyleRenderE2ETests.swift",
         "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/PlacedCardStyleTests.swift"
       ]
+    },
+    {
+      "id": "kri-1350-colour-moments",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_colour_moments.py tests/evals/test_edit_copilot_evals.py tests/kria/test_plan_review.py tests/routes/test_editor_save_code_catalog.py",
+      "xctests": [
+        "KriaTests/ColorMomentsEditorPreviewTests/testTheStoredLaneReachesThePreviewRecipe",
+        "KriaTests/ColorMomentsEditorPreviewTests/testAShorterCutShortensOrDropsLikeTheServer",
+        "KriaTests/ColorMomentsEditorPreviewTests/testAnUnreadableLanePreviewsWithoutMoments",
+        "KriaTests/ColorMomentsEditorPreviewTests/testTheDocumentReadsTheLaneButNeverSavesIt"
+      ],
+      "paths": [
+        "src/apps/api/app/kria/portable_color_moments.py",
+        "src/apps/api/app/agents/editor_ops_v2/color_moments.py",
+        "src/apps/api/prompts/edit_copilot_ops/color_moments.txt",
+        "src/apps/api/tests/kria/test_colour_moments.py",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/color_moments_bw_light_leak_whoosh.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/color_moments_gate_closed_refusal.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/color_moments_turkish_end_fade.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/color_moments_unasked_refusal.json",
+        "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/ColorMoments.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/ColorMomentsCompositionTests.swift",
+        "src/apps/ios/Tests/KriaTests/ColorMomentsEditorPreviewTests.swift",
+        "scripts/verify-colour-moments.py",
+        "tests/fixtures/colour-moments/parity-v1.json",
+        "tests/fixtures/colour-moments/cigdem-reel-answer-key.json"
+      ]
     }
   ]
 }
