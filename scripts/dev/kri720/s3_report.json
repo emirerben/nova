@@ -1,0 +1,134 @@
+{
+ "s3_clean": {
+  "export_s": 32.329,
+  "recipe_s": 32.329,
+  "silences_over_0.4s_inside_speech": [
+   [
+    2.44,
+    2.86
+   ],
+   [
+    13.57,
+    14.12
+   ],
+   [
+    15.27,
+    15.76
+   ],
+   [
+    20.68,
+    21.11
+   ],
+   [
+    28.87,
+    29.43
+   ]
+  ],
+  "expected_words": 90,
+  "heard_words": 90,
+  "missing_or_changed_words": [],
+  "caption_offset_median_s": 0.148,
+  "caption_offset_p90_s": 0.41,
+  "caption_words_matched": 89
+ },
+ "s3_uncut": {
+  "export_s": 34.249,
+  "recipe_s": 34.249,
+  "silences_over_0.4s_inside_speech": [
+   [
+    1.85,
+    2.48
+   ],
+   [
+    4.36,
+    4.78
+   ],
+   [
+    15.49,
+    16.04
+   ],
+   [
+    17.19,
+    17.68
+   ],
+   [
+    22.6,
+    23.03
+   ],
+   [
+    30.79,
+    31.35
+   ]
+  ],
+  "expected_words": 94,
+  "heard_words": 95,
+  "missing_or_changed_words": [
+   "lipton",
+   "mira's",
+   "mira's"
+  ],
+  "caption_offset_median_s": 0.208,
+  "caption_offset_p90_s": 0.52,
+  "caption_words_matched": 91
+ },
+ "s3_clean_a_last": {
+  "export_s": 31.922,
+  "recipe_s": 31.921646000000003,
+  "silences_over_0.4s_inside_speech": [
+   [
+    2.49,
+    2.92
+   ],
+   [
+    10.67,
+    11.24
+   ],
+   [
+    16.17,
+    16.59
+   ],
+   [
+    27.3,
+    27.86
+   ],
+   [
+    29.0,
+    29.49
+   ]
+  ],
+  "expected_words": 90,
+  "heard_words": 90,
+  "missing_or_changed_words": [],
+  "caption_offset_median_s": 0.296,
+  "caption_offset_p90_s": 0.454,
+  "caption_words_matched": 89
+ },
+ "single_clean": {
+  "export_s": 18.188,
+  "recipe_s": 18.188000000000002,
+  "silences_over_0.4s_inside_speech": [
+   [
+    2.44,
+    2.86
+   ],
+   [
+    13.57,
+    14.12
+   ],
+   [
+    15.27,
+    15.76
+   ]
+  ],
+  "expected_words": 49,
+  "heard_words": 49,
+  "missing_or_changed_words": [],
+  "caption_offset_median_s": 0.19,
+  "caption_offset_p90_s": 0.49,
+  "caption_words_matched": 48
+ },
+ "control_a_last_captions_on_uncut_export": {
+  "caption_offset_median_s": 19.93,
+  "caption_offset_p90_s": 20.16
+ }
+}
