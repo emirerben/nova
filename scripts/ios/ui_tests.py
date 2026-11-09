@@ -18,9 +18,17 @@ LEGACY_DURATIONS = Path(__file__).with_name("ui-test-durations.json")
 # selection splits only when one leg would run more than this much recorded UI
 # time. Nightly/manual full regression gets three legs; PRs use one Mac.
 SHARD_TARGET_SECONDS = 15 * 60
-# Bound full regression fan-out. ios.yml must define a matrix for every
-# count up to this one; main and PRs explicitly select one native leg.
+# Bound fan-out. ios.yml must define a matrix for every count up to this one;
+# ci.yml gives each PR shard its own `ui-<i>` leg next to the unit leg.
 MAX_SHARDS = 3
+# A PR UI leg runs only its shard after a cached compile (~8-12 min of setup),
+# so it targets more recorded time per Mac than nightly. An editor PR's group
+# records 88.6 min (it ran 87 min on #2225): three legs of ~30 min finish in
+# ~40-50 min next to a 19-40 min unit leg, instead of 2+ hours on one Mac.
+# Short selections (smoke, projects: 10 min) stay on the unit leg's Mac.
+PR_SHARD_TARGET_SECONDS = 35 * 60
+# Shard 1 of ios.yml also runs the unit suite; PR UI legs pass 0.
+UNIT_OVERHEAD_SECONDS = 7 * 60
 FEATURES = ("creation", "projects", "editor")
 FOCUSED = tuple(f"smoke,{group}" for group in FEATURES)
 UI_TEST_ROOT = "src/apps/ios/Tests/KriaUITests/"
@@ -149,6 +157,36 @@ def changed_tests(source, lines):
     return tests
 
 
+def file_group(path, data, root=ROOT):
+    """Feature group owning every test of a self-contained UI test file, else None.
+
+    The file must hold one XCTestCase class and nothing at file scope but
+    imports, that class, its extensions and private declarations: a shared
+    helper (a struct or enum other files call) can change tests outside the
+    file, so it keeps an explicit mapping or selects full.
+    """
+    if not path.startswith(UI_TEST_ROOT):
+        return None
+    source = (root / path).read_text()
+    classes = re.findall(r"\bclass\s+(\w+)\s*:\s*XCTestCase\b", source)
+    methods = re.findall(r"\bfunc\s+(test\w+)\s*\(", source)
+    if len(classes) != 1 or not methods:
+        return None
+    own = re.compile(
+        r"(?:import\s|//|/\*|\*|\}|#(?:if|elseif|else|endif)\b|@\w+(?:\([^)]*\))?\s*$"
+        r"|(?:private|fileprivate)\s"
+        r"|(?:@\w+(?:\([^)]*\))?\s+)*(?:final\s+)?"
+        rf"(?:class\s+{classes[0]}\s*:\s*XCTestCase\b|extension\s+{classes[0]}\b))"
+    )
+    if any(
+        re.match(r"\S", line) and not own.match(line) for line in source.splitlines()
+    ):
+        return None
+    tests = {f"KriaUITests/{classes[0]}/{name}" for name in methods}
+    groups = {group for group in FEATURES if tests & set(data["groups"][group])}
+    return groups.pop() if len(groups) == 1 else None
+
+
 def select_groups(paths, root=ROOT, focused=None):
     """Caller passes only paths that selected UI coverage, including deleted paths.
 
@@ -173,6 +211,8 @@ def select_groups(paths, root=ROOT, focused=None):
                 tests |= changed
             elif path in sources:
                 groups.add(sources[path])
+            elif group := file_group(path, data, root):
+                groups.add(group)
             else:
                 return "full", "Shared, deleted, or unmapped UI input changed."
         if len(groups) > 1:
@@ -358,17 +398,15 @@ def weights(tests, durations=None):
     return {test: float(durations.get(test, default)) for test in tests}
 
 
-def shard_count(value, root=ROOT, durations=None):
-    """Native legs for an executed selection: one per SHARD_TARGET_SECONDS of
+def shard_count(value, root=ROOT, durations=None, target=SHARD_TARGET_SECONDS):
+    """Native legs for an executed selection: one per `target` seconds of
     recorded UI time, at most MAX_SHARDS and never more legs than tests."""
     tests = expected_tests(value, root)
     estimate = sum(weights(tests, durations).values())
-    return max(
-        1, min(MAX_SHARDS, len(tests), math.ceil(estimate / SHARD_TARGET_SECONDS))
-    )
+    return max(1, min(MAX_SHARDS, len(tests), math.ceil(estimate / target)))
 
 
-def shard_tests(tests, spec, durations=None):
+def shard_tests(tests, spec, durations=None, overhead=UNIT_OVERHEAD_SECONDS):
     """This shard's part of a deterministic, duration-balanced partition.
 
     Every shard computes the same partition from the same checkout, so the
@@ -379,10 +417,10 @@ def shard_tests(tests, spec, durations=None):
     index, count = parse_shard(spec)
     weight = weights(tests, durations)
     loads, members = [0.0] * count, [[] for _ in range(count)]
-    # Shard 1 runs the unit suite. Small focused selections keep their old
-    # partition: the overhead alone would otherwise consume their UI budget.
-    if count > 1 and sum(weight.values()) > count * 7 * 60:
-        loads[0] = 7 * 60
+    # `overhead` is the unit suite shard 1 also runs. Small focused selections
+    # keep their old partition: it would otherwise consume their UI budget.
+    if count > 1 and sum(weight.values()) > count * overhead:
+        loads[0] = overhead
     for test in sorted(tests, key=lambda test: (-weight[test], test)):
         target = min(range(count), key=lambda shard: (loads[shard], shard))
         loads[target] += weight[test]
@@ -399,7 +437,12 @@ def main():
     # Macs; each shard runs and verifies exactly its part.
     shard = os.environ.get("KRIA_IOS_UI_SHARD", "")
     if shard:
-        expected = shard_tests(expected, shard)
+        overhead = os.environ.get("KRIA_IOS_UI_SHARD_OVERHEAD_SECONDS", "")
+        expected = shard_tests(
+            expected,
+            shard,
+            overhead=int(overhead) if overhead else UNIT_OVERHEAD_SECONDS,
+        )
     if command == "args":
         if value == "full" and not shard:
             print("-only-testing:KriaUITests")
