@@ -380,6 +380,7 @@ def _coerce_realign_labels(name: str, payload: dict, snapshot: dict, state: Any)
             "id": bar_id,
             "media_id": rows[bar_id].get("clip_id"),
             "segment_id": rows[bar_id].get("segment_id"),
+            "runs_on": rows[bar_id].get("runs_on") is True,
             "start_s": rows[bar_id].get("start_s"),
             "end_s": rows[bar_id].get("end_s"),
         }

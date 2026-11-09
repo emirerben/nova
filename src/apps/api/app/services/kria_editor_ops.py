@@ -577,10 +577,14 @@ def clip_visible_text_by_media_id(
 
 
 def _clip_label_links(job: Any, variant: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Text-bar id -> {clip_id, inferred} for the per-clip label lane.
+    """Text-bar id -> {clip_id, inferred, edited} for every text bound to a clip.
 
     The unified montage writes ``clip-label-{cut_id}`` bars; a copilot-authored
-    label uses ``clip-label-media-{media_id}``. Approved label provenance
+    label uses ``clip-label-media-{media_id}``. Any other text is bound by the clip
+    it records in ``source_params`` (``source_asset_id`` + ``source_timeline_id``:
+    titles the phone repair placed, KRI-1331, and participant labels); such a link
+    adds ``runs_on`` (the text starts at its clip and may run on past it) and
+    ``segment_id`` (the clip's timeline id). Approved label provenance
     (``inferred`` = a model landmark guess the creator may correct) is kept only
     while the bar still shows the approved text, so a creator's own edit is
     never re-flagged as a guess.
@@ -603,12 +607,15 @@ def _clip_label_links(job: Any, variant: dict[str, Any]) -> dict[str, dict[str, 
     links: dict[str, dict[str, Any]] = {}
     for bar in variant.get("text_elements") or []:
         bar_id = bar.get("id") if isinstance(bar, dict) else None
-        if not isinstance(bar_id, str) or not bar_id.startswith(_CLIP_LABEL_BAR_PREFIX):
+        if not isinstance(bar_id, str):
             continue
+        recorded: dict[str, Any] = {}
         if bar_id.startswith(_CLIP_LABEL_MEDIA_PREFIX):
             media_id = bar_id[len(_CLIP_LABEL_MEDIA_PREFIX) :]
-        else:
+        elif bar_id.startswith(_CLIP_LABEL_BAR_PREFIX):
             media_id = media_by_cut.get(bar_id[len(_CLIP_LABEL_BAR_PREFIX) :])
+        else:
+            media_id, recorded = _recorded_clip(bar)
         if not media_id:
             continue
         label = approved.get(media_id)
@@ -619,8 +626,31 @@ def _clip_label_links(job: Any, variant: dict[str, Any]) -> dict[str, dict[str, 
             # Not the approved AI/fact label any more (the creator changed it, or
             # it was authored in chat): `label_each_clip` must leave it alone.
             "edited": not same_text,
+            **recorded,
         }
     return links
+
+
+def _recorded_clip(bar: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
+    """The clip a text records in ``source_params``, with its link fields.
+
+    A word-by-word piece copies its source's params, so it never counts: each piece
+    keeps its own window inside the sequence.
+    """
+    params = bar.get("source_params")
+    if (
+        not isinstance(params, dict)
+        or bar.get("sequence_source_id")
+        or params.get("sequence_source_id")
+    ):
+        return None, {}
+    media_id, timeline_id = params.get("source_asset_id"), params.get("source_timeline_id")
+    if not isinstance(media_id, str):
+        return None, {}
+    return media_id, {
+        "runs_on": True,
+        "segment_id": timeline_id if isinstance(timeline_id, str) and timeline_id else None,
+    }
 
 
 def _is_guided_native(job: Any, variant: dict[str, Any]) -> bool:
@@ -652,6 +682,7 @@ def _bar_clip_link(row: dict[str, Any], links: dict[str, dict[str, Any]]) -> dic
     out = {"clip_id": link["clip_id"], "inferred": link["inferred"]}
     if link["edited"]:
         out["edited"] = True
+    out.update({key: link[key] for key in ("runs_on", "segment_id") if link.get(key)})
     return out
 
 
