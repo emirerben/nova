@@ -192,7 +192,7 @@ G4 older builds
 - O6 a job approved on 47 reopened on an old device.
 - O7 Swift and server protocol numbers drift.
 
-## Proof after the four fixes (2026-11-09, HEAD 172619530, macOS KriaMediaEngine, real S3 takes)
+## Proof after the four fixes (2026-11-09, HEAD be3915c4f, macOS KriaMediaEngine, real S3 takes)
 
 What ran ($0, no model calls): the LIVE whisper-1 word stamps of job 7416c94b stand in for the
 server transcriber (one concatenated timeline split by the uncut take durations 20.108 / 6.989 /
@@ -203,7 +203,8 @@ engine, real `_analyze_takes`, real worker (`_run_phone_subtitled_job`, `require
 exported by `AudioParityFixtureTests`. Settings: `tight_pause_cut_enabled`,
 `speech_cleanup_long_pauses_enabled`, `talking_multi_take_cleanup_enabled`, retake levers on.
 Briefs are bound on the job: Cigdem's real plain ask (`speech_cleanup: true`, no tight fact);
-named-line cases add one `cut_lines` entry.
+named-line cases add one `cut_lines` entry. Run twice: first on 172619530 (one 0.42 s pause
+stayed), then on be3915c4f (the fix); the table is the second run.
 
 ```bash
 cd src/apps/api && PYTHONPATH=$PWD .venv/bin/python ../../../scripts/dev/kri720/s3_proof.py \
@@ -215,27 +216,24 @@ src/apps/api/.venv/bin/python -I scripts/dev/kri720/audio_align.py OUT ~/Downloa
 
 | Case | Export = recipe | Slate + "oh sorry, again" | Named line | Silences >= 0.4 s inside speech | Joins | Real words lost | Caption vs own sound |
 |---|---|---|---|---|---|---|---|
-| s3_clean (A,B,C) | 27.509 = 27.509 | gone | n/a | 1: 1.96-2.38 (0.42 s) | no gap | 0 (2 transcriber mishears, "lip tint" heard as "Lipton") | 79/84 clear, max lag 0.000 s, 0 over 0.1 s |
-| s3_clean_a_last (B,C,A) | 27.509 = 27.509 | gone | n/a | 1: 15.36-15.78 (0.42 s, same pause) | no gap | 0 (same mishear) | 79/84, max 0.000 s |
-| single_clean (A) | 14.108 = 14.108 | gone | n/a | 1: 1.96-2.38 (long-only on one take, by design) | n/a | 0 | 42/43, max 0.000 s |
+| s3_clean (A,B,C) | 27.339 = 27.339 | gone | n/a | none | no gap | 0 (2 transcriber mishears, "lip tint" heard as "Lipton") | 79/84 clear, max lag 0.000 s, 0 over 0.1 s |
+| s3_clean_a_last (B,C,A) | 27.339 = 27.339 | gone | n/a | none | no gap | 0 (same mishear) | 79/84, max 0.000 s |
+| single_clean (A) | 14.108 = 14.108 | gone | n/a | 1: 1.96-2.38 (0.42 s; one take keeps long-only, by design) | n/a | 0 | 42/43, max 0.000 s |
 | s3_uncut (control) | 34.249 = 34.249 | kept | n/a | 6 (0.42-0.63 s) | n/a | 0 (2 mishears of "Mira's") | 90/95 |
-| s3_named_line ("But that's for the next episode.", take C) | 25.784 = 25.784 | gone | gone; "cafes" and "Don't forget to follow" stay | 1: 1.96-2.38 | no gap | 0 | 73/78, max 0.000 s |
-| s3_named_line_tail ("Don't forget to follow.", take C) | 26.349 = 26.349 | gone | gone; "But that's for the next episode" and "cafes" stay | 1: 1.96-2.38 | no gap | 0 | 75/80, max 0.000 s |
+| s3_named_line ("But that's for the next episode.", take C) | 25.614 = 25.614 | gone | gone; "cafes" and "Don't forget to follow" stay | none | no gap | 0 | 73/78, max 0.000 s |
+| s3_named_line_tail ("Don't forget to follow.", take C) | 26.179 = 26.179 | gone | gone; "But that's for the next episode" and "cafes" stay | none | no gap | 0 | 75/80, max 0.000 s |
 
 Negative control: the `s3_clean_a_last` captions searched in the uncut export: 0 of 84 correlate.
 Named-line receipts: `applied`, one occurrence, take 3 (`takeC`), cut 4.10-5.85 s / 5.92-7.08 s.
 Numbers: `scripts/dev/kri720/s3_report.json`, `s3_audio_align.json`, `s3_recipes.json`.
 
 Findings:
-- G2 holds: the restart "oh sorry, again" (13.94-17.54 s) and the slate (0-2.4 s) are both cut;
-  `relisten.dropped=[]` on take A.
+- G2 holds: the restart "oh sorry, again" (13.94-17.54 s) and the slate (0-2.4 s) are both cut.
 - G3 holds: the named line is cut from the one take that says it, later clips and captions shift
   exactly, neighbour words survive.
-- NOT met, narrowly: "no pause > 0.4 s". One pause stays in every several-take case: take A
-  source 4.39-4.78 s (between "marketing?" and "Because"). The tight pass measures it at 0.389 s
-  (-38 dB, high-passed), ffmpeg `silencedetect` -35 dB sees 0.42 s. The pass reports
-  `no_change` with `pauses_over_limit: 2`: cutting it to the 0.3 s target would remove ~0.09 s,
-  below `TIGHT_MIN_CUT_S` (0.12). Moving the stamp of "Because" later does not change this, so
-  it is the min-cut rule, not loose word stamps. Joins are clean (no silence within 0.5 s).
-- Caption timing: caption words sit exactly on their own sound in the export (max lag 0.000 s);
-  this checks the remap and offsets, the source stamps themselves are whisper-1's.
+- The 0.42 s pause (take A source 4.39-4.78 s, "marketing?" to "Because") that stayed on
+  172619530 is now cut (take A keeps 2.4-4.53, 4.63-8.19, 8.26-13.94, 17.54-20.108 s): the bar
+  "no pause > 0.4 s" is met in every several-take case, joins included.
+- The single-take case keeps its 0.42 s pause on purpose (one take = long pauses only).
+- Caption words sit exactly on their own sound in the export (max lag 0.000 s); this checks the
+  remap and offsets, the source stamps themselves are whisper-1's.

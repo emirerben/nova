@@ -6,29 +6,24 @@
     "restart_gone": true
    },
    "join_times_s": [
-    14.108,
-    20.747
+    13.938,
+    20.577
    ],
    "longest_silence_within_0.5s_of_join_s": [
     0.0,
     0.0
    ],
-   "export_s": 27.509,
-   "recipe_s": 27.509,
-   "silences_over_0.4s_inside_speech": [
-    [
-     1.96,
-     2.38
-    ]
-   ],
+   "export_s": 27.339,
+   "recipe_s": 27.339,
+   "silences_over_0.4s_inside_speech": [],
    "expected_words": 84,
    "heard_words": 83,
    "missing_or_changed_words": [
     "lip",
     "tint"
    ],
-   "caption_offset_median_s": 0.091,
-   "caption_offset_p90_s": 0.28,
+   "caption_offset_median_s": 0.106,
+   "caption_offset_p90_s": 0.29,
    "caption_words_matched": 82
   },
   "audio_align": {
@@ -42,14 +37,14 @@
   },
   "tight_pauses": {
    "version": 1,
-   "status": "no_change",
+   "status": "applied",
    "target_s": 0.3,
    "limit_s": 0.35,
-   "added_cuts": 0,
-   "added_removed_ms": 0,
-   "longest_pause_s": 0.39,
+   "added_cuts": 2,
+   "added_removed_ms": 170,
+   "longest_pause_s": 0.33,
    "longest_pause_before_s": 0.39,
-   "pauses_over_limit": 2,
+   "pauses_over_limit": 0,
    "guard_dropped": 0,
    "guard_trimmed": 0,
    "capped": false,
@@ -167,22 +162,17 @@
     0.0,
     0.0
    ],
-   "export_s": 27.509,
-   "recipe_s": 27.509,
-   "silences_over_0.4s_inside_speech": [
-    [
-     15.36,
-     15.78
-    ]
-   ],
+   "export_s": 27.339,
+   "recipe_s": 27.339,
+   "silences_over_0.4s_inside_speech": [],
    "expected_words": 84,
    "heard_words": 83,
    "missing_or_changed_words": [
     "lip",
     "tint"
    ],
-   "caption_offset_median_s": 0.099,
-   "caption_offset_p90_s": 0.268,
+   "caption_offset_median_s": 0.1,
+   "caption_offset_p90_s": 0.288,
    "caption_words_matched": 82
   },
   "audio_align": {
@@ -229,14 +219,14 @@
    {
     "take": 2,
     "version": 1,
-    "status": "no_change",
+    "status": "applied",
     "target_s": 0.3,
     "limit_s": 0.35,
-    "added_cuts": 0,
-    "added_removed_ms": 0,
-    "longest_pause_s": 0.39,
+    "added_cuts": 2,
+    "added_removed_ms": 170,
+    "longest_pause_s": 0.33,
     "longest_pause_before_s": 0.39,
-    "pauses_over_limit": 2,
+    "pauses_over_limit": 0,
     "guard_dropped": 0,
     "guard_trimmed": 0,
     "capped": false,
@@ -296,29 +286,24 @@
     }
    },
    "join_times_s": [
-    14.108,
-    20.747
+    13.938,
+    20.577
    ],
    "longest_silence_within_0.5s_of_join_s": [
     0.0,
     0.0
    ],
-   "export_s": 25.784,
-   "recipe_s": 25.784,
-   "silences_over_0.4s_inside_speech": [
-    [
-     1.96,
-     2.38
-    ]
-   ],
+   "export_s": 25.614,
+   "recipe_s": 25.613999999999997,
+   "silences_over_0.4s_inside_speech": [],
    "expected_words": 78,
    "heard_words": 77,
    "missing_or_changed_words": [
     "lip",
     "tint"
    ],
-   "caption_offset_median_s": 0.12,
-   "caption_offset_p90_s": 0.37,
+   "caption_offset_median_s": 0.11,
+   "caption_offset_p90_s": 0.27,
    "caption_words_matched": 76
   },
   "audio_align": {
@@ -332,14 +317,14 @@
   },
   "tight_pauses": {
    "version": 1,
-   "status": "no_change",
+   "status": "applied",
    "target_s": 0.3,
    "limit_s": 0.35,
-   "added_cuts": 0,
-   "added_removed_ms": 0,
-   "longest_pause_s": 0.39,
+   "added_cuts": 2,
+   "added_removed_ms": 170,
+   "longest_pause_s": 0.33,
    "longest_pause_before_s": 0.39,
-   "pauses_over_limit": 2,
+   "pauses_over_limit": 0,
    "guard_dropped": 0,
    "guard_trimmed": 0,
    "capped": false,
@@ -411,29 +396,24 @@
     }
    },
    "join_times_s": [
-    14.108,
-    20.747
+    13.938,
+    20.577
    ],
    "longest_silence_within_0.5s_of_join_s": [
     0.0,
     0.0
    ],
-   "export_s": 26.349,
-   "recipe_s": 26.349,
-   "silences_over_0.4s_inside_speech": [
-    [
-     1.96,
-     2.38
-    ]
-   ],
+   "export_s": 26.179,
+   "recipe_s": 26.179,
+   "silences_over_0.4s_inside_speech": [],
    "expected_words": 80,
    "heard_words": 79,
    "missing_or_changed_words": [
     "lip",
     "tint"
    ],
-   "caption_offset_median_s": 0.089,
-   "caption_offset_p90_s": 0.3,
+   "caption_offset_median_s": 0.101,
+   "caption_offset_p90_s": 0.29,
    "caption_words_matched": 78
   },
   "audio_align": {
@@ -447,14 +427,14 @@
   },
   "tight_pauses": {
    "version": 1,
-   "status": "no_change",
+   "status": "applied",
    "target_s": 0.3,
    "limit_s": 0.35,
-   "added_cuts": 0,
-   "added_removed_ms": 0,
-   "longest_pause_s": 0.39,
+   "added_cuts": 2,
+   "added_removed_ms": 170,
+   "longest_pause_s": 0.33,
    "longest_pause_before_s": 0.39,
-   "pauses_over_limit": 2,
+   "pauses_over_limit": 0,
    "guard_dropped": 0,
    "guard_trimmed": 0,
    "capped": false,
@@ -530,8 +510,9 @@
   }
  },
  "_notes": {
-  "words": "live whisper-1 stamps (gap2/live_caption_words_all_takes.json), split by uncut take durations 20.108/6.989/7.152",
-  "transcriber_mishears": "'lip tint' heard as 'Lipton' and Mira's as 'mirrors' by whisper.cpp; the caption words correlate with their own sound (audio_align)",
-  "residual_pause": "take A source 4.39-4.78 (marketing? -> Because): engine measures 0.389 s (-38 dB, highpass), ffmpeg silencedetect -35 dB d=0.4 sees 0.42 s; tight pass leaves it (cut would be 0.09 s < TIGHT_MIN_CUT_S 0.12)"
+  "commit": "be3915c4f (tight pass makes a >=0.05 s cut when a pause would stay over 0.35 s)",
+  "words": "live whisper-1 stamps split by uncut take durations 20.108/6.989/7.152",
+  "transcriber_mishears": "'lip tint' heard as 'Lipton', Mira's as 'mirrors' by whisper.cpp; caption words correlate with their own sound",
+  "take_A_pause_4.39_4.78": "now cut: take A keeps 2.4-4.53, 4.63-8.19, 8.26-13.94, 17.54-20.108"
  }
 }
