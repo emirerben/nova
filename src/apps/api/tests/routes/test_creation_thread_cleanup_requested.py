@@ -374,6 +374,7 @@ def _several_takes_on(monkeypatch):
     monkeypatch.setattr(
         "app.services.phone_rollout.phone_talking_multi_take_cleanup_supported", lambda: True
     )
+    monkeypatch.setattr(settings, "tight_pause_cut_enabled", True, raising=False)
 
 
 @pytest.mark.asyncio

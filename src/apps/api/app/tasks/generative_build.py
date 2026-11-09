@@ -10053,8 +10053,23 @@ def _run_phone_subtitled_job(
                             for i in _named_ids
                         ),
                     ]
+                    # Real places in the finished video (an uncut take in between still counts),
+                    # and the words of every uncut take (no analysis, the ending) so a line they
+                    # also say is refused as said in several takes.
+                    _witnesses = [
+                        (
+                            extra_speaker_ids.index(i) + 2,
+                            list(getattr(talking_transcripts.get(i), "words", None) or []),
+                            float(probe_map[clip_id_to_local[i]].duration_s),
+                        )
+                        for i in extra_speaker_ids
+                        if i not in extra_take_plans and i in talking_transcripts
+                    ]
                     _named_plans, multi_take_named_receipts = _phone_multi_take_named_cuts(
-                        snapshot, _named_takes
+                        snapshot,
+                        _named_takes,
+                        positions=[1, *(extra_speaker_ids.index(i) + 2 for i in _named_ids)],
+                        witnesses=_witnesses,
                     )
                     cut_plan = _named_plans[0]
                     for _i, _plan in zip(_named_ids, _named_plans[1:], strict=True):
@@ -10064,6 +10079,8 @@ def _run_phone_subtitled_job(
                     # of the consented plan, before the opening cut and before the outcome
                     # bookkeeping below, so they count as cleanup.
                     consented_plan = cut_plan
+                    # Before any pause pass, so the first take's tail trim is a join row too.
+                    pre_join_plans = {None: cut_plan, **extra_take_plans}
                     # KRI-720 G1: a several-take video's pauses are all cut tight (plain ask
                     # too), every take and every join; one take keeps today's rules.
                     take_order: list[str | None] = [None, *extra_speaker_ids]
@@ -10086,7 +10103,11 @@ def _run_phone_subtitled_job(
                             duration_s=float(probe.duration_s),
                             **first_take_tight,
                         )
-                    if tight_pauses_report is None:
+                    # A take the tight pass could not do (noisy, unmeasured, failed) falls back
+                    # to today's long-pause pass and join trim, reported on its own.
+                    first_fallback = tight_takes and _tight_pass_fell_back(tight_pauses_report)
+                    fallback_ids: set[str | None] = {None} if first_fallback else set()
+                    if tight_pauses_report is None or first_fallback:
                         # Emir's camera take: the cleanup default also cuts pauses the word
                         # stamps swallow (>= 0.6 s). Never when the creator asked for tight.
                         cut_plan, long_pauses_report = _phone_long_pause_cut(
@@ -10095,6 +10116,7 @@ def _run_phone_subtitled_job(
                             speech_cleanup_snapshot.source_words(),
                             clip_path=clip_path,
                             duration_s=float(probe.duration_s),
+                            ignore_tight_brief=bool(first_fallback),
                         )
                     if cut_plan is not consented_plan:
                         # The public receipt reads only these two counts: report what was cut.
@@ -10102,12 +10124,11 @@ def _run_phone_subtitled_job(
                             _merged_removal_count(cut_plan.removed)
                         )
                         speech_cleanup_outcome_context["output_removed_ms"] = max(
-                            0, int(round(cut_plan.time_saved_s * 1000))
+                            0, int(round(_cleanup_removed_s(cut_plan) * 1000))
                         )
                     if multi_take_cleanup:
                         # KRI-720: the same default long-pause pass on every other take, and
                         # the public counts cover every take that was cut.
-                        pre_join_plans = {None: cut_plan, **extra_take_plans}
                         for extra_id, extra_plan in list(extra_take_plans.items()):
                             extra_local = clip_id_to_local[extra_id]
                             extra_words = extra_take_snapshots[extra_id].source_words()
@@ -10131,6 +10152,18 @@ def _run_phone_subtitled_job(
                                 )
                                 if extra_report is not None:
                                     extra_tight_pauses.append({"take": position, **extra_report})
+                                if _tight_pass_fell_back(extra_report):
+                                    fallback_ids.add(extra_id)
+                                    extra_plan, long_report = _phone_long_pause_cut(
+                                        snapshot,
+                                        extra_plan,
+                                        extra_words,
+                                        clip_path=extra_local,
+                                        duration_s=extra_duration,
+                                        ignore_tight_brief=True,
+                                    )
+                                    if long_report is not None:
+                                        extra_long_pauses.append({"take": position, **long_report})
                             else:
                                 extra_plan, extra_report = _phone_long_pause_cut(
                                     snapshot,
@@ -10152,18 +10185,6 @@ def _run_phone_subtitled_job(
                             # The tight pass trimmed each cut take's join edges with the take's
                             # own words and the voice guard; say what was trimmed and measure
                             # what is left between every pair of neighbours (play order).
-                            take_specs = [
-                                (
-                                    cut_plan if cid is None else extra_take_plans.get(cid),
-                                    clip_path if cid is None else clip_id_to_local[cid],
-                                    float(
-                                        probe.duration_s
-                                        if cid is None
-                                        else probe_map[clip_id_to_local[cid]].duration_s
-                                    ),
-                                )
-                                for cid in take_order
-                            ]
                             for position, cid in enumerate(take_order):
                                 before = pre_join_plans.get(cid)
                                 after = cut_plan if cid is None else extra_take_plans.get(cid)
@@ -10183,6 +10204,50 @@ def _run_phone_subtitled_job(
                                                 "removed_s": round(removed, 3),
                                             }
                                         )
+                            if fallback_ids:
+                                # A take whose tight pass did not run keeps today's join trim
+                                # on its own edges (silence measured on its audio).
+                                join_ids = [
+                                    None,
+                                    *(i for i in extra_speaker_ids if i in extra_take_plans),
+                                ]
+                                joined, rows = _trim_take_joins(
+                                    [
+                                        (
+                                            cut_plan if cid is None else extra_take_plans[cid],
+                                            clip_path if cid is None else clip_id_to_local[cid],
+                                            float(
+                                                probe.duration_s
+                                                if cid is None
+                                                else probe_map[clip_id_to_local[cid]].duration_s
+                                            ),
+                                        )
+                                        for cid in join_ids
+                                    ]
+                                )
+                                for cid, plan in zip(join_ids, joined, strict=True):
+                                    if cid in fallback_ids:
+                                        if cid is None:
+                                            cut_plan = plan
+                                        else:
+                                            extra_take_plans[cid] = plan
+                                take_join_trims.extend(
+                                    {**row, "take": take_order.index(join_ids[row["take"]])}
+                                    for row in rows
+                                    if join_ids[row["take"]] in fallback_ids
+                                )
+                            take_specs = [
+                                (
+                                    cut_plan if cid is None else extra_take_plans.get(cid),
+                                    clip_path if cid is None else clip_id_to_local[cid],
+                                    float(
+                                        probe.duration_s
+                                        if cid is None
+                                        else probe_map[clip_id_to_local[cid]].duration_s
+                                    ),
+                                )
+                                for cid in take_order
+                            ]
                             take_join_gaps = _measure_take_join_gaps(take_specs)
                         else:
                             # The joins between consecutive cut takes (the first take, then
@@ -10219,7 +10284,7 @@ def _run_phone_subtitled_job(
                             int(
                                 round(
                                     sum(
-                                        plan.time_saved_s
+                                        _cleanup_removed_s(plan)
                                         for plan in (cut_plan, *extra_take_plans.values())
                                     )
                                     * 1000
@@ -12909,9 +12974,9 @@ def _run_phone_subtitled_job(
             # (`app.routes.device_render._device_speech_cleanup_outcome`) reads to publish the
             # public "applied"/"checked_no_change" receipt once the device uploads.
             # A start/end cut is not speech cleanup: only cleanup's own removals count.
-            cleanup_removed = (
-                cleanup_cut_plan is not None and bool(cleanup_cut_plan.removed)
-            ) or any(plan.removed for plan in extra_take_plans.values())
+            cleanup_removed = _has_cleanup_removal(cleanup_cut_plan) or any(
+                _has_cleanup_removal(plan) for plan in extra_take_plans.values()
+            )
             new_entry["silence_cut_outcome"] = "applied" if cleanup_removed else "no_change"
             new_entry["_speech_cleanup_outcome_context"] = speech_cleanup_outcome_context
         if existing_index is not None:
@@ -13124,6 +13189,9 @@ def _missed_named_cuts(
 def _phone_multi_take_named_cuts(
     snapshot: dict,
     takes: Sequence[tuple[str, CutPlan, Sequence[Any], float]],
+    *,
+    positions: Sequence[int] | None = None,
+    witnesses: Sequence[tuple[int, Sequence[Any], float]] = (),
 ) -> tuple[list[CutPlan], list[dict[str, Any]] | None]:
     """KRI-720 (G3): the lines the approved brief names to cut, cut from the ONE take that says
     each (``takes`` = ``(media id, plan, own words, duration)`` in play order).
@@ -13153,7 +13221,9 @@ def _phone_multi_take_named_cuts(
     if not named:
         return plans, None
     try:
-        return apply_named_line_cuts_across_takes(takes, named)
+        return apply_named_line_cuts_across_takes(
+            takes, named, positions=positions, witnesses=witnesses
+        )
     except Exception as exc:  # noqa: BLE001 - a missed cut is reported, never fatal
         log.warning("phone_opening_cut.failed", error=str(exc)[:200])
         return plans, _missed_named_cuts(
@@ -13297,6 +13367,21 @@ def _phone_opening_cut(
     return cut_plan, receipts
 
 
+def _cleanup_removed_s(plan: CutPlan) -> float:
+    """Seconds a plan removed that are cleanup's own: a named line is the creator's cut, not
+    cleanup's (``_merged_removal_count`` already leaves it out of the count)."""
+    named = sum(
+        max(0.0, r.end_s - r.start_s)
+        for r in plan.removed
+        if getattr(r, "reason", None) == "named_cut"
+    )
+    return max(0.0, float(plan.time_saved_s) - named)
+
+
+def _has_cleanup_removal(plan: CutPlan | None) -> bool:
+    return plan is not None and any(getattr(r, "reason", None) != "named_cut" for r in plan.removed)
+
+
 def _merged_removal_count(removed: Sequence[Any], *, join_s: float = 0.001) -> int:
     """Removals counted as the creator sees them: ones touching within ``join_s`` are one cut."""
     count = 0
@@ -13403,6 +13488,14 @@ def _phone_tight_pause_cut(
 # (the per-take `TIGHT_MAX_KEEP_SEGMENTS` of one take), leaving headroom for the named /
 # opening / explicit cuts that come after.
 TAKE_TIGHT_MAX_CLIPS = 85
+
+
+def _tight_pass_fell_back(report: Mapping[str, Any] | None) -> bool:
+    """KRI-720 G1: the tight pass did not cut this take (noisy, unmeasured, failed): it gets
+    today's long-pause pass and join trim instead."""
+    return isinstance(report, Mapping) and (
+        report.get("status") == "unavailable" or report.get("reason") == "noisy_take"
+    )
 
 
 def _take_clip_budget(
@@ -13636,6 +13729,7 @@ def _phone_long_pause_cut(
     *,
     clip_path: str,
     duration_s: float,
+    ignore_tight_brief: bool = False,
 ) -> tuple[CutPlan, dict[str, Any] | None]:
     """Cut pauses of ``MAX_PAUSE_S`` or more that whisper's contiguous word stamps hide.
 
@@ -13644,7 +13738,9 @@ def _phone_long_pause_cut(
     only Kria silence spans of 0.6 s or more are cut, and the receipt lands under
     ``variant["long_pauses"]`` (never ``tight_pauses``, which means the creator asked). Flag off,
     or a brief that asks for tight pauses (that path owns them): ``(cut_plan, None)`` with the
-    SAME plan object. Never raises: a failure keeps the consented plan."""
+    SAME plan object. ``ignore_tight_brief`` (several takes, KRI-720): the take's tight pass did
+    not run, so this pass is its fallback whatever the ask says. Never raises: a failure keeps the
+    consented plan."""
     from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
     from app.kria.tight_pause_ask import brief_tight_pauses  # noqa: PLC0415
     from app.pipeline.silence_cut import MAX_PAUSE_S  # noqa: PLC0415
@@ -13653,7 +13749,7 @@ def _phone_long_pause_cut(
     if not settings.speech_cleanup_long_pauses_enabled:
         return cut_plan, None
     raw_binding = snapshot.get("creator_brief_binding")
-    if raw_binding:
+    if raw_binding and not ignore_tight_brief:
         try:
             if brief_tight_pauses(BriefBinding.model_validate(raw_binding).resolve()):
                 return cut_plan, None

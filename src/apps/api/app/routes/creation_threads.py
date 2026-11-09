@@ -3525,7 +3525,11 @@ async def _cleanup_ask_projection(
         clip_paths = tuple(getattr(item, "clip_gcs_paths", None) or ())
         # KRI-720 G1: several takes cut every pause tight for a plain ask too, so the card says
         # so; a one-take video is tight only when the creator asked.
-        several_takes = len(clip_paths) > 1 and phone_talking_multi_take_cleanup_supported()
+        several_takes = bool(
+            len(clip_paths) > 1
+            and phone_talking_multi_take_cleanup_supported()
+            and settings.tight_pause_cut_enabled
+        )
         if not tight_ask and not several_takes:
             return True, False
         raw_strategy = snapshot.get("strategy")

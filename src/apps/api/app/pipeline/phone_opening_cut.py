@@ -398,6 +398,9 @@ def apply_named_line_cuts(
 def apply_named_line_cuts_across_takes(
     takes: Sequence[tuple[str, CutPlan, Sequence[Any], float]],
     cuts: Sequence[Sequence[Any]],
+    *,
+    positions: Sequence[int] | None = None,
+    witnesses: Sequence[tuple[int, Sequence[Any], float]] = (),
 ) -> tuple[list[CutPlan], list[dict[str, Any]]]:
     """KRI-720 (G3): cut each named line out of the ONE take of several that says it.
 
@@ -413,10 +416,18 @@ def apply_named_line_cuts_across_takes(
       take that holds it; one take's own rules (said twice, too short, ...) are
       `apply_named_line_cuts`'s, unchanged.
 
+    ``positions`` is each take's 1-based place in the finished video (default: its place in
+    ``takes``); a take with no plan (no speech analysis, the footage ending) is not in ``takes``,
+    so the caller names the real positions. ``witnesses`` = ``(position, words, duration)`` of
+    those uncut takes: a line one of them also says is "said in several takes" (refused, never
+    guessed). Receipt ``take.index`` and ``takes`` are those 1-based positions (the tight-pause
+    rows count 0-based).
+
     Each receipt row carries ``take = {"index": 1-based play order, "media_id"}`` once a take
     holds the line. Returns the new plans (same order) and one receipt per line.
     """
     plans = [take[1] for take in takes]
+    places = list(positions) if positions is not None else list(range(1, len(takes) + 1))
     receipts: list[dict[str, Any]] = []
     for entry in cuts:
         quote, requirement_ids = entry[0], entry[1]
@@ -427,11 +438,23 @@ def apply_named_line_cuts_across_takes(
             for i, take in enumerate(takes)
         ]
         holders = [i for i, found in enumerate(hits) if found]
+        witnessed = [
+            place
+            for place, words, dur in witnesses
+            if line_occurrences(words, quote, duration_s=dur)
+        ]
+        if holders and witnessed:
+            receipt = _receipt(quote, requirement_ids)
+            receipt["occurrences_found"] = sum(len(found) for found in hits) + len(witnessed)
+            receipt["takes"] = sorted([places[holder] for holder in holders] + witnessed)
+            receipt["reason"] = "said_in_several_takes"
+            receipts.append(receipt)
+            continue
         if len(holders) > 1:
             total = sum(len(found) for found in hits)
             receipt = _receipt(quote, requirement_ids)
             receipt["occurrences_found"] = total
-            receipt["takes"] = [holder + 1 for holder in holders]
+            receipt["takes"] = [places[holder] for holder in holders]
             if occurrence is None or pin is not None:
                 receipt["reason"] = "said_in_several_takes"
                 receipts.append(receipt)
@@ -459,7 +482,7 @@ def apply_named_line_cuts_across_takes(
         row = rows[0]
         if occurrence is not None:
             row["occurrence"] = occurrence
-        row["take"] = {"index": holder + 1, "media_id": media_id}
+        row["take"] = {"index": places[holder], "media_id": media_id}
         receipts.append(row)
     return plans, receipts
 
