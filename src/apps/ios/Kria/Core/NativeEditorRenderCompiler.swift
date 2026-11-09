@@ -1082,8 +1082,31 @@ enum NativeEditorRenderError: Error, Equatable {
             if let item = items.first(where: { $0.kind == .drawing && $0.id == drawing.id }) { placed.startS = item.start; placed.endS = item.end }
             return placed
         }, timelineDuration: TimelineMath.totalDuration(of: recipe))
+        (recipe.colorMoments, recipe.endFade) = Self.colorMoments(document.colorMoments, duration: TimelineMath.totalDuration(of: recipe))
         try recipe.validate()
         return NativeEditorRenderProgram(recipe: recipe, assetURLs: urls)
+    }
+
+    /// KRI-1350: the stored colour-moments lane for the PREVIEW, clamped to this edit's length exactly as the server's
+    /// `compile_color_moments` does (a moment a shorter cut pushed past the end is shortened, or dropped under 0.5 s;
+    /// an end fade longer than the video is dropped). An unreadable lane previews without moments, never fails.
+    static func colorMoments(_ raw: JSONValue?, duration: Double) -> ([ColorMoment], EndFade?) {
+        guard let raw, raw != .null, case let .object(lane) = raw else { return ([], nil) }
+        var moments: [ColorMoment] = []
+        if case let .array(rows)? = lane["moments"] {
+            for row in rows {
+                guard let data = try? JSONEncoder().encode(row), var moment = try? JSONDecoder().decode(ColorMoment.self, from: data) else { continue }
+                moment.end = min(moment.end, duration)
+                guard moment.end - moment.start >= ColorMoment.minimumLength - 1e-9,
+                      moments.last.map({ moment.start >= $0.end - 1e-6 }) ?? true else { continue }
+                moments.append(moment)
+            }
+        }
+        var fade: EndFade?
+        if let row = lane["end_fade"], row != .null, let data = try? JSONEncoder().encode(row),
+           let decoded = try? JSONDecoder().decode(EndFade.self, from: data),
+           EndFade.durationRange.contains(decoded.duration), decoded.duration <= duration { fade = decoded }
+        return (Array(moments.prefix(ColorMoment.maxMoments)), fade)
     }
 
     static func visualEditorStyle(_ raw: JSONValue?) throws -> VisualEditorStyle? {

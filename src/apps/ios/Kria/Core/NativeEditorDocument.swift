@@ -835,6 +835,9 @@ struct EditorDocument: Equatable, Sendable {
     var drawings: [EditorDrawing]
     /// KRI-1118: nil = no background. See `EditorSpeakerBackground`.
     var speakerBackground: EditorSpeakerBackground?
+    /// KRI-1350: the server-owned colour-moments lane (`{moments, end_fade}`), written only by Kria chat. Read for
+    /// the preview; never part of a Save (no `EditorSection`), so the server's copy stays authoritative.
+    var colorMoments: JSONValue?
     var carouselMoment: [String: JSONValue]?
     var lyrics: [String: JSONValue]?
     var title: String?
@@ -947,6 +950,7 @@ struct EditorDocument: Equatable, Sendable {
         document.backgroundMusic = decodeBackground(object(sections["background_music"] ?? snapshot["background_music"]))
         document.carouselMoment = object(sections["carousel_moment"] ?? snapshot["carousel_moment"])
         document.lyrics = object(sections["lyrics"] ?? snapshot["lyrics"])
+        if let lane = sections["color_moments"] ?? snapshot["color_moments"], lane != .null { document.colorMoments = lane }
         document.capabilities = decodeCapabilities(
             object(snapshot["editor_capabilities"])
                 ?? object(sections["editor_capabilities"])

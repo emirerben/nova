@@ -1400,7 +1400,12 @@ enum KriaClientProtocolContract {
     /// `generated_overlay` card only to this protocol, because an older build would spend on one touch.
     ///
     /// 46 (KRI-1231) preserves editable split-screen sections and renders ordinary media in independent panel viewports.
-    static let version = 46
+    ///
+    /// 48 (KRI-1350): decodes and draws `color_moments` (black-and-white / warm / faded windows with white-flash,
+    /// light-leak or dip-to-black edges) and `end_fade`, and the `colorMoments` capability. The server serves such a
+    /// recipe only to this protocol (`COLOR_MOMENTS_ENABLED` + `colorMoments` verified) and answers 426
+    /// `client_update_required` (`color_moments`) to an older build. 47 is claimed by the open KRI-720 change.
+    static let version = 48
     static let header = "X-Kria-Client-Protocol"
 }
 
