@@ -304,45 +304,57 @@ struct NativeEditorView: View {
             // creator closes it); `conversationAcceptedID` is intentionally unused here.
             // A re-plan can finish as a NEW job while this editor is open: show it.
             .onChange(of: project.activeJobID) { _, _ in Task { await loadEditor() } }
-            .safeAreaInset(edge: .top) {
-                if let conflict = session.mergeConflictMessage {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Review conflicting changes").font(KriaFont.body().weight(.semibold))
-                        Text(conflict).font(.footnote)
-                        HStack {
-                            Button("Keep my conflicting changes") { session.resolveMergeConflicts(keepingLocal: true) }
-                                .accessibilityIdentifier("native-editor-merge-local")
-                                .disabled(!session.canKeepLocalMergeConflicts)
-                            Button("Use latest conflicting changes") { session.resolveMergeConflicts(keepingLocal: false) }
-                                .accessibilityIdentifier("native-editor-merge-remote")
-                        }
-                        .disabled(session.isSaving)
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(KriaColor.paper)
-                } else if let newer = session.newerJobPrompt {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("A new version of your video is ready")
-                            .font(KriaFont.body().weight(.semibold))
-                        Text("Switching discards your unsaved edits.")
-                            .font(.footnote)
-                        HStack {
-                            Button("Switch") { Task { await session.switchToLatestJob(newer, api: model.api) } }
-                                .accessibilityIdentifier("native-editor-switch-job")
-                            Button("Keep editing") { session.keepEditingCurrentJob() }
-                                .accessibilityIdentifier("native-editor-keep-editing")
-                        }
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(KriaColor.paper)
-                } else if let message = session.latestJobRefreshMessage {
-                    Text(message).font(.footnote).padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(KriaColor.paper)
-                }
+            .safeAreaInset(edge: .top) { topNotice }
+    }
+
+    @ViewBuilder private var topNotice: some View {
+        let reduced = KriaMotion.isReduced(reduceMotion)
+        // Padding belongs to the notice: an empty inset must take no height from the editor.
+        Group {
+            if topNoticeKey != "none" {
+                noticeCard
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .transition(reduced ? .opacity : .move(edge: .top).combined(with: .opacity))
             }
+        }
+        .animation(reduced ? nil : .easeOut(duration: 0.25), value: topNoticeKey)
+    }
+
+    @ViewBuilder private var noticeCard: some View {
+        Group {
+            if let conflict = session.mergeConflictMessage {
+                NativeEditorNoticeCard(
+                    title: "Review conflicting changes",
+                    message: conflict,
+                    primary: NativeEditorNoticeAction(title: "Use latest version", identifier: "native-editor-merge-remote") {
+                        session.resolveMergeConflicts(keepingLocal: false)
+                    },
+                    secondary: session.canKeepLocalMergeConflicts
+                        ? NativeEditorNoticeAction(title: "Keep mine", identifier: "native-editor-merge-local") {
+                            session.resolveMergeConflicts(keepingLocal: true)
+                        } : nil,
+                    isDisabled: session.isSaving)
+            } else if let newer = session.newerJobPrompt {
+                NativeEditorNoticeCard(
+                    title: "A new version of your video is ready",
+                    message: "Switching discards your unsaved edits.",
+                    primary: NativeEditorNoticeAction(title: "Use latest version", identifier: "native-editor-switch-job") {
+                        Task { await session.switchToLatestJob(newer, api: model.api) }
+                    },
+                    secondary: NativeEditorNoticeAction(title: "Keep mine", identifier: "native-editor-keep-editing") {
+                        session.keepEditingCurrentJob()
+                    })
+            } else if let message = session.latestJobRefreshMessage {
+                NativeEditorNoticeCard(message: message)
+            }
+        }
+    }
+
+    private var topNoticeKey: String {
+        if let conflict = session.mergeConflictMessage { return "conflict:\(conflict):\(session.canKeepLocalMergeConflicts)" }
+        if let newer = session.newerJobPrompt { return "newer:\(newer.id)" }
+        return session.latestJobRefreshMessage.map { "refresh:\($0)" } ?? "none"
     }
 
     private func editorExitControls<Content: View>(_ content: Content) -> some View {

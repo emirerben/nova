@@ -685,6 +685,86 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertEqual(session.document.textElements.first?.text, "changed")
     }
 
+    private static func transitionDraft(revision: Int, base: String = "g1", transitions: [String: String], echo: String? = nil) -> DraftSnapshot {
+        let slots: [JSONValue] = [("s1", 0.0), ("s2", 1.0), ("s3", 2.0)].map { id, index in
+            .object(["slot_id": .string(id), "clip_index": .number(index), "in_s": .number(0), "duration_s": .number(2),
+                     "removed": .bool(false), "transition_after": .string(transitions[id] ?? "cut")])
+        }
+        let draft = DraftSnapshot(draftID: "t\(revision)", itemID: "item", variantKey: "initial", draftRevision: revision,
+            snapshotHash: "h", etag: "e", baseJobID: Self.jobID, baseGenerationID: base,
+            snapshot: ["kind": .string("editor"), "editor_payload": .object([
+                "base_generation": .string(base), "timeline_slots": .array(slots)])], canUndo: true, createdAt: .now)
+        return echo.map { Self.echoing($0, draft) } ?? draft
+    }
+
+    private static func transition(_ session: NativeEditorSession, _ id: String) -> String? {
+        session.document.clips.first { $0.id == id }?.transitionAfter
+    }
+
+    func testChatStagedTransitionSurvivesSuccessiveRendersOfTheSameJobWithoutConflict() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        fake.draftSnapshot = Self.transitionDraft(revision: 3, transitions: ["s1": "crossfade"])
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(Self.transition(session, "s1"), "crossfade")
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+
+        for (revision, generation) in [(4, "g2"), (5, "g3")] {
+            fake.authoritativeVariant = Self.variant(generation: generation)
+            fake.draftSnapshot = Self.transitionDraft(revision: revision, base: generation, transitions: ["s1": "crossfade"])
+            await session.synchronizePromptRevision()
+            XCTAssertNil(session.mergeConflictMessage, generation)
+            XCTAssertEqual(session.document.revision.baseGeneration, generation)
+            XCTAssertEqual(Self.transition(session, "s1"), "crossfade", generation)
+            XCTAssertTrue(session.hasOnlyChatStagedChanges, "the AI's edit is still the AI's after \(generation)")
+        }
+        XCTAssertEqual(fake.commitCount, 0)
+    }
+
+    func testTwoDraftRevisionsEchoingTheSameSubmittedStateReplaceEachOtherWithoutConflict() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        let sent = try XCTUnwrap(session.exportEditorState())
+        fake.draftSnapshot = Self.transitionDraft(revision: 3, transitions: ["s1": "crossfade"], echo: sent.clientStateID)
+        await session.synchronizePromptRevision()
+        XCTAssertNil(session.mergeConflictMessage)
+        XCTAssertEqual(Self.transition(session, "s1"), "crossfade")
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+
+        fake.draftSnapshot = Self.transitionDraft(revision: 4, transitions: ["s1": "crossfade", "s2": "dip_to_black"], echo: sent.clientStateID)
+        await session.synchronizePromptRevision()
+        XCTAssertNil(session.mergeConflictMessage, "the AI never conflicts with its own earlier revision")
+        XCTAssertEqual(Self.transition(session, "s1"), "crossfade")
+        XCTAssertEqual(Self.transition(session, "s2"), "dip_to_black")
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+        XCTAssertEqual(fake.commitCount, 0)
+    }
+
+    func testManualTransitionEditStillConflictsWithADifferentChatTransition() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        let sent = try XCTUnwrap(session.exportEditorState())
+        session.setClipTransition(clipID: "s1", transition: "flash")
+        let before = session.document
+        fake.draftSnapshot = Self.transitionDraft(revision: 3, transitions: ["s1": "crossfade"], echo: sent.clientStateID)
+        await session.synchronizePromptRevision()
+        XCTAssertNotNil(session.mergeConflictMessage)
+        XCTAssertEqual(session.document, before, "neither side is applied before the creator chooses")
+        XCTAssertFalse(session.hasOnlyChatStagedChanges)
+    }
+
+    func testManualTransitionEditStillConflictsWithANewerRenderChangingTheSameTransition() async throws {
+        let (session, fake) = await loaded(Self.bootstrapSnapshot())
+        session.setClipTransition(clipID: "s1", transition: "flash")
+        let before = session.document
+        var latest = Self.variant(generation: "g2")
+        guard case var .object(timeline)? = latest["user_timeline"], case var .array(slots)? = timeline["slots"],
+              case var .object(first) = slots[0] else { return XCTFail("timeline fixture missing") }
+        first["transition_after"] = .string("crossfade"); slots[0] = .object(first)
+        timeline["slots"] = .array(slots); latest["user_timeline"] = .object(timeline)
+        fake.authoritativeVariant = latest
+        await session.synchronizePromptRevision()
+        XCTAssertNotNil(session.mergeConflictMessage)
+        XCTAssertEqual(session.document, before)
+    }
+
     func testSaveCommitsChatAndManualLanesThenTheStaleDraftIsIgnored() async throws {
         let (session, fake) = await loaded(Self.chatSnapshot(shape: .flatOnly))
         session.setClipTiming(clipID: "s1", durationS: 1.1)
