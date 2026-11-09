@@ -68,11 +68,24 @@ One rule, one write, no phone-app change. Behind `VISUAL_TALKING_TAKES_ENABLED`
 | 12 | Task redelivered / runs twice | Idempotent: an existing row with the same `pool_source.asset_id` stops it. |
 | 13 | Proxy upload races another writer | Upload uses `if-generation-match: 0`; the row is written under the item lock and rechecks every condition. |
 
-## Proof
+## Proof (2026-11-09, commit on branch `codex/kri-1340-visual-talking-takes`)
 
-- Offline replay of the Yorum1 shape (take A footage, takes B and C Visuals) must give the
-  Yorum2 result: order A→B→C seated, no "couldn't tell which clip" problem, "café"
-  heard by the photo-on-word grounding.
-- Controls: Yorum2 (three footage takes) unchanged; a no-one-talking Visual video stays a
-  Visual; switch off is byte-identical.
-- Device: one real chat on Yasin's dev build (paid, ask first).
+| Check | Result |
+|---|---|
+| Yorum1 setup on real Postgres, real adoption task (ffmpeg proxy, local storage), the takes' own stored analysis: `tests/tasks/test_kri1340_visual_takes_postgres.py` | B and C adopted; b-roll (`not_to_camera`) and photo (`not_video`) stay Visuals; `bind_phone_sources` binds all three, B/C from the pool with the pool bytes' SHA; Yorum1's words ("two at home" / "one in the car") seat A → B → C with no unresolved problem; readiness has no "couldn't tell which clip"; take C's words ("cafes") are in the edit's footage; a rerun adds nothing; switch off / not Talking / a copy of take A change nothing. |
+| Phone Talking job + recipe compiler with S3's own word timings, B and C pool-sourced: `tests/tasks/test_kri1340_visual_takes_phone_render.py` | B/C are pinned `visual` assets (pool generation + SHA), A stays an `original`; takes play once each, A → B → C (B at 20.1 s, C at 27.07 s); the café photo lands 2.6 s into take C, donut in B, Nar in A, the calendar decoy never; export needs only A's original; the editor streams B/C (`local_required: false`) and keeps A local; a footage binding serializes exactly as before. |
+| Counted group in the Talking contract: `tests/kria/test_s3_yorum2_talking_clip_order.py` | "two at home" / "one in the car" seats A, B, C; "the home clip" and "three at home" (count mismatch) are still asked by name. |
+| Delete: `tests/routes/test_plan_item_assets.py::test_delete_drops_the_talking_take_adopted_from_this_visual` | Deleting the Visual removes its take; footage stays. |
+| Real S3 files through `_prepare` (IMG_7244/7245/7252.MOV, local storage, not committed) | Proxies 320×568 at 30 fps, durations within 0.016 s of the originals (20.108/6.989/7.152 s, the prod pool durations). IMG_7244's pool SHA equals the phone's own original SHA (`d6788e0a…`), so the copy guard holds on real data. |
+| Related suites (`tests/kria tests/services tests/pipeline` + phone Talking task tests), `-n 6` | 24,345 passed. The 25 failures + 2 errors also fail on clean `origin/main` on this Mac (render-review evidence needs Linux resource limits, face sampler cv2, Apple-revocation DB name, real-storage review admission, `test_s3_caption_middle_off_face`). |
+
+No phone-app change: the device already downloads `visual` assets by grant and plays a main-track
+pool video with sound (KRI-841 ending clip); the editor already plays URL-backed speakers
+(`NativeEditorSourcesTests.testPhoneTalkingEditWithSeveralVideosPlaysEverySpeakerInOrder`), and the
+relink prompt lists only `local_required` sources.
+
+Not done here: a simulator UI test that attaches takes the Yorum1 way needs the Visuals analysis
+(Gemini) and a chat turn, both paid; the real-iPhone run below covers the same path.
+
+Pending: one real chat on Yasin's dev build with the switch on (paid, ~$0.50–2): finished video
+has all 3 takes in order, ~36 s.
