@@ -602,8 +602,6 @@
         "src/apps/api/app/pipeline/phone_narrated_plan.py",
         "src/apps/api/app/pipeline/phone_subtitled_plan.py",
         "src/apps/api/app/pipeline/phone_subtitled_title.py",
-        "src/apps/api/app/pipeline/phone_talking_closing_card.py",
-        "src/apps/api/app/pipeline/phone_talking_corner_text.py",
         "src/apps/api/app/pipeline/unified_montage.py",
         "src/apps/api/app/routes/creator_agent.py",
         "src/apps/api/app/schemas/clip_intents.py",
