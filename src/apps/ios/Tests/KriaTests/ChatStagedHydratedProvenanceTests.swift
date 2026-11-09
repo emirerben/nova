@@ -164,8 +164,8 @@ final class ChatStagedHydratedProvenanceTests: XCTestCase {
             snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
             snapshot: ["kind": .string("editor"), "schema_version": .number(2), "edit_format": .string("montage"),
                        "editor_payload": .object(["base_generation": .string("generation-1"), "text_elements": text,
-                                                  "timeline": .object(["slots": slots]),
-                                                  "sections": .object(["text_elements": text, "timeline": .object(["slots": slots])])])],
+                                                  "timeline_slots": slots,
+                                                  "sections": .object(["text_elements": text, "timeline_slots": slots])])],
             canUndo: true, createdAt: .now)
         await session.synchronizePromptRevision()
         XCTAssertTrue(session.dirtySections.contains(.timeline), "the chat's timeline change is real: \(session.dirtySections)")
