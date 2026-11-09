@@ -320,6 +320,8 @@ struct NativeSplitMediaPicker: View {
                     .accessibilityIdentifier("native-editor-split-add-picked")
             }
         }
+        .onAppear { session.addClipAlertSuppressed = true }
+        .onDisappear { session.addClipAlertSuppressed = false }
         .task { await requestPhotosIfNeeded() }
         .task { await checkSaved() }
         .task(id: tab) { if tab == .saved { await loadSaved() } }
@@ -435,6 +437,7 @@ struct NativeSplitMediaPicker: View {
 
     private func loader(for item: PhotosPickerItem) -> Loader {
         {
+            if let id = item.itemIdentifier { return try await PhotoItemFileLoader().load(item: item, identifier: id) }
             guard let media = try await item.loadTransferable(type: ImportedMedia.self) else { throw AddClipSourceUnreadable() }
             return media.url
         }
@@ -443,12 +446,7 @@ struct NativeSplitMediaPicker: View {
     private func loader(for pick: Pick) -> Loader {
         switch pick {
         case .photo(let id):
-            return {
-                guard let media = try await PhotosPickerItem(itemIdentifier: id).loadTransferable(type: ImportedMedia.self) else {
-                    throw AddClipSourceUnreadable()
-                }
-                return media.url
-            }
+            return { try await PhotosLibraryAssetExporter().exportFile(localIdentifier: id) }
         case .saved(let id):
             let api = api
             let asset = savedAssets.first { $0.id == id }

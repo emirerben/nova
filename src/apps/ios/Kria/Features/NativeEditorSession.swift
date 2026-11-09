@@ -1257,6 +1257,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// Seam over `UIApplication.beginBackgroundTask` so a test can drive expiration.
     var backgroundActivity: any BackgroundActivityAssertion = UIKitBackgroundActivityAssertion()
     @Published var addClipError: String?
+    /// The Split picker shows `addClipError` inline, so the timeline's "Couldn’t add clip" alert stays quiet while it is open.
+    @Published var addClipAlertSuppressed = false
     /// Default window given to a freshly added timeline clip/photo. The server
     /// has never probed this source, so it can't bound the window itself — see
     /// `resolve_timeline_slots_for_edit`'s "New clips the AI never probed have

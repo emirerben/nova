@@ -1958,7 +1958,7 @@ struct NativeMiniStrip: View {
         // The add-clip sheet closes as soon as a file is chosen, so a failure has to surface here.
         // Suppressed while the sheet is open, where it shows the same error inline.
         .alert("Couldn’t add clip", isPresented: Binding(
-            get: { session.addClipError != nil && !isPresentingAddClip },
+            get: { session.addClipError != nil && !isPresentingAddClip && !session.addClipAlertSuppressed },
             set: { if !$0 { session.addClipError = nil } }
         )) {
             Button("OK", role: .cancel) {}
