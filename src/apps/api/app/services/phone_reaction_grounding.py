@@ -60,6 +60,7 @@ from app.pipeline.phone_subtitled_lanes import (
     SubtitledSoundEffect,
     sfx_path_is_playable,
 )
+from app.pipeline.phrase_window import phrase_window
 from app.pipeline.render_geometry import MediaFootprint, NormalizedBox, ProtectedRegion
 from app.services.phone_card_layout import CardLayoutContext
 from app.services.phone_overlay_grounding import (
@@ -581,6 +582,56 @@ class _CardCandidate:
     asset: dict
     display_mode: str = "pip"
     following_clip_id: str | None = None
+    # KRI-1342: set when the window follows the phrase around the cue (`phrase_window`
+    # keyword arguments, minus ``not_before_s``), with the cue word's own times.
+    phrase_args: dict[str, Any] | None = None
+    cue_start_s: float = 0.0
+    cue_end_s: float = 0.0
+
+
+@dataclass(frozen=True)
+class PhraseTiming:
+    """KRI-1342: a visual cued by what the talk is ABOUT starts with the phrase that names it.
+
+    Passed by a worker with ``BEAT_PHRASE_TIMING_ENABLED`` on; ``None`` (the default) keeps
+    every window on its cue word, byte for byte. ``min_s``/``max_s`` bound a full-screen
+    photo's phrase-sized hold. ``word_cued`` holds the folded spoken words the creator NAMED
+    ("when I say X", the brief's ``facts.triggers``): those beats keep their exact word timing.
+    """
+
+    min_s: float
+    max_s: float
+    word_cued: frozenset[str] = frozenset()
+
+
+# KRI-1342 bounds for a phrase-sized full-screen photo: Talking covers the speaker, so at most
+# 3 s; a Voiceover photo replaces footage under the voice, so 2-4 s around its old 3 s.
+TALKING_PHRASE_TIMING = PhraseTiming(min_s=TALKING_FULLSCREEN_HOLD_S_DEFAULT, max_s=3.0)
+VOICEOVER_PHRASE_TIMING = PhraseTiming(min_s=2.0, max_s=4.0)
+
+
+def creator_named_cues(requirements: Sequence[Any]) -> frozenset[str]:
+    """The folded spoken words the creator named in live brief asks (``facts.triggers``)."""
+    out: set[str] = set()
+    for req in requirements or ():
+        facts = getattr(req, "facts", None)
+        if not isinstance(facts, dict):
+            continue
+        raw = facts.get("triggers")
+        values = raw if isinstance(raw, list | tuple) else [raw] if isinstance(raw, str) else []
+        for value in values:
+            folded = " ".join(fold_tokens(value))
+            if folded:
+                out.add(folded)
+    return frozenset(out)
+
+
+def _phrase_cued(timing: PhraseTiming | None, *, trigger: str, after: object, slot: str) -> bool:
+    """Does this beat's picture follow the phrase (not the word)? Never for a sticker (a
+    reaction on the word), an ``after`` cue, or a word the creator named."""
+    if timing is None or after or slot == "sticker":
+        return False
+    return " ".join(fold_tokens(trigger)) not in timing.word_cued
 
 
 @dataclass
@@ -637,6 +688,39 @@ def _truncate_same_slot_overlaps(
     return survivors, dropped
 
 
+def _phrase_starts_after_earlier_cues(
+    cards: list[_CardCandidate], words: list[dict]
+) -> list[_CardCandidate]:
+    """KRI-1342: two pictures cued in one phrase ("the launch ... and the billboards") would
+    both take the phrase start, and the overlap rule would then drop the first. A phrase-timed
+    card never starts before the previous same-slot card's own cue word has been said."""
+    moved: dict[str, _CardCandidate] = {}
+    by_slot: dict[str, list[_CardCandidate]] = {}
+    for card in cards:
+        by_slot.setdefault(card.slot, []).append(card)
+    for slot_cards in by_slot.values():
+        ordered = sorted(slot_cards, key=lambda c: (c.cue_start_s, c.n))
+        previous: _CardCandidate | None = None
+        for card in ordered:
+            if (
+                previous is not None
+                and card.phrase_args is not None
+                and card.start_s < previous.cue_end_s
+            ):
+                window = phrase_window(
+                    words,
+                    card.cue_start_s,
+                    card.cue_end_s,
+                    not_before_s=previous.cue_end_s,
+                    **card.phrase_args,
+                )
+                if window is not None:
+                    card = replace(card, start_s=window.start_s, end_s=window.end_s)
+                    moved[card.id] = card
+            previous = card
+    return [moved.get(card.id, card) for card in cards]
+
+
 @dataclass(frozen=True)
 class GroundedReactionBeats:
     """The grounding result: ready-to-bind cards/sounds + a creator-safe
@@ -667,6 +751,7 @@ def ground_phone_reaction_beats(
     face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
     protected_regions: Sequence[ProtectedRegion] = (),
     card_layout: CardLayoutContext | None = None,
+    phrase_timing: PhraseTiming | None = None,
 ) -> GroundedReactionBeats:
     """Ground creator-authored reaction beats + closing media against the
     clip's raw Whisper words into phone Talking-lane cards/sounds (KRI-178).
@@ -701,6 +786,10 @@ def ground_phone_reaction_beats(
     open, every photo/video pop-in is laid out wide in the TOP or BOTTOM band exactly like the
     generic cards (`phone_overlay_grounding._lay_out_cards`) instead of the small top-right
     corner slot. Stickers/logos and the closing shot keep their own slots.
+
+    ``phrase_timing`` (KRI-1342, default ``None`` = unchanged): a photo/video picked for what
+    the talk is about starts with the phrase holding its cue (`app.pipeline.phrase_window`);
+    a full-screen photo with no ``hold_s`` is held for that phrase. The sound stays on the word.
 
     Fails open at every stage: a broken face sampler leaves no face regions
     protected (`face_sampling == "failed"`), a bad DB row is skipped, and any
@@ -850,6 +939,28 @@ def ground_phone_reaction_beats(
                 if asset is not None:
                     win_start = max(0.0, match_start_s)
                     win_end = min(duration_s, win_start + hold)
+                    phrase_args: dict[str, Any] | None = None
+                    if phrase_timing is not None and _phrase_cued(
+                        phrase_timing, trigger=trigger, after=after, slot=slot
+                    ):
+                        sized = (
+                            display_mode == "fullscreen"
+                            and hold_s is None
+                            and not is_video
+                            and following_clip_id is None
+                        )
+                        phrase_args = {
+                            "min_s": phrase_timing.min_s if sized else hold,
+                            "max_s": phrase_timing.max_s if sized else hold,
+                            "size_to_phrase": sized,
+                            "hold_s": hold,
+                            "duration_s": duration_s,
+                        }
+                        window = phrase_window(words, match_start_s, match_end_s, **phrase_args)
+                        if window is not None:
+                            win_start, win_end = window.start_s, window.end_s
+                        else:
+                            phrase_args = None
                     if win_end - win_start >= _MIN_CARD_WINDOW_S:
                         card_id = f"beat-{beat_id}-{occurrence_index}"
                         # A defensive de-dupe: a malformed `beat_id` colliding
@@ -872,6 +983,9 @@ def ground_phone_reaction_beats(
                                 asset=asset,
                                 display_mode=display_mode,
                                 following_clip_id=following_clip_id,
+                                phrase_args=phrase_args,
+                                cue_start_s=match_start_s,
+                                cue_end_s=match_end_s,
                             )
                         )
                         occ.card_id = card_id
@@ -916,6 +1030,8 @@ def ground_phone_reaction_beats(
             _record_beat_failure(beat_id, trigger, f"error: {exc}"[:_MAX_REASON_LEN])
 
     # --- same-slot overlap truncation (beats only, before closing) ----------
+    if phrase_timing is not None:
+        card_candidates = _phrase_starts_after_earlier_cues(card_candidates, words)
     card_candidates, overlap_dropped = _truncate_same_slot_overlaps(card_candidates)
     cards_by_id = {c.id: c for c in card_candidates}
     for card_id, reason in overlap_dropped.items():
@@ -1249,6 +1365,10 @@ def ground_phone_reaction_beats(
                 entry["at_s"] = round(card.start_s, 3)
                 entry["end_s"] = round(card.end_s, 3)
                 entry["visual_label"] = _label_for_asset(card.asset)
+                if card.phrase_args is not None:
+                    # KRI-1342: the picture follows the phrase; the cue word stays on record.
+                    entry["timing"] = "phrase"
+                    entry["cue_at_s"] = round(card.cue_start_s, 3)
                 if card.display_mode == "fullscreen":
                     entry["card_id"] = card.id
                     entry["display_mode"] = "fullscreen"

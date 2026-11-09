@@ -352,6 +352,13 @@ class Settings(BaseSettings):
     # PHONE_SUBTITLED_FULLSCREEN_OVERLAYS_ENABLED=false --app nova-video` +
     # `fly machine restart <id>` (api + worker).
     phone_subtitled_fullscreen_overlays_enabled: bool = True
+    # KRI-1342 item 8: a photo/video the planner cued by what the talk is ABOUT (no spoken word
+    # the creator named) starts with the phrase holding its cue word, and a full-screen photo
+    # with no stated length is held for that phrase (never cut off mid-way through the next
+    # sentence). Phone Talking and Voiceover beats (`phone_reaction_grounding.PhraseTiming`).
+    # Default off: windows stay on the cue word, byte-identical. Apply: `fly secrets set
+    # BEAT_PHRASE_TIMING_ENABLED=true -a nova-video`, then restart the worker.
+    beat_phrase_timing_enabled: bool = False
     # KRI-547 kill switch: when the approved brief asks for a vertical / 9:16 /
     # full-screen / "keep my face in frame" video and the phone Talking speaker
     # clip is landscape, `_run_phone_subtitled_job` samples the face across the

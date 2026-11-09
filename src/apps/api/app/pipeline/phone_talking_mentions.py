@@ -38,6 +38,7 @@ from app.pipeline.phone_talking_cutaways import (
     _free_intervals,
     schedule_footage_cutaways,
 )
+from app.pipeline.phrase_window import phrase_window
 
 # Why a speaker clip was turned into footage / kept as a speaker.
 DEMOTED_NAMED = "named_by_ask"
@@ -315,8 +316,12 @@ def schedule_mention_cutaways(
     duration_s: float,
     blocked: Iterable[tuple[float, float]] = (),
     word_starts: Sequence[float] = (),
+    phrase_starts: bool = False,
 ) -> tuple[list[FootageCutawayWindow], list[dict], list[CutawayAnchor]]:
     """Place each footage clip where the creator mentions what it shows, else spread it.
+
+    ``phrase_starts`` (KRI-1342, default off = unchanged): a silent cutaway starts with the
+    phrase holding its mention (`app.pipeline.phrase_window`), not on the first matched word.
 
     Returns ``(windows, unplaced, anchors)``: ``windows`` and ``unplaced`` have the shape
     `schedule_footage_cutaways` returns; ``anchors`` has one row per placed clip saying
@@ -342,7 +347,14 @@ def schedule_mention_cutaways(
             # A silent cutaway starts as the creator says it; one whose own sound plays
             # starts once he has said it, so his mention stays audible.
             sounding = clip.max_window_s > MAX_WINDOW_S
-            scored.append((best[0], best[1], best[2] if sounding else best[1], clip))
+            begin_s = best[2] if sounding else best[1]
+            if phrase_starts and not sounding:
+                window = phrase_window(
+                    words, best[1], best[1], min_s=MIN_SLOT_S, max_s=MAX_WINDOW_S
+                )
+                if window is not None:
+                    begin_s = min(begin_s, window.start_s)
+            scored.append((best[0], best[1], begin_s, clip))
 
     mentions = sorted(begin_s for _score, _at, begin_s, _clip in scored)
     placed: list[FootageCutawayWindow] = []
