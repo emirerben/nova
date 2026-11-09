@@ -26,6 +26,20 @@ ORDER = {
     "s3_uncut": ["takeA", "takeB", "takeC"],
     "s3_clean_a_last": ["takeB", "takeC", "takeA"],
     "single_clean": ["takeA"],
+    "s3_named_line": ["takeA", "takeB", "takeC"],
+    "s3_named_line_tail": ["takeA", "takeB", "takeC"],
+}
+# Lines the creator named in the brief (cut from the one take that says them): their words are
+# not expected in the export; everything else is.
+NAMED = {
+    "s3_named_line": ["but", "that's", "for", "the", "next", "episode"],
+    "s3_named_line_tail": ["don't", "forget", "to", "follow"],
+}
+# Words that must be GONE (slate / restart) and words that must stay (neighbours / controls).
+GONE_EVERYWHERE = {"wait the light okay": ["wait", "the", "light", "okay"], "oh sorry again": ["oh", "sorry", "again"]}
+STAY = {
+    "s3_named_line": ["cafes", "don't forget to follow"],
+    "s3_named_line_tail": ["but that's for the next episode", "cafes"],
 }
 
 
@@ -57,6 +71,17 @@ def silences(mp4: Path) -> list[tuple[float, float]]:
 def duration(mp4: Path) -> float:
     return float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of",
                                  "csv=p=0", str(mp4)], capture_output=True, text=True).stdout)
+
+
+def drop_seq(words: list[str], seq: list[str]) -> list[str]:
+    for i in range(len(words) - len(seq) + 1):
+        if words[i:i + len(seq)] == seq:
+            return words[:i] + words[i + len(seq):]
+    raise AssertionError(f"named line {seq} not in the kept words")
+
+
+def has_seq(words: list[str], seq: list[str]) -> bool:
+    return any(words[i:i + len(seq)] == seq for i in range(len(words) - len(seq) + 1))
 
 
 def expected_words(analysis: dict, order: list[str], cut: bool) -> list[str]:
@@ -101,12 +126,37 @@ def main(out: Path) -> None:
         first, last = spoken[0][0], spoken[-1][1]
         inside = [(round(s, 2), round(e, 2)) for s, e in silences(mp4) if s > first and e < last]
         want = expected_words(analysis, order, cut=case != "s3_uncut")
+        if case in NAMED:
+            want = drop_seq(want, NAMED[case])
         got = [norm(t) for t, _, _ in words if norm(t)]
         sm = difflib.SequenceMatcher(a=want, b=got, autojunk=False)
         missing = [want[i] for tag, i1, i2, _, _ in sm.get_opcodes() if tag in ("delete", "replace")
                    for i in range(i1, i2)]
         offsets = caption_offsets(variant["caption_cues"], words)
+        recipe_clips = next(t for t in recipe["tracks"] if t["id"] == "subtitled")["clips"]
+        # take joins: the first clip of every take after the first
+        firsts, seen = [], set()
+        for c in recipe_clips:
+            if c["source_asset_id"] not in seen:
+                seen.add(c["source_asset_id"])
+                firsts.append(round(c["timeline_start"], 3))
+        joins = firsts[1:]
+        all_sil = [(s_, e_) for s_, e_ in silences(mp4)]
+        join_gaps = [max([round(e_ - s_, 2) for s_, e_ in all_sil if s_ < j + 0.5 and e_ > j - 0.5] or [0.0])
+                     for j in joins]
+        joined = [norm(t) for t, _, _ in words if norm(t)]
+        checks = {
+            "slate_gone": not has_seq(joined, GONE_EVERYWHERE["wait the light okay"][:3])
+                          and "okay" not in joined,
+            "restart_gone": "sorry" not in joined and "again" not in joined,
+        }
+        if case in NAMED:
+            checks["named_line_gone"] = not has_seq(joined, NAMED[case][:3]) and not has_seq(joined, NAMED[case][-3:])
+            checks["control_lines_stay"] = {c: has_seq(joined, [norm(w) for w in c.split()]) for c in STAY[case]}
         report[case] = {
+            "checks": checks if case != "s3_uncut" else None,
+            "join_times_s": joins,
+            "longest_silence_within_0.5s_of_join_s": join_gaps,
             "export_s": round(duration(mp4), 3),
             "recipe_s": json.load(open(out / "summary.json"))[case]["duration_s"],
             "silences_over_0.4s_inside_speech": inside,

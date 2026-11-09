@@ -8,11 +8,31 @@
 Cases: s3_clean (3 takes, cleanup), s3_uncut (same takes, cleanup off: control),
 single_clean (take A alone, cleanup: today's single-take path).
 
-Usage (from src/apps/api, PYTHONPATH=$PWD, API keys in env):
-    python kri720_s3_proof.py KIT_DIR OUT_DIR
+Second pass (2026-11-09, "Proof after the four fixes"): the preflight words are the LIVE
+whisper-1 word stamps of the three takes (`LIVE_WORDS`, one concatenated timeline split by the
+uncut take durations), the relisten stand-in hears exactly the words left (free, as
+scratchpad/gap2/run_gap2.py), the settings are tight_pause_cut_enabled + long pauses + the
+multi-take cleanup flag, and each case carries Cigdem's real plain ask as a brief binding.
+Extra cases: s3_named_line / s3_named_line_tail (a line named in ONE take).
+
+Usage (from src/apps/api, PYTHONPATH=$PWD):
+    python s3_proof.py KIT_DIR OUT_DIR LIVE_WORDS_JSON
 """
 
 from __future__ import annotations
+
+import os
+
+for _k, _v in {
+    "STORAGE_BUCKET": "nova-test", "STORAGE_PROVIDER": "gcs",
+    "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/nova_test",
+    "REDIS_URL": "redis://localhost:6379", "OPENAI_API_KEY": "sk-test",
+    "TOKEN_ENCRYPTION_KEY": "x", "WHISPER_BACKEND": "local", "WAITLIST_ADMIN_SECRET": "x",
+    "ALLOWED_ORIGINS": '["http://localhost:3000"]', "INTERNAL_API_KEY": "x",
+    # the paid retake detector is replaced by the labelled-restarts stand-in, but its levers must be on
+    "RETAKE_CUT_ENABLED": "true", "SPEECH_CLEANUP_RETAKES_ENABLED": "true",
+}.items():
+    os.environ.setdefault(_k, _v)
 
 import hashlib
 import json
@@ -47,6 +67,58 @@ from tests.tasks.test_phone_subtitled_narrated_dispatch import (
 
 TAKES = [("takeA", "IMG_7244.MOV"), ("takeB", "IMG_7245.MOV"), ("takeC", "IMG_7252.MOV")]
 FINGERPRINT = hashlib.sha256(b"kri720-s3-proof").hexdigest()
+LIVE: dict[str, list[dict]] = {}  # media_id -> that take's live whisper-1 words (take-local seconds)
+WAVS: dict[str, str] = {}  # local wav path -> media_id (takes may be analysed concurrently)
+
+
+def split_live(path: Path, durations: dict[str, float]) -> None:
+    """Split the concatenated live timeline into the three takes by the uncut durations and
+    verify the split by text against the kit's SCRIPT.txt."""
+    words = json.load(open(path))
+    a_end = durations["takeA"]
+    b_end = a_end + durations["takeB"]
+    parts = {"takeA": [], "takeB": [], "takeC": []}
+    for w in words:
+        mid = w["start_s"] + 0.5 * (w["end_s"] - w["start_s"])
+        key = "takeA" if mid < a_end else "takeB" if mid < b_end else "takeC"
+        off = {"takeA": 0.0, "takeB": a_end, "takeC": b_end}[key]
+        parts[key].append({"text": w["text"], "start_s": max(0.0, w["start_s"] - off),
+                           "end_s": max(0.0, w["end_s"] - off)})
+    LIVE.update(parts)
+
+
+def live_words(mid: str):
+    from app.pipeline.transcribe import Word
+
+    return [Word(text=w["text"], start_s=w["start_s"], end_s=w["end_s"], confidence=1.0)
+            for w in LIVE[mid]]
+
+
+def live_transcript(mid: str):
+    from app.pipeline.transcribe import Transcript
+
+    ws = live_words(mid)
+    return Transcript(words=ws, full_text=" ".join(w.text for w in ws), language="en")
+
+
+def install_ideal_relisten():
+    """Free relisten stand-in (run_gap2.py `w1_ideal_relisten`): the 'transcriber' hears exactly
+    the words left in the audio after the cut, with times relative to the relistened window."""
+    import app.pipeline.speech_cleanup_analysis as sca
+
+    def fake_window(audio_path, start, end, cut, *, language, transcribe, workdir):
+        out = []
+        for w in LIVE[WAVS[str(audio_path)]]:
+            m = (w["start_s"] + w["end_s"]) / 2
+            if not (start <= m < end):
+                continue
+            if cut and cut[0] <= m < cut[1]:
+                continue
+            t = m - start - ((cut[1] - cut[0]) if cut and m >= cut[1] else 0)
+            out.append((sca._relisten_key(w["text"]), t))
+        return [(k, t) for k, t in out if k]
+
+    sca._window_words = fake_window
 
 
 def probe_s(path: Path) -> float:
@@ -108,6 +180,7 @@ def whisper_cpp(path: str, *, language=None, verbatim_prompt=None):
     return Transcript(words=words, full_text=" ".join(w.text for w in words), language="en")
 
 
+PLAIN_ASK = 'Cut the pauses, the "okay"s and the places I restarted'
 RESTARTS = [("wait", "okay"), ("and", "again")]  # take A: the slate, then "…perfume on— oh sorry, again"
 
 
@@ -124,7 +197,7 @@ def labelled_restarts(words, language):
     return tuple(spans)
 
 
-def analyse_take(path: Path, duration_s: float):
+def analyse_take(path: Path, duration_s: float, mid: str):
     """One take exactly as the preflight worker analyses it (local audio, real engine)."""
     with tempfile.TemporaryDirectory() as tmp:
         wav = Path(tmp) / "narration.wav"
@@ -133,6 +206,7 @@ def analyse_take(path: Path, duration_s: float):
              "-ar", "16000", "-c:a", "pcm_s16le", str(wav)],
             check=True,
         )
+        WAVS[str(wav)] = mid
         presence = audio_presence(str(wav))
         if presence.status in ("silent", "inaudible"):
             return None
@@ -152,7 +226,7 @@ def analyse_take(path: Path, duration_s: float):
                 max_removal_frac_required=gb.settings.speech_cleanup_max_removal_frac_required,
                 filler_check=gb.settings.speech_cleanup_filler_check_enabled,
             ),
-            transcribe_fn=whisper_cpp,
+            transcribe_fn=lambda *_a, _m=mid, **_k: live_transcript(_m),
             # Stand-in for the paid retake detector (an LLM): the two restarts a person marks
             # in take A by listening (answer key `must_not_hear`). Words are located by text, so
             # the engine still decides the exact cut edges from the audio.
@@ -160,13 +234,21 @@ def analyse_take(path: Path, duration_s: float):
         )
 
 
-def main(kit: Path, out: Path) -> None:
+def main(kit: Path, out: Path, live_json: Path) -> None:
     from app.services.active_narration_source import NarrationTake
+
+    import app.pipeline.speech_cleanup_analysis as _sca
+
+    print("module:", _sca.__file__)
+    install_ideal_relisten()
 
     upload = kit / "upload" / "S3"
     files = {mid: upload / name for mid, name in TAKES}
     bindings = {mid: binding(mid, files[mid]) for mid, _ in TAKES}
     durations = {mid: bindings[mid].original.duration_s for mid, _ in TAKES}
+    split_live(live_json, durations)
+    for mid in LIVE:
+        print(mid, len(LIVE[mid]), "live words:", " ".join(w["text"] for w in LIVE[mid]))
 
     # 1. The several-take analysis through the REAL assembly (`_analyze_takes`).
     by_path = {bindings[mid].proxy_path: mid for mid in bindings}
@@ -174,7 +256,7 @@ def main(kit: Path, out: Path) -> None:
 
     def local_source(work, *, allow_silent=False):
         mid = by_path[work.source_storage_path]
-        results[mid] = analyse_take(files[mid], durations[mid])
+        results[mid] = analyse_take(files[mid], durations[mid], mid)
         return results[mid]
 
     takes = tuple(
@@ -216,15 +298,21 @@ def main(kit: Path, out: Path) -> None:
         **multi_snapshot, "schema_version": 1, "analysis": a.to_payload(),
     }
 
+    plain = {"speech_cleanup": True}  # Cigdem's real plain ask: no tight fact, no named line
+    named_middle = {"speech_cleanup": True, "cut_lines": ["But that's for the next episode."]}
+    named_tail = {"speech_cleanup": True, "cut_lines": ["Don't forget to follow."]}
+    # case -> (take order, preflight, several takes, brief facts or None)
     cases = {
-        "s3_clean": (["takeA", "takeB", "takeC"], multi_snapshot, True),
-        "s3_uncut": (["takeA", "takeB", "takeC"], None, True),
+        "s3_clean": (["takeA", "takeB", "takeC"], multi_snapshot, True, plain),
+        "s3_uncut": (["takeA", "takeB", "takeC"], None, True, None),
         # Take A (the one with a cut) played LAST: its cut lands on an extra speaker.
-        "s3_clean_a_last": (["takeB", "takeC", "takeA"], multi_snapshot, True),
-        "single_clean": (["takeA"], single_snapshot, False),
+        "s3_clean_a_last": (["takeB", "takeC", "takeA"], multi_snapshot, True, plain),
+        "single_clean": (["takeA"], single_snapshot, False, plain),
+        "s3_named_line": (["takeA", "takeB", "takeC"], multi_snapshot, True, named_middle),
+        "s3_named_line_tail": (["takeA", "takeB", "takeC"], multi_snapshot, True, named_tail),
     }
     summary = {}
-    for case, (mids, preflight, several) in cases.items():
+    for case, (mids, preflight, several, brief_facts) in cases.items():
         with pytest.MonkeyPatch.context() as mp:
             snapshot = {
                 PHONE_SOURCES_FIELD: [bindings[m].model_dump(mode="json") for m in mids],
@@ -240,7 +328,9 @@ def main(kit: Path, out: Path) -> None:
             mp.setattr(gb.settings, "talking_multi_clip_enabled", True)
             mp.setattr(gb.settings, "talking_multi_take_cleanup_enabled", True)
             mp.setattr(gb.settings, "speech_cleanup_long_pauses_enabled", True)
+            mp.setattr(gb.settings, "tight_pause_cut_enabled", True)
             local = {m: str(files[m]) for m in mids}
+            by_path_local = {v: k for k, v in local.items()}
             mp.setattr(gb, "_ingest_clips", lambda *a, _m=mids, _l=local, **k: {
                 "clip_metas": [_Meta(m, 5.0) for m in _m],
                 "clip_id_to_gcs": {m: bindings[m].proxy_path for m in _m},
@@ -250,13 +340,27 @@ def main(kit: Path, out: Path) -> None:
             }, raising=False)
             import app.pipeline.transcribe as transcribe_mod
 
+            by_name = {files[m].name: m for m in files}
             mp.setattr(transcribe_mod, "transcribe_whisper_cached",
-                       lambda p, **k: whisper_cpp(p), raising=False)
+                       lambda p, **k: live_transcript(by_name.get(Path(p).name) or by_path_local[str(p)]),
+                       raising=False)
             if preflight is not None:
                 snapshot["speech_cleanup_contract"] = "required_v1"
                 snapshot["_speech_cleanup_internal"] = {"preflight_snapshot": preflight}
             if several and preflight is None:
                 snapshot["speech_cleanup_contract"] = "off_v1"
+            if brief_facts is not None:
+                from app.kria.brief import BriefRequirement, CreativeBrief
+                from app.kria.brief_binding import BriefBinding
+
+                req = BriefRequirement(id="r1", kind="audio", scope="global",
+                                       description=PLAIN_ASK + "".join(f' Cut "{q}"' for q in brief_facts.get("cut_lines", [])),
+                                       facts=dict(brief_facts))
+                binding_json = BriefBinding.create(
+                    uuid.uuid4(), CreativeBrief(version=1, requirements=[req])
+                ).model_dump(mode="json")
+                snapshot["creator_brief_binding"] = binding_json
+                job.assembly_plan["creator_brief_binding"] = binding_json
             gb._run_phone_subtitled_job(str(job.id), snapshot, all_candidates, ownership_epoch=3)
             assert job.status == "awaiting_device", job.status
             recipe = device_status(job, "subtitled").request.recipe
@@ -271,7 +375,8 @@ def main(kit: Path, out: Path) -> None:
         (directory / "variant.json").write_text(json.dumps(
             {k: variant.get(k) for k in ("caption_cues", "silence_cut", "phone_talking_multi_clip",
                                          "_speech_cleanup_outcome_context", "long_pauses",
-                                         "long_pauses_other_takes")}, indent=1, default=str))
+                                         "long_pauses_other_takes", "tight_pauses",
+                                         "tight_pauses_other_takes", "named_cuts")}, indent=1, default=str))
         main = next(t for t in recipe.tracks if t.id == "subtitled").clips
         summary[case] = {
             "duration_s": recipe.duration,
@@ -283,4 +388,4 @@ def main(kit: Path, out: Path) -> None:
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]).expanduser(), Path(sys.argv[2]).expanduser())
+    main(Path(sys.argv[1]).expanduser(), Path(sys.argv[2]).expanduser(), Path(sys.argv[3]).expanduser())

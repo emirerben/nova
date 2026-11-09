@@ -1,134 +1,537 @@
 {
  "s3_clean": {
-  "export_s": 32.329,
-  "recipe_s": 32.329,
-  "silences_over_0.4s_inside_speech": [
-   [
-    2.44,
-    2.86
+  "measure": {
+   "checks": {
+    "slate_gone": true,
+    "restart_gone": true
+   },
+   "join_times_s": [
+    14.108,
+    20.747
    ],
-   [
-    13.57,
-    14.12
+   "longest_silence_within_0.5s_of_join_s": [
+    0.0,
+    0.0
    ],
-   [
-    15.27,
-    15.76
+   "export_s": 27.509,
+   "recipe_s": 27.509,
+   "silences_over_0.4s_inside_speech": [
+    [
+     1.96,
+     2.38
+    ]
    ],
-   [
-    20.68,
-    21.11
+   "expected_words": 84,
+   "heard_words": 83,
+   "missing_or_changed_words": [
+    "lip",
+    "tint"
    ],
-   [
-    28.87,
-    29.43
-   ]
+   "caption_offset_median_s": 0.091,
+   "caption_offset_p90_s": 0.28,
+   "caption_words_matched": 82
+  },
+  "audio_align": {
+   "words": 84,
+   "caption_words_not_paired_to_a_source_word": 0,
+   "clear_matches": 79,
+   "weak_or_silent": 5,
+   "max_abs_lag_s": 0.0,
+   "p95_abs_lag_s": 0.0,
+   "over_0.1s": 0
+  },
+  "tight_pauses": {
+   "version": 1,
+   "status": "no_change",
+   "target_s": 0.3,
+   "limit_s": 0.35,
+   "added_cuts": 0,
+   "added_removed_ms": 0,
+   "longest_pause_s": 0.39,
+   "longest_pause_before_s": 0.39,
+   "pauses_over_limit": 2,
+   "guard_dropped": 0,
+   "guard_trimmed": 0,
+   "capped": false,
+   "reason": null
+  },
+  "tight_pauses_other_takes": [
+   {
+    "take": 1,
+    "version": 1,
+    "status": "no_change",
+    "target_s": 0.3,
+    "limit_s": 0.35,
+    "added_cuts": 0,
+    "added_removed_ms": 0,
+    "longest_pause_s": 0.28,
+    "longest_pause_before_s": 0.28,
+    "pauses_over_limit": 0,
+    "guard_dropped": 0,
+    "guard_trimmed": 0,
+    "capped": false,
+    "reason": null
+   },
+   {
+    "take": 2,
+    "version": 1,
+    "status": "no_change",
+    "target_s": 0.3,
+    "limit_s": 0.35,
+    "added_cuts": 0,
+    "added_removed_ms": 0,
+    "longest_pause_s": 0.3,
+    "longest_pause_before_s": 0.3,
+    "pauses_over_limit": 0,
+    "guard_dropped": 0,
+    "guard_trimmed": 0,
+    "capped": false,
+    "reason": null
+   }
   ],
-  "expected_words": 90,
-  "heard_words": 90,
-  "missing_or_changed_words": [],
-  "caption_offset_median_s": 0.148,
-  "caption_offset_p90_s": 0.41,
-  "caption_words_matched": 89
+  "named_cuts": null
  },
  "s3_uncut": {
-  "export_s": 34.249,
-  "recipe_s": 34.249,
-  "silences_over_0.4s_inside_speech": [
-   [
-    1.85,
-    2.48
+  "measure": {
+   "checks": null,
+   "join_times_s": [
+    20.108,
+    27.097
    ],
-   [
-    4.36,
-    4.78
+   "longest_silence_within_0.5s_of_join_s": [
+    0.0,
+    0.0
    ],
-   [
-    15.49,
-    16.04
+   "export_s": 34.249,
+   "recipe_s": 34.249,
+   "silences_over_0.4s_inside_speech": [
+    [
+     1.85,
+     2.48
+    ],
+    [
+     4.36,
+     4.78
+    ],
+    [
+     15.49,
+     16.04
+    ],
+    [
+     17.19,
+     17.68
+    ],
+    [
+     22.6,
+     23.03
+    ],
+    [
+     30.79,
+     31.35
+    ]
    ],
-   [
-    17.19,
-    17.68
+   "expected_words": 95,
+   "heard_words": 95,
+   "missing_or_changed_words": [
+    "mira's",
+    "mira's"
    ],
-   [
-    22.6,
-    23.03
-   ],
-   [
-    30.79,
-    31.35
-   ]
-  ],
-  "expected_words": 94,
-  "heard_words": 95,
-  "missing_or_changed_words": [
-   "lipton",
-   "mira's",
-   "mira's"
-  ],
-  "caption_offset_median_s": 0.208,
-  "caption_offset_p90_s": 0.52,
-  "caption_words_matched": 91
+   "caption_offset_median_s": 0.163,
+   "caption_offset_p90_s": 0.58,
+   "caption_words_matched": 93
+  },
+  "audio_align": {
+   "words": 95,
+   "caption_words_not_paired_to_a_source_word": 0,
+   "clear_matches": 90,
+   "weak_or_silent": 5,
+   "max_abs_lag_s": 0.0,
+   "p95_abs_lag_s": 0.0,
+   "over_0.1s": 0
+  },
+  "tight_pauses": null,
+  "tight_pauses_other_takes": null,
+  "named_cuts": null
  },
  "s3_clean_a_last": {
-  "export_s": 31.922,
-  "recipe_s": 31.921646000000003,
-  "silences_over_0.4s_inside_speech": [
-   [
-    2.49,
-    2.92
+  "measure": {
+   "checks": {
+    "slate_gone": true,
+    "restart_gone": true
+   },
+   "join_times_s": [
+    6.639,
+    13.401
    ],
-   [
-    10.67,
-    11.24
+   "longest_silence_within_0.5s_of_join_s": [
+    0.0,
+    0.0
    ],
-   [
-    16.17,
-    16.59
+   "export_s": 27.509,
+   "recipe_s": 27.509,
+   "silences_over_0.4s_inside_speech": [
+    [
+     15.36,
+     15.78
+    ]
    ],
-   [
-    27.3,
-    27.86
+   "expected_words": 84,
+   "heard_words": 83,
+   "missing_or_changed_words": [
+    "lip",
+    "tint"
    ],
-   [
-    29.0,
-    29.49
-   ]
+   "caption_offset_median_s": 0.099,
+   "caption_offset_p90_s": 0.268,
+   "caption_words_matched": 82
+  },
+  "audio_align": {
+   "words": 84,
+   "caption_words_not_paired_to_a_source_word": 0,
+   "clear_matches": 79,
+   "weak_or_silent": 5,
+   "max_abs_lag_s": 0.0,
+   "p95_abs_lag_s": 0.0,
+   "over_0.1s": 0
+  },
+  "tight_pauses": {
+   "version": 1,
+   "status": "no_change",
+   "target_s": 0.3,
+   "limit_s": 0.35,
+   "added_cuts": 0,
+   "added_removed_ms": 0,
+   "longest_pause_s": 0.28,
+   "longest_pause_before_s": 0.28,
+   "pauses_over_limit": 0,
+   "guard_dropped": 0,
+   "guard_trimmed": 0,
+   "capped": false,
+   "reason": null
+  },
+  "tight_pauses_other_takes": [
+   {
+    "take": 1,
+    "version": 1,
+    "status": "no_change",
+    "target_s": 0.3,
+    "limit_s": 0.35,
+    "added_cuts": 0,
+    "added_removed_ms": 0,
+    "longest_pause_s": 0.3,
+    "longest_pause_before_s": 0.3,
+    "pauses_over_limit": 0,
+    "guard_dropped": 0,
+    "guard_trimmed": 0,
+    "capped": false,
+    "reason": null
+   },
+   {
+    "take": 2,
+    "version": 1,
+    "status": "no_change",
+    "target_s": 0.3,
+    "limit_s": 0.35,
+    "added_cuts": 0,
+    "added_removed_ms": 0,
+    "longest_pause_s": 0.39,
+    "longest_pause_before_s": 0.39,
+    "pauses_over_limit": 2,
+    "guard_dropped": 0,
+    "guard_trimmed": 0,
+    "capped": false,
+    "reason": null
+   }
   ],
-  "expected_words": 90,
-  "heard_words": 90,
-  "missing_or_changed_words": [],
-  "caption_offset_median_s": 0.296,
-  "caption_offset_p90_s": 0.454,
-  "caption_words_matched": 89
+  "named_cuts": null
  },
  "single_clean": {
-  "export_s": 18.188,
-  "recipe_s": 18.188000000000002,
-  "silences_over_0.4s_inside_speech": [
-   [
-    2.44,
-    2.86
+  "measure": {
+   "checks": {
+    "slate_gone": true,
+    "restart_gone": true
+   },
+   "join_times_s": [],
+   "longest_silence_within_0.5s_of_join_s": [],
+   "export_s": 14.108,
+   "recipe_s": 14.108,
+   "silences_over_0.4s_inside_speech": [
+    [
+     1.96,
+     2.38
+    ]
    ],
-   [
-    13.57,
-    14.12
+   "expected_words": 43,
+   "heard_words": 42,
+   "missing_or_changed_words": [
+    "lip",
+    "tint"
    ],
-   [
-    15.27,
-    15.76
-   ]
+   "caption_offset_median_s": 0.16,
+   "caption_offset_p90_s": 0.57,
+   "caption_words_matched": 41
+  },
+  "audio_align": {
+   "words": 43,
+   "caption_words_not_paired_to_a_source_word": 0,
+   "clear_matches": 42,
+   "weak_or_silent": 1,
+   "max_abs_lag_s": 0.0,
+   "p95_abs_lag_s": 0.0,
+   "over_0.1s": 0
+  },
+  "tight_pauses": null,
+  "tight_pauses_other_takes": null,
+  "named_cuts": null
+ },
+ "s3_named_line": {
+  "measure": {
+   "checks": {
+    "slate_gone": true,
+    "restart_gone": true,
+    "named_line_gone": true,
+    "control_lines_stay": {
+     "cafes": true,
+     "don't forget to follow": true
+    }
+   },
+   "join_times_s": [
+    14.108,
+    20.747
+   ],
+   "longest_silence_within_0.5s_of_join_s": [
+    0.0,
+    0.0
+   ],
+   "export_s": 25.784,
+   "recipe_s": 25.784,
+   "silences_over_0.4s_inside_speech": [
+    [
+     1.96,
+     2.38
+    ]
+   ],
+   "expected_words": 78,
+   "heard_words": 77,
+   "missing_or_changed_words": [
+    "lip",
+    "tint"
+   ],
+   "caption_offset_median_s": 0.12,
+   "caption_offset_p90_s": 0.37,
+   "caption_words_matched": 76
+  },
+  "audio_align": {
+   "words": 78,
+   "caption_words_not_paired_to_a_source_word": 0,
+   "clear_matches": 73,
+   "weak_or_silent": 5,
+   "max_abs_lag_s": 0.0,
+   "p95_abs_lag_s": 0.0,
+   "over_0.1s": 0
+  },
+  "tight_pauses": {
+   "version": 1,
+   "status": "no_change",
+   "target_s": 0.3,
+   "limit_s": 0.35,
+   "added_cuts": 0,
+   "added_removed_ms": 0,
+   "longest_pause_s": 0.39,
+   "longest_pause_before_s": 0.39,
+   "pauses_over_limit": 2,
+   "guard_dropped": 0,
+   "guard_trimmed": 0,
+   "capped": false,
+   "reason": null
+  },
+  "tight_pauses_other_takes": [
+   {
+    "take": 1,
+    "version": 1,
+    "status": "no_change",
+    "target_s": 0.3,
+    "limit_s": 0.35,
+    "added_cuts": 0,
+    "added_removed_ms": 0,
+    "longest_pause_s": 0.28,
+    "longest_pause_before_s": 0.28,
+    "pauses_over_limit": 0,
+    "guard_dropped": 0,
+    "guard_trimmed": 0,
+    "capped": false,
+    "reason": null
+   },
+   {
+    "take": 2,
+    "version": 1,
+    "status": "no_change",
+    "target_s": 0.3,
+    "limit_s": 0.35,
+    "added_cuts": 0,
+    "added_removed_ms": 0,
+    "longest_pause_s": 0.21,
+    "longest_pause_before_s": 0.21,
+    "pauses_over_limit": 0,
+    "guard_dropped": 0,
+    "guard_trimmed": 0,
+    "capped": false,
+    "reason": null
+   }
   ],
-  "expected_words": 49,
-  "heard_words": 49,
-  "missing_or_changed_words": [],
-  "caption_offset_median_s": 0.19,
-  "caption_offset_p90_s": 0.49,
-  "caption_words_matched": 48
+  "named_cuts": [
+   {
+    "version": 1,
+    "quote": "But that's for the next episode.",
+    "requirement_ids": [
+     "r1"
+    ],
+    "status": "applied",
+    "occurrences_found": 1,
+    "start_s": 4.1,
+    "end_s": 5.85,
+    "removed_s": 1.725,
+    "exact": true,
+    "take": {
+     "index": 3,
+     "media_id": "takeC"
+    }
+   }
+  ]
+ },
+ "s3_named_line_tail": {
+  "measure": {
+   "checks": {
+    "slate_gone": true,
+    "restart_gone": true,
+    "named_line_gone": true,
+    "control_lines_stay": {
+     "but that's for the next episode": true,
+     "cafes": true
+    }
+   },
+   "join_times_s": [
+    14.108,
+    20.747
+   ],
+   "longest_silence_within_0.5s_of_join_s": [
+    0.0,
+    0.0
+   ],
+   "export_s": 26.349,
+   "recipe_s": 26.349,
+   "silences_over_0.4s_inside_speech": [
+    [
+     1.96,
+     2.38
+    ]
+   ],
+   "expected_words": 80,
+   "heard_words": 79,
+   "missing_or_changed_words": [
+    "lip",
+    "tint"
+   ],
+   "caption_offset_median_s": 0.089,
+   "caption_offset_p90_s": 0.3,
+   "caption_words_matched": 78
+  },
+  "audio_align": {
+   "words": 80,
+   "caption_words_not_paired_to_a_source_word": 0,
+   "clear_matches": 75,
+   "weak_or_silent": 5,
+   "max_abs_lag_s": 0.0,
+   "p95_abs_lag_s": 0.0,
+   "over_0.1s": 0
+  },
+  "tight_pauses": {
+   "version": 1,
+   "status": "no_change",
+   "target_s": 0.3,
+   "limit_s": 0.35,
+   "added_cuts": 0,
+   "added_removed_ms": 0,
+   "longest_pause_s": 0.39,
+   "longest_pause_before_s": 0.39,
+   "pauses_over_limit": 2,
+   "guard_dropped": 0,
+   "guard_trimmed": 0,
+   "capped": false,
+   "reason": null
+  },
+  "tight_pauses_other_takes": [
+   {
+    "take": 1,
+    "version": 1,
+    "status": "no_change",
+    "target_s": 0.3,
+    "limit_s": 0.35,
+    "added_cuts": 0,
+    "added_removed_ms": 0,
+    "longest_pause_s": 0.28,
+    "longest_pause_before_s": 0.28,
+    "pauses_over_limit": 0,
+    "guard_dropped": 0,
+    "guard_trimmed": 0,
+    "capped": false,
+    "reason": null
+   },
+   {
+    "take": 2,
+    "version": 1,
+    "status": "no_change",
+    "target_s": 0.3,
+    "limit_s": 0.35,
+    "added_cuts": 0,
+    "added_removed_ms": 0,
+    "longest_pause_s": 0.16,
+    "longest_pause_before_s": 0.16,
+    "pauses_over_limit": 0,
+    "guard_dropped": 0,
+    "guard_trimmed": 0,
+    "capped": false,
+    "reason": null
+   }
+  ],
+  "named_cuts": [
+   {
+    "version": 1,
+    "quote": "Don't forget to follow.",
+    "requirement_ids": [
+     "r1"
+    ],
+    "status": "applied",
+    "occurrences_found": 1,
+    "start_s": 5.92,
+    "end_s": 7.08,
+    "removed_s": 1.16,
+    "exact": true,
+    "take": {
+     "index": 3,
+     "media_id": "takeC"
+    }
+   }
+  ]
  },
  "control_a_last_captions_on_uncut_export": {
-  "caption_offset_median_s": 19.93,
-  "caption_offset_p90_s": 20.16
+  "measure": {
+   "caption_offset_median_s": 20.308,
+   "caption_offset_p90_s": 20.711
+  },
+  "audio_align": {
+   "words": 84,
+   "caption_words_not_paired_to_a_source_word": 0,
+   "clear_matches": 0,
+   "weak_or_silent": 84,
+   "max_abs_lag_s": null,
+   "p95_abs_lag_s": null,
+   "over_0.1s": 0
+  }
+ },
+ "_notes": {
+  "words": "live whisper-1 stamps (gap2/live_caption_words_all_takes.json), split by uncut take durations 20.108/6.989/7.152",
+  "transcriber_mishears": "'lip tint' heard as 'Lipton' and Mira's as 'mirrors' by whisper.cpp; the caption words correlate with their own sound (audio_align)",
+  "residual_pause": "take A source 4.39-4.78 (marketing? -> Because): engine measures 0.389 s (-38 dB, highpass), ffmpeg silencedetect -35 dB d=0.4 sees 0.42 s; tight pass leaves it (cut would be 0.09 s < TIGHT_MIN_CUT_S 0.12)"
  }
 }

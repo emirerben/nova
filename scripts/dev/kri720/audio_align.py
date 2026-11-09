@@ -26,6 +26,8 @@ ORDER = {
     "s3_clean_a_last": ["takeB", "takeC", "takeA"],
     "single_clean": ["takeA"],
     "s3_uncut": ["takeA", "takeB", "takeC"],
+    "s3_named_line": ["takeA", "takeB", "takeC"],
+    "s3_named_line_tail": ["takeA", "takeB", "takeC"],
 }
 FILLERS = {"um", "uh", "erm", "hmm", "mm"}
 
