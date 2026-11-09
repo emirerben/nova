@@ -15,7 +15,7 @@ from dataclasses import dataclass, fields, is_dataclass
 from types import UnionType
 from typing import Annotated, Any, Literal, Union, get_args, get_origin, get_type_hints
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.agents._schemas.creator_agent import CreativeStrategy
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
@@ -1043,6 +1043,22 @@ class TextRequirement(BaseModel):
     media_id: str | None = None
     shot_index: int | None = Field(default=None, ge=0)
     duration_s: float | None = Field(default=None, gt=0)
+    # KRI-1331: a chapter's one title (a creator-worded caption over several clips): drawn
+    # once, starting on the first of these clips the edit plays and never past that run of
+    # them. Omitted from dumps when empty, so every other contract (and its digest) stays
+    # byte-identical; an older worker, which forbids unknown keys, refuses one (fails closed).
+    chapter_media_ids: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+
+    @model_validator(mode="after")
+    def _one_chapter_shape(self) -> TextRequirement:
+        if self.chapter_media_ids and (
+            self.role != "clip"
+            or self.media_id is not None
+            or self.shot_index is not None
+            or len(set(self.chapter_media_ids)) < 2
+        ):
+            raise ValueError("a chapter title is a clip text over two or more clips")
+        return self
 
 
 class HiddenPartRequirement(BaseModel):
@@ -1117,16 +1133,17 @@ def _label_intent_media_ids(resolved_intents: object, literal: str) -> tuple[str
     return tuple(ids)
 
 
-def _caption_intent_media_ids(resolved_intents: object, literal: str) -> tuple[str, ...]:
-    """Clips a resolved described-shot caption prints the creator's ``literal`` on (KRI-804).
+def _caption_intent_chapters(resolved_intents: object, literal: str) -> tuple[tuple[str, ...], ...]:
+    """Member clips of each resolved caption printing the creator's ``literal`` (KRI-804).
 
     "Put "chimichurri & salsa criolla" on the sauce bowls" may travel as a caption with the
     creator's words (``creator_text``), the lane that prints them as written however long
-    (KRI-296); the montage burns it on exactly its member clips. A chapter caption with no
-    creator words, or one the resolver wrote, is never this placement.
+    (KRI-296). A caption is one phrase for its chapter (``app.schemas.clip_intents``): the
+    montage draws it once across neighbouring members. A chapter caption with no creator
+    words, or one the resolver wrote, is never this placement.
     """
     wanted = _normal(literal)
-    ids: list[str] = []
+    chapters: list[tuple[str, ...]] = []
     for intent in resolved_intents if isinstance(resolved_intents, Sequence) else ():
         if not isinstance(intent, Mapping) or intent.get("op") != "caption":
             continue
@@ -1141,11 +1158,33 @@ def _caption_intent_media_ids(resolved_intents: object, literal: str) -> tuple[s
             or _normal(text) != wanted
         ):
             continue
-        for row in intent.get("assignments") or []:
-            media_id = str(row.get("media_id") or "") if isinstance(row, Mapping) else ""
-            if media_id and media_id not in ids:
-                ids.append(media_id)
-    return tuple(ids)
+        members = tuple(
+            dict.fromkeys(
+                str(row.get("media_id"))
+                for row in intent.get("assignments") or []
+                if isinstance(row, Mapping) and row.get("media_id")
+            )
+        )
+        if members and members not in chapters:
+            chapters.append(members)
+    return tuple(chapters)
+
+
+def _caption_intent_media_ids(resolved_intents: object, literal: str) -> tuple[str, ...]:
+    """Every clip a creator-worded caption printing ``literal`` covers (draft receipts)."""
+    return tuple(
+        dict.fromkeys(
+            media_id
+            for members in _caption_intent_chapters(resolved_intents, literal)
+            for media_id in members
+        )
+    )
+
+
+def _caption_text_requirement(literal: str, members: tuple[str, ...]) -> TextRequirement:
+    if len(members) == 1:
+        return TextRequirement(role="clip", text=literal, media_id=members[0])
+    return TextRequirement(role="clip", text=literal, chapter_media_ids=members)
 
 
 def _json_value(value: object) -> object:
@@ -1815,17 +1854,15 @@ def build_render_contract(
                                 for media_id in placed_ids
                             )
                             continue
-                        captioned = _caption_intent_media_ids(
+                        chapters = _caption_intent_chapters(
                             raw.get("resolved_clip_intents"), requirement.literal
                         )
-                        if captioned:
-                            # A shared caption may cross neighboring member clips, but
-                            # its source identities must survive into verification.
+                        if chapters:
+                            # KRI-1331: one title per chapter ("a title at the beginning of
+                            # each event"), never one per member clip.
                             texts.extend(
-                                TextRequirement(
-                                    role="clip", text=requirement.literal, media_id=media_id
-                                )
-                                for media_id in captioned
+                                _caption_text_requirement(requirement.literal, members)
+                                for members in chapters
                             )
                             continue
                         # Nothing here turns the words into a caption, so the reply offers
@@ -2592,6 +2629,56 @@ def source_group_text_matches(
     return bounded
 
 
+def chapter_window(
+    members: frozenset[str],
+    spans: Sequence[tuple[str, float, float]],
+    *,
+    tolerance_s: float,
+) -> tuple[float, float, float] | None:
+    """Where a chapter's title goes: ``(start, end, run_end)`` of its first clip.
+
+    ``spans`` are the picture clips as ``(media id, start, end)``. The run is that clip and
+    the member clips straight after it. ``None`` when no member plays.
+    """
+    ordered = sorted(spans, key=lambda span: span[1])
+    for rank, (media_id, start, end) in enumerate(ordered):
+        if media_id not in members:
+            continue
+        run_end = end
+        for next_id, next_start, next_end in ordered[rank + 1 :]:
+            if next_id not in members or next_start > run_end + tolerance_s:
+                break
+            run_end = max(run_end, next_end)
+        return start, end, run_end
+    return None
+
+
+def chapter_text_matches(
+    matches: Sequence[dict[str, Any]],
+    *,
+    members: frozenset[str],
+    spans: Sequence[tuple[str, float, float]],
+    tolerance_s: float,
+) -> list[dict[str, Any]]:
+    """Visible matches for a chapter title, shared by the phone, cloud and plan repair.
+
+    A match starts on the chapter's first clip and stays within the run of member clips
+    from there, so the montage's title across the chapter and a title on its first clip
+    both count; the words on another clip, or reaching past the chapter, never do.
+    """
+    window = chapter_window(members, spans, tolerance_s=tolerance_s)
+    if window is None:
+        return []
+    start, end, run_end = window
+    return [
+        row
+        for row in matches
+        if (row.get("media_id") is None or row["media_id"] in members)
+        and start - tolerance_s <= row["start_s"] < end - tolerance_s
+        and row["end_s"] <= run_end + tolerance_s
+    ]
+
+
 def check_recipe_duration(
     contract: CreatorRenderContract,
     duration_s: float,
@@ -3007,24 +3094,31 @@ def verify_phone_recipe(
                     if _contract_media_id(manifest.get(clip.source_asset_id))
                     == requirement.media_id
                 ]
+            spans = [
+                (
+                    source,
+                    clip.timeline_start,
+                    clip.timeline_start
+                    + clip.source_duration / clip.rate
+                    + (clip.hold_duration or 0),
+                )
+                for clip in picture
+                if (source := _contract_media_id(manifest.get(clip.source_asset_id))) is not None
+            ]
             group = text_source_group(contract.exact_texts, requirement)
-            if group:
+            if requirement.chapter_media_ids:
+                matches = chapter_text_matches(
+                    matches,
+                    members=frozenset(requirement.chapter_media_ids),
+                    spans=spans,
+                    tolerance_s=frame,
+                )
+            elif group:
                 matches = source_group_text_matches(
                     matches,
                     group=group,
                     media_id=requirement.media_id or "",
-                    spans=[
-                        (
-                            source,
-                            clip.timeline_start,
-                            clip.timeline_start
-                            + clip.source_duration / clip.rate
-                            + (clip.hold_duration or 0),
-                        )
-                        for clip in picture
-                        if (source := _contract_media_id(manifest.get(clip.source_asset_id)))
-                        is not None
-                    ],
+                    spans=spans,
                     tolerance_s=frame,
                     minimum_overlap_s=frame,
                 )

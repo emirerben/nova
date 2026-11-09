@@ -4434,6 +4434,63 @@
       ],
       "red_control": "not_applicable",
       "journey": "kria-continued-turn-paid-calls"
+    },
+    {
+      "id": "kri-1331-event-titles-once",
+      "tickets": [
+        "KRI-1331"
+      ],
+      "symptom": "Prod job f6671587 (2026-11): \"Add a title at the beginning of each event. Football, dodgeball, beach volleyball and pub\" plus an intro title rendered 21 texts instead of 5 on the phone: the composer's four titles on clips it guessed, 13 \"beach volleyball\" labels back to back (one per event clip) and \"Football\", \"dodgeball\", \"pub\" stacked on one clip at the same height.",
+      "boundary": "contract",
+      "status": "open_pr",
+      "owner": "KRI-1331",
+      "fix_prs": [],
+      "paths": [
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/services/cloud_render_contract.py",
+        "src/apps/api/app/pipeline/phone_plan_repair.py",
+        "src/apps/api/app/pipeline/phone_speech_montage_plan.py",
+        "src/apps/api/app/services/phone_speech_montage_job.py",
+        "src/apps/api/app/services/phone_editor.py"
+      ],
+      "regression_tests": [
+        "tests/tasks/test_kri1331_event_titles_once.py",
+        "tests/kria/test_kri804_label_text_reply.py",
+        "tests/services/test_kri1102_visual_photo_label.py",
+        "tests/services/test_phone_speech_montage_job.py",
+        "tests/tasks/test_phone_plan_contract_repair.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Prod job f6671587's approved strategy, brief, timeline and the text composer's six recorded operations through the real contract builder, replay_text_composition, compile_phone_guided_repaired and verify_phone_recipe. On origin/main 5e9be6765 prod's own resolution draws 21 texts (the incident count) and proper event members draw 42; with the fix both draw the intro plus one title per event, each starting on its event's first clip, none overlapping in time and height.",
+        "live_model": "Not run; no paid calls. No prompt changed.",
+        "native_output": "Not run on a device: the checks read the compiled phone recipe's text layers (what the phone draws), not an exported video.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "events with proper member clips (7, 2, 15 and 13 clips) and prod's own resolution (three events on one clip, KRI-1330)",
+        "the composer moved the montage's titles to guessed clips: its rows are moved back, never copied",
+        "the montage's own title across each event is kept and nothing is added",
+        "a per-clip label ask keeps one pin per clip",
+        "wrong-content controls: a title on its event's second clip, on another event's first clip, or running past its event is refused",
+        "phone and cloud verifiers share the chapter rule (KRI-804 source-affinity matrix)",
+        "spoken-excerpt montage draws a chapter title once, on the first cut",
+        "editor Save with an untouched timeline keeps the chapter",
+        "a contract without a chapter title stays readable by an older worker"
+      ],
+      "neighbours_gap": [
+        "The composer still guesses where its titles go (it never sees the resolved event clips); the repair moves them, so its own placement is not used.",
+        "Several events resolved to one clip (KRI-1330) still draw their titles on that clip, stacked clear of each other.",
+        "A duplicate the composer writes beside a planner title that already shows the words is not removed.",
+        "Titles do not yet follow their clip when the creator reorders in the editor (KRI-1332 reads source_params.source_asset_id / source_timeline_id).",
+        "An older or rolled-back worker refuses a contract that has a chapter title until the deploy completes."
+      ],
+      "follow_ups": [
+        "KRI-1332 titles follow their clips in the editor",
+        "Phone re-send of the Emir Olympics request after deploy"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

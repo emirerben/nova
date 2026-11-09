@@ -334,6 +334,7 @@ def _text_requirements_for_save(
                         media_id=source.media_id,
                         shot_index=source.shot_index,
                         duration_s=source.duration_s,
+                        chapter_media_ids=source.chapter_media_ids,
                     )
                 )
             else:

@@ -27,6 +27,15 @@ Ways this could fail, written before the code:
  10. the title -> clip binding is not recorded on the text, so the editor cannot keep it
      with its clip;
  11. the test passes on the code that shipped the incident (the fixture proves nothing).
+
+Added with the code, once the contract carried a chapter title:
+
+ 12. a contract with no chapter title changes shape, so an older worker refuses it;
+ 13. an editor Save that leaves the timeline alone drops the chapter, and the text is then
+     wanted on every clip;
+ 14. the spoken-excerpt montage (the other phone writer of contract clip texts) draws the
+     chapter title on every clip, or on none
+     (``tests/services/test_phone_speech_montage_job.py``).
 """
 
 from __future__ import annotations
@@ -236,7 +245,7 @@ def _assert_one_title_per_event(recipe, events: dict[str, list[int]]) -> None:
     for text, indexes in events.items():
         [layer] = [layer for layer in layers if layer["text"] == text]
         first = TIMELINE[indexes[0]]
-        assert first["output_start_s"] - FRAME <= layer["start"] < first["output_end_s"], (
+        assert first["output_start_s"] - FRAME <= layer["start"] < first["output_end_s"] - FRAME, (
             text,
             layer,
         )
@@ -362,3 +371,43 @@ def test_a_title_in_the_wrong_place_is_refused(text, indexes):
         verify_phone_recipe(
             contract, recipe, source_audio={m["media_id"]: True for m in FIXTURE["media"]}
         )
+
+
+def test_a_contract_without_a_chapter_title_is_still_read_by_an_older_worker():
+    """Rolling deploy: only a contract that has a chapter title carries the new key."""
+    from pydantic import create_model
+
+    from app.services.creator_render_contract import CreatorRenderContract, TextRequirement
+
+    older_text = create_model(
+        "OlderTextRequirement",
+        __config__=TextRequirement.model_config,
+        **{
+            name: (info.annotation, info)
+            for name, info in TextRequirement.model_fields.items()
+            if name != "chapter_media_ids"
+        },
+    )
+    fields = {
+        name: (info.annotation, info) for name, info in CreatorRenderContract.model_fields.items()
+    }
+    fields["exact_texts"] = (tuple[older_text, ...], ())
+    older = create_model("OlderContract", __config__=CreatorRenderContract.model_config, **fields)
+
+    one_clip_each = _contract(
+        _strategy({text: _ids(indexes[:1]) for text, indexes in EVENTS.items()})
+    )
+    stored = one_clip_each.model_dump(mode="json")
+    assert older.model_validate(stored).model_dump(mode="json") == stored
+    chapters = _contract(_strategy(_event_members())).model_dump(mode="json")
+    with pytest.raises(ValueError, match="chapter_media_ids"):
+        older.model_validate(chapters)
+
+
+def test_an_editor_save_that_keeps_the_timeline_keeps_each_title_on_its_event():
+    from app.services.phone_editor import _text_requirements_for_save
+
+    contract = _contract(_strategy(_event_members()))
+    rows = [{"id": f"row-{text}", "text": text} for text in [TITLE, *EVENTS]]
+    saved = _text_requirements_for_save(rows, contract.exact_texts, {}, keep_shot_roles=True)
+    assert set(saved) == set(contract.exact_texts)
