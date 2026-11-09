@@ -738,7 +738,6 @@ def main():
         os.environ.get("CI_BASE", ""),
         os.environ.get("CI_HEAD", ""),
     )
-    groups = os.environ.get("TEMP_FORCE_UI_GROUPS") or groups  # TEMP: revert before merge.
     shards = ui_shards(event, groups)
     output = "".join(f"{suite}={str(suite in suites).lower()}\n" for suite in SUITES)
     journey, coverage, journey_ids = journey_details(
