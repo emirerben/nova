@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.120.0] - 2026-11-09
+
+### Changed
+- ci: give the iPhone validation leg 150 minutes (#2236) <!-- release-pr: 2236 -->
+
 ## [0.88.119.0] - 2026-11-09
 
 ### Fixed
