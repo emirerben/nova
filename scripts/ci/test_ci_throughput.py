@@ -248,7 +248,7 @@ class ThroughputTests(unittest.TestCase):
             ("ui-2", "3", "2/3|0"),
             ("ui-3", "3", "3/3|0"),
             ("ui-2", "2", "2/2|0"),
-            ("unit", "1", "unset|0"),
+            ("unit", "1", "unset|unset"),
         ):
             with self.subTest(leg=leg, shards=shards):
                 result = self.run_ui_step(leg, shards)

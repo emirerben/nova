@@ -131,13 +131,19 @@ class UISelectionTests(unittest.TestCase):
         files = {
             "AUITests.swift": "import XCTest\n\n@MainActor\nfinal class AUITests: XCTestCase {\n    func testA() {}\n}\n\nextension AUITests {\n    func helper() {}\n}\n",
             "BUITests.swift": "import XCTest\n\nfinal class BUITests: XCTestCase {\n    func testB() {}\n}\n\nstruct Harness {}\n",
+            "EUITests.swift": "import XCTest\n\nfinal class EUITests: XCTestCase {\n    func testF() {}\n}\n\nprivate extension XCUIElement {}\n",
             "CUITests.swift": "import XCTest\n\nfinal class CUITests: XCTestCase {\n    func testC() {}\n    func testD() {}\n}\n",
             "DUITests.swift": "import XCTest\n\nfinal class DUITests: XCTestCase {\n    func testE() {}\n}\n",
         }
         data = {
             "groups": {
                 "smoke": ["KriaUITests/AUITests/testA"],
-                "editor": ["KriaUITests/AUITests/testA", "KriaUITests/BUITests/testB", "KriaUITests/CUITests/testC"],
+                "editor": [
+                    "KriaUITests/AUITests/testA",
+                    "KriaUITests/BUITests/testB",
+                    "KriaUITests/CUITests/testC",
+                    "KriaUITests/EUITests/testF",
+                ],
                 "creation": ["KriaUITests/CUITests/testD"],
                 "projects": ["KriaUITests/DUITests/testE"],
             },
@@ -153,6 +159,7 @@ class UISelectionTests(unittest.TestCase):
                     ("AUITests.swift", "smoke,editor"),
                     ("BUITests.swift", "full"),
                     ("CUITests.swift", "full"),
+                    ("EUITests.swift", "smoke,editor"),
                     ("DUITests.swift", "smoke,creation"),
                 ):
                     with self.subTest(name=name):
@@ -422,12 +429,12 @@ class UISelectionTests(unittest.TestCase):
                 self.assertEqual(
                     ui.select_groups([projects], focused=fallback)[0], "smoke,projects"
                 )
-        # An unmapped test file used to select full (smoke alone on PRs), so the
-        # edited test never ran before merge; a focused edit now runs it.
+        # An unmapped test file selects the group owning its tests; a focused
+        # edit still narrows to just the changed methods.
         visual = "src/apps/ios/Tests/KriaUITests/NativeCaptionVisualUITests.swift"
         caption = "NativeCaptionVisualUITests/testCaptionAndVisualPaperScreens"
         self.assertNotIn(visual, ui.manifest()["sources"])
-        self.assertEqual(ui.select_groups([visual])[0], "full")
+        self.assertEqual(ui.select_groups([visual])[0], "smoke,editor")
         self.assertEqual(
             ui.select_groups([visual], focused={visual: {caption}})[0],
             f"smoke,{caption}",
@@ -450,7 +457,6 @@ class ShardOverheadTests(unittest.TestCase):
         self.assertLessEqual(max(loads) - min(loads), 120)
         self.assertLess(len(parts[0]), len(parts[1]))
         self.assertEqual(ui.shard_tests(tests, "1/1", durations), tests)
-
 
     def test_shards_without_unit_work_balance_every_leg(self):
         # PR UI legs run no unit tests, so no leg reserves time for them.
