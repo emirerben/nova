@@ -106,10 +106,12 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # `hold_s`; before: 63a22d0d… / 7ed8c8f9…); brief-off unchanged.
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
+# KRI-1327: the brief section teaches `subject_outline` (a line drawn around a person): the two
+# brief-on hashes re-pinned (before: 9fc58bb0… / 891266d1…); brief-off unchanged.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "9fc58bb0742ecf8fe56ddd862622b2b1975a1d114db22a9e47411620ba91c8c6",
+    (True, True): "ae8b21b43597bc4e1d70b195c0ee7fbe91c1e8adcb904a97303833c0776eb385",
     (True, False): "42a19e30cae3fadac2dd65318b2af49ca4a5d70332e17f714aa5875af6433914",
-    (False, True): "891266d1a4eb81153c7845a50aefb9b03cf6b17f4f963f0a8463e63479431a48",
+    (False, True): "3b5a507badc13191d84d388d405ea8aaec38d9a2d2266ea5286f85f184103f6b",
     (False, False): "68d42cab5cc0d03ccf3cf164d19bccba9193f01a9409d802acc0454b4adce777",
 }
 

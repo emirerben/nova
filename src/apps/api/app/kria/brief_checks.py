@@ -46,6 +46,8 @@ from app.kria.caption_look_ask import (
     caption_look_ask,
     caption_look_reason,
     caption_over_speaker,
+    caption_spot_holds,
+    caption_spot_moved_reason,
 )
 from app.kria.clip_sound_toggle_ask import (
     SoundTarget,
@@ -463,6 +465,11 @@ class SpeakerBackgroundFact:
     aimed: bool | None = None
     # KRI-1304: what the planner left out of the sequence, as (name, "no_recording" | "not_said").
     left_out: tuple[tuple[str, str], ...] = ()
+    # Çiğdem S2: on a finished video, the rhythm the creator named (``cadence_s``, the midpoint of a
+    # range) and how long the longest photo really stays (kept-take seconds). None = no rhythm was
+    # named, or a render recorded before the worker wrote it (no claim either way).
+    asked_cadence_s: float | None = None
+    longest_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -1342,7 +1349,15 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
         unshown=_unshown_recordings(detail.get("unshown")),
         aimed=detail["aimed"] if isinstance(detail.get("aimed"), bool) else None,
         left_out=_left_out_recordings(detail.get("left_out")),
+        asked_cadence_s=_positive_seconds(detail.get("cadence_s")),
+        longest_s=_positive_seconds(detail.get("longest_s")),
     )
+
+
+def _positive_seconds(value: object) -> float | None:
+    if isinstance(value, int | float) and not isinstance(value, bool) and value > 0:
+        return float(value)
+    return None
 
 
 def _left_out_recordings(rows: object) -> tuple[tuple[str, str], ...]:
@@ -3066,6 +3081,16 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     changes.update(_list_label_facts(variant))
     changes.update(_protected_text_facts(variant))
     changes.update(_beat_room_facts(variant.get("phone_beat_receipt")))
+    multi = variant.get("phone_talking_multi_clip")
+    if (
+        isinstance(multi, Mapping)
+        and multi.get("lanes_skipped")
+        and variant.get("phone_beat_receipt") is None
+    ):
+        # KRI-1327 (S3): several takes talked and no beat ran, so no photo was shown; the
+        # review says so ("aren't available"), never "have a look".
+        changes["reaction_beats_available"] = False
+        changes["reaction_beats"] = ()
     changes.update(_timed_card_receipt_facts(variant.get("phone_timed_card_receipt")))
     changes.update(_overlay_sequence_facts(variant.get("phone_overlay_receipt")))
     changes.update(_grounded_card_facts(variant))
@@ -5560,6 +5585,13 @@ def _check_speaker_background_core(req: BriefRequirement, facts: PlanFacts) -> R
             tr += f"; sen {corner[1]}sın"
     missing = _unshown_sentence(fact) if rendered else None
     left_out = _left_out_sentence(fact)
+    slow = _slower_than_asked_sentence(fact) if rendered and wants_several else None
+    if slow:
+        # Çiğdem S2: "changing every 3-5 seconds" with too few photos for the talk is not met.
+        extra = " ".join(
+            part for part in (slow, missing, left_out[0] if left_out else None) if part
+        )
+        return _receipt(req, "partial", f"{say(en=en + '.', tr=tr + '.')} {extra}")
     if missing or (left_out and (left_out[1] or not rendered)):
         # Qendresa case 5: a recording she asked for never shows, so the ask is not met.
         # KRI-1304: so is a repo with no recording attached. On a draft a recording the planner
@@ -5571,6 +5603,33 @@ def _check_speaker_background_core(req: BriefRequirement, facts: PlanFacts) -> R
     if left_out:
         return _receipt(req, "met", f"{say(en=en + '.', tr=tr + '.')} {left_out[0]}")
     return _receipt(req, "met", say(en=en + ".", tr=tr + "."))
+
+
+# A photo may stay this much longer than the named rhythm before the reply calls it out ("3-5
+# seconds" is recorded as 4, so anything over 5 s is outside what was asked).
+_RHYTHM_SLACK_S = 1.0
+
+
+def _slower_than_asked_sentence(fact: SpeakerBackgroundFact) -> str | None:
+    """Çiğdem S2: one photo stays clearly longer than the rhythm the creator named, because each
+    photo shows once and there are too few for the talk. None when no rhythm was named, the
+    record predates it, or every photo changes within it."""
+    cadence, longest = fact.asked_cadence_s, fact.longest_s
+    if cadence is None or longest is None or longest <= cadence + _RHYTHM_SLACK_S:
+        return None
+    shown = _background_media_shown(fact)
+    return say(
+        en=(
+            f"One stays on for {longest:.0f} s, but you asked for a change about every "
+            f"{cadence:g} s: there are only {shown} photos or videos for this talk and none "
+            "repeats. Add more for faster changes."
+        ),
+        tr=(
+            f"Biri {longest:.0f} sn ekranda kalıyor ama yaklaşık {cadence:g} saniyede bir "
+            f"değişmesini istedin: bu konuşma için yalnızca {shown} fotoğraf ya da video var ve "
+            "hiçbiri tekrar etmiyor. Daha hızlı değişmesi için daha fazlasını ekle."
+        ),
+    )
 
 
 def _left_out_sentence(fact: SpeakerBackgroundFact) -> tuple[str, bool] | None:
@@ -6808,6 +6867,13 @@ _CLEANUP_IF_OFFERED = (
     "If Clean up speech is offered when you approve, choose it to cut the long pauses"
 )
 _CLEANUP_UNAVAILABLE = "Speech cleanup isn't available for this project yet, so the pauses stay"
+# KRI-720: a phone Talking edit of several clips plays every take whole: dispatch refuses
+# consented cleanup (`speech_cleanup_unavailable_on_phone`) and the render grounds no named,
+# start or end line (`_phone_opening_cut(multiple_takes=True)`). A limit, never a promise.
+_CLEANUP_SEVERAL_TAKES = (
+    "I can't cut anything out of a video made of several takes yet, so the pauses and lines "
+    "you asked me to cut stay in"
+)
 # Qendresa 13 (TIGHT_PAUSE_CUT_ENABLED): "cut out all my pauses so it's tight". Only said when the
 # flag is on and the ask wants every pause gone; the draft promises 0.3 s, the finished video
 # reports what the render measured.
@@ -6880,6 +6946,18 @@ _CLEANUP_NOT_RUN = "Speech cleanup didn't run on this video, so the long pauses 
 _LIGHT_UNAVAILABLE = (
     "I can't change how bright or dark clips look in this edit yet, so they keep their own light"
 )
+# KRI-1327 (S3): with several talking takes only full-screen photos on a word run
+# (`_multi_take_beat_problem`), and only once that lane is switched on.
+_MULTI_TAKE_NO_BEATS = (
+    "Photos timed to your words don't show yet when several of your clips talk, "
+    "so this video won't have them"
+)
+_MULTI_TAKE_FULLSCREEN_ONLY = (
+    "When several of your clips talk, photos on your words can only show full screen, "
+    "so this one won't show"
+)
+# KRI-1327 (S3): no edit draws a line around a person (see `wants_subject_outline`).
+_NO_SUBJECT_OUTLINE = "I can't draw a line around someone in the video yet, so it won't have one"
 # KRI-777: no edit can hold a frame (see `kria.freeze_ask`). Said on the draft, before the
 # approval card, and again on the finished video's receipt.
 _NO_FREEZE_FRAME = "I can't freeze a frame in this edit yet, so that moment plays normally"
@@ -7314,6 +7392,21 @@ _REASON_TR: dict[str, str] = {
     _CLEANUP_DONE: "Konuşma temizliği uzun duraklamaları kesti",
     _CLEANUP_NOTHING_TO_CUT: "Konuşma temizliği kesilecek uzun bir duraklama bulmadı",
     _CLEANUP_NOT_RUN: ("Konuşma temizliği bu videoda çalışmadı, o yüzden uzun duraklamalar kaldı"),
+    _CLEANUP_SEVERAL_TAKES: (
+        "Birkaç çekimden oluşan bir videodan henüz bir şey kesemiyorum, o yüzden kesmemi "
+        "istediğin duraklamalar ve satırlar kalıyor"
+    ),
+    _MULTI_TAKE_NO_BEATS: (
+        "Birkaç klibinde konuştuğunda sözlerine göre çıkan fotoğraflar henüz gösterilemiyor, "
+        "o yüzden bu videoda olmayacak"
+    ),
+    _MULTI_TAKE_FULLSCREEN_ONLY: (
+        "Birkaç klibinde konuştuğunda sözlerine göre çıkan fotoğraflar yalnızca tam ekran "
+        "gösterilebiliyor, o yüzden bu gösterilmeyecek"
+    ),
+    _NO_SUBJECT_OUTLINE: (
+        "Videodaki birinin etrafına henüz çizgi çizemiyorum, o yüzden videoda olmayacak"
+    ),
     _LIGHT_UNAVAILABLE: (
         "Bu düzenlemede kliplerin ne kadar aydınlık ya da karanlık göründüğünü henüz "
         "değiştiremiyorum, o yüzden kendi ışıklarıyla kalıyorlar"
@@ -7481,6 +7574,7 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _CLEANUP_AT_APPROVAL,
     _CLEANUP_IF_OFFERED,
     _CLEANUP_UNAVAILABLE,
+    _CLEANUP_SEVERAL_TAKES,
     *_TIGHT_STATIC_LINES,
     _CLEANUP_DONE,
     _CLEANUP_NOTHING_TO_CUT,
@@ -7508,6 +7602,9 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _FREEZE_NEEDS_FRAME,
     _FREEZE_FIRST_FRAME,
     _LIGHT_UNAVAILABLE,
+    _NO_SUBJECT_OUTLINE,
+    _MULTI_TAKE_NO_BEATS,
+    _MULTI_TAKE_FULLSCREEN_ONLY,
     # KRI-724: the planned source cut / noise filter, and what the noise filter can't do.
     _SPEECH_CUT_DRAFT_PLAN,
     _NOISE_REDUCTION_PLANNED,
@@ -8357,6 +8454,9 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     cards = _spoken_cards_receipt(req, facts)
     if cards is not None:
         return cards  # KRI-1237: the phone Talking card matcher's Visuals
+    multi_take = _multi_take_beat_problem(req, facts)
+    if multi_take is not None:
+        return _receipt(req, "not_possible", multi_take)
     wants_beats = _wants_beats(req)
     wants_closing = _closing_photo_ask(req, facts)
     asked_display = _display_ask(req) if wants_beats else None
@@ -8713,6 +8813,11 @@ _NAMED_CUT_MISSED = {
         "your take has no word timings to find it in",
         "çekiminde onu bulacak kelime zamanlaması yok",
     ),
+    # KRI-720: the render plays several takes whole (`_phone_opening_cut(multiple_takes=True)`).
+    "several_takes": (
+        "I can't cut a line out of a video made of several takes yet",
+        "birkaç çekimden oluşan bir videodan henüz satır kesemiyorum",
+    ),
     # KRI-889: the line was found, but cutting the voiceover file failed.
     "cut_failed": (
         "cutting it out of your voiceover failed",
@@ -8849,6 +8954,11 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         return _receipt(req, "partial", _CANT_CHECK_CLEANUP)
     if facts.rendered_variant:
         return _merge_cleanup_timing(req, facts, _check_rendered_cleanup(req, facts))
+    if facts.phone_talking and (facts.video_clip_count or 0) > 1:
+        # KRI-720 (S3 Yorum2, job 7416c94b): several takes render whole, whatever approval
+        # offers, so no cleanup, named-line or restart promise is true here.
+        cleanup = _receipt(req, "partial", _loc(_CLEANUP_SEVERAL_TAKES))
+        return _merge_cleanup_timing(req, facts, cleanup)
     if facts.speech_cleanup_enabled:
         lead, status = _CLEANUP_PLANNED, "met"
     elif facts.speech_cleanup_offered is True:
@@ -9316,6 +9426,9 @@ def _check_caption_look(
                     tr="Altyazılar artık istediğin gibi görünmüyor.",
                 ),
             )
+        moved = _caption_spot_drawn_receipt(req, facts.caption_look_receipt)
+        if moved is not None:
+            return moved
         over_face = facts.caption_look_receipt.get("over_face") is True
         return _receipt(
             req,
@@ -9341,6 +9454,21 @@ def _check_caption_look(
             caption_look_reason(ask, over_speaker=over_speaker, over_face=False),
         )
     return None
+
+
+def _caption_spot_drawn_receipt(
+    req: BriefRequirement, look_receipt: Mapping[str, Any] | None
+) -> RequirementReceipt | None:
+    """KRI-1327 (S3): a face the creator named pushed the block out of the row they asked for
+    ("in the middle, never on my face" drawn at y 0.86). The finished video is then "Partly",
+    with why, never "in the middle". ``None`` = drawn in the asked row (or nothing asked)."""
+    ask = caption_look_ask(req)
+    drawn = (look_receipt or {}).get("position_y_frac")
+    if ask is None or ask.position is None or not isinstance(drawn, (int, float)):
+        return None
+    if caption_spot_holds(ask.position, float(drawn)):
+        return None
+    return _receipt(req, "partial", caption_spot_moved_reason(ask.position, float(drawn)))
 
 
 def _with_caption_words(
@@ -9920,6 +10048,36 @@ def _talking_draft_split(
         tuple(m for m in ids if m in candidates),
         seconds,
     )
+
+
+def _multi_take_beat_problem(req: BriefRequirement, facts: PlanFacts) -> str | None:
+    """KRI-1327 (S3): a phone Talking draft where several clips may talk. The render grounds
+    cards, the closing shot and the generic pass on ONE speaker's frames, so with several
+    speakers only full-screen photos on a word run, and only while
+    `phone_talking_multi_speaker_beats_supported()`. The draft says so before approval
+    instead of "Done" for a photo the render then skips. ``None`` = nothing in the way."""
+    if not facts.phone_talking or facts.editor or facts.rendered_variant:
+        return None
+    wants_beats = _wants_beats(req)
+    closing = _closing_photo_ask(req, facts)
+    if not (wants_beats or closing) or len(_talking_draft_split(facts)[1]) < 2:
+        return None
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_talking_multi_speaker_beats_supported,
+    )
+
+    if not phone_talking_multi_speaker_beats_supported():
+        return _MULTI_TAKE_NO_BEATS
+    names = {_fold_name(n) for n in (_named_triggers(req) or _cue_triggers(req))}
+    corner = any(
+        beat.display_mode != "fullscreen" and _fold_name(beat.trigger) in names
+        for beat in facts.reaction_beats or ()
+    ) or (wants_beats and _display_ask(req) not in (None, "fullscreen"))
+    return _MULTI_TAKE_FULLSCREEN_ONLY if closing or corner else None
+
+
+def _fold_name(text: str) -> str:
+    return " ".join(str(text or "").casefold().split())
 
 
 def _talking_footage_clips(facts: PlanFacts) -> tuple[str, ...]:
@@ -11626,6 +11784,13 @@ def _with_title_face(
 
 def _opening_cut_miss(reason: str | None, quote: str | None) -> str:
     line = f"“{quote}”" if quote else "that line"
+    if reason == "several_takes":
+        return say(
+            en="I can't cut the start of a video made of several takes yet, so it opens at the "
+            "beginning of your first take",
+            tr="Birkaç çekimden oluşan bir videonun başını henüz kesemiyorum, o yüzden ilk "
+            "çekiminin başından açılıyor",
+        )
     if reason == "cleanup_off":
         return say(
             en="Speech cleanup was off, so I couldn't cut the start and the video opens at the "
@@ -11648,6 +11813,13 @@ def _opening_cut_miss(reason: str | None, quote: str | None) -> str:
 
 def _end_cut_miss(reason: str | None, quote: str | None) -> str:
     line = f"\u201c{quote}\u201d" if quote else "that line"
+    if reason == "several_takes":
+        return say(
+            en="I can't cut the end of a video made of several takes yet, so it runs to the "
+            "end of your last take",
+            tr="Birkaç çekimden oluşan bir videonun sonunu henüz kesemiyorum, o yüzden son "
+            "çekiminin sonuna kadar sürüyor",
+        )
     if reason == "cleanup_off":
         return say(
             en="Speech cleanup was off, so I couldn't cut the end and the video runs to the end "
@@ -13981,6 +14153,15 @@ def wants_light_change(req: BriefRequirement) -> bool:
     return isinstance(stated, str) and stated.strip().casefold() in _FOOTAGE_LIGHT_FACTS
 
 
+# KRI-1327 (S3, 2026-11-08): a line, outline or glow drawn around a person ("put an orange line
+# around me"). No edit draws one: the phone's person matte only cuts the speaker out for a
+# background. The model that read the ask records it as `facts["subject_outline"]`
+# (main_creator._BRIEF_PROMPT_SECTION); the words are never re-read here (KRI-667).
+def wants_subject_outline(req: BriefRequirement) -> bool:
+    """True when the creator asks for a line drawn around a person in the video."""
+    return req.facts.get("subject_outline") is True
+
+
 def _check_light_change(req: BriefRequirement) -> RequirementReceipt:
     # A limit of every draft, not a simplification: reported as "Couldn't", never the
     # "should I make a simpler version?" question (`is_format_limit`).
@@ -14149,6 +14330,7 @@ def _has_checker(req: BriefRequirement) -> bool:
         or _wants_speaker_framing(req)
         or requirement_landscape_fit(req) is not None
         or wants_light_change(req)
+        or wants_subject_outline(req)
         or asks_freeze_frame(req)
     ):
         return True
@@ -14868,6 +15050,9 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         # KRI-700: a draft or a finished render never brightens the footage. An editor turn
         # keeps its own receipts (the before/after diff names what its ops changed).
         return _check_light_change(req)
+    if wants_subject_outline(req) and (facts.rendered_variant or not facts.editor):
+        # KRI-1327: said before the approval card ("Couldn't"), never "have a look".
+        return _receipt(req, "not_possible", _NO_SUBJECT_OUTLINE)
     if facts.rendered_montage:
         # KRI-546: a finished phone montage shows which files repeat and whether the
         # closing clip's own line plays whole; every other plan keeps its usual path.
@@ -15851,6 +16036,7 @@ __all__ = [
     "brief_caption_spellings",
     "keeps_model_summary",
     "wants_light_change",
+    "wants_subject_outline",
     "defers_caption_words_to_phone_render",
     "defers_to_narrated_render",
     "defers_to_unified_montage",

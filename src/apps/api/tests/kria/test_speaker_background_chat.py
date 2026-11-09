@@ -1020,24 +1020,24 @@ def test_flag_off_the_brief_sections_are_the_bytes_they_were_before_the_opening(
     # one captions requirement / "all my pauses" / unnamed mistakes / one-moment holds / typed
     # ending); the flag-off section was 14ad8c6e… before it. Re-frozen again for #2164 (the
     # keep-the-take-whole line also records speech_cleanup false), and for KRI-1292 (`hold_s`
-    # for a text at a spoken word).
+    # for a text at a spoken word), and for KRI-1327 (`subject_outline`, a line around a person).
     assert brief_prompt_section() is _BRIEF_PROMPT_SECTION
     assert digest(brief_prompt_section()) == (
-        "57f3bdbfedf269939ba49d61c102e96f30565c6cf91d89665eb20264d7ca94fb"
+        "50c7c030fd9d8b53eeaca8c186bced335bd356466bcbc7a4d564329c11d1bacb"
     )
     assert digest(brief_prompt_section(True)) == (
-        "84efb17469fadcedcb91773105d9cff9a919c59643a2a4c06b53b75e790d9528"
+        "fc26f5110ab6b4845774f62228ae520fdb303f785ee29cfaa1f3fedebff8042d"
     )
     assert digest(_narrow_brief_section(False)) == (
-        "f81e1cd37f93bda0d9fc79232657e7aed6051ce73a963c913713af86d228f8a1"
+        "415c3f3d2b13444feeabccb552caa61e03426cd9fd3d81c55347d3bcd98fa21f"
     )
     assert digest(_narrow_brief_section(True)) == (
-        "c6aad6a3988c5eb66a57ffdb06d3b2efebf467c4f67b799019fcb98d997a06b1"
+        "cec86bdac935d451292dc906c3afad89553d87b7a5d6437b180e344aaed4373e"
     )
     # and the whole extractor prompt, byte for byte (captured from that same tree)
     for insert_open, expected in (
-        (False, "2cdbedd98e05e50c4ff56649653d46839a55b2c23f90b1fa4f1cec3cf051faa9"),
-        (True, "7f52303a015ec76d59bf81983883fa340be75d32048b19df1f19721ac3a88cb1"),
+        (False, "f2512e6951e699f3cd0961aa58a27dee13a59671bd8257167f836811b76bfcb3"),
+        (True, "73a65445cb14bfab53908d9448283994a76bf2d8a6f755a8d3826daace58b621"),
     ):
         rendered = BriefExtractorAgent(None).render_prompt(
             BriefExtractionInput(

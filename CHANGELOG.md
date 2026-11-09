@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.132.0] - 2026-11-09
+
+### Changed
+- ci: run the selected iPhone UI scenarios in parallel shards (#2246) <!-- release-pr: 2246 -->
+
+## [0.88.131.0] - 2026-11-09
+
+### Changed
+- test(captions): unbreak main, give the middle-spot D1 case a chin a 42 px small block meets (KRI-1327) (#2249) <!-- release-pr: 2249 -->
+
+## [0.88.130.0] - 2026-11-09
+
+### Fixed
+- fix(kria): Talking videos made of several takes — clip names, one-reply holds, photos on words, honest cleanup/captions/outline (KRI-1327) (#2231) <!-- release-pr: 2231 -->
+
+## [0.88.129.0] - 2026-11-09
+
+### Fixed
+- fix(kria): Çiğdem S2 green screen — cut the recording-check opening, honest rhythm reply, smaller small captions (KRI-1326) (#2230) <!-- release-pr: 2230 -->
+
+## [0.88.128.0] - 2026-11-09
+
+### Changed
+- fix(ios): repair the wide-canvas drawing UI test that fails on main (#2243) <!-- release-pr: 2243 -->
+
+## [0.88.127.0] - 2026-11-09
+
+### Changed
+- refactor(api): one owner for the Job.status vocabulary (KRI-1336) (#2242) <!-- release-pr: 2242 -->
+
 ## [0.88.126.0] - 2026-11-09
 
 ### Changed

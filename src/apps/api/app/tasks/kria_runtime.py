@@ -65,6 +65,7 @@ from app.kria.brief_checks import (
     requirements_to_check_at_draft,
     speech_cleanup_review_note,
     wants_light_change,
+    wants_subject_outline,
     with_planned_cuts,
 )
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
@@ -1965,6 +1966,13 @@ def _automatic_omission_reason(req: BriefRequirement, strategy: Mapping[str, Any
         or "audio_intent" in req.facts
     ):
         return None
+    if wants_subject_outline(req) and not req.literal:
+        # KRI-1327: no edit draws a line around a person; the draft goes ahead without it and
+        # the reply says "Couldn't" (`brief_checks._NO_SUBJECT_OUTLINE`).
+        return say(
+            en="This edit can't draw a line around someone yet.",
+            tr="Bu düzenleme henüz birinin etrafına çizgi çizemiyor.",
+        )
     if wants_light_change(req):
         # A brightness fact can share a row with independently requested copy.
         # Only the known, already-kept title has a safe partial fallback here;
@@ -5209,7 +5217,9 @@ def _speech_cleanup_offered(item: Any, strategy: Mapping[str, Any] | None) -> bo
         view = _DraftItemView(item, edit_format=edit_format, audio_mode=audio_mode)
         resolution = resolve_item_narration(view, detector_policy=current_detector_policy())
         if resolution.source is None:
-            return None
+            # KRI-720: several clips with sound on a Talking edit never resolve one source, so
+            # no check is scheduled and approval cannot offer the choice.
+            return False if resolution.reason == "ambiguous_embedded_source" else None
         return bool(
             preflight_enabled_for_source(
                 resolution.source.source_policy_fingerprint,
