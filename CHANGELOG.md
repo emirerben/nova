@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.128.0] - 2026-11-09
+
+### Changed
+- fix(ios): repair the wide-canvas drawing UI test that fails on main (#2243) <!-- release-pr: 2243 -->
+
 ## [0.88.127.0] - 2026-11-09
 
 ### Changed
