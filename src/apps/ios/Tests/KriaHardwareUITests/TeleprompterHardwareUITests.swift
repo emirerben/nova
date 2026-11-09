@@ -360,6 +360,115 @@ import XCTest
         #endif
     }
 
+    /// KRI-1160 robustness of the background Cinematic bake on the phone, driven by `scripts/ios/talk-bake-robustness.sh`. Each
+    /// scenario records a Cinematic take first, then interferes with the bake that starts when Review opens. The script pulls the
+    /// app container afterwards and checks the take, its manifest and the staging files; this test only drives and asserts what
+    /// the screen shows. Opt-in twice, like `testTalkBenchTake`.
+    ///   KRIA_TALK_BAKE_SCENARIO       = background | kill | retake
+    ///   KRIA_TALK_BAKE_SECONDS        = length of the first take, default 30
+    ///   KRIA_TALK_BAKE_AWAY_SECONDS   = background: how long the app stays away, default 25
+    ///   KRIA_TALK_BAKE_KILL_DELAY     = kill: seconds between the first bake progress and the kill, default 1
+    ///   KRIA_TALK_BAKE_SECOND_SECONDS = retake: length of the take recorded after Record again, default 6
+    func testTalkBakeRobustness() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("The bake robustness scenarios need a physical iPhone.")
+        #else
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["KRIA_TELEPROMPTER_HARDWARE_TEST"] == "1", environment["KRIA_TALK_BENCH"] == "1" else {
+            throw XCTSkip("Set KRIA_TELEPROMPTER_HARDWARE_TEST=1 and KRIA_TALK_BENCH=1 (scripts/ios/talk-bake-robustness.sh does).")
+        }
+        continueAfterFailure = false
+        let scenario = environment["KRIA_TALK_BAKE_SCENARIO"] ?? ""
+        XCTAssertTrue(["background", "kill", "retake"].contains(scenario), "KRIA_TALK_BAKE_SCENARIO is background, kill or retake.")
+        let seconds = TimeInterval(environment["KRIA_TALK_BAKE_SECONDS"] ?? "") ?? 30
+        let away = TimeInterval(environment["KRIA_TALK_BAKE_AWAY_SECONDS"] ?? "") ?? 25
+        let killDelay = TimeInterval(environment["KRIA_TALK_BAKE_KILL_DELAY"] ?? "") ?? 1
+        let secondSeconds = TimeInterval(environment["KRIA_TALK_BAKE_SECOND_SECONDS"] ?? "") ?? 6
+
+        let removePermissionMonitor = addUIInterruptionMonitor(withDescription: "Kria permission prompt") { [self] alert in
+            guard let allow = alert.buttons.allElementsBoundByIndex.first(where: { isAffirmativePermissionAction($0.label) }) else { return false }
+            allow.tap()
+            return true
+        }
+        defer { removeUIInterruptionMonitor(removePermissionMonitor) }
+        let app = launchTalking(bench: ["KRIA_TALK_BENCH": "1", "KRIA_TALK_BENCH_BACKGROUND": "none", "KRIA_TALK_BENCH_CINEMATIC": "1"])
+        openScriptFromTray(app)
+        let script = app.textViews["teleprompter-script-editor"]
+        XCTAssertTrue(script.waitForExistence(timeout: 8))
+        paste("I am recording this on an iPhone. I will keep talking for the bench so the preview has a moving subject.", into: script, app: app)
+        app.buttons["teleprompter-use-script"].tap()
+        let record = app.buttons["teleprompter-record"]
+        guard triggerPermissionPrompts(in: app, untilEnabled: record), waitUntilEnabled(record, timeout: 20) else {
+            XCTFail("A physical iPhone with granted camera and microphone permission should enable Record.")
+            return
+        }
+        let cinematic = app.buttons["teleprompter-cinematic"]
+        XCTAssertTrue(cinematic.waitForExistence(timeout: 5))
+        guard cinematic.isEnabled else { throw XCTSkip("This iPhone cannot record Cinematic with the front camera.") }
+        if (cinematic.value as? String) != "On" { cinematic.tap() }
+        XCTAssertEqual(cinematic.value as? String, "On")
+        guard waitUntilEnabled(record, timeout: Self.graphRebuildTimeout) else { XCTFail("Record is enabled again after switching to Cinematic."); return }
+        wait(seconds: 3)
+
+        let stop = app.buttons["teleprompter-stop-recording"]
+        let useTake = app.buttons["teleprompter-use-take"]
+        let bakeNote = app.descendants(matching: .any).matching(identifier: "teleprompter-review-cinematic").firstMatch
+        func recordTake(seconds: TimeInterval) {
+            record.tap()
+            XCTAssertTrue(stop.waitForExistence(timeout: Self.recordStartTimeout), "Stop appears only after AVFoundation confirms recording started.")
+            wait(seconds: seconds)
+            stop.tap()
+            XCTAssertTrue(useTake.waitForExistence(timeout: 60), "Stop reaches Review at once, the bake runs afterwards.")
+            XCTAssertTrue(bakeNote.waitForExistence(timeout: 5), "A Cinematic take shows its bake note in Review.")
+        }
+        func waitForBakeProgress() -> Bool {
+            let moving = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label MATCHES '.*[0-9]+%'"), object: bakeNote)
+            return XCTWaiter().wait(for: [moving], timeout: 30) == .completed
+        }
+        func finishAndFlush() {
+            // The app writes its numbers every two seconds and again when it leaves the foreground.
+            wait(seconds: 3)
+            XCUIDevice.shared.press(.home)
+            wait(seconds: 3)
+        }
+
+        recordTake(seconds: seconds)
+        switch scenario {
+        case "background":
+            XCUIDevice.shared.press(.home)
+            wait(seconds: away)
+            app.activate()
+            XCTAssertTrue(useTake.waitForExistence(timeout: 30), "Review is still there when the app returns.")
+            XCTAssertTrue(waitForBakeToSettle(bakeNote, timeout: 300), "The bake resumes after backgrounding and finishes.")
+            XCTAssertEqual(bakeNote.label, "Recorded in Cinematic.", "A bake paused by backgrounding ends baked, not standard.")
+            XCTAssertTrue(useTake.isEnabled)
+            screenshot(app, named: "Review after background mid-bake")
+            finishAndFlush()
+        case "kill":
+            XCTAssertTrue(waitForBakeProgress(), "The bake reports progress before the kill.")
+            wait(seconds: killDelay)
+            screenshot(app, named: "Review just before the kill")
+            app.terminate()
+        default:
+            XCTAssertTrue(waitForBakeProgress(), "The bake reports progress before Record again.")
+            let retake = app.buttons["teleprompter-retake"]
+            XCTAssertTrue(retake.isEnabled)
+            retake.tap()
+            guard waitUntilEnabled(record, timeout: Self.graphRebuildTimeout) else { XCTFail("Record again returns to the camera."); return }
+            XCTAssertEqual(cinematic.value as? String, "On", "The Cinematic choice stays on for the next take.")
+            XCTAssertFalse(useTake.exists)
+            screenshot(app, named: "Camera after Record again mid-bake")
+            // Longer than the first take's whole bake, so a bake that kept running would have landed by now.
+            wait(seconds: 15)
+            recordTake(seconds: secondSeconds)
+            XCTAssertTrue(waitForBakeToSettle(bakeNote, timeout: 300), "The second take's bake finishes.")
+            XCTAssertEqual(bakeNote.label, "Recorded in Cinematic.")
+            screenshot(app, named: "Second take review after retake")
+            finishAndFlush()
+        }
+        #endif
+    }
+
     #if !targetEnvironment(simulator)
     /// The Review note says "Applying your Cinematic look..." while the bake owes or runs, then turns final.
     private func waitForBakeToSettle(_ note: XCUIElement, timeout: TimeInterval) -> Bool {
