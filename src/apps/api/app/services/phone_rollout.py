@@ -304,7 +304,10 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         for clip in track.clips
         if clip.visual_placement is not None
     ]
-    if recipe.visual_fills:
+    if recipe.visual_fills and not (
+        # KRI-1346: the closing card's colour is the one fill a phone recipe may carry.
+        recipe_fills_are_closing_cards(recipe) and phone_talking_closing_card_available()
+    ):
         raise ValueError("Visual blocks await native parity and device qualification")
     if recipe.audio.mute_windows and not phone_clip_sound_windows_supported():
         # KRI-118 L1 item 6: mute windows are a distinct feature from visual
@@ -2065,6 +2068,64 @@ def cta_ending_planned_for(client_protocol: int | None) -> bool:
         and client_protocol is not None
         and client_protocol >= settings.freehand_drawing_min_client_protocol
     )
+
+
+CLOSING_CARD_FEATURE = "closingCard"
+CLOSING_CARD_ENGINE_FEATURES: tuple[str, ...] = (
+    "freezeFrame",
+    "visualBlocks",
+    CLOSING_CARD_FEATURE,
+)
+
+
+def phone_talking_corner_text_supported() -> bool:
+    """Can a phone Talking edit keep the creator's corner text on screen (KRI-1342 item 7)?
+
+    The lines are ordinary positioned text rows on the KRI-467 lane (no new recipe field), so
+    the flag and the title lane are the whole gate. Session-level capability for honest
+    replies: False means a corner line is still turned into the opening title or asked about.
+    """
+
+    return bool(settings.phone_talking_corner_text_enabled and phone_subtitled_title_supported())
+
+
+def phone_talking_closing_card_available() -> bool:
+    """Server-wide: may a phone Talking edit end on a full-screen colour card (KRI-1346)?
+
+    The card is the last frame held (``freezeFrame``) under a solid visual fill
+    (``visualBlocks``) with a text row on it. Visual fills were never device-qualified on
+    their own, so the ``closingCard`` token is added to ``PHONE_RENDER_VERIFIED_FEATURES``
+    only after a physical-iPhone preview + export check of a card."""
+
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        settings.phone_talking_closing_card_enabled
+        and phone_subtitled_title_supported()
+        and all(feature in verified for feature in CLOSING_CARD_ENGINE_FEATURES)
+    )
+
+
+def phone_talking_closing_card_planned_for(client_protocol: int | None) -> bool:
+    """May this creator's phone Talking edit end on a colour card? Read like
+    `freeze_frame_planned_for`: ``client_protocol`` is the app build the creator acted from
+    (the turn's ``client_protocol`` or the Job's ``creator_client_protocol``). The card adds no
+    recipe field, so the build only has to decode a held frame."""
+
+    return bool(
+        phone_talking_closing_card_available()
+        and client_protocol is not None
+        and client_protocol >= settings.freeze_frame_min_client_protocol
+    )
+
+
+def recipe_fills_are_closing_cards(recipe: Any) -> bool:
+    """Every visual fill in ``recipe`` is a closing card (the only fill a phone recipe may
+    carry, and only while the card is available)."""
+
+    from app.pipeline.phone_talking_closing_card import CLOSING_CARD_FILL_ID  # noqa: PLC0415
+
+    fills = list(getattr(recipe, "visual_fills", None) or [])
+    return bool(fills) and all(fill.id == CLOSING_CARD_FILL_ID for fill in fills)
 
 
 def phone_subtitled_spoken_text_supported() -> bool:

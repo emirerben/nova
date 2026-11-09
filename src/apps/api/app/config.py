@@ -501,6 +501,26 @@ class Settings(BaseSettings):
     # byte-identical to today. Rollback: `fly secrets set
     # CREATOR_CTA_ENDING_ENABLED=false --app nova-video` + restart api + worker.
     creator_cta_ending_enabled: bool = False
+    # KRI-1342 item 7 (corner text on phone Talking edits): the creator's corner lines
+    # (`strategy.pinned_texts`: 'a small "Yorumla" label top left for the whole video',
+    # "sağ altta @handle") stay on screen for their whole window at the asked corner,
+    # placed off every face the window shows (`app.pipeline.phone_talking_corner_text`).
+    # Needs the KRI-467 text lane (`phone_subtitled_title_supported`); no new recipe field,
+    # so every app build draws it. False: byte-identical to today (one top line becomes the
+    # opening title, anything else is asked about). Rollback: `fly secrets set
+    # PHONE_TALKING_CORNER_TEXT_ENABLED=false --app nova-video` + restart api + worker.
+    phone_talking_corner_text_enabled: bool = False
+    # KRI-1346 (closing card on phone Talking edits): "end on a red screen with yellow text
+    # 'follow for more'" appends a full-screen colour card with the creator's text AFTER the
+    # last word (`app.pipeline.phone_talking_closing_card`): the last frame holds silently
+    # (`freezeFrame`) under a solid visual fill, so no speech is cut. Needs the KRI-467
+    # text lane, "freezeFrame", "visualBlocks" and the device-qualification token
+    # "closingCard" in `phone_render_verified_features` (add it after a physical-iPhone
+    # preview + export check) and an app build stamped >= `freeze_frame_min_client_protocol`;
+    # see `app.services.phone_rollout.phone_talking_closing_card_planned_for`. False:
+    # byte-identical to today. Rollback: `fly secrets set
+    # PHONE_TALKING_CLOSING_CARD_ENABLED=false --app nova-video` + restart api + worker.
+    phone_talking_closing_card_enabled: bool = False
     # KRI-707 (text on a spoken word on phone Talking edits): a brief text ask with
     # its spoken cue ("big 'ATAKAN' when I say 'Atakan'": literal + `facts.triggers`)
     # renders as an editable text row from the moment the take says the word, off the
