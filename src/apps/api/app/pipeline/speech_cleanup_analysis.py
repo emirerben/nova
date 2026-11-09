@@ -1222,6 +1222,12 @@ def _relistened_plan(
     )
 
 
+def _retakes_enabled() -> bool:
+    from app.services.plan_item_media import speech_cleanup_retakes_enabled  # noqa: PLC0415
+
+    return speech_cleanup_retakes_enabled()
+
+
 def analyze_speech_cleanup(
     analysis_input: SpeechCleanupAnalysisInput,
     *,
@@ -1279,6 +1285,15 @@ def analyze_speech_cleanup(
             language=language,
         )
     silences = tuple(_value(silence_result, "spans") or ())
+    # Çiğdem S2: "okay, we're recording" opening the take is a production slate, not speech;
+    # it is cut like an abandoned take (same snapping, voice-guard exemption, receipts).
+    # It is a retake-kind cut, so it stays behind the same consent fence (both retake switches).
+    if settings.speech_cleanup_slate_cut_enabled and _retakes_enabled():
+        from app.pipeline.speech_slate import opening_slate_span  # noqa: PLC0415
+
+        slate = opening_slate_span(words, silences=silences)
+        if slate is not None and slate not in detected_retakes:
+            detected_retakes = (*detected_retakes, slate)
 
     forced = tuple(
         {

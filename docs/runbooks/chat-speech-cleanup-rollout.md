@@ -92,6 +92,31 @@ the extra cuts. No iPhone change: the phone applies the server's cut ranges.
    `pauses_over_limit` is 0; a noisy-room take reports `no_change`.
 3. Kill switch: the same secret `=false` + restart; renders already pinned keep their cuts.
 
+## Recording-check opening ("okay, we're recording")
+
+`SPEECH_CLEANUP_SLATE_CUT_ENABLED` (default off; off is byte-identical). A creator who says "okay,
+we're recording" before the first real sentence restarts nothing, so the pause, filler and retake
+rules all keep it (Çiğdem S2 "ss2b", prod job f4f81c07, 2026-11-08). With the flag on,
+`app/pipeline/speech_slate.py` checks the take's FIRST utterance only: after leading/trailing
+fillers it must equal a closed EN/TR list of recording / rolling / countdown / mic-check talk,
+end with a full stop, a gap or a silence, finish within 3 s and leave at least 3 words. It is
+handed to the planner as a retake span (same snapping, voice-guard exemption, receipts). Because it is
+cut and counted as a retake, it also needs both retake switches (`RETAKE_CUT_ENABLED` and
+`SPEECH_CLEANUP_RETAKES_ENABLED`, both on in prod since 2026-11-04); with either off it is kept.
+The cleanup offer counts it among the "restarted sentences". Generic
+hooks ("Ready?", "Here we go", "Action!") and longer sentences ("we're recording our first album")
+never match. Failure modes and checks: `docs/reviews/cigdem-s2-failure-modes.md` (A).
+
+Replay with free local transcription (whisper.cpp) through the real analysis: the S2 take cuts
+0.00–0.84 s and starts on "Kervan"; the S4 Turkish take (opens on its first real sentence) is
+unchanged. No iPhone change: the phone applies the server's cut ranges.
+
+1. `fly secrets set SPEECH_CLEANUP_SLATE_CUT_ENABLED=true --app nova-video`, restart api and
+   worker (and the `speech_analysis` process: preflight analysis runs there).
+2. Re-send a take that opens with "okay, we're recording" and approve with Clean up speech: the
+   first removal is `retake` from 0 s and the video starts on the first real word.
+3. Kill switch: the same secret `=false` + restart; renders already pinned keep their cuts.
+
 ## Gates and sequence
 
 Deploy migration, API, web, Beat, and the dedicated `speech_analysis` Fly process
