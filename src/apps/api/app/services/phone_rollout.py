@@ -2214,6 +2214,25 @@ def phone_talking_head_supported() -> bool:
 TALKING_MULTI_CLIP_MAX_CLIPS = 10
 
 
+def phone_talking_multi_speaker_beats_supported() -> bool:
+    """Single source of truth for "do full-screen photos pinned to a word still show when
+    several clips talk" (KRI-1327). Consulted by the worker (`_run_phone_subtitled_job`) and
+    the draft check (`brief_checks._multi_take_beat_problem`), so a draft never says "Done"
+    for a photo the render then skips.
+
+    True iff ALL of: `phone_talking_multi_speaker_beats_enabled`, several-clip Talking
+    (`phone_talking_multi_clip_supported`), reaction beats
+    (`phone_subtitled_reaction_beats_supported`) and the full-screen track
+    (`phone_subtitled_fullscreen_overlays_enabled`).
+    """
+    return bool(
+        getattr(settings, "phone_talking_multi_speaker_beats_enabled", False)
+        and getattr(settings, "phone_subtitled_fullscreen_overlays_enabled", True)
+        and phone_talking_multi_clip_supported()
+        and phone_subtitled_reaction_beats_supported()
+    )
+
+
 def phone_talking_multi_clip_supported() -> bool:
     """Single source of truth for "may a declared Talking-to-camera
     (`subtitled`) item carry 2+ clips right now" (KRI-719).

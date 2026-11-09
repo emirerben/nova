@@ -399,11 +399,23 @@ class GateTests(unittest.TestCase):
         self.assertEqual(
             ci.ui_shards("workflow_dispatch", "full"), ci.ui_tests.MAX_SHARDS
         )
-        # One PR Mac job owns the selected UI and journey scenarios.
+        # A PR's short selections stay on the unit leg's Mac. PRs run `full` as
+        # the smoke tripwire, so it never splits either.
         self.assertEqual(ci.ui_shards("pull_request", "full"), 1)
         self.assertEqual(ci.ui_shards("pull_request", "none"), 1)
+        self.assertEqual(ci.ui_shards("pull_request", "smoke"), 1)
         self.assertEqual(ci.ui_shards("pull_request", "smoke,projects"), 1)
-        self.assertEqual(ci.ui_shards("pull_request", "smoke,editor"), 1)
+        # An editor PR's group ran 89 min serially (#2225): it splits across
+        # Macs, sized by the PR leg target and capped like nightly.
+        editor = ci.ui_shards("pull_request", "smoke,editor")
+        self.assertGreater(editor, 1)
+        self.assertLessEqual(editor, ci.ui_tests.MAX_SHARDS)
+        self.assertEqual(
+            editor,
+            ci.ui_tests.shard_count(
+                "smoke,editor", target=ci.ui_tests.PR_SHARD_TARGET_SECONDS
+            ),
+        )
         # An unusable selection keeps one leg; its UI step fails closed.
         with patch.object(ci.ui_tests, "shard_count", side_effect=ValueError):
             self.assertEqual(ci.ui_shards("pull_request", "smoke,editor"), 1)

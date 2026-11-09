@@ -1,0 +1,286 @@
+{
+ "source": "Prod thread cc0e3706 (S3 Yorum2, 2026-11-08, Fly 9d4ba22b5, TestFlight 1929): turn 2 hold. Clip rows trimmed from job 7416c94b's binding snapshot (length, capture time, transcript, setting). Brief r1/r2 reconstructed at v2 from the turn-2 reply (the draft brief is not in the export); r3-r8 as approved. Strategy = the approved one with no reaction_beats: turn 2's photos read 'spread evenly across the talk, not timed to the word you said'.",
+ "clips": {
+  "A": "analysis-proxy-ios-3EFC1CFD-11F2-428A-8C0C-B0FBBE713658.mp4",
+  "B": "analysis-proxy-ios-97316080-846E-47E2-B266-9447F77611CC.mp4",
+  "C": "analysis-proxy-ios-9020AEC9-79FA-42C2-AA33-274C0AE93899.mp4"
+ },
+ "prod_turn2_policy_problem": "I couldn't tell which clip \"20-second home clip\" means, so I can't confirm the order.",
+ "snapshot": {
+  "song_path": null,
+  "voiceover": null,
+  "clip_paths": [
+   "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/cc0e3706-7e48-43f3-9ec2-10646b9e10c9/analysis-proxy-ios-97316080-846E-47E2-B266-9447F77611CC.mp4",
+   "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/cc0e3706-7e48-43f3-9ec2-10646b9e10c9/analysis-proxy-ios-3EFC1CFD-11F2-428A-8C0C-B0FBBE713658.mp4",
+   "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/cc0e3706-7e48-43f3-9ec2-10646b9e10c9/analysis-proxy-ios-9020AEC9-79FA-42C2-AA33-274C0AE93899.mp4"
+  ],
+  "song_analysis": null,
+  "song_alignment": null,
+  "voiceover_path": null,
+  "song_duration_s": null,
+  "song_generation": null,
+  "voiceover_duration_s": null,
+  "voiceover_generation": null,
+  "clip_assignments": [
+   {
+    "media_id": "analysis-proxy-ios-97316080-846E-47E2-B266-9447F77611CC.mp4",
+    "kind": "video",
+    "capture": {
+     "capture_time": "2026-10-30T20:44:00Z"
+    },
+    "source_filename": "C7B84331-469C-434B-9F32-8F6F43ACFA81-IMG_7245.MOV",
+    "analysis": {
+     "duration_s": 6.986667,
+     "transcript": "And food is the most shared culture. When a brand speaks the language of food, it reaches a whole new audience.",
+     "understanding": {
+      "setting": "cozy living room interior at night",
+      "speech": {
+       "language": "en",
+       "segments": [
+        {
+         "text": "And food is the most shared culture.",
+         "end_s": 2.44,
+         "start_s": 0.0
+        },
+        {
+         "text": "When a brand speaks the language of food, it reaches a whole new audience.",
+         "end_s": 6.7,
+         "start_s": 3.04
+        }
+       ],
+       "to_camera": true,
+       "has_speech": true,
+       "transcript": "And food is the most shared culture. When a brand speaks the language of food, it reaches a whole new audience."
+      }
+     }
+    }
+   },
+   {
+    "media_id": "analysis-proxy-ios-3EFC1CFD-11F2-428A-8C0C-B0FBBE713658.mp4",
+    "kind": "video",
+    "capture": {
+     "capture_time": "2026-10-30T20:40:00Z"
+    },
+    "source_filename": "A8CB58A0-C92F-4DC6-92F9-C226B369C30A-IMG_7244.MOV",
+    "analysis": {
+     "duration_s": 20.106667,
+     "transcript": "Wait, the light. Okay. Why do brands do food marketing? Because when you see a perfume, you might not feel anything. But next to food, something comes alive in your head. Like Nars lip tint in a cinnamon roll, and mirror's perfume on oh, sorry again. And mirror's perfume on a stack of pancakes.",
+     "understanding": {
+      "setting": "cozy living room interior",
+      "speech": {
+       "language": "en",
+       "segments": [
+        {
+         "text": "Wait, the light, okay.",
+         "end_s": 1.88,
+         "start_s": 0.0
+        },
+        {
+         "text": "Why do brands do food marketing?",
+         "end_s": 4.2,
+         "start_s": 2.52
+        },
+        {
+         "text": "Because when you see a perfume, you might not feel anything, but next to food, something comes alive in your head, like NARS Lip Tint in a cinnamon roll and Mira's perfume on, oh, sorry again, and Mira's perfume on",
+         "end_s": 18.9,
+         "start_s": 4.66
+        },
+        {
+         "text": "a stack of pancakes.",
+         "end_s": 19.98,
+         "start_s": 18.9
+        }
+       ],
+       "to_camera": true,
+       "has_speech": true,
+       "transcript": "Wait, the light. Okay. Why do brands do food marketing? Because when you see a perfume, you might not feel anything. But next to food, something comes alive in your head. Like Nars lip tint in a cinnamon roll, and mirror's perfume on oh, sorry again. And mirror's perfume on a stack of pancakes."
+      }
+     }
+    }
+   },
+   {
+    "media_id": "analysis-proxy-ios-9020AEC9-79FA-42C2-AA33-274C0AE93899.mp4",
+    "kind": "video",
+    "capture": {
+     "capture_time": "2026-10-31T11:10:00Z"
+    },
+    "source_filename": "91C8CE0A-F72B-4A27-8EDE-B5D2D82ECD6A-IMG_7252.MOV",
+    "analysis": {
+     "duration_s": 7.15,
+     "transcript": "One of the best examples is luxury brands opening cafes. But that's for the next episode. Don't forget to follow.",
+     "understanding": {
+      "setting": "car interior during daytime",
+      "speech": {
+       "language": "en",
+       "segments": [
+        {
+         "text": "One of the best examples is luxury brands opening cafes.",
+         "end_s": 3.64,
+         "start_s": 0.0
+        },
+        {
+         "text": "But that's for the next episode.",
+         "end_s": 5.66,
+         "start_s": 4.28
+        },
+        {
+         "text": "Don't forget to follow.",
+         "end_s": 6.86,
+         "start_s": 6.1
+        }
+       ],
+       "to_camera": true,
+       "has_speech": true,
+       "transcript": "One of the best examples is luxury brands opening cafes. But that's for the next episode. Don't forget to follow."
+      }
+     }
+    }
+   }
+  ],
+  "visuals": []
+ },
+ "strategy": {
+  "pacing": "balanced",
+  "direction": "native",
+  "rationale": "Compiling the talking head clips with speech cleanup to remove long pauses, the 'okay' line, and the restart. The requested photos will pop up full screen exactly when mentioned.",
+  "edit_format": "subtitled",
+  "caption_style": "auto",
+  "audio_strategy": "original_audio",
+  "render_program": "native",
+  "story_structure": [],
+  "target_duration_s": 34,
+  "selected_media_ids": [
+   "analysis-proxy-ios-3EFC1CFD-11F2-428A-8C0C-B0FBBE713658.mp4",
+   "analysis-proxy-ios-97316080-846E-47E2-B266-9447F77611CC.mp4",
+   "analysis-proxy-ios-9020AEC9-79FA-42C2-AA33-274C0AE93899.mp4"
+  ],
+  "video_reuse_policy": "once",
+  "optional_treatments": []
+ },
+ "brief": {
+  "version": 2,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "order",
+    "facts": {
+     "key": "capture_time",
+     "first_clip": "20-second home clip",
+     "last_clip": "the car clip"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "20-second home clip first, then the 7-second home clip, then the car clip last.",
+    "source_turn_id": "5f22c0fa-7912-4649-8476-6fd9b3f5264c"
+   },
+   {
+    "id": "r2",
+    "kind": "style",
+    "facts": {
+     "cut_lines": [
+      "okay"
+     ],
+     "cut_restarts": true,
+     "speech_cleanup": true,
+     "pauses": "tight"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Cut every pause, the \"okay\"s and the places I restarted.",
+    "source_turn_id": "cd2865f0-7922-48f8-b9c3-ad8da2d90cc2"
+   },
+   {
+    "id": "r3",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "Nar"
+     ],
+     "display_mode": "fullscreen"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Show the Nar picture full screen when I mention it",
+    "source_turn_id": "e9c5af2e-a523-495a-ab97-7997e8eea230"
+   },
+   {
+    "id": "r4",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "Mira"
+     ],
+     "display_mode": "fullscreen"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Show the Mira picture full screen when I mention it",
+    "source_turn_id": "e9c5af2e-a523-495a-ab97-7997e8eea230"
+   },
+   {
+    "id": "r5",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "donut"
+     ],
+     "display_mode": "fullscreen"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Show the donut picture full screen when I mention it",
+    "source_turn_id": "e9c5af2e-a523-495a-ab97-7997e8eea230"
+   },
+   {
+    "id": "r6",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "café"
+     ],
+     "display_mode": "fullscreen"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Show the café picture full screen when I mention it",
+    "source_turn_id": "e9c5af2e-a523-495a-ab97-7997e8eea230"
+   },
+   {
+    "id": "r7",
+    "kind": "style",
+    "facts": {},
+    "scope": "clip:analysis-proxy-ios-9020AEC9-79FA-42C2-AA33-274C0AE93899.mp4",
+    "status": "open",
+    "literal": null,
+    "description": "In the last part in the car, put an orange line around me",
+    "source_turn_id": "e9c5af2e-a523-495a-ab97-7997e8eea230"
+   },
+   {
+    "id": "r8",
+    "kind": "style",
+    "facts": {
+     "captions": "on",
+     "caption_size": "small",
+     "caption_color": "#FFFFFF",
+     "keep_text_off": [
+      {
+       "kind": "face"
+      }
+     ],
+     "caption_position": "middle"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Captions small, white, in the middle, never on my face",
+    "source_turn_id": "e9c5af2e-a523-495a-ab97-7997e8eea230"
+   }
+  ]
+ }
+}

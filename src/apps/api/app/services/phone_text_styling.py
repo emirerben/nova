@@ -369,22 +369,27 @@ def generation_resolved_rows(role: str) -> list[dict]:
     ]
 
 
-def caption_spot_is_asked() -> bool:
-    """Did the creator place the captions: a spot on the brief, a saved caption (or all-text)
-    position, or one named this turn? Their spot wins over a face (KRI-1177), so nothing
-    moves it for a face band (KRI-632)."""
+def caption_asked_spot() -> str | None:
+    """The spot the creator placed the captions at: on the brief, a saved caption (or
+    all-text) position, or one named this turn; None when nobody placed them."""
     policy = _POLICY.get()
     if not policy:
-        return False
+        return None
     from app.kria.caption_look_ask import CaptionLookAsk
 
     ask = CaptionLookAsk.from_dict(policy.get("caption_ask"))
     if ask is not None and ask.position is not None:
-        return True
+        return ask.position
     rule = effective_text_rule(
         policy.get("preferences") or {}, policy.get("requested") or {}, "caption"
     )
-    return bool(rule.get("position"))
+    return rule.get("position") or None
+
+
+def caption_spot_is_asked() -> bool:
+    """Did the creator place the captions? Their spot wins over a face (KRI-1177), so nothing
+    moves it for a face band (KRI-632)."""
+    return caption_asked_spot() is not None
 
 
 def generation_caption_look(cues: list[dict], look=None, *, canvas=None):

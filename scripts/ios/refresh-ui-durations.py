@@ -6,7 +6,9 @@ Run from the repo root with an authenticated `gh`:
     python3 scripts/ios/refresh-ui-durations.py [--runs 120]
 
 Each value is the median of the passing attempts of that test across the native
-legs of the last N completed `iOS` workflow runs (main shards and PR subsets).
+legs of the last N completed runs of each workflow: `iOS` (main and nightly
+shards) and `CI` (the PR iPhone validation legs, where editor PRs run their UI
+group).
 Failed attempts are ignored: retries are flakes, not the test's cost. Tests
 without a sample keep their previous value; the file covers exactly the current
 inventory. Durations only size and balance shards; they never change coverage.
@@ -47,6 +49,14 @@ def medians(samples, inventory, previous):
     return result
 
 
+WORKFLOWS = ("ios.yml", "ci.yml")
+
+
+def native_leg(name):
+    """ios.yml's `ios-tests (native, ...)` legs and ci.yml's `iPhone validation (...)`."""
+    return "native" in name or name.startswith("iPhone validation")
+
+
 def gh_json(*args):
     return json.loads(subprocess.check_output(["gh", *args]))
 
@@ -55,25 +65,32 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--runs", type=int, default=120)
     options = parser.parse_args()
-    runs = gh_json(
-        "run",
-        "list",
-        "--workflow",
-        "ios.yml",
-        "--limit",
-        str(options.runs),
-        "--json",
-        "databaseId,conclusion",
-    )
+    runs = [
+        run
+        for workflow in WORKFLOWS
+        for run in gh_json(
+            "run",
+            "list",
+            "--workflow",
+            workflow,
+            "--limit",
+            str(options.runs),
+            "--json",
+            "databaseId,conclusion",
+        )
+    ]
     samples, legs = {}, 0
     for run in runs:
         if run["conclusion"] not in ("success", "failure"):
             continue
-        jobs = gh_json(
-            "api", f"repos/{{owner}}/{{repo}}/actions/runs/{run['databaseId']}/jobs"
-        )["jobs"]
+        try:
+            jobs = gh_json(
+                "api", f"repos/{{owner}}/{{repo}}/actions/runs/{run['databaseId']}/jobs"
+            )["jobs"]
+        except subprocess.CalledProcessError:
+            continue  # A transient API error drops one run's samples, not all.
         for job in jobs:
-            if "native" not in job["name"] or job["conclusion"] not in (
+            if not native_leg(job["name"]) or job["conclusion"] not in (
                 "success",
                 "failure",
             ):

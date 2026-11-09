@@ -598,7 +598,10 @@ When the creator wants each photo or video to show while they talk about it ("wh
 video I'm talking about", "when I mention it", "hangi fotoğraftan bahsediyorsam o arkamda
 olsun"), give every entry a `spoken_phrase`: the few words from THIS take that name what it shows,
 copied as spoken from the speaker clip's timed `segments` (or transcript) in
-`analysis_only_not_copy` (e.g. "the night market", "her new tablet", "drones"). List the entries
+`analysis_only_not_copy` (e.g. "the night market", "her new tablet", "drones"). Take them from the
+sentence that is ABOUT what it shows: its people, product, place, or the names and text on it (a
+post by two brands' accounts goes on the line that names their partnership). Never move one to a
+later or closing line just to fill time; the one before staying on longer is fine. List the entries
 in the order those words are spoken; each one shows on its words and stays until the next. Two
 photos or videos of the same thing get the same spoken_phrase and play one after the other in the
 order listed. Leave out any photo or video they never talk about and name it in `summary` ("I left
@@ -611,8 +614,9 @@ Leave `left_out` out when nothing is left out. When the creator pairs only some 
 rotation such as "change every 3 seconds") leave it out and the photos take turns in the order
 listed. Without a stated rhythm they change every 4 seconds; set `cadence_s` (2 to 10) when the
 creator names one ("every 3 seconds", "5 saniyede bir"), and use the midpoint of a range ("3-5
-seconds" = 4). List each photo or video once unless the creator wants repeats; the list repeats by
-itself until the talk ends. Copy exact `media_id`s from `media_context`, never invent one, never
+seconds" = 4). Set it with `spoken_phrase`s too: the finished video's reply checks it. List
+each photo or video once unless the creator wants repeats; the list repeats by itself until the
+talk ends. Copy exact `media_id`s from `media_context`, never invent one, never
 use the speaker's own clips. With a `sequence`, `background_media.media_id` is the FILL shown
 wherever no window covers the time: use the first entry's id unless the creator names a different
 fill. `speaker_frame` places the speaker (cut out of their own background) as a small picture over
@@ -1112,7 +1116,10 @@ later answer that question in their own words, record it on that same requiremen
 translated; brighten or darken
 the footage itself ("brighten the dark clips", "klipleri aydınlat") => a `style` requirement with
 {"footage_light": "brighter"} or {"footage_light": "darker"}; no edit can change the footage's
-light yet, so never say in `summary` that it is brightened or darkened; how sideways
+light yet, so never say in `summary` that it is brightened or darkened; a line, outline or glow
+drawn around the creator or another person ("put an orange line around me", "etrafıma turuncu bir
+çizgi çiz") => a `style` requirement with {"subject_outline": true} (scoped to the clip it names);
+no edit can draw one yet, so never say in `summary` that it is drawn; how sideways
 (horizontal) clips sit in a vertical video => a `style` requirement with {"landscape_fit": "fill"}
 when the creator wants them cropped to fill the frame ("make it all vertical", "no black bars",
 "hepsini dikey yap", "siyah bant olmasın") or {"landscape_fit": "fit"} when they want them whole

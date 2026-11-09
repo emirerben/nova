@@ -387,6 +387,15 @@ class Settings(BaseSettings):
     # the cloud renderer uses the extra clips too (plans/027). Apply: `fly secrets
     # set TALKING_MULTI_CLIP_ENABLED=true --app nova-video` + restart api + worker.
     talking_multi_clip_enabled: bool = False
+    # KRI-1327 (Çiğdem S3): several talking takes keep full-screen photos pinned to a word
+    # ("show the Nar picture full screen when I mention it"), grounded on every take's words
+    # shifted to where that take plays. Corner cards, the held closing shot and the generic
+    # grounded pass stay off with several speakers (they need one speaker's frames). False
+    # (default): byte-identical, every lane is skipped with several speakers and the draft says
+    # the photos won't show. See `phone_rollout.phone_talking_multi_speaker_beats_supported`.
+    # Apply: `fly secrets set PHONE_TALKING_MULTI_SPEAKER_BEATS_ENABLED=true --app nova-video`
+    # + restart api + worker.
+    phone_talking_multi_speaker_beats_enabled: bool = False
     # Re-record a take: `POST /creation-threads/{id}/media/replace` swaps one attached
     # speaker clip for a new upload in a single transaction, and `upload-urls` accepts
     # `replaces_media_id` for the clip cap. False (default): the route and the field
@@ -1929,6 +1938,19 @@ class Settings(BaseSettings):
         "Default off: no extra cuts and every receipt is byte-identical to before. "
         "Kill switch: `fly secrets set TIGHT_PAUSE_CUT_ENABLED=false --app nova-video` + api "
         "and worker restart.",
+    )
+
+    speech_cleanup_slate_cut_enabled: bool = Field(
+        default=False,
+        description="Speech cleanup also cuts a production slate that opens a take: the first "
+        'utterance, when it is only recording / rolling / countdown / mic-check talk ("okay, '
+        'we\'re recording", "tamam, kayıttayız", "three two one"), ends with a full stop, a '
+        "gap or a silence, lasts under 3 s and leaves at least 3 words "
+        "(`app/pipeline/speech_slate.py`; Çiğdem S2, docs/reviews/cigdem-s2-failure-modes.md). "
+        "It is cut like an abandoned take, so it also needs RETAKE_CUT_ENABLED and "
+        "SPEECH_CLEANUP_RETAKES_ENABLED. Default off: no span is added and every plan and "
+        "receipt is byte-identical to before. Kill switch: `fly secrets set "
+        "SPEECH_CLEANUP_SLATE_CUT_ENABLED=false --app nova-video` + api and worker restart.",
     )
 
     speech_cleanup_long_pauses_enabled: bool = Field(
