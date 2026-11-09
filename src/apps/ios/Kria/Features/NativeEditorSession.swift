@@ -970,6 +970,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         return player != nil && player === finishedRenderPlayer
     }
 
+    var isShowingVersionBeforeStagedEdit: Bool { false }
+
     var canDisplayCurrentPlayer: Bool {
         guard player != nil else { return false }
         switch sourcePreviewState {
@@ -1398,6 +1400,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var retainedPreviewTimeout: (ticket: NativeEditorPreviewWork, task: Task<Void, Never>)?
     /// How long a ready live item may wait for its frame report before the retained picture is dropped.
     nonisolated static let retainedPreviewBound: Duration = .milliseconds(1500)
+    var retainedPreviewPreparationBound: Duration = .seconds(8)
     /// Tests replace this to force a preroll miss; production always uses `prerolledPlayer`.
     var prerolledPlayerProvider: @MainActor (AVPlayerItem, TimeInterval) async -> AVPlayer? = { await NativeEditorSession.prerolledPlayer(for: $0, at: $1) }
     private var playbackControlEpoch: UInt64 = 0
