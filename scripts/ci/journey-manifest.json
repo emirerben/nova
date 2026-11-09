@@ -2035,9 +2035,12 @@
     {
       "id": "kri-793-caption-spellings",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri793_caption_spellings.py tests/tasks/test_kri793_talking_caption_spellings.py tests/pipeline/test_caption_spelling.py tests/tasks/test_green45_talking_caption_text.py",
+      "api_tests": "tests/kria/test_kri793_caption_spellings.py tests/tasks/test_kri793_talking_caption_spellings.py tests/pipeline/test_caption_spelling.py tests/tasks/test_green45_talking_caption_text.py tests/pipeline/test_kri1345_caption_names.py",
       "paths": [
         "src/apps/api/app/pipeline/caption_case.py",
+        "src/apps/api/app/pipeline/caption_names.py",
+        "src/apps/api/tests/pipeline/test_kri1345_caption_names.py",
+        "src/apps/api/tests/pipeline/fixtures/kri1345_yorum3_hearing.json",
         "src/apps/api/tests/tasks/green45_caption_text.json",
         "src/apps/api/tests/tasks/test_green45_talking_caption_text.py",
         "src/apps/api/tests/fixtures/kri793_t1_caro/t1_brief_and_speech.json",
