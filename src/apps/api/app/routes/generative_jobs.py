@@ -8730,6 +8730,18 @@ def _native_timeline_source(
             binding = PhoneSourceBinding.model_validate(matches[0])
         except ValueError:
             return None
+        if binding.pool_source is not None:
+            # KRI-1340: a take adopted from Visuals has no camera-roll binding on any phone;
+            # the editor plays its pinned pool bytes, exactly what the render downloads.
+            from app import storage  # noqa: PLC0415
+
+            try:
+                url = storage.signed_get_url_for_generation(
+                    binding.pool_source.gcs_path, generation=binding.pool_source.generation
+                )
+            except Exception:  # noqa: BLE001 - report an unavailable source, never stale bytes
+                return None
+            return {"media_id": binding.media_id, "source_url": url, "local_required": False}
         return {
             "media_id": binding.media_id,
             "original": binding.original.model_dump(),
