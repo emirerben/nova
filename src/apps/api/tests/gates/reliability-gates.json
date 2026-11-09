@@ -4507,10 +4507,12 @@
         "src/apps/api/app/services/kria_editor_ops.py",
         "src/apps/api/app/services/kria_editor_ops_text.py",
         "src/apps/api/app/services/kria_editor_timeline.py",
-        "src/apps/api/app/agents/editor_ops_v2/text.py"
+        "src/apps/api/app/agents/editor_ops_v2/text.py",
+        "src/apps/api/app/agents/edit_copilot.py"
       ],
       "regression_tests": [
         "tests/services/test_kri1332_titles_follow_clips.py",
+        "tests/services/test_kri1332_link_side_effects.py",
         "tests/services/test_kria_editor_realign_labels.py",
         "tests/services/test_kria_editor_guided_timeline.py",
         "tests/services/test_guided_label_rebase_vectors.py"
@@ -4530,6 +4532,8 @@
         "several titles on one clip (prod's KRI-1330 resolution) all follow it",
         "realign_labels on an authored phone timeline (no stored output times) and its honest no-op when titles already sit on their clips",
         "a reorder on a guided story keeps a run-on title from stretching back to the footage it ran on over",
+        "participant labels (PLAYER N) bound by the same link: follow their clip on a duration edit, fill their clip on realign, never withhold visual_media, never absorb the hour from label_each_clip, still allow a label of their own on the clip",
+        "linked event titles are not the clip's fact label: label_each_clip and add_text clip_id treat the clip as unlabelled",
         "legacy clip-label-* / montage-text-* rows unchanged (guided timeline, realign and iPhone parity vector suites)"
       ],
       "neighbours_gap": [

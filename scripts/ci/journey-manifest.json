@@ -2509,14 +2509,16 @@
     {
       "id": "kri-1332-titles-follow-clips",
       "needs_native": false,
-      "api_tests": "tests/services/test_kri1332_titles_follow_clips.py tests/services/test_kria_editor_realign_labels.py tests/services/test_kria_editor_guided_timeline.py tests/services/test_guided_label_rebase_vectors.py",
+      "api_tests": "tests/services/test_kri1332_titles_follow_clips.py tests/services/test_kri1332_link_side_effects.py tests/services/test_kria_editor_realign_labels.py tests/services/test_kria_editor_guided_timeline.py tests/services/test_guided_label_rebase_vectors.py",
       "paths": [
+        "src/apps/api/app/agents/edit_copilot.py",
         "src/apps/api/app/agents/editor_ops_v2/text.py",
         "src/apps/api/app/pipeline/phone_plan_repair.py",
         "src/apps/api/app/services/kria_editor_ops.py",
         "src/apps/api/app/services/kria_editor_ops_text.py",
         "src/apps/api/app/services/kria_editor_timeline.py",
         "src/apps/api/tests/fixtures/kri1331_event_titles.json",
+        "src/apps/api/tests/services/test_kri1332_link_side_effects.py",
         "src/apps/api/tests/services/test_kri1332_titles_follow_clips.py",
         "src/apps/api/tests/tasks/test_kri1331_event_titles_once.py"
       ]

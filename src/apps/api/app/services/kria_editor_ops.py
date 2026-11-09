@@ -584,7 +584,8 @@ def _clip_label_links(job: Any, variant: dict[str, Any]) -> dict[str, dict[str, 
     it records in ``source_params`` (``source_asset_id`` + ``source_timeline_id``:
     titles the phone repair placed, KRI-1331, and participant labels); such a link
     adds ``runs_on`` (the text starts at its clip and may run on past it) and
-    ``segment_id`` (the clip's timeline id). Approved label provenance
+    ``segment_id`` (the clip's timeline id), plus ``recorded``, which tells such a text from
+    a label-lane bar. Approved label provenance
     (``inferred`` = a model landmark guess the creator may correct) is kept only
     while the bar still shows the approved text, so a creator's own edit is
     never re-flagged as a guess.
@@ -648,7 +649,8 @@ def _recorded_clip(bar: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
     if not isinstance(media_id, str):
         return None, {}
     return media_id, {
-        "runs_on": True,
+        "recorded": True,
+        "runs_on": not params.get("narration_label_kind"),
         "segment_id": timeline_id if isinstance(timeline_id, str) and timeline_id else None,
     }
 
@@ -672,7 +674,8 @@ def _is_authored_phone_native(job: Any, variant: dict[str, Any]) -> bool:
 
 
 def _has_label_lane(job: Any, variant: dict[str, Any]) -> bool:
-    return bool(_clip_label_links(job, variant))
+    """Per-clip label bars only: a title or participant label bound by its recorded clip is not."""
+    return any(not link.get("recorded") for link in _clip_label_links(job, variant).values())
 
 
 def _bar_clip_link(row: dict[str, Any], links: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -682,7 +685,7 @@ def _bar_clip_link(row: dict[str, Any], links: dict[str, dict[str, Any]]) -> dic
     out = {"clip_id": link["clip_id"], "inferred": link["inferred"]}
     if link["edited"]:
         out["edited"] = True
-    out.update({key: link[key] for key in ("runs_on", "segment_id") if link.get(key)})
+    out.update({key: link[key] for key in ("recorded", "runs_on", "segment_id") if link.get(key)})
     return out
 
 

@@ -464,7 +464,10 @@ def coerce_add_text_extras(out: dict, snapshot: dict, state: Any) -> dict | None
         if not isinstance(clip_id, str) or clip_id not in media:
             state.invalid_value()
             return None
-        if any(bar["clip_id"] == clip_id and not bar["removed"] for bar in bars):
+        if any(
+            bar["clip_id"] == clip_id and not bar["removed"] and not bar.get("recorded")
+            for bar in bars
+        ):
             _clarify(
                 state,
                 "That clip already has a label. Should I change its wording instead of adding one?",

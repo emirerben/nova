@@ -279,6 +279,7 @@ def bars_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
                     sequence_source_id if isinstance(sequence_source_id, str) else None
                 ),
                 "clip_id": clip if isinstance(clip, str) and clip else None,
+                "recorded": row.get("recorded") is True,
                 "removed": bool(row.get("removed")),
                 "start_s": _number(row.get("start_s")),
                 "caption": row.get("caption_cue") is True,
@@ -311,6 +312,7 @@ def bars_from_variant(job: Any, variant: dict[str, Any]) -> list[dict[str, Any]]
                         sequence_source_id if isinstance(sequence_source_id, str) else None
                     ),
                     "clip_id": (links.get(row_id) or {}).get("clip_id"),
+                    "recorded": (links.get(row_id) or {}).get("recorded") is True,
                     "removed": bool(row.get("removed")),
                     "start_s": _number(row.get("start_s")),
                     "caption": is_caption_text_bar(row),

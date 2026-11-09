@@ -424,9 +424,10 @@ def _on_recorded_clip(
 
     It follows that clip only while it still starts on it, so a text the creator moved
     elsewhere stays where they put it: one that fits the clip is re-windowed like a label,
-    one that runs on past it keeps its start on the clip and its end on its footage.
+    a title that runs on past it keeps its start on the clip and its end on its footage.
+    A participant label that no longer fits its clip is the creator's own placement.
     """
-    if not link or not link.get("runs_on"):
+    if not link or not link.get("recorded"):
         return None, False, False
     segment = _identify_old_segment(
         {"segment_id": link.get("segment_id"), "start_s": start, "end_s": end},
@@ -440,6 +441,8 @@ def _on_recorded_clip(
     ):
         return None, False, False
     fits = end <= float(segment["output_end_s"]) + _SEGMENT_FIT_TOLERANCE_S
+    if not fits and not link.get("runs_on"):
+        return None, False, False
     return segment, fits, not fits
 
 
