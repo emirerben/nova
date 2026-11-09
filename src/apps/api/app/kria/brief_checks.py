@@ -5216,8 +5216,10 @@ def asks_closing_card(req: BriefRequirement) -> bool:
     Typed facts only (KRI-667), so "a plain white background behind me" (no ``closing``) stays
     a speaker-background ask and "end with 'follow me'" (no colour) stays closing text."""
     closing = req.facts.get("closing")
-    return isinstance(closing, str) and bool(closing.strip()) and (
-        _asked_background_color(req) is not None
+    return (
+        isinstance(closing, str)
+        and bool(closing.strip())
+        and (_asked_background_color(req) is not None)
     )
 
 
