@@ -1676,7 +1676,7 @@
         "KriaTests/SuggestionCardsTests/testAHeldV2SetIsFrozenLikeChipsSoCardsNeverReorderUnderTheThumb",
         "KriaTests/SuggestionCardsTests/testOneTapAtATimeAndADoubleTapIsOneTurn",
         "KriaTests/SuggestionCardsTests/testAnAcceptedTapHidesTheCardAndAFailedOneLeavesItTappable",
-        "KriaTests/SuggestionCardsTests/testANewSetBringsBackHandledCardsExceptDismissedOnes",
+        "KriaTests/SuggestionCardsTests/testANewSetBringsBackHandledCards",
         "KriaTests/SuggestionCardsTests/testASetChangingMidTapKeepsTheTapSending",
         "KriaTests/SuggestionCardsTests/testTappingChipsAppendsEachPromptOnItsOwnLineAfterTheLast",
         "KriaTests/SuggestionCardsTests/testOnlyAWholeDraftThatIsOneCardsPromptIsPinned",
