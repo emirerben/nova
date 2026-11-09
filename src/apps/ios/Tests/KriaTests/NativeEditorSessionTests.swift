@@ -2545,6 +2545,9 @@ final class NativeEditorSessionTests: XCTestCase {
         for kind in [HydratingProject.narrated, .phoneNarrated, .phoneTalking] {
             let (session, fake) = try await Self.hydratedProject(kind)
             XCTAssertEqual(session.sourcePreviewState, .ready, "\(kind)")
+            let reopenBuilds = session.sourcePreviewBuildCountForTesting
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.sourcePreviewBuildCountForTesting, reopenBuilds, "\(kind): the clean reopen skip ran before the chat edit arrived")
             let text: JSONValue = .array([Self.textRow])
             fake.draftSnapshot = DraftSnapshot(draftID: "d3", itemID: "item", variantKey: "variant", draftRevision: 3,
                 snapshotHash: "h", etag: "e", baseJobID: fake.draftSnapshot.baseJobID, baseGenerationID: "generation-1",
@@ -2556,6 +2559,9 @@ final class NativeEditorSessionTests: XCTestCase {
             XCTAssertEqual(session.document.textElements.map(\.text), ["from the server"], "\(kind)")
             XCTAssertTrue(session.hasUnsavedChanges, "\(kind): a staged chat edit is an unsaved edit")
             XCTAssertEqual(fake.commitCount, 0, "\(kind)")
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.document.textElements.map(\.text), ["from the server"], "\(kind): a repeated sync keeps the staged edit")
+            XCTAssertTrue(session.hasUnsavedChanges, "\(kind)")
         }
     }
 
