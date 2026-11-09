@@ -71,6 +71,12 @@ GENERATED_CARD_CONSENT_PROTOCOL = 45
 # KRI-1231: the first build that decodes and edits split-screen sections. TestFlight 1926 is 45.
 SPLIT_SCREEN_PROTOCOL = 46
 
+# KRI-720: the first build whose editor preview cuts every take of a several-take Talking edit from
+# the receipt's `phone_talking_multi_clip.speaker_removed` rows. An older build cuts only the first
+# take and would play the others uncut, so `several_take_preview_gate` serves it the receipt with no
+# `speaker_media_ids`, the shape every build since protocol 11 answers with the finished video.
+SPEAKER_REMOVED_PROTOCOL = 47
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()

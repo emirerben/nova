@@ -1400,7 +1400,11 @@ enum KriaClientProtocolContract {
     /// `generated_overlay` card only to this protocol, because an older build would spend on one touch.
     ///
     /// 46 (KRI-1231) preserves editable split-screen sections and renders ordinary media in independent panel viewports.
-    static let version = 46
+    ///
+    /// 47 (KRI-720): cuts every take of a several-take Talking preview from the receipt's `phone_talking_multi_clip.speaker_removed`
+    /// rows. The server serves a build below 47 that receipt with no `speaker_media_ids`, so it previews the finished video
+    /// instead of later takes uncut.
+    static let version = 47
     static let header = "X-Kria-Client-Protocol"
 }
 
