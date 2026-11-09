@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.131.0] - 2026-11-09
+
+### Changed
+- test(captions): unbreak main, give the middle-spot D1 case a chin a 42 px small block meets (KRI-1327) (#2249) <!-- release-pr: 2249 -->
+
 ## [0.88.130.0] - 2026-11-09
 
 ### Fixed
