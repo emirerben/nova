@@ -216,7 +216,7 @@ def _render(strategy: dict, plan: Any):
     verify_phone_recipe(
         contract, result.recipe, source_audio={m["media_id"]: True for m in FIXTURE["media"]}
     )
-    return contract, result
+    return result
 
 
 def _layers(recipe) -> list[dict[str, Any]]:
@@ -304,7 +304,7 @@ def test_incident_the_composer_titles_move_to_each_event_start_and_nothing_is_ad
     plan = _composed(titles, operations)
     composer_ids = sorted(e.id for e in plan.text_elements if e.id.startswith("creation-"))
 
-    _contract_, result = _render(_strategy(_event_members()), plan)
+    result = _render(_strategy(_event_members()), plan)
 
     _assert_one_title_per_event(
         result.recipe, {text: list(indexes) for text, indexes in EVENTS.items()}
@@ -319,7 +319,7 @@ def test_incident_the_composer_titles_move_to_each_event_start_and_nothing_is_ad
 
 def test_the_montage_title_across_each_event_is_kept_and_nothing_is_added():
     plan = _composed(_event_group_titles(), [])
-    _contract_, result = _render(_strategy(_event_members()), plan)
+    result = _render(_strategy(_event_members()), plan)
     _assert_one_title_per_event(
         result.recipe, {text: list(indexes) for text, indexes in EVENTS.items()}
     )
@@ -335,7 +335,7 @@ def test_prod_several_events_on_one_clip_are_drawn_once_each_without_overlap():
     ]
     plan = _composed(planner, FIXTURE["composer_operations"])
 
-    _contract_, result = _render(_strategy(), plan)
+    result = _render(_strategy(), plan)
 
     one_clip = [34]
     _assert_one_title_per_event(
