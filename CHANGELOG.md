@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.114.0] - 2026-11-09
+
+### Changed
+- fix(ios): the AI's staged edit no longer conflicts with itself; conflict notice becomes a Kria card (KRI-1313) (#2215) <!-- release-pr: 2215 -->
+
 ## [0.88.113.0] - 2026-11-08
 
 ### Changed
