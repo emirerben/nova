@@ -113,7 +113,12 @@ log = structlog.get_logger()
 # v120 (KRI-1253): PICTURE CARDS teaches add_overlay for an ASSET POOL row (the generated image the
 # creator accepted, listed by its title); with no row the lane still says a new picture can't be
 # added from chat.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-08-v120"
+# v121 (KRI-1350): set_color_moments {moments?, end_fade_s?} sets black-and-white / warm / faded
+# stretches with cut, white-flash, light-leak or dip-to-black edges (a library sound may land on an
+# edge) and the fade to black at the end. Taught in color_moments.txt and printed as COLOR MOMENTS
+# only where the snapshot offers the `color_moments` family (flag + verified token + protocol 48),
+# so every other prompt is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-10-v121"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -2044,6 +2049,26 @@ def _format_snapshot(snapshot: dict) -> str:
                     f"{_fmt_round3(_first_number(suggestion, ('end_s',)))}s"
                 )
         else:
+            lines.append("(none)")
+
+    if isinstance(snapshot.get("color_moments"), dict):
+        lane = snapshot["color_moments"]
+        lines.append(
+            f"\nCOLOR MOMENTS (video length {_fmt_round3(lane.get('duration_s'))}s; "
+            f"end fade {_fmt_round3(lane.get('end_fade_s')) if lane.get('end_fade_s') else 'none'}):"
+        )
+        for moment in lane.get("moments") or []:
+            sound = (
+                f" sound={_field(moment.get('sound'), max_chars=80)!r}@{moment.get('sound_at')}"
+                if moment.get("sound")
+                else ""
+            )
+            lines.append(
+                f"- {_fmt_round3(moment.get('start_s'))}-{_fmt_round3(moment.get('end_s'))}s "
+                f"tone={moment.get('tone')} enter={moment.get('enter')} exit={moment.get('exit')}"
+                + sound
+            )
+        if not lane.get("moments"):
             lines.append("(none)")
 
     if isinstance(snapshot.get("background"), dict):
@@ -4276,6 +4301,11 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
                 tr="Bunu bu düzenlemede henüz değiştiremiyorum.",
             ),
         )
+        closed_note = _v2.REGISTRY.closed_notes.get(name)
+        if closed_note is not None:
+            note = say(en=closed_note[0], tr=closed_note[1])
+            if note not in state.reply_notes:
+                state.reply_notes.append(note)
         return None
 
     raw_payload = raw_op.get("payload")

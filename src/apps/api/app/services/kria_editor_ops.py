@@ -33,6 +33,7 @@ from app.pipeline.camera_effects import easing_bounds, resolve_easing
 from app.routes.generative_jobs import (
     EditorCommitBackgroundMusic,
     EditorCommitCaptionMeta,
+    EditorCommitColorMoments,
     EditorCommitMix,
     EditorCommitRequest,
     EditorCommitSpeakerBackground,
@@ -68,6 +69,7 @@ _PORTABLE_FAMILIES = {
     "background_windows",
     "caption",
     "clip",
+    "color_moments",
     "effect",
     "music",
     "overlay",
@@ -946,7 +948,63 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
             families.append("background_windows")
         if background_focus_open(job, variant):
             families.append("background_focus")
+    if color_moments_open(job, variant):
+        families.append("color_moments")
     return sorted(set(families) & _PORTABLE_FAMILIES)
+
+
+def color_moments_open(job: Any, variant: dict[str, Any]) -> bool:
+    """KRI-1350: may chat set colour moments on this edit right now?
+
+    The kill switch, the verified token and the app build (`color_moments_supported`, the
+    worker-side client rule of every phone lane), on a device edit whose Save recompiles
+    lane-free sections (the drawings shape; `_validate_color_moments_section` re-checks).
+    """
+    from app.routes.generative_jobs import _drawing_capabilities  # noqa: PLC0415
+    from app.services.phone_rollout import color_moments_supported  # noqa: PLC0415
+
+    if variant.get("render_destination") != "device" or not color_moments_supported():
+        return False
+    try:
+        return bool(_drawing_capabilities(job, variant)["delete"]["editable"])
+    except Exception:  # noqa: BLE001 - a capability probe never breaks the snapshot
+        return False
+
+
+def _color_moments_snapshot(variant: dict[str, Any]) -> dict[str, Any]:
+    """What the copilot sees of the colour-moments lane: current moments (with the sound
+    each one's edge carries) and the video's length."""
+    from app.agents.editor_ops_v2.color_moments import (  # noqa: PLC0415
+        SOUND_ID_PREFIX,
+        current_lane,
+    )
+    from app.routes.generative_jobs import visual_block_variant_duration  # noqa: PLC0415
+
+    lane = current_lane(variant)
+    sounds = {
+        str(row.get("id"))[len(SOUND_ID_PREFIX) :]: row.get("sound_effect_id")
+        for row in variant.get("sound_effects") or []
+        if isinstance(row, dict) and str(row.get("id") or "").startswith(SOUND_ID_PREFIX)
+    }
+    moments = []
+    for moment in lane["moments"]:
+        row = {
+            "start_s": moment.get("start"),
+            "end_s": moment.get("end"),
+            "tone": moment.get("tone"),
+            "enter": (moment.get("enter") or {}).get("style", "cut"),
+            "exit": (moment.get("exit") or {}).get("style", "cut"),
+        }
+        for at in ("enter", "exit"):
+            effect = sounds.get(f"{moment.get('id')}-{at}")
+            if effect:
+                row["sound"], row["sound_at"] = effect, at
+        moments.append(row)
+    return {
+        "moments": moments,
+        "end_fade_s": (lane["end_fade"] or {}).get("duration"),
+        "duration_s": round(float(visual_block_variant_duration(variant) or 0), 3),
+    }
 
 
 def _sfx_base_missing(variant: dict[str, Any]) -> bool:
@@ -1722,6 +1780,8 @@ def build_editor_snapshot(
             tilt=caps.get("media_overlay_tilt") is True,
             pool=clip_context.get("generated_overlay_pool"),
         )
+    if "color_moments" in snapshot["allowed_op_families"]:
+        snapshot["color_moments"] = _color_moments_snapshot(variant)
     background = _background_snapshot(job, variant, clip_context)
     if background is not None:
         # Present only while the lane has something to say, so every other snapshot is
@@ -2249,6 +2309,8 @@ def editor_payload_dump(payload: EditorCommitRequest) -> dict[str, Any]:
     data = payload.model_dump(mode="json", exclude_none=True)
     if "speaker_background" in payload.model_fields_set and payload.speaker_background is None:
         data["speaker_background"] = None
+    if "color_moments" in payload.model_fields_set and payload.color_moments is None:
+        data["color_moments"] = None
     return data
 
 
@@ -2528,6 +2590,9 @@ class _DraftState:
     # `changed`, so an untouched lane is absent (leave unchanged), never an explicit clear.
     speaker_background: dict[str, Any] | None = None
     drawings: list[dict[str, Any]] = field(default_factory=list)
+    # KRI-1350: the colour-moments lane `set_color_moments` built ({"moments", "end_fade"}).
+    # Reaches the payload only when "color_moments" is in `changed`.
+    color_moments: dict[str, Any] | None = None
 
     def text_bar(self, index: object) -> dict[str, Any]:
         row = self.text_bars[_require_index(self.text_bars, index, "Text")]
@@ -3527,6 +3592,13 @@ def compile_editor_ops(
             if state.speaker_background is not None
             else None
         )
+    if "color_moments" in changed:
+        lane = state.color_moments or {}
+        background_section["color_moments"] = (
+            EditorCommitColorMoments(**lane)
+            if lane.get("moments") or lane.get("end_fade")
+            else None
+        )
     request = EditorCommitRequest(
         guided_revision_number=int(guided["revision_number"]) if guided is not None else None,
         visual_blocks=state.visual_blocks,
@@ -3666,6 +3738,8 @@ def _before_lanes(
         before["drawings"] = copy.deepcopy(variant.get("drawings") or [])
     if "speaker_background" in changed:
         before["speaker_background"] = copy.deepcopy(background_current(state.job, variant))
+    if "color_moments" in changed:
+        before["color_moments"] = copy.deepcopy(variant.get("color_moments"))
     if "mix" in changed:
         mix: dict[str, Any] = {}
         if state.mix_level is not None and variant.get("mix") is not None:

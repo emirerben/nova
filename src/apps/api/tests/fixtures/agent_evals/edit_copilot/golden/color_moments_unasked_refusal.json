@@ -1,0 +1,78 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-11-10-v121",
+  "input": {
+    "utterance": "make it more cinematic",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "color_moments",
+        "sfx"
+      ],
+      "editor_ops_version": 2,
+      "render_destination": "device",
+      "slots": [],
+      "text_bars": [],
+      "total_duration_s": 60.0,
+      "color_moments": {
+        "moments": [],
+        "end_fade_s": null,
+        "duration_s": 60.0
+      },
+      "sfx": {
+        "placements": [],
+        "catalog": [
+          {
+            "id": "whoosh-fast",
+            "label": "Whoosh fast",
+            "category": "transition",
+            "duration_s": 0.6
+          },
+          {
+            "id": "cinematic-hit",
+            "label": "Cinematic hit",
+            "category": "impact",
+            "duration_s": 1.2
+          }
+        ]
+      }
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"set_color_moments\", \"moments\": [{\"start_s\": 0, \"end_s\": 8, \"tone\": \"mono\", \"enter\": \"cut\", \"exit\": \"light_leak\"}]}], \"confidence\": 0.92, \"reply\": \"I made the opening black and white with a flash for a cinematic feel.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [],
+    "confidence": 0.92,
+    "reply": "I only change the colours when you ask for it, so I left them as they are.",
+    "suggestions": [],
+    "needs_clarification": false,
+    "outcome": "no_effect",
+    "rejection_reasons": [
+      {
+        "op": "set_color_moments",
+        "reason": "not_requested",
+        "detail": "I only change the colours when you ask for it, so I left them as they are."
+      }
+    ],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": [],
+    "reply_notes": "I only change the colours when you ask for it, so I left them as they are.",
+    "claimed_ops": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "unasked: a vague ask never becomes a colour change, even when the model proposes one (failure mode 6)",
+    "lane": "color_moments",
+    "capability_contract": {
+      "intent": "edit",
+      "needs_clarification": false,
+      "reply_contains": [
+        "only change the colours when you ask"
+      ],
+      "reply_excludes": [
+        "black and white with a flash"
+      ]
+    }
+  }
+}

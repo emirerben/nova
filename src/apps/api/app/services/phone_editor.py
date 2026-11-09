@@ -49,6 +49,7 @@ from app.pipeline.phone_recipe_shared import (
     apply_landscape_fit,
     clip_tilt_zoom,
     timeline_end_s,
+    with_color_moments,
     with_drawings,
 )
 from app.pipeline.phone_subtitled_lanes import (
@@ -93,6 +94,7 @@ from app.services.phone_rollout import (
     background_focus_client_supported,
     card_style_supported,
     card_tilt_supported,
+    color_moments_client_supported,
     freehand_drawing_client_supported,
     freeze_frame_client_supported,
     phone_guided_sfx_supported,
@@ -173,6 +175,8 @@ _SUBTITLED_EDITOR_SECTIONS = frozenset(
         "orientation",
         # KRI-589: freehand drawings compile into the recipe's `drawing_layers`.
         "drawings",
+        # KRI-1350: colour moments (the chat op) compile onto `color_moments` / `end_fade`.
+        "color_moments",
         # KRI-1117: the whole-edit Talk-to-camera background (`EditRecipeV2.speaker_background`).
         "speaker_background",
     }
@@ -187,7 +191,7 @@ _SUBTITLED_TEXT_SECTIONS = frozenset({"text_elements"})
 # always honours (KRI-280): the caption lines and their look. Every other
 # section opens only behind its own gate below, and the rest stay closed rather
 # than silently dropped on Save.
-_NARRATED_EDITOR_SECTIONS = frozenset({"caption_cues", "caption_meta", "drawings"})
+_NARRATED_EDITOR_SECTIONS = frozenset({"caption_cues", "caption_meta", "drawings", "color_moments"})
 _NARRATED_CAPTION_SECTIONS = frozenset({"caption_cues", "caption_meta"})
 # KRI-465: ...and the opening title / text the creator adds, as `text_elements`,
 # recompiled into the pinned recipe's `title-` layers by `replace_narrated_title`
@@ -209,7 +213,8 @@ _VOICEOVER_FIT_SECTIONS = frozenset({"landscape_fit"})
 # KRI-589: ...and freehand drawings, recompiled from the variant's stored lane onto the
 # pinned recipe's `drawing_layers` (`with_drawings`) on EVERY Save of every device
 # archetype, whichever sections it carries.
-_DRAWING_SECTIONS = frozenset({"drawings"})
+# KRI-1350: colour moments ride the same lane-free path (`with_color_moments`).
+_DRAWING_SECTIONS = frozenset({"drawings", "color_moments"})
 # KRI-821: ...and the footage's own sound level (Sounds > Original audio, `mix.original_level`
 # only), written onto the pinned recipe's `audio.original_volume` by `_apply_original_level`.
 # The narration and any music bed keep their pinned levels.
@@ -610,9 +615,12 @@ def _compile_editor_commit(
     if variant.get("editor_timeline_mode") == "authored":
         from app.pipeline.phone_authored_timeline import compile_phone_authored_timeline
 
-        recipe = compile_phone_authored_timeline(staged, variant, previous.recipe)
+        recipe = compile_phone_authored_timeline(
+            staged, variant, with_color_moments(previous.recipe, None)
+        )
         if "drawings" in variant:
             recipe = with_drawings(recipe, variant.get("drawings"))
+        recipe = with_color_moments(recipe, variant.get("color_moments"))
         validate_phone_pilot_recipe(recipe, allow_editor_media=True)
         request = make_device_request(
             job_id=job.id,
@@ -674,7 +682,7 @@ def _compile_editor_commit(
         plan = copy.deepcopy(variant.get(PHONE_EDITOR_SAVED_PLAN_FIELD) or worker_plan)
         revision = prep.get("guided_revision")
         render_sections = {key for key, value in prep["sections"].items() if value}
-        if not (render_sections - {"text_elements", "drawings"}):
+        if not (render_sections - {"text_elements", "drawings", "color_moments"}):
             # A text-only save keeps the approved plan's device-verified timing
             # program and swaps just the text lane, whether it came from a
             # legacy guided editor or the v2 revision contract. Re-projecting
@@ -770,6 +778,8 @@ def _compile_editor_commit(
         )
         # KRI-589: the revision is the guided variant's canonical lanes.
         recipe = with_drawings(recipe, revision.get("drawings") if revision is not None else None)
+        # KRI-1350: colour moments are server-owned (the chat op) and ride every Save.
+        recipe = with_color_moments(recipe, variant.get("color_moments"))
         validate_phone_pilot_recipe(recipe, allow_editor_media=allow_editor_media)
         request = make_device_request(
             job_id=job.id,
@@ -874,6 +884,29 @@ def prepare_phone_editor_commit(
     if stored_drawings and not freehand_drawing_client_supported():
         # A recompile would pin a recipe (`drawingLayers`) this app build cannot decode.
         raise HTTPException(426, detail={"code": "client_update_required", "feature": "drawing"})
+    stored_color_moments = next(
+        (
+            v.get("color_moments")
+            for v in (job.assembly_plan or {}).get("variants", [])
+            if isinstance(v, dict) and v.get("variant_id") == variant_id
+        ),
+        None,
+    )
+    if (
+        isinstance(stored_color_moments, dict)
+        and (stored_color_moments.get("moments") or stored_color_moments.get("end_fade"))
+        and not color_moments_client_supported()
+    ):
+        # KRI-1350: a recompile would pin `color_moments` / `end_fade`, which this
+        # app build cannot decode.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "color_moments",
+                "minimum_client_protocol": settings.color_moments_min_client_protocol,
+            },
+        )
     stored_variant = next(
         (
             v
@@ -1627,6 +1660,7 @@ def _compile_subtitled_editor_commit(
         **({"clip_tilts": tilts} if (tilts := _previous_clip_tilts(previous.recipe)) else {}),
     )
     recipe = with_drawings(recipe, variant.get("drawings"))
+    recipe = with_color_moments(recipe, variant.get("color_moments"))
     # KRI-1142: added pictures are rebuilt from the saved blocks on EVERY Talking Save, not only a
     # Save that touches them. This compiler rebuilds the recipe from scratch, so skipping the media
     # layer here would silently drop a picture on the next caption or sound edit. The blocks are
@@ -2075,7 +2109,7 @@ def _compile_narrated_editor_commit(
     # KRI-589: patch from the pinned recipe WITHOUT its drawing layers (a shorter cut would
     # leave them past the end, which the recipe validator refuses) and re-add them from the
     # stored lane at the end, whichever sections this Save carried.
-    recipe = with_drawings(previous.recipe, None)
+    recipe = with_color_moments(with_drawings(previous.recipe, None), None)
     if cut_active:
         bindings, pool = _voiceover_sources(staged, assembly)
         recipe = _swap_voiceover_cut(
@@ -2128,6 +2162,7 @@ def _compile_narrated_editor_commit(
     if original_active:
         recipe = _apply_original_level(recipe, variant, prep)
     recipe = with_drawings(recipe, variant.get("drawings"))
+    recipe = with_color_moments(recipe, variant.get("color_moments"))
     validate_phone_pilot_recipe(recipe, allow_editor_media=_voiceover_allows_editor_media(recipe))
     request = make_device_request(
         job_id=previous.identity.job_id,
@@ -2235,7 +2270,7 @@ def _compile_voiceover_montage_editor_commit(
         raise ValueError("phone Voiceover edits need a pinned v2 recipe")
 
     # KRI-589: patch from the pinned recipe without its drawing layers (see the narrated twin).
-    recipe = with_drawings(previous.recipe, None)
+    recipe = with_color_moments(with_drawings(previous.recipe, None), None)
     if cut_active:
         bindings, pool = _voiceover_sources(staged, assembly)
         recipe = _swap_voiceover_cut(
@@ -2274,6 +2309,7 @@ def _compile_voiceover_montage_editor_commit(
     if original_active:
         recipe = _apply_original_level(recipe, variant, prep)
     recipe = with_drawings(recipe, variant.get("drawings"))
+    recipe = with_color_moments(recipe, variant.get("color_moments"))
     validate_phone_pilot_recipe(recipe, allow_editor_media=_voiceover_allows_editor_media(recipe))
     request = make_device_request(
         job_id=previous.identity.job_id,

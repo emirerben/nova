@@ -302,6 +302,9 @@ MediaCapability = Literal[
     # KRI-1192: a text run drawn in a script-fallback face (Noto Sans KR / Noto Sans Arabic),
     # bundled in the app from protocol 35. Derived from the run's font asset file.
     "scriptFonts",
+    # KRI-1350: `color_moments` (whole-frame tone windows with flash / light-leak / dip edges)
+    # and/or `end_fade` on the V2 recipe root, drawn on device by `ColorMomentPainter`.
+    "colorMoments",
     # Vocabulary for lanes the V2 recipe schema has no fields for yet — see
     # docs/reviews/kri-29/capability-matrix.md. Naming these does not enable
     # them: `phone_guided_plan.compile_phone_guided_plan` still rejects the

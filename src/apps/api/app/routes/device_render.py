@@ -104,10 +104,12 @@ from app.services.phone_rollout import (
     card_tilt_client_supported,
     clip_backdrop_media_client_supported,
     clip_tilt_client_supported,
+    color_moments_client_supported,
     freehand_drawing_client_supported,
     freeze_frame_client_supported,
     recipe_has_clip_backdrop_media,
     recipe_has_clip_tilt,
+    recipe_has_color_moments,
     recipe_has_freeze_frame,
     recipe_has_single_word_text,
     recipe_has_styled_card,
@@ -630,6 +632,14 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "code": "client_update_required",
             "feature": "text_behind_subject",
             "minimum_client_protocol": settings.text_behind_subject_phone_min_client_protocol,
+        }
+    if recipe_has_color_moments(recipe) and not color_moments_client_supported():
+        # KRI-1350: an older build rejects `color_moments` / `end_fade` as unknown recipe keys (and
+        # the `colorMoments` token) and would FAIL the whole render.
+        return {
+            "code": "client_update_required",
+            "feature": "color_moments",
+            "minimum_client_protocol": settings.color_moments_min_client_protocol,
         }
     if (
         getattr(recipe, "speaker_background", None) is not None

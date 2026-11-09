@@ -485,6 +485,13 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
             "A photo or video behind a clip awaits native parity and device qualification",
             capability="clipBackdropMedia",
         )
+    if recipe_has_color_moments(recipe) and "colorMoments" not in set(
+        settings.phone_render_verified_features
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Black-and-white moments, flashes and the end fade await device qualification",
+            capability="colorMoments",
+        )
     missing = recipe.required_capabilities - set(settings.phone_render_verified_features)
     if missing:
         raise PhoneCapabilityUnavailable(
@@ -1325,6 +1332,46 @@ def clip_tilt_supported(*, require_client: bool | None = None) -> bool:
         settings.media_tilt_enabled
         and "clipTilt" in set(settings.phone_render_verified_features)
         and clip_tilt_client_supported(require_client=require_client)
+    )
+
+
+def recipe_has_color_moments(recipe: Any) -> bool:
+    """Does this recipe carry colour moments or an end fade (KRI-1350)?"""
+    return bool(getattr(recipe, "color_moments", None)) or (
+        getattr(recipe, "end_fade", None) is not None
+    )
+
+
+def color_moments_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode ``color_moments`` / ``end_fade``?
+
+    At least ``color_moments_min_client_protocol`` (48); an older build fails the whole recipe
+    on the unknown keys and token. ``require_client`` follows `clip_tilt_client_supported`
+    (workers have no app build to qualify; the device-render poll answers 426 instead).
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.color_moments_min_client_protocol
+
+
+def color_moments_supported(*, require_client: bool | None = None) -> bool:
+    """Single source of truth for "may Kria add colour moments to a phone edit right now".
+
+    The kill switch (``color_moments_enabled``, default off), ``colorMoments`` in
+    ``phone_render_verified_features`` and the app-build gate.
+    """
+    return bool(
+        settings.color_moments_enabled
+        and "colorMoments" in set(settings.phone_render_verified_features)
+        and color_moments_client_supported(require_client=require_client)
     )
 
 

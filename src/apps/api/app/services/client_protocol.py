@@ -71,6 +71,10 @@ GENERATED_CARD_CONSENT_PROTOCOL = 45
 # KRI-1231: the first build that decodes and edits split-screen sections. TestFlight 1926 is 45.
 SPLIT_SCREEN_PROTOCOL = 46
 
+# KRI-1350: the first build that decodes and draws `color_moments` / `end_fade` (48: 47 is
+# claimed by the open KRI-720 speaker-removed change).
+COLOR_MOMENTS_PROTOCOL = 48
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()
