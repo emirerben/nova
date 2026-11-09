@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.123.0] - 2026-11-09
+
+### Changed
+- fix(kria): picker tap answers only its own intent, not look-alike captions (KRI-1330) (#2238) <!-- release-pr: 2238 -->
+
 ## [0.88.122.0] - 2026-11-09
 
 ### Changed
