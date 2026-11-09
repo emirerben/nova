@@ -395,12 +395,82 @@ def apply_named_line_cuts(
     return cut, receipts
 
 
+def apply_named_line_cuts_across_takes(
+    takes: Sequence[tuple[str, CutPlan, Sequence[Any], float]],
+    cuts: Sequence[Sequence[Any]],
+) -> tuple[list[CutPlan], list[dict[str, Any]]]:
+    """KRI-720 (G3): cut each named line out of the ONE take of several that says it.
+
+    ``takes`` is ``(media id, plan, that take's own words, take duration)`` in play order;
+    ``cuts`` as in `apply_named_line_cuts`. Each line is grounded in every take's own words
+    (never another take's), and cut only when exactly one take says it:
+
+    - said in no take -> ``not_found``; said in two or more takes with no pick, or with a
+      ``pin`` (a pin's ordinal and time were built on one take's timeline) ->
+      ``said_in_several_takes``, nothing cut, the receipt lists the takes (``takes``);
+    - ``occurrence`` (first / second / last) counts across the takes in PLAY ORDER ("the second
+      time I say it" is the second time in the finished video), then the cut is made in the
+      take that holds it; one take's own rules (said twice, too short, ...) are
+      `apply_named_line_cuts`'s, unchanged.
+
+    Each receipt row carries ``take = {"index": 1-based play order, "media_id"}`` once a take
+    holds the line. Returns the new plans (same order) and one receipt per line.
+    """
+    plans = [take[1] for take in takes]
+    receipts: list[dict[str, Any]] = []
+    for entry in cuts:
+        quote, requirement_ids = entry[0], entry[1]
+        occurrence = entry[2] if len(entry) > 2 else None
+        pin = entry[3] if len(entry) > 3 else None
+        hits = [
+            line_occurrences(_kept_words(plans[i], take[2]), quote, duration_s=take[3])
+            for i, take in enumerate(takes)
+        ]
+        holders = [i for i, found in enumerate(hits) if found]
+        if len(holders) > 1:
+            total = sum(len(found) for found in hits)
+            receipt = _receipt(quote, requirement_ids)
+            receipt["occurrences_found"] = total
+            receipt["takes"] = [holder + 1 for holder in holders]
+            if occurrence is None or pin is not None:
+                receipt["reason"] = "said_in_several_takes"
+                receipts.append(receipt)
+                continue
+            flat = [holder for holder in holders for _ in hits[holder]]
+            index = occurrence - 1 if occurrence > 0 else total + occurrence
+            if not 0 <= index < total:
+                receipt["occurrence"] = occurrence
+                receipt["reason"] = "occurrence_not_found"
+                receipts.append(receipt)
+                continue
+            holder = flat[index]
+            local = index - flat.index(holder) + 1
+        elif holders:
+            holder, local = holders[0], occurrence
+        else:
+            receipt = _receipt(quote, requirement_ids)
+            receipt["reason"] = "pinned_occurrence_missing" if pin is not None else "not_found"
+            receipts.append(receipt)
+            continue
+        media_id, _plan, words, duration_s = takes[holder]
+        plans[holder], rows = apply_named_line_cuts(
+            plans[holder], words, [(quote, requirement_ids, local, pin)], duration_s=duration_s
+        )
+        row = rows[0]
+        if occurrence is not None:
+            row["occurrence"] = occurrence
+        row["take"] = {"index": holder + 1, "media_id": media_id}
+        receipts.append(row)
+    return plans, receipts
+
+
 __all__ = [
     "END_CUT_REASON",
     "NAMED_CUT_REASON",
     "OPENING_CUT_REASON",
     "TAKE_WINDOW_REASONS",
     "apply_named_line_cuts",
+    "apply_named_line_cuts_across_takes",
     "apply_opening_cut",
     "apply_take_window",
     "cut_after",

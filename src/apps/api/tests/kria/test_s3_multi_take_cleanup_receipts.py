@@ -129,14 +129,69 @@ def _multi_take_cleanup_on(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.usefixtures("_multi_take_cleanup_on")
-def test_s3_with_cleanup_on_offers_the_pause_cut_but_never_the_named_line():
+def test_s3_with_cleanup_on_offers_the_pause_cut_and_the_named_line():
+    """KRI-720 G3: cleanup offered -> the render cuts the line from the take that says it."""
     receipt = check_requirement(R2, _draft(3, offered=True))
     reason = receipt.full_reason
     assert bc._CLEANUP_SEVERAL_TAKES not in reason
     assert bc._CLEANUP_AT_APPROVAL in reason
+    assert bc._NAMED_CUT_AT_RENDER in reason
+    assert bc._NAMED_CUTS_SEVERAL_TAKES not in reason
+    assert receipt.status == "partial"
+
+
+@pytest.mark.usefixtures("_multi_take_cleanup_on")
+def test_s3_with_cleanup_unavailable_still_refuses_the_named_line():
+    """N10: no cleanup offered -> the takes play whole, the draft says the line stays in."""
+    receipt = check_requirement(R2, _draft(3, offered=False))
+    reason = receipt.full_reason
     assert bc._NAMED_CUTS_SEVERAL_TAKES in reason
     assert bc._NAMED_CUT_AT_RENDER not in reason
-    assert receipt.status == "partial"
+
+
+@pytest.mark.usefixtures("_multi_take_cleanup_on")
+def test_finished_video_names_the_take_a_line_was_cut_from():
+    facts = PlanFacts(
+        edit_format="subtitled",
+        phone_talking=True,
+        video_clip_count=3,
+        rendered_variant=True,
+        speech_cleanup_outcome="no_change",
+        named_cuts=[
+            {
+                "version": 1,
+                "quote": "okay",
+                "requirement_ids": ["r2"],
+                "status": "applied",
+                "removed_s": 0.5,
+                "take": {"index": 2, "media_id": "m2"},
+            }
+        ],
+    )
+    assert "take 2" in check_requirement(R2, facts).full_reason
+
+
+@pytest.mark.usefixtures("_multi_take_cleanup_on")
+def test_finished_video_says_a_line_in_two_takes_was_left_in():
+    facts = PlanFacts(
+        edit_format="subtitled",
+        phone_talking=True,
+        video_clip_count=3,
+        rendered_variant=True,
+        speech_cleanup_outcome="no_change",
+        named_cuts=[
+            {
+                "version": 1,
+                "quote": "okay",
+                "requirement_ids": ["r2"],
+                "status": "not_applied",
+                "reason": "said_in_several_takes",
+                "takes": [1, 2],
+            }
+        ],
+    )
+    reason = check_requirement(R2, facts).full_reason
+    assert "more than one take" in reason and "okay" in reason
 
 
 @pytest.mark.usefixtures("_multi_take_cleanup_on")
@@ -149,4 +204,4 @@ def test_s3_with_cleanup_chosen_plans_the_pause_cut():
         speech_cleanup_offered=True,
     )
     reason = check_requirement(R2, facts).full_reason
-    assert bc._CLEANUP_PLANNED in reason and bc._NAMED_CUTS_SEVERAL_TAKES in reason
+    assert bc._CLEANUP_PLANNED in reason and bc._NAMED_CUT_AT_RENDER in reason
