@@ -1191,11 +1191,13 @@ jobs:
     # took 40-55 min per PR (2026-10-23); each leg targets ~20 min. The selector
     # starts only the legs whose journeys were selected (LEG_JOURNEYS in
     # scripts/ci/select-tests.py); the `journey` aggregate requires every leg.
+    # The `unit` leg also runs the selected smoke+editor UI groups: build+unit
+    # took ~43 min and ~170 UI tests ran past 90 min on 2026-11-09 (#2225, #2215).
     strategy:
       fail-fast: false
       matrix:
         leg: ${{ fromJSON(needs.changes.outputs.native_legs || '["unit"]') }}
-    timeout-minutes: 90
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
       - name: Prepare native result directories
