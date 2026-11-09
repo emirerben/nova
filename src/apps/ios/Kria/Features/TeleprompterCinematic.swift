@@ -119,8 +119,8 @@ enum CinematicTakeFinisher {
     static func finish(movieAt url: URL, progress: (@Sendable (Double) -> Void)? = nil) async throws -> CinematicTakeOutcome? {
         let asset = AVURLAsset(url: url)
         guard await CNAssetInfo.isCinematic(asset: asset) else { return nil }
-        let staging = FileManager.default.temporaryDirectory.appendingPathComponent("cinematic-\(UUID().uuidString).mov")
-        defer { try? FileManager.default.removeItem(at: staging) }
+        let staging = CinematicStaging.shared.reserve()
+        defer { CinematicStaging.shared.release(staging) }
         do {
             let info = try await CNAssetInfo(asset: asset)
             let length = try await asset.load(.duration).seconds

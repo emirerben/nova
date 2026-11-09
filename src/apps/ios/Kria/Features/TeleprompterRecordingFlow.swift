@@ -146,6 +146,7 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
 
     func load() async {
         guard !loaded else { return }; loaded = true
+        Task.detached(priority: .utility) { CinematicStaging.shared.sweepAbandoned() }
         do {
             #if DEBUG
             try await TeleprompterReviewFixture.seedIfRequested(store: store)
