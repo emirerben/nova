@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.125.0] - 2026-11-09
+
+### Changed
+- fix(kria): one title per event at its start, never one per clip (KRI-1331) (#2241) <!-- release-pr: 2241 -->
+
 ## [0.88.124.0] - 2026-11-09
 
 ### Changed
