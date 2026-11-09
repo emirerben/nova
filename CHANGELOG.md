@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.132.0] - 2026-11-09
+
+### Changed
+- ci: run the selected iPhone UI scenarios in parallel shards (#2246) <!-- release-pr: 2246 -->
+
 ## [0.88.131.0] - 2026-11-09
 
 ### Changed
