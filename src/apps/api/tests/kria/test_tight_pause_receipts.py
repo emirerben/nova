@@ -300,11 +300,14 @@ def test_review_2102_failed_measurement_video_and_receipt_agree(flag_on, tmp_pat
 
 
 def test_multi_clip_draft_does_not_promise_tight(flag_on):
-    for count in (2, 3, None):
+    receipt = check_requirement(_req(), _draft(video_clip_count=None))
+    assert receipt.reason == (
+        "Speech cleanup cuts only the long pauses in this kind of video, so shorter pauses stay"
+    )
+    for count in (2, 3):
+        # KRI-720: several takes play whole on the phone, so not even the long pauses go.
         receipt = check_requirement(_req(), _draft(video_clip_count=count))
-        assert receipt.reason == (
-            "Speech cleanup cuts only the long pauses in this kind of video, so shorter pauses stay"
-        ), count
+        assert receipt.reason.startswith("I can't cut anything out of a video"), count
 
 
 def _cut_variant(rows, report=None):

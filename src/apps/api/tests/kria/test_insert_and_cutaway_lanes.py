@@ -88,11 +88,13 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # 4b280598 / 83b280d6.
 # Re-pinned for KRI-1292: the brief section teaches `hold_s` for a text at a spoken word;
 # removing that clause reproduces the values above.
+# Re-pinned for KRI-1327: the brief section teaches `subject_outline` (a line around a person);
+# the values before it were ce15504f / 8a7a2c85 / 68edb943 / d29283f2.
 MAIN_PROMPT_SHA = {
-    "neither": "ce15504fa5dce5d85ecda204ea5b1a92c51f8997c7a0eeca5271ccf120459f0d",
-    (True, True): "8a7a2c85d4236c8c303d080506009e9996eb874ac08287252a31f92032dea0a2",
-    (True, False): "68edb943bf51c03e6f78d3fc9f1eb75e20602d174767f2018181679ec04c6e1c",
-    (False, True): "d29283f2d0c4cf5c1c4b150f1a52c99e817b9658479283f6e57c6ce165a6e9b2",
+    "neither": "b52730bbebdefd441710f4e6ef7b7e66ff6937fdbb7f309d8f226d4f10c1be10",
+    (True, True): "72041f99fc66ee7875cf3bf74a07bde4135e8e7aba0c5a777b140e71bef70765",
+    (True, False): "3116efd479545f7000420b98c3dcf55e5b5035e43cca3c5930277e5a47dff2f7",
+    (False, True): "7cc917df0f46f28fd027b80b76aa119a501d2b2bff7a933d2e4c7d885c3d9a6a",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (

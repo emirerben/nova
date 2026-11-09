@@ -7717,6 +7717,23 @@ def _classify_phone_talking_clips(
     return classify_talking_clips(evidence), transcripts
 
 
+def _speakers_in_pinned_order(roles: Any, contract: Any, media_ids: Mapping[str, str]) -> Any:
+    """S3 Yorum2 (prod thread cc0e3706): the takes play in the order the approved contract pins.
+
+    The creator attached B, A, C and asked for A, B, C; the contract seats those takes
+    (`talking_clip_anchors`) and `verify_phone_recipe` refuses any other picture order, so
+    upload order could only be refused. ``media_ids`` maps clip id -> media id. A take the
+    order does not name keeps its place after the named ones; no pinned order changes nothing.
+    """
+    if contract is None or not contract.order_required or not contract.order_ids:
+        return roles
+    rank = {media_id: at for at, media_id in enumerate(contract.order_ids)}
+    speakers = tuple(
+        sorted(roles.speakers, key=lambda cid: rank.get(media_ids.get(cid, ""), len(rank)))
+    )
+    return roles if speakers == roles.speakers else replace(roles, speakers=speakers)
+
+
 def _apply_talking_mention_ask(
     snapshot: Mapping[str, Any],
     roles: Any,
@@ -8723,6 +8740,54 @@ def _creator_pinned_media_keys(beats: list, closing: dict | None) -> frozenset[s
     return frozenset(keys)
 
 
+def _strategy_has_fullscreen_beats(all_candidates: Mapping[str, Any]) -> bool:
+    """KRI-1327: does the approved strategy pin a photo full screen to a spoken word?"""
+    strategy = all_candidates.get("creator_strategy")
+    beats = strategy.get("reaction_beats") if isinstance(strategy, Mapping) else None
+    return any(
+        isinstance(beat, Mapping) and beat.get("display_mode") == "fullscreen"
+        for beat in beats or ()
+    )
+
+
+def _multi_take_fullscreen_beats(
+    beats: Sequence[Any], *, spine_cut: bool
+) -> tuple[list[dict], list[dict]]:
+    """KRI-1327: the beats several takes can still carry (full-screen photos on a word), and a
+    receipt row for each one they can't. A cut first take moves its words off the take
+    offsets, so then nothing runs (never a photo on the wrong word)."""
+    kept: list[dict] = []
+    held: list[dict] = []
+    for beat in beats:
+        if not isinstance(beat, dict):
+            continue
+        if (
+            not spine_cut
+            and beat.get("display_mode") == "fullscreen"
+            and beat.get("anchor") != "title"
+        ):
+            kept.append(beat)
+        else:
+            held.append(
+                {
+                    "beat_id": beat.get("beat_id"),
+                    "trigger": beat.get("trigger"),
+                    "reason": "multiple_speakers",
+                }
+            )
+    return kept, held
+
+
+def _beat_word(word: Any, offset_s: float) -> dict:
+    """One spoken word as the beat grounder reads it, ``offset_s`` later."""
+    return {
+        "text": word.text,
+        "start_s": float(word.start_s) + offset_s,
+        "end_s": float(word.end_s) + offset_s,
+        "confidence": word.confidence,
+    }
+
+
 def _without_ending_media(
     beats: list, closing: dict | None, media_id: str
 ) -> tuple[list, dict | None, list[dict], bool]:
@@ -9171,6 +9236,7 @@ def _run_phone_subtitled_job(
         phone_talking_insert_clips_supported,
         phone_talking_mention_cutaways_supported,
         phone_talking_multi_clip_supported,
+        phone_talking_multi_speaker_beats_supported,
         validate_phone_pilot_recipe,
     )
     from app.services.phone_sources import (  # noqa: PLC0415
@@ -9469,6 +9535,10 @@ def _run_phone_subtitled_job(
     # Several clips speak, so cards / sounds / beats are off -- but a Visuals ending is appended
     # after ALL of them and still rides the lanes machinery, alone.
     ending_lane_only = False
+    # KRI-1327: several takes keep their full-screen photos pinned to a word, grounded on every
+    # take's spoken words shifted to where that take plays (`beat_words`).
+    multi_speaker_beats = False
+    beat_words: list[dict] = []
     ending_beat_removed: list[dict] = []
     ending_closing_removed = False
 
@@ -9726,6 +9796,17 @@ def _run_phone_subtitled_job(
                                         c for c in talking_roles.footage if c != ending_clip_id
                                     ),
                                 )
+                # S3 Yorum2: last, so no re-sort above (a mention ask's upload order) undoes it;
+                # the offsets, captions and beat words below all follow `extra_speaker_ids`.
+                talking_roles = _speakers_in_pinned_order(
+                    talking_roles,
+                    _phone_pin_contract(snapshot, "subtitled"),
+                    {
+                        cid: binding_by_proxy[path].media_id
+                        for cid, path in clip_id_to_gcs.items()
+                        if path in binding_by_proxy
+                    },
+                )
                 spine_clip_id = talking_roles.speakers[0]
                 extra_speaker_ids = talking_roles.speakers[1:]
                 extra = []
@@ -9751,7 +9832,19 @@ def _run_phone_subtitled_job(
                     # when several clips speak (the receipt says so). A footage
                     # ENDING (KRI-841) plays after the talk and doesn't count.
                     talking_lanes_skipped = True
-                    if ending_request is not None and ending_source != "footage":
+                    # KRI-1327 (S3): a full-screen photo pinned to a word covers the whole
+                    # frame, so it needs no one speaker's frames: it is grounded on every
+                    # take's words, each shifted to where its take plays. Corner cards, sounds
+                    # alone, the held closing shot and the generic pass stay off.
+                    multi_speaker_beats = (
+                        beats_enabled
+                        and fullscreen_beats_enabled
+                        and phone_talking_multi_speaker_beats_supported()
+                        and _strategy_has_fullscreen_beats(all_candidates)
+                    )
+                    if (
+                        ending_request is not None and ending_source != "footage"
+                    ) or multi_speaker_beats:
                         # KRI-841: a Visuals ending plays after every speaker, so it doesn't
                         # depend on one speaker's timeline: keep the lane machinery for it
                         # alone (the global lanes kill switch is still honoured -- this block
@@ -9760,7 +9853,7 @@ def _run_phone_subtitled_job(
                     else:
                         media_lanes_enabled = False
                     overlay_grounding_enabled = False
-                    beats_enabled = False
+                    beats_enabled = multi_speaker_beats
                     video_overlays_enabled = False
 
             if ending_request is not None and not talking_multi:
@@ -9974,6 +10067,7 @@ def _run_phone_subtitled_job(
                 speech_cleanup_snapshot.source_words() if speech_cleanup_snapshot else (),
                 duration_s=float(probe.duration_s),
                 off_words=explicit_words,
+                multiple_takes=multi_clip,
             )
             cut_plan, explicit_cut_receipts = _phone_explicit_speech_cuts(
                 explicit_asks,
@@ -10360,6 +10454,9 @@ def _run_phone_subtitled_job(
                     insert_spoken_words = list(transcript.words)
                 if mention_ask is not None:
                     mention_words = list(transcript.words)
+                if multi_speaker_beats:
+                    # KRI-1327: the spoken pass, never the caption-language words (KRI-839).
+                    beat_words = [_beat_word(word, 0.0) for word in transcript.words]
                 # KRI-719: each extra speaker's own words, shifted to where it
                 # plays (right after the speakers before it). Built per clip so
                 # one caption line never spans two clips.
@@ -10400,6 +10497,8 @@ def _run_phone_subtitled_job(
                             timeline_words.extend(extra_words)
                         if mention_ask is not None:
                             mention_words.extend(extra_words)
+                        if multi_speaker_beats:
+                            beat_words.extend(_beat_word(word, 0.0) for word in extra_words)
                     extra_offset_s += float(extra_binding.original.duration_s)
             # KRI-1015: the review says when the captions were translated -- the spoken language
             # (a language Nova names, never a whisper guess) when the final one differs from it.
@@ -11119,9 +11218,28 @@ def _run_phone_subtitled_job(
                                 ending_beat_removed,
                                 ending_closing_removed,
                             ) = _without_ending_media(beats_to_ground, closing, ending_visual_id)
+                        multi_take_held: list[dict] = []
+                        if multi_speaker_beats:
+                            # KRI-1327: only full-screen photos run across several takes; a
+                            # corner card, a title logo and the held closing shot are placed on
+                            # ONE take's frames, so they are reported instead.
+                            beats_to_ground, multi_take_held = _multi_take_fullscreen_beats(
+                                beats_to_ground + title_anchored,
+                                spine_cut=bool(cut_plan is not None and cut_plan.removed),
+                            )
+                            title_anchored = []
+                            if closing_to_ground:
+                                multi_take_held.append(
+                                    {"beat_id": "closing", "reason": "multiple_speakers"}
+                                )
+                            closing_to_ground = None
                         ground_beats = phone_reaction_grounding_mod.ground_phone_reaction_beats
                         try:
-                            if title_anchored and not beats_to_ground and not closing_to_ground:
+                            if (
+                                not beats_to_ground
+                                and not closing_to_ground
+                                and (title_anchored or multi_take_held)
+                            ):
                                 # Only title logos: grounding has nothing to listen for.
                                 grounded_beats = phone_reaction_grounding_mod.GroundedReactionBeats(
                                     receipt=_empty_beat_receipt()
@@ -11132,8 +11250,12 @@ def _run_phone_subtitled_job(
                                     job_id=job_id,
                                     beats=beats_to_ground,
                                     closing=closing_to_ground,
-                                    words=raw_words or [],
-                                    duration_s=float(probe.duration_s),
+                                    words=(beat_words if multi_speaker_beats else raw_words) or [],
+                                    duration_s=(
+                                        float(talking_timeline_s)
+                                        if multi_speaker_beats
+                                        else float(probe.duration_s)
+                                    ),
                                     clip_path=clip_path,
                                     # KRI-521: "when I say X, show my video" -- the
                                     # same gate the KRI-183 PiP pass uses.
@@ -11179,6 +11301,12 @@ def _run_phone_subtitled_job(
                             beat_receipt = grounded_beats.receipt
                             beat_closing_card_id = grounded_beats.closing_card_id
                             beat_closing_aspect = grounded_beats.closing_card_aspect
+                            if multi_take_held:
+                                beat_receipt = {
+                                    **beat_receipt,
+                                    "unplaced": list(beat_receipt.get("unplaced") or [])
+                                    + multi_take_held,
+                                }
                             if ending_beat_removed:
                                 beat_receipt = {
                                     **beat_receipt,
@@ -12309,9 +12437,24 @@ def _run_phone_subtitled_job(
             # KRI-827: the captions moved off the marked object; the saved geometry makes
             # every later compile of this variant (the editor's Save/reopen,
             # `caption_look_from_variant`) draw them in the same place.
+            from app.pipeline.phone_captions import caption_y_fields  # noqa: PLC0415
+
+            moved_y = float(protected_caption_look.position_y_frac)
             caption_style_map = dict(new_entry.get("caption_editor_style") or {})
-            caption_style_map["position_y_frac"] = protected_caption_look.position_y_frac
+            caption_style_map["position_y_frac"] = moved_y
             new_entry["caption_editor_style"] = caption_style_map
+            # KRI-1327 (S3): the margin moves too (KRI-1008), and the look receipt records
+            # where the block was really drawn, so the finished check judges the drawn spot
+            # ("in the middle" drawn at 0.86 was called kept-or-lost on a stale 0.5).
+            new_entry.update(caption_y_fields(new_entry, moved_y))
+            look_receipt = new_entry.get("caption_look_receipt")
+            if isinstance(look_receipt, dict):
+                moved_by = protected_caption_receipt or caption_face_band_receipt or {}
+                new_entry["caption_look_receipt"] = {
+                    **look_receipt,
+                    "position_y_frac": round(moved_y, 5),
+                    "over_face": moved_by.get("face_collision") is True,
+                }
         if caption_face_band_receipt is not None:
             new_entry["caption_face_band_placement"] = caption_face_band_receipt
         if protected_plan is not None:
@@ -12649,6 +12792,7 @@ def _phone_opening_cut(
     *,
     duration_s: float,
     off_words: Any = None,
+    multiple_takes: bool = False,
 ) -> tuple[CutPlan | None, dict[str, Any] | None]:
     """KRI-628 / KRI-790: cut the phone Talking take to the lines the creator quoted.
 
@@ -12720,8 +12864,9 @@ def _phone_opening_cut(
 
     source_words = words if cut_plan is not None else off_words
     if source_words is None:
-        # Cleanup was declined and the job carries no word timings to ground the lines in.
-        receipts = _missed("cleanup_off")
+        # Cleanup was declined and the job carries no word timings to ground the lines in;
+        # KRI-720: several takes play whole, so no line is grounded in any of them.
+        receipts = _missed("several_takes" if multiple_takes else "cleanup_off")
     else:
         try:
             plan = cut_plan if cut_plan is not None else no_op_plan(duration_s)

@@ -1116,7 +1116,10 @@ later answer that question in their own words, record it on that same requiremen
 translated; brighten or darken
 the footage itself ("brighten the dark clips", "klipleri aydınlat") => a `style` requirement with
 {"footage_light": "brighter"} or {"footage_light": "darker"}; no edit can change the footage's
-light yet, so never say in `summary` that it is brightened or darkened; how sideways
+light yet, so never say in `summary` that it is brightened or darkened; a line, outline or glow
+drawn around the creator or another person ("put an orange line around me", "etrafıma turuncu bir
+çizgi çiz") => a `style` requirement with {"subject_outline": true} (scoped to the clip it names);
+no edit can draw one yet, so never say in `summary` that it is drawn; how sideways
 (horizontal) clips sit in a vertical video => a `style` requirement with {"landscape_fit": "fill"}
 when the creator wants them cropped to fill the frame ("make it all vertical", "no black bars",
 "hepsini dikey yap", "siyah bant olmasın") or {"landscape_fit": "fit"} when they want them whole

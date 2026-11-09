@@ -1258,6 +1258,28 @@ then spread mechanically, never at a mention.
   words and analyses (`tests/fixtures/talking_show_when_mentioned_6fa36e51.json`) through
   `_run_generative_job`; `tests/pipeline/test_phone_talking_mentions.py` lists the failure modes.
 
+#### Full-screen photos on a word across several takes (KRI-1327, `PHONE_TALKING_MULTI_SPEAKER_BEATS_ENABLED`)
+
+Çiğdem S3 (job 7416c94b): three takes of one creator plus "show the Nar, Mira, donut and café
+pictures full screen when I mention them". Several talking clips set `lanes_skipped:
+multiple_speakers`, so no photo showed while the draft said "Done" four times.
+
+- **On**: when several clips talk and the approved strategy pins a full-screen photo to a word,
+  `_run_phone_subtitled_job` keeps the beat lane alone (`ending_lane_only`): the photos are grounded
+  on every take's spoken words, each shifted by the takes that play before it (`beat_words`), over
+  the whole talk (`talking_timeline_s`). A corner card, a title logo and the held closing shot are
+  placed on ONE take's frames, so they stay off and `phone_beat_receipt.unplaced[]` names them with
+  `reason: multiple_speakers`; the generic grounded pass stays off too. A cut first take moves its
+  words off the offsets, so then nothing runs.
+- **Off (default)**: byte-identical render. The draft says before approval that photos on a word
+  don't show with several talking clips (`brief_checks._multi_take_beat_problem`), and the review
+  of such a render says they weren't available, never "have a look".
+- Gate: `phone_rollout.phone_talking_multi_speaker_beats_supported()` (the flag, several-clip
+  Talking, the reaction-beat lane, the full-screen track). No new device feature or protocol.
+- Apply: `fly secrets set PHONE_TALKING_MULTI_SPEAKER_BEATS_ENABLED=true --app nova-video` + restart
+  api + worker, after one device check of a several-take edit with photos (editor open / Save and
+  the preview). Rollback: the same secret `false`.
+
 #### Phase 2: PiP cards grounded from the transcript (KRI-176)
 
 **Gate:** `app.services.phone_rollout.phone_subtitled_overlays_supported()` --

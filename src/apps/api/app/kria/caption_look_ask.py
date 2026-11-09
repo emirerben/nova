@@ -100,6 +100,10 @@ _POSITION_WORDS = {
 # with the 0.68 caption width, a bottom block ending at y 0.84, a top block starting at 0.12.
 _ZONE_X = {"left": (0.06, 0.74), "center": (0.16, 0.84), "right": (0.14, 0.82)}
 _ZONE_Y = {"top": (0.12, 0.24), "middle": (0.44, 0.56), "bottom": (0.72, 0.84)}
+# KRI-1327 (S3): block centres that still read as each asked row (the writer draws top 0.12,
+# middle 0.5, bottom 0.78). A face the creator named moves the block inside its row first
+# (`phone_protected_text.choose_caption_look`); outside these bands the receipt says it moved.
+CAPTION_SPOT_Y_BANDS = {"top": (0.08, 0.30), "middle": (0.44, 0.64), "bottom": (0.70, 0.90)}
 
 
 @dataclass(frozen=True)
@@ -251,17 +255,49 @@ def caption_alignment(position: str) -> str:
     )
 
 
-def _zone(position: str) -> tuple[float, float, float, float]:
-    row = (
+def _row(position: str) -> str:
+    return (
         "top"
         if position.startswith("top")
         else "bottom"
         if position.startswith("bottom")
         else "middle"
     )
+
+
+def _zone(position: str) -> tuple[float, float, float, float]:
     x0, x1 = _ZONE_X[caption_alignment(position)]
-    y0, y1 = _ZONE_Y[row]
+    y0, y1 = _ZONE_Y[_row(position)]
     return x0, y0, x1, y1
+
+
+def caption_spot_band(position: str | None) -> tuple[float, float] | None:
+    """The block centres that still read as the asked row, or None when nothing was asked."""
+    if position not in CAPTION_ASK_POSITIONS:
+        return None
+    return CAPTION_SPOT_Y_BANDS[_row(position)]
+
+
+def caption_spot_holds(position: str | None, y_frac: float) -> bool:
+    """Is a block drawn with its centre at ``y_frac`` still in the row the creator asked for?"""
+    band = caption_spot_band(position)
+    return band is None or band[0] - 1e-6 <= y_frac <= band[1] + 1e-6
+
+
+def caption_spot_moved_reason(position: str, y_frac: float) -> str:
+    """Why the captions are not where the creator put them: a named face pushed them out."""
+    band = caption_spot_band(position)
+    lower = band is not None and y_frac > band[1]
+    return say(
+        en=(
+            f"The captions sit {'lower' if lower else 'higher'} than you asked "
+            "so they stay off your face."
+        ),
+        tr=(
+            f"Altyazılar yüzüne gelmesin diye istediğinden daha "
+            f"{'aşağıda' if lower else 'yukarıda'} duruyor."
+        ),
+    )
 
 
 def caption_over_speaker(position: str | None, frame: str | None) -> bool:
