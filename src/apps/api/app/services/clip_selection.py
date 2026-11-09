@@ -118,7 +118,7 @@ def _key_attribute_tokens(key: str) -> set[str]:
 
 
 def _ops_compatible(a: str, b: str) -> bool:
-    return a == b or (a in _MEMBERSHIP_OPS and b in _MEMBERSHIP_OPS)
+    return a in _MEMBERSHIP_OPS and b in _MEMBERSHIP_OPS
 
 
 def _shares_answer(a: str, b: str) -> bool:
