@@ -1191,8 +1191,11 @@ jobs:
     # took 40-55 min per PR (2026-10-23); each leg targets ~20 min. The selector
     # starts only the legs whose journeys were selected (LEG_JOURNEYS in
     # scripts/ci/select-tests.py); the `journey` aggregate requires every leg.
-    # The `unit` leg also runs the selected smoke+editor UI groups: build+unit
-    # took ~43 min and ~170 UI tests ran past 90 min on 2026-11-09 (#2225, #2215).
+    # PR UI scenarios run on the `unit` leg when they fit one shard. A longer
+    # selection (an editor PR's group: 88.6 recorded min, 87 min serially on
+    # #2225 after a 19-40 min build+unit) gets one `ui-<i>` leg per shard
+    # (ui_tests.PR_SHARD_TARGET_SECONDS); the unit leg then builds and runs unit
+    # tests only. The `journey` aggregate checks the matrix holds every leg.
     strategy:
       fail-fast: false
       matrix:
@@ -1256,19 +1259,19 @@ jobs:
       # minutes: 70 of 97 PR runs on 2026-11-04..06 compiled cold (+~10 min),
       # and only 6 of 27 hits came from a PR's own save. ios.yml seeds main.
       - name: Wait for the portable journeys this leg depends on
-        if: needs.changes.outputs.journey == 'true'
+        if: "!startsWith(matrix.leg, 'ui-') && needs.changes.outputs.journey == 'true'"
         env:
           GH_TOKEN: ${{ github.token }}
           LIBRARY: ${{ contains(needs.changes.outputs.journey_ids, 'kri-384-library-ingest') && 'journey-library' || '' }}
         run: python3 scripts/ci/wait-for-jobs.py journey-offline "$LIBRARY"
       - name: Download this attempt's portable fixture inputs
-        if: needs.changes.outputs.journey_needs_native == 'true'
+        if: "!startsWith(matrix.leg, 'ui-') && needs.changes.outputs.journey_needs_native == 'true'"
         uses: actions/download-artifact@v4
         with:
           name: fixture-bundle-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
           path: test-results/kri-559/
       - name: Check fixture provenance and transferred bytes
-        if: needs.changes.outputs.journey_needs_native == 'true'
+        if: "!startsWith(matrix.leg, 'ui-') && needs.changes.outputs.journey_needs_native == 'true'"
         env:
           JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
         run: |
@@ -1277,11 +1280,25 @@ jobs:
             python3 scripts/ci/journey-gate.py verify-input --fixture test-results/kri-559/fixture --head "${{ github.sha }}"
           fi
       - name: Run selected iPhone UI scenarios
-        if: github.event_name == 'pull_request' && needs.changes.outputs.ios_ui == 'true' && matrix.leg == 'unit'
+        id: ui
+        if: github.event_name == 'pull_request' && needs.changes.outputs.ios_ui == 'true' && ((matrix.leg == 'unit' && needs.changes.outputs.ios_ui_shards == '1') || startsWith(matrix.leg, 'ui-'))
         env:
           KRIA_IOS_TEST_MODE: ui
           KRIA_IOS_UI_GROUPS: ${{ needs.changes.outputs.ios_ui_groups == 'full' && 'smoke' || needs.changes.outputs.ios_ui_groups }}
-        run: bash scripts/ios/verify.sh
+          LEG: ${{ matrix.leg }}
+          UI_SHARDS: ${{ needs.changes.outputs.ios_ui_shards }}
+        run: |
+          if [[ "$LEG" == ui-* ]]; then
+            export KRIA_IOS_UI_SHARD="${LEG#ui-}/$UI_SHARDS"
+            # UI legs run no unit tests, so no shard reserves time for them.
+            export KRIA_IOS_UI_SHARD_OVERHEAD_SECONDS=0
+          fi
+          bash scripts/ios/verify.sh
+      - name: Require this UI leg's shard to have run
+        if: always() && startsWith(matrix.leg, 'ui-')
+        env:
+          UI_OUTCOME: ${{ steps.ui.outcome }}
+        run: test "$UI_OUTCOME" = success
       - name: Verify native speed reset, inspector Undo and pinch warning
         if: matrix.leg == 'creation' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-689-clip-speed')
         working-directory: src/apps/ios
