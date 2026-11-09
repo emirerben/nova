@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.121.0] - 2026-11-09
+
+### Changed
+- feat(ios): suggestions as multi-select AI chips in chat, remove editor Improve (KRI-1329) (#2235) <!-- release-pr: 2235 -->
+
 ## [0.88.120.0] - 2026-11-09
 
 ### Changed
