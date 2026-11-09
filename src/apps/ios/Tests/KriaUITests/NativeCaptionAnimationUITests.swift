@@ -41,7 +41,10 @@ final class NativeCaptionAnimationUITests: XCTestCase {
 
     private func scrollTo(_ app: XCUIApplication, _ element: XCUIElement) {
         let scroll = app.scrollViews["native-editor-captions-scroll"]
-        for _ in 0..<4 where !element.isHittable { scroll.swipeUp() }
+        for _ in 0..<4 {
+            if element.isHittable { return }
+            scroll.swipeUp()
+        }
     }
 
     private func exerciseScopes(_ app: XCUIApplication, row: String, line: String, prefix: String) {
@@ -108,7 +111,7 @@ final class NativeCaptionAnimationUITests: XCTestCase {
     func testTextMotionPresetShowsInAllCaptions() {
         for (fixture, prefix) in [("-ui-testing-editor-talking-captions", "preset-cue"), ("-ui-testing-editor-song-captions", "preset-lyrics")] {
             let app = launch([fixture, "-ui-testing-editor-caption-animation", "-ui-testing-editor-caption-text-motion",
-                              "-ui-testing-editor-live-preview"])
+                              "-ui-testing-editor-live-preview"], environment: ["UI_TEST_REDUCE_MOTION": "1"])
             app.buttons["native-editor-captions-tab-Style"].tap()
             XCTAssertFalse(app.descendants(matching: .any)["native-editor-caption-text-motion"].exists, "Text motion lives in Animation now")
             app.buttons["native-editor-captions-tab-Animation"].tap()
@@ -137,11 +140,11 @@ final class NativeCaptionAnimationUITests: XCTestCase {
 
     /// Display Word keeps the chosen animation (founder report): the Animation tab still shows it after
     /// Sentence, Word, Sentence, Word, for a Text motion entrance and for an Animation-tab choice. The playing
-    /// burst is the visual evidence that each word enters. One test per fixture keeps each under the CI
-    /// runner's 3-minute per-test allowance.
+    /// burst is the visual evidence that each word enters. Looping card previews made every Animation-tab query
+    /// take seconds on CI, so they stay still here; the burst plays the editor preview, which ignores this.
     private func assertWordDisplayKeepsTheChosenAnimation(fixture: String, row: String, prefix: String) {
         let app = launch([fixture, "-ui-testing-editor-caption-animation", "-ui-testing-editor-caption-text-motion",
-                          "-ui-testing-editor-live-preview"])
+                          "-ui-testing-editor-live-preview"], environment: ["UI_TEST_REDUCE_MOTION": "1"])
         app.buttons["native-editor-captions-tab-Animation"].tap()
         let silk = app.buttons["In animation Silk Reveal"]
         scrollTo(app, silk)
@@ -152,7 +155,10 @@ final class NativeCaptionAnimationUITests: XCTestCase {
         shot(app, "\(prefix)-1-word-keeps-silk")
 
         let pop = app.buttons["In animation Pop"]
-        for _ in 0..<4 where !pop.isHittable { app.scrollViews["native-editor-captions-scroll"].swipeDown() }
+        for _ in 0..<4 {
+            if pop.isHittable { break }
+            app.scrollViews["native-editor-captions-scroll"].swipeDown()
+        }
         pop.tap()
         app.buttons["Out"].tap()
         let fade = app.buttons["Out animation Fade"]
