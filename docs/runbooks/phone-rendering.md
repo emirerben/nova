@@ -1280,6 +1280,40 @@ multiple_speakers`, so no photo showed while the draft said "Done" four times.
   api + worker, after one device check of a several-take edit with photos (editor open / Save and
   the preview). Rollback: the same secret `false`.
 
+#### Speech cleanup across several takes (KRI-720, `TALKING_MULTI_TAKE_CLEANUP_ENABLED`)
+
+Çiğdem S3: three takes and "cut the pauses, the okays and the places I restarted". Several clips
+with sound used to resolve to `ambiguous_embedded_source`, so no check ran and every take played
+whole. Design and failure modes: `docs/reviews/kri-720-multi-take-cleanup.md`.
+
+- **Preflight**: `active_narration_source` resolves every clip with sound as a take
+  (`ActiveNarrationSource.takes`, identity `active-narration-multi-take-v1` over all takes in
+  order). Still ONE `speech_cleanup_analyses` row per item: its scalar source columns are the first
+  take, `analysis_payload_version = "2"`, and the payload is `SpeechCleanupMultiTakeResult` (each
+  take's own single-source result, or none for a silent take). The worker re-resolves the takes at
+  claim time and fails closed unless they match the row's fingerprint; it analyses takes side by
+  side and marks the talking ones with the render's own rule (`classify_talking_clips`). The card's
+  numbers sum the talking takes only.
+- **Consent / dispatch**: one decision covers every take. Dispatch stamps a schema-2 snapshot;
+  `hydrate_speech_cleanup_snapshot` validates every take and reads as the first talking take for
+  single-source readers (`snapshot.take(path)` for the rest).
+- **Render** (`_run_phone_subtitled_job`): each speaker is fenced to its own take
+  (`require_source`) and cut with its own plan plus the default long-pause pass; a footage ending
+  (KRI-841) and a take with no speech play whole; a talking take the check never saw fails
+  `snapshot_mismatch`. Captions, mention/beat words, cutaways, the ending text and face protection
+  run on the cut timeline (`_take_kept_s`). The compiler emits one main-track clip per kept segment
+  per take (`additional_speaker_keep_segments`, ids `speaker-N`, `speaker-N-K`); Save reads them back
+  (`additional_speaker_keep_segments_from_recipe`). `phone_talking_multi_clip.speaker_removed` lets
+  the editor preview cut the later takes (iOS `speakerRemovedSpans`; an older app plays them whole
+  in the preview only).
+- **Still not cut from several takes**: a named line, a start/end line and tight 0.3 s pauses; the
+  draft says so (`_NAMED_CUTS_SEVERAL_TAKES`, `_TIGHT_KIND_LONG_ONLY`).
+- **Off (default)**: byte-identical; the draft keeps `_CLEANUP_SEVERAL_TAKES`.
+- Gate: `phone_rollout.phone_talking_multi_take_cleanup_supported()` (the flag + several-clip
+  Talking). Apply: `fly secrets set TALKING_MULTI_TAKE_CLEANUP_ENABLED=true --app nova-video` +
+  restart api + worker. Rollback: the same secret `false` (a check already made for several takes
+  then no longer matches the item, so dispatch asks again instead of applying it).
+
 #### Phase 2: PiP cards grounded from the transcript (KRI-176)
 
 **Gate:** `app.services.phone_rollout.phone_subtitled_overlays_supported()` --

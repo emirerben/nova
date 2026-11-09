@@ -396,6 +396,15 @@ class Settings(BaseSettings):
     # Apply: `fly secrets set PHONE_TALKING_MULTI_SPEAKER_BEATS_ENABLED=true --app nova-video`
     # + restart api + worker.
     phone_talking_multi_speaker_beats_enabled: bool = False
+    # KRI-720: speech cleanup (pauses, fillers) for a Talking edit made of several takes. The
+    # preflight analyses every clip with sound as its own take (one analysis row, one payload
+    # per take), the creator consents once, and the phone render cuts each talking take with
+    # its own plan before joining them. False (default): byte-identical, several takes stay
+    # `ambiguous_embedded_source` and the draft says cleanup couldn't run. Needs several-clip
+    # Talking (`phone_talking_multi_clip_supported`). See
+    # `phone_rollout.phone_talking_multi_take_cleanup_supported`. Apply: `fly secrets set
+    # TALKING_MULTI_TAKE_CLEANUP_ENABLED=true --app nova-video` + restart api + worker.
+    talking_multi_take_cleanup_enabled: bool = False
     # Re-record a take: `POST /creation-threads/{id}/media/replace` swaps one attached
     # speaker clip for a new upload in a single transaction, and `upload-urls` accepts
     # `replaces_media_id` for the clip cap. False (default): the route and the field
