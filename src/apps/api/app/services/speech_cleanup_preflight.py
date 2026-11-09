@@ -147,7 +147,7 @@ def preflight_enabled_for_source(
 
 
 def _payload_version_for(source: ActiveNarrationSource) -> str:
-    if source.takes:
+    if getattr(source, "takes", ()):
         return SPEECH_CLEANUP_MULTI_TAKE_PAYLOAD_VERSION
     return SPEECH_CLEANUP_PAYLOAD_VERSION
 
@@ -292,7 +292,7 @@ def _terminal_result_is_reusable(
     # halves still agree. Re-validating here is intentionally rare (only an
     # A -> B -> A source transition) and prevents corrupt old JSON from being
     # promoted back into the decision card.
-    if source.takes:
+    if getattr(source, "takes", ()):
         return _multi_take_result_is_reusable(row, source)
     try:
         from app.pipeline.speech_cleanup_analysis import SpeechCleanupAnalysisResult
