@@ -2610,8 +2610,11 @@ struct EditorStateRequest: Codable, Sendable, Equatable {
     var version = 1
     var baseGeneration: String
     var clientStateID: String
+    /// The newest chat draft revision this editor staged or discarded; nil when it never read one.
+    /// Without it the server builds a clean state's turn on the draft head (KRI-1333).
+    var draftRevision: Int? = nil
     var lanes: EditorCommitRequest
-    enum CodingKeys: String, CodingKey { case version; case baseGeneration = "base_generation"; case clientStateID = "client_state_id"; case lanes }
+    enum CodingKeys: String, CodingKey { case version; case baseGeneration = "base_generation"; case clientStateID = "client_state_id"; case draftRevision = "draft_revision"; case lanes }
 }
 extension EditorCommitRequest: Equatable {
     static func == (l: Self, r: Self) -> Bool { (try? JSONEncoder().encode(l)) == (try? JSONEncoder().encode(r)) }
@@ -3030,9 +3033,12 @@ extension DraftSnapshot {
     /// an older head may still exist when the editor is reopened. The status
     /// variant is authoritative for every renderer-owned section and baseline.
     func editorDraft(projectID: UUID, authoritativeVariant: [String: JSONValue]? = nil) -> EditorDraft {
+        // A chat draft stamps `editor_state_version` too (the phone's state carries it), but its flat
+        // lane keys mark it as edits over the variant, not a committed snapshot (KRI-1333).
         if let authoritativeVariant,
            authoritativeVariant["render_generation_id"]?.stringValue == baseGenerationID,
-           Self.object(snapshot["editor_payload"])?["editor_state_version"] == .number(2) {
+           let payload = Self.object(snapshot["editor_payload"]), payload["editor_state_version"] == .number(2),
+           !Self.stagedLaneKeys.contains(where: { payload[$0.key] != nil }) {
             // A committed full snapshot owns authoring state. The variant is
             // a render projection and may lag this exact durable revision.
             var document = snapshot
