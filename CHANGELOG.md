@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.126.0] - 2026-11-09
+
+### Changed
+- fix(kria): a chat turn after unsaved chat edits builds on them, not the published video (KRI-1333) (#2239) <!-- release-pr: 2239 -->
+
 ## [0.88.125.0] - 2026-11-09
 
 ### Changed
