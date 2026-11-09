@@ -93,3 +93,6 @@ visuals in the corpus; old jobs predate brief `facts.triggers`, so "named" was r
 from their request text. Named-word visuals keep their fixed holds, some of which still run
 into the next sentence (food, football) — the creator chose the word, not the length; a
 follow-up could size those holds too.
+
+Artifacts: hand-reviewed phrase starts `kri-1342-beat-phrase-answer-key.json`; per-visual before/after
+`kri-1342-beat-phrase-replay.json` (no transcripts, times only).
