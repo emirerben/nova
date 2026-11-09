@@ -2226,7 +2226,7 @@ def phone_talking_multi_speaker_beats_supported() -> bool:
     (`phone_subtitled_fullscreen_overlays_enabled`).
     """
     return bool(
-        getattr(settings, "phone_talking_multi_speaker_beats_enabled", False)
+        getattr(settings, "phone_talking_multi_speaker_beats_enabled", True)
         and getattr(settings, "phone_subtitled_fullscreen_overlays_enabled", True)
         and phone_talking_multi_clip_supported()
         and phone_subtitled_reaction_beats_supported()

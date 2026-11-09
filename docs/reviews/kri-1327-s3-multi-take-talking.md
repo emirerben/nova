@@ -30,7 +30,7 @@ at home, C 7.15 s in the car; four photos plus a decoy calendar).
 |---|---|---|
 | A clip names | Talking plans no clip intents, so `build_render_contract` had no rows to seat a stated first/last take and refused every wording | `services/talking_clip_anchors.py` seats a take by length, quoted opening words or place from the snapshot (every cue must agree on one take); the Talking writer plays the pinned order (`_speakers_in_pinned_order`); readiness vouches for it only when every clip talks |
 | F one blocker per turn | `approval_readiness` copied `contract.unresolved[0]` onto every row | `_order_problems` puts the pin lines on the order ask alone; every other ask keeps its own verdict |
-| B photos | Several talking clips switched every lane off; grounding used the first take's words only | Behind `PHONE_TALKING_MULTI_SPEAKER_BEATS_ENABLED` (default off): full-screen photos are grounded on every take's words shifted to where the take plays; corner cards / closing shot are reported `multiple_speakers`. Draft and review say "won't show" whenever the lane is closed. Pop-in triggers also hear a plural / possessive "s" ("Nar" in "NARS", "café" in "cafes") |
+| B photos | Several talking clips switched every lane off; grounding used the first take's words only | `PHONE_TALKING_MULTI_SPEAKER_BEATS_ENABLED` (default on, kill switch): full-screen photos are grounded on every take's words shifted to where the take plays; corner cards / closing shot are reported `multiple_speakers`. Draft and review say "won't show" whenever the lane is closed. Pop-in triggers also hear a plural / possessive "s" ("Nar" in "NARS", "café" in "cafes") |
 | C cleanup | Several takes = no single narration source → contract `off_v1`, no choice offered; the draft still promised the cut | Honest format limit before approval (`_CLEANUP_SEVERAL_TAKES`); the worker records `several_takes`, not "no word timings". Real per-take cleanup stays KRI-720 |
 | D captions | The face ladder jumped from the asked 0.5 straight to 0.86; the look receipt kept the stale 0.5 | The asked row is tried first (nearest, below on a tie); margin and look receipt record the drawn spot; a block outside the asked row is "Partly, lower so it stays off your face" |
 | E outline | No fact for a line around a person, so nothing claimed it | Main Creator records `subject_outline: true`; `brief_checks` says "Couldn't" before approval and the draft goes ahead |
@@ -57,8 +57,9 @@ cd src/apps/api && .venv/bin/python -m pytest tests/kria/test_s3_*.py tests/task
 
 ## Gaps
 
-- Photos need `PHONE_TALKING_MULTI_SPEAKER_BEATS_ENABLED=true` (Fly, api + worker) and one device
-  check: several speakers plus full-screen cards has never shipped (editor open / Save, preview).
+- Photos ship on (`PHONE_TALKING_MULTI_SPEAKER_BEATS_ENABLED` defaults `true`), but several
+  speakers plus full-screen cards has not been seen on a device yet (editor open / Save,
+  preview). Kill switch: the same secret `false` on Fly, api + worker.
 - Cutting pauses and lines inside several takes is KRI-720 (consent per take, schema, iOS card).
 - "donut" is never spoken in S3; the finished review says it was never heard. A draft-time
   "you never say this word" check is not built.
