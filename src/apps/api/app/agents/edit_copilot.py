@@ -2053,9 +2053,10 @@ def _format_snapshot(snapshot: dict) -> str:
 
     if isinstance(snapshot.get("color_moments"), dict):
         lane = snapshot["color_moments"]
+        fade = _fmt_round3(lane.get("end_fade_s")) if lane.get("end_fade_s") else "none"
         lines.append(
             f"\nCOLOR MOMENTS (video length {_fmt_round3(lane.get('duration_s'))}s; "
-            f"end fade {_fmt_round3(lane.get('end_fade_s')) if lane.get('end_fade_s') else 'none'}):"
+            f"end fade {fade}):"
         )
         for moment in lane.get("moments") or []:
             sound = (

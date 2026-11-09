@@ -13696,7 +13696,8 @@ def _prepare_editor_commit(
             "motion_scenes": validated_motion_scenes is not None,
             "camera_effects": validated_camera_effects is not None,
             "drawings": validated_drawings is not None,
-            "color_moments": color_moments_touched,
+            # KRI-1350: present only when touched, so every other Save's sections are unchanged.
+            **({"color_moments": True} if color_moments_touched else {}),
             "speaker_background": speaker_background_touched,
             "carousel_moment": carousel_moment_touched,
         },
