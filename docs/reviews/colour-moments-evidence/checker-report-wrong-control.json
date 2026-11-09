@@ -1,0 +1,97 @@
+{
+  "pass": false,
+  "tolerance_frames": 1,
+  "rows": [
+    {
+      "expected": {
+        "kind": "mono",
+        "start": 33,
+        "end": 77,
+        "start_max": 38,
+        "end_min": 72
+      },
+      "measured": {
+        "start": 33,
+        "end": 74,
+        "peak": null,
+        "length": 42
+      },
+      "offsets": {
+        "start": 0,
+        "end": 0
+      },
+      "pass": true
+    },
+    {
+      "expected": {
+        "kind": "flash",
+        "peak": 33,
+        "style": "light_leak"
+      },
+      "measured": {
+        "start": 29,
+        "end": 31,
+        "peak": 30,
+        "length": 3
+      },
+      "offsets": {
+        "peak": -3
+      },
+      "pass": false
+    },
+    {
+      "expected": {
+        "kind": "dip",
+        "peak": 78,
+        "style": "dip_black"
+      },
+      "measured": {
+        "start": 74,
+        "end": 76,
+        "peak": 75,
+        "length": 3
+      },
+      "offsets": {
+        "peak": -3
+      },
+      "pass": false
+    },
+    {
+      "expected": {
+        "kind": "sound",
+        "start": 78
+      },
+      "measured": {
+        "start": 75,
+        "end": 79,
+        "peak": 75,
+        "length": 5
+      },
+      "offsets": {
+        "start": -3
+      },
+      "pass": false
+    },
+    {
+      "expected": {
+        "kind": "end_fade",
+        "start": 90,
+        "end": 119
+      },
+      "measured": {
+        "start": 90,
+        "end": 119,
+        "peak": null,
+        "length": 30
+      },
+      "offsets": {
+        "start": 0,
+        "end": 0
+      },
+      "pass": true
+    }
+  ],
+  "unexpected": [],
+  "video": "colour-moments.mp4 (ColorMomentsCompositionTests export, not committed)",
+  "fps": 30.0
+}
