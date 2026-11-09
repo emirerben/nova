@@ -2046,7 +2046,7 @@
         },
         "EditorStateIn": {
           "additionalProperties": false,
-          "description": "The editor's CURRENT UNSAVED state, sent with a chat turn.\n\nA lane present is the client's full current value; absent equals the saved variant.\nA present-but-empty ``lanes`` is still authoritative: \"no unsaved edits\".\nThe server never recomputes a hash; ``client_state_id`` is echoed verbatim.",
+          "description": "The editor's CURRENT UNSAVED state, sent with a chat turn.\n\nA lane present is the client's full current value; absent equals the saved variant.\nA present-but-empty ``lanes`` is authoritative (\"no unsaved edits\") only over chat\ndrafts the editor has seen: ``draft_revision`` is the newest one it staged or discarded,\nabsent from older builds and from an editor that never read the head (KRI-1333).\nThe server never recomputes a hash; ``client_state_id`` is echoed verbatim.",
           "properties": {
             "base_generation": {
               "maxLength": 128,
@@ -2058,6 +2058,19 @@
               "minLength": 1,
               "title": "Client State Id",
               "type": "string"
+            },
+            "draft_revision": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Draft Revision"
             },
             "lanes": {
               "$ref": "#/$defs/EditorStateLanes"

@@ -427,6 +427,69 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertFalse(stale.hasUnsavedChanges)
     }
 
+    // MARK: KRI-1333 — thread 1894f8d0: a later chat turn rebuilt on the published video
+
+    /// The head a chat turn stores from the phone's state: flat lanes plus the Save defaults
+    /// every phone state carries (`editor_state_version: 2`, `remove_music: false`), no `sections`.
+    private static func incidentHead(revision: Int = 7) -> DraftSnapshot {
+        var payload = chatPayload(shape: .flatOnly)
+        payload["editor_state_version"] = .number(2)
+        return DraftSnapshot(draftID: "d\(revision)", itemID: "item", variantKey: "initial", draftRevision: revision,
+            snapshotHash: "h", etag: "e", baseJobID: Self.jobID, baseGenerationID: "g1",
+            snapshot: ["kind": .string("editor"), "schema_version": .number(2), "edit_format": .string("montage"),
+                       "editor_payload": .object(payload)], canUndo: true, createdAt: .now)
+    }
+
+    private static func encoded(_ state: EditorStateRequest) throws -> [String: JSONValue] {
+        try XCTUnwrap(JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(state)).objectValue)
+    }
+
+    func testAChatHeadIsNotACommittedSnapshotSoTheCleanDocumentIsTheVariant() throws {
+        let draft = Self.incidentHead().editorDraft(projectID: UUID(), authoritativeVariant: Self.variant())
+        let clean = EditorDocument(snapshot: draft.serverSnapshot)
+        XCTAssertEqual(clean.textElements.map(\.text), ["hello"], "the published text, not the chat head's")
+        XCTAssertEqual(clean.clips.compactMap(\.id), ["s1", "s2", "s3"])
+        XCTAssertNotNil(clean.music)
+    }
+
+    func testUndoingAStagedChatHeadReturnsToThePublishedDocument() async throws {
+        let (session, _) = await loaded(Self.incidentHead())
+        XCTAssertEqual(session.document.textElements.first?.text, "changed")
+        session.undo()
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertEqual(session.document.textElements.map(\.text), ["hello"])
+        XCTAssertEqual(session.document.clips.compactMap(\.id), ["s1", "s2", "s3"])
+    }
+
+    func testJobPathOpenWhoseDraftReadFailedStagesTheHeadBeforeExport() async throws {
+        let (session, fake) = await openedProject(Self.incidentHead(), draftError: .conflict)
+        XCTAssertFalse(session.hasUnsavedChanges, "the best-effort open read lost the chat head")
+        fake.draftError = nil
+        let exported = await session.exportEditorStateSyncingDraft()
+        let state = try XCTUnwrap(exported)
+        XCTAssertNotNil(state.lanes.textElements)
+        XCTAssertNotNil(state.lanes.timelineSlots)
+        XCTAssertEqual(try Self.encoded(state)["draft_revision"], .number(7), "names the chat draft it carries")
+    }
+
+    func testAStateThatNeverSawTheHeadNamesNoRevisionSoTheServerDecides() async throws {
+        let (session, _) = await openedProject(Self.incidentHead(), draftError: .conflict)
+        let exported = await session.exportEditorStateSyncingDraft()
+        let state = try XCTUnwrap(exported)
+        XCTAssertNil(state.lanes.textElements)
+        XCTAssertNil(try Self.encoded(state)["draft_revision"])
+    }
+
+    func testUndoingTheStagedChatEditDeclaresTheRevisionItDiscarded() async throws {
+        let (session, _) = await openedProject(Self.incidentHead())
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+        session.undo()
+        let exported = await session.exportEditorStateSyncingDraft()
+        let state = try XCTUnwrap(exported)
+        XCTAssertNil(state.lanes.textElements, "the creator discarded it")
+        XCTAssertEqual(try Self.encoded(state)["draft_revision"], .number(7))
+    }
+
     func testReturningToALoadedEditorStagesTheLatestDraft() async throws {
         let (session, fake) = await openedProject(Self.bootstrapSnapshot())
         XCTAssertFalse(session.hasUnsavedChanges)

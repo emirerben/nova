@@ -2165,6 +2165,38 @@ def client_state_payload(client_state: Any) -> dict[str, Any]:
     return lanes
 
 
+# Keys a phone state or a chat draft carries that are not edits. `remove_music: false` is
+# a Save default the phone always encodes; only `true` removes the music.
+_NOT_EDIT_KEYS = _STATE_DROP_KEYS | {"base_generation", "editor_state_version", "sections"}
+
+
+def _carries_edits(lanes: dict[str, Any]) -> bool:
+    return any(
+        key not in _NOT_EDIT_KEYS and not (key == "remove_music" and value is False)
+        for key, value in lanes.items()
+    )
+
+
+def _unseen_chat_head(head: Any, variant: dict[str, Any], job: Any, client_state: Any) -> dict:
+    """The head's chat lanes when a clean ``client_state`` never saw them, else ``{}``.
+
+    KRI-1333: an editor whose open-time draft read failed sends a clean state; taken as
+    authoritative it rebuilt the next turn on the published video and dropped every unsaved
+    chat edit. A clean state that names the head's revision is a deliberate discard.
+    """
+    state = _state_dict(client_state)
+    if _carries_edits(state.get("lanes") or {}):
+        return {}
+    seen = state.get("draft_revision")
+    revision = getattr(head, "draft_revision", None)
+    if seen is not None and (revision is None or seen >= revision):
+        return {}
+    fresh = fresh_editor_head_payload(head, variant, job)
+    if str(fresh.get("base_generation") or "") != str(state.get("base_generation") or ""):
+        return {}
+    return fresh if _carries_edits(fresh) else {}
+
+
 def resolve_editor_base(
     job: Any, variant: dict[str, Any], head: Any, client_state: Any = None
 ) -> EditorBase:
@@ -2172,7 +2204,8 @@ def resolve_editor_base(
 
     Precedence:
       1. ``client_state`` whose ``base_generation`` equals the variant's current render
-         baseline -> authoritative, the head is IGNORED (even for empty lanes).
+         baseline -> authoritative, the head is IGNORED, unless the state is clean and
+         never saw the head's chat lanes (``_unseen_chat_head``): then the head.
          A different baseline raises ``EditorStateStaleError`` (never silently rebased).
          Untrusted: a projection failure falls back to 2/3 with ``fallback_reason``.
       2. the head draft when fresh (``fresh_editor_head_payload``).
@@ -2187,6 +2220,14 @@ def resolve_editor_base(
         )
         if str(base or "") != variant_render_baseline(variant):
             raise EditorStateStaleError("editor state is based on an older render")
+        unseen = _unseen_chat_head(head, variant, job, client_state)
+        if unseen:
+            return EditorBase(
+                project_editor_draft(variant, unseen, job),
+                unseen,
+                "head",
+                "client_state_unseen_head",
+            )
         try:
             prior = client_state_payload(client_state)
             return EditorBase(project_editor_draft(variant, prior, job), prior, "client_state")

@@ -1327,7 +1327,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         // Save-only: the server rejects these on a turn's editor state.
         lanes.guidedRevisionNumber = nil; lanes.guidedRevision = nil
         lanes.acceptedSuggestionIDs = nil; lanes.copilotReceiptIDs = []; lanes.retryGuidedRevision = false
-        let request = EditorStateRequest(baseGeneration: generation, clientStateID: UUID().uuidString, lanes: lanes)
+        let request = EditorStateRequest(baseGeneration: generation, clientStateID: UUID().uuidString,
+            draftRevision: appliedChatDraftRevision, lanes: lanes)
         if let maxBytes, let encoded = try? JSONEncoder().encode(request), encoded.count > maxBytes {
             Self.stagingLog.debug("editor_state over cap bytes=\(encoded.count, privacy: .public) max=\(maxBytes, privacy: .public); legacy flush")
             return nil
