@@ -775,6 +775,14 @@ def approval_card(fx: dict) -> dict[str, Any]:
     disclosures = (
         card_disclosures(brief.live(), strategy, route=route, media=media) if shown else []
     )
+    try:  # KRI-1347: the draft turn drops a heads-up line a Done line contradicts
+        from app.kria.reply_consistency import reconcile_disclosures
+    except ImportError:  # code that predates the consistency check
+        reconcile_disclosures = None
+    if disclosures and reconcile_disclosures is not None:
+        disclosures = reconcile_disclosures(
+            disclosures, requirements=brief.live(), receipts=receipts, strategy=strategy
+        )
     if disclosures:
         reply = f"{reply}\n{card_text(disclosures)}"
     arguments = SimpleNamespace(

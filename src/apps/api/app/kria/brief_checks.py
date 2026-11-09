@@ -5183,7 +5183,12 @@ _SBC_NOTHING_TO_SWITCH = (
     "The plain colour stays behind you the whole time; no photos or videos are attached to take "
     "turns over it. Attach them in Visuals"
 )
+# KRI-1346: an ending asked as a coloured screen with words on it ("end on a red screen with
+# yellow text"): a closing card. It records `closing` + `background_color`, and is answered as
+# a closing card, never as a colour behind the speaker (`kria_honest_reply_lines_enabled`).
+_CC_UNAVAILABLE = "Ending on a coloured screen with your words on it isn't available yet"
 _SB_FORMAT_LIMITS: tuple[str, ...] = (
+    _CC_UNAVAILABLE,
     _SB_NOT_TALKING,
     _SB_UNAVAILABLE,
     _SB_APP_TOO_OLD,
@@ -5197,6 +5202,42 @@ _SB_FORMAT_LIMITS: tuple[str, ...] = (
 )
 
 
+def honest_reply_lines() -> bool:
+    """KRI-1346/1347 switch (``KRIA_HONEST_REPLY_LINES_ENABLED``): one capability answer for
+    every hold / draft / review line. Off: byte-identical to before."""
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(getattr(settings, "kria_honest_reply_lines_enabled", False))
+
+
+def asks_closing_card(req: BriefRequirement) -> bool:
+    """An ending asked as a coloured screen (KRI-1346): the model recorded the ending
+    (``facts["closing"]``) AND a plain colour (``facts["background_color"]``) on the same ask.
+    Typed facts only (KRI-667), so "a plain white background behind me" (no ``closing``) stays
+    a speaker-background ask and "end with 'follow me'" (no colour) stays closing text."""
+    closing = req.facts.get("closing")
+    return isinstance(closing, str) and bool(closing.strip()) and (
+        _asked_background_color(req) is not None
+    )
+
+
+def closing_card_supported() -> bool:
+    """The closing-card capability, when the render side ships one
+    (`phone_rollout.phone_closing_card_supported`, KRI-1348). Absent or failing: False."""
+    try:
+        from app.services import phone_rollout  # noqa: PLC0415
+
+        probe = getattr(phone_rollout, "phone_closing_card_supported", None)
+        return bool(probe()) if callable(probe) else False
+    except Exception:  # noqa: BLE001 - a capability probe never fails a draft
+        return False
+
+
+def closing_card_declined(req: BriefRequirement) -> bool:
+    """The closing-card ask this switch answers with an honest "can't" (no capability yet)."""
+    return honest_reply_lines() and asks_closing_card(req) and not closing_card_supported()
+
+
 def asks_speaker_background(req: BriefRequirement) -> bool:
     """A photo or video behind the speaker ("put the beach photo behind me", a green screen).
 
@@ -5206,6 +5247,8 @@ def asks_speaker_background(req: BriefRequirement) -> bool:
     record no such fact, can never be read as this ask.
     """
     # KRI-1173: a plain colour ask records `background_color` (and `speaker_background: true`).
+    if honest_reply_lines() and asks_closing_card(req):
+        return False  # KRI-1346: the colour is the closing screen's, not behind the speaker
     return bool(req.facts.get("speaker_background")) or _asked_background_color(req) is not None
 
 
@@ -7502,6 +7545,7 @@ _REASON_TR: dict[str, str] = {
     _SB_NOT_PLANNED: "Bu taslak arkana fotoğraf ya da video koymuyor",
     _SB_NOT_DRAWN: "Biten videoda arkanda fotoğraf ya da video yok",
     _SB_NO_CHANGE: ("Bütün video boyunca arkanda tek bir fotoğraf ya da video duruyor; değişmiyor"),
+    _CC_UNAVAILABLE: "Videoyu üstünde yazın olan renkli bir ekranla bitirmek henüz mümkün değil",
     # KRI-1173: a plain colour behind the speaker.
     _SBC_NOT_TALKING: (
         "Arkana düz renk yalnızca iPhone'da hazırlanan konuşmalı düzenlemede konabilir"
@@ -14338,6 +14382,8 @@ def _has_checker(req: BriefRequirement) -> bool:
         return True
     if _ending_clip_fact(req):
         return True  # KRI-841: judged against the plan's / render's ending video
+    if closing_card_declined(req):
+        return True  # KRI-1346: the closing-card capability answers it
     if asks_speaker_background(req) or _full_opening_asked(req):
         return True  # KRI-1161 / item 16: judged against the plan's / render's background
     if wants_no_music(req):
@@ -14944,6 +14990,10 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         # This must own a timing/select row before generic timing sees its ordinal as ordinary
         # timing.  A receipt is source-space evidence, not a claim based on captions.
         return _check_explicit_speech_cut(req, speech_cut, facts)
+    if closing_card_declined(req):
+        # KRI-1346: "end on a red screen with yellow text" is a closing card; it names that
+        # capability, never "a plain colour behind you".
+        return _receipt(req, "not_possible", _sb(_CC_UNAVAILABLE))
     if asks_speaker_background(req):
         # KRI-1161: "put the photo behind me" / a green screen is judged against the background
         # the plan (or the render) holds, ahead of the framing and generic Talking answers.
@@ -16023,7 +16073,10 @@ __all__ = [
     "ExplicitSpeechCutFact",
     "EndingClipFact",
     "SpeakerBackgroundFact",
+    "asks_closing_card",
     "asks_speaker_background",
+    "closing_card_declined",
+    "honest_reply_lines",
     "InsertClipFact",
     "NO_TITLE_REASON",
     "NARRATED_ALIGNMENT_RECOVERY",
