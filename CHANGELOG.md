@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.116.0] - 2026-11-09
+
+### Changed
+- docs(evals): record the first paid SuggestionAgent live run (KRI-1254) (#2232) <!-- release-pr: 2232 -->
+
 ## [0.88.115.0] - 2026-11-09
 
 ### Fixed
