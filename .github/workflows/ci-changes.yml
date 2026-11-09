@@ -67,4 +67,5 @@ jobs:
           CI_EVENT: ${{ github.event_name }}
           CI_BASE: ${{ github.event.pull_request.base.sha }}
           CI_HEAD: ${{ github.event.pull_request.head.sha }}
+          TEMP_FORCE_UI_GROUPS: ${{ github.event_name == 'pull_request' && 'smoke,editor' || '' }}
         run: python3 scripts/ci/select-tests.py
