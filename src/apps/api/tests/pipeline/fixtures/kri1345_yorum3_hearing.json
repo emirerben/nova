@@ -1,0 +1,543 @@
+{
+ "source": "KRI-1345 yorum3: Kria iPhone test take filmed by Yasin (made-up brands), job 7eba9903, whisper-1 overlay_transcript + Gemini clip transcript, 2026-11-09",
+ "prompt": "Yorumla episode 8: Vela's reply to Lumo. Use my talking video and cut the dead air and the sentence I restarted. When I mention the launch, Vela's 2 posts and the billboards, show that picture full screen while my voice keeps going. Captions small, white, lowercase, in the middle of the screen, never on my face. A small \"Yorumla\" label in the top left for the whole video. End on a red screen with yellow text \"follow for more brand and marketing content\". No music.",
+ "language": "en",
+ "whisper_words": [
+  {
+   "text": "Okay,",
+   "start_s": 0.0,
+   "end_s": 0.46
+  },
+  {
+   "text": "starting.",
+   "start_s": 0.84,
+   "end_s": 1.26
+  },
+  {
+   "text": "Ten",
+   "start_s": 2.16,
+   "end_s": 2.28
+  },
+  {
+   "text": "minutes",
+   "start_s": 2.28,
+   "end_s": 2.62
+  },
+  {
+   "text": "after",
+   "start_s": 2.62,
+   "end_s": 2.98
+  },
+  {
+   "text": "Lumo",
+   "start_s": 2.98,
+   "end_s": 3.18
+  },
+  {
+   "text": "launched",
+   "start_s": 3.18,
+   "end_s": 3.58
+  },
+  {
+   "text": "its",
+   "start_s": 3.58,
+   "end_s": 3.82
+  },
+  {
+   "text": "first",
+   "start_s": 3.82,
+   "end_s": 4.24
+  },
+  {
+   "text": "foldable",
+   "start_s": 4.24,
+   "end_s": 4.56
+  },
+  {
+   "text": "phone,",
+   "start_s": 4.56,
+   "end_s": 4.98
+  },
+  {
+   "text": "Vila",
+   "start_s": 5.54,
+   "end_s": 5.58
+  },
+  {
+   "text": "posted",
+   "start_s": 5.58,
+   "end_s": 5.94
+  },
+  {
+   "text": "on",
+   "start_s": 5.94,
+   "end_s": 6.16
+  },
+  {
+   "text": "Instagram",
+   "start_s": 6.16,
+   "end_s": 6.6
+  },
+  {
+   "text": "in",
+   "start_s": 6.6,
+   "end_s": 6.94
+  },
+  {
+   "text": "pure",
+   "start_s": 6.94,
+   "end_s": 7.36
+  },
+  {
+   "text": "TikTok",
+   "start_s": 7.36,
+   "end_s": 7.82
+  },
+  {
+   "text": "language.",
+   "start_s": 7.82,
+   "end_s": 8.36
+  },
+  {
+   "text": "First,",
+   "start_s": 9.08,
+   "end_s": 9.1
+  },
+  {
+   "text": "Welcome,",
+   "start_s": 9.82,
+   "end_s": 9.82
+  },
+  {
+   "text": "Lumo.",
+   "start_s": 10.02,
+   "end_s": 10.3
+  },
+  {
+   "text": "We've",
+   "start_s": 10.48,
+   "end_s": 10.66
+  },
+  {
+   "text": "been",
+   "start_s": 10.66,
+   "end_s": 10.82
+  },
+  {
+   "text": "waiting",
+   "start_s": 10.82,
+   "end_s": 11.02
+  },
+  {
+   "text": "for",
+   "start_s": 11.02,
+   "end_s": 11.26
+  },
+  {
+   "text": "you",
+   "start_s": 11.26,
+   "end_s": 11.48
+  },
+  {
+   "text": "for",
+   "start_s": 11.48,
+   "end_s": 11.72
+  },
+  {
+   "text": "five",
+   "start_s": 11.72,
+   "end_s": 12.12
+  },
+  {
+   "text": "years.",
+   "start_s": 12.12,
+   "end_s": 12.54
+  },
+  {
+   "text": "Then,",
+   "start_s": 12.94,
+   "end_s": 13.38
+  },
+  {
+   "text": "A",
+   "start_s": 13.72,
+   "end_s": 13.92
+  },
+  {
+   "text": "hinge?",
+   "start_s": 13.92,
+   "end_s": 14.22
+  },
+  {
+   "text": "We",
+   "start_s": 14.58,
+   "end_s": 14.78
+  },
+  {
+   "text": "call",
+   "start_s": 14.78,
+   "end_s": 14.94
+  },
+  {
+   "text": "that",
+   "start_s": 14.94,
+   "end_s": 15.16
+  },
+  {
+   "text": "an",
+   "start_s": 15.16,
+   "end_s": 15.32
+  },
+  {
+   "text": "old",
+   "start_s": 15.32,
+   "end_s": 15.56
+  },
+  {
+   "text": "friend.",
+   "start_s": 15.56,
+   "end_s": 15.96
+  },
+  {
+   "text": "Rival",
+   "start_s": 16.88,
+   "end_s": 16.9
+  },
+  {
+   "text": "brand",
+   "start_s": 16.9,
+   "end_s": 17.26
+  },
+  {
+   "text": "banter",
+   "start_s": 17.26,
+   "end_s": 17.64
+  },
+  {
+   "text": "is",
+   "start_s": 17.64,
+   "end_s": 17.96
+  },
+  {
+   "text": "my",
+   "start_s": 17.96,
+   "end_s": 18.26
+  },
+  {
+   "text": "favorite.",
+   "start_s": 18.26,
+   "end_s": 18.66
+  },
+  {
+   "text": "Like",
+   "start_s": 18.78,
+   "end_s": 19.02
+  },
+  {
+   "text": "car",
+   "start_s": 19.02,
+   "end_s": 19.5
+  },
+  {
+   "text": "brands",
+   "start_s": 19.5,
+   "end_s": 19.78
+  },
+  {
+   "text": "fighting",
+   "start_s": 19.78,
+   "end_s": 20.08
+  },
+  {
+   "text": "on",
+   "start_s": 20.08,
+   "end_s": 20.52
+  },
+  {
+   "text": "bill...",
+   "start_s": 20.52,
+   "end_s": 20.88
+  },
+  {
+   "text": "Sorry,",
+   "start_s": 20.88,
+   "end_s": 21.16
+  },
+  {
+   "text": "let",
+   "start_s": 21.22,
+   "end_s": 21.42
+  },
+  {
+   "text": "me",
+   "start_s": 21.42,
+   "end_s": 21.52
+  },
+  {
+   "text": "start",
+   "start_s": 21.52,
+   "end_s": 21.66
+  },
+  {
+   "text": "that",
+   "start_s": 21.66,
+   "end_s": 21.84
+  },
+  {
+   "text": "again.",
+   "start_s": 21.84,
+   "end_s": 22.14
+  },
+  {
+   "text": "Rival",
+   "start_s": 22.9,
+   "end_s": 23.08
+  },
+  {
+   "text": "brand",
+   "start_s": 23.08,
+   "end_s": 23.42
+  },
+  {
+   "text": "banter",
+   "start_s": 23.42,
+   "end_s": 23.8
+  },
+  {
+   "text": "is",
+   "start_s": 23.8,
+   "end_s": 24.18
+  },
+  {
+   "text": "my",
+   "start_s": 24.18,
+   "end_s": 24.58
+  },
+  {
+   "text": "favorite.",
+   "start_s": 24.58,
+   "end_s": 25.0
+  },
+  {
+   "text": "Like",
+   "start_s": 25.06,
+   "end_s": 25.52
+  },
+  {
+   "text": "car",
+   "start_s": 25.52,
+   "end_s": 25.88
+  },
+  {
+   "text": "brands",
+   "start_s": 25.88,
+   "end_s": 26.14
+  },
+  {
+   "text": "fighting",
+   "start_s": 26.14,
+   "end_s": 26.46
+  },
+  {
+   "text": "on",
+   "start_s": 26.46,
+   "end_s": 26.76
+  },
+  {
+   "text": "billboards.",
+   "start_s": 26.76,
+   "end_s": 27.24
+  },
+  {
+   "text": "So,",
+   "start_s": 27.24,
+   "end_s": 28.06
+  },
+  {
+   "text": "how",
+   "start_s": 28.28,
+   "end_s": 28.36
+  },
+  {
+   "text": "do",
+   "start_s": 28.36,
+   "end_s": 28.46
+  },
+  {
+   "text": "I",
+   "start_s": 28.46,
+   "end_s": 28.64
+  },
+  {
+   "text": "read",
+   "start_s": 28.64,
+   "end_s": 28.84
+  },
+  {
+   "text": "this,",
+   "start_s": 28.84,
+   "end_s": 29.16
+  },
+  {
+   "text": "as",
+   "start_s": 29.28,
+   "end_s": 29.38
+  },
+  {
+   "text": "a",
+   "start_s": 29.38,
+   "end_s": 29.5
+  },
+  {
+   "text": "brand",
+   "start_s": 29.5,
+   "end_s": 29.68
+  },
+  {
+   "text": "consultant?",
+   "start_s": 29.68,
+   "end_s": 30.14
+  },
+  {
+   "text": "Vila",
+   "start_s": 30.96,
+   "end_s": 31.08
+  },
+  {
+   "text": "turned",
+   "start_s": 31.08,
+   "end_s": 31.52
+  },
+  {
+   "text": "Lumo's",
+   "start_s": 31.52,
+   "end_s": 31.96
+  },
+  {
+   "text": "big",
+   "start_s": 31.96,
+   "end_s": 32.24
+  },
+  {
+   "text": "launch",
+   "start_s": 32.24,
+   "end_s": 32.52
+  },
+  {
+   "text": "into",
+   "start_s": 32.52,
+   "end_s": 32.82
+  },
+  {
+   "text": "its",
+   "start_s": 32.82,
+   "end_s": 33.02
+  },
+  {
+   "text": "own",
+   "start_s": 33.02,
+   "end_s": 33.38
+  },
+  {
+   "text": "moment.",
+   "start_s": 33.38,
+   "end_s": 33.68
+  },
+  {
+   "text": "Humor",
+   "start_s": 34.26,
+   "end_s": 34.42
+  },
+  {
+   "text": "that",
+   "start_s": 34.42,
+   "end_s": 34.78
+  },
+  {
+   "text": "speaks",
+   "start_s": 34.78,
+   "end_s": 35.04
+  },
+  {
+   "text": "Gen",
+   "start_s": 35.04,
+   "end_s": 35.4
+  },
+  {
+   "text": "Z",
+   "start_s": 35.4,
+   "end_s": 35.68
+  },
+  {
+   "text": "beats",
+   "start_s": 35.68,
+   "end_s": 36.24
+  },
+  {
+   "text": "corporate",
+   "start_s": 36.24,
+   "end_s": 36.64
+  },
+  {
+   "text": "language.",
+   "start_s": 36.64,
+   "end_s": 37.14
+  },
+  {
+   "text": "So,",
+   "start_s": 37.58,
+   "end_s": 38.0
+  },
+  {
+   "text": "whose",
+   "start_s": 38.0,
+   "end_s": 38.12
+  },
+  {
+   "text": "side",
+   "start_s": 38.12,
+   "end_s": 38.32
+  },
+  {
+   "text": "are",
+   "start_s": 38.32,
+   "end_s": 38.42
+  },
+  {
+   "text": "you",
+   "start_s": 38.42,
+   "end_s": 38.64
+  },
+  {
+   "text": "on?",
+   "start_s": 38.64,
+   "end_s": 38.86
+  },
+  {
+   "text": "Tell",
+   "start_s": 39.1,
+   "end_s": 39.28
+  },
+  {
+   "text": "me",
+   "start_s": 39.28,
+   "end_s": 39.4
+  },
+  {
+   "text": "in",
+   "start_s": 39.4,
+   "end_s": 39.5
+  },
+  {
+   "text": "the",
+   "start_s": 39.5,
+   "end_s": 39.96
+  },
+  {
+   "text": "comments.",
+   "start_s": 39.96,
+   "end_s": 39.96
+  }
+ ],
+ "gemini_transcript": "Okay, starting. 10 minutes after Lumo launched its first foldable phone, Vila posted on Instagram in pure Tik Tok language. First, welcome Lumo. We've been waiting for you for five years. Then, a hinge, we call that an old friend. Rival brand banter is my favorite. Like car brands fighting on Bill. Sorry, let me start that again. Rival brand banter is my favorite, like car brands fighting on billboards. So, how do I read this as a brand console? Vila turned Lumo's big launch into its own moment. Humor that speaks Jen Z beats corporate language. So, who's side are you on? Tell me in the comments."
+}

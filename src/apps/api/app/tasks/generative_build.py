@@ -10519,6 +10519,7 @@ def _run_phone_subtitled_job(
                 all_candidates=all_candidates,
                 cut_plan=cut_plan,
                 clip_metas=clip_metas,
+                job_id=job_id,
             )
 
             # The speaker's span exactly as the compiler plays it: the cleanup
@@ -14325,9 +14326,11 @@ def _phone_talking_caption_text(
     all_candidates: dict,
     cut_plan: Any,
     clip_metas: Any = None,
+    job_id: str | None = None,
 ) -> tuple[list, dict | None]:
     """The phone Talking caption words after whisper, in the job's order: the model spelling
-    fix, sentence split, the creator's spellings, unclear words, then the creator's case ask.
+    fix, sentence split, the creator's spellings (KRI-1345: and the job's own names, which read
+    the Visuals pool of ``job_id``), unclear words, then the creator's case ask.
 
     One function so a replay of a real job runs exactly these steps (Green 4/5, 2026-11-04).
     ``clip_metas`` are the job's Gemini clip records. Returns ``(cues, unclear_words_receipt)``.
@@ -14361,16 +14364,27 @@ def _phone_talking_caption_text(
     # to Kervan" types both) or a spelling above; a name typed in a "don't" clause is none.
     request = _creator_request_text(all_candidates)
     names = creator_request_names(request) if settings.caption_request_names_enabled else ()
+    targets = _phone_caption_spellings(
+        snapshot,
+        extract_spelling_asks(request),
+        typed=creator_typed_words(request) if request.strip() else None,
+    )
     cues = _apply_creator_spellings(
         cues,
-        _phone_caption_spellings(
-            snapshot,
-            extract_spelling_asks(request),
-            typed=creator_typed_words(request) if request.strip() else None,
-        ),
+        targets,
         request_names=names,
         typed=creator_typed_words(request) if names else (),
     )
+    # KRI-1345: the names that rule leaves out (4-letter typed names, the media's own names).
+    if settings.caption_name_vocabulary_enabled:
+        cues = _apply_caption_name_vocabulary(
+            cues,
+            request=request,
+            snapshot=snapshot,
+            job_id=job_id,
+            references=[str(getattr(m, "transcript", None) or "") for m in clip_metas or ()],
+            protected=(*targets, *names),
+        )
     # KRI-849: "if you can't tell what he says, ask me": leave the unclear word out.
     cues, unclear_words_receipt = _apply_unclear_words(
         cues,
@@ -14381,6 +14395,124 @@ def _phone_talking_caption_text(
     # KRI-1177: "captions lowercase" is the cue text itself, so the drawn layers, the
     # editor and a Save all carry it.
     return generation_caption_cues(cues, language=detected_lang), unclear_words_receipt
+
+
+def _narrated_caption_names(
+    cues: list, *, snapshot: dict, all_candidates: dict, job_id: str | None
+) -> list:
+    """KRI-1345: the phone Narrated captions get the Talking spelling steps: the quoted and
+    brief spellings, the names the creator typed (``CAPTION_REQUEST_NAMES_ENABLED``) and the
+    job's own names. The voiceover has no second hearing, so whisper's casing is the evidence."""
+    from app.pipeline.caption_spelling import (  # noqa: PLC0415
+        creator_request_names,
+        creator_typed_words,
+    )
+
+    request = _creator_request_text(all_candidates)
+    targets = _caption_glossary(snapshot, all_candidates)
+    names = creator_request_names(request) if settings.caption_request_names_enabled else ()
+    cues = _apply_creator_spellings(
+        cues,
+        targets,
+        request_names=names,
+        typed=creator_typed_words(request) if names else (),
+    )
+    return _apply_caption_name_vocabulary(
+        cues,
+        request=request,
+        snapshot=snapshot,
+        job_id=job_id,
+        references=(),
+        protected=(*targets, *names),
+    )
+
+
+def _caption_media_rows(snapshot: dict, job_id: str | None) -> tuple[list[dict], str]:
+    """KRI-1345: the job's media records the caption names read: the approved clips (with their
+    stored understanding) and the Visuals-pool assets the approval pinned (all ready ones for a
+    snapshot without a visuals list). Returns ``(rows, pool_state)``; a pool that cannot be read
+    adds nothing (names are best effort, never a reason to fail or retry a render)."""
+    rows: list[dict] = []
+    pinned: set[str] | None = None
+    binding = snapshot.get("creator_brief_binding")
+    media = binding.get("media_snapshot") if isinstance(binding, dict) else None
+    if isinstance(media, dict):
+        rows.extend(r for r in media.get("clip_assignments") or [] if isinstance(r, dict))
+        if isinstance(media.get("visuals"), list):
+            pinned = {
+                str(r.get("media_id"))
+                for r in media["visuals"]
+                if isinstance(r, dict) and r.get("media_id")
+            }
+    if not job_id or pinned == set():
+        return rows, "none"
+    import app.services.phone_overlay_grounding as grounding  # noqa: PLC0415
+
+    try:
+        pool = grounding._load_ready_pool_assets(_sync_session, job_id=job_id)
+    except Exception as exc:  # noqa: BLE001 - best effort
+        log.warning("caption_names.pool_unavailable", job_id=job_id, error=str(exc)[:200])
+        return rows, "unavailable"
+    rows.extend(r for r in pool if pinned is None or f"asset-{r.get('id')}" in pinned)
+    return rows, "read"
+
+
+def _apply_caption_name_vocabulary(
+    cues: list,
+    *,
+    request: str,
+    snapshot: dict,
+    job_id: str | None,
+    references: Any,
+    protected: Any,
+) -> list:
+    """KRI-1345: ``cues`` with the job's evidence-gated names applied
+    (`app.pipeline.caption_names`), after the creator spellings; a `captions/name_vocabulary`
+    trace event lists the names, their sources and every changed line. Never raises: any error
+    leaves the captions as the creator spellings wrote them."""
+    from app.pipeline.caption_names import (  # noqa: PLC0415
+        apply_name_vocabulary,
+        name_vocabulary,
+    )
+    from app.pipeline.caption_spelling import creator_typed_words  # noqa: PLC0415
+
+    try:
+        rows, pool_state = _caption_media_rows(snapshot, job_id)
+        typed = creator_typed_words(request) if request.strip() else ()
+        vocab = name_vocabulary(request, rows, typed_names=(*protected, *typed))
+        out, plan = apply_name_vocabulary(
+            cues,
+            vocab.names,
+            references=[r for r in references or () if r],
+            protected=(*protected, *typed),
+        )
+    except Exception as exc:  # noqa: BLE001 - the captions never fail on a name
+        log.warning("caption_names.failed", job_id=job_id, error=str(exc)[:200])
+        return cues
+    changes = [
+        {"before": str(old.get("text") or "")[:200], "after": str(new.get("text") or "")[:200]}
+        for old, new in zip(cues, out, strict=True)
+        if old.get("text") != new.get("text")
+    ]
+    try:
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        record_pipeline_event(
+            "captions",
+            "name_vocabulary",
+            {
+                "short_names": list(vocab.short_names),
+                "media_names": list(vocab.media_names),
+                "media_rows": len(rows),
+                "pool": pool_state,
+                "respelled": dict(plan),
+                "changed": len(changes),
+                "changes": changes[:20],
+            },
+        )
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return out
 
 
 def _settle_caption_case(cues: list, clip_metas: Any) -> list:
@@ -16001,7 +16133,15 @@ def _run_phone_narrated_job(
                 cues = resplit_cues_into_sentences(cues)
                 # KRI-961: the creator's spellings (quoted asks + the approved brief's list),
                 # applied last as Talking does (KRI-793), so "Olloda bife" reads "ojo de bife".
-                cues = _apply_creator_spellings(cues, _caption_glossary(snapshot, all_candidates))
+                # KRI-1345: plus, as Talking, the names the creator typed and the job's own names.
+                if settings.caption_name_vocabulary_enabled:
+                    cues = _narrated_caption_names(
+                        cues, snapshot=snapshot, all_candidates=all_candidates, job_id=job_id
+                    )
+                else:
+                    cues = _apply_creator_spellings(
+                        cues, _caption_glossary(snapshot, all_candidates)
+                    )
                 # KRI-1177: this writer draws the typed caption look too, so the asked case is
                 # the cue text here as well (else its receipt reads as a look later changed).
                 cues = generation_caption_cues(cues, language=detected_lang)
