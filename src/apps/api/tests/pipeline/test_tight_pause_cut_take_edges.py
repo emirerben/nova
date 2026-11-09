@@ -45,7 +45,7 @@ def _take(tmp_path: Path, parts: list[tuple], name: str = "edge.wav", floor_amp:
             words.append({"text": f"w{len(words)}", "start_s": t, "end_s": t + dur})
             pieces.append(_word_tone(dur))
         elif kind == "soft":
-            pieces.append(rng.standard_normal(int(dur * SR)) * part[2])
+            pieces.append(part[2] * np.sin(2 * np.pi * 300 * np.arange(int(dur * SR)) / SR))
         else:
             pieces.append(_floor(int(dur * SR), rng, floor_amp))
         t += dur
@@ -142,3 +142,58 @@ def test_the_clip_budget_caps_the_kept_segments(tmp_path):
     # A budget below what the consented plan already uses adds nothing.
     none, report0 = tpc.apply_tight_pauses(plan, path, words, dur, max_keep_segments=0)
     assert none.removed == plan.removed and report0.added_cuts == 0
+
+
+# --- KRI-720 G1: a pause just over the limit whose cuttable piece is under TIGHT_MIN_CUT_S ---
+#
+# Real S3 take A: 0.389 s pause (0.42 s by the acceptance tool) with ~0.09 s cuttable beside the
+# word pads; the 0.12 s minimum dropped the cut so the pause stayed over 0.4 s. Failure modes:
+# 1. default mode changes (one take must stay byte-identical); 2. a micro-cut lands on a pause
+# that is already under the limit; 3. the short cut eats a soft word edge beside the pause.
+
+SHORT_CUT = tpc.TIGHT_MIN_CUT_OVER_LIMIT_S
+# Quiet edges (-52 dBFS, protected as sound) make the measured pause 0.41 s while only 0.09 s of
+# it is cuttable between the word pads.
+LONG_BY_EDGES = [
+    ("floor", 0.6),
+    ("word", 0.4),
+    ("soft", 0.03, 0.0035),
+    ("floor", 0.33),
+    ("soft", 0.03, 0.0035),
+    ("word", 0.4),
+    ("floor", 0.6),
+]
+SHORT_ENOUGH = [("floor", 0.6), ("word", 0.4), ("floor", 0.30), ("word", 0.4), ("floor", 0.6)]
+
+
+def test_a_just_over_limit_pause_is_cut_with_the_short_minimum_only(tmp_path):
+    path, words, dur = _take(tmp_path, LONG_BY_EDGES, "over.wav")
+    plan = consented(path, words, dur)
+    default, d_report = tpc.apply_tight_pauses(plan, path, words, dur)
+    short, s_report = tpc.apply_tight_pauses(plan, path, words, dur, min_cut_s=SHORT_CUT)
+
+    assert d_report.added_cuts == 0 and d_report.pauses_over_limit == 1
+    assert s_report.added_cuts == 1 and s_report.pauses_over_limit == 0
+    assert s_report.longest_pause_s <= tpc.TIGHT_PAUSE_LIMIT_S
+    (cut,) = [r for r in short.removed if r not in plan.removed]
+    assert cut.end_s - cut.start_s == pytest.approx(0.09, abs=0.03)
+    # The quiet edges beside the pause and both words stay in the kept audio.
+    for lo, hi in ((1.0, 1.03), (1.36, 1.39)):
+        assert any(a <= lo and hi <= b for a, b in short.keep_segments)
+    for w in words:
+        assert any(a <= w["start_s"] and w["end_s"] <= b for a, b in short.keep_segments)
+
+
+def test_a_pause_already_under_the_limit_gets_no_micro_cut(tmp_path):
+    path, words, dur = _take(tmp_path, SHORT_ENOUGH, "short.wav")
+    plan = consented(path, words, dur)
+    out, report = tpc.apply_tight_pauses(plan, path, words, dur, min_cut_s=SHORT_CUT)
+    assert report.added_cuts == 0 and out.removed == plan.removed
+
+
+def test_the_default_minimum_is_unchanged(tmp_path):
+    path, words, dur = _take(tmp_path, LONG_BY_EDGES, "same.wav")
+    plan = consented(path, words, dur)
+    a, _ = tpc.apply_tight_pauses(plan, path, words, dur)
+    b, _ = tpc.apply_tight_pauses(plan, path, words, dur, min_cut_s=tpc.TIGHT_MIN_CUT_S)
+    assert a.removed == b.removed and a.keep_segments == b.keep_segments

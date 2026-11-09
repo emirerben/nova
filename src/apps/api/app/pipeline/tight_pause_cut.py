@@ -51,6 +51,11 @@ from app.pipeline.speech_voice_guard import (
 )
 
 TIGHT_MIN_CUT_S = 0.12  # smallest extra cut worth making
+# Several-take renders (KRI-720 G1): a cut this short is allowed, but only on a pause that would
+# otherwise stay over the limit (a 0.389 s pause measured 0.42 s by the acceptance tool had only
+# ~0.09 s cuttable; below 0.12 s it was dropped). 0.05 s is about 1.5 frames at 30 fps: the
+# least that still brings a pause just over the limit back under it.
+TIGHT_MIN_CUT_OVER_LIMIT_S = 0.05
 TIGHT_PAUSE_TARGET_S = 0.3  # what a tight cut aims to leave (2 x PAD_S = 0.24 by word stamps)
 TIGHT_PAUSE_LIMIT_S = 0.35  # a kept pause longer than this still counts as "long"
 TIGHT_REPORT_VERSION = 1
@@ -335,6 +340,7 @@ def _candidates(
     min_pause_s: float | None = None,
     trim_head: bool = False,
     trim_tail: bool = False,
+    min_cut_s: float = TIGHT_MIN_CUT_S,
 ) -> list[Removal]:
     """Cuts inside Kria silence spans that lie within the talk, clear of audible sound.
 
@@ -368,7 +374,7 @@ def _candidates(
             pieces = [
                 p
                 for p in _subtract(seg[0], seg[1], protected)
-                if p[1] - p[0] >= TIGHT_MIN_CUT_S - _EPS
+                if p[1] - p[0] >= min_cut_s - _EPS
                 or (
                     p[1] - p[0] > _SLIVER_MIN_S
                     and any(abs(p[0] - e) <= _TOUCH_S or abs(p[1] - e) <= _TOUCH_S for e in edges)
@@ -515,6 +521,7 @@ def tighten_pauses(
     trim_head: bool = False,
     trim_tail: bool = False,
     max_keep_segments: int = TIGHT_MAX_KEEP_SEGMENTS,
+    min_cut_s: float = TIGHT_MIN_CUT_S,
 ) -> tuple[CutPlan, TightPauseReport]:
     long_mode = min_pause_s is not None
     mode: Literal["tight", "long"] = "long" if long_mode else "tight"
@@ -558,6 +565,16 @@ def tighten_pauses(
         candidates = _candidates(
             kept, keep, plan.removed, spans, normalized, loud, min_pause_s, trim_head, trim_tail
         )
+        if min_cut_s < TIGHT_MIN_CUT_S - _EPS:
+            candidates = _with_short_cuts(
+                candidates,
+                _candidates(
+                    kept, keep, plan.removed, spans, normalized, loud, min_pause_s,
+                    trim_head, trim_tail, min_cut_s,
+                ),
+                measure,
+                limit_s,
+            )  # fmt: skip
     else:
         candidates = []
     before_longest = kept_pause_stats(plan, words, measure, duration_s, limit_s)[0]
@@ -575,7 +592,7 @@ def tighten_pauses(
             samples,
             exempt=(),
             sr=sr,
-            min_cut_s=TIGHT_MIN_CUT_S,
+            min_cut_s=min_cut_s,
             min_floor_db=TIGHT_MIN_FLOOR_DBFS,
         )
         guard_dropped, guard_trimmed = g_report["dropped_total"], g_report["trimmed_total"]
@@ -622,6 +639,30 @@ def tighten_pauses(
     )  # fmt: skip
 
 
+def _with_short_cuts(
+    base: list[Removal],
+    wide: list[Removal],
+    measure: Sequence[tuple[float, float]],
+    limit_s: float,
+) -> list[Removal]:
+    """``base`` plus the short cuts of ``wide`` that bring a pause back under ``limit_s``.
+
+    A short cut (under ``TIGHT_MIN_CUT_S``) is kept only when the measured pause holding it still
+    lasts longer than the limit after ``base``'s cuts: never a micro-cut on a pause that is
+    already short enough."""
+
+    extra = [r for r in wide if r not in base]
+    out = list(base)
+    for r in sorted(extra, key=lambda r: r.start_s):
+        span = max(measure, key=lambda m: min(m[1], r.end_s) - max(m[0], r.start_s), default=None)
+        if span is None or min(span[1], r.end_s) - max(span[0], r.start_s) <= _EPS:
+            continue
+        cut = sum(max(0.0, min(span[1], c.end_s) - max(span[0], c.start_s)) for c in out)
+        if (span[1] - span[0]) - cut > limit_s + _MEASURE_TOL_S:
+            out.append(r)
+    return sorted(out, key=lambda r: r.start_s)
+
+
 def _unavailable(
     plan: CutPlan,
     reason: str,
@@ -645,6 +686,7 @@ def apply_tight_pauses(
     trim_head: bool = False,
     trim_tail: bool = False,
     max_keep_segments: int = TIGHT_MAX_KEEP_SEGMENTS,
+    min_cut_s: float = TIGHT_MIN_CUT_S,
 ) -> tuple[CutPlan, TightPauseReport]:
     """``tighten_pauses`` for the media the plan was built from (detects + decodes itself)."""
 
@@ -678,4 +720,5 @@ def apply_tight_pauses(
         trim_head=trim_head,
         trim_tail=trim_tail,
         max_keep_segments=max_keep_segments,
+        min_cut_s=min_cut_s,
     )

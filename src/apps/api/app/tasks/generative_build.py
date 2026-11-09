@@ -13354,13 +13354,17 @@ def _phone_tight_pause_cut(
             log.warning("phone_tight_pauses.binding_unreadable", error=str(exc)[:200])
             return cut_plan, None
     try:
-        from app.pipeline.tight_pause_cut import apply_tight_pauses  # noqa: PLC0415
+        from app.pipeline.tight_pause_cut import (  # noqa: PLC0415
+            TIGHT_MIN_CUT_OVER_LIMIT_S,
+            apply_tight_pauses,
+        )
 
         take_kwargs: dict[str, Any] = (
             {
                 "trim_head": trim_head,
                 "trim_tail": trim_tail,
                 "max_keep_segments": max_keep_segments,
+                "min_cut_s": TIGHT_MIN_CUT_OVER_LIMIT_S,
             }
             if multi_take and max_keep_segments is not None
             else {}
