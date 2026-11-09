@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.118.0] - 2026-11-09
+
+### Changed
+- fix(kria): Qendresa Q2 run 2 fixes: title logo, hold card, freeze, title on captions, labels, black bars, pauses (KRI-1320) (#2229) <!-- release-pr: 2229 -->
+
+## [0.88.117.0] - 2026-11-09
+
+### Changed
+- fix(kria): chat tells generated images apart and places them where asked (KRI-1253) (#2218) <!-- release-pr: 2218 -->
+
+## [0.88.116.0] - 2026-11-09
+
+### Changed
+- docs(evals): record the first paid SuggestionAgent live run (KRI-1254) (#2232) <!-- release-pr: 2232 -->
+
+## [0.88.115.0] - 2026-11-09
+
+### Fixed
+- fix(ios): talk-bench video background no longer blocks Record (KRI-1180) (#2219) <!-- release-pr: 2219 -->
+
+## [0.88.114.0] - 2026-11-09
+
+### Changed
+- fix(ios): the AI's staged edit no longer conflicts with itself; conflict notice becomes a Kria card (KRI-1313) (#2215) <!-- release-pr: 2215 -->
+
+## [0.88.113.0] - 2026-11-08
+
+### Changed
+- fix(ios): repair the font picker and text danger-guide UI tests that fail on main (#2228) <!-- release-pr: 2228 -->
+
 ## [0.88.112.0] - 2026-11-08
 
 ### Fixed

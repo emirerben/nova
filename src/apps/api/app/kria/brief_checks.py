@@ -697,6 +697,9 @@ class PlanFacts:
     unheard_beat_triggers: tuple[str, ...] = ()
     # (trigger, reason) for a title-anchored beat the render could not place; never "unheard".
     title_beat_misses: tuple[tuple[str, str], ...] = ()
+    # KRI-1322: the names of the creator's own pictures on this draft's manifest ("GitHub
+    # logo.png"), so a picture asked for by name is told apart from words. () = not known.
+    owned_picture_labels: tuple[str, ...] = ()
     # KRI-550: (trigger, placed, heard) for each "every time I say X" beat the render placed
     # on only some of the times it was said (`unplaced[]` reason "occurrence_cap").
     capped_beat_hits: tuple[tuple[str, int, int], ...] = ()
@@ -1019,6 +1022,13 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
     raw_closing = parsed.closing_media
     closing = repaired.closing_media
     return {
+        "owned_picture_labels": tuple(
+            dict.fromkeys(
+                str(media.label)
+                for media in manifest.media
+                if media.kind == "image" and (media.label or "").strip()
+            )
+        ),
         "reaction_beats_available": available,
         "reaction_beats": tuple(
             BeatFact(
@@ -1203,9 +1213,15 @@ def _speaker_background_facts(
             )
         }
     opening_planned = bool(getattr(kept, "full_screen_opening", False))
+    # KRI-1304 leftover: what the planner left out, so the draft row says it like its lead.
+    left_out = tuple(
+        (row.name, row.why)
+        for row in (getattr(kept, "left_out", ()) or getattr(asked, "left_out", ()) or ())
+    )
     return {
         "speaker_background": SpeakerBackgroundFact(
             "planned",
+            left_out=left_out,
             pool_count=len(pool),
             fill_id=kept.media_id,
             window_count=len(kept.sequence),
@@ -5340,8 +5356,15 @@ def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> Requir
     full-screen start is judged too: a missing opening makes a "met" background at most "partial",
     and a made one is reported beside it.
     """
+    return _with_zoom_promise_only(req, facts, _speaker_background_receipt(req, facts))
+
+
+def _speaker_background_receipt(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """`_check_speaker_background` before a zoom-only draft row becomes its promise."""
     receipt = _check_speaker_background_core(req, facts)
-    receipt = _with_zoom_verdict(req, receipt, facts.speaker_background)
+    receipt = _with_zoom_verdict(
+        req, receipt, facts.speaker_background, rendered=bool(facts.rendered_variant)
+    )
     fact = facts.speaker_background
     if not _full_opening_asked(req) or fact is None or receipt.status == "not_possible":
         return receipt
@@ -5357,9 +5380,38 @@ def _check_speaker_background(req: BriefRequirement, facts: PlanFacts) -> Requir
     return _receipt(req, "partial", f"{receipt.full_reason or ''} {gap}".strip())
 
 
+def _with_zoom_promise_only(
+    req: BriefRequirement, facts: PlanFacts, receipt: RequirementReceipt
+) -> RequirementReceipt:
+    """KRI-1285 kept (KRI-1304 leftover follow-up): a draft row short only of the zoom, which the
+    render does, is exactly the render promise, so the reply lists it as planned ("Will do at
+    render") and keeps its lead. A recording left out, or anything else short, keeps the full
+    Partly sentence. Judged by re-checking with the zoom made: met then means nothing else is
+    short."""
+    fact = facts.speaker_background
+    if (
+        receipt.status != "partial"
+        or facts.rendered_variant
+        or fact is None
+        or fact.status != "planned"
+        or fact.aimed is not None
+        or fact.left_out
+        or _fact_flag(req, "background_zoom") is not True
+    ):
+        return receipt
+    zoomed = dataclasses.replace(facts, speaker_background=dataclasses.replace(fact, aimed=True))
+    if _check_speaker_background(req, zoomed).status != "met":
+        return receipt
+    return _receipt(req, "partial", _BACKGROUND_ZOOM_PLAN)
+
+
 def _zoomed(focus: object) -> bool:
-    zoom = focus.get("zoom") if isinstance(focus, Mapping) else None
-    return isinstance(zoom, int | float) and not isinstance(zoom, bool) and zoom > 1.0
+    """KRI-1307: the render's own rule (`focus_zooms_onto_text`): zoomed past the cover fit, or
+    filled to the frame and aimed off-centre at the text (Q2 run 2: her recordings at 1.0x,
+    x ≈ 0.26). A centred 1.0x is a plain crop, never zoomed."""
+    from app.kria.portable_speaker_background import focus_zooms_onto_text  # noqa: PLC0415
+
+    return isinstance(focus, Mapping) and focus_zooms_onto_text(dict(focus))
 
 
 def _document_all_zoomed(doc: Mapping[str, Any]) -> bool:
@@ -5373,7 +5425,11 @@ def _document_all_zoomed(doc: Mapping[str, Any]) -> bool:
 
 
 def _with_zoom_verdict(
-    req: BriefRequirement, receipt: RequirementReceipt, fact: SpeakerBackgroundFact | None
+    req: BriefRequirement,
+    receipt: RequirementReceipt,
+    fact: SpeakerBackgroundFact | None,
+    *,
+    rendered: bool = False,
 ) -> RequirementReceipt:
     """KRI-1307: a "zoom into the recordings so the text is readable" ask is judged on its own.
 
@@ -5399,13 +5455,41 @@ def _with_zoom_verdict(
             tr="Kayıtların hepsine yakınlaşamadım, küçük yazılar küçük kalabilir.",
         )
         status = "partial"
-    else:
+    elif rendered:
+        # A render recorded before the worker wrote ``aimed``: no claim either way.
         extra = say(
             en="I'll zoom in on the text when it's made; I can't confirm it before then.",
             tr="Video yapılınca yazılara yakınlaşacağım; öncesinde doğrulayamıyorum.",
         )
         status = receipt.status
+    else:
+        # KRI-1304 leftover: a draft never says Done for what only the render can show; the
+        # zoom is said as planned (`_BACKGROUND_ZOOM_PLAN`), and a row short of nothing else is
+        # only that promise (`_check_speaker_background`).
+        extra = _loc(_BACKGROUND_ZOOM_PLAN) + "."
+        status = "partial"
     return _receipt(req, status, f"{receipt.full_reason or ''} {extra}".strip())
+
+
+def speaker_background_waits_for_render(req: BriefRequirement, facts: PlanFacts) -> bool:
+    """KRI-1304 leftover: this draft's green-screen row is short only of what the render
+    decides (the zoom) or of recordings the planner left out, never of anything the plan lacks.
+
+    The row then reads Partly (it matches the lead and the finished list), and approval
+    readiness still approves it: holding it would offer "Make it without these", which drops
+    the whole green-screen ask for one recording. Re-judged with the zoom made and nothing left
+    out; met then means nothing else is short.
+    """
+    fact = facts.speaker_background
+    if fact is None or facts.rendered_variant or fact.status != "planned":
+        return False
+    if not fact.left_out and fact.aimed is not None:
+        return False
+    hopeful = dataclasses.replace(fact, aimed=True, left_out=())
+    return (
+        check_requirement(req, dataclasses.replace(facts, speaker_background=hopeful)).status
+        == "met"
+    )
 
 
 def _check_speaker_background_core(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -5488,7 +5572,7 @@ def _check_speaker_background_core(req: BriefRequirement, facts: PlanFacts) -> R
             en += f"; you're {corner[0]}"
             tr += f"; sen {corner[1]}sın"
     missing = _unshown_sentence(fact) if rendered else None
-    left_out = _left_out_sentence(fact) if rendered else None
+    left_out = _left_out_sentence(fact)
     slow = _slower_than_asked_sentence(fact) if rendered and wants_several else None
     if slow:
         # Çiğdem S2: "changing every 3-5 seconds" with too few photos for the talk is not met.
@@ -5496,9 +5580,12 @@ def _check_speaker_background_core(req: BriefRequirement, facts: PlanFacts) -> R
             part for part in (slow, missing, left_out[0] if left_out else None) if part
         )
         return _receipt(req, "partial", f"{say(en=en + '.', tr=tr + '.')} {extra}")
-    if missing or (left_out and left_out[1]):
+    if missing or (left_out and (left_out[1] or not rendered)):
         # Qendresa case 5: a recording she asked for never shows, so the ask is not met.
-        # KRI-1304: so is a repo with no recording attached.
+        # KRI-1304: so is a repo with no recording attached. On a draft a recording the planner
+        # left out is never "Done" either (Q2 run 2: the lead said the trending page was left
+        # out while the row said Done); readiness still approves it
+        # (`speaker_background_waits_for_render`).
         extra = " ".join(part for part in (missing, left_out[0] if left_out else None) if part)
         return _receipt(req, "partial", f"{say(en=en + '.', tr=tr + '.')} {extra}")
     if left_out:
@@ -6931,6 +7018,19 @@ _VOICEOVER_SPOKEN_TEXT_PLAN = (
 # Item 14: an ending that asks for an arrow next to its text. The phone Talking writer draws
 # one with the "comment READ" ending when the switch is on; otherwise the creator draws it.
 _CLOSING_ARROW_PLAN = "I'll draw a curly arrow next to your ending text"
+# KRI-1322: a logo / sticker the planner anchored to the opening title. Whether it fits above
+# the title without covering her face or captions is the render's call (KRI-1303's
+# `no_room_above_title`), so a draft never says Done for it; the finished video says which.
+# KRI-1304 leftover (KRI-1285 kept): "zoom into the recordings so the text is readable" on a
+# draft. Whether every recording is aimed at its text is the render's (`aimed`), so a draft says
+# it as planned; the finished video says made or not.
+_BACKGROUND_ZOOM_PLAN = (
+    "I'll zoom onto the text when the video is made; I can't confirm it before then"
+)
+_TITLE_PICTURE_PLAN = (
+    "I'll put it above your title when the video is made; if there's no room without covering "
+    "your face or captions, I'll tell you"
+)
 _CLOSING_ARROW_MISSING = (
     "The arrow isn't in the video yet; you can draw one with the pen in the editor"
 )
@@ -6971,6 +7071,10 @@ RENDER_PROMISE_REASONS: tuple[str, ...] = (
     _TIGHT_IF_OFFERED,
     # Qendresa 14: the arrow beside the "comment WORD" ending.
     _CLOSING_ARROW_PLAN,
+    # KRI-1322: the picture above the opening title.
+    _TITLE_PICTURE_PLAN,
+    # KRI-1304 leftover: the zoom onto the recordings' text.
+    _BACKGROUND_ZOOM_PLAN,
     # KRI-707: a text shown at the word it is said; Qendresa 19: a list label at its part.
     _TALKING_SPOKEN_TEXT_PLAN,
     _TALKING_LIST_LABEL_PLAN,
@@ -7288,6 +7392,11 @@ _REASON_TR: dict[str, str] = {
     ),
     _NOISE_REDUCTION_MISSED: "Motor gürültüsünü azaltamadım",
     _CLOSING_ARROW_PLAN: "Kapanış yazının yanına kıvrımlı bir ok çizeceğim",
+    _BACKGROUND_ZOOM_PLAN: ("Video yapılınca yazılara yakınlaşacağım; öncesinde doğrulayamıyorum"),
+    _TITLE_PICTURE_PLAN: (
+        "Video yapılınca onu başlığının üstüne koyacağım; yüzünü ya da altyazılarını kapatmadan "
+        "yer yoksa sana söyleyeceğim"
+    ),
     _CLOSING_ARROW_MISSING: "Ok henüz videoda yok; editörde kalemle bir ok çizebilirsin",
     _TALKING_SPOKEN_TEXT_PLAN: (
         "Çekiminde o kelimeyi söylediğin anda yazıyı gösteririm; kelimeyi duymazsam yazı çıkmaz"
@@ -7805,6 +7914,98 @@ def _title_logo_miss_receipt(req: BriefRequirement, facts: PlanFacts) -> Require
     if not missed:
         return None
     return _receipt(req, "partial", "; ".join(_title_miss_problem(t, r) for t, r in missed))
+
+
+# A media label's file extension ("GitHub logo.png"): reads a file name, never creator words.
+_PICTURE_FILE_EXT = re.compile(r"\.(png|jpe?g|webp|heic|gif|svg)$", re.I)  # kri667: file label
+
+
+def _title_look_on() -> bool:
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(settings.title_look_enabled)
+
+
+def _same_picture(named: str, other: str) -> bool:
+    """Two names for one picture: the ask's words and a beat trigger / file label."""
+    a = _PICTURE_FILE_EXT.sub("", named.strip())
+    b = _PICTURE_FILE_EXT.sub("", other.strip())
+    return bool(_fold(a) and _fold(b)) and _trigger_heard(a, b)
+
+
+def _title_picture_receipt(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """KRI-1322: a title-scoped "text" whose words name a picture, judged as that picture.
+
+    Prod thread 9db44dc2 (Qendresa Q2 run 2): the brief filed "with the GitHub logo above it"
+    as ``text/title`` literal "GitHub logo", the text check called it missing words and the
+    draft was held. It is the uploaded image the planner anchors above the title (a reaction
+    beat with ``anchor: "title"``). None when the words name no picture this draft knows of,
+    so a real missing title ("My logo story") keeps the text verdict. KRI-667: the words are
+    never read for meaning; only this draft's own pictures (beats, misses, file labels) decide.
+    """
+    literal = (req.literal or "").strip()
+    if req.scope != "title" or not literal or len(literal.split()) > 5:
+        return None
+    beats = facts.reaction_beats or ()
+    titled = [b for b in beats if b.anchor == "title" and _same_picture(literal, b.trigger)]
+    misses = [(t, r) for t, r in facts.title_beat_misses if _same_picture(literal, t)]
+    dropped = [t for t in facts.dropped_beat_triggers if _same_picture(literal, t)]
+    owned = [label for label in facts.owned_picture_labels if _same_picture(literal, label)]
+    if not (titled or misses or dropped or owned):
+        return None
+    name = f"“{literal}”"
+    if misses:
+        return _receipt(req, "partial", "; ".join(_title_miss_problem(t, r) for t, r in misses))
+    if facts.rendered_variant:
+        if titled:
+            return _receipt(req, "met", _placement_reason(titled))
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"{name} isn't above your title in this video.",
+                tr=f"{name} bu videoda başlığının üstünde değil.",
+            ),
+        )
+    if titled:
+        if not _title_look_on():
+            return _receipt(
+                req,
+                "not_possible",
+                say(
+                    en="A picture can't go above the title on this edit yet.",
+                    tr="Bu düzenlemede başlığın üstüne henüz görsel konamıyor.",
+                ),
+            )
+        return _receipt(req, "partial", _TITLE_PICTURE_PLAN)
+    if dropped:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"I couldn't find the photo or sticker for {name}.",
+                tr=f"{name} için fotoğraf ya da çıkartma bulamadım.",
+            ),
+        )
+    if facts.reaction_beats_available is False:
+        return _receipt(
+            req,
+            "not_possible",
+            say(
+                en="A picture can't go above the title on this edit yet.",
+                tr="Bu düzenlemede başlığın üstüne henüz görsel konamıyor.",
+            ),
+        )
+    if facts.reaction_beats is None:
+        return _receipt(req, "partial", _CANT_CHECK_BEATS)
+    return _receipt(
+        req,
+        "partial",
+        say(
+            en=f"This draft doesn't put your picture {name} above your title.",
+            tr=f"Bu taslak {name} görselini başlığının üstüne koymuyor.",
+        ),
+    )
 
 
 def _placement_reason(placements: Sequence[BeatFact]) -> str | None:
@@ -8396,6 +8597,15 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                     )
                 )
     if not problems:
+        if (
+            by_name
+            and placements
+            and not facts.rendered_variant
+            and all(b.anchor == "title" for b in placements)
+            and _title_look_on()
+        ):
+            # KRI-1322: only the render knows whether the logo fits above the title.
+            return _receipt(req, "partial", _TITLE_PICTURE_PLAN)
         return _receipt(req, "met", _placement_reason(placements) if by_name else None)
     status = "partial" if delivered else "not_possible"
     return _receipt(req, status, "; ".join(problems) + ".")
@@ -13001,6 +13211,9 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         if logo_miss is not None:
             return logo_miss
         return _receipt(req, "met", None)
+    picture = _title_picture_receipt(req, facts)
+    if picture is not None:
+        return picture  # KRI-1322: "the GitHub logo above it" is a picture, not words
     # Checked BEFORE the spoken-text branch: a wording cue ("when I talk about them") with no
     # trigger is the worker's list label, not KRI-791's "tell me the exact word".
     if (

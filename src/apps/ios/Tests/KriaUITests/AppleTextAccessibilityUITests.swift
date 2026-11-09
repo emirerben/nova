@@ -118,10 +118,27 @@ final class AppleTextAccessibilityUITests: XCTestCase {
         let editorial = app.buttons["native-editor-font-tab-editorial"]
         XCTAssertTrue(editorial.waitForExistence(timeout: 3))
         XCTAssertTrue(editorial.isSelected)
-        XCTAssertTrue(app.buttons["native-editor-font-option-editorial-playfair-display"].waitForExistence(timeout: 3))
+        // The page lists its fonts alphabetically in a lazy list, so a font far down it is not on screen yet.
+        let playfair = app.buttons["native-editor-font-option-editorial-playfair-display"]
+        let editorialPages = app.scrollViews.containing(NSPredicate(format: "identifier BEGINSWITH %@", "native-editor-font-option-editorial-"))
+        XCTAssertTrue(editorialPages.firstMatch.waitForExistence(timeout: 3))
+        for _ in 0..<8 where !playfair.isHittable {
+            // The innermost match is the page's own vertical list; the outer one is the sideways pager.
+            editorialPages.element(boundBy: editorialPages.count - 1).swipeUp()
+        }
+        XCTAssertTrue(playfair.waitForExistence(timeout: 3))
+        XCTAssertTrue(playfair.isHittable, "Playfair Display is listed on the Editorial page")
 
         // Tapping a chip jumps straight to that type, which lists only its fonts.
         XCTAssertTrue(script.waitForExistence(timeout: 3))
+        // The strip has scrolled to centre Editorial, so Script is past its edge: drag the strip sideways to reach it.
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        let window = app.windows.firstMatch.frame
+        for _ in 0..<3 where !window.contains(script.frame) {
+            let row = editorial.frame.midY
+            origin.withOffset(CGVector(dx: window.width * 0.85, dy: row))
+                .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: window.width * 0.15, dy: row)))
+        }
         script.tap()
         let pacifico = app.buttons["native-editor-font-option-script-pacifico"]
         XCTAssertTrue(pacifico.waitForExistence(timeout: 3))

@@ -216,6 +216,29 @@ final class PerfCounters: @unchecked Sendable {
         if counts[key] == nil { counts[key] = value }
     }
 
+    private var pingSent: UInt64?
+    /// KRI-1239: when the main-thread probe's current ping was sent (nil once it ran), so a stuck main thread shows.
+    func markPing(_ sent: UInt64?) {
+        lock.lock(); defer { lock.unlock() }
+        pingSent = sent
+    }
+
+    func pingSentAt() -> UInt64? {
+        lock.lock(); defer { lock.unlock() }
+        return pingSent
+    }
+
+    func set(_ key: String, _ value: Int) {
+        lock.lock(); defer { lock.unlock() }
+        counts[key] = value
+    }
+
+    /// Keeps the largest value seen (a worst-case reading such as `main.maxStallMs`).
+    func raise(_ key: String, to value: Int) {
+        lock.lock(); defer { lock.unlock() }
+        if value > counts[key, default: 0] { counts[key] = value }
+    }
+
     func snapshot() -> [String: Int] {
         lock.lock(); defer { lock.unlock() }
         return counts

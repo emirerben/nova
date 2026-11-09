@@ -403,11 +403,13 @@ def test_ffmpeg_missing_or_timeout_returns_none(tmp_path, monkeypatch):
 
 
 def test_focus_github_1x():
+    # KRI-1307: never below the cover fit (it used to zoom out to 0.865x: black bars); the view
+    # starts at the column's left edge (0.18 less the 2 % pad) so lines read from their start.
     col = TextColumn(left=0.18, right=0.60, line_pitch=26 / 1080)
     f = focus_for_text_column(col, source_w=1920, source_h=1080)
     assert f is not None
-    assert f.zoom == pytest.approx(0.865, abs=0.01)
-    assert f.x == pytest.approx(0.24, abs=0.02)
+    assert f.zoom == pytest.approx(1.0, abs=0.01)
+    assert f.x == pytest.approx(0.16 / (1 - 1080 / (1920 * 1920 / 1080)), abs=0.01)
     assert f.y == 0.5
 
 
@@ -415,8 +417,8 @@ def test_focus_retina():
     col = TextColumn(left=0.09, right=0.67, line_pitch=52 / 1964)
     f = focus_for_text_column(col, source_w=3024, source_h=1964)
     assert f is not None
-    assert 0.55 <= f.zoom <= 0.85
-    assert 0.10 <= f.x <= 0.17
+    assert f.zoom == pytest.approx(1.0, abs=0.01)  # KRI-1307: fills the frame (was 0.55-0.85)
+    assert 0.08 <= f.x <= 0.12  # the view starts at the column's left edge
 
 
 def test_focus_none_when_picture_fits():

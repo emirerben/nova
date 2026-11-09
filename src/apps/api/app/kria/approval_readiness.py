@@ -29,6 +29,7 @@ from app.kria.brief_checks import (
     defers_text_to_phone,
     plan_facts_from_editor_payload,
     plan_facts_from_strategy,
+    speaker_background_waits_for_render,
 )
 from app.kria.contracts import RequirementReceipt
 from app.kria.order_replacement_receipts import with_verified_order_execution
@@ -146,7 +147,11 @@ def _promised_at_render(req: BriefRequirement, receipt: RequirementReceipt, fact
     reason = receipt.full_reason
     if receipt.status != "partial" or not reason or receipt.requirement_id != req.id:
         return False
-    return _only_promises(reason) or reason == _pinned_promise(req, facts)
+    return (
+        _only_promises(reason)
+        or reason == _pinned_promise(req, facts)
+        or speaker_background_waits_for_render(req, facts)
+    )
 
 
 def _only_promises(reason: str) -> bool:

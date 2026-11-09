@@ -1011,7 +1011,7 @@ def _overlay_snapshot(
             "fullscreen": sum(1 for c in cards if c["display_mode"] == "fullscreen"),
         },
         "asset_pool": [
-            {key: row[key] for key in ("id", "kind", "label") if key in row}
+            {key: row[key] for key in ("id", "kind", "subject") if key in row}
             for row in pool or []
             if isinstance(row, dict)
         ],

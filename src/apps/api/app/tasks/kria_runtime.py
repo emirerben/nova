@@ -1792,6 +1792,13 @@ def _simpler_version_consent(
     Legacy offers have receipt versions but no choice card. They use the same exact
     label/alias matcher, preserving KRI-610's text fallback without treating silence,
     refusal, another question, or an old stable requirement ID as consent (KRI-698).
+
+    KRI-1323: the tap need not be this turn's own message. Qendresa Q2 run 2 (prod thread
+    9db44dc2): the tap turn asked the ending's wording instead of drafting, and the answer to
+    that question became the next turn's message, so the tap was lost and the same card came
+    back. The latest answer ON THE CARD, given after it was offered and with no draft since,
+    is the creator's choice (a later "Change my request" on it wins; a newer hold's card is a
+    new offer that an older tap never answers).
     """
     if not requirement_ids or brief is None or source_event is None:
         return None
@@ -1799,15 +1806,24 @@ def _simpler_version_consent(
         select(CreationThreadEvent.event_type, CreationThreadEvent.payload)
         .where(
             CreationThreadEvent.thread_id == thread_id,
-            CreationThreadEvent.event_type.in_(("assistant_response", "draft_applied")),
+            CreationThreadEvent.event_type.in_(
+                ("assistant_response", "draft_applied", "user_message")
+            ),
         )
         .order_by(CreationThreadEvent.sequence.desc())
         .limit(50)
     ).all()
+    # Card answers given after the offer being read, newest first (KRI-1323).
+    answers: list[Mapping[str, Any]] = []
     for event_type, payload in rows:
         if event_type == "draft_applied":
             return None
         payload = payload if isinstance(payload, Mapping) else {}
+        if event_type == "user_message":
+            answer = payload.get("choice_selection")
+            if isinstance(answer, Mapping):
+                answers.append(answer)
+            continue
         coverage = payload.get("brief_coverage")
         if not isinstance(coverage, Mapping) or coverage.get("reason") not in {
             SIMPLER_VERSION_REASON,
@@ -1833,13 +1849,18 @@ def _simpler_version_consent(
         else:
             consent = "unnamed"
         selection = (source_event.payload or {}).get("choice_selection")
+        if isinstance(selection, Mapping) and selection.get("question_id") == question.get(
+            "question_id"
+        ):
+            return consent if selection.get("option_key") == "simpler_version" else None
+        # KRI-1323: this turn answers another question; an earlier tap on this card still holds.
+        earlier = next(
+            (a for a in answers if a.get("question_id") == question.get("question_id")), None
+        )
+        if earlier is not None and question.get("question_id"):
+            return consent if earlier.get("option_key") == "simpler_version" else None
         if isinstance(selection, Mapping):
-            return (
-                consent
-                if selection.get("question_id") == question.get("question_id")
-                and selection.get("option_key") == "simpler_version"
-                else None
-            )
+            return None
         # A bare number may answer an intervening clip question. Only the live
         # card's validated selection can use its ordinal; a text fallback must
         # name the simpler option itself.

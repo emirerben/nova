@@ -850,7 +850,11 @@ private struct CreationWorkspaceView: View {
         for requestID in completedThoughtSummaries.keys.sorted() {
             hasher.combine(requestID)
             for summary in completedThoughtSummaries[requestID] ?? [] {
-                hasher.combine(summary.id); hasher.combine(summary.status.rawValue); hasher.combine(summary.text)
+                // KRI-1239: never the text itself. A finished thought's text is final, and hashing it (tens of KB of
+                // non-ASCII prose, normalised on every read) on every row of every redraw froze the main thread
+                // past the iOS watchdog. Its length (O(1) for native strings) still marks a changed record.
+                hasher.combine(summary.id); hasher.combine(summary.status.rawValue)
+                hasher.combine(summary.text.utf8.count); hasher.combine(summary.durationMS)
             }
         }
         let key = hasher.finalize()
@@ -862,7 +866,20 @@ private struct CreationWorkspaceView: View {
         )
         derived.timelineKey = cacheable ? key : nil
         derived.timeline = built
+        derived.timelineMessages = nil
         return built
+    }
+
+    /// The timeline's messages in order. Each question card asks for them on every redraw, so they are kept with the
+    /// timeline they came from instead of being filtered out again per row.
+    private var timelineMessages: [ChatTranscriptMessage] {
+        let entries = timeline
+        if let cached = derived.timelineMessages, derived.timelineKey != nil { return cached }
+        let messages = entries.compactMap { entry -> ChatTranscriptMessage? in
+            if case .message(let message) = entry.content { message } else { nil }
+        }
+        if derived.timelineKey != nil { derived.timelineMessages = messages }
+        return messages
     }
 
     /// The newest reply that carries requirement receipts; a new one means the brief may have changed.
@@ -1294,7 +1311,7 @@ private struct CreationWorkspaceView: View {
     private var timelineUpdateToken: String {
         let feed = planFeed.paced(by: deviceBuildStage)
         let readyCardsToken: String = readyCardsPresentation?.cards.map(\.id).joined(separator: ",") ?? ""
-        let liveThoughtToken: String = liveThoughtSummaries.map { "\($0.id):\($0.status.rawValue):\($0.text.count)" }.joined(separator: "|")
+        let liveThoughtToken: String = liveThoughtSummaries.map { "\($0.id):\($0.status.rawValue):\($0.text.utf8.count)" }.joined(separator: "|")
         let timelineIDs: String = timeline.map(\.id).joined(separator: "|")
         let failureMessage: String = failure?.message ?? ""
         let upNextTurnID: String = upNext?.turnID ?? ""
@@ -1423,6 +1440,7 @@ private struct CreationWorkspaceView: View {
     }
 
     @ViewBuilder private func timelineRow(_ entry: ChatTimelineEntry) -> some View {
+        let _ = Perf.event("chat.rowBuilt")
         switch entry.content {
         case .message(let message):
             messageRow(message)
@@ -1472,9 +1490,7 @@ private struct CreationWorkspaceView: View {
         // The payload only exists when the server supports it, so an unloaded capability snapshot never hides it.
         guard transcriptIsFresh, ClipSelectionAvailability.isAvailable(capabilities: capabilities),
               let question = message.clipQuestion else { return nil }
-        let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
-            if case .message(let message) = entry.content { message } else { nil }
-        }
+        let messages = timelineMessages
         guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return nil }
         let isLatestQuestion = !messages[(index + 1)...].contains { $0.clipQuestion != nil }
         let isAnswered = messages[(index + 1)...].contains { $0.role == .user }
@@ -1611,9 +1627,7 @@ private struct CreationWorkspaceView: View {
     private func choiceQuestionMode(for message: ChatTranscriptMessage) -> ChoiceQuestionCardMode? {
         guard transcriptIsFresh, capabilities?.choiceQuestionsEnabled == true,
               let question = message.choiceQuestion else { return nil }
-        let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
-            if case .message(let message) = entry.content { message } else { nil }
-        }
+        let messages = timelineMessages
         guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return nil }
         let later = messages[(index + 1)...]
         if let answer = later.first(where: { $0.role == .user }) {
@@ -1640,9 +1654,7 @@ private struct CreationWorkspaceView: View {
     private func echoesChoiceAnswer(_ message: ChatTranscriptMessage) -> Bool {
         guard message.role == .user, !message.isPending, transcriptIsFresh,
               capabilities?.choiceQuestionsEnabled == true else { return false }
-        let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
-            if case .message(let message) = entry.content { message } else { nil }
-        }
+        let messages = timelineMessages
         guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return false }
         // The nearest question above, with no other user message in between: this one is its answer.
         for earlier in messages[..<index].reversed() {
@@ -1659,9 +1671,7 @@ private struct CreationWorkspaceView: View {
     /// project (its item, its latest revision); every other script card is read-only text.
     private func voiceoverScriptMode(for message: ChatTranscriptMessage) -> VoiceoverScriptCardMode? {
         guard capabilities?.voiceoverScriptCardsEnabled == true, let script = message.voiceoverScript else { return nil }
-        let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
-            if case .message(let message) = entry.content { message } else { nil }
-        }
+        let messages = timelineMessages
         let scripts = messages.compactMap(\.voiceoverScript)
         // A draft is live while it is the newest draft; a failed draft only while no draft exists to record.
         let current = script.isDraft ? scripts.last(where: \.isDraft) : (scripts.contains(where: \.isDraft) ? nil : scripts.last)
@@ -1717,9 +1727,7 @@ private struct CreationWorkspaceView: View {
     /// anything later that landed (an answer, a newer question) removes them from history.
     private func replyOptionsMode(for message: ChatTranscriptMessage) -> ReplyOptionsMode? {
         guard transcriptIsFresh, !message.replyOptions.isEmpty else { return nil }
-        let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
-            if case .message(let message) = entry.content { message } else { nil }
-        }
+        let messages = timelineMessages
         guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return nil }
         let later = messages[(index + 1)...]
         guard !later.contains(where: { ($0.role == .user && !$0.isPending) || !$0.replyOptions.isEmpty || !$0.options.isEmpty }) else { return nil }
@@ -3729,6 +3737,8 @@ enum ChatMessageRole: Equatable { case user, assistant }
 final class ChatDerivedMemo {
     var timelineKey: Int?
     var timeline: [ChatTimelineEntry] = []
+    /// The `.message` entries of `timeline`; nil until read after each rebuild.
+    var timelineMessages: [ChatTranscriptMessage]?
     var feedKey: Int?
     var feed: PlanBlockFeedState?
     var clipQuestionKey: Int?

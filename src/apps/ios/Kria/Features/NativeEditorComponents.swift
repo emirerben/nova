@@ -318,6 +318,87 @@ struct NativeEditorBannerRow: View {
     }
 }
 
+struct NativeEditorNoticeAction {
+    let title: String
+    let identifier: String
+    let handler: () -> Void
+}
+
+/// The editor's top notice: a `fill` card inset from the screen edges, a title and one plain sentence,
+/// and at most a primary button beside a tertiary one. No borders.
+struct NativeEditorNoticeCard: View {
+    var title: String?
+    let message: String
+    var primary: NativeEditorNoticeAction?
+    var secondary: NativeEditorNoticeAction?
+    var isDisabled = false
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                if let title {
+                    Text(title)
+                        .kriaType(.button)
+                        .foregroundStyle(KriaColor.ink)
+                        .accessibilityAddTraits(.isHeader)
+                }
+                Text(message)
+                    .kriaType(.label)
+                    .foregroundStyle(title == nil ? KriaColor.ink : KriaColor.mutedInk)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            if primary != nil || secondary != nil {
+                let layout = typeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .center, spacing: 8))
+                    : AnyLayout(HStackLayout(spacing: 8))
+                layout {
+                    if let primary {
+                        Button(primary.title, action: primary.handler)
+                            .buttonStyle(KriaButtonStyle(role: .primary, size: .medium, fullWidth: true))
+                            .accessibilityIdentifier(primary.identifier)
+                    }
+                    if let secondary {
+                        Button(secondary.title, action: secondary.handler)
+                            .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium, fullWidth: typeSize.isAccessibilitySize))
+                            .accessibilityIdentifier(secondary.identifier)
+                    }
+                }
+                .disabled(isDisabled)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .accessibilityElement(children: .contain)
+    }
+}
+
+#Preview("Editor notices") {
+    VStack(spacing: 12) {
+        NativeEditorNoticeCard(
+            title: "Review conflicting changes",
+            message: "You and the latest version changed the same content. Choose which one to keep.",
+            primary: NativeEditorNoticeAction(title: "Use latest version", identifier: "native-editor-merge-remote") {},
+            secondary: NativeEditorNoticeAction(title: "Keep mine", identifier: "native-editor-merge-local") {})
+        NativeEditorNoticeCard(
+            title: "Review conflicting changes",
+            message: "The latest version may use a different song. Use it, then edit the song.",
+            primary: NativeEditorNoticeAction(title: "Use latest version", identifier: "native-editor-merge-remote") {})
+        NativeEditorNoticeCard(
+            title: "A new version of your video is ready",
+            message: "Switching discards your unsaved edits.",
+            primary: NativeEditorNoticeAction(title: "Use latest version", identifier: "native-editor-switch-job") {},
+            secondary: NativeEditorNoticeAction(title: "Keep mine", identifier: "native-editor-keep-editing") {})
+        NativeEditorNoticeCard(message: "The latest version could not be checked. Your edits are still here.")
+    }
+    .padding(.horizontal, 16)
+    .frame(maxHeight: .infinity, alignment: .top)
+    .background(KriaColor.paper)
+}
+
 struct NativeEditorTransport: View {
     @ObservedObject var session: NativeEditorSession
     @ObservedObject private var clock: NativeEditorPlaybackClock

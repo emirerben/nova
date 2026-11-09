@@ -18,6 +18,12 @@ Failure catalogue (written before the code; each row is a test below):
   P5  the kill switch: with the card flag off nothing is offered, nothing is pinned, and the same
       Save is refused as it always was.
   P6  a Save of cards the job already pinned is untouched by the new pin step.
+  P8  the model is told how to place an image: the prompt it is rendered lists each accepted
+      image under the creator's title and teaches add_overlay instead of refusing it.
+  P9  the op's own fields are honoured: "bottom" lands at the bottom, an exact spot beats a
+      preset, and the effect bundle id reaches the card.
+  P10 more accepted images than the pool holds drops the OLDEST, so the newest is still placeable
+      and a Save that places it pins it.
 
 Stand-ins: the image provider (the operation is completed with a real PNG through the real
 admission path), the bucket (an in-memory object store), and the render worker.
@@ -235,7 +241,7 @@ def test_p1_only_an_accepted_generated_image_is_offered_and_placeable(talking): 
     assert [row["id"] for row in rows] == [str(accepted)], "an image nobody accepted is not offered"
     snapshot = snapshot_with(job, rows)
     assert snapshot["overlays"]["asset_pool"] == [
-        {"id": str(accepted), "kind": "image", "label": "generated.png"}
+        {"id": str(accepted), "kind": "image", "subject": "red card"}
     ]
     assert "gcs_path" not in json.dumps(snapshot), "the model sees ids, never storage paths"
 
@@ -340,6 +346,81 @@ def test_the_accepted_image_row_is_the_one_the_pool_lists(talking):  # noqa: ANN
             select(GeneratedMediaOperation).where(GeneratedMediaOperation.asset_id == accepted)
         )
         assert operation.request_metadata.get("accepted") is True
+
+
+# ── P8: the prompt the model reads ──────────────────────────────────────────────────
+
+
+def test_p8_the_rendered_prompt_names_each_image_and_teaches_add_overlay(talking):  # noqa: ANN001
+    from app.agents import edit_copilot
+    from app.agents.editor_ops_v2 import family_fragments
+
+    make_image(talking, "red", accepted=True)
+    make_image(talking, "blue", accepted=True)
+    snapshot = snapshot_with(load_job(talking), pool_rows(talking))
+
+    text = edit_copilot._format_snapshot(snapshot)
+    pool_lines = [
+        line for line in text.splitlines() if line.startswith("- id=") and "kind='image'" in line
+    ]
+    assert sorted(line.split("subject=")[1] for line in pool_lines) == ["'blue card'", "'red card'"]
+    assert not any("unknown" in line for line in pool_lines)
+
+    lane = family_fragments(snapshot)
+    assert '"op":"add_overlay"' in lane
+    assert "(no ASSET POOL)" not in lane, "the lane must not tell the model to refuse a pool row"
+
+
+# ── P9: add_overlay honours position and the bundle id ───────────────────────────────
+
+
+def placed_card(talking, op):  # noqa: ANN001, ANN201
+    accepted = make_image(talking, "red", accepted=True)
+    job = load_job(talking)
+    rows = pool_rows(talking)
+    parsed = parse(add_op(accepted, **op), snapshot_with(job, rows))
+    assert parsed is not None
+    compiled = compile_editor_ops(
+        job,
+        projected_variant(job),
+        [parsed],
+        pool_assets=generated_overlay_pool.paths_by_asset_id(rows),
+    )
+    return next(
+        c for c in compiled.payload.media_overlays if c["src_gcs_path"] == path_of(accepted)
+    )
+
+
+def test_p9_position_preset_effect_bundle_and_exact_spot(talking):  # noqa: ANN001
+    bottom = placed_card(talking, {"position": "bottom", "effect_bundle_id": "reveal_1"})
+    assert (bottom["x_frac"], bottom["y_frac"]) == (0.5, 0.82)
+    assert bottom["effect_group_id"] == "reveal_1"
+
+    exact = placed_card(talking, {"position": "bottom", "y_frac": 0.3})
+    assert exact["y_frac"] == 0.3, "an exact spot beats the preset"
+
+    default = placed_card(talking, {})
+    assert (default["x_frac"], default["y_frac"]) == (0.74, 0.22)
+    assert "effect_group_id" not in default
+
+
+# ── P10: the newest image survives the pool's size limit ─────────────────────────────
+
+
+def test_p10_the_oldest_image_is_the_one_the_pool_drops(talking):  # noqa: ANN001
+    made = [
+        make_image(talking, f"#{n:02x}{n:02x}{n:02x}", accepted=True)
+        for n in range(1, generated_overlay_pool.MAX_POOL_ROWS + 2)
+    ]
+    ids = [row["id"] for row in pool_rows(talking)]
+    assert len(ids) == generated_overlay_pool.MAX_POOL_ROWS
+    assert str(made[-1]) in ids and str(made[0]) not in ids
+
+    job = load_job(talking)
+    card_row = card(made[-1], path_of(made[-1]))
+    prep = commit(job, talking, media_overlays=[card_row])
+    assert prep["render_destination"] == "device"
+    assert str(made[-1]) in pinned_ids(job)
 
 
 # ── P7: the real chat turn compiles the card from the server's rows ──────────────────
