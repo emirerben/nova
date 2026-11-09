@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.134.0] - 2026-11-09
+
+### Changed
+- fix(kria): a title linked to its clip follows it, and realign re-attaches it (KRI-1332) (#2244) <!-- release-pr: 2244 -->
+
 ## [0.88.133.0] - 2026-11-09
 
 ### Changed
