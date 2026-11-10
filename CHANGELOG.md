@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.139.0] - 2026-11-10
+
+### Changed
+- fix(ios): reopening an unchanged editor no longer rebuilds the preview (#2225) <!-- release-pr: 2225 -->
+
 ## [0.88.138.0] - 2026-11-10
 
 ### Changed
