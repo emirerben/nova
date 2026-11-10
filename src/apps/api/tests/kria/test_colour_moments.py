@@ -430,6 +430,10 @@ def test_a_moment_whose_first_frames_are_trimmed_keeps_its_sound_on_the_new_edge
     recipe = device_status(job, "subtitled").request.recipe
     assert [(m.start, m.end) for m in recipe.color_moments] == [pytest.approx((0.0, 2.0))]
     assert _sound_starts(job) == [pytest.approx(0.0)]
+    variant = job.assembly_plan["variants"][0]
+    assert [(r["id"], r["at_s"]) for r in variant["sound_effects"]] == [
+        ("cmsfx-cm1-enter", pytest.approx(0.0))
+    ]
 
 
 # --- removal with the gate closed: chat and old builds (review of 8e2a3615e) ----------------

@@ -838,6 +838,10 @@ struct EditorDocument: Equatable, Sendable {
     /// KRI-1350: the server-owned colour-moments lane (`{moments, end_fade}`), written only by Kria chat. Read for
     /// the preview; never part of a Save (no `EditorSection`), so the server's copy stays authoritative.
     var colorMoments: JSONValue?
+    /// KRI-1350: the timeline the stored colour-moments lane is timed against (the server's saved slots). The preview
+    /// moves the moments from it onto the current Range edit exactly like the server's `reproject_color_moments` does
+    /// at Save. Empty whenever the edit has no lane, so every other document is unchanged.
+    var colorMomentsBaseSlots: [EditorTimelineSlot] = []
     var carouselMoment: [String: JSONValue]?
     var lyrics: [String: JSONValue]?
     var title: String?
@@ -963,6 +967,10 @@ struct EditorDocument: Equatable, Sendable {
         document.orientation = canonicalOrientation(document.orientation)
         if document.landscapeFit == nil { document.landscapeFit = document.capabilities["landscape_fit"]?.value.flatMap { ["fit", "fill"].contains($0) ? $0 : nil } }
         document.clips = decodeSlots(array(sections["timeline_slots"] ?? object(snapshot["user_timeline"])?["slots"]) ?? []) .filter { !$0.removed }
+        if document.colorMoments != nil {
+            // The server's own saved timeline wins over editor sections a merge may have replaced with local edits.
+            document.colorMomentsBaseSlots = decodeSlots(array(object(snapshot["user_timeline"])?["slots"] ?? sections["timeline_slots"]) ?? []).filter { !$0.removed }
+        }
         document.tombstones = decodeSlots(array(sections["timeline_slots"] ?? object(snapshot["user_timeline"])?["slots"]) ?? []) .filter(\.removed)
         let splitValue = sections["split_screen_sections"] ?? object(snapshot["user_timeline"])?["split_screen_sections"]
         let splitRows = array(splitValue) ?? []

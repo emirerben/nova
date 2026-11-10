@@ -3601,7 +3601,11 @@
         "KriaTests/ColorMomentsEditorPreviewTests/testTheStoredLaneReachesThePreviewRecipe",
         "KriaTests/ColorMomentsEditorPreviewTests/testAShorterCutShortensOrDropsLikeTheServer",
         "KriaTests/ColorMomentsEditorPreviewTests/testAnUnreadableLanePreviewsWithoutMoments",
-        "KriaTests/ColorMomentsEditorPreviewTests/testTheDocumentReadsTheLaneButNeverSavesIt"
+        "KriaTests/ColorMomentsEditorPreviewTests/testTheDocumentReadsTheLaneButNeverSavesIt",
+        "KriaTests/ColorMomentsEditorPreviewTests/testARangeTrimMovesThePreviewMomentAndItsSoundTogether",
+        "KriaTests/ColorMomentsEditorPreviewTests/testAMomentWhoseFirstFramesAreTrimmedKeepsItsSoundOnTheNewEdge",
+        "KriaTests/ColorMomentsEditorPreviewTests/testAnEditWithoutMomentsKeepsNoBaseAndAnUntouchedTimelineIsUnchanged",
+        "KriaTests/NativeSpeechTimelineTests/testDeleteTrimSlideReorderKeepsWordsAndLanesOnTheirSource"
       ],
       "paths": [
         "src/apps/api/app/kria/portable_color_moments.py",
@@ -3619,7 +3623,8 @@
         "tests/fixtures/colour-moments/parity-v1.json",
         "tests/fixtures/colour-moments/cigdem-reel-answer-key.json",
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/color_moments_removal_only_clear.json",
-        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/color_moments_removal_only_refuses_new.json"
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/color_moments_removal_only_refuses_new.json",
+        "src/apps/ios/Kria/Core/NativeSpeechTimelineProjection.swift"
       ]
     }
   ]
