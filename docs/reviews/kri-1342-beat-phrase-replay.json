@@ -1,0 +1,1765 @@
+{
+ "note": "Offline replay of ground_phone_reaction_beats on 13 prod jobs, flag off (before) vs BEAT_PHRASE_TIMING on (after). dstart = start - phrase start; cut = ends inside a sentence that began after the cue.",
+ "rows": [
+  {
+   "case": "cabin T2 Deniz room interview (Tigre)",
+   "job_id": "001ce6d8-5b81-4571-8304-6b4ae1ab8086",
+   "language": "tr",
+   "beat_id": "airbnb-video-pip",
+   "trigger": "Airbnb",
+   "cue": "named_word",
+   "before": {
+    "at": 36.44,
+    "end": 39.44,
+    "dstart": 0.38,
+    "cut": true
+   },
+   "after": {
+    "at": 36.44,
+    "end": 39.44,
+    "dstart": 0.38,
+    "cut": true
+   }
+  },
+  {
+   "case": "cabin T2 Deniz room interview (Tigre)",
+   "job_id": "001ce6d8-5b81-4571-8304-6b4ae1ab8086",
+   "language": "tr",
+   "beat_id": "kano-photo-pip",
+   "trigger": "kano",
+   "cue": "named_word",
+   "before": {
+    "at": 66.8,
+    "end": 69.8,
+    "dstart": 0.0,
+    "cut": false
+   },
+   "after": {
+    "at": 66.8,
+    "end": 69.8,
+    "dstart": 0.0,
+    "cut": false
+   }
+  },
+  {
+   "case": "cabin T2 Deniz room interview (Tigre)",
+   "job_id": "001ce6d8-5b81-4571-8304-6b4ae1ab8086",
+   "language": "tr",
+   "beat_id": "helal-olsun-ding",
+   "trigger": "helal olsun",
+   "cue": "named_word",
+   "before": {
+    "at": 46.9,
+    "end": 49.4,
+    "dstart": 0.56,
+    "cut": true
+   },
+   "after": {
+    "at": 46.9,
+    "end": 49.4,
+    "dstart": 0.56,
+    "cut": true
+   }
+  },
+  {
+   "case": "football KRI-172 acceptance (EN) 09-24",
+   "job_id": "1aff3f03-1558-4ebf-b345-99a9ec80184e",
+   "language": "en",
+   "beat_id": "greenwood",
+   "trigger": "Mason Greenwood",
+   "cue": "named_word",
+   "before": {
+    "at": 6.92,
+    "end": 9.44,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 6.92,
+    "end": 9.44,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "football KRI-172 acceptance (EN) 09-24",
+   "job_id": "1aff3f03-1558-4ebf-b345-99a9ec80184e",
+   "language": "en",
+   "beat_id": "greenwood-no",
+   "trigger": "no",
+   "cue": "named_word",
+   "before": {
+    "at": 7.66,
+    "end": 9.44,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 7.66,
+    "end": 9.44,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "football KRI-172 acceptance (EN) 09-24",
+   "job_id": "1aff3f03-1558-4ebf-b345-99a9ec80184e",
+   "language": "en",
+   "beat_id": "vlahovic",
+   "trigger": "Vlahović",
+   "cue": "named_word",
+   "before": {
+    "at": 12.32,
+    "end": 13.62,
+    "dstart": 0.0,
+    "cut": false
+   },
+   "after": {
+    "at": 12.32,
+    "end": 13.62,
+    "dstart": 0.0,
+    "cut": false
+   }
+  },
+  {
+   "case": "football KRI-172 acceptance (EN) 09-24",
+   "job_id": "1aff3f03-1558-4ebf-b345-99a9ec80184e",
+   "language": "en",
+   "beat_id": "vlahovic-no",
+   "trigger": "no",
+   "cue": "named_word",
+   "before": {
+    "at": 12.62,
+    "end": 13.62,
+    "dstart": 0.0,
+    "cut": false
+   },
+   "after": {
+    "at": 12.62,
+    "end": 13.62,
+    "dstart": 0.0,
+    "cut": false
+   }
+  },
+  {
+   "case": "football KRI-172 acceptance (EN) 09-24",
+   "job_id": "1aff3f03-1558-4ebf-b345-99a9ec80184e",
+   "language": "en",
+   "beat_id": "leao",
+   "trigger": "Rafael Leão",
+   "cue": "named_word",
+   "before": {
+    "at": 9.44,
+    "end": 12.32,
+    "dstart": 0.0,
+    "cut": false
+   },
+   "after": {
+    "at": 9.44,
+    "end": 12.32,
+    "dstart": 0.0,
+    "cut": false
+   }
+  },
+  {
+   "case": "football KRI-172 acceptance (EN) 09-24",
+   "job_id": "1aff3f03-1558-4ebf-b345-99a9ec80184e",
+   "language": "en",
+   "beat_id": "leao-check",
+   "trigger": "Rafael Leão",
+   "cue": "named_word",
+   "before": {
+    "at": 9.44,
+    "end": 10.94,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 9.44,
+    "end": 10.94,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "football KRI-172 acceptance (EN) 09-24",
+   "job_id": "1aff3f03-1558-4ebf-b345-99a9ec80184e",
+   "language": "en",
+   "beat_id": "trossard",
+   "trigger": "Leandro Trossard",
+   "cue": "named_word",
+   "before": {
+    "at": 13.62,
+    "end": 16.62,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 13.62,
+    "end": 16.62,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "football KRI-172 acceptance (EN) 09-24",
+   "job_id": "1aff3f03-1558-4ebf-b345-99a9ec80184e",
+   "language": "en",
+   "beat_id": "trossard-check",
+   "trigger": "Leandro Trossard",
+   "cue": "named_word",
+   "before": {
+    "at": 13.62,
+    "end": 16.12,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 13.62,
+    "end": 16.12,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "football KRI-172 acceptance (EN) 09-24",
+   "job_id": "1aff3f03-1558-4ebf-b345-99a9ec80184e",
+   "language": "en",
+   "beat_id": "rank3",
+   "trigger": "number three",
+   "cue": "named_word",
+   "before": {
+    "at": 6.08,
+    "end": 7.66,
+    "dstart": 0.36,
+    "cut": false
+   },
+   "after": {
+    "at": 6.08,
+    "end": 7.66,
+    "dstart": 0.36,
+    "cut": false
+   }
+  },
+  {
+   "case": "football KRI-172 acceptance (EN) 09-24",
+   "job_id": "1aff3f03-1558-4ebf-b345-99a9ec80184e",
+   "language": "en",
+   "beat_id": "rank2",
+   "trigger": "number two",
+   "cue": "named_word",
+   "before": {
+    "at": 10.94,
+    "end": 12.62,
+    "dstart": 0.24,
+    "cut": false
+   },
+   "after": {
+    "at": 10.94,
+    "end": 12.62,
+    "dstart": 0.24,
+    "cut": false
+   }
+  },
+  {
+   "case": "football KRI-172 acceptance (EN) 09-24",
+   "job_id": "1aff3f03-1558-4ebf-b345-99a9ec80184e",
+   "language": "en",
+   "beat_id": "rank1",
+   "trigger": "number one",
+   "cue": "named_word",
+   "before": {
+    "at": 16.24,
+    "end": 18.74,
+    "dstart": 0.38,
+    "cut": true
+   },
+   "after": {
+    "at": 16.24,
+    "end": 18.74,
+    "dstart": 0.38,
+    "cut": true
+   }
+  },
+  {
+   "case": "football KRI-172 acceptance (EN) 09-24",
+   "job_id": "1aff3f03-1558-4ebf-b345-99a9ec80184e",
+   "language": "en",
+   "beat_id": "salah",
+   "trigger": "Salah",
+   "cue": "named_word",
+   "before": {
+    "at": 19.02,
+    "end": 21.84,
+    "dstart": 0.36,
+    "cut": false
+   },
+   "after": {
+    "at": 19.02,
+    "end": 21.84,
+    "dstart": 0.36,
+    "cut": false
+   }
+  },
+  {
+   "case": "football KRI-172 acceptance (EN) 09-24",
+   "job_id": "1aff3f03-1558-4ebf-b345-99a9ec80184e",
+   "language": "en",
+   "beat_id": "salah-goat",
+   "trigger": "Salah",
+   "cue": "named_word",
+   "before": {
+    "at": 19.02,
+    "end": 21.52,
+    "dstart": 0.36,
+    "cut": false
+   },
+   "after": {
+    "at": 19.02,
+    "end": 21.52,
+    "dstart": 0.36,
+    "cut": false
+   }
+  },
+  {
+   "case": "football KRI-172 first run (TR-misdetected) 09-24",
+   "job_id": "385e3b13-9ca0-4a7e-807d-525e2217bb74",
+   "language": "tr",
+   "beat_id": "leao_photo",
+   "trigger": "Rafael Leão",
+   "cue": "named_word",
+   "before": {
+    "at": 9.38,
+    "end": 12.38,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 9.38,
+    "end": 12.38,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "football KRI-172 first run (TR-misdetected) 09-24",
+   "job_id": "385e3b13-9ca0-4a7e-807d-525e2217bb74",
+   "language": "tr",
+   "beat_id": "leao_check",
+   "trigger": "Rafael Leão",
+   "cue": "named_word",
+   "before": {
+    "at": 9.38,
+    "end": 11.88,
+    "dstart": 0.0,
+    "cut": false
+   },
+   "after": {
+    "at": 9.38,
+    "end": 11.88,
+    "dstart": 0.0,
+    "cut": false
+   }
+  },
+  {
+   "case": "football KRI-172 first run (TR-misdetected) 09-24",
+   "job_id": "385e3b13-9ca0-4a7e-807d-525e2217bb74",
+   "language": "tr",
+   "beat_id": "trossard_photo",
+   "trigger": "Leandro Trossard",
+   "cue": "named_word",
+   "before": {
+    "at": 13.48,
+    "end": 16.48,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 13.48,
+    "end": 16.48,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "football KRI-172 first run (TR-misdetected) 09-24",
+   "job_id": "385e3b13-9ca0-4a7e-807d-525e2217bb74",
+   "language": "tr",
+   "beat_id": "trossard_check",
+   "trigger": "Leandro Trossard",
+   "cue": "named_word",
+   "before": {
+    "at": 13.48,
+    "end": 15.98,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 13.48,
+    "end": 15.98,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "football KRI-172 first run (TR-misdetected) 09-24",
+   "job_id": "385e3b13-9ca0-4a7e-807d-525e2217bb74",
+   "language": "tr",
+   "beat_id": "salah_photo",
+   "trigger": "Salah",
+   "cue": "named_word",
+   "before": {
+    "at": 19.04,
+    "end": 21.88,
+    "dstart": 0.4,
+    "cut": false
+   },
+   "after": {
+    "at": 19.04,
+    "end": 21.88,
+    "dstart": 0.4,
+    "cut": false
+   }
+  },
+  {
+   "case": "football KRI-172 first run (TR-misdetected) 09-24",
+   "job_id": "385e3b13-9ca0-4a7e-807d-525e2217bb74",
+   "language": "tr",
+   "beat_id": "salah_goat",
+   "trigger": "Salah",
+   "cue": "named_word",
+   "before": {
+    "at": 19.04,
+    "end": 21.54,
+    "dstart": 0.4,
+    "cut": false
+   },
+   "after": {
+    "at": 19.04,
+    "end": 21.54,
+    "dstart": 0.4,
+    "cut": false
+   }
+  },
+  {
+   "case": "football/Super Lig EN 09-25",
+   "job_id": "30d213cd-848a-4d72-88f7-d0986eaf803e",
+   "language": "en",
+   "beat_id": "greenwood",
+   "trigger": "Mason Greenwood",
+   "cue": "named_word",
+   "before": {
+    "at": 6.92,
+    "end": 9.44,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 6.92,
+    "end": 9.44,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "football/Super Lig EN 09-25",
+   "job_id": "30d213cd-848a-4d72-88f7-d0986eaf803e",
+   "language": "en",
+   "beat_id": "greenwood-no",
+   "trigger": "no",
+   "cue": "named_word",
+   "before": {
+    "at": 7.66,
+    "end": 9.44,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 7.66,
+    "end": 9.44,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "football/Super Lig EN 09-25",
+   "job_id": "30d213cd-848a-4d72-88f7-d0986eaf803e",
+   "language": "en",
+   "beat_id": "vlahovic",
+   "trigger": "Vlahović",
+   "cue": "named_word",
+   "before": {
+    "at": 12.32,
+    "end": 13.74,
+    "dstart": 0.0,
+    "cut": false
+   },
+   "after": {
+    "at": 12.32,
+    "end": 13.74,
+    "dstart": 0.0,
+    "cut": false
+   }
+  },
+  {
+   "case": "football/Super Lig EN 09-25",
+   "job_id": "30d213cd-848a-4d72-88f7-d0986eaf803e",
+   "language": "en",
+   "beat_id": "vlahovic-no",
+   "trigger": "no",
+   "cue": "named_word",
+   "before": {
+    "at": 12.72,
+    "end": 13.74,
+    "dstart": 0.0,
+    "cut": false
+   },
+   "after": {
+    "at": 12.72,
+    "end": 13.74,
+    "dstart": 0.0,
+    "cut": false
+   }
+  },
+  {
+   "case": "football/Super Lig EN 09-25",
+   "job_id": "30d213cd-848a-4d72-88f7-d0986eaf803e",
+   "language": "en",
+   "beat_id": "leao",
+   "trigger": "Rafael Leão",
+   "cue": "named_word",
+   "before": {
+    "at": 9.44,
+    "end": 12.32,
+    "dstart": 0.0,
+    "cut": false
+   },
+   "after": {
+    "at": 9.44,
+    "end": 12.32,
+    "dstart": 0.0,
+    "cut": false
+   }
+  },
+  {
+   "case": "football/Super Lig EN 09-25",
+   "job_id": "30d213cd-848a-4d72-88f7-d0986eaf803e",
+   "language": "en",
+   "beat_id": "leao-yes",
+   "trigger": "Rafael Leão",
+   "cue": "named_word",
+   "before": {
+    "at": 9.44,
+    "end": 10.94,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 9.44,
+    "end": 10.94,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "football/Super Lig EN 09-25",
+   "job_id": "30d213cd-848a-4d72-88f7-d0986eaf803e",
+   "language": "en",
+   "beat_id": "trossard",
+   "trigger": "Leandro Trossard",
+   "cue": "named_word",
+   "before": {
+    "at": 13.74,
+    "end": 16.74,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 13.74,
+    "end": 16.74,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "football/Super Lig EN 09-25",
+   "job_id": "30d213cd-848a-4d72-88f7-d0986eaf803e",
+   "language": "en",
+   "beat_id": "trossard-yes",
+   "trigger": "Leandro Trossard",
+   "cue": "named_word",
+   "before": {
+    "at": 13.74,
+    "end": 16.24,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 13.74,
+    "end": 16.24,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "football/Super Lig EN 09-25",
+   "job_id": "30d213cd-848a-4d72-88f7-d0986eaf803e",
+   "language": "en",
+   "beat_id": "rank-3",
+   "trigger": "three",
+   "cue": "named_word",
+   "before": {
+    "at": 6.08,
+    "end": 7.66,
+    "dstart": 0.4,
+    "cut": false
+   },
+   "after": {
+    "at": 6.08,
+    "end": 7.66,
+    "dstart": 0.4,
+    "cut": false
+   }
+  },
+  {
+   "case": "football/Super Lig EN 09-25",
+   "job_id": "30d213cd-848a-4d72-88f7-d0986eaf803e",
+   "language": "en",
+   "beat_id": "rank-2",
+   "trigger": "two",
+   "cue": "named_word",
+   "before": {
+    "at": 10.94,
+    "end": 12.72,
+    "dstart": 0.24,
+    "cut": true
+   },
+   "after": {
+    "at": 10.94,
+    "end": 12.72,
+    "dstart": 0.24,
+    "cut": true
+   }
+  },
+  {
+   "case": "football/Super Lig EN 09-25",
+   "job_id": "30d213cd-848a-4d72-88f7-d0986eaf803e",
+   "language": "en",
+   "beat_id": "rank-1",
+   "trigger": "one",
+   "cue": "named_word",
+   "before": {
+    "at": 16.24,
+    "end": 18.74,
+    "dstart": 0.36,
+    "cut": true
+   },
+   "after": {
+    "at": 16.24,
+    "end": 18.74,
+    "dstart": 0.36,
+    "cut": true
+   }
+  },
+  {
+   "case": "football/Super Lig EN 09-25",
+   "job_id": "30d213cd-848a-4d72-88f7-d0986eaf803e",
+   "language": "en",
+   "beat_id": "salah",
+   "trigger": "Salah",
+   "cue": "named_word",
+   "before": {
+    "at": 19.02,
+    "end": 21.72,
+    "dstart": 0.38,
+    "cut": false
+   },
+   "after": {
+    "at": 19.02,
+    "end": 21.72,
+    "dstart": 0.38,
+    "cut": false
+   }
+  },
+  {
+   "case": "football/Super Lig EN 09-25",
+   "job_id": "30d213cd-848a-4d72-88f7-d0986eaf803e",
+   "language": "en",
+   "beat_id": "salah-goat",
+   "trigger": "Salah",
+   "cue": "named_word",
+   "before": {
+    "at": 19.02,
+    "end": 21.52,
+    "dstart": 0.38,
+    "cut": false
+   },
+   "after": {
+    "at": 19.02,
+    "end": 21.52,
+    "dstart": 0.38,
+    "cut": false
+   }
+  },
+  {
+   "case": "best food in Europe EN 09-25",
+   "job_id": "1ce20697-6625-459b-935d-d3ddd0a05442",
+   "language": "en",
+   "beat_id": "europe",
+   "trigger": "Europe",
+   "cue": "named_word",
+   "before": {
+    "at": 4.36,
+    "end": 6.86,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 4.36,
+    "end": 6.86,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "best food in Europe EN 09-25",
+   "job_id": "1ce20697-6625-459b-935d-d3ddd0a05442",
+   "language": "en",
+   "beat_id": "italy",
+   "trigger": "Italy",
+   "cue": "named_word",
+   "before": {
+    "at": 9.26,
+    "end": 11.76,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 9.26,
+    "end": 11.76,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "best food in Europe EN 09-25",
+   "job_id": "1ce20697-6625-459b-935d-d3ddd0a05442",
+   "language": "en",
+   "beat_id": "germany",
+   "trigger": "Germany",
+   "cue": "named_word",
+   "before": {
+    "at": 16.08,
+    "end": 18.58,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 16.08,
+    "end": 18.58,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "best food in Europe EN 09-25",
+   "job_id": "1ce20697-6625-459b-935d-d3ddd0a05442",
+   "language": "en",
+   "beat_id": "spain",
+   "trigger": "Spain",
+   "cue": "named_word",
+   "before": {
+    "at": 37.26,
+    "end": 38.62,
+    "dstart": 0.66,
+    "cut": false
+   },
+   "after": {
+    "at": 37.26,
+    "end": 38.62,
+    "dstart": 0.66,
+    "cut": false
+   }
+  },
+  {
+   "case": "best food in Europe EN 09-25",
+   "job_id": "1ce20697-6625-459b-935d-d3ddd0a05442",
+   "language": "en",
+   "beat_id": "pasta",
+   "trigger": "pasta",
+   "cue": "named_word",
+   "before": {
+    "at": 12.42,
+    "end": 14.28,
+    "dstart": 0.8,
+    "cut": false
+   },
+   "after": {
+    "at": 12.42,
+    "end": 14.28,
+    "dstart": 0.8,
+    "cut": false
+   }
+  },
+  {
+   "case": "best food in Europe EN 09-25",
+   "job_id": "1ce20697-6625-459b-935d-d3ddd0a05442",
+   "language": "en",
+   "beat_id": "pasta-check",
+   "trigger": "pasta",
+   "cue": "named_word",
+   "before": {
+    "at": 12.42,
+    "end": 14.28,
+    "dstart": 0.8,
+    "cut": false
+   },
+   "after": {
+    "at": 12.42,
+    "end": 14.28,
+    "dstart": 0.8,
+    "cut": false
+   }
+  },
+  {
+   "case": "best food in Europe EN 09-25",
+   "job_id": "1ce20697-6625-459b-935d-d3ddd0a05442",
+   "language": "en",
+   "beat_id": "pizza",
+   "trigger": "pizza",
+   "cue": "named_word",
+   "before": {
+    "at": 14.28,
+    "end": 17.28,
+    "dstart": 0.36,
+    "cut": true
+   },
+   "after": {
+    "at": 14.28,
+    "end": 17.28,
+    "dstart": 0.36,
+    "cut": true
+   }
+  },
+  {
+   "case": "best food in Europe EN 09-25",
+   "job_id": "1ce20697-6625-459b-935d-d3ddd0a05442",
+   "language": "en",
+   "beat_id": "pizza-reject",
+   "trigger": "pizza",
+   "cue": "named_word",
+   "before": {
+    "at": 14.28,
+    "end": 16.08,
+    "dstart": 0.36,
+    "cut": false
+   },
+   "after": {
+    "at": 14.28,
+    "end": 16.08,
+    "dstart": 0.36,
+    "cut": false
+   }
+  },
+  {
+   "case": "best food in Europe EN 09-25",
+   "job_id": "1ce20697-6625-459b-935d-d3ddd0a05442",
+   "language": "en",
+   "beat_id": "currywurst",
+   "trigger": "Currywurst",
+   "cue": "named_word",
+   "before": {
+    "at": 23.62,
+    "end": 26.62,
+    "dstart": 0.0,
+    "cut": false
+   },
+   "after": {
+    "at": 23.62,
+    "end": 26.62,
+    "dstart": 0.0,
+    "cut": false
+   }
+  },
+  {
+   "case": "best food in Europe EN 09-25",
+   "job_id": "1ce20697-6625-459b-935d-d3ddd0a05442",
+   "language": "en",
+   "beat_id": "currywurst-check",
+   "trigger": "Currywurst",
+   "cue": "named_word",
+   "before": {
+    "at": 23.62,
+    "end": 26.12,
+    "dstart": 0.0,
+    "cut": false
+   },
+   "after": {
+    "at": 23.62,
+    "end": 26.12,
+    "dstart": 0.0,
+    "cut": false
+   }
+  },
+  {
+   "case": "best food in Europe EN 09-25",
+   "job_id": "1ce20697-6625-459b-935d-d3ddd0a05442",
+   "language": "en",
+   "beat_id": "gluhwein",
+   "trigger": "Glühwein",
+   "cue": "named_word",
+   "before": {
+    "at": 29.96,
+    "end": 32.96,
+    "dstart": 0.66,
+    "cut": false
+   },
+   "after": {
+    "at": 29.96,
+    "end": 32.96,
+    "dstart": 0.66,
+    "cut": false
+   }
+  },
+  {
+   "case": "best food in Europe EN 09-25",
+   "job_id": "1ce20697-6625-459b-935d-d3ddd0a05442",
+   "language": "en",
+   "beat_id": "paella",
+   "trigger": "Paella",
+   "cue": "named_word",
+   "before": {
+    "at": 38.62,
+    "end": 41.62,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 38.62,
+    "end": 41.62,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "best food in Europe EN 09-25",
+   "job_id": "1ce20697-6625-459b-935d-d3ddd0a05442",
+   "language": "en",
+   "beat_id": "paella-classic",
+   "trigger": "Paella",
+   "cue": "named_word",
+   "before": {
+    "at": 38.62,
+    "end": 41.12,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 38.62,
+    "end": 41.12,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "best food in Europe EN 09-25",
+   "job_id": "1ce20697-6625-459b-935d-d3ddd0a05442",
+   "language": "en",
+   "beat_id": "labomba",
+   "trigger": "La Bomba",
+   "cue": "named_word",
+   "before": {
+    "at": 44.28,
+    "end": 47.28,
+    "dstart": 1.9,
+    "cut": true
+   },
+   "after": {
+    "at": 44.28,
+    "end": 47.28,
+    "dstart": 1.9,
+    "cut": true
+   }
+  },
+  {
+   "case": "best food in Europe EN 09-25",
+   "job_id": "1ce20697-6625-459b-935d-d3ddd0a05442",
+   "language": "en",
+   "beat_id": "labomba-check",
+   "trigger": "La Bomba",
+   "cue": "named_word",
+   "before": {
+    "at": 44.28,
+    "end": 46.78,
+    "dstart": 1.9,
+    "cut": true
+   },
+   "after": {
+    "at": 44.28,
+    "end": 46.78,
+    "dstart": 1.9,
+    "cut": true
+   }
+  },
+  {
+   "case": "best food in Europe EN 09-25",
+   "job_id": "1ce20697-6625-459b-935d-d3ddd0a05442",
+   "language": "en",
+   "beat_id": "pork-meh",
+   "trigger": "pork",
+   "cue": "named_word",
+   "before": {
+    "at": 19.72,
+    "end": 22.22,
+    "dstart": 1.5,
+    "cut": false
+   },
+   "after": {
+    "at": 19.72,
+    "end": 22.22,
+    "dstart": 1.5,
+    "cut": false
+   }
+  },
+  {
+   "case": "protein snacks top 3 EN 10-07",
+   "job_id": "a4e259ab-70b6-4805-aeec-0fb82cbecab3",
+   "language": "en",
+   "beat_id": "yogurt",
+   "trigger": "Greek yogurt",
+   "cue": "named_word",
+   "before": {
+    "at": 4.8,
+    "end": 7.8,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 4.8,
+    "end": 7.8,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "protein snacks top 3 EN 10-07",
+   "job_id": "a4e259ab-70b6-4805-aeec-0fb82cbecab3",
+   "language": "en",
+   "beat_id": "drumroll",
+   "trigger": "number one",
+   "cue": "named_word",
+   "before": {
+    "at": 14.92,
+    "end": 17.42,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 14.92,
+    "end": 17.42,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "protein snacks top 3 EN 10-07",
+   "job_id": "a4e259ab-70b6-4805-aeec-0fb82cbecab3",
+   "language": "en",
+   "beat_id": "toast",
+   "trigger": "cottage cheese on toast",
+   "cue": "named_word",
+   "before": {
+    "at": 18.52,
+    "end": 21.52,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 18.52,
+    "end": 21.52,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "stress T3 Kadikoy TR re-run 10-08",
+   "job_id": "3a6b9ff6-3ab6-42ea-922c-eb0ca18d9b43",
+   "language": "tr",
+   "beat_id": "kahve-sesi",
+   "trigger": "kahve",
+   "cue": "named_word",
+   "before": {
+    "at": 5.08,
+    "end": 7.58,
+    "dstart": 0.9,
+    "cut": false
+   },
+   "after": {
+    "at": 5.08,
+    "end": 7.58,
+    "dstart": 0.9,
+    "cut": false
+   }
+  },
+  {
+   "case": "stress T3 Kadikoy TR re-run 10-08",
+   "job_id": "3a6b9ff6-3ab6-42ea-922c-eb0ca18d9b43",
+   "language": "tr",
+   "beat_id": "kahve-sesi",
+   "trigger": "kahve",
+   "cue": "named_word",
+   "before": {
+    "at": 10.6,
+    "end": 13.1,
+    "dstart": 0.18,
+    "cut": true
+   },
+   "after": {
+    "at": 10.6,
+    "end": 13.1,
+    "dstart": 0.18,
+    "cut": true
+   }
+  },
+  {
+   "case": "stress T3 Kadikoy TR re-run 10-08",
+   "job_id": "3a6b9ff6-3ab6-42ea-922c-eb0ca18d9b43",
+   "language": "tr",
+   "beat_id": "kahve-sesi",
+   "trigger": "kahve",
+   "cue": "named_word",
+   "before": {
+    "at": 13.18,
+    "end": 15.68,
+    "dstart": 0.28,
+    "cut": false
+   },
+   "after": {
+    "at": 13.18,
+    "end": 15.68,
+    "dstart": 0.28,
+    "cut": false
+   }
+  },
+  {
+   "case": "stress T3 Kadikoy TR re-run 10-08",
+   "job_id": "3a6b9ff6-3ab6-42ea-922c-eb0ca18d9b43",
+   "language": "tr",
+   "beat_id": "kahve-sesi",
+   "trigger": "kahve",
+   "cue": "named_word",
+   "before": {
+    "at": 16.84,
+    "end": 18.74,
+    "dstart": 0.8,
+    "cut": true
+   },
+   "after": {
+    "at": 16.84,
+    "end": 18.74,
+    "dstart": 0.8,
+    "cut": true
+   }
+  },
+  {
+   "case": "stress T3 Kadikoy TR re-run 10-08",
+   "job_id": "3a6b9ff6-3ab6-42ea-922c-eb0ca18d9b43",
+   "language": "tr",
+   "beat_id": "kahve-sesi",
+   "trigger": "kahve",
+   "cue": "named_word",
+   "before": {
+    "at": 18.74,
+    "end": 21.24,
+    "dstart": 0.2,
+    "cut": true
+   },
+   "after": {
+    "at": 18.74,
+    "end": 21.24,
+    "dstart": 0.2,
+    "cut": true
+   }
+  },
+  {
+   "case": "stress T3 Kadikoy TR re-run 10-08",
+   "job_id": "3a6b9ff6-3ab6-42ea-922c-eb0ca18d9b43",
+   "language": "tr",
+   "beat_id": "kahve-sesi",
+   "trigger": "kahve",
+   "cue": "named_word",
+   "before": {
+    "at": 24.38,
+    "end": 26.88,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 24.38,
+    "end": 26.88,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "stress T3 Kadikoy TR re-run 10-08",
+   "job_id": "3a6b9ff6-3ab6-42ea-922c-eb0ca18d9b43",
+   "language": "tr",
+   "beat_id": "kahve-sesi",
+   "trigger": "kahve",
+   "cue": "named_word",
+   "before": {
+    "at": 27.64,
+    "end": 30.08,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 27.64,
+    "end": 30.08,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "stress T3 Kadikoy TR re-run 10-08",
+   "job_id": "3a6b9ff6-3ab6-42ea-922c-eb0ca18d9b43",
+   "language": "tr",
+   "beat_id": "kahve-sesi",
+   "trigger": "kahve",
+   "cue": "named_word",
+   "before": {
+    "at": 30.08,
+    "end": 32.54,
+    "dstart": 1.44,
+    "cut": true
+   },
+   "after": {
+    "at": 30.08,
+    "end": 32.54,
+    "dstart": 1.44,
+    "cut": true
+   }
+  },
+  {
+   "case": "stress T3 Kadikoy TR re-run 10-08",
+   "job_id": "3a6b9ff6-3ab6-42ea-922c-eb0ca18d9b43",
+   "language": "tr",
+   "beat_id": "kahve-sesi",
+   "trigger": "kahve",
+   "cue": "named_word",
+   "before": {
+    "at": 32.54,
+    "end": 34.34,
+    "dstart": 0.12,
+    "cut": false
+   },
+   "after": {
+    "at": 32.54,
+    "end": 34.34,
+    "dstart": 0.12,
+    "cut": false
+   }
+  },
+  {
+   "case": "stress T3 Kadikoy TR re-run 10-08",
+   "job_id": "3a6b9ff6-3ab6-42ea-922c-eb0ca18d9b43",
+   "language": "tr",
+   "beat_id": "ilk-durak-video",
+   "trigger": "İlk durak",
+   "cue": "named_word",
+   "before": {
+    "at": 7.72,
+    "end": 10.72,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 7.72,
+    "end": 10.72,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "stress T3 Kadikoy TR first send 10-08 (KRI-540)",
+   "job_id": "86838f8c-6600-400b-bd03-fb2a156743b6",
+   "language": "tr",
+   "beat_id": "kahve",
+   "trigger": "kahve",
+   "cue": "named_word",
+   "before": {
+    "at": 5.08,
+    "end": 7.58,
+    "dstart": 0.9,
+    "cut": false
+   },
+   "after": {
+    "at": 5.08,
+    "end": 7.58,
+    "dstart": 0.9,
+    "cut": false
+   }
+  },
+  {
+   "case": "stress T3 Kadikoy TR first send 10-08 (KRI-540)",
+   "job_id": "86838f8c-6600-400b-bd03-fb2a156743b6",
+   "language": "tr",
+   "beat_id": "kahve",
+   "trigger": "kahve",
+   "cue": "named_word",
+   "before": {
+    "at": 10.6,
+    "end": 13.1,
+    "dstart": 0.18,
+    "cut": true
+   },
+   "after": {
+    "at": 10.6,
+    "end": 13.1,
+    "dstart": 0.18,
+    "cut": true
+   }
+  },
+  {
+   "case": "stress T3 Kadikoy TR first send 10-08 (KRI-540)",
+   "job_id": "86838f8c-6600-400b-bd03-fb2a156743b6",
+   "language": "tr",
+   "beat_id": "kahve",
+   "trigger": "kahve",
+   "cue": "named_word",
+   "before": {
+    "at": 13.18,
+    "end": 15.68,
+    "dstart": 0.28,
+    "cut": false
+   },
+   "after": {
+    "at": 13.18,
+    "end": 15.68,
+    "dstart": 0.28,
+    "cut": false
+   }
+  },
+  {
+   "case": "stress T3 Kadikoy TR first send 10-08 (KRI-540)",
+   "job_id": "86838f8c-6600-400b-bd03-fb2a156743b6",
+   "language": "tr",
+   "beat_id": "kahve",
+   "trigger": "kahve",
+   "cue": "named_word",
+   "before": {
+    "at": 16.84,
+    "end": 18.74,
+    "dstart": 0.8,
+    "cut": true
+   },
+   "after": {
+    "at": 16.84,
+    "end": 18.74,
+    "dstart": 0.8,
+    "cut": true
+   }
+  },
+  {
+   "case": "stress T3 Kadikoy TR first send 10-08 (KRI-540)",
+   "job_id": "86838f8c-6600-400b-bd03-fb2a156743b6",
+   "language": "tr",
+   "beat_id": "kahve",
+   "trigger": "kahve",
+   "cue": "named_word",
+   "before": {
+    "at": 18.74,
+    "end": 21.24,
+    "dstart": 0.2,
+    "cut": true
+   },
+   "after": {
+    "at": 18.74,
+    "end": 21.24,
+    "dstart": 0.2,
+    "cut": true
+   }
+  },
+  {
+   "case": "stress T3 Kadikoy TR first send 10-08 (KRI-540)",
+   "job_id": "86838f8c-6600-400b-bd03-fb2a156743b6",
+   "language": "tr",
+   "beat_id": "kahve",
+   "trigger": "kahve",
+   "cue": "named_word",
+   "before": {
+    "at": 24.38,
+    "end": 26.88,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 24.38,
+    "end": 26.88,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "stress T3 Kadikoy TR first send 10-08 (KRI-540)",
+   "job_id": "86838f8c-6600-400b-bd03-fb2a156743b6",
+   "language": "tr",
+   "beat_id": "kahve",
+   "trigger": "kahve",
+   "cue": "named_word",
+   "before": {
+    "at": 27.64,
+    "end": 30.08,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 27.64,
+    "end": 30.08,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "stress T3 Kadikoy TR first send 10-08 (KRI-540)",
+   "job_id": "86838f8c-6600-400b-bd03-fb2a156743b6",
+   "language": "tr",
+   "beat_id": "kahve",
+   "trigger": "kahve",
+   "cue": "named_word",
+   "before": {
+    "at": 30.08,
+    "end": 32.54,
+    "dstart": 1.44,
+    "cut": true
+   },
+   "after": {
+    "at": 30.08,
+    "end": 32.54,
+    "dstart": 1.44,
+    "cut": true
+   }
+  },
+  {
+   "case": "stress T3 Kadikoy TR first send 10-08 (KRI-540)",
+   "job_id": "86838f8c-6600-400b-bd03-fb2a156743b6",
+   "language": "tr",
+   "beat_id": "kahve",
+   "trigger": "kahve",
+   "cue": "named_word",
+   "before": {
+    "at": 32.54,
+    "end": 34.34,
+    "dstart": 0.12,
+    "cut": false
+   },
+   "after": {
+    "at": 32.54,
+    "end": 34.34,
+    "dstart": 0.12,
+    "cut": false
+   }
+  },
+  {
+   "case": "stress T3 Kadikoy TR first send 10-08 (KRI-540)",
+   "job_id": "86838f8c-6600-400b-bd03-fb2a156743b6",
+   "language": "tr",
+   "beat_id": "ilk-durak",
+   "trigger": "İlk durak",
+   "cue": "named_word",
+   "before": {
+    "at": 7.72,
+    "end": 10.72,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 7.72,
+    "end": 10.72,
+    "dstart": 0.0,
+    "cut": true
+   }
+  },
+  {
+   "case": "stress N3 marathon voiceover morning run 10-08",
+   "job_id": "890eca28-ec1c-485d-951e-fdf0e859eba6",
+   "language": "en",
+   "beat_id": "medal",
+   "trigger": "the medal",
+   "cue": "named_word",
+   "before": {
+    "at": 25.432,
+    "end": 28.432,
+    "dstart": 0.48,
+    "cut": false
+   },
+   "after": {
+    "at": 25.432,
+    "end": 28.432,
+    "dstart": 0.48,
+    "cut": false
+   }
+  },
+  {
+   "case": "stress N3 marathon voiceover morning run 10-08",
+   "job_id": "890eca28-ec1c-485d-951e-fdf0e859eba6",
+   "language": "en",
+   "beat_id": "watch-time",
+   "trigger": "four hours and twelve minutes",
+   "cue": "named_word",
+   "before": {
+    "at": 23.262,
+    "end": 25.432,
+    "dstart": 0.88,
+    "cut": true
+   },
+   "after": {
+    "at": 23.262,
+    "end": 25.432,
+    "dstart": 0.88,
+    "cut": true
+   }
+  },
+  {
+   "case": "stress N3 marathon voiceover re-run 10-08",
+   "job_id": "8a0ced82-6b45-46ff-8b56-126b893a4617",
+   "language": "en",
+   "beat_id": "medal-photo",
+   "trigger": "the medal",
+   "cue": "named_word",
+   "before": {
+    "at": 25.432,
+    "end": 28.432,
+    "dstart": 0.48,
+    "cut": false
+   },
+   "after": {
+    "at": 25.432,
+    "end": 28.432,
+    "dstart": 0.48,
+    "cut": false
+   }
+  },
+  {
+   "case": "stress N3 marathon voiceover re-run 10-08",
+   "job_id": "8a0ced82-6b45-46ff-8b56-126b893a4617",
+   "language": "en",
+   "beat_id": "watch-photo",
+   "trigger": "four hours and twelve minutes",
+   "cue": "named_word",
+   "before": {
+    "at": 23.262,
+    "end": 25.432,
+    "dstart": 0.88,
+    "cut": true
+   },
+   "after": {
+    "at": 23.262,
+    "end": 25.432,
+    "dstart": 0.88,
+    "cut": true
+   }
+  },
+  {
+   "case": "Don Julio lunch T2 steak mixed EN/ES 10-27",
+   "job_id": "64b07a7e-9c7e-4c52-a43f-6c76fc3b6bd1",
+   "language": "en",
+   "beat_id": "asado-photo",
+   "trigger": "asado",
+   "cue": "named_word",
+   "before": {
+    "at": 3.18,
+    "end": 4.68,
+    "dstart": 0.36,
+    "cut": false
+   },
+   "after": {
+    "at": 3.18,
+    "end": 4.68,
+    "dstart": 0.36,
+    "cut": false
+   }
+  },
+  {
+   "case": "Qendresa Q1 run 2 11-07",
+   "job_id": "72cf0827-25af-4504-bced-4bd1a4763e2f",
+   "language": "en",
+   "beat_id": "speckit",
+   "trigger": "Spec Kit",
+   "cue": "meaning",
+   "before": {
+    "at": 8.48,
+    "end": 11.48,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 8.38,
+    "end": 13.04,
+    "dstart": -0.1,
+    "cut": false
+   }
+  },
+  {
+   "case": "Qendresa Q1 run 2 11-07",
+   "job_id": "72cf0827-25af-4504-bced-4bd1a4763e2f",
+   "language": "en",
+   "beat_id": "impeccable",
+   "trigger": "Impeccable",
+   "cue": "meaning",
+   "before": {
+    "at": 15.32,
+    "end": 18.32,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 15.22,
+    "end": 18.88,
+    "dstart": -0.1,
+    "cut": true
+   }
+  },
+  {
+   "case": "Qendresa Q1 run 2 11-07",
+   "job_id": "72cf0827-25af-4504-bced-4bd1a4763e2f",
+   "language": "en",
+   "beat_id": "tradingagents",
+   "trigger": "Trading Agents",
+   "cue": "meaning",
+   "before": {
+    "at": 22.82,
+    "end": 25.82,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 22.72,
+    "end": 26.5,
+    "dstart": -0.1,
+    "cut": false
+   }
+  },
+  {
+   "case": "Qendresa Q1 run 2 11-07",
+   "job_id": "72cf0827-25af-4504-bced-4bd1a4763e2f",
+   "language": "en",
+   "beat_id": "agentsmarketplace",
+   "trigger": "Agents Marketplace",
+   "cue": "meaning",
+   "before": {
+    "at": 31.4,
+    "end": 34.4,
+    "dstart": 0.34,
+    "cut": true
+   },
+   "after": {
+    "at": 30.96,
+    "end": 36.18,
+    "dstart": -0.1,
+    "cut": false
+   }
+  },
+  {
+   "case": "Qendresa Q1 run 2 11-07",
+   "job_id": "72cf0827-25af-4504-bced-4bd1a4763e2f",
+   "language": "en",
+   "beat_id": "gamestudios",
+   "trigger": "Cloud Code Game Studios",
+   "cue": "meaning",
+   "before": {
+    "at": 39.32,
+    "end": 42.32,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 39.22,
+    "end": 41.94,
+    "dstart": -0.1,
+    "cut": true
+   }
+  },
+  {
+   "case": "Cigdem yorum3 (S2-style green screen) 11-09",
+   "job_id": "7eba9903-2ceb-47ca-b1d8-f4922e6e95fa",
+   "language": "en",
+   "beat_id": "launch",
+   "trigger": "launched",
+   "cue": "meaning",
+   "before": {
+    "at": 3.18,
+    "end": 4.68,
+    "dstart": 1.02,
+    "cut": false
+   },
+   "after": {
+    "at": 2.06,
+    "end": 4.98,
+    "dstart": -0.1,
+    "cut": false
+   }
+  },
+  {
+   "case": "Cigdem yorum3 (S2-style green screen) 11-09",
+   "job_id": "7eba9903-2ceb-47ca-b1d8-f4922e6e95fa",
+   "language": "en",
+   "beat_id": "post1",
+   "trigger": "welcome Lumo",
+   "cue": "meaning",
+   "before": {
+    "at": 9.82,
+    "end": 11.32,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 9.72,
+    "end": 12.54,
+    "dstart": -0.1,
+    "cut": false
+   }
+  },
+  {
+   "case": "Cigdem yorum3 (S2-style green screen) 11-09",
+   "job_id": "7eba9903-2ceb-47ca-b1d8-f4922e6e95fa",
+   "language": "en",
+   "beat_id": "post2",
+   "trigger": "a hinge",
+   "cue": "meaning",
+   "before": {
+    "at": 13.72,
+    "end": 15.22,
+    "dstart": 0.0,
+    "cut": true
+   },
+   "after": {
+    "at": 13.62,
+    "end": 16.16,
+    "dstart": -0.1,
+    "cut": false
+   }
+  },
+  {
+   "case": "Cigdem yorum3 (S2-style green screen) 11-09",
+   "job_id": "7eba9903-2ceb-47ca-b1d8-f4922e6e95fa",
+   "language": "en",
+   "beat_id": "billboards",
+   "trigger": "billboards",
+   "cue": "meaning",
+   "before": {
+    "at": 26.76,
+    "end": 28.26,
+    "dstart": 1.7,
+    "cut": true
+   },
+   "after": {
+    "at": 25.0,
+    "end": 27.24,
+    "dstart": -0.06,
+    "cut": false
+   }
+  }
+ ]
+}

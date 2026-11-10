@@ -11129,6 +11129,7 @@ def _run_phone_subtitled_job(
                         duration_s=talking_timeline_s,
                         blocked=footage_blocked,
                         word_starts=word_starts,
+                        **({"phrase_starts": True} if settings.beat_phrase_timing_enabled else {}),
                     )
                     mention_receipt["placements"] = [
                         {
@@ -11546,6 +11547,10 @@ def _run_phone_subtitled_job(
                                         {"card_layout": card_layout}
                                         if card_layout is not None
                                         else {}
+                                    ),
+                                    **_beat_phrase_timing_kwargs(
+                                        phone_reaction_grounding_mod.TALKING_PHRASE_TIMING,
+                                        talking_requirements,
                                     ),
                                 )
                         except OperationalError:
@@ -15962,6 +15967,19 @@ def _narrated_caption_transcript(
     return requested, ensured.language
 
 
+def _beat_phrase_timing_kwargs(base: Any, requirements: Sequence[Any]) -> dict[str, Any]:
+    """KRI-1342: ``{"phrase_timing": ...}`` for the beat grounding while
+    ``BEAT_PHRASE_TIMING_ENABLED`` is on, carrying the spoken words the creator named (those
+    beats keep their exact word timing). ``{}`` when off, so the call is byte-identical."""
+    if not settings.beat_phrase_timing_enabled:
+        return {}
+    from dataclasses import replace as dc_replace  # noqa: PLC0415
+
+    from app.services.phone_reaction_grounding import creator_named_cues  # noqa: PLC0415
+
+    return {"phrase_timing": dc_replace(base, word_cued=creator_named_cues(requirements))}
+
+
 def _phone_narrated_reaction_lanes(
     job_id: str,
     *,
@@ -15969,6 +15987,7 @@ def _phone_narrated_reaction_lanes(
     closing: dict | None,
     words: list[dict],
     duration_s: float,
+    requirements: Sequence[Any] = (),
 ) -> tuple[Any, tuple, dict]:
     """KRI-519: ground a phone Voiceover edit's reaction beats against the
     voiceover's own words into the KRI-281 lanes -> ``(lanes | None, visuals,
@@ -15996,6 +16015,9 @@ def _phone_narrated_reaction_lanes(
             duration_s=duration_s,
             clip_path=None,
             allow_fullscreen=bool(settings.phone_subtitled_fullscreen_overlays_enabled),
+            **_beat_phrase_timing_kwargs(
+                phone_reaction_grounding_mod.VOICEOVER_PHRASE_TIMING, requirements
+            ),
         )
     except OperationalError:
         raise  # transient DB -> Celery autoretry, never a lane drop
@@ -16959,6 +16981,7 @@ def _run_phone_narrated_job(
                         for word in transcript.words
                     ],
                     duration_s=voiceover_duration_s,
+                    requirements=_phone_brief_live_requirements(snapshot),
                 )
             # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED): grounded on the
             # voice timeline (each step's window IS the output clock) and merged into the

@@ -1174,12 +1174,14 @@
     {
       "id": "kri-1151-talking-show-when-mentioned",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_phone_talking_mentions.py tests/tasks/test_talking_show_when_mentioned.py",
+      "api_tests": "tests/pipeline/test_phone_talking_mentions.py tests/services/test_kri1342_beat_phrase_timing.py tests/tasks/test_talking_show_when_mentioned.py",
       "paths": [
         "src/apps/api/app/kria/cutaway_show_ask.py",
         "src/apps/api/app/pipeline/phone_talking_mentions.py",
+        "src/apps/api/app/pipeline/phrase_window.py",
         "src/apps/api/tests/fixtures/talking_show_when_mentioned_6fa36e51.json",
         "src/apps/api/tests/pipeline/test_phone_talking_mentions.py",
+        "src/apps/api/tests/services/test_kri1342_beat_phrase_timing.py",
         "src/apps/api/tests/tasks/test_talking_show_when_mentioned.py"
       ]
     },
