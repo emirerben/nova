@@ -9611,7 +9611,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             // differ in shape without representing a user edit.
             let differs: Bool
             switch section {
-            case .timeline: differs = document.clips != cleanDocument.clips || document.tombstones != cleanDocument.tombstones || document.splitScreenSections != cleanDocument.splitScreenSections
+            case .timeline: differs = !document.hasSameTimelineSlots(as: cleanDocument) || document.splitScreenSections != cleanDocument.splitScreenSections
             case .text: differs = document.textElements != cleanDocument.textElements
             case .captions: differs = document.captionCues != cleanDocument.captionCues
             case .captionMeta: differs = document.captionMeta != cleanDocument.captionMeta
