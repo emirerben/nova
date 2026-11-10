@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.155.0] - 2026-11-10
+
+### Changed
+- feat(split-screen): panels collapse when one ends, protocol 47 (KRI-1335) (#2262) <!-- release-pr: 2262 -->
+
 ## [0.88.154.0] - 2026-11-10
 
 ### Fixed
