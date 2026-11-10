@@ -751,7 +751,7 @@ struct NativeEditorView: View {
                                     .transition(panelTransition)
                             }
                             if !keyboardVisible && !lineEditing {
-                                NativeEditorToolRail(selected: panel?.tool, connected: true, showsDraw: session.canAddDrawing, showsBackground: session.canEditSpeakerBackground, onSelect: selectTool)
+                                NativeEditorToolRail(selected: panel?.tool, connected: true, showsDraw: session.canAddDrawing, showsBackground: session.canEditSpeakerBackground, showsSplit: session.canEditSplitScreen, onSelect: selectTool)
                             }
                         }
                         .frame(width: panelIsOpen ? max(0, area.size.width - 24) : min(328, max(0, area.size.width - 24)))
@@ -825,6 +825,8 @@ struct NativeEditorView: View {
             NativeSoundsPanel(session: session, panelDrafts: panelDrafts) { changePanel(to: nil) }
         case .drawing(let id):
             NativeDrawingPanel(session: session, id: id, onDrawMore: { enterDrawMode(appendingTo: id) }, onDone: { changePanel(to: nil) }).id(id)
+        case .split:
+            NativeSplitPanel(session: session) { changePanel(to: nil) }
         case nil:
             EmptyView()
         }
@@ -849,7 +851,7 @@ struct NativeEditorView: View {
             // An empty draft returns nil and the pending-text observer closes the panel.
             if let selection = session.finishTextCreation() { textCreated(selection) }
         case .text: textEditingDone()
-        case .captions, .visuals, .background, .sounds, .drawing: changePanel(to: nil)
+        case .captions, .visuals, .background, .sounds, .drawing, .split: changePanel(to: nil)
         case .speaker:
             if session.selection?.kind == .speaker { session.select(nil, seekToStart: false) }
             changePanel(to: nil)
@@ -904,6 +906,7 @@ struct NativeEditorView: View {
             session.select(nil)
         case .background: changePanel(to: .background)
         case .sounds: changePanel(to: .sounds)
+        case .split: changePanel(to: .split)
         case .draw: enterDrawMode()
         default:
             changePanel(to: nil)
@@ -1024,6 +1027,8 @@ struct NativeEditorView: View {
             return
         }
         selectedTextForActions = nil
+        // The Split panel selects clips itself (this clip, a panel's member); that must not close it.
+        if panel == .split, selection.kind == .clip { return }
         changePanel(to: nil)
         if selection.kind != .clip { inspector = .selection(selection) }
     }
@@ -1095,25 +1100,8 @@ struct NativeEditorView: View {
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") || ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { return }
         #endif
-        session.useDeviceRendering(model.deviceRenders)
-        session.useMediaUploads(model.uploads)
-        if session.isBehindActiveJob(project) {
-            await session.adoptLatestJob(project, api: model.api)
-            return
-        }
-        guard session.needsReload(for: project) else {
-            // Already loaded: a chat draft may have landed while this tab was hidden.
-            if project.runtimeVersion == 2 { await session.synchronizePromptRevision() }
-            return
-        }
-        let lifetime = session.editorLifetimeID
-        if libraryJobID == nil {
-            // KRI-529: a thread revision bump alone (a chat turn) must not reload the editor.
-            if await session.reconcileOnOpen(project: project, api: model.api) { return }
-        }
-        guard let loadedLifetime = await session.loadForEditorOpen(project: project, libraryJobID: libraryJobID,
-            api: model.api, expectedLifetime: lifetime), session.editorLifetimeID == loadedLifetime else { return }
-        if let file = deviceLocalFile { session.showDeviceOutput(file) }
+        await session.openOrWarm(project: project, libraryJobID: libraryJobID, api: model.api,
+                                 deviceRenders: model.deviceRenders, uploads: model.uploads)
     }
 
     private func blockedReason(_ deletion: NativeEditorSession.TextDeletion) -> String? {

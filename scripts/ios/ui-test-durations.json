@@ -66,6 +66,7 @@
   "KriaUITests/EditorUITests/testDeletingFinalClipShowsEmptyCanvasAndUndoRestoresPlayback": 24.1,
   "KriaUITests/EditorUITests/testFirstSourcePreviewPlaysBrandOutroAndReplays": 20.2,
   "KriaUITests/EditorUITests/testOpeningTheEditorFromChatNeverShowsSaving": 25.0,
+  "KriaUITests/EditorUITests/testEditorIsReadyBeforeTheTap": 25.0,
   "KriaUITests/EditorUITests/testNativeEditorBackButtonReturnsToPreviousSurface": 11.6,
   "KriaUITests/EditorUITests/testNativeEditorFixturePlaysAndAdvancesTheClock": 11.8,
   "KriaUITests/EditorUITests/testNativeEditorLongTextEditPreservesDurationAndClipGeometry": 22.2,

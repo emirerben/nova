@@ -542,6 +542,7 @@ private struct CreationWorkspaceView: View {
     @State private var transcriptIsFresh = true
     @StateObject private var responsePresentation = ChatResponsePresentation()
     @Environment(\.scenePhase) private var scenePhase
+    @ObservedObject private var reachability = NetworkReachability.shared
     @State private var pendingTurnSubmission: ChatTurnSubmissionIdentity?
     @State private var sendReceipt: ChatSendReceipt?
     @State private var approval: ApprovalSnapshot?
@@ -585,6 +586,10 @@ private struct CreationWorkspaceView: View {
     @State private var afterSequence = -1
     @State private var threadRevision: Int
     @State private var projectionOrder = ThreadProjectionOrder()
+    /// Ticks once a second while the speech check runs, so it lives in a box: a plain `@State` struct
+    /// would re-render this view every tick. Only the timed-out flag below is observed.
+    @State private var speechCheckClock = SpeechCheckClock()
+    @State private var speechCheckTimedOut = false
     @State private var ownsSendAttempt = false
     @State private var hasActivatedDraftStorage = false
     private var isSending: Bool { ownsSendAttempt || chatDrafts.isSubmitting(for: project.id) }
@@ -1789,9 +1794,38 @@ private struct CreationWorkspaceView: View {
             isChoosingFormat = false
             return
         }
+        // The flight the chat started while it was idle is the creator's from here on.
+        editorSession.claimWarm()
+        Perf.begin("editor.tap.toFrame")
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) { showsResult = true }
+    }
+
+    /// Whether the chat may prepare its editor now. The value is the `.task(id:)` identity, so the warm-up restarts only
+    /// when the job, the variant or the permission changes, never on a chat poll.
+    private var editorWarmPlan: EditorWarmPlan {
+        var warmable = true
+        #if DEBUG
+        warmable = ProcessInfo.processInfo.environment["KRIA_EDITOR_WARM_DISABLED"] != "1"
+        #endif
+        return EditorWarmPlan(project: currentProject, facts: .init(
+            videoIsReady: currentProject.status == .ready && warmable, formatIsKnown: isFormatKnown,
+            isSlidePost: isSlidePostProject, canOpenVideoEditor: canOpenVideoEditor,
+            sceneIsActive: scenePhase == .active, chatIsIdle: !isSending && !isActing && !isThinking,
+            isOnline: reachability.isOnline, isLowDataMode: reachability.isConstrained))
+    }
+
+    /// Prepares the editor (variant, draft, sources, composition) while the creator reads the chat, so the tap finds it
+    /// loaded. A load that fails leaves the editor as it was: the tap opens it the way it always has.
+    private func warmEditor() async {
+        let plan = editorWarmPlan
+        guard plan.isWarmable, !showsResult else { editorSession.cancelWarm(); return }
+        // Let the chat finish drawing and reading before competing with it; a plan that flips back cancels this sleep.
+        try? await Task.sleep(for: EditorWarmPlan.settleDelay)
+        guard !Task.isCancelled else { return }
+        await editorSession.openOrWarm(project: currentProject, libraryJobID: nil, api: model.api,
+                                       deviceRenders: model.deviceRenders, uploads: model.uploads, intent: .warm)
     }
 
     private func dismissEditor() {
@@ -2038,6 +2072,11 @@ private struct CreationWorkspaceView: View {
             await capabilities
         }
         .task(id: suggestionFetchKey) { await loadSuggestions() }
+        .task(id: editorWarmPlan) { await warmEditor() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+            editorSession.releaseWarmForMemoryPressure()
+        }
+        .onDisappear { editorSession.cancelWarm() }
         // An editor Save changes the Job without a new thread revision, so cards built on the old edit are asked about again.
         .onChange(of: editorSession.saveState) { old, new in
             if case .saving = old, new == .saved || new == .previewPending { suggestionLedger.requestRefresh() }
@@ -2361,6 +2400,7 @@ private struct CreationWorkspaceView: View {
                     approval: approval,
                     format: selectedFormat,
                     speechCleanup: approval.retryOfExecutionID == nil ? fullThread?.speechCleanup : nil,
+                    speechCheckTimedOut: speechCheckTimedOut,
                     renderShape: approval.retryOfExecutionID == nil ? renderShapePicker : nil,
                     researchPreview: ResearchPreview.parse(activeProposalEvent?.payload?["research_preview"]),
                     replyLanguage: ClipAnswerLanguage(threadState: threadState),
@@ -2384,6 +2424,7 @@ private struct CreationWorkspaceView: View {
                     conflict: visibleConfirmationConflict(for: thread),
                     renderShape: renderShapePicker,
                     refreshDirection: refreshDirection,
+                    speechCheckTimedOut: speechCheckTimedOut,
                     action: performAction
                 )
             }
@@ -2474,6 +2515,7 @@ private struct CreationWorkspaceView: View {
                     responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },
                     conflict: visibleConfirmationConflict(for: thread),
                     refreshDirection: refreshDirection,
+                    speechCheckTimedOut: speechCheckTimedOut,
                     action: performAction
                 )
             } else {
@@ -3155,8 +3197,9 @@ private struct CreationWorkspaceView: View {
                 let deviceSettled = serverDeviceRenderKey.map { model.deviceRenders.isSettled($0) } ?? false
                 if changed || !deviceSettled || currentProject.status == .rendering { await refreshDeviceRender() }
                 if let routedKey = routedDeviceRenderKey { await refreshDeviceRender(routedKey) }
+                await refreshWhileCheckingSpeech()
                 delay = changed || isSending || isActing || isThinking || currentProject.status == .rendering
-                    || fullThread?.preparationIsActive == true || speechCleanupIsChecking
+                    || fullThread?.preparationIsActive == true || (speechCleanupIsChecking && !speechCheckTimedOut)
                     ? 1_000_000_000 : min(delay * 2, 8_000_000_000)
             } catch is CancellationError {
                 return
@@ -3170,6 +3213,20 @@ private struct CreationWorkspaceView: View {
             }
             try? await Task.sleep(nanoseconds: delay)
         }
+    }
+
+    /// The analysis task never bumps the thread revision or appends an event, so `/delta` cannot
+    /// announce it finishing. While the card says "Checking speech…", re-read the full thread on
+    /// `SpeechCheckWatch`'s schedule. This loop awaits it, so reads never overlap each other.
+    private func refreshWhileCheckingSpeech() async {
+        let resolution = SpeechCleanupOffer.resolve(fullThread?.speechCleanup)
+        let shouldRefetch = speechCheckClock.watch.observe(resolution.offer, analysisID: resolution.analysisID, now: .now)
+        let timedOut = speechCheckClock.watch.hasTimedOut
+        if timedOut != speechCheckTimedOut { speechCheckTimedOut = timedOut }
+        guard shouldRefetch else { return }
+        let requestSequence = projectionOrder.begin()
+        guard let thread = try? await model.api.project(threadID: project.id), !Task.isCancelled else { return }
+        apply(thread, requestSequence: requestSequence)
     }
 
     /// True while the v2 approval card's speech-check analysis is queued,

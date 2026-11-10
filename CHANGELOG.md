@@ -2,6 +2,61 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.141.0] - 2026-11-10
+
+### Changed
+- feat(ios): warm the editor while the chat is on screen (#2261) <!-- release-pr: 2261 -->
+
+## [0.88.140.0] - 2026-11-10
+
+### Changed
+- fix(kria): talking takes attached through Visuals become Talking takes (KRI-1340) (#2250) <!-- release-pr: 2250 -->
+
+## [0.88.139.0] - 2026-11-10
+
+### Changed
+- fix(ios): reopening an unchanged editor no longer rebuilds the preview (#2225) <!-- release-pr: 2225 -->
+
+## [0.88.138.0] - 2026-11-10
+
+### Changed
+- test(ios): stop caption animation tests playing card previews mid-query (#2260) <!-- release-pr: 2260 -->
+
+## [0.88.137.0] - 2026-11-10
+
+### Changed
+- fix(ios): a chat edit on a narrated or talking project no longer counts as a timeline change (#2234) <!-- release-pr: 2234 -->
+
+## [0.88.136.0] - 2026-11-10
+
+### Changed
+- fix(ios): stop drag-lift taps reselecting preview items; stabilize editor UI tests (#2247) <!-- release-pr: 2247 -->
+
+## [0.88.135.0] - 2026-11-10
+
+### Changed
+- feat(ios): redesign split-screen flow, Split tool in the island (KRI-1335) (#2245) <!-- release-pr: 2245 -->
+
+## [0.88.134.0] - 2026-11-09
+
+### Changed
+- fix(kria): a title linked to its clip follows it, and realign re-attaches it (KRI-1332) (#2244) <!-- release-pr: 2244 -->
+
+## [0.88.133.0] - 2026-11-09
+
+### Changed
+- fix(ios): re-read the thread while Checking speech so a finished check resolves (KRI-1341) (#2248) <!-- release-pr: 2248 -->
+
+## [0.88.132.0] - 2026-11-09
+
+### Changed
+- ci: run the selected iPhone UI scenarios in parallel shards (#2246) <!-- release-pr: 2246 -->
+
+## [0.88.131.0] - 2026-11-09
+
+### Changed
+- test(captions): unbreak main, give the middle-spot D1 case a chin a 42 px small block meets (KRI-1327) (#2249) <!-- release-pr: 2249 -->
+
 ## [0.88.130.0] - 2026-11-09
 
 ### Fixed

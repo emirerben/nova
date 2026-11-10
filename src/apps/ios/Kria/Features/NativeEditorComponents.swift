@@ -16,12 +16,16 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
     case sounds = "Sounds"
     /// KRI-589: shown only when the variant opens `drawings.add`.
     case draw = "Draw"
+    /// KRI-1335: the only way into split screen. Always the last tool; shown only when the variant can edit split screens.
+    case split = "Split"
 
     var id: String { rawValue }
 
-    /// The tools the rail offers: Draw and Background appear only when the server opens them for this variant.
-    static func railTools(showsDraw: Bool, showsBackground: Bool) -> [NativeEditorTool] {
-        allCases.filter { $0 != .kria && ($0 != .draw || showsDraw) && ($0 != .background || showsBackground) }
+    /// The tools the rail offers: Draw, Background and Split appear only when the server opens them for this variant.
+    static func railTools(showsDraw: Bool, showsBackground: Bool, showsSplit: Bool = false) -> [NativeEditorTool] {
+        allCases.filter {
+            $0 != .kria && ($0 != .draw || showsDraw) && ($0 != .background || showsBackground) && ($0 != .split || showsSplit)
+        }
     }
 
     var icon: String {
@@ -33,6 +37,7 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
         case .background: "photo.on.rectangle"
         case .sounds: "waveform"
         case .draw: "pencil.tip"
+        case .split: "rectangle.split.1x2"
         }
     }
 
@@ -45,6 +50,7 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
         case .background: "Put a photo or video behind you"
         case .sounds: "Adjust music and add sound effects"
         case .draw: "Draw on the video with your finger"
+        case .split: "Show two or three clips on screen at once"
         }
     }
 }
@@ -745,8 +751,10 @@ struct NativeEditorToolRail: View {
     var showsDraw = false
     /// The Background tool is offered only when the server opens `speaker_background` for this variant.
     var showsBackground = false
+    /// The Split tool is offered only when the variant can edit split screens. It is always the last tool.
+    var showsSplit = false
     let onSelect: (NativeEditorTool) -> Void
-    private var tools: [NativeEditorTool] { NativeEditorTool.railTools(showsDraw: showsDraw, showsBackground: showsBackground) }
+    private var tools: [NativeEditorTool] { NativeEditorTool.railTools(showsDraw: showsDraw, showsBackground: showsBackground, showsSplit: showsSplit) }
 
     private var shouldReduceMotion: Bool {
         reduceMotion || ProcessInfo.processInfo.environment["UI_TEST_REDUCE_MOTION"] == "1"
