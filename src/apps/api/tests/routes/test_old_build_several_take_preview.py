@@ -60,7 +60,7 @@ def _speakers(variant) -> list:
     return variant["phone_talking_multi_clip"]["speaker_media_ids"]
 
 
-@pytest.mark.parametrize("protocol", [22, 45, GENERATED_CARD_CONSENT_PROTOCOL, None])
+@pytest.mark.parametrize("protocol", [22, 45, GENERATED_CARD_CONSENT_PROTOCOL, 47, 48, None])
 def test_an_old_or_undeclared_build_gets_the_finished_video_fallback(monkeypatch, protocol):
     job = _job(monkeypatch, RECEIPT)
     set_client_protocol(protocol)  # None = an HTTP caller that sends no header (web, or ancient)

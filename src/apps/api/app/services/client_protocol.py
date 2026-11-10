@@ -75,7 +75,9 @@ SPLIT_SCREEN_PROTOCOL = 46
 # the receipt's `phone_talking_multi_clip.speaker_removed` rows. An older build cuts only the first
 # take and would play the others uncut, so `several_take_preview_gate` serves it the receipt with no
 # `speaker_media_ids`, the shape every build since protocol 11 answers with the finished video.
-SPEAKER_REMOVED_PROTOCOL = 47
+# 47 (split panels collapse, #2262) and 48 (colour moments, #2259) are taken by open PRs; protocol
+# numbers are cumulative, so this one lands after both.
+SPEAKER_REMOVED_PROTOCOL = 49
 
 
 def caption_style_scope_supported() -> bool:

@@ -131,7 +131,7 @@ Decisions:
   (62 jobs; only the last two days on 44-46). The several-take render is plain timeline clips, so
   old builds export it; the hole is the editor PREVIEW (old builds cut only the first take, so
   takes B/C preview uncut and captions/cards/sounds sit on the wrong words). A protocol gate would
-  lock out every build in use, so: protocol 47 = understands `speaker_removed`; callers below 47
+  lock out every build in use, so: protocol 49 = understands `speaker_removed` (47/48 are taken by open PRs #2262/#2259; numbers are cumulative, so this lands after them); callers below 49
   (or with no protocol) get the variant served so they take their existing finished-video
   fallback; Save keeps every take's cut either way. F21 below is reworded accordingly.
 
@@ -187,9 +187,9 @@ G4 older builds
 - O1 an old build still previews uncut (fallback condition not present in every build 22..46).
 - O2 the fallback hides something else old builds need (finished video URL, poster, Save).
 - O3 old-build Save drops the later takes' cuts.
-- O4 new build (47) wrongly falls back; single-take / uncut several-take variants change.
+- O4 new build (49) wrongly falls back; single-take / uncut several-take variants change.
 - O5 variants rendered with cuts while the flag is later turned off stay exposed.
-- O6 a job approved on 47 reopened on an old device.
+- O6 a job approved on 49 reopened on an old device.
 - O7 Swift and server protocol numbers drift.
 
 ## Proof after the four fixes (2026-11-09, HEAD be3915c4f, macOS KriaMediaEngine, real S3 takes)
