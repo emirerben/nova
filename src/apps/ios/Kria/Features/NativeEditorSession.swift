@@ -101,6 +101,8 @@ struct NativeEditorTemporaryVideo: Sendable {
 
 /// Local-first state for the Paper native editor. Every edit is a synchronous
 /// value transaction; persistence happens only from the explicit Save action.
+enum EditorOpenIntent { case warm, open }
+
 @MainActor final class NativeEditorSession: ObservableObject {
     /// Canonical mutable editor state. The legacy `draft` accessor below is a
     /// compatibility projection for first-pass views and test fixtures.
@@ -1579,6 +1581,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         previewWork.end(ticket)
         previewResumeIntent = nil
         retirePreviousPreview()
+        Perf.end("editor.tap.toFrame")
         return true
     }
     private func acceptInPlaceFrame(_ ticket: NativeEditorPreviewWork, item: AVPlayerItem,
@@ -2548,6 +2551,8 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     private func synchronizePromptRevision(identity: EditorOperationIdentity, owner: String?) async {
         guard !isReviewingPreviousMerge, editorOperationIdentity == identity, api?.mediaLibraryOwner == owner else { return }
+        // The open holds the session until its preview is built; runPromptRevisionSync would drop this, so remember it.
+        if openFlight != nil, isSaving || loadState != .loaded { syncDroppedByOpen = true }
         // A concurrent save/hydration can change the clean baseline while this
         // suspends; retain the initiating account through every baseline retry.
         for attempt in 0..<3 {
@@ -2932,6 +2937,143 @@ struct NativeEditorTemporaryVideo: Sendable {
         guard hasOwnEdits, !isSaving else { return false }
         _ = await reloadLatestKeepingLocalEdits()
         return true
+    }
+
+    // MARK: - Open and warm
+
+    /// What one open or warm run is for. Runs with an equal target share one flight.
+    private struct EditorOpenTarget: Equatable {
+        let threadID: UUID
+        let jobID: UUID?
+        let variantID: String?
+        let libraryJobID: UUID?
+        let owner: String?
+    }
+
+    /// The one open in progress. `claimed` is set once the creator asked for the editor, which a chat that merely
+    /// stopped being warmable must not undo.
+    private struct OpenFlight {
+        let id: UUID
+        let target: EditorOpenTarget
+        let task: Task<Void, Never>
+        var claimed: Bool
+    }
+
+    private var openFlight: OpenFlight?
+    /// A chat sync arrived while an open held the session; it is replayed once the open is done.
+    private var syncDroppedByOpen = false
+
+    /// The creator asked for the editor (the chat's Open editor tap): the flight in progress is theirs now.
+    func claimWarm() { openFlight?.claimed = true }
+
+    /// The open path: follow a newer job, reconcile or reload, then show a finished device render. The editor view
+    /// calls it when the creator opens the editor (`.open`) and the chat calls it while the video is ready and the
+    /// chat is idle (`.warm`), so the editor is already loaded at the tap.
+    ///
+    /// One flight at a time. A call for the same target joins the flight and returns when it is done; a call for a
+    /// different target (another job, account or thread) retires an unfinished flight and starts its own. A warm that
+    /// fails leaves the session idle, so the tap loads from scratch exactly as it did before warming existed.
+    func openOrWarm(project: ProjectSummary, libraryJobID: UUID?, api: any KriaAPIClient,
+                    deviceRenders: DeviceRenderSessions, uploads: BackgroundUploadCoordinator,
+                    intent: EditorOpenIntent = .open) async {
+        let target = EditorOpenTarget(threadID: project.id, jobID: project.activeJobID, variantID: project.outputVariantID,
+                                      libraryJobID: libraryJobID, owner: api.mediaLibraryOwner)
+        while let flight = openFlight {
+            if flight.target == target {
+                if intent == .open { openFlight?.claimed = true }
+                await flight.task.value
+                if loadState == .loaded || intent == .warm { return }
+                continue
+            }
+            if loadState == .loaded { await flight.task.value } else { retireOpenFlight() }
+        }
+        // Chat events keep a loaded session current (`synchronizePromptRevision`, `adoptLatestJob`); asking again for
+        // the same job costs nothing.
+        if intent == .warm, loadState == .loaded, !isBehindActiveJob(project) { return }
+        let id = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.syncDroppedByOpen = false
+            await self.performOpen(project: project, libraryJobID: libraryJobID, api: api, deviceRenders: deviceRenders, uploads: uploads)
+            // A retired flight must not touch the session its replacement now owns.
+            guard self.openFlight?.id == id else { return }
+            if self.syncDroppedByOpen {
+                self.syncDroppedByOpen = false
+                if self.loadState == .loaded, self.conversationRuntimeVersion == 2 { await self.synchronizePromptRevision() }
+            }
+            guard self.openFlight?.id == id else { return }
+            if intent == .warm, self.loadState != .loaded { self.abandonUnfinishedLoad() }
+            self.openFlight = nil
+        }
+        openFlight = OpenFlight(id: id, target: target, task: task, claimed: intent == .open)
+        await task.value
+    }
+
+    private func performOpen(project: ProjectSummary, libraryJobID: UUID?, api: any KriaAPIClient,
+                             deviceRenders: DeviceRenderSessions, uploads: BackgroundUploadCoordinator) async {
+        useDeviceRendering(deviceRenders)
+        useMediaUploads(uploads)
+        if isBehindActiveJob(project) {
+            await adoptLatestJob(project, api: api)
+            return
+        }
+        guard needsReload(for: project) else {
+            // Already loaded: a chat draft may have landed while this tab was hidden.
+            if project.runtimeVersion == 2 { await synchronizePromptRevision() }
+            return
+        }
+        let lifetime = editorLifetimeID
+        if libraryJobID == nil {
+            // KRI-529: a thread revision bump alone (a chat turn) must not reload the editor.
+            if await reconcileOnOpen(project: project, api: api) { return }
+        }
+        guard let loadedLifetime = await loadForEditorOpen(project: project, libraryJobID: libraryJobID,
+            api: api, expectedLifetime: lifetime), editorLifetimeID == loadedLifetime else { return }
+        if let key = deviceRenderKey, let file = deviceRenders.presentations[key]?.localFile { showDeviceOutput(file) }
+    }
+
+    /// The chat stopped being warmable (a turn started, the app left the foreground, the creator left the chat):
+    /// drop a warm load that is still fetching. A load that already has its document keeps going, and a flight the
+    /// creator claimed with a tap is never cancelled from here.
+    func cancelWarm() {
+        guard let flight = openFlight, !flight.claimed, loadState != .loaded else { return }
+        retireOpenFlight()
+    }
+
+    private func retireOpenFlight() {
+        guard let flight = openFlight else { return }
+        openFlight = nil
+        flight.task.cancel()
+        abandonUnfinishedLoad()
+    }
+
+    /// Fences every continuation of an unfinished load (its epoch is replaced) and returns the session to the state a
+    /// first open starts from: idle, no error surface, no retry scheduled.
+    private func abandonUnfinishedLoad() {
+        guard loadState != .loaded else { return }
+        _ = beginEditorLoad()
+        isSaving = false; isLoadingEditor = false
+        loadRetryTask?.cancel(); loadRetryTask = nil
+        pendingLoadObservation = nil
+        loadWaitingMessage = nil
+        loadState = .idle
+        saveState = .idle
+    }
+
+    /// iOS asked for memory back. A warm session nobody is looking at gives up its composition and player; the tap then
+    /// loads it again from the cold path. A session the creator is using, or holds their own edits, is never touched.
+    func releaseWarmForMemoryPressure() {
+        guard !previewPresentationActive, openFlight?.claimed != true else { return }
+        if loadState != .loaded { retireOpenFlight(); return }
+        guard openFlight == nil, !isSaving, pendingText == nil, !hasUnsavedChanges || hasOnlyChatStagedChanges else { return }
+        _ = beginEditorLoad()
+        isSaving = false; isLoadingEditor = false
+        discardPlaybackForNewJob()
+        serverBaseline = nil
+        hasUnsavedChanges = false
+        chatStagedDocument = nil; chatStagedSections = []; appliedChatDraftRevision = nil
+        loadState = .idle
+        saveState = .idle
     }
 
     func loadForEditorOpen(project: ProjectSummary, libraryJobID: UUID?, api: any KriaAPIClient,
@@ -4030,6 +4172,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         #if DEBUG
         sourcePreviewBuildCountForTesting += 1
         #endif
+        Perf.event("editor.preview.build")
         Perf.begin("editor.preview", id: jobID.uuidString)
         defer { Perf.end("editor.preview", id: jobID.uuidString) }
         sourcePreviewTask?.cancel()
@@ -10202,7 +10345,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         player?.pause()
         isPlaying = false
         failureHandledItem = nil
-        activatePreviewAudio()
+        if wantsPlayback || previewPresentationActive { activatePreviewAudio() }
         if player != nil, player === finishedRenderPlayer, let url = playableDeviceOutputURL ?? finishedRenderURL {
             reinstallFinishedRender(url: url, preferredDuration: finishedRenderDuration)
         }
