@@ -1,7 +1,8 @@
 # KRI-1352: researched text as word sequences and translated layers
 
-Claim: `local_fix`, offline verified. The live replay, the device render and production are not
-verified. The incident stays open in KRI-1352.
+Claim: `local_fix`, offline verified. The one approved live replay stopped after the writer reported
+that supplied facts did not mention the date. The device render and production are not verified. The
+incident stays open in KRI-1352.
 
 ## The request and the failure
 
@@ -72,11 +73,27 @@ Cases covered offline, with synthetic facts and wording:
 
 | Check | Result |
 | --- | --- |
-| `tests/evals/request_following/test_research_feeds_text_sequences.py` | 37 passed |
+| `tests/evals/request_following/test_research_feeds_text_sequences.py` | 39 passed |
 | `tests/kria/test_refusal_names_real_limit.py` | 4 passed; 2 fail on the base code |
 | `tests/gates/test_reliability_gates.py` | 148 passed |
-| Live text-only replay (approved, USD 3 cap) | pending |
+| Live text-only replay (approved, USD 3 cap) | ran once; failed before shaping, see below |
 | Phone render of the original request | pending |
+
+## Live replay result
+
+The one approved replay ran on 2026-11-10 against a production-shaped rebuild of the failed text
+pass, with real Gemini calls and no stubs. It made three calls, all settled, USD 0.102215 in total,
+with no unknown spend. The composer asked for research, the grounded search returned, and the
+layer writer answered with an unmet request: the facts it received did not mention the date. The
+render failed as "Text composition is incomplete" with that reason. No text was shown, and nothing
+unsourced was rendered.
+
+The facts, the research topic and the writer's layers were not captured, because
+`persist_agent_run` stores no row without a job, plan item or session. The cause is therefore
+unproven. In production, both searches for this request returned facts that named the date from
+`.gov.tr` sources, so the search can ground it; why this run was rejected is unknown. An unmet
+answer ends research before validation, review and the correction round, so no second write ran.
+The request is not fulfilled. Any further paid run needs a new approval.
 
 Each reviewer reproduction failed before its fix with `DID NOT RAISE` or `IndexError`.
 
