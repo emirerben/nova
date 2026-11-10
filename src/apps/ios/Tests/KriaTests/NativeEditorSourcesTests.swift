@@ -240,6 +240,129 @@ final class NativeEditorSourcesTests: XCTestCase {
         XCTAssertNil(NativePhoneTalkingSource.sourceIndices(variant: variant, document: document, pool: pool, lanesEditable: true))
     }
 
+    /// KRI-720: each talking take is cut on its own. The receipt's `speaker_removed` rows split every speaker into
+    /// its kept segments, back to back, exactly as the recipe plays them; captions are on that cut timeline.
+    func testPhoneTalkingEditCutsEveryTakeFromTheReceipt() throws {
+        func source(_ id: String) -> NativeTimelineSource {
+            NativeTimelineSource(mediaID: id, sourceURL: URL(string: "https://example.com/\(id).mov"), original: nil, localRequired: false)
+        }
+        let pool = NativeEditorSourcePool(clips: [
+            .init(clipIndex: 0, nativeSource: source("footage-a")),
+            .init(clipIndex: 1, nativeSource: source("speaker-b")),
+            .init(clipIndex: 2, nativeSource: source("speaker-a")),
+        ], baseGeneration: "g")
+        func span(_ start: Double, _ end: Double) -> JSONValue { .object(["start_s": .number(start), "end_s": .number(end)]) }
+        func row(_ id: String, _ spans: [JSONValue]) -> JSONValue { .object(["media_id": .string(id), "removed": .array(spans)]) }
+        func variant(_ speakerRemoved: JSONValue?) -> [String: JSONValue] {
+            var receipt: [String: JSONValue] = ["version": .number(1), "speaker_media_ids": .array([.string("speaker-a"), .string("speaker-b")])]
+            if let speakerRemoved { receipt["speaker_removed"] = speakerRemoved }
+            return ["resolved_archetype": .string("subtitled"), "render_destination": .string("device"),
+                    "silence_cut": .object(["removed": .array([span(3, 4)])]), "phone_talking_multi_clip": .object(receipt)]
+        }
+        let speakerIndices = [2, 1]
+        let speakers: [NativePhoneTalkingSource.Speaker] = [.init(clipIndex: 2, duration: 8), .init(clipIndex: 1, duration: 5.5)]
+        let document = EditorDocument(capabilities: ["timeline": .init(editable: false)], revision: .init(baseGeneration: "g"))
+
+        // Both takes cut. The second take's rows come first and unsorted: matched by media id, sorted by start.
+        let both = variant(.array([row("speaker-b", [span(4, 4.5), span(1, 2)]), row("speaker-a", [span(0, 0.5), span(6, 7)])]))
+        let spans = try XCTUnwrap(NativePhoneTalkingSource.speakerRemovedSpans(variant: both, pool: pool, speakerIndices: speakerIndices))
+        XCTAssertEqual(spans[1]?.map(\.start), [1, 4])
+        XCTAssertEqual(spans[2]?.map(\.start), [0, 6])
+        let removed = NativePhoneTalkingSource.removedSpans(variant: both)
+        let cut = try NativePhoneTalkingSource.hydrate(document, speakers: speakers, removed: removed, speakerRemoved: spans)
+        // speaker-a's own row wins over silence_cut's (3, 4): [0.5, 6] + [7, 8]; speaker-b: [0, 1] + [2, 4] + [4.5, 5.5].
+        XCTAssertEqual(cut.clips.map(\.clipIndex), [2, 2, 1, 1, 1])
+        XCTAssertEqual(cut.clips.map(\.inS), [0.5, 7, 0, 2, 4.5])
+        XCTAssertEqual(cut.clips.compactMap(\.durationS), [5.5, 1, 1, 2, 1])
+        XCTAssertEqual(cut.clips.compactMap(\.id), ["native-phone-talking-source", "native-phone-talking-source-1",
+            "native-phone-talking-source-2", "native-phone-talking-source-3", "native-phone-talking-source-4"])
+        XCTAssertEqual(cut.clips.map { $0.raw["source_duration_s"] }, [.number(8), .number(8), .number(5.5), .number(5.5), .number(5.5)])
+        XCTAssertTrue(cut.clips.allSatisfy(NativePhoneTalkingSource.isSourceSlot))
+        XCTAssertEqual(try NativePhoneTalkingSource.hydrate(cut, speakers: speakers, removed: removed, speakerRemoved: spans), cut,
+                       "rehydrating an already-split document is stable")
+
+        // Only the second take has a row: the first keeps silence_cut's cut, exactly as before.
+        let secondOnly = try XCTUnwrap(NativePhoneTalkingSource.speakerRemovedSpans(
+            variant: variant(.array([row("speaker-b", [span(1, 2)])])), pool: pool, speakerIndices: speakerIndices))
+        let mixed = try NativePhoneTalkingSource.hydrate(document, speakers: speakers, removed: removed, speakerRemoved: secondOnly)
+        XCTAssertEqual(mixed.clips.map(\.clipIndex), [2, 2, 1, 1])
+        XCTAssertEqual(mixed.clips.map(\.inS), [0, 4, 0, 2])
+        XCTAssertEqual(mixed.clips.compactMap(\.durationS), [3, 4, 1, 3.5])
+
+        // A span past the take's end is clamped; a sub-millisecond sliver left before a span is not footage.
+        let edge = try NativePhoneTalkingSource.hydrate(document, speakers: speakers, removed: [],
+                                                        speakerRemoved: [1: [(start: 0.0004, end: 2), (start: 4, end: 9)]])
+        XCTAssertEqual(edge.clips.map(\.clipIndex), [2, 1])
+        XCTAssertEqual(edge.clips.map(\.inS), [0, 2])
+        XCTAssertEqual(edge.clips.compactMap(\.durationS), [8, 2])
+        // A take cleanup emptied cannot fall back to playing it uncut.
+        XCTAssertThrowsError(try NativePhoneTalkingSource.hydrate(document, speakers: speakers, speakerRemoved: [1: [(start: 0, end: 5.5)]]))
+
+        // Inserts stay on the first take's timeline, untouched by the later take's cut.
+        let insert = NativePhoneTalkingSource.Insert(clipIndex: 0, atTake: 2, duration: 3)
+        let withInsert = try NativePhoneTalkingSource.hydrate(document, speakers: speakers, removed: removed, speakerRemoved: secondOnly,
+                                                              inserts: [(insert: insert, sourceDuration: 3)])
+        XCTAssertEqual(withInsert.clips.map(\.clipIndex), [2, 0, 2, 2, 1, 1])
+        XCTAssertEqual(withInsert.clips.map(\.inS), [0, 0, 2, 4, 0, 2])
+        XCTAssertEqual(withInsert.clips.compactMap(\.durationS), [2, 3, 1, 4, 1, 3.5])
+        XCTAssertEqual(Set(withInsert.clips.compactMap(\.id)).count, 6)
+    }
+
+    /// KRI-720: no `speaker_removed` key previews byte-identically to before; anything the preview could not cut
+    /// faithfully is nil, so the editor shows the finished MP4.
+    func testPhoneTalkingSpeakerCutsFallBackWhenTheReceiptIsWrong() throws {
+        func source(_ id: String) -> NativeTimelineSource {
+            NativeTimelineSource(mediaID: id, sourceURL: URL(string: "https://example.com/\(id).mov"), original: nil, localRequired: false)
+        }
+        let pool = NativeEditorSourcePool(clips: [
+            .init(clipIndex: 0, nativeSource: source("footage-a")),
+            .init(clipIndex: 1, nativeSource: source("speaker-b")),
+            .init(clipIndex: 2, nativeSource: source("speaker-a")),
+        ], baseGeneration: "g")
+        func span(_ start: Double, _ end: Double) -> JSONValue { .object(["start_s": .number(start), "end_s": .number(end)]) }
+        func row(_ id: String, _ spans: [JSONValue]) -> JSONValue { .object(["media_id": .string(id), "removed": .array(spans)]) }
+        func variant(_ speakerRemoved: JSONValue?) -> [String: JSONValue] {
+            var receipt: [String: JSONValue] = ["version": .number(1), "speaker_media_ids": .array([.string("speaker-a"), .string("speaker-b")])]
+            if let speakerRemoved { receipt["speaker_removed"] = speakerRemoved }
+            return ["phone_talking_multi_clip": .object(receipt)]
+        }
+        let speakerIndices = [2, 1]
+        func parse(_ value: [String: JSONValue]) -> [Int: [(start: Double, end: Double)]]? {
+            NativePhoneTalkingSource.speakerRemovedSpans(variant: value, pool: pool, speakerIndices: speakerIndices)
+        }
+
+        // Absent: no receipt, or a receipt without the key. Same pieces, same ids as today's call.
+        XCTAssertEqual(parse([:])?.isEmpty, true)
+        XCTAssertEqual(parse(variant(nil))?.isEmpty, true)
+        XCTAssertEqual(parse(variant(.array([])))?.isEmpty, true)
+        let document = EditorDocument(capabilities: ["timeline": .init(editable: false)], revision: .init(baseGeneration: "g"))
+        let speakers: [NativePhoneTalkingSource.Speaker] = [.init(clipIndex: 2, duration: 8), .init(clipIndex: 1, duration: 5.5)]
+        XCTAssertEqual(try NativePhoneTalkingSource.hydrate(document, speakers: speakers, removed: [(3, 4)], speakerRemoved: try XCTUnwrap(parse(variant(nil)))),
+                       try NativePhoneTalkingSource.hydrate(document, speakers: speakers, removed: [(3, 4)]))
+        // A take with an empty list plays in full.
+        XCTAssertEqual(parse(variant(.array([row("speaker-b", [])])))?[1]?.count, 0)
+
+        // Unknown clip, or a clip that is in the pool but is not a speaker.
+        XCTAssertNil(parse(variant(.array([row("gone", [span(1, 2)])]))))
+        XCTAssertNil(parse(variant(.array([row("footage-a", [span(1, 2)])]))))
+        // Malformed: not an array, a row that isn't an object, missing fields, bad spans, a repeated take.
+        let malformed: [JSONValue] = [
+            .object([:]),
+            .array([.string("speaker-b")]),
+            .array([.object(["media_id": .string("speaker-b")])]),
+            .array([.object(["removed": .array([span(1, 2)])])]),
+            .array([.object(["media_id": .string("speaker-b"), "removed": span(1, 2)])]),
+            .array([row("speaker-b", [span(2, 1)])]),
+            .array([row("speaker-b", [span(-1, 1)])]),
+            .array([row("speaker-b", [span(1, .infinity)])]),
+            .array([row("speaker-b", [.object(["start_s": .number(1)])])]),
+            .array([row("speaker-b", [.string("1-2")])]),
+            .array([row("speaker-b", [span(1, 2)]), row("speaker-b", [span(3, 4)])]),
+        ]
+        for bad in malformed { XCTAssertNil(parse(variant(bad)), "\(bad)") }
+        XCTAssertNil(parse(["phone_talking_multi_clip": .string("receipt")]))
+    }
+
     /// KRI-719: the receipt's footage windows map onto the source pool for the live preview, sorted by start.
     /// Anything the preview could not draw faithfully (unknown clip, a speaker, overlap, a bad window) is nil,
     /// so the editor shows the finished MP4 instead of a video without its cutaways.

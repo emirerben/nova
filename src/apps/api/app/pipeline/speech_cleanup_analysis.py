@@ -354,6 +354,117 @@ class SpeechCleanupAnalysisResult(_FrozenModel):
         return cls.model_validate(payload)
 
 
+MULTI_TAKE_PAYLOAD_VERSION = "2"
+"""``SpeechCleanupAnalysis.analysis_payload_version`` of a several-take row (KRI-720)."""
+
+
+class SpeechCleanupTakeResult(_FrozenModel):
+    """KRI-720: one take of a several-take Talking analysis.
+
+    ``analysis`` is the ordinary single-source result for that take's own window, or
+    ``None`` when the take has no audible speech (footage with a dead or silent track): the
+    render never plays such a clip as a speaker. ``speaker`` is the preflight's own reading of
+    `phone_talking_cutaways.classify_talking_clips` over the takes' words: only speaker takes
+    count in the public receipt (footage with ambient sound is never "cleaned" in the card).
+    """
+
+    media_id: str = Field(min_length=1, max_length=256)
+    storage_path: str = Field(min_length=1, max_length=2048)
+    generation: str = Field(min_length=1, max_length=256)
+    window_start_s: float = Field(ge=0, allow_inf_nan=False)
+    window_end_s: float = Field(gt=0, allow_inf_nan=False)
+    speaker: bool
+    analysis: SpeechCleanupAnalysisResult | None = None
+
+    @model_validator(mode="after")
+    def validate_take(self) -> SpeechCleanupTakeResult:
+        if self.window_end_s <= self.window_start_s:
+            raise ValueError("take window end must follow its start")
+        if self.analysis is not None and not (
+            math.isclose(
+                self.analysis.source_window_start_s, self.window_start_s, rel_tol=0, abs_tol=1e-6
+            )
+            and math.isclose(
+                self.analysis.source_window_end_s, self.window_end_s, rel_tol=0, abs_tol=1e-6
+            )
+        ):
+            raise ValueError("take analysis is for another window")
+        if self.speaker and self.analysis is None:
+            raise ValueError("a speaker take needs its analysis")
+        return self
+
+
+def multi_take_public_receipt(
+    takes: Sequence[SpeechCleanupTakeResult],
+) -> SpeechCleanupPublicReceipt:
+    """The card's numbers: the sum over the speaker takes (each take's own receipt)."""
+
+    counted = [take.analysis.public_receipt for take in takes if take.speaker and take.analysis]
+    removed_ms = sum(receipt.estimated_removed_ms for receipt in counted)
+    source_ms = sum(int(receipt.source_duration_ms or 0) for receipt in counted)
+    return SpeechCleanupPublicReceipt(
+        candidate_count=sum(receipt.candidate_count for receipt in counted),
+        category_counts=SpeechCleanupCategoryCounts(
+            filler_sounds=sum(r.category_counts.filler_sounds for r in counted),
+            long_pauses=sum(r.category_counts.long_pauses for r in counted),
+            retakes=sum(r.category_counts.retakes for r in counted),
+        ),
+        estimated_removed_ms=removed_ms,
+        source_duration_ms=source_ms,
+        result_duration_ms=source_ms - removed_ms,
+    )
+
+
+class SpeechCleanupMultiTakeResult(_FrozenModel):
+    """KRI-720: the private payload of one several-take Talking analysis row.
+
+    Every take keeps its own exact single-source result (words, CutPlan, findings in that
+    take's source time), so the render cuts each take with the plan made for its own bytes.
+    The public receipt is derived, never trusted: it must equal `multi_take_public_receipt`.
+    """
+
+    schema_version: Literal[2] = 2
+    source_fingerprint: str = Field(min_length=1, max_length=256)
+    detector_version: str = Field(min_length=1, max_length=100)
+    takes: tuple[SpeechCleanupTakeResult, ...] = Field(min_length=2)
+    public_receipt: SpeechCleanupPublicReceipt
+
+    @model_validator(mode="after")
+    def validate_takes(self) -> SpeechCleanupMultiTakeResult:
+        if len({take.media_id for take in self.takes}) != len(self.takes):
+            raise ValueError("several-take analysis repeats a take")
+        if len({take.storage_path for take in self.takes}) != len(self.takes):
+            raise ValueError("several-take analysis repeats a source path")
+        if not any(take.speaker for take in self.takes):
+            raise ValueError("several-take analysis has no speaker take")
+        for take in self.takes:
+            analysis = take.analysis
+            if analysis is None:
+                continue
+            if analysis.source_fingerprint != self.source_fingerprint:
+                raise ValueError("take analysis is for another source identity")
+            if analysis.detector_version != self.detector_version:
+                raise ValueError("take analysis used another detector")
+        if self.public_receipt != multi_take_public_receipt(self.takes):
+            raise ValueError("public receipt does not match the speaker takes")
+        return self
+
+    def take(self, storage_path: str) -> SpeechCleanupTakeResult | None:
+        return next((take for take in self.takes if take.storage_path == storage_path), None)
+
+    def primary(self) -> SpeechCleanupTakeResult:
+        """The first speaker take, in clip order: the take single-source readers see."""
+
+        return next(take for take in self.takes if take.speaker)
+
+    def to_payload(self) -> dict[str, Any]:
+        return self.model_dump(mode="json")
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> SpeechCleanupMultiTakeResult:
+        return cls.model_validate(payload)
+
+
 class _TranscriptFn(Protocol):
     def __call__(
         self,

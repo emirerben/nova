@@ -506,3 +506,45 @@ def test_a_title_held_past_a_short_first_clip_is_not_called_clear():
     assert gb._title_protected_placement(_MEASURED, held, plan, 3.0)["objects_verified"] is False
     assert gb._title_protected_placement(_MEASURED, held, plan, 10.0) == _MEASURED
     assert gb._title_protected_placement(_MEASURED, [], plan, 3.0) is None
+
+
+# KRI-720 (Emir's review of #2251): with several takes, the first take can be cut while every
+# later take plays whole. Face/object protection for take2 must start where take2 really plays
+# (after the first take's KEPT seconds), never at the first take's full length.
+
+
+@pytest.mark.parametrize(
+    ("first_keep", "later_cut", "take2_start_s"),
+    [
+        ([(0.0, 10.0)], None, 10.0),  # nothing cut: unchanged
+        ([(0.0, 2.0), (4.0, 10.0)], None, 8.0),  # first cut, later whole (the review case)
+        ([(0.0, 2.0), (4.0, 10.0)], {"take2": [(1.0, 8.0)]}, 8.0),  # both cut
+    ],
+)
+def test_later_take_protection_starts_after_the_first_takes_kept_seconds(
+    monkeypatch, first_keep, later_cut, take2_start_s
+):
+    from tests.pipeline.test_phone_voiceover_montage_plan import _binding as _source
+
+    _plates_by_clip(monkeypatch, {"take1": MIDDLE_PLATE, "take2": CAPTION_BAND_PLATE})
+    marks = [
+        _mark(media_id="take1", box=_box_list(MIDDLE_PLATE)),
+        _mark(media_id="take2", box=_box_list(CAPTION_BAND_PLATE)),
+    ]
+    plan, _look, _receipt = gb._phone_protected_plan(
+        {"creator_brief_binding": _binding(marks=marks)},
+        binding=_source("take1", duration_s=10.0),
+        clip_path="/tmp/take1.mp4",
+        keep_segments=first_keep,
+        landscape_fit="fill",
+        position_x=0.0,
+        cues=[{"text": "hello there", "start_s": 0.5, "end_s": 1.5}],
+        caption_style="sentence",
+        extra_speakers=((_source("take2", duration_s=8.0), "/tmp/take2.mp4"),),
+        **({"extra_keep_segments": later_cut} if later_cut else {}),
+    )
+
+    (take2,) = [s for s in plan.speakers if s.media_id == "take2"]
+    assert take2.start_s == pytest.approx(take2_start_s)
+    later_s = sum(b - a for a, b in (later_cut or {}).get("take2", [(0.0, 8.0)]))
+    assert take2.end_s == pytest.approx(take2_start_s + later_s)

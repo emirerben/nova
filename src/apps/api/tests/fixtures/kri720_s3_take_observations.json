@@ -1,0 +1,18 @@
+{
+  "_note": "KRI-720 reviewed source observations for Çiğdem S3 (kit upload/S3, AI presenter takes). Written by listening to the takes, independent of any Kria output. Times are source seconds in each take.",
+  "request": "There are 3 videos, two at home and one in the car, join them in that order. Cut the pauses, the okays and the places I restarted.",
+  "play_order": ["IMG_7244.MOV", "IMG_7245.MOV", "IMG_7252.MOV"],
+  "takes": {
+    "IMG_7244.MOV": {
+      "duration_s": 20.108,
+      "restarts": [
+        {"say": "Wait, the light? Okay.", "approx_s": [0.0, 1.92], "kind": "slate"},
+        {"say": "and Mira's perfume on... Oh, sorry, again.", "approx_s": [14.13, 17.49], "kind": "retake", "kept_redelivery": "And Mira's perfume on a stack of pancakes."}
+      ]
+    },
+    "IMG_7245.MOV": {"duration_s": 6.989, "restarts": []},
+    "IMG_7252.MOV": {"duration_s": 7.152, "restarts": []}
+  },
+  "must_keep_every_other_word": true,
+  "format_rule": "no pause longer than 0.4 s (Çiğdem's Yorumla format)"
+}
