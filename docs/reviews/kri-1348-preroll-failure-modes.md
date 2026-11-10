@@ -125,6 +125,18 @@ often as pre-roll, and "Sorry." / "I'm sorry." can open an apology video → "wa
 role. "Wait, the light… okay." is still cut through "light"; "Hazır mıyız?" (are WE ready) still
 counts through the first-person "mıyız".
 
+Added in code review of PR #2252 (Emir, 2026-11-10):
+
+F19. **A glue-only real opening swept in by a later aside** — "This is it. Okay, starting. Apple…"
+cut "This is it." with the slate, because a line of glue words with no anchor let the scan go on
+and the later "starting" anchored everything from word 0 → such a line now ends the scan (inside
+a cue stretch too, and unpunctuated); only fillers ("Okay."), an interjection ("Wait,") and a
+countdown still under way ("Three,") keep it reading. A fragment whisper split off mid-clause at a
+short pause (ending on a comma or a word no sentence ends on: "Wait, the" / "light,") joins the
+next piece instead of ending the scan, so Çiğdem S3's "Wait, the light… okay." is still cut.
+Still cut by design: one comma-joined line about the recording ("This is it, okay, starting.").
+Negative controls in `test_glue_only_opening_line_stops_the_scan` (EN + TR).
+
 ### Missed pre-roll (the cheap side: acceptable, but measured)
 
 M1. A pre-roll word not in the table → kept (as today). Logged in the corpus replay so the table

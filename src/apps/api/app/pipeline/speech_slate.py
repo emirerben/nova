@@ -9,7 +9,7 @@ same outward snapping, voice-guard exemption and receipts as an abandoned take.
 
 The rule is about word ROLES, not phrases (failure modes:
 ``docs/reviews/cigdem-s2-failure-modes.md`` A1-A14 and
-``docs/reviews/kri-1348-preroll-failure-modes.md`` F1-F18, P1-P7). Each word of the opening gets
+``docs/reviews/kri-1348-preroll-failure-modes.md`` F1-F19, P1-P7). Each word of the opening gets
 one role: filler ("okay", "tamam"), glue ("we", "is", "this", "mı"), production
 ("recording", "starting", "mic", "kayıt", "başlıyorum"), countdown number, or cue ("go",
 "let's", "is this on", "hadi", "hazır mıyız"). An utterance is pre-roll when EVERY word has a
@@ -21,7 +21,8 @@ need no change; a word with no role makes the utterance real speech, so a real f
 Precision over recall:
 
 * only utterances that start at word 0 are read, one after another, and the scan stops at the
-  first real one (a slate mid-take is never cut);
+  first real one (a slate mid-take is never cut); a line of glue words with no anchor ("This is
+  it.") also stops it, so a later aside never sweeps a real opening into the cut;
 * an utterance ends at sentence-final punctuation, a gap of ``_MIN_GAP_S`` or a detected silence
   starting inside its last word; at most ``_MAX_UTTERANCE_WORDS`` words and ``_MAX_UTTERANCE_S``
   long, so a transcript that glues the opening to the content never matches;
@@ -70,15 +71,18 @@ _FILLER = (
     "tamam tamamdır evet peki şey hı hıı ıı ıh ee eee aa hm yani işte of tamamdir"
 )
 # Words addressed to the AUDIENCE ("you", "siz", "mısınız") are deliberately absent: "Are you
-# ready?", "Hazır mısınız?" asked of the viewer is a hook, not pre-roll. Words that open real hooks
-# as often as pre-roll ("Wait.", "Ready?", "Dur!") are glue: allowed, never an anchor.
+# ready?", "Hazır mısınız?" asked of the viewer is a hook, not pre-roll. A line made of glue words
+# and no anchor ("This is it.") may be the real opening, so it ends the scan (F19).
 _GLUE = (
     "i im ive we were weve it its this that thats is are am was be been the a an "
     "now again here there then just me us to do does can gonna going let get got in "
-    "wait hold ready "
-    "ben biz bu şu şimdi artık mı mi mu mü muyum miyim hazır dur bekle "
+    "ben biz bu şu şimdi artık mı mi mu mü muyum miyim "
     "da de ve var oldu olduk oluyor geliyor"
 )
+# Interjections that open real hooks as often as pre-roll ("Wait.", "Ready?", "Dur!"): allowed,
+# never an anchor. Alone they are not a sentence, so they do not end the scan ("Wait, … the
+# light, … okay." is split by whisper at every pause).
+_SOFT = "wait hold ready hazır dur bekle"
 # An article before a production word makes it a noun in a real sentence ("That's a record.",
 # "It's a start.", "Bu bir kayıt.").
 _ARTICLES = frozenset({"a", "an", "the", "bir"})
@@ -112,6 +116,9 @@ _NUMBERS = (
 )
 
 _SENTENCE_END = re.compile(r"[.!?…]+[\"'”’)]*$")
+_CLAUSE_GOES_ON = re.compile(r"[,;:]$")
+# Words a sentence cannot end on: a fragment ending on one is mid-clause ("Wait, the" / "light").
+_OPEN_ENDS = frozenset({"the", "a", "an", "to", "of", "in", "and", "bu", "şu", "ve", "bir"})
 _STRIP = re.compile(r"[^\w\s]")
 
 
@@ -143,6 +150,8 @@ _GLUE_LEX = _Lexicon(_GLUE)
 _PRODUCTION_LEX = _Lexicon(_PRODUCTION)
 _TOPIC_LEX = {concept: _Lexicon(entries) for concept, entries in _TOPIC.items()}
 _CUE_LEX = _Lexicon(_CUE)
+_SOFT_LEX = _Lexicon(_SOFT)
+_OPEN_END_KEYS = frozenset(_fold(word) for word in _OPEN_ENDS)
 _NUMBER_LEX = _Lexicon(_NUMBERS)
 
 
@@ -201,6 +210,11 @@ def _ends_utterance(
     return any(hi - lo >= _MIN_SILENCE_S for lo, hi in _boundary_silences(words, j, silences))
 
 
+def _mid_clause(text: str) -> bool:
+    folded = _fold(text).split()
+    return bool(_CLAUSE_GOES_ON.search(text)) or bool(folded and folded[-1] in _OPEN_END_KEYS)
+
+
 def _topic_concept(token: str) -> str | None:
     for concept, lexicon in _TOPIC_LEX.items():
         if token in lexicon:
@@ -211,12 +225,14 @@ def _topic_concept(token: str) -> str | None:
 class _Roles:
     """What one utterance contributes; ``real`` = a word with no production role."""
 
-    __slots__ = ("concepts", "cue", "filler_only", "numbers", "production", "real")
+    __slots__ = ("concepts", "cue", "filler_only", "glue", "numbers", "production", "real", "soft")
 
     def __init__(self) -> None:
         self.concepts: set[str] = set()
         self.real = False
         self.filler_only = True
+        self.glue = False
+        self.soft = False
         self.production = False
         self.numbers = 0
         self.cue = False
@@ -246,7 +262,11 @@ def _roles(tokens: list[str]) -> _Roles:
             roles.numbers += 1
         elif token in _CUE_LEX:
             roles.cue = True
-        elif token not in _GLUE_LEX:
+        elif token in _SOFT_LEX:
+            roles.soft = True
+        elif token in _GLUE_LEX:
+            roles.glue = True
+        else:
             roles.real = True  # a word with no production role (F1, F2, F9)
             return roles
     return roles
@@ -336,12 +356,25 @@ def opening_slate_span(
             if cue_end is None:
                 cue_first = first
             cue_end = j
-        elif cue_end is not None:
-            cue_end = j  # glue, fillers or a lone number inside the cue stretch
-        elif cut_end is not None and roles.filler_only:
-            # "We're recording. Okay." — the trailing "Okay." goes too; a glue-only line after
-            # pre-roll ("This is it.") may be the hook and stays.
-            cut_end = j
+        elif not roles.glue:
+            # Fillers ("Okay."), an interjection ("Wait,") or a countdown still under way
+            # ("Three,"): keep reading. After pre-roll the fillers go too ("We're recording.
+            # Okay.").
+            if cue_end is not None:
+                cue_end = j
+            elif cut_end is not None and roles.filler_only:
+                cut_end = j
+        elif _mid_clause(parsed[j][0]) and (
+            _fresh_start_pause(parsed, first, j, clean_silences) < _MIN_CUE_PAUSE_S
+        ):
+            # A fragment whisper split off at a short pause mid-clause ("Wait, the" / "light,"):
+            # it joins the next piece and is judged with it.
+            continue
+        else:
+            # A line of glue words with no anchor ("This is it.", "Here we are", unpunctuated
+            # too) may be the real opening: the scan stops, so a later aside never sweeps it
+            # in (F19).
+            break
         first = j + 1
     if cue_end is not None and (
         _fresh_start_pause(parsed, cue_first, cue_end, clean_silences) >= _MIN_CUE_PAUSE_S

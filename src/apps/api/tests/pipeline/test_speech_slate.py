@@ -300,3 +300,38 @@ def test_repeated_check_word_is_not_the_videos_topic():
     # "Testing, testing, one, two." — the second "testing" is still the opening, not the topic.
     words = _words("Testing, testing, one, two. Apple just dropped a new ad.", gaps={3: 0.8})
     assert opening_slate_span(words) == (0, 3)
+
+
+@pytest.mark.parametrize(
+    ("text", "gaps", "cut"),
+    [
+        # F19 (review of #2252): a glue-only opening line is real speech; a later aside must not
+        # sweep it into the cut.
+        ("This is it. Okay, starting. Apple just dropped a new ad.", None, None),
+        ("Here we are. We're recording. Apple just dropped a new ad.", None, None),
+        ("This is one. Three, two, one. Apple just dropped a new ad.", None, None),
+        ("Bu iş böyle. Tamam, kayıttayız. Fenerbahçe Kadıköy'den taşınıyor.", None, None),
+        # Unpunctuated transcript, short pauses: "it" can end a sentence, so the line stops.
+        ("this is it okay starting apple just dropped a new ad", {2: 0.4, 4: 0.4}, None),
+        # A cue stretch stops at the same line: only the cue before it goes.
+        ("Let's go. This is it. Apple just dropped a new ad.", {1: 0.9}, "Let's go."),
+        ("Let's go. This is it. Apple just dropped a new ad.", {4: 0.9}, None),
+    ],
+)
+def test_glue_only_opening_line_stops_the_scan(text, gaps, cut):
+    words = _words(text, gaps=gaps)
+    span = opening_slate_span(words)
+    got = None if span is None else " ".join(w["text"] for w in words[: span[1] + 1])
+    assert got == cut
+
+
+def test_interjection_split_off_by_whisper_does_not_stop_the_scan():
+    # Çiğdem S3 take A as whisper.cpp stamped it: "Wait," / "the light," / "okay." are three
+    # utterances (a silence starts inside each). "Wait" alone is an interjection, not a line.
+    rows = [("Wait,", 0.01, 0.63), ("the", 0.63, 0.89), ("light,", 0.89, 1.58)]
+    rest = [("okay.", 1.58, 2.4), ("Why", 2.64, 2.8), ("do", 2.8, 2.9), ("brands", 2.9, 3.3)]
+    silences = [(0.33, 0.63), (0.99, 1.28), (1.8, 2.65)]
+    assert opening_slate_span(_stamped([*rows, *rest]), silences=silences) == (0, 3)
+    # The punctuated variant splits "Wait, the" / "light,": the fragment joins the next piece.
+    silences = [(0.7, 0.88), (1.0, 1.28), (1.8, 2.65)]
+    assert opening_slate_span(_stamped([*rows, *rest]), silences=silences) == (0, 3)

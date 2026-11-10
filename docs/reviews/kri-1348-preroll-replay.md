@@ -66,12 +66,15 @@ The first draft cut "Hazır mısınız?" (an audience question followed by a rea
 missed the comma-split countdown and "Testing, testing"; those became F14–F16 and were fixed before
 the corpus verdict.
 
+Re-run 2026-11-10 after the F19 review fix (a glue-only opening line ends the scan): every
+number above is unchanged.
+
 ## 5. Checks
 
-- `tests/pipeline/test_speech_slate.py`: 69 passed (23 KRI-1326 unchanged + 46 new, one per
-  failure mode, EN and TR).
+- `tests/pipeline/test_speech_slate.py`: 77 passed (23 KRI-1326 unchanged + 54 new, one per
+  failure mode, EN and TR, incl. the F19 review controls); `test_speech_slate_cleanup_e2e.py`: 8 passed.
 - Speech cleanup suites (`test_silence_cut*`, `test_speech_cleanup*`, voice guard e2e, retake
-  detector, Green 3 retake replay, worker contract, config): 768 passed.
+  detector, Green 3 retake replay, worker contract, config): 784 passed.
 - `make kria-replay FIXTURE=nermin-matcha-update`: passes.
 
 ## Not covered
