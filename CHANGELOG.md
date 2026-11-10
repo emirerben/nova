@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.136.0] - 2026-11-10
+
+### Changed
+- fix(ios): stop drag-lift taps reselecting preview items; stabilize editor UI tests (#2247) <!-- release-pr: 2247 -->
+
 ## [0.88.135.0] - 2026-11-10
 
 ### Changed
