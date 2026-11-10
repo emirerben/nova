@@ -746,6 +746,10 @@ class PlanFacts:
     # KRI-533: a phone Voiceover edit as the worker laid it out, clips in screen order.
     # None = this plan is not a rendered Voiceover edit (nothing about it is claimed).
     narrated_steps: tuple[NarratedStepFact, ...] | None = None
+    # KRI-1357: the same steps beside a finished phone Voiceover VARIANT's own facts (the
+    # review of its beat receipt), read only to say which clip played under a named cue that
+    # had no pop-in. Kept apart from ``narrated_steps`` so no order / timing checker reads it.
+    narrated_cue_steps: tuple[NarratedStepFact, ...] | None = None
     # The language the rendered captions are in, and the language that was spoken.
     caption_language: str | None = None
     spoken_language: str | None = None
@@ -7220,6 +7224,18 @@ _TALKING_LIST_LABEL_PLAN = (
     "I'll show it when that part of your talk starts; if I don't hear where it starts, it "
     "won't appear"
 )
+# KRI-1356: a word-triggered pop-in on a phone Voiceover DRAFT. Nothing has listened to the
+# voiceover yet, so it is a promise, not "met"; the finished render's beat receipt decides
+# (placed = met, never heard = "I never heard ... in your voice").
+_NARRATED_BEAT_PLAN = "I'll show it when I hear those words in your voiceover"
+# KRI-1357: a named spoken cue with no pop-in planned on a phone Voiceover DRAFT ("show the fans
+# clip at '1. FC Nürnberg'"). The narration places the footage on the words, and nothing typed
+# tells footage from a Visuals pop-in, so the draft promises only the check the finished
+# render makes (`_footage_at_cue_problem`): which clip plays when those words are said.
+_NARRATED_FOOTAGE_CUE_PLAN = (
+    "Your clips follow your voice, so once the video is made I'll check what's on screen when "
+    "you say those words"
+)
 # KRI-1235: what a draft promises the render (or the approval card's Clean up speech choice)
 # does with an ask, and says after: never a shortfall to hold the first draft over. Approval
 # readiness approves a checked partial receipt whose reason is only these, each part exact and
@@ -7254,6 +7270,9 @@ RENDER_PROMISE_REASONS: tuple[str, ...] = (
     # KRI-980: the renderer mutes every footage clip and its roles receipt names which clips
     # those were, so "if it plays as a cutaway, it plays silent" is what the render then says.
     _TALKING_MUTE_IF_CUTAWAY,
+    # KRI-1356 / KRI-1357: a phone Voiceover draft's word cues wait for the voice.
+    _NARRATED_BEAT_PLAN,
+    _NARRATED_FOOTAGE_CUE_PLAN,
 )
 # KRI-793: what a phone Talking draft says about a captions ask naming a language or words
 # to spell: the writer captions everything said in the take (an off-camera voice too), and
@@ -7604,6 +7623,11 @@ _REASON_TR: dict[str, str] = {
     ),
     _TALKING_LIST_LABEL_PLAN: (
         "Konuşmanda o bölüm başladığında gösteririm; nerede başladığını duymazsam çıkmaz"
+    ),
+    _NARRATED_BEAT_PLAN: "Seslendirmende o sözleri duyduğumda gösteririm",
+    _NARRATED_FOOTAGE_CUE_PLAN: (
+        "Klipler sesini takip ediyor, video hazır olunca o sözleri söylediğinde ekranda ne "
+        "olduğunu kontrol edeceğim"
     ),
     _TALKING_CAPTIONS_EVERY_VOICE: (
         "Çekimindeki her ses altyazıya girer, kamera dışındaki sesler de"
@@ -8635,6 +8659,8 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         return _receipt(req, "partial", _CANT_CHECK_BEATS)
     beats = facts.reaction_beats
     problems: list[str] = []
+    # KRI-1356 / KRI-1357: what this draft promises the render instead of a verdict.
+    promises: list[str] = []
     title_misses: list[tuple[str, str]] = []
     delivered = False
     placements: list[BeatFact] = []
@@ -8659,6 +8685,11 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
             title_misses = _title_misses_for(facts, names)
             if title_misses:
                 problems.extend(_title_miss_problem(t, r) for t, r in title_misses)
+            no_beat_cues = (
+                _footage_cues(facts, named)
+                if not unheard and not room and not title_misses and not sequence_problem
+                else []
+            )
             if unheard:
                 problems.append(
                     _never_heard_problem(unheard, other_speaker=_asks_about_other_speaker(req))
@@ -8667,6 +8698,13 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                 problems.append(room)
             elif title_misses:
                 pass
+            elif no_beat_cues and len(no_beat_cues) == len(named):
+                # KRI-1357: no pop-in at all, every named cue possibly footage on the words.
+                if facts.rendered_variant:
+                    problems.extend(_footage_at_cue_problem(n, facts) for n in no_beat_cues)
+                    delivered = True
+                else:
+                    promises.append(_NARRATED_FOOTAGE_CUE_PLAN)
             else:
                 problems.append(
                     say(
@@ -8718,6 +8756,10 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                 and not any(_trigger_heard(n, u) for u in unheard)
                 and not any(_trigger_heard(n, t) for t, _r in title_misses)
             ]
+            # KRI-1357: a cue with no pop-in on a Voiceover edit may be footage the narration
+            # places on the words; nothing typed says which, so it is not "No pop-in".
+            footage_cues = _footage_cues(facts, missing) if not sequence_problem else []
+            missing = [n for n in missing if n not in footage_cues]
             if unheard:
                 problems.append(
                     _never_heard_problem(unheard, other_speaker=_asks_about_other_speaker(req))
@@ -8742,6 +8784,11 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                     )
                 )
                 delivered = delivered or bool(sequence_problem)
+            if footage_cues and facts.rendered_variant:
+                problems.extend(_footage_at_cue_problem(n, facts) for n in footage_cues)
+                delivered = True
+            elif footage_cues:
+                promises.append(_NARRATED_FOOTAGE_CUE_PLAN)
             if unresolved:
                 problems.append(
                     say(
@@ -8827,9 +8874,82 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         ):
             # KRI-1322: only the render knows whether the logo fits above the title.
             return _receipt(req, "partial", _TITLE_PICTURE_PLAN)
+        if (
+            by_name
+            and placements
+            and _narrated_draft(facts)
+            and any(b.anchor != "title" for b in placements)
+            and _narrated_beat_promise_on()
+        ):
+            # KRI-1356: no voice has been matched against the cue yet.
+            promises.insert(0, _NARRATED_BEAT_PLAN)
+        if promises:
+            return _receipt(req, "partial", "; ".join(_loc(p) for p in promises))
         return _receipt(req, "met", _placement_reason(placements) if by_name else None)
+    problems.extend(_loc(p) for p in promises)
     status = "partial" if delivered else "not_possible"
     return _receipt(req, status, "; ".join(problems) + ".")
+
+
+def _narrated_beat_promise_on() -> bool:
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(settings.narrated_beat_render_promise_enabled)
+
+
+def _narrated_draft(facts: PlanFacts) -> bool:
+    """A draft the phone Voiceover compiler will render (never a finished one or an editor)."""
+    return facts.phone_narrated and not facts.rendered_variant and not facts.editor
+
+
+def _footage_cues(facts: PlanFacts, names: Sequence[str]) -> list[str]:
+    """KRI-1357: the named cues with no pop-in that a phone Voiceover edit's narration may cover
+    with footage: on its draft, or on its finished variant when the render's clip steps are
+    known. A cue whose planned pop-in lost its photo (``dropped_beat_triggers``) or had no room
+    on screen (``beat_room_drops``, KRI-547) is a Visuals ask, never one of these: it keeps its
+    own honest sentence. Empty when the flag is off (the old "No pop-in")."""
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.narrated_footage_cue_promise_enabled:
+        return []
+    if not (_narrated_draft(facts) or (facts.rendered_variant and facts.narrated_cue_steps)):
+        return []
+    return [
+        n
+        for n in names
+        if not any(_trigger_heard(n, t) for t in facts.dropped_beat_triggers)
+        and not _beat_room_drop(facts, n)
+    ]
+
+
+def _footage_at_cue_problem(name: str, facts: PlanFacts) -> str:
+    """KRI-1357: which clip of the finished Voiceover edit plays while the cue is said.
+
+    Read off the render's own steps (each clip's window and the words spoken over it), with the
+    matcher's folding; it names the clip, it never claims it is the one the creator meant."""
+    from app.services.phone_reaction_grounding import fold_tokens  # noqa: PLC0415
+
+    steps = facts.narrated_cue_steps or ()
+    wanted = fold_tokens(name)
+    for index, step in enumerate(steps):
+        said = fold_tokens(step.text)
+        if wanted and any(
+            said[i : i + len(wanted)] == wanted for i in range(len(said) - len(wanted) + 1)
+        ):
+            return say(
+                en=(
+                    f"When you say {_names([name])}, clip {index + 1} of {len(steps)} is on "
+                    f"screen ({step.start_s:.1f}–{step.end_s:.1f} s)"
+                ),
+                tr=(
+                    f"{_names([name])} dediğinde ekranda {len(steps)} klipten {index + 1}. "
+                    f"klip var ({step.start_s:.1f}–{step.end_s:.1f} sn)"
+                ),
+            )
+    return say(
+        en=f"I couldn't tell which clip is on screen when you say {_names([name])}",
+        tr=f"{_names([name])} dediğinde ekranda hangi klibin olduğunu anlayamadım",
+    )
 
 
 # KRI-783: each pattern carries its Turkish alternatives too, written Turkish-folded
@@ -13326,9 +13446,33 @@ def brief_caption_spellings(brief: CreativeBrief | None) -> tuple[str, ...]:
 _TITLE_SOURCES_THE_CREATOR_OWNS = frozenset({"creator", "brief"})
 
 
+_NO_TITLE_AS_ASKED = "No title, as asked."
+_REASON_TR[_NO_TITLE_AS_ASKED] = "İstediğin gibi başlık yok."
+_TITLE_DESPITE_NO_TITLE = "This draft has a title, but you asked for none."
+_REASON_TR[_TITLE_DESPITE_NO_TITLE] = "Bu taslakta başlık var, ama başlık istemedin."
+
+
+def title_off(req: BriefRequirement) -> bool:
+    """KRI-1355: the brief model typed this title ask as "no title" (``facts.title == "off"``,
+    any language: "Kein Titel"). Off with ``TITLE_OFF_FACT_ENABLED``: never read."""
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.title_off_fact_enabled or req.kind != "text" or req.scope != "title":
+        return False
+    value = req.facts.get("title")
+    if isinstance(value, bool):
+        return value is False
+    return isinstance(value, str) and value.strip().casefold() == "off"
+
+
 def _check_title(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """A title requirement with no exact text: met when the title is the creator's own
-    words or was written from what their brief said (never a default or a model hook)."""
+    words or was written from what their brief said (never a default or a model hook).
+    A typed "no title" ask (KRI-1355) is met by no title and "Couldn't" with one."""
+    if title_off(req):
+        if facts.title:
+            return _receipt(req, "not_possible", _TITLE_DESPITE_NO_TITLE)
+        return _receipt(req, "met", _NO_TITLE_AS_ASKED)
     if not facts.title:
         return _receipt(req, "partial", _NO_TITLE)
     if facts.title_source is None:

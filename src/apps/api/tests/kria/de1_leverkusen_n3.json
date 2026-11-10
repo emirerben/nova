@@ -1,0 +1,1146 @@
+{
+ "source": {
+  "issue": "KRI-1353 (children KRI-1354..1361)",
+  "thread": "de1 (Leverkusen N3 German voiceover), 2026-11-10 10:33-11:01 UTC, build 1951 / protocol 46",
+  "recorded": [
+   "creator messages and Kria replies (thread events)",
+   "brief v3 bound to the job (creator_brief_binding); v1 = v3 with the 'superseded' markers removed",
+   "the two footage clips' analyses and durations (media_snapshot.clip_assignments)",
+   "the Visuals records the clip resolver saw (proposal-trace input_json, aliases m003-m006)",
+   "the voiceover words with times (proposal-trace input_json)",
+   "the approved strategy's reaction beats and the phone render's beat receipt + narrated alignment"
+  ],
+  "reconstructed": [
+   "ids are scrubbed: analysis-proxy-de1-{fans,lightshow}.mp4, asset-de1-{lineup,score}",
+   "brief v1 statuses: the bound v3 brief marks r2/r3/r7 superseded_by creator and r8 by server after the simpler-version taps"
+  ]
+ },
+ "messages": [
+  "Mein Voiceover ist auf Deutsch. Deutsche Untertitel, Wort für Wort. Zeig die Nürnberger Fans bei \"1. FC Nürnberg\", den Lichtshow-Clip bei \"das Licht aus\", das Aufstellungsblatt bei \"Aufstellung\" und das 0:0-Foto bei \"Null zu null\". Das Spielerfoto brauchst du nicht. Lass den Stadionsprecher im Lichtshow-Clip leise unter meiner Stimme laufen und schalte alles andere stumm. Kein Titel.",
+  "Hab jetzt Spielerfoto hinzugefügt",
+  "Deutsche Untertitel, Wort für Wort. Zeig das Aufstellungsblatt bei \"Aufstellung\" und das 0:0-Foto bei \"Null zu null\".",
+  "Mach es ohne die anderen Fotos"
+ ],
+ "replies": {
+  "hold_left_out_media": "This voiceover edit uses all of your project's clips. Photos and videos from Visuals show up only on a word you say, so I left out the ones not tied to a word. Should I make a simpler version?",
+  "no_title_reason": "I didn't add a title because no creator text or grounded brief facts were available.",
+  "under_voice_reason": "Playing one clip's own sound under or after your voice only works in a voiceover edit made on your iPhone, not in this one",
+  "review_null_zu_null": "Couldn't: das 0:0-Foto bei 'Null zu null' (I never heard Null zu null in your voice)"
+ },
+ "brief_v1": {
+  "version": 1,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "style",
+    "facts": {
+     "captions": "word_by_word",
+     "caption_language": "de"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Deutsche Untertitel, Wort für Wort",
+    "source_turn_id": "de1-turn-1"
+   },
+   {
+    "id": "r2",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "1. FC Nürnberg"
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Zeig die Nürnberger Fans bei '1. FC Nürnberg'",
+    "source_turn_id": "de1-turn-1"
+   },
+   {
+    "id": "r3",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "das Licht aus"
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "den Lichtshow-Clip bei 'das Licht aus'",
+    "source_turn_id": "de1-turn-1"
+   },
+   {
+    "id": "r4",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "Aufstellung"
+     ],
+     "display_mode": "fullscreen"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "das Aufstellungsblatt bei 'Aufstellung'",
+    "source_turn_id": "de1-turn-1"
+   },
+   {
+    "id": "r5",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "Null zu null"
+     ],
+     "display_mode": "fullscreen"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "das 0:0-Foto bei 'Null zu null'",
+    "source_turn_id": "de1-turn-1"
+   },
+   {
+    "id": "r6",
+    "kind": "select",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Das Spielerfoto brauchst du nicht",
+    "source_turn_id": "de1-turn-1"
+   },
+   {
+    "id": "r7",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "under_voice"
+    },
+    "scope": "clip:analysis-proxy-de1-lightshow.mp4",
+    "status": "open",
+    "literal": null,
+    "description": "Lass den Stadionsprecher im Lichtshow-Clip leise unter meiner Stimme laufen",
+    "source_turn_id": "de1-turn-1"
+   },
+   {
+    "id": "r8",
+    "kind": "text",
+    "facts": {},
+    "scope": "title",
+    "status": "open",
+    "literal": null,
+    "description": "Kein Titel",
+    "source_turn_id": "de1-turn-1"
+   }
+  ]
+ },
+ "brief_v3_bound": {
+  "version": 3,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "style",
+    "facts": {
+     "captions": "word_by_word",
+     "caption_language": "de"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Deutsche Untertitel, Wort für Wort",
+    "source_turn_id": "de1-turn-1"
+   },
+   {
+    "id": "r2",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "1. FC Nürnberg"
+     ],
+     "superseded_by": "creator"
+    },
+    "scope": "global",
+    "status": "superseded",
+    "literal": null,
+    "description": "Zeig die Nürnberger Fans bei '1. FC Nürnberg'",
+    "source_turn_id": "de1-turn-1"
+   },
+   {
+    "id": "r3",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "das Licht aus"
+     ],
+     "superseded_by": "creator"
+    },
+    "scope": "global",
+    "status": "superseded",
+    "literal": null,
+    "description": "den Lichtshow-Clip bei 'das Licht aus'",
+    "source_turn_id": "de1-turn-1"
+   },
+   {
+    "id": "r4",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "Aufstellung"
+     ],
+     "display_mode": "fullscreen"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "das Aufstellungsblatt bei 'Aufstellung'",
+    "source_turn_id": "de1-turn-1"
+   },
+   {
+    "id": "r5",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "Null zu null"
+     ],
+     "display_mode": "fullscreen"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "das 0:0-Foto bei 'Null zu null'",
+    "source_turn_id": "de1-turn-1"
+   },
+   {
+    "id": "r6",
+    "kind": "select",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Das Spielerfoto brauchst du nicht",
+    "source_turn_id": "de1-turn-1"
+   },
+   {
+    "id": "r7",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "under_voice",
+     "superseded_by": "creator"
+    },
+    "scope": "clip:analysis-proxy-de1-lightshow.mp4",
+    "status": "superseded",
+    "literal": null,
+    "description": "Lass den Stadionsprecher im Lichtshow-Clip leise unter meiner Stimme laufen",
+    "source_turn_id": "de1-turn-1"
+   },
+   {
+    "id": "r8",
+    "kind": "text",
+    "facts": {
+     "superseded_by": "server"
+    },
+    "scope": "title",
+    "status": "superseded",
+    "literal": null,
+    "description": "Kein Titel",
+    "source_turn_id": "de1-turn-1"
+   }
+  ]
+ },
+ "clips": [
+  {
+   "media_id": "analysis-proxy-de1-fans.mp4",
+   "kind": "video",
+   "duration_s": 8.533333,
+   "has_audio": true,
+   "analysis": {
+    "width": 320,
+    "aspect": 0.5634,
+    "brands": [],
+    "height": 568,
+    "source": "clip_metadata",
+    "pix_fmt": "yuv420p",
+    "signals": {
+     "audio_quality": {
+      "v": 2,
+      "data": {
+       "noisy": true,
+       "silent": false,
+       "clipped": false,
+       "peak_db": -4.9,
+       "clipping": 0.0,
+       "evidence": [
+        "steady background noise, floor -22 dBFS"
+       ],
+       "wind_score": 0.044,
+       "crowd_score": 0.934,
+       "noise_floor_db": -22.1
+      }
+     },
+     "near_dup_hash": {
+      "v": 2,
+      "data": {
+       "frames": 3,
+       "hashes": [
+        "a7f3d69e7e9ea633",
+        "efef3ffc2cfcddef",
+        "e7edbdfe342c4d77"
+       ],
+       "mean_luma": 104.9,
+       "sharpness": 1337.8
+      }
+     }
+    },
+    "subject": "stadium crowd",
+    "exposure": {
+     "frames": 9,
+     "version": 1,
+     "mean_luma": 104.5,
+     "near_black_share": 0.0
+    },
+    "duration_s": 8.533333,
+    "transcript": "",
+    "description": "stadium crowd chanting loudly fans waving flags and chanting wide shot of stadium crowd under red lights",
+    "video_codec": "h264",
+    "best_moments": [
+     {
+      "end_s": 3.0,
+      "energy": 7.0,
+      "start_s": 0.0,
+      "description": "stadium crowd chanting loudly"
+     },
+     {
+      "end_s": 6.5,
+      "energy": 7.5,
+      "start_s": 3.5,
+      "description": "fans waving flags and chanting"
+     },
+     {
+      "end_s": 10.0,
+      "energy": 7.0,
+      "start_s": 7.0,
+      "description": "wide shot of stadium crowd under red lights"
+     }
+    ],
+    "display_width": 320,
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "red and black flags",
+      "white banner with black text",
+      "metal barrier netting"
+     ],
+     "brands": [],
+     "people": {
+      "note": "a large crowd of football fans",
+      "count": 99,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "to_camera": false,
+      "has_speech": false,
+      "transcript": ""
+     },
+     "actions": [
+      "crowd waves flags",
+      "crowd chants"
+     ],
+     "setting": "indoor football stadium",
+     "subject": "stadium crowd",
+     "summary": "The clip shows a large crowd of football fans in a stadium, chanting and waving flags, with red stadium lights illuminating the stands. A large banner with text is visible across the top of the crowd.",
+     "activity": "fans cheering and chanting",
+     "audio_type": "ambient",
+     "content_type": "ambience",
+     "on_screen_text": "",
+     "visual_quality": "sharp and steady",
+     "notable_moments": [
+      {
+       "end_s": 3.0,
+       "start_s": 0.0,
+       "description": "stadium crowd chanting loudly"
+      },
+      {
+       "end_s": 6.5,
+       "start_s": 3.5,
+       "description": "fans waving flags and chanting"
+      },
+      {
+       "end_s": 10.0,
+       "start_s": 7.0,
+       "description": "wide shot of stadium crowd under red lights"
+      }
+     ]
+    },
+    "display_height": 568,
+    "on_screen_text": "",
+    "analysis_version": 8,
+    "rotation_degrees": 0
+   }
+  },
+  {
+   "media_id": "analysis-proxy-de1-lightshow.mp4",
+   "kind": "video",
+   "duration_s": 11.066667,
+   "has_audio": true,
+   "analysis": {
+    "width": 320,
+    "aspect": 0.5634,
+    "brands": [],
+    "height": 568,
+    "source": "clip_metadata",
+    "pix_fmt": "yuv420p",
+    "signals": {
+     "audio_quality": {
+      "v": 2,
+      "data": {
+       "noisy": false,
+       "silent": false,
+       "clipped": false,
+       "peak_db": -1.7,
+       "clipping": 0.0,
+       "evidence": [],
+       "wind_score": 0.194,
+       "crowd_score": 0.245,
+       "noise_floor_db": -16.0
+      }
+     },
+     "near_dup_hash": {
+      "v": 2,
+      "data": {
+       "frames": 3,
+       "hashes": [
+        "f7f3f3cff05a1919",
+        "fcfcfd1e3e7efb23",
+        "f9f9f97978ed5f8c"
+       ],
+       "mean_luma": 61.5,
+       "sharpness": 396.4
+      }
+     }
+    },
+    "subject": "stadium crowd and football pitch",
+    "exposure": {
+     "frames": 12,
+     "version": 1,
+     "mean_luma": 89.4,
+     "near_black_share": 0.0
+    },
+    "duration_s": 11.066667,
+    "transcript": "Und vor Nummer 28, Janis. Mit der Nummer 2 spielt Facundo.",
+    "description": "announcer introduces player, crowd cheers red stadium lights flash on and off announcer introduces second player",
+    "video_codec": "h264",
+    "best_moments": [
+     {
+      "end_s": 2.5,
+      "energy": 6.0,
+      "start_s": 0.0,
+      "description": "announcer introduces player, crowd cheers"
+     },
+     {
+      "end_s": 6.0,
+      "energy": 7.0,
+      "start_s": 3.0,
+      "description": "red stadium lights flash on and off"
+     },
+     {
+      "end_s": 10.5,
+      "energy": 6.0,
+      "start_s": 7.5,
+      "description": "announcer introduces second player"
+     }
+    ],
+    "display_width": 320,
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "red stadium lights",
+      "stadium scoreboard"
+     ],
+     "brands": [],
+     "people": {
+      "note": "large crowd in stadium seats, players on the pitch",
+      "count": null,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "language": "hawaiian",
+      "segments": [
+       {
+        "text": "Der Torhüter Nr.",
+        "end_s": 2.36,
+        "start_s": 0.0
+       },
+       {
+        "text": "28 Jannis",
+        "end_s": 4.96,
+        "start_s": 2.66
+       },
+       {
+        "text": "Mit der Nr.",
+        "end_s": 7.42,
+        "start_s": 5.82
+       },
+       {
+        "text": "2 spielt Fakulto",
+        "end_s": 9.48,
+        "start_s": 7.42
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Und vor Nummer 28, Janis. Mit der Nummer 2 spielt Facundo."
+     },
+     "actions": [
+      "stadium lights flash on and off"
+     ],
+     "setting": "indoor football stadium at night",
+     "subject": "stadium crowd and football pitch",
+     "summary": "The clip shows a wide view of a crowded football stadium at night, with red lights illuminating the stands. Players are on the pitch, and an announcer introduces player names.",
+     "activity": "football team introductions before a match",
+     "audio_type": "dialogue",
+     "content_type": "ambience",
+     "on_screen_text": "",
+     "visual_quality": "shaky handheld, stays sharp",
+     "notable_moments": [
+      {
+       "end_s": 2.5,
+       "start_s": 0.0,
+       "description": "announcer introduces player, crowd cheers"
+      },
+      {
+       "end_s": 6.0,
+       "start_s": 3.0,
+       "description": "red stadium lights flash on and off"
+      },
+      {
+       "end_s": 10.5,
+       "start_s": 7.5,
+       "description": "announcer introduces second player"
+      }
+     ]
+    },
+    "display_height": 568,
+    "on_screen_text": "Und vor Nummer 28, Janis. Mit der Nummer 2 spielt Facundo.",
+    "analysis_version": 8,
+    "rotation_degrees": 0
+   }
+  }
+ ],
+ "visual_records": {
+  "m003": {
+   "subject": "Football stadium event overhead",
+   "summary": "An overhead photo captures a football stadium during an event, displaying a large crowd in red and black seats, players on the green field, and numerous security staff in orange vests around the perimeter.",
+   "on_screen_text": "800 BLANKEN SEKTION REGENSBURG ARSEN F4"
+  },
+  "m004": {
+   "brands": [
+    "Bayer Leverkusen",
+    "Zalando",
+    "Wiesenhof",
+    "Bitvava",
+    "Ergo"
+   ],
+   "subject": "Football stadium during game",
+   "summary": "A high-angle photo shows a football stadium with players on the green pitch, red spectator stands full of fans, and a large screen displaying the Bayer Leverkusen logo and a countdown.",
+   "on_screen_text": "1904 BAYER LEVERKUSEN 00:28:06 ORDKURVE 04 WIESENHOF bitvava ERGO"
+  },
+  "m005": {
+   "brands": [
+    "bitvavo",
+    "WIESENHOF",
+    "ERGO",
+    "Bayer Leverkusen",
+    "1. FC Nürnberg"
+   ],
+   "subject": "Football stadium with pyrotechnics",
+   "summary": "A nighttime photo of a football stadium with a 0:0 score displayed on the scoreboard, showing dense smoke from pyrotechnics among a crowded fan section holding flags and banners, with the green pitch and advertising hoardings in the foreground.",
+   "on_screen_text": "0:0 FCN 20:41 WIESENHOF bitvavo ERGO ID. P."
+  },
+  "m006": {
+   "brands": [
+    "Bayer 04 Leverkusen",
+    "1.FC Nürnberg"
+   ],
+   "subject": "Football match team lineup document",
+   "summary": "The image displays a printed document detailing the team lineups for a DFB-Pokal football match between Bayer 04 Leverkusen and 1.FC Nürnberg, listing starting players, substitutes, trainers, and officials for both teams.",
+   "on_screen_text": "Mannschaftsaufstellung DFB-Pokal 2. Hauptrunde 26/27 BayArena Leverkusen Spiel-Nr. 43 28.10.2026, 20:45 Bayer 04 Leverkusen 1.FC Nürnberg Trainer/in: Carles Martinez Trainer/in: Miroslav Klose Startaufstellung Ersatzbank"
+  }
+ },
+ "visual_aliases": {
+  "m005": "asset-de1-score",
+  "m006": "asset-de1-lineup"
+ },
+ "voiceover": {
+  "duration_s": 16.137868,
+  "language": "de",
+  "words": [
+   {
+    "i": 0,
+    "text": "Mittwochabend",
+    "start_s": 0.7599999904632568,
+    "end_s": 1.2799999713897705
+   },
+   {
+    "i": 1,
+    "text": "in",
+    "start_s": 1.2799999713897705,
+    "end_s": 1.5
+   },
+   {
+    "i": 2,
+    "text": "der",
+    "start_s": 1.5,
+    "end_s": 1.6399999856948853
+   },
+   {
+    "i": 3,
+    "text": "Bayern",
+    "start_s": 1.6399999856948853,
+    "end_s": 1.8200000524520874
+   },
+   {
+    "i": 4,
+    "text": "Arena",
+    "start_s": 1.8200000524520874,
+    "end_s": 2.0799999237060547
+   },
+   {
+    "i": 5,
+    "text": "DFB-Pokal,",
+    "start_s": 2.0799999237060547,
+    "end_s": 2.880000114440918
+   },
+   {
+    "i": 6,
+    "text": "Bayer",
+    "start_s": 3.059999942779541,
+    "end_s": 3.259999990463257
+   },
+   {
+    "i": 7,
+    "text": "Leverkusen",
+    "start_s": 3.259999990463257,
+    "end_s": 3.859999895095825
+   },
+   {
+    "i": 8,
+    "text": "gegen",
+    "start_s": 3.859999895095825,
+    "end_s": 4.179999828338623
+   },
+   {
+    "i": 9,
+    "text": "den",
+    "start_s": 4.179999828338623,
+    "end_s": 4.420000076293945
+   },
+   {
+    "i": 10,
+    "text": "FC",
+    "start_s": 4.420000076293945,
+    "end_s": 4.679999828338623
+   },
+   {
+    "i": 11,
+    "text": "Nürnberg.",
+    "start_s": 4.679999828338623,
+    "end_s": 5.079999923706055
+   },
+   {
+    "i": 12,
+    "text": "Vor",
+    "start_s": 5.320000171661377,
+    "end_s": 5.340000152587891
+   },
+   {
+    "i": 13,
+    "text": "dem",
+    "start_s": 5.340000152587891,
+    "end_s": 5.519999980926514
+   },
+   {
+    "i": 14,
+    "text": "Ampfiff",
+    "start_s": 5.519999980926514,
+    "end_s": 5.820000171661377
+   },
+   {
+    "i": 15,
+    "text": "ging",
+    "start_s": 5.820000171661377,
+    "end_s": 5.980000019073486
+   },
+   {
+    "i": 16,
+    "text": "das",
+    "start_s": 5.980000019073486,
+    "end_s": 6.320000171661377
+   },
+   {
+    "i": 17,
+    "text": "Licht",
+    "start_s": 6.320000171661377,
+    "end_s": 6.420000076293945
+   },
+   {
+    "i": 18,
+    "text": "aus",
+    "start_s": 6.420000076293945,
+    "end_s": 6.71999979019165
+   },
+   {
+    "i": 19,
+    "text": "und",
+    "start_s": 6.71999979019165,
+    "end_s": 6.980000019073486
+   },
+   {
+    "i": 20,
+    "text": "der",
+    "start_s": 6.980000019073486,
+    "end_s": 7.380000114440918
+   },
+   {
+    "i": 21,
+    "text": "Stadionsprecher",
+    "start_s": 7.380000114440918,
+    "end_s": 8.279999732971191
+   },
+   {
+    "i": 22,
+    "text": "hat",
+    "start_s": 8.279999732971191,
+    "end_s": 8.5
+   },
+   {
+    "i": 23,
+    "text": "die",
+    "start_s": 8.5,
+    "end_s": 8.699999809265137
+   },
+   {
+    "i": 24,
+    "text": "Aufstellung",
+    "start_s": 8.699999809265137,
+    "end_s": 9.100000381469727
+   },
+   {
+    "i": 25,
+    "text": "vorgelesen.",
+    "start_s": 9.100000381469727,
+    "end_s": 9.84000015258789
+   },
+   {
+    "i": 26,
+    "text": "Hier",
+    "start_s": 10.319999694824219,
+    "end_s": 10.4399995803833
+   },
+   {
+    "i": 27,
+    "text": "ist",
+    "start_s": 10.4399995803833,
+    "end_s": 10.680000305175781
+   },
+   {
+    "i": 28,
+    "text": "sie,",
+    "start_s": 10.680000305175781,
+    "end_s": 11.079999923706055
+   },
+   {
+    "i": 29,
+    "text": "schwarz",
+    "start_s": 11.4399995803833,
+    "end_s": 11.65999984741211
+   },
+   {
+    "i": 30,
+    "text": "auf",
+    "start_s": 11.65999984741211,
+    "end_s": 12.079999923706055
+   },
+   {
+    "i": 31,
+    "text": "weiß,",
+    "start_s": 12.079999923706055,
+    "end_s": 12.399999618530273
+   },
+   {
+    "i": 32,
+    "text": "0",
+    "start_s": 13.279999732971191,
+    "end_s": 13.34000015258789
+   },
+   {
+    "i": 33,
+    "text": "zu",
+    "start_s": 13.34000015258789,
+    "end_s": 13.520000457763672
+   },
+   {
+    "i": 34,
+    "text": "0",
+    "start_s": 13.520000457763672,
+    "end_s": 13.739999771118164
+   },
+   {
+    "i": 35,
+    "text": "beim",
+    "start_s": 13.739999771118164,
+    "end_s": 14.0
+   },
+   {
+    "i": 36,
+    "text": "Ampfiff",
+    "start_s": 14.0,
+    "end_s": 14.5
+   },
+   {
+    "i": 37,
+    "text": "und",
+    "start_s": 14.5,
+    "end_s": 14.720000267028809
+   },
+   {
+    "i": 38,
+    "text": "auf",
+    "start_s": 14.720000267028809,
+    "end_s": 14.920000076293945
+   },
+   {
+    "i": 39,
+    "text": "der",
+    "start_s": 14.920000076293945,
+    "end_s": 15.100000381469727
+   },
+   {
+    "i": 40,
+    "text": "Nordkurve",
+    "start_s": 15.100000381469727,
+    "end_s": 15.460000038146973
+   },
+   {
+    "i": 41,
+    "text": "brannte",
+    "start_s": 15.460000038146973,
+    "end_s": 15.800000190734863
+   },
+   {
+    "i": 42,
+    "text": "Piro.",
+    "start_s": 15.800000190734863,
+    "end_s": 16.100000381469727
+   }
+  ]
+ },
+ "approved_strategy": {
+  "edit_format": "narrated_planned",
+  "audio_strategy": "voiceover",
+  "media_scope": "selected",
+  "selected_media_ids": [
+   "analysis-proxy-de1-fans.mp4",
+   "analysis-proxy-de1-lightshow.mp4"
+  ]
+ },
+ "phone_beat_receipt": {
+  "placed": [
+   {
+    "at_s": 8.24,
+    "end_s": 11.24,
+    "beat_id": "aufstellung",
+    "card_id": "beat-aufstellung-1",
+    "trigger": "Aufstellung",
+    "display_mode": "fullscreen",
+    "visual_label": "IMG_1038.HEIC"
+   }
+  ],
+  "closing": {
+   "badge": "none",
+   "status": "none"
+  },
+  "matcher": "phrase",
+  "version": 1,
+  "unplaced": [
+   {
+    "reason": "never_heard",
+    "beat_id": "null",
+    "trigger": "Null zu null"
+   }
+  ],
+  "face_sampling": "skipped"
+ },
+ "narrated_alignment": {
+  "steps": [
+   {
+    "clip": "analysis-proxy-de1-lightshow.mp4",
+    "text": "Mittwochabend in der Bayern Arena DFB-Pokal, Bayer Leverkusen gegen den FC Nürnberg. Vor dem Ampfiff ging das Licht aus und der Stadionsprecher hat die Aufstellung vorgelesen. Hier ist sie, schwarz auf weiß, 0 zu 0 beim Ampfiff und",
+    "end_s": 13.683,
+    "labels": [],
+    "placed": [],
+    "start_s": 0.0,
+    "step_id": "seg_0",
+    "media_id": "analysis-proxy-de1-lightshow.mp4"
+   },
+   {
+    "clip": "analysis-proxy-de1-fans.mp4",
+    "text": "auf der Nordkurve brannte Piro.",
+    "end_s": 15.183,
+    "labels": [],
+    "placed": [],
+    "start_s": 13.683,
+    "step_id": "seg_1",
+    "media_id": "analysis-proxy-de1-fans.mp4"
+   }
+  ],
+  "spoken_language": "de",
+  "caption_language": "de",
+  "ordering_basis": "spoken_word_alignment"
+ },
+ "caption_cues": [
+  {
+   "text": "Mittwochabend in der Bayern Arena DFB-Pokal, Bayer Leverkusen gegen den FC Nürnberg.",
+   "end_s": 4.62,
+   "words": [
+    {
+     "text": "Mittwochabend",
+     "end_s": 0.82,
+     "start_s": 0.3
+    },
+    {
+     "text": "in",
+     "end_s": 1.04,
+     "start_s": 0.82
+    },
+    {
+     "text": "der",
+     "end_s": 1.18,
+     "start_s": 1.04
+    },
+    {
+     "text": "Bayern",
+     "end_s": 1.36,
+     "start_s": 1.18
+    },
+    {
+     "text": "Arena",
+     "end_s": 1.62,
+     "start_s": 1.36
+    },
+    {
+     "text": "DFB-Pokal,",
+     "end_s": 2.42,
+     "start_s": 1.62
+    },
+    {
+     "text": "Bayer",
+     "end_s": 2.8,
+     "start_s": 2.6
+    },
+    {
+     "text": "Leverkusen",
+     "end_s": 3.4,
+     "start_s": 2.8
+    },
+    {
+     "text": "gegen",
+     "end_s": 3.72,
+     "start_s": 3.4
+    },
+    {
+     "text": "den",
+     "end_s": 3.96,
+     "start_s": 3.72
+    },
+    {
+     "text": "FC",
+     "end_s": 4.22,
+     "start_s": 3.96
+    },
+    {
+     "text": "Nürnberg.",
+     "end_s": 4.62,
+     "start_s": 4.22
+    }
+   ],
+   "start_s": 0.3
+  },
+  {
+   "text": "Vor dem Anpfiff ging das Licht aus und der Stadionsprecher hat die Aufstellung vorgelesen.",
+   "end_s": 9.38,
+   "words": [
+    {
+     "text": "Vor",
+     "end_s": 4.88,
+     "start_s": 4.86
+    },
+    {
+     "text": "dem",
+     "end_s": 5.06,
+     "start_s": 4.88
+    },
+    {
+     "text": "Anpfiff",
+     "end_s": 5.36,
+     "start_s": 5.06
+    },
+    {
+     "text": "ging",
+     "end_s": 5.52,
+     "start_s": 5.36
+    },
+    {
+     "text": "das",
+     "end_s": 5.86,
+     "start_s": 5.52
+    },
+    {
+     "text": "Licht",
+     "end_s": 5.96,
+     "start_s": 5.86
+    },
+    {
+     "text": "aus",
+     "end_s": 6.26,
+     "start_s": 5.96
+    },
+    {
+     "text": "und",
+     "end_s": 6.52,
+     "start_s": 6.26
+    },
+    {
+     "text": "der",
+     "end_s": 6.92,
+     "start_s": 6.52
+    },
+    {
+     "text": "Stadionsprecher",
+     "end_s": 7.82,
+     "start_s": 6.92
+    },
+    {
+     "text": "hat",
+     "end_s": 8.04,
+     "start_s": 7.82
+    },
+    {
+     "text": "die",
+     "end_s": 8.24,
+     "start_s": 8.04
+    },
+    {
+     "text": "Aufstellung",
+     "end_s": 8.64,
+     "start_s": 8.24
+    },
+    {
+     "text": "vorgelesen.",
+     "end_s": 9.38,
+     "start_s": 8.64
+    }
+   ],
+   "start_s": 4.86
+  },
+  {
+   "text": "Hier ist sie, schwarz auf weiß, 0 zu 0 beim Anpfiff und auf der",
+   "end_s": 14.145,
+   "words": [
+    {
+     "text": "Hier",
+     "end_s": 9.98,
+     "start_s": 9.86
+    },
+    {
+     "text": "ist",
+     "end_s": 10.22,
+     "start_s": 9.98
+    },
+    {
+     "text": "sie,",
+     "end_s": 10.62,
+     "start_s": 10.22
+    },
+    {
+     "text": "schwarz",
+     "end_s": 11.2,
+     "start_s": 10.98
+    },
+    {
+     "text": "auf",
+     "end_s": 11.62,
+     "start_s": 11.2
+    },
+    {
+     "text": "weiß,",
+     "end_s": 11.94,
+     "start_s": 11.62
+    },
+    {
+     "text": "0",
+     "end_s": 12.385,
+     "start_s": 12.325
+    },
+    {
+     "text": "zu",
+     "end_s": 12.565,
+     "start_s": 12.385
+    },
+    {
+     "text": "0",
+     "end_s": 12.785,
+     "start_s": 12.565
+    },
+    {
+     "text": "beim",
+     "end_s": 13.045,
+     "start_s": 12.785
+    },
+    {
+     "text": "Anpfiff",
+     "end_s": 13.545,
+     "start_s": 13.045
+    },
+    {
+     "text": "und",
+     "end_s": 13.765,
+     "start_s": 13.545
+    },
+    {
+     "text": "auf",
+     "end_s": 13.965,
+     "start_s": 13.765
+    },
+    {
+     "text": "der",
+     "end_s": 14.145,
+     "start_s": 13.965
+    }
+   ],
+   "start_s": 9.86
+  },
+  {
+   "text": "Nordkurve brannte Pyro.",
+   "end_s": 15.145,
+   "words": [
+    {
+     "text": "Nordkurve",
+     "end_s": 14.505,
+     "start_s": 14.145
+    },
+    {
+     "text": "brannte",
+     "end_s": 14.845,
+     "start_s": 14.505
+    },
+    {
+     "text": "Pyro.",
+     "end_s": 15.145,
+     "start_s": 14.845
+    }
+   ],
+   "start_s": 14.145
+  }
+ ]
+}

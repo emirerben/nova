@@ -108,10 +108,12 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
 # KRI-1327: the brief section teaches `subject_outline` (a line drawn around a person): the two
 # brief-on hashes re-pinned (before: 9fc58bb0… / 891266d1…); brief-off unchanged.
+# KRI-1355: the brief section teaches the typed no-title ask (`facts.title == "off"`): the two
+# brief-on hashes re-pinned (before: ae8b21b4… / 3b5a507b…); brief-off unchanged.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "ae8b21b43597bc4e1d70b195c0ee7fbe91c1e8adcb904a97303833c0776eb385",
+    (True, True): "5ac96e9a1909de36430a3641ab104edafae4a20af1fa9bf8f30f20d25705ec77",
     (True, False): "42a19e30cae3fadac2dd65318b2af49ca4a5d70332e17f714aa5875af6433914",
-    (False, True): "3b5a507badc13191d84d388d405ea8aaec38d9a2d2266ea5286f85f184103f6b",
+    (False, True): "4ad9471f016b045c48ca1c328d4334a7c69179c221770d5c17416b09e98c0631",
     (False, False): "68d42cab5cc0d03ccf3cf164d19bccba9193f01a9409d802acc0454b4adce777",
 }
 

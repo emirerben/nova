@@ -209,7 +209,9 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
         # KRI-766: a spoken mention of the label's own words never outweighs the described action.
         # KRI-845: clip records carry props / actions / visual_quality; the prompt says how to
         # use them (a blurry/shaky ask matches reported blur, never "stays sharp").
-        prompt_version="2026-10-27-order-certainty",
+        # KRI-1359: the creator may write in another language than the English records;
+        # match an attribute by meaning across languages; on_screen_text + brands are evidence.
+        prompt_version="2026-11-10-cross-language-evidence",
         # Text-only match against pre-computed clip records; flash + a small
         # thinking budget mirrors clip_plan_matcher's measured setting.
         model="gemini-2.5-flash",

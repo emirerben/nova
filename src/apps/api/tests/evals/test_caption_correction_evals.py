@@ -188,6 +188,41 @@ LEGACY_CASES = [
         "model_line": "the fire 🔥 burns",
         "expected": "the fire 🔥 burns",
     },
+    # KRI-1361 (de1 Leverkusen N3): whisper wrote "Bayern Arena" and "den FC Nürnberg"; the
+    # creator's own Visuals spell "BayArena" and "1.FC Nürnberg" (spelling_hints). The
+    # model_line is the authored correction, not a recorded gpt-4o answer.
+    {
+        "id": "de_hinted_stadium_and_club",
+        "language": "de",
+        "text": "in der Bayern Arena gegen den FC Nürnberg.",
+        "model_line": "in der BayArena gegen den 1. FC Nürnberg.",
+        "brand_hints": ["1.FC Nürnberg"],
+        "spelling_hints": ["BayArena Leverkusen"],
+        "expected": "in der BayArena gegen den 1. FC Nürnberg.",
+    },
+    {
+        "id": "de_same_names_without_hints_stay_heard",
+        "language": "de",
+        "text": "in der Bayern Arena gegen den FC Nürnberg.",
+        "model_line": "in der BayArena gegen den 1. FC Nürnberg.",
+        "expected": "in der Bayern Arena gegen den FC Nürnberg.",
+    },
+    {
+        "id": "de_hints_do_not_unlock_a_rewording",
+        "language": "de",
+        "text": "wir waren im Stadion mit Bayern Arena Fans",
+        "model_line": "wir gingen ins Stadion mit Bayern Arena Fans",
+        "spelling_hints": ["BayArena Leverkusen"],
+        "expected": "wir waren im Stadion mit Bayern Arena Fans",
+    },
+    {
+        "id": "de_ocr_noun_is_not_a_name",
+        "language": "de",
+        "text": "die Spieler sind müde",
+        "model_line": "die Spiel sind müde",
+        "spelling_hints": ["Das Spiel"],
+        "expected": "die Spieler sind müde",
+    },
 ]
 
 
@@ -202,10 +237,13 @@ def test_legacy_caption_correction_keeps_timing_and_lands_good_fixes(
         monkeypatch.setattr(
             correction,
             "_llm_correct_lines",
-            lambda texts, language, *, model: [case["model_line"]],
+            lambda texts, language, *, model, spelling_hints=(): [case["model_line"]],
         )
     before = _cue(case["text"])
-    output = correction.correct_caption_cues([before], case["language"])[0]
+    hints = correction.SpellingHints(
+        brands=tuple(case.get("brand_hints", ())), names=tuple(case.get("spelling_hints", ()))
+    )
+    output = correction.correct_caption_cues([before], case["language"], spelling_hints=hints)[0]
 
     spans = [(word["start_s"], word["end_s"]) for word in output["words"]]
     assert spans[0][0] == before["start_s"]

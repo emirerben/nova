@@ -1,0 +1,112 @@
+{
+  "agent": "nova.plan.clip_request_resolver",
+  "prompt_version": "2026-11-10-cross-language-evidence",
+  "input": {
+    "creator_request": "Mein Voiceover ist auf Deutsch. Deutsche Untertitel, Wort für Wort. Zeig die Nürnberger Fans bei \"1. FC Nürnberg\", den Lichtshow-Clip bei \"das Licht aus\", das Aufstellungsblatt bei \"Aufstellung\" und das 0:0-Foto bei \"Null zu null\". Das Spielerfoto brauchst du nicht. Lass den Stadionsprecher im Lichtshow-Clip leise unter meiner Stimme laufen und schalte alles andere stumm. Kein Titel.",
+    "intents": [
+      {
+        "intent_id": "include_aufstellungsblatt",
+        "op": "include",
+        "attribute": "das Aufstellungsblatt",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null
+      }
+    ],
+    "clips": [
+      {
+        "alias": "m003",
+        "kind": "image",
+        "record": {
+          "subject": "Football stadium event overhead",
+          "summary": "An overhead photo captures a football stadium during an event, displaying a large crowd in red and black seats, players on the green field, and numerous security staff in orange vests around the perimeter.",
+          "on_screen_text": "800 BLANKEN SEKTION REGENSBURG ARSEN F4"
+        }
+      },
+      {
+        "alias": "m004",
+        "kind": "image",
+        "record": {
+          "brands": [
+            "Bayer Leverkusen",
+            "Zalando",
+            "Wiesenhof",
+            "Bitvava",
+            "Ergo"
+          ],
+          "subject": "Football stadium during game",
+          "summary": "A high-angle photo shows a football stadium with players on the green pitch, red spectator stands full of fans, and a large screen displaying the Bayer Leverkusen logo and a countdown.",
+          "on_screen_text": "1904 BAYER LEVERKUSEN 00:28:06 ORDKURVE 04 WIESENHOF bitvava ERGO"
+        }
+      },
+      {
+        "alias": "m005",
+        "kind": "image",
+        "record": {
+          "brands": [
+            "bitvavo",
+            "WIESENHOF",
+            "ERGO",
+            "Bayer Leverkusen",
+            "1. FC Nürnberg"
+          ],
+          "subject": "Football stadium with pyrotechnics",
+          "summary": "A nighttime photo of a football stadium with a 0:0 score displayed on the scoreboard, showing dense smoke from pyrotechnics among a crowded fan section holding flags and banners, with the green pitch and advertising hoardings in the foreground.",
+          "on_screen_text": "0:0 FCN 20:41 WIESENHOF bitvavo ERGO ID. P."
+        }
+      },
+      {
+        "alias": "m006",
+        "kind": "image",
+        "record": {
+          "brands": [
+            "Bayer 04 Leverkusen",
+            "1.FC Nürnberg"
+          ],
+          "subject": "Football match team lineup document",
+          "summary": "The image displays a printed document detailing the team lineups for a DFB-Pokal football match between Bayer 04 Leverkusen and 1.FC Nürnberg, listing starting players, substitutes, trainers, and officials for both teams.",
+          "on_screen_text": "Mannschaftsaufstellung DFB-Pokal 2. Hauptrunde 26/27 BayArena Leverkusen Spiel-Nr. 43 28.10.2026, 20:45 Bayer 04 Leverkusen 1.FC Nürnberg Trainer/in: Carles Martinez Trainer/in: Miroslav Klose Startaufstellung Ersatzbank"
+        }
+      }
+    ]
+  },
+  "raw_text": "{\"intents\": [{\"intent_id\": \"include_aufstellungsblatt\", \"assignments\": [{\"media\": \"m006\", \"value\": \"\", \"evidence\": \"subject: Football match team lineup document; on_screen_text: Mannschaftsaufstellung\", \"confidence\": 0.95}], \"needs_vision\": [], \"question\": null, \"caption\": null}]}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "include_aufstellungsblatt",
+        "assignments": [
+          {
+            "media": "m006",
+            "value": null,
+            "evidence": "subject: Football match team lineup document; on_screen_text: Mannschaftsaufstellung",
+            "confidence": 0.95
+          }
+        ],
+        "needs_vision": [],
+        "question": null,
+        "caption": null
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "KRI-1359 (de1 Leverkusen N3, German iPhone voiceover chat, 2026-11-10). The creator wrote in German \"Zeig ... das Aufstellungsblatt bei 'Aufstellung'\"; the intent attribute stays in her words (\"das Aufstellungsblatt\" = the line-up sheet). The Visuals records are the ones the resolver saw in turn 1 (tests/kria/de1_leverkusen_n3.json visual_records m003-m006, m006 = asset-de1-lineup): m006's subject is \"Football match team lineup document\" and its on_screen_text starts \"Mannschaftsaufstellung\". In turn 1 the resolver (prompt 2026-10-27-order-certainty) returned nothing for this intent; a later turn mapped it. The prompt now says the creator may write in another language than the English records, to match by meaning, and that on_screen_text and brands are evidence. The raw_text is an AUTHORED recorded-style answer: replay only re-parses it and proves the schema/acceptance wiring, NOT that the model now finds m006. No live run was made (no paid calls).",
+    "expect_covered": {
+      "include_aufstellungsblatt": [
+        "m006"
+      ]
+    },
+    "expect_not_assigned": {
+      "include_aufstellungsblatt": [
+        "m003",
+        "m004",
+        "m005"
+      ]
+    },
+    "alias_to_clip": {
+      "m005": "asset-de1-score",
+      "m006": "asset-de1-lineup"
+    }
+  }
+}
