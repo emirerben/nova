@@ -63,3 +63,20 @@ The ordinary inspector continues to own media edits. The split controls expose s
 `speaker_subject` is durable occurrence provenance, distinct from caption ancestry. Copies preserve explicit true/false; legacy speaker IDs are resolved before a new UUID is minted. New independent copies do not inherit a caption-parent link. Recipe `speaker_background.subject_clip_ids` names the exact video occurrences; absent keeps legacy track ownership, while an empty array represents no current subject. `speaker_frame_override` stores independent occurrence framing. Missing or inherit uses the shared default; explicit full-panel differs from inheritance, and custom retains validated frame geometry. Selected-occurrence controls preserve peers. Background focus uses the panel's aspect ratio.
 
 Native chat staging and variant hydration copy slots and section definitions atomically. An explicit section array makes the chat's complete timeline authoritative, including an empty array when unstacking. New canonical UUIDs retain identity and approved source metadata; historical non-UUID temporary IDs retain their existing admission repair. A panel-local edit does not move global canvas layers. Section boundary changes move those layers through serial section units, while explicitly source-owned text/captions follow the movement/hold source clock.
+
+## Collapse mode (`collapse_empty_panels`, phone protocol 47)
+
+A split section may set the optional boolean `collapse_empty_panels`. Absent or false keeps today's behavior: panel rects are fixed for the whole section and a panel with no clip shows the section background.
+
+When true:
+
+- **Active panels.** At time `t` inside the section a panel is active when one of its members has a half-open window `[start, end)` containing `t`. Two overlapping members of the same panel (a transition) count as one active panel. A panel with no members at all is never active.
+- **Layout.** Only active panels are shown, top to bottom in panel-index order. With `n` active panels, `available = 1 - gutter * (n - 1)` of the canvas height and each panel gets `available * weight_i / sum(weights of active panels)`. Gutters sit only between active panels. One active panel fills the whole canvas. Zero active panels show the section background across the canvas.
+- **Hard cut.** The layout changes on the frame a member starts or ends. There is no animation. Preview and export must change on the same frame.
+- **Panel identity.** Panel indexes, weights and member `split_panel_index` values are unchanged. Collapse only changes which panels are drawn and how tall they are.
+- **Section duration.** The section lasts until its longest member ends: `duration_s = max(split_offset_s + duration_s)` over its members. Trimming or extending a member changes it, later sections shift, and a section always keeps at least one member.
+- **Weights.** Dragging a divider in the preview changes the weights of the two adjacent ACTIVE panels and keeps their sum.
+- **Defaults.** New sections created by a protocol 47 client set `collapse_empty_panels: true`. Existing sections and sections made by older clients stay false. The Split panel offers "When a panel ends: Others fill the screen | Leave it empty".
+- **Recipe.** V2 recipe sections carry `collapse_empty_panels` next to `panel_weights`. A recipe with the field set to true requires the `splitCollapse` capability. Members stay ordinary video clips on separate panel tracks.
+- **Gating.** `SPLIT_COLLAPSE_PROTOCOL = 47`. A client below 47 must not save a timeline that has `collapse_empty_panels: true`, and the server must not offer or accept the field below 47. The server advertises collapse only when `splitCollapse` is in `PHONE_RENDER_VERIFIED_FEATURES`, so the rollout stays dark until that setting is changed.
+- **Engine API.** `SplitScreenSection` gains `collapseEmptyPanels: Bool = false` (strict decode key `collapse_empty_panels`). `panelRect(index:canvas:activePanels:)` takes an optional ascending list of active panel indexes (nil = all panels, today's behavior).
