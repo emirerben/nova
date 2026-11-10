@@ -1280,6 +1280,32 @@ multiple_speakers`, so no photo showed while the draft said "Done" four times.
   api + worker, after one device check of a several-take edit with photos (editor open / Save and
   the preview). Rollback: the same secret `false`.
 
+#### Talking takes attached through Visuals (KRI-1340, `VISUAL_TALKING_TAKES_ENABLED`)
+
+Çiğdem S3 Yorum1 (thread 855274e8): take A as footage, takes B and C in Visuals. Nothing heard B
+or C, so "two at home" never resolved and every ask was held. Where a talking video was attached
+must not matter.
+
+- **On**: when a Visuals video's analysis lands (`autoplace.analyze_pool_asset`) in a Talking item
+  and says someone speaks to the camera (`understanding.speech.to_camera`, 6+ words), the task
+  `app.tasks.visual_talking_takes` attaches it as footage: hashes the pool bytes at their pinned
+  generation, makes the phone-shaped analysis proxy (long side 568, <= 30 fps) under the thread,
+  and appends a normal clip row with `pool_source` (Visual id, path, generation). Every reader of
+  `clip_assignments` then sees a take. The phone binding's `render_asset()` is a `visual` asset
+  keyed by the take's media id, so the phone downloads the take through the Visuals grant (no
+  camera-roll original needed); the editor source pool streams it (`local_required: false`).
+  The planner stops listing that Visual (`visual_talking_takes.without_adopted`); deleting the
+  Visual drops the take. A copy of a footage take (same SHA-256) is never added twice.
+- **Off (default)**: byte-identical; the video stays a Visual.
+- Gate: the switch + `phone_talking_multi_clip_supported()`, item `edit_format == "subtitled"`, no
+  recorded voiceover, room under `TALKING_MULTI_CLIP_MAX_CLIPS`. No new device feature or protocol
+  (a main-track pool video is the KRI-841 ending-clip path).
+- Not covered: a Visual still analysing when the creator sends the message is planned as a
+  Visual for that turn; it becomes a take when its analysis lands (pending approvals retire).
+- Apply: `fly secrets set VISUAL_TALKING_TAKES_ENABLED=true --app nova-video` + restart api +
+  worker, after one device run of the S3 Yorum1 setup. Rollback: the same secret `false` (takes
+  already added stay footage). Review: `docs/reviews/kri-1340-visual-talking-takes.md`.
+
 #### Phase 2: PiP cards grounded from the transcript (KRI-176)
 
 **Gate:** `app.services.phone_rollout.phone_subtitled_overlays_supported()` --

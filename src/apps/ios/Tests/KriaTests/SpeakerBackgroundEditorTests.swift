@@ -288,6 +288,9 @@ import KriaMediaEngine
         XCTAssertFalse(NativeEditorTool.railTools(showsDraw: true, showsBackground: true).contains(.kria))
         XCTAssertEqual(NativeEditorTool.railTools(showsDraw: false, showsBackground: false), [.text, .captions, .visuals, .sounds],
                        "the existing rail is unchanged")
+        XCTAssertEqual(NativeEditorTool.railTools(showsDraw: true, showsBackground: true, showsSplit: true).last, .split,
+                       "Split is only ever the last tool")
+        XCTAssertFalse(NativeEditorTool.railTools(showsDraw: true, showsBackground: true).contains(.split))
     }
 
     func testToolIsClosedWithoutTheCapabilityAndEditsAreRefused() {
