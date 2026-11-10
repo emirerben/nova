@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.150.0] - 2026-11-10
+
+### Fixed
+- fix(kria): one capability answer for hold / draft / review lines (KRI-1346, KRI-1347) (#2254) <!-- release-pr: 2254 -->
+
 ## [0.88.149.0] - 2026-11-10
 
 ### Changed
