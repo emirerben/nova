@@ -1,0 +1,39 @@
+A creator recorded a voiceover for a short video and asked for something to appear "when I
+say" certain words (their cues). An automatic speech-to-text pass wrote down the voiceover.
+An exact text match could not find these cues in it. For each cue, find where the speaker
+says it, or answer null when they never say it.
+
+VOICEOVER WORDS (in spoken order; ids are the only valid references):
+$words_json
+
+CUES (the creator's own spelling):
+$cues_json
+
+SPOKEN LANGUAGE: $language
+
+Return ONLY JSON, one row per cue, in the order given:
+{
+  "resolutions": [
+    {"cue_id": "...", "start_word_id": "w000000", "end_word_id": "w000002"},
+    {"cue_id": "...", "start_word_id": null, "end_word_id": null}
+  ]
+}
+
+Rules:
+- Match by meaning, the way a listener would recognise the creator's words in the recording:
+  - a number written as digits in one and as words in the other ("Null zu null" and "0 zu 0",
+    "three" and "3", "on bir" and "11");
+  - a part the speaker or the transcript dropped or added, such as a leading ordinal or
+    article ("1. FC Nürnberg" said or written as "FC Nürnberg", "the Eiffel Tower" as
+    "Eiffel Tower");
+  - another inflection or form of the same words (case, plural, possessive, a verb form);
+  - a transcription misspelling of the same spoken words ("Ampfiff" for "Anpfiff").
+- The span is the words where the cue itself is said: start at its first spoken word and end
+  at its last. Keep it as short as the cue (at most 8 words). Never stretch it over the
+  surrounding sentence.
+- Never pick a different moment: a word that merely sounds similar, a related topic, a
+  synonym the speaker did not say, or the closest sentence is NOT the cue. If you are not
+  sure the speaker says the cue, answer null.
+- If the cue is said more than once, give its first occurrence.
+- Answer every cue exactly once, using only the given cue ids and word ids. Never invent ids.
+  Both ids are set, or both are null.

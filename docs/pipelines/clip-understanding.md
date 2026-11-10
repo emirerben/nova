@@ -216,6 +216,11 @@ Flow (flag on):
    `named_guesses_settled`). The resolver runs as ONE call while the project
    fits the measured 12-clip x 8-intent (96-cell) load; bigger projects split into
    ~48-cell shards, which see only part of the footage at once.
+   The creator may write in any language while the records are English, so the
+   resolver matches an intent's attribute by meaning across languages and reads
+   `on_screen_text` and `brands` as evidence like `subject` (KRI-1359, prompt
+   `clip_request_resolver` 2026-11-10-cross-language-evidence; golden
+   `kri1359_german_lineup_sheet`: "das Aufstellungsblatt" -> the line-up sheet photo).
    A label that asks what happens in each clip ("explain the footages", "a summary
    on each clip"; `is_clip_description_label`, canonical attribute "what is
    happening in the clip") never asks the creator and never re-checks the

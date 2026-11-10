@@ -90,11 +90,13 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # removing that clause reproduces the values above.
 # Re-pinned for KRI-1327: the brief section teaches `subject_outline` (a line around a person);
 # the values before it were ce15504f / 8a7a2c85 / 68edb943 / d29283f2.
+# Re-pinned for KRI-1355: the brief section teaches the typed no-title ask (`title: "off"`);
+# the values before it were b52730bb / 72041f99 / 3116efd4 / 7cc917df.
 MAIN_PROMPT_SHA = {
-    "neither": "b52730bbebdefd441710f4e6ef7b7e66ff6937fdbb7f309d8f226d4f10c1be10",
-    (True, True): "72041f99fc66ee7875cf3bf74a07bde4135e8e7aba0c5a777b140e71bef70765",
-    (True, False): "3116efd479545f7000420b98c3dcf55e5b5035e43cca3c5930277e5a47dff2f7",
-    (False, True): "7cc917df0f46f28fd027b80b76aa119a501d2b2bff7a933d2e4c7d885c3d9a6a",
+    "neither": "62cb90f09ed39561094307dcbe86fb5858d82957b0373a3ba5b14a1973912e00",
+    (True, True): "2c83102a5775194593119b0cd004a6593d9c9b3622815419da09aedf33c3f181",
+    (True, False): "f2f80a6e20025407fbe0a2dffb0176c7a534a42eac2faf3fea4de2649242bec8",
+    (False, True): "d0df791e74b22894ca12b7933e8f5c3d2144f9156b273939d998eb618efae5ed",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (

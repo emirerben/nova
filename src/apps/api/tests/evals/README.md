@@ -53,6 +53,7 @@ pytest tests/evals/test_narrated_storyboard_evals.py -v --with-judge
 | `nova.compose.sfx_placement` | ✓ | `rubrics/sfx_placement.md` | hand-authored golden (visual moments) | — |
 | `nova.compose.narrated_storyboard` | ✓ | `rubrics/narrated_storyboard.md` | hand-authored sports, non-sports, and adversarial golden fixtures | `Job.assembly_plan.variants[].narrated_storyboard` |
 | `nova.compose.narrated_clip_alignment` | ✓ | `rubrics/narrated_clip_alignment.md` | live-captured goldens (cacio e pepe, locked + free order; Cappadocia pinned-last, re-sorted from prod 38caaebd) | — |
+| `nova.compose.spoken_cue_resolver` | ✓ | — | hand-authored replay golden (de1 "Null zu null" → "0 zu 0", "1. FC Nürnberg" → "FC Nürnberg", a cue never said → null); no live capture yet (KRI-1356) | — |
 
 ## Layer-2 text-overlay pipeline eval
 

@@ -8426,6 +8426,7 @@ def _approved_generation_requirements_review(
     )
     receipts = []
     montage: dict | None = None
+    narrated: dict | None = None
     for record_key in ("unified_montage", NARRATED_ALIGNMENT_FIELD):
         record = (job.assembly_plan or {}).get(record_key) or {}
         record_generation = record.get("generation_id")
@@ -8433,6 +8434,8 @@ def _approved_generation_requirements_review(
             continue
         if record_key == "unified_montage":
             montage = record
+        else:
+            narrated = record
         for row in record.get("requirement_receipts") or []:
             try:
                 receipt = RequirementReceipt.model_validate(row)
@@ -8477,6 +8480,16 @@ def _approved_generation_requirements_review(
         facts = dataclasses.replace(
             facts, original_audio_control=original_audio_recovery(job, variant)
         )
+        if narrated is not None:
+            # KRI-1357: which clip played under a named cue that had no pop-in.
+            from app.kria.brief_checks import (  # noqa: PLC0415
+                plan_facts_from_narrated_alignment,
+            )
+
+            facts = dataclasses.replace(
+                facts,
+                narrated_cue_steps=plan_facts_from_narrated_alignment(narrated).narrated_steps,
+            )
     # KRI-942: clip sound on/off asks are judged on the recipe the phone renders now.
     facts = _with_clip_sound_toggles(job, variant, facts, brief_binding=raw)
     # KRI-1189: a restart ask with no retake cut says "didn't find" only where this render's
