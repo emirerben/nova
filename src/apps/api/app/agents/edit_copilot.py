@@ -113,7 +113,10 @@ log = structlog.get_logger()
 # v120 (KRI-1253): PICTURE CARDS teaches add_overlay for an ASSET POOL row (the generated image the
 # creator accepted, listed by its title); with no row the lane still says a new picture can't be
 # added from chat.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-08-v120"
+# v121 (KRI-1365): a vague "make the video shorter" acts at once (about 70%, proportional) instead
+# of asking; "make the text faster" / "show each text shorter" retimes every word sequence, a
+# paired one (a text and its translation) over the same window.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-10-v121"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).

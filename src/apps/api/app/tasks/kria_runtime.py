@@ -90,6 +90,7 @@ from app.kria.planner import (
     answering_through_sequence,
     continuation_superseded_reply,
     extract_deferred_brief,
+    job_never_rendered,
     localized_editor_state_reply,
     no_longer_fits_reply,
     plan_live_turn,
@@ -1451,6 +1452,7 @@ def _creative_copy_problem_sync(
     strategy=None,  # noqa: ANN001
     resolution=None,  # noqa: ANN001
     pinned_ops=None,  # noqa: ANN001
+    editor_text=None,  # noqa: ANN001
 ):  # noqa: ANN202
     rows = db.execute(
         select(
@@ -1471,6 +1473,7 @@ def _creative_copy_problem_sync(
         media,
         strategy=strategy,
         pinned_ops=pinned_ops,
+        editor_text=editor_text,
     )
 
 
@@ -2099,6 +2102,45 @@ def _append_automatic_omissions_sync(
     return merged
 
 
+def _return_to_last_ready(item, job, ready_job, session, last_ready):  # noqa: ANN001, ANN202
+    """Point the item and its editor session back at the ready video the planner edited.
+
+    Only while nothing moved since planning: the item still points at the job whose render
+    failed without producing anything, and the session's ``last_good`` is still that video.
+    """
+    last_good = session.last_good if isinstance(session.last_good, dict) else {}
+    variant = next(
+        (
+            row
+            for row in ((ready_job.assembly_plan or {}).get("variants") or [] if ready_job else [])
+            if isinstance(row, dict)
+            and row.get("variant_id") == last_ready.get("variant_id")
+            and row.get("render_status") == "ready"
+        ),
+        None,
+    )
+    if (
+        job is None
+        or ready_job is None
+        or variant is None
+        or str(job.id) != str(last_ready.get("failed_job_id"))
+        or not job_never_rendered(job)
+        or session.target_job_id != job.id
+        or str(last_good.get("job_id")) != str(ready_job.id)
+        or last_good.get("variant_id") != last_ready.get("variant_id")
+        or ready_job.content_plan_item_id != item.id
+        or ready_job.user_id != job.user_id
+    ):
+        raise RuntimeError("The exact editor target is no longer available")
+    item.current_job_id = ready_job.id
+    session.target_job_id = ready_job.id
+    session.target_variant_id = variant["variant_id"]
+    session.target_generation_id = last_good.get("render_generation_id") or variant.get(
+        "render_generation_id"
+    )
+    return ready_job
+
+
 def _complete_draft_turn(
     turn_id: uuid.UUID,
     *,
@@ -2176,6 +2218,18 @@ def _complete_draft_turn(
             if item.current_job_id is not None
             else None
         )
+        last_ready = (
+            (plan.diagnostics or {}).get("editor_last_ready")
+            if apply_intent.tool_name == "draft.apply_editor_ops"
+            else None
+        )
+        ready_job = (
+            db.execute(
+                select(Job).where(Job.id == uuid.UUID(str(last_ready["job_id"]))).with_for_update()
+            ).scalar_one_or_none()
+            if isinstance(last_ready, dict)
+            else None
+        )
         session = db.execute(
             select(CreatorAgentSession)
             .where(CreatorAgentSession.id == turn_ref.session_id)
@@ -2242,6 +2296,13 @@ def _complete_draft_turn(
                 and apply_intent.tool_name == "draft.apply_editor_ops"
                 else None
             ),
+            # The approved words of a typed editor draft are checked once its ops compile.
+            editor_text=(
+                ([], [])
+                if planned.suggestion_pin is None
+                and apply_intent.tool_name == "draft.apply_editor_ops"
+                else None
+            ),
         )
         if copy_problem:
             _refuse_repair_reply(planned)
@@ -2261,6 +2322,8 @@ def _complete_draft_turn(
             )
             return replace(completed, response_only=True)
 
+        if last_ready is not None:
+            job = _return_to_last_ready(item, job, ready_job, session, last_ready)
         variant_key = str(session.target_variant_id or "initial")
         generation_id = str(session.target_generation_id or "") or None
         draft_generation_id = generation_id
@@ -2589,6 +2652,22 @@ def _complete_draft_turn(
             from app.kria.editor_repair import verify_compiled_repair
 
             verify_compiled_repair(planned, compiled.payload)
+            if planned.suggestion_pin is None:
+                rewritten = _creative_copy_problem_sync(
+                    db,
+                    thread.id,
+                    _copy_media(item),
+                    resolution=planned.creative_copy_resolution,
+                    editor_text=(
+                        editor_base.projected.get("text_elements") or [],
+                        compiled.payload.text_elements
+                        if isinstance(compiled.payload, EditorCommitRequest)
+                        and compiled.payload.text_elements is not None
+                        else editor_base.projected.get("text_elements") or [],
+                    ),
+                )
+                if rewritten:
+                    raise KriaEditorOpError(rewritten)
             changes = compiled.changes
             editor_diff_trace = compiled.diff.to_json()
             state_id = (
