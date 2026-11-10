@@ -289,14 +289,10 @@ def caption_spot_moved_reason(position: str, y_frac: float) -> str:
     band = caption_spot_band(position)
     lower = band is not None and y_frac > band[1]
     return say(
-        en=(
-            f"The captions sit {'lower' if lower else 'higher'} than you asked "
-            "so they stay off your face."
-        ),
-        tr=(
-            f"Altyazılar yüzüne gelmesin diye istediğinden daha "
-            f"{'aşağıda' if lower else 'yukarıda'} duruyor."
-        ),
+        en=("The captions sit {v1} than you asked so they stay off your face."),
+        tr=("Altyazılar yüzüne gelmesin diye istediğinden daha {v2} duruyor."),
+        v1="lower" if lower else "higher",
+        v2="aşağıda" if lower else "yukarıda",
     )
 
 

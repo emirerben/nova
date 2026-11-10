@@ -195,13 +195,14 @@ def _question_text(labels: list[str]) -> str:
     if len(labels) == 1:
         return say(
             en=(
-                f'I couldn\'t tell which of your clips to leave out for "{labels[0]}". '
+                'I couldn\'t tell which of your clips to leave out for "{labels_0}". '
                 "Tap the ones to leave out, or tell me none."
             ),
             tr=(
-                f'"{labels[0]}" için hangi klipleri çıkaracağımı anlayamadım. '
+                '"{labels_0}" için hangi klipleri çıkaracağımı anlayamadım. '
                 "Çıkarılacak olanlara dokun ya da hiçbirini çıkarmamamı söyle."
             ),
+            labels_0=labels[0],
         )
     shown = ", ".join(f'"{label}"' for label in labels[:4])
     more = say(
@@ -210,13 +211,15 @@ def _question_text(labels: list[str]) -> str:
     )
     return say(
         en=(
-            f"I couldn't tell which of your clips to leave out for {shown}{more}. "
+            "I couldn't tell which of your clips to leave out for {shown}{more}. "
             "Tap the clips to leave out for each one, or mark the ones with none."
         ),
         tr=(
-            f"Şunlar için hangi klipleri çıkaracağımı anlayamadım: {shown}{more}. "
+            "Şunlar için hangi klipleri çıkaracağımı anlayamadım: {shown}{more}. "
             "Her biri için çıkarılacak klipleri seç ya da hiçbirini çıkarmayacaklarını işaretle."
         ),
+        shown=shown,
+        more=more,
     )
 
 
@@ -379,8 +382,12 @@ def still_played_notice(positions: Sequence[int]) -> str:
     en, tr = _clip_numbers(positions)
     one = len(positions) == 1
     return say(
-        en=f"I couldn't leave out {en}, so {'it is' if one else 'they are'} still in the video.",
-        tr=f"{tr} çıkaramadım, o yüzden videoda {'duruyor' if one else 'duruyorlar'}.",
+        en="I couldn't leave out {v1}, so {v2} still in the video.",
+        tr="{v3} çıkaramadım, o yüzden videoda {v4}.",
+        v1=en,
+        v2="it is" if one else "they are",
+        v3=tr,
+        v4="duruyor" if one else "duruyorlar",
     )
 
 
@@ -410,11 +417,12 @@ def length_exclusion_notice(
         en, tr = _clip_numbers(left_out)
         one = len(left_out) == 1
         return say(
-            en=f"I left out {en} because {'it is' if one else 'they are'} too short to use.",
-            tr=(
-                f"{tr} kullanılamayacak kadar kısa {'olduğu' if one else 'oldukları'} için"
-                " çıkardım."
-            ),
+            en="I left out {v1} because {v2} too short to use.",
+            tr=("{v3} kullanılamayacak kadar kısa {v4} için çıkardım."),
+            v1=en,
+            v2="it is" if one else "they are",
+            v3=tr,
+            v4="olduğu" if one else "oldukları",
         )
     if not matched:
         return say(

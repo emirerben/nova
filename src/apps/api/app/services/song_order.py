@@ -401,13 +401,14 @@ def song_order_question_text(question: SongOrderQuestion) -> str:
         )
     return say(
         en=(
-            f"I'm not sure where {unsure} of your clips sit in the song. "
+            "I'm not sure where {unsure} of your clips sit in the song. "
             "They're in the order I think; drag any that are out of place."
         ),
         tr=(
-            f"Kliplerinden {unsure} tanesinin şarkıda nereye geldiğinden emin değilim. "
+            "Kliplerinden {unsure} tanesinin şarkıda nereye geldiğinden emin değilim. "
             "Klipleri doğru olduğunu düşündüğüm sırayla dizdim; yeri yanlış olanları sürükle."
         ),
+        unsure=unsure,
     )
 
 

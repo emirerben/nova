@@ -77,11 +77,12 @@ def unclear_sequence_words(words: str) -> str:
     from app.kria.reply_language import say  # noqa: PLC0415 - keeps this module import-light
 
     return say(
-        en=f"I couldn't tell which clips \"{words}\" means, so I can't confirm the order.",
+        en="I couldn't tell which clips \"{words}\" means, so I can't confirm the order.",
         tr=(
-            f'"{words}" derken hangi klipleri kastettiğini anlayamadım, '
+            '"{words}" derken hangi klipleri kastettiğini anlayamadım, '
             "o yüzden sırayı doğrulayamıyorum."
         ),
+        words=words,
     )
 
 

@@ -111,23 +111,26 @@ def _question_text(asked: Sequence[tuple[str, int]]) -> str:
         if count == 2:
             return say(
                 en=(
-                    f'Two of your clips show "{label}". Which one should I use for it? '
+                    'Two of your clips show "{label}". Which one should I use for it? '
                     "Keep that one ticked and untick the other."
                 ),
                 tr=(
-                    f'"{label}" iki klibinde de görünüyor. Hangisini kullanayım? '
+                    '"{label}" iki klibinde de görünüyor. Hangisini kullanayım? '
                     "Onu işaretli bırak, diğerinin işaretini kaldır."
                 ),
+                label=label,
             )
         return say(
             en=(
-                f'{count} of your clips show "{label}". Which one should I use for it? '
+                '{count} of your clips show "{label}". Which one should I use for it? '
                 "Keep that one ticked and untick the others."
             ),
             tr=(
-                f'"{label}" {count} klibinde görünüyor. Hangisini kullanayım? '
+                '"{label}" {count} klibinde görünüyor. Hangisini kullanayım? '
                 "Onu işaretli bırak, diğerlerinin işaretini kaldır."
             ),
+            count=count,
+            label=label,
         )
     shown = ", ".join(f'"{label}"' for label, _count in asked[:4])
     more = say(
@@ -136,13 +139,15 @@ def _question_text(asked: Sequence[tuple[str, int]]) -> str:
     )
     return say(
         en=(
-            f"More than one of your clips shows {shown}{more}. "
+            "More than one of your clips shows {shown}{more}. "
             "For each one, keep the clip to use ticked and untick the others."
         ),
         tr=(
-            f"Şunlar birden fazla klibinde görünüyor: {shown}{more}. "
+            "Şunlar birden fazla klibinde görünüyor: {shown}{more}. "
             "Her biri için kullanılacak klibi işaretli bırak, diğerlerinin işaretini kaldır."
         ),
+        shown=shown,
+        more=more,
     )
 
 

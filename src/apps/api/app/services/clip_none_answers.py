@@ -176,46 +176,56 @@ def _pin_notice(
     if withdrawn:
         # KRI-1068: the creator typed "skip that" after a reply stuck on this clip.
         head = say(
-            en=f'As you asked, I dropped "{words}"',
-            tr=f'İstediğin gibi "{words}" kısmını çıkardım',
+            en='As you asked, I dropped "{words}"',
+            tr='İstediğin gibi "{words}" kısmını çıkardım',
+            words=words,
         )
     elif skipped:
         head = say(
-            en=f'You didn\'t pick a clip for "{words}"', tr=f'"{words}" için bir klip seçmedin'
+            en='You didn\'t pick a clip for "{words}"',
+            tr='"{words}" için bir klip seçmedin',
+            words=words,
         )
     else:
         head = say(
-            en=f'None of your clips show "{words}"',
-            tr=f'Kliplerinin hiçbirinde "{words}" yok',
+            en='None of your clips show "{words}"',
+            tr='Kliplerinin hiçbirinde "{words}" yok',
+            words=words,
         )
     last = position == "last"
     if basis is not None:
         filmed = basis == "filmed"
         clip = say(
-            en=f"{'last' if last else 'first'} clip you {'filmed' if filmed else 'added'}",
-            tr=f"{'çektiğin' if filmed else 'eklediğin'} {'son' if last else 'ilk'} klip",
+            en="{v1} clip you {v2}",
+            tr="{v3} {v4} klip",
+            v1="last" if last else "first",
+            v2="filmed" if filmed else "added",
+            v3="çektiğin" if filmed else "eklediğin",
+            v4="son" if last else "ilk",
         )
         tail = (
             say(
                 en=(
-                    f"so the video ends on the {clip}. Tell me which clip to end on if you'd "
+                    "so the video ends on the {clip}. Tell me which clip to end on if you'd "
                     "like a different one."
                 ),
                 tr=(
-                    f"o yüzden video {clip}te bitiyor. Başka bir klipte bitmesini istersen "
+                    "o yüzden video {clip}te bitiyor. Başka bir klipte bitmesini istersen "
                     "hangisi olduğunu söyle."
                 ),
+                clip=clip,
             )
             if last
             else say(
                 en=(
-                    f"so the video starts with the {clip}. Tell me which clip to start with "
+                    "so the video starts with the {clip}. Tell me which clip to start with "
                     "if you'd like a different one."
                 ),
                 tr=(
-                    f"o yüzden video {clip} ile başlıyor. Başka bir klip ile başlamasını "
+                    "o yüzden video {clip} ile başlıyor. Başka bir klip ile başlamasını "
                     "istersen hangisi olduğunu söyle."
                 ),
+                clip=clip,
             )
         )
     else:
@@ -248,23 +258,26 @@ def _pin_notice(
 def _text_notice(literal: str, label: str, *, skipped: bool) -> str:
     if skipped:
         head = say(
-            en=f'You didn\'t pick a clip for "{label}"',
-            tr=f'"{label}" için bir klip seçmedin',
+            en='You didn\'t pick a clip for "{label}"',
+            tr='"{label}" için bir klip seçmedin',
+            label=label,
         )
     else:
         head = say(
-            en=f'None of your clips show "{label}"',
-            tr=f'Kliplerinin hiçbirinde "{label}" yok',
+            en='None of your clips show "{label}"',
+            tr='Kliplerinin hiçbirinde "{label}" yok',
+            label=label,
         )
     return say(
         en=(
-            f'{head}, so I left out "{literal}". Tell me which clip it goes on if you still '
-            "want it."
+            '{head}, so I left out "{literal}". Tell me which clip it goes on if you still want it.'
         ),
         tr=(
-            f'{head}, o yüzden "{literal}" yazısını koymadım. Yine de istersen hangi klibe '
+            '{head}, o yüzden "{literal}" yazısını koymadım. Yine de istersen hangi klibe '
             "gideceğini söyle."
         ),
+        head=head,
+        literal=literal,
     )
 
 
@@ -395,24 +408,32 @@ def _without_pins(req: Any, gone: dict[str, str], *, withdrawn: bool = False) ->
         )
         if "first" in pins:
             description += say(
-                en=f", starting with {pins['first']}", tr=f", {pins['first']} ile başlayarak"
+                en=", starting with {pins_first}",
+                tr=", {pins_first} ile başlayarak",
+                pins_first=pins["first"],
             )
         if "last" in pins:
             description += say(
-                en=f", ending on {pins['last']}", tr=f", {pins['last']} ile bitirerek"
+                en=", ending on {pins_last}",
+                tr=", {pins_last} ile bitirerek",
+                pins_last=pins["last"],
             )
     else:
         # A rule this module cannot re-word ("along my route"): keep it, say what is gone.
         missing = ", ".join(f'"{words}"' for words in gone.values())
         description = (
             say(
-                en=f"{req.description} (without {missing})",
-                tr=f"{req.description} ({missing} olmadan)",
+                en="{req_description} (without {missing})",
+                tr="{req_description} ({missing} olmadan)",
+                req_description=req.description,
+                missing=missing,
             )
             if withdrawn
             else say(
-                en=f"{req.description} (none of your clips show {missing})",
-                tr=f"{req.description} (kliplerinde {missing} yok)",
+                en="{req_description} (none of your clips show {missing})",
+                tr="{req_description} (kliplerinde {missing} yok)",
+                req_description=req.description,
+                missing=missing,
             )
         )
     return req.model_copy(update={"facts": facts, "description": description})

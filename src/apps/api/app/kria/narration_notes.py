@@ -276,21 +276,23 @@ def narration_note_parts(
     if quiet_held:
         parts.append(
             say(
-                en=f"Your last clip introduces someone ({quote}) with nothing before it, "
+                en="Your last clip introduces someone ({quote}) with nothing before it, "
                 "so I end on that clip without those words. Tell me if you want the "
                 "line heard.",
-                tr=f"Son klibin birini tanıtıyor ({quote}) ama öncesinde bir şey yok; "
+                tr="Son klibin birini tanıtıyor ({quote}) ama öncesinde bir şey yok; "
                 "bu yüzden videoyu o klipte bu sözler olmadan bitiriyorum. Cümlenin "
                 "duyulmasını istersen söyle.",
+                quote=quote,
             )
         )
     else:
         parts.append(
             say(
-                en=f"Your last clip introduces someone ({quote}), so the video ends on "
+                en="Your last clip introduces someone ({quote}), so the video ends on "
                 "that introduction. Tell me if it should come earlier.",
-                tr=f"Son klibin birini tanıtıyor ({quote}); video bu tanıtımla bitiyor. "
+                tr="Son klibin birini tanıtıyor ({quote}); video bu tanıtımla bitiyor. "
                 "Daha önce gelmesini istersen söyle.",
+                quote=quote,
             )
         )
     return _with_sound_sentence(parts)

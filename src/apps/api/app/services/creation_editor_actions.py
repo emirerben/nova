@@ -415,9 +415,9 @@ def _rejection_reply(exc: Exception) -> str:
         refusal = BACKGROUND_REFUSALS.get(str(exc.detail.get("code") or ""))
         if refusal is not None:
             # KRI-1117 (S18): the honest "Couldn't ..." for a background the Save refused.
-            return say(en=f"{refusal[0]}. ", tr=f"{refusal[1]}. ") + say(
-                en="Nothing was changed.", tr="Hiçbir şey değişmedi."
-            )
+            return say(
+                en="{refusal_0}. ", tr="{refusal_1}. ", refusal_0=refusal[0], refusal_1=refusal[1]
+            ) + say(en="Nothing was changed.", tr="Hiçbir şey değişmedi.")
         message = str(exc.detail.get("message") or "").strip()
         if message and not _mixes_languages(message):
             return f"{message} " + say(en="Nothing was changed.", tr="Hiçbir şey değişmedi.")
@@ -511,7 +511,7 @@ def _rejection_phrase(reason: object) -> str:
 
 
 def _not_done(text: str) -> str:
-    return say(en=f"Not done: {text}.", tr=f"Yapılmadı: {text}.")
+    return say(en="Not done: {text}.", tr="Yapılmadı: {text}.", text=text)
 
 
 def _sentence(text: str) -> str:

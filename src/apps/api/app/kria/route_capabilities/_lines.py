@@ -50,13 +50,14 @@ def hook(value: Any, _s: Mapping[str, Any]) -> str | None:
         return None
     return say(
         en=(
-            f'I can\'t use the opening hook idea ("{clip(value)}") on this video yet, '
+            'I can\'t use the opening hook idea ("{clip_value}") on this video yet, '
             "so it won't be shown as text"
         ),
         tr=(
-            f'Açılış kanca fikrini ("{clip(value)}") bu videoda henüz kullanamıyorum, '
+            'Açılış kanca fikrini ("{clip_value}") bu videoda henüz kullanamıyorum, '
             "o yüzden yazı olarak gösterilmeyecek"
         ),
+        clip_value=clip(value),
     )
 
 
@@ -66,13 +67,14 @@ def story(value: Any, _s: Mapping[str, Any]) -> str | None:
         return None
     return say(
         en=(
-            f"I can't follow the planned story structure ({listed(items)}) on this video yet, "
+            "I can't follow the planned story structure ({listed_items}) on this video yet, "
             "so it won't change the order of the clips"
         ),
         tr=(
-            f"Planlanan hikâye yapısını ({listed(items)}) bu videoda henüz uygulayamıyorum, "
+            "Planlanan hikâye yapısını ({listed_items}) bu videoda henüz uygulayamıyorum, "
             "o yüzden kliplerin sırasını değiştirmeyecek"
         ),
+        listed_items=listed(items),
     )
 
 
@@ -80,8 +82,9 @@ def caption_style(value: Any, _s: Mapping[str, Any]) -> str | None:
     if not value or value in {"auto", "none"}:
         return None
     return say(
-        en=f"I can't apply the {value} caption style on this video yet, so it won't be used",
-        tr=f"{value} altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak",
+        en="I can't apply the {value} caption style on this video yet, so it won't be used",
+        tr="{value} altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak",
+        value=value,
     )
 
 
@@ -113,10 +116,11 @@ def treatments(value: Any, _s: Mapping[str, Any]) -> str | None:
         return None
     return say(
         en=(
-            f"I can't add the treatments ({listed(items)}) on this video yet, "
+            "I can't add the treatments ({listed_items}) on this video yet, "
             "so they won't be applied"
         ),
-        tr=f"Şu efektleri ({listed(items)}) bu videoda henüz ekleyemiyorum, uygulanmayacak",
+        tr="Şu efektleri ({listed_items}) bu videoda henüz ekleyemiyorum, uygulanmayacak",
+        listed_items=listed(items),
     )
 
 
@@ -124,8 +128,9 @@ def archetype(value: Any, _s: Mapping[str, Any]) -> str | None:
     if not value:
         return None
     return say(
-        en=f"I can't use the {_words(value)} story archetype on this video yet",
-        tr=f"{_words(value)} hikâye kalıbını bu videoda henüz kullanamıyorum",
+        en="I can't use the {words_value} story archetype on this video yet",
+        tr="{words_value} hikâye kalıbını bu videoda henüz kullanamıyorum",
+        words_value=_words(value),
     )
 
 
@@ -163,30 +168,33 @@ def title_animation(value: Any, _s: Mapping[str, Any]) -> str | None:
     if not value:
         return None
     return say(
-        en=f"I can't animate the title ({_words(value)}) on this video yet, so it shows without "
+        en="I can't animate the title ({words_value}) on this video yet, so it shows without "
         "motion",
-        tr=f"Başlığı ({_words(value)}) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz "
+        tr="Başlığı ({words_value}) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz "
         "görünecek",
+        words_value=_words(value),
     )
 
 
 def title_animation_from_ask(value: Any) -> str:
     """The planned title animation when the creator's own animation ask sets the entrance."""
     return say(
-        en=f"I'm not using the planned title animation ({_words(value)}): the title follows "
+        en="I'm not using the planned title animation ({words_value}): the title follows "
         "your own animation ask",
-        tr=f"Planlanan başlık animasyonunu ({_words(value)}) kullanmıyorum: başlık senin "
+        tr="Planlanan başlık animasyonunu ({words_value}) kullanmıyorum: başlık senin "
         "animasyon isteğini izliyor",
+        words_value=_words(value),
     )
 
 
 def title_animation_as_fade(value: Any) -> str:
     """The planned title animation on a phone that plays only the legacy text effects."""
     return say(
-        en=f"This phone can't play the title animation ({_words(value)}) yet, so the title "
+        en="This phone can't play the title animation ({words_value}) yet, so the title "
         "fades in instead",
-        tr=f"Bu telefon başlık animasyonunu ({_words(value)}) henüz oynatamıyor, o yüzden başlık "
+        tr="Bu telefon başlık animasyonunu ({words_value}) henüz oynatamıyor, o yüzden başlık "
         "onun yerine yavaşça beliriyor",
+        words_value=_words(value),
     )
 
 
@@ -194,8 +202,9 @@ def label_position(value: Any, _s: Mapping[str, Any]) -> str | None:
     if not value:
         return None
     return say(
-        en=f"I can't place the clip labels at the {_words(value)} on this video yet",
-        tr=f"Klip etiketlerini bu videoda henüz {_words(value)} konumuna yerleştiremiyorum",
+        en="I can't place the clip labels at the {words_value} on this video yet",
+        tr="Klip etiketlerini bu videoda henüz {words_value} konumuna yerleştiremiyorum",
+        words_value=_words(value),
     )
 
 
@@ -203,8 +212,9 @@ def opening_title(value: Any, _s: Mapping[str, Any]) -> str | None:
     if not str(value or "").strip():
         return None
     return say(
-        en=f'I can\'t add the opening title ("{clip(value)}") on this video yet',
-        tr=f'Açılış başlığını ("{clip(value)}") bu videoya henüz ekleyemiyorum',
+        en='I can\'t add the opening title ("{clip_value}") on this video yet',
+        tr='Açılış başlığını ("{clip_value}") bu videoya henüz ekleyemiyorum',
+        clip_value=clip(value),
     )
 
 
@@ -212,8 +222,9 @@ def closing_title(value: Any, _s: Mapping[str, Any]) -> str | None:
     if not str(value or "").strip():
         return None
     return say(
-        en=f'I can\'t add the closing title ("{clip(value)}") on this video yet',
-        tr=f'Kapanış başlığını ("{clip(value)}") bu videoya henüz ekleyemiyorum',
+        en='I can\'t add the closing title ("{clip_value}") on this video yet',
+        tr='Kapanış başlığını ("{clip_value}") bu videoya henüz ekleyemiyorum',
+        clip_value=clip(value),
     )
 
 
@@ -277,8 +288,10 @@ def stated_length(instead_en: str, instead_tr: str) -> WithAsks:
         if not length_stated(strategy, requirements):
             return None
         return say(
-            en=f"I can't make this video the length you asked for yet: {instead_en}",
-            tr=f"Bu videoyu henüz istediğin uzunlukta yapamıyorum: {instead_tr}",
+            en="I can't make this video the length you asked for yet: {instead_en}",
+            tr="Bu videoyu henüz istediğin uzunlukta yapamıyorum: {instead_tr}",
+            instead_en=instead_en,
+            instead_tr=instead_tr,
         )
 
     return WithAsks(build)
@@ -291,8 +304,11 @@ def direction_line(own: str | None, instead_en: str, instead_tr: str) -> Builder
         if not value or value == own:
             return None
         return say(
-            en=f"The {_words(value)} direction isn't applied on this video yet: {instead_en}",
-            tr=f"{_words(value)} yönü bu videoda henüz uygulanmıyor: {instead_tr}",
+            en="The {words_value} direction isn't applied on this video yet: {instead_en}",
+            tr="{words_value} yönü bu videoda henüz uygulanmıyor: {instead_tr}",
+            words_value=_words(value),
+            instead_en=instead_en,
+            instead_tr=instead_tr,
         )
 
     return build
@@ -308,8 +324,11 @@ def pacing_line(
         if not value or applied(value, strategy):
             return None
         return say(
-            en=f"The {_words(value)} pacing isn't applied on this video yet: {instead_en}",
-            tr=f"{_words(value)} tempo bu videoda henüz uygulanmıyor: {instead_tr}",
+            en="The {words_value} pacing isn't applied on this video yet: {instead_en}",
+            tr="{words_value} tempo bu videoda henüz uygulanmıyor: {instead_tr}",
+            words_value=_words(value),
+            instead_en=instead_en,
+            instead_tr=instead_tr,
         )
 
     return build

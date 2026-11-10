@@ -960,22 +960,25 @@ def closing_quote_notice(record: Mapping[str, Any] | None) -> str | None:
     quote = str(record.get("quote") or "")
     if record.get("status") == "not_held":
         return say(
-            en=f"I found where you say “{quote}”, but couldn't fit it as the ending with "
+            en="I found where you say “{quote}”, but couldn't fit it as the ending with "
             "your other clips, so the video won't end exactly on it.",
-            tr=f"“{quote}” dediğin anı buldum ama diğer kliplerle birlikte sona "
+            tr="“{quote}” dediğin anı buldum ama diğer kliplerle birlikte sona "
             "yerleştiremedim, bu yüzden video tam o anda bitmeyecek.",
+            quote=quote,
         )
     if record.get("status") == "too_long":
         return say(
-            en=f"The line “{quote}” is longer than the video can hold with your other "
+            en="The line “{quote}” is longer than the video can hold with your other "
             "moments, so the video won't end exactly on it.",
-            tr=f"“{quote}” cümlesi diğer anlarla birlikte videoya sığmıyor, bu yüzden video "
+            tr="“{quote}” cümlesi diğer anlarla birlikte videoya sığmıyor, bu yüzden video "
             "tam o anda bitmeyecek.",
+            quote=quote,
         )
     return say(
-        en=f"I couldn't find the moment you say “{quote}” in your clips, so the video "
+        en="I couldn't find the moment you say “{quote}” in your clips, so the video "
         "can't end exactly on it.",
-        tr=f"Kliplerinde “{quote}” dediğin anı bulamadım, bu yüzden video tam o anda bitemiyor.",
+        tr="Kliplerinde “{quote}” dediğin anı bulamadım, bu yüzden video tam o anda bitemiyor.",
+        quote=quote,
     )
 
 

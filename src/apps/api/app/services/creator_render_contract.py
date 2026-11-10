@@ -1298,22 +1298,24 @@ def _creator_listed_order(
 def _pin_not_found(words: str) -> str:
     """A stated first / last clip the server could not place, in the chat's language."""
     return say(
-        en=f"I couldn't tell which clip \"{words}\" means, so I can't confirm the order.",
+        en="I couldn't tell which clip \"{words}\" means, so I can't confirm the order.",
         tr=(
-            f'"{words}" derken hangi klibi kastettiğini anlayamadım, '
+            '"{words}" derken hangi klibi kastettiğini anlayamadım, '
             "o yüzden sırayı doğrulayamıyorum."
         ),
+        words=words,
     )
 
 
 def text_clip_not_found(literal: str) -> str:
     """Creator text whose clip the server could not tell, in the chat's language."""
     return say(
-        en=f"I couldn't tell which clip \"{literal}\" goes on, so I can't confirm that text.",
+        en="I couldn't tell which clip \"{literal}\" goes on, so I can't confirm that text.",
         tr=(
-            f'"{literal}" yazısının hangi klibe gideceğini anlayamadım, o yüzden bu yazıyı '
+            '"{literal}" yazısının hangi klibe gideceğini anlayamadım, o yüzden bu yazıyı '
             "doğrulayamıyorum."
         ),
+        literal=literal,
     )
 
 
@@ -1347,8 +1349,12 @@ def capture_time_missing(names: Sequence[tuple[str, str]], *, whole_edit: bool =
     if whole_edit:
         en, tr = "Your clips and photos", "Kliplerinin ve fotoğraflarının hiçbiri"
     return say(
-        en=f"{en} {_NO_CAPTURE_TAILS['en'][0 if one else 1]}",
-        tr=f"{tr} {_NO_CAPTURE_TAILS['tr'][0 if one else 1]}",
+        en="{v1} {v2}",
+        tr="{v3} {v4}",
+        v1=en,
+        v2=_NO_CAPTURE_TAILS["en"][0 if one else 1],
+        v3=tr,
+        v4=_NO_CAPTURE_TAILS["tr"][0 if one else 1],
     )
 
 
@@ -1722,8 +1728,9 @@ def build_render_contract(
     )
     unresolved.extend(
         say(
-            en=f"I still need to know which part of {name} to leave out.",
-            tr=f"{name} içinde hangi bölümü göstermeyeceğimi hâlâ bilmem gerekiyor.",
+            en="I still need to know which part of {name} to leave out.",
+            tr="{name} içinde hangi bölümü göstermeyeceğimi hâlâ bilmem gerekiyor.",
+            name=name,
         )
         for name in unsettled_hidden_parts(raw)
     )

@@ -200,7 +200,7 @@ def _photo_candidates(
         {
             "media_id": media_id,
             "kind": "image",
-            "label": say(en=f"Photo {n}", tr=f"Fotoğraf {n}"),
+            "label": say(en="Photo {n}", tr="Fotoğraf {n}", n=n),
         }
         for n, media_id in enumerate(photos, 1)
     ]
@@ -297,13 +297,14 @@ def clip_question_text(categories: list[dict[str, Any]], *, only_video: bool = F
     if len(labels) == 1:
         return say(
             en=(
-                f'I couldn\'t tell which of your clips show "{labels[0]}". '
+                'I couldn\'t tell which of your clips show "{labels_0}". '
                 "Tap the clips that do, or tell me there aren't any."
             ),
             tr=(
-                f'Kliplerinden hangilerinde "{labels[0]}" olduğunu anlayamadım. '
+                'Kliplerinden hangilerinde "{labels_0}" olduğunu anlayamadım. '
                 "Olanlara dokun ya da hiç olmadığını söyle."
             ),
+            labels_0=labels[0],
         )
     shown = ", ".join(f'"{label}"' for label in labels[:4])
     more = say(
@@ -312,13 +313,15 @@ def clip_question_text(categories: list[dict[str, Any]], *, only_video: bool = F
     )
     return say(
         en=(
-            f"I couldn't tell which of your clips match {shown}{more}. "
+            "I couldn't tell which of your clips match {shown}{more}. "
             "Tap the clips for each one, or mark the ones that have none."
         ),
         tr=(
-            f"Şunlar için hangi klipleri kastettiğini anlayamadım: {shown}{more}. "
+            "Şunlar için hangi klipleri kastettiğini anlayamadım: {shown}{more}. "
             "Her biri için klipleri seç ya da hiç klibi olmayanları işaretle."
         ),
+        shown=shown,
+        more=more,
     )
 
 
@@ -338,14 +341,15 @@ def _not_in_the_video_text(labels: list[str]) -> str:
     if len(labels) == 1:
         return say(
             en=(
-                f'About when does "{labels[0]}" appear in your video? '
+                'About when does "{labels_0}" appear in your video? '
                 "Give a rough time, such as near the start or 30 seconds, "
                 "or tell me it isn't there."
             ),
             tr=(
-                f'Videonda "{labels[0]}" yaklaşık ne zaman görünüyor? '
+                'Videonda "{labels_0}" yaklaşık ne zaman görünüyor? '
                 "Başlara doğru veya 30. saniye gibi yaklaşık bir zaman ver ya da olmadığını söyle."
             ),
+            labels_0=labels[0],
         )
     shown = ", ".join(f'"{label}"' for label in labels[:4])
     more = say(
@@ -354,13 +358,15 @@ def _not_in_the_video_text(labels: list[str]) -> str:
     )
     return say(
         en=(
-            f"About when do {shown}{more} appear in your video? "
+            "About when do {shown}{more} appear in your video? "
             "Give a rough time for each, or tell me which aren't there."
         ),
         tr=(
-            f"Videonda şunlar yaklaşık ne zaman görünüyor: {shown}{more}? "
+            "Videonda şunlar yaklaşık ne zaman görünüyor: {shown}{more}? "
             "Her biri için yaklaşık bir zaman ver ya da hangilerinin olmadığını söyle."
         ),
+        shown=shown,
+        more=more,
     )
 
 

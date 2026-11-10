@@ -143,8 +143,11 @@ def _asked_media_left_out_notice(kind: str | None, ask: str) -> str:
 
     noun_en, noun_tr = ("photo", "fotoğraf") if kind == "image" else ("video", "video")
     return say(
-        en=f'This version leaves out the {noun_en} you asked for: "{ask}".',
-        tr=f'Bu sürümde istediğin {noun_tr} yok: "{ask}".',
+        en='This version leaves out the {noun_en} you asked for: "{ask}".',
+        tr='Bu sürümde istediğin {noun_tr} yok: "{ask}".',
+        noun_en=noun_en,
+        ask=ask,
+        noun_tr=noun_tr,
     )
 
 
@@ -643,13 +646,14 @@ def _refusal_question(exc: ValueError, strategy: CreativeStrategy) -> RefusedStr
             return RefusedStrategy(
                 question=say(
                     en=(
-                        f"I can keep up to {MAX_CREATOR_PINNED_TEXTS} lines of corner text. "
+                        "I can keep up to {max_creator_pinned_texts} lines of corner text. "
                         "Which ones should stay?"
                     ),
                     tr=(
-                        f"Köşede en fazla {MAX_CREATOR_PINNED_TEXTS} satır yazı tutabilirim. "
+                        "Köşede en fazla {max_creator_pinned_texts} satır yazı tutabilirim. "
                         "Hangileri kalsın?"
                     ),
+                    max_creator_pinned_texts=MAX_CREATOR_PINNED_TEXTS,
                 ),
                 code="pinned_text_too_many",
             )
@@ -661,13 +665,15 @@ def _refusal_question(exc: ValueError, strategy: CreativeStrategy) -> RefusedStr
             return RefusedStrategy(
                 question=say(
                     en=(
-                        f'"{shown}" is too long to fit on one line in a corner (about '
-                        f"{PINNED_TEXT_MAX_CHARS} characters at most). Can you shorten it?"
+                        '"{shown}" is too long to fit on one line in a corner (about '
+                        "{pinned_text_max_chars} characters at most). Can you shorten it?"
                     ),
                     tr=(
-                        f'"{shown}" köşede tek satıra sığmayacak kadar uzun (en fazla yaklaşık '
-                        f"{PINNED_TEXT_MAX_CHARS} karakter). Kısaltır mısın?"
+                        '"{shown}" köşede tek satıra sığmayacak kadar uzun (en fazla yaklaşık '
+                        "{pinned_text_max_chars} karakter). Kısaltır mısın?"
                     ),
+                    shown=shown,
+                    pinned_text_max_chars=PINNED_TEXT_MAX_CHARS,
                 ),
                 code="pinned_text_too_long",
             )
@@ -718,13 +724,15 @@ def _refusal_question(exc: ValueError, strategy: CreativeStrategy) -> RefusedStr
             return RefusedStrategy(
                 question=say(
                     en=(
-                        f"This kind of edit can't show {missing} yet. Should I make everything "
+                        "This kind of edit can't show {missing} yet. Should I make everything "
                         "else and leave that text out?"
                     ),
                     tr=(
-                        f"Bu tür düzenleme {missing_tr} henüz gösteremiyor. Geri kalan her şeyi "
+                        "Bu tür düzenleme {missing_tr} henüz gösteremiyor. Geri kalan her şeyi "
                         "yapıp o yazıyı dışarıda bırakayım mı?"
                     ),
+                    missing=missing,
+                    missing_tr=missing_tr,
                 ),
                 code="shot_text_unavailable",
             )
@@ -889,8 +897,10 @@ def _join_numbers(numbers: Sequence[int]) -> str:
     if len(words) < 2:
         return "".join(words)
     return say(
-        en=f"{', '.join(words[:-1])} and {words[-1]}",
-        tr=f"{', '.join(words[:-1])} ve {words[-1]}",
+        en="{v1} and {v2}",
+        tr="{v1} ve {v2}",
+        v1=", ".join(words[:-1]),
+        v2=words[-1],
     )
 
 
@@ -905,40 +915,54 @@ def _length_reason(
         if len(numbers) > 6:
             return say(
                 en=(
-                    f"Only {len(numbers)} of your {own_count} clips are in this edit and "
-                    f"together they run about {possible:g} seconds, so the video can't be "
-                    f"{wanted:g} seconds."
+                    "Only {len_numbers} of your {own_count} clips are in this edit and "
+                    "together they run about {possible:g} seconds, so the video can't be "
+                    "{wanted:g} seconds."
                 ),
                 tr=(
-                    f"Bu düzenlemede {own_count} klipten yalnızca {len(numbers)} tanesi var ve "
-                    f"birlikte yaklaşık {possible:g} saniye sürüyor, bu yüzden video "
-                    f"{wanted:g} saniye olamıyor."
+                    "Bu düzenlemede {own_count} klipten yalnızca {len_numbers} tanesi var ve "
+                    "birlikte yaklaşık {possible:g} saniye sürüyor, bu yüzden video "
+                    "{wanted:g} saniye olamıyor."
                 ),
+                len_numbers=len(numbers),
+                own_count=own_count,
+                possible=possible,
+                wanted=wanted,
             )
         several = len(numbers) > 1
         which = _join_numbers(numbers)
         return say(
             en=(
-                f"Only {'clips' if several else 'clip'} {which} "
-                f"{'are' if several else 'is'} in this edit and "
-                f"{'together they run' if several else 'it runs'} about {possible:g} seconds, "
-                f"so the video can't be {wanted:g} seconds."
+                "Only {v1} {which} "
+                "{v2} in this edit and "
+                "{v3} about {possible:g} seconds, "
+                "so the video can't be {wanted:g} seconds."
             ),
             tr=(
-                f"Bu düzenlemede yalnızca {which}. {'klipler' if several else 'klip'} var ve "
-                f"{'birlikte ' if several else ''}yaklaşık {possible:g} saniye sürüyor, bu "
-                f"yüzden video {wanted:g} saniye olamıyor."
+                "Bu düzenlemede yalnızca {which}. {v4} var ve "
+                "{v5}yaklaşık {possible:g} saniye sürüyor, bu "
+                "yüzden video {wanted:g} saniye olamıyor."
             ),
+            v1="clips" if several else "clip",
+            which=which,
+            v2="are" if several else "is",
+            v3="together they run" if several else "it runs",
+            possible=possible,
+            wanted=wanted,
+            v4="klipler" if several else "klip",
+            v5="birlikte " if several else "",
         )
     return say(
         en=(
-            f"Your clips add up to about {possible:g} seconds, so the video can't be "
-            f"{wanted:g} seconds."
+            "Your clips add up to about {possible:g} seconds, so the video can't be "
+            "{wanted:g} seconds."
         ),
         tr=(
-            f"Klipler toplam yaklaşık {possible:g} saniye, bu yüzden video {wanted:g} saniye "
+            "Klipler toplam yaklaşık {possible:g} saniye, bu yüzden video {wanted:g} saniye "
             "olamıyor."
         ),
+        possible=possible,
+        wanted=wanted,
     )
 
 
@@ -968,14 +992,20 @@ def _lost_in_words(
             which = _join_numbers(numbers)
             reasons.append(
                 say(
-                    en=f"{'Clips' if several else 'Clip'} {which} can't be in this edit.",
-                    tr=f"{which}. {'klipler' if several else 'klip'} bu düzenlemeye giremiyor.",
+                    en="{v1} {which} can't be in this edit.",
+                    tr="{which}. {v2} bu düzenlemeye giremiyor.",
+                    v1="Clips" if several else "Clip",
+                    which=which,
+                    v2="klipler" if several else "klip",
                 )
             )
             agreed.append(
                 say(
-                    en=f"I left out {'clips' if several else 'clip'} {which}.",
-                    tr=f"{which}. {'klipleri' if several else 'klibi'} dışarıda bıraktım.",
+                    en="I left out {v1} {which}.",
+                    tr="{which}. {v2} dışarıda bıraktım.",
+                    v1="clips" if several else "clip",
+                    which=which,
+                    v2="klipleri" if several else "klibi",
                 )
             )
         elif field == "target_duration_s":
@@ -983,8 +1013,10 @@ def _lost_in_words(
             reasons.append(_length_reason(manifest, wanted, possible, after.selected_media_ids))
             agreed.append(
                 say(
-                    en=f"I made it {possible:g} seconds instead of {wanted:g}.",
-                    tr=f"{wanted:g} saniye yerine {possible:g} saniyelik yaptım.",
+                    en="I made it {possible:g} seconds instead of {wanted:g}.",
+                    tr="{wanted:g} saniye yerine {possible:g} saniyelik yaptım.",
+                    possible=possible,
+                    wanted=wanted,
                 )
             )
         elif field in _LOST_FIELD_WORDS:
@@ -995,11 +1027,12 @@ def _lost_in_words(
         names = ", ".join(say(en=en, tr=tr) for en, tr in named)
         reasons.append(
             say(
-                en=f"This edit can't keep: {names}.",
-                tr=f"Bu düzenlemede korunamayanlar: {names}.",
+                en="This edit can't keep: {names}.",
+                tr="Bu düzenlemede korunamayanlar: {names}.",
+                names=names,
             )
         )
-        agreed.append(say(en=f"Left out: {names}.", tr=f"Çıkardıklarım: {names}."))
+        agreed.append(say(en="Left out: {names}.", tr="Çıkardıklarım: {names}.", names=names))
     return " ".join(reasons), " ".join(agreed)
 
 
@@ -1013,13 +1046,14 @@ def _repair_detail(before: CreativeStrategy, after: CreativeStrategy) -> str:
         lines.append(
             say(
                 en=(
-                    f"This edit can't hold your title for exactly "
-                    f"{before.opening_title_duration_s:g} seconds."
+                    "This edit can't hold your title for exactly "
+                    "{before_opening_title_duration_s:g} seconds."
                 ),
                 tr=(
-                    f"Bu düzenleme başlığını tam {before.opening_title_duration_s:g} saniye "
+                    "Bu düzenleme başlığını tam {before_opening_title_duration_s:g} saniye "
                     "tutamıyor."
                 ),
+                before_opening_title_duration_s=before.opening_title_duration_s,
             )
         )
     if (
@@ -1064,13 +1098,14 @@ def _talking_top_text_as_title(
         strategy.model_copy(update={"opening_title": text, "pinned_texts": None}),
         say(
             en=(
-                f'"{text}" shows as the opening title for the first few seconds. '
+                '"{text}" shows as the opening title for the first few seconds. '
                 "Talking edits can't keep text on screen the whole time yet."
             ),
             tr=(
-                f'"{text}" ilk birkaç saniye açılış başlığı olarak görünüyor. Konuşmalı '
+                '"{text}" ilk birkaç saniye açılış başlığı olarak görünüyor. Konuşmalı '
                 "düzenlemeler yazıyı henüz videonun tamamında ekranda tutamıyor."
             ),
+            text=text,
         ),
     )
 
@@ -1090,13 +1125,17 @@ def _pin_range_refusal(strategy: CreativeStrategy) -> RefusedStrategy | None:
             return RefusedStrategy(
                 question=say(
                     en=(
-                        f'You picked {clips} clip{"" if clips == 1 else "s"}, so "{pin.text}" '
-                        f"can't go on clip {pin.clip}. Which clip should it be on?"
+                        'You picked {clips} clip{v1}, so "{pin_text}" '
+                        "can't go on clip {pin_clip}. Which clip should it be on?"
                     ),
                     tr=(
-                        f'{clips} klip seçtin, o yüzden "{pin.text}" {pin.clip}. klibe '
+                        '{clips} klip seçtin, o yüzden "{pin_text}" {pin_clip}. klibe '
                         "konamaz. Hangi klibe koyayım?"
                     ),
+                    clips=clips,
+                    v1="" if clips == 1 else "s",
+                    pin_text=pin.text,
+                    pin_clip=pin.clip,
                 ),
                 code="pinned_text_clip_missing",
             )
@@ -1133,8 +1172,10 @@ def _omission_notice(field: str, strategy: CreativeStrategy) -> str:
     else:
         detail = str(value)
     return say(
-        en=f'This edit cannot render {name}, so I left it out: "{detail}".',
-        tr=f'Bu düzenlemede {name} gösterilemiyor, o yüzden çıkardım: "{detail}".',
+        en='This edit cannot render {name}, so I left it out: "{detail}".',
+        tr='Bu düzenlemede {name} gösterilemiyor, o yüzden çıkardım: "{detail}".',
+        name=name,
+        detail=detail,
     )
 
 
