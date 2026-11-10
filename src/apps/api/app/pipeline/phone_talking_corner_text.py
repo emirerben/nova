@@ -41,17 +41,31 @@ _SHRINK = (1.0, 0.85, 0.72, 0.6)
 _MAX_FACE_COVERAGE = 0.0
 _MAX_CAPTION_COVERAGE = 0.05
 _FACE_PAD = 0.01
+# Two corner lines on screen together never touch (review of #2256: they used to be placed one by
+# one and both slid to the same spot under a face).
+_LABEL_PAD = 0.004
 
 
 def is_corner_text_row(row: dict) -> bool:
     return (row.get("source_params") or {}).get("source") == CORNER_TEXT_SOURCE
 
 
-def corner_text_rows(pins: Sequence[Any], *, talk_end_s: float, canvas: Any) -> list[dict]:
-    """The pins as tagged text rows on the talk's timeline (before placement)."""
+def corner_text_rows(
+    pins: Sequence[Any],
+    *,
+    talk_end_s: float,
+    canvas: Any,
+    clip_windows: Sequence[tuple[float, float]] | None = None,
+) -> list[dict]:
+    """The pins as tagged text rows on the talk's timeline (before placement).
+
+    ``clip_windows`` are the Talking edit's clips in play order on the same timeline (the first
+    speaker's cut take, then each further speaker): a pin scoped to "clip 2" runs over the second
+    one. Without them a clip-scoped pin has no window (review of #2256: ``clip=1`` on a one-take
+    edit used to vanish); `unplaced_pins` names every pin that got none."""
     from app.pipeline.pinned_text import pinned_text_elements, resolve_pin_windows  # noqa: PLC0415
 
-    windows = resolve_pin_windows(pins, talk_end_s)
+    windows = resolve_pin_windows(pins, talk_end_s, clip_windows)
     rows = pinned_text_elements(windows, font_family=None, text_color=None, canvas=canvas)
     tagged = []
     for window, row in zip(windows, rows, strict=True):
@@ -67,6 +81,28 @@ def corner_text_rows(pins: Sequence[Any], *, talk_end_s: float, canvas: Any) -> 
             }
         )
     return tagged
+
+
+def unplaced_pins(
+    pins: Sequence[Any],
+    *,
+    talk_end_s: float,
+    clip_windows: Sequence[tuple[float, float]] | None = None,
+) -> list[dict[str, Any]]:
+    """Receipt entries for the pins that have no window on this edit (a clip it doesn't have, a
+    range outside it): said, never dropped silently."""
+    from app.pipeline.pinned_text import resolve_pin_windows  # noqa: PLC0415
+
+    drawn = {w.index for w in resolve_pin_windows(pins, talk_end_s, clip_windows)}
+    out = []
+    for index, pin in enumerate(pins):
+        if index in drawn:
+            continue
+        entry: dict[str, Any] = {"text": pin.text, "corner": pin.corner, "status": "no_window"}
+        if pin.clip is not None:
+            entry["clip"] = pin.clip
+        out.append(entry)
+    return out
 
 
 def _slices(start_s: float, end_s: float) -> list[tuple[float, float]]:
@@ -88,14 +124,17 @@ def place_corner_row(
     faces: Sequence[NormalizedBox],
     captions: Sequence[NormalizedBox],
     measure: Callable[[dict], NormalizedBox],
+    labels: Sequence[NormalizedBox] = (),
 ) -> tuple[dict | None, dict[str, Any]]:
-    """``row`` at the first spot in its corner clear of every face (and of the captions when
-    any spot allows), stepping inward then shrinking; ``(None, receipt)`` when no spot in the
-    corner clears the faces."""
+    """``row`` at the first spot in its corner clear of every face and of every corner line
+    already placed in an overlapping window (``labels``), and of the captions when any spot
+    allows; stepping inward then shrinking. ``(None, receipt)`` when no spot in the corner
+    clears them."""
     corner = str((row.get("source_params") or {}).get("corner") or "top_left")
     zone = corner.split("_", 1)[0]
     direction = {"top": 1.0, "bottom": -1.0}.get(zone, 0.0)
     padded = [face.padded(_FACE_PAD) for face in faces]
+    others = [label.padded(_LABEL_PAD) for label in labels]
     base_y = float(row["y_frac"])
     base_size = float(row.get("size_px") or 52)
     face_only: tuple[dict, NormalizedBox, float, float] | None = None
@@ -108,6 +147,8 @@ def place_corner_row(
             if box.top < 0.0 or box.bottom > 1.0:
                 continue
             if not _clear(box, padded, _MAX_FACE_COVERAGE):
+                continue
+            if any(box.intersection_area(other) > 0 for other in others):
                 continue
             if _clear(box, captions, _MAX_CAPTION_COVERAGE):
                 return candidate, {
@@ -159,6 +200,7 @@ def place_corner_text(
         return pst._measure_title_box(candidate, canvas=canvas)
 
     placed: list[dict] = []
+    placed_boxes: list[tuple[tuple[float, float], NormalizedBox]] = []
     entries: list[dict[str, Any]] = []
     sampling: dict[str, Any] = {}
     for row in rows:
@@ -176,11 +218,17 @@ def place_corner_text(
                 position_x=position_x,
             )
             captions = list(caption_boxes(window)) if caption_boxes else []
-            kept, entry = place_corner_row(row, faces=faces, captions=captions, measure=measure)
+            labels = [
+                box for (start, end), box in placed_boxes if start < window[1] and window[0] < end
+            ]
+            kept, entry = place_corner_row(
+                row, faces=faces, captions=captions, measure=measure, labels=labels
+            )
         except Exception as exc:  # noqa: BLE001 - never draw unplaced text on a face
             log.warning("corner_text_placement_failed", error=str(exc)[:200])
             kept, entry = None, {"status": "error", "error": str(exc)[:200]}
         entries.append({"id": row["id"], "text": row["text"], **entry})
         if kept is not None:
             placed.append(kept)
+            placed_boxes.append((window, measure(kept)))
     return placed, {"rows": entries, **{k: v for k, v in sampling.items() if k != "windows"}}
