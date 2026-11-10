@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 
 from app.config import settings
+from app.kria.brief import BriefRequirement
 from app.kria.recipes import Canvas
 from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes, SubtitledEndingClip
 from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
@@ -352,3 +353,52 @@ def test_align_rows_puts_card_on_its_window_and_whole_video_at_the_end():
         10.0,
         13.0,
     )
+
+
+# --- review of #2256: never shorten the creator's words ---------------------------------------
+
+
+def test_review_long_words_are_kept_whole_in_the_spec():
+    words = "follow for more " * 12  # 192 characters: past the old 160 cut
+    spec = closing_card_from_requirements(
+        [
+            BriefRequirement(
+                id="r5",
+                kind="text",
+                scope="global",
+                description="end card",
+                facts={"closing": words, "background_color": "red"},
+            )
+        ]
+    )
+    assert spec is not None and spec.text == " ".join(words.split())
+
+
+def test_review_words_over_a_rows_limit_are_refused_not_cut():
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS
+    from app.pipeline.phone_talking_closing_card import (
+        TOO_LONG,
+        ClosingCardSpec,
+        closing_card_text_row_or_reason,
+    )
+
+    spec = ClosingCardSpec(text="x" * 501, background_color="#FF0000", text_color="#FFFF00")
+    row, reason = closing_card_text_row_or_reason(
+        spec, start_s=10.0, end_s=13.0, canvas=_STORY_CANVAS
+    )
+    assert row is None and reason == TOO_LONG
+
+
+def test_review_a_drawn_card_carries_every_word():
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS
+    from app.pipeline.phone_talking_closing_card import (
+        ClosingCardSpec,
+        closing_card_text_row_or_reason,
+    )
+
+    words = " ".join(("follow for more brand and marketing content " * 4).split())
+    spec = ClosingCardSpec(text=words, background_color="#FF0000", text_color="#FFFF00")
+    row, reason = closing_card_text_row_or_reason(
+        spec, start_s=10.0, end_s=13.0, canvas=_STORY_CANVAS
+    )
+    assert reason is None and row is not None and row["text"] == words

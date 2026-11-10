@@ -4734,7 +4734,11 @@ audio ends exactly where it did and nothing spoken is cut), a solid `visual_fill
 shrunk to fit 0.82 wide) that the compiler times to the card. Colours: a hex or a named preset (EN + TR,
 `BACKGROUND_COLOR_PRESETS`); an unnamed shade makes no card. A text colour that would not read on the
 background (contrast < 2) is swapped to black/white and the receipt says so. Default 3 s, clamped 1-10 s.
-The card owns the ending words: no lime closing tag is drawn over the talk. Receipt (read back from the
+The card owns the ending words: no lime closing tag is drawn over the talk. The words are never
+cut short: over a text row's 500 characters, or still too big at the smallest size, the card is not
+made (`text_too_long`, "shorten them"); a finished card is "met" only when `shown_text` equals the
+creator's words. The draft reads the same gate as the render for the build that sent the message
+(`phone_talking_closing_card_planned_reason`): an older app is told to update, never promised a card. Receipt (read back from the
 compiled recipe): `variants[i].phone_closing_card` (`applied` with its window, or `dropped` + reason).
 The editor's Save keeps the card (`closing_card_from_recipe`); its words are an editable text row.
 

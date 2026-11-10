@@ -2118,6 +2118,20 @@ def phone_talking_closing_card_planned_for(client_protocol: int | None) -> bool:
     )
 
 
+def phone_talking_closing_card_planned_reason(client_protocol: int | None) -> str | None:
+    """Why a phone Talking plan may NOT end on a colour card for the build ``client_protocol``,
+    or None when it may (the draft's twin of `phone_talking_closing_card_planned_for`, so the
+    draft never promises a card the render then leaves out). Codes: ``unavailable`` (the switch,
+    the text lane or a verified token is missing), ``app_too_old`` (no stamp, or a build below
+    ``freeze_frame_min_client_protocol``)."""
+
+    if not phone_talking_closing_card_available():
+        return "unavailable"
+    if client_protocol is None or client_protocol < settings.freeze_frame_min_client_protocol:
+        return "app_too_old"
+    return None
+
+
 def recipe_fills_are_closing_cards(recipe: Any) -> bool:
     """Every visual fill in ``recipe`` is a closing card (the only fill a phone recipe may
     carry, and only while the card is available)."""

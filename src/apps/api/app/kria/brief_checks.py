@@ -5198,6 +5198,13 @@ _CC_UNAVAILABLE = "Ending on a full-screen colour with your text isn't available
 _CC_PLAN = "I'll end the video on that colour screen with your text, after your last word"
 _CC_NOT_DRAWN = "The finished video doesn't end on your colour screen"
 _CC_UNNAMED_COLOR = "Tell me the colour as a name like red or a code like #FF0000"
+_CC_APP_TOO_OLD = (
+    "Your iPhone app is too old to end on a full-screen colour with your text; update it first"
+)
+# Not limits of the format: the creator can shorten the words or change a character.
+_CC_TOO_LONG = "Your end-screen words are too long to fit on one screen; shorten them"
+_CC_UNDRAWABLE = "Your end-screen words have a character I can't draw on the card"
+_CC_WORDS_DIFFER = "The end screen doesn't show all of your words"
 _SB_FORMAT_LIMITS: tuple[str, ...] = (
     _SB_NOT_TALKING,
     _SB_UNAVAILABLE,
@@ -5211,6 +5218,7 @@ _SB_FORMAT_LIMITS: tuple[str, ...] = (
     _SBC_NO_SWITCHING,
     _CC_NOT_TALKING,
     _CC_UNAVAILABLE,
+    _CC_APP_TOO_OLD,
 )
 
 
@@ -5230,12 +5238,30 @@ def _check_closing_card(req: BriefRequirement, facts: PlanFacts) -> RequirementR
     to be one Kria can name exactly: a guessed shade is not the creator's colour.
     """
     from app.agents._schemas.reaction_beats import normalise_background_color  # noqa: PLC0415
-    from app.services.phone_rollout import phone_talking_closing_card_available  # noqa: PLC0415
+    from app.pipeline.phone_talking_closing_card import (  # noqa: PLC0415
+        CLOSING_CARD_TEXT_MAX_CHARS,
+        TOO_LONG,
+        UNDRAWABLE,
+    )
+    from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_talking_closing_card_planned_reason,
+    )
 
+    raw_words = req.facts.get("closing")
+    wanted = " ".join(str(raw_words if isinstance(raw_words, str) else req.literal or "").split())
     if facts.rendered_variant:
         card = facts.closing_card or {}
         if card.get("status") != "applied":
-            return _receipt(req, "not_possible", _CC_NOT_DRAWN, stage="checked")
+            reason = {TOO_LONG: _CC_TOO_LONG, UNDRAWABLE: _CC_UNDRAWABLE}.get(
+                str(card.get("reason") or ""), _CC_NOT_DRAWN
+            )
+            return _receipt(req, "not_possible", reason, stage="checked")
+        # Review of #2256: "done" only when the card shows every word asked, never a shortened
+        # line (an older receipt without `shown_text` is judged by the words it was made from).
+        shown = " ".join(str(card.get("shown_text") or card.get("text") or "").split())
+        if wanted and shown and _fold(shown) != _fold(wanted):
+            return _receipt(req, "partial", _CC_WORDS_DIFFER, stage="checked")
         if card.get("text_color_swapped"):
             shown = "black" if card.get("text_color") == "#000000" else "white"
             return _receipt(
@@ -5256,8 +5282,18 @@ def _check_closing_card(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         return _receipt(req, "met", None, stage="checked")
     if not facts.phone_talking:
         return _receipt(req, "not_possible", _CC_NOT_TALKING)
-    if not phone_talking_closing_card_available():
+    # The same gate the render uses, for the build that sent the message (a draft never
+    # promises a card an older app would be told to update for).
+    build = (
+        facts.client_protocol if facts.client_protocol is not None else current_client_protocol()
+    )
+    closed = phone_talking_closing_card_planned_reason(build)
+    if closed == "unavailable":
         return _receipt(req, "not_possible", _CC_UNAVAILABLE)
+    if closed == "app_too_old":
+        return _receipt(req, "not_possible", _CC_APP_TOO_OLD)
+    if len(wanted) > CLOSING_CARD_TEXT_MAX_CHARS:
+        return _receipt(req, "not_possible", _CC_TOO_LONG)
     if normalise_background_color(req.facts.get("background_color")) is None:
         return _receipt(req, "partial", _CC_UNNAMED_COLOR)
     return _receipt(req, "partial", _CC_PLAN)
@@ -7590,6 +7626,12 @@ _REASON_TR: dict[str, str] = {
     _CC_PLAN: "Son sözünden sonra videoyu o renkli ekranla ve yazınla bitireceğim",
     _CC_NOT_DRAWN: "Bitmiş video senin renkli ekranınla bitmiyor",
     _CC_UNNAMED_COLOR: "Rengi kırmızı gibi bir adla ya da #FF0000 gibi bir kodla söyle",
+    _CC_APP_TOO_OLD: (
+        "iPhone uygulaman videoyu yazılı tam ekran bir renkle bitirmek için çok eski; önce güncelle"
+    ),
+    _CC_TOO_LONG: "Son ekran yazın tek bir ekrana sığmayacak kadar uzun; kısalt",
+    _CC_UNDRAWABLE: "Son ekran yazında kartta çizemediğim bir karakter var",
+    _CC_WORDS_DIFFER: "Son ekran yazının tamamını göstermiyor",
     _SBC_APP_TOO_OLD: "iPhone uygulaman arkana düz renk koymak için çok eski; önce güncelle",
     _SBC_NOT_PLANNED: "Bu taslak arkana düz renk koymuyor",
     _SBC_NOT_DRAWN: "Biten videoda arkanda düz renk yok",

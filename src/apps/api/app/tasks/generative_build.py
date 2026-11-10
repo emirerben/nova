@@ -10775,21 +10775,23 @@ def _run_phone_subtitled_job(
                     _STORY_CANVAS as _CARD_CANVAS,
                 )
                 from app.pipeline.phone_talking_closing_card import (  # noqa: PLC0415
-                    closing_card_text_row,
+                    closing_card_text_row_or_reason,
                 )
 
-                closing_card_row = closing_card_text_row(
+                closing_card_row, _card_problem = closing_card_text_row_or_reason(
                     closing_card_spec,
                     start_s=talking_timeline_s,
                     end_s=talking_timeline_s + closing_card_spec.duration_s,
                     canvas=text_canvas.get("canvas", _CARD_CANVAS),
                 )
                 if closing_card_row is None:
-                    # Words the card's font cannot draw: no card, said on the receipt.
+                    # Words the card can't carry in full (a character its font can't draw, or
+                    # too long even at the smallest size): no card, said on the receipt. The
+                    # words are never cut short to make them fit.
                     closing_card_receipt = {
                         **closing_card_spec.as_dict(),
                         "status": "dropped",
-                        "reason": "undrawable_text",
+                        "reason": _card_problem or "undrawable_text",
                     }
                     closing_card_spec = None
             if corner_pins:
