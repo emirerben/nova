@@ -882,6 +882,48 @@ def test_resolved_cue_places_the_score_photo_on_0_zu_0(monkeypatch: pytest.Monke
     assert rows["r4"]["status"] == "met", rows["r4"]
 
 
+def test_a_resolved_named_cue_keeps_its_word_start_with_phrase_timing(monkeypatch) -> None:  # noqa: ANN001
+    """Emir's #2266 re-review: with BEAT_PHRASE_TIMING_ENABLED on, the creator NAMED
+    "Null zu null" (r5's trigger), so its photo keeps its exact word start even after the
+    resolver rewrites the cue to the transcript's "0 zu 0" -- never the phrase's earlier start.
+
+    Failure modes covered: the alias drops the word-cued exemption (photo moves to 13.18 s);
+    the exemption leaks to an alias of a cue the creator never named (that beat must still
+    follow its phrase); the flag-off path changes (it must stay byte-identical)."""
+    _resolver(monkeypatch, RESOLVED_NULL)
+    monkeypatch.setattr(settings, "beat_phrase_timing_enabled", True)
+    _job, variant, _binding, recipe = _de1_render(monkeypatch)
+
+    null = next(p for p in variant["phone_beat_receipt"]["placed"] if p["beat_id"] == "null")
+    assert null["heard_as"] == "0 zu 0"
+    assert null["at_s"] == pytest.approx(NULL_AT_S, abs=0.01)
+    assert round(NULL_AT_S, 2) in _overlay_starts(recipe), _overlay_starts(recipe)
+
+
+def test_only_a_named_cue_passes_its_exemption_to_the_heard_words(monkeypatch) -> None:  # noqa: ANN001
+    import app.services.phone_reaction_grounding as grounding  # noqa: PLC0415
+    import app.tasks.generative_build as gb  # noqa: PLC0415
+
+    monkeypatch.setattr(settings, "beat_phrase_timing_enabled", True)
+    timing = gb._beat_phrase_timing_kwargs(  # noqa: SLF001
+        grounding.VOICEOVER_PHRASE_TIMING,
+        [_req("r5")],
+        heard_as={"Null zu null": "0 zu 0", "Abpfiff": "der Schlusspfiff"},
+    )["phrase_timing"]
+    assert timing.word_cued == frozenset({"null zu null", "0 zu 0"})
+    assert not grounding._phrase_cued(timing, trigger="0 zu 0", after=None, slot="fullscreen")  # noqa: SLF001
+    assert grounding._phrase_cued(  # noqa: SLF001
+        timing, trigger="der Schlusspfiff", after=None, slot="fullscreen"
+    )
+    monkeypatch.setattr(settings, "beat_phrase_timing_enabled", False)
+    assert (
+        gb._beat_phrase_timing_kwargs(  # noqa: SLF001
+            grounding.VOICEOVER_PHRASE_TIMING, [_req("r5")], heard_as={"Null zu null": "0 zu 0"}
+        )
+        == {}
+    )
+
+
 @pytest.mark.parametrize(
     "answer",
     [

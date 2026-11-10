@@ -16114,17 +16114,48 @@ def _restore_beat_cues(receipt: dict, beats: list, heard_as: dict[str, dict[str,
     }
 
 
-def _beat_phrase_timing_kwargs(base: Any, requirements: Sequence[Any]) -> dict[str, Any]:
+def _beat_phrase_timing_kwargs(
+    base: Any, requirements: Sequence[Any], *, heard_as: Mapping[str, str] | None = None
+) -> dict[str, Any]:
     """KRI-1342: ``{"phrase_timing": ...}`` for the beat grounding while
     ``BEAT_PHRASE_TIMING_ENABLED`` is on, carrying the spoken words the creator named (those
-    beats keep their exact word timing). ``{}`` when off, so the call is byte-identical."""
+    beats keep their exact word timing). ``{}`` when off, so the call is byte-identical.
+
+    ``heard_as`` maps a cue the creator wrote to the transcript words the KRI-1356 resolver
+    put in its place ("Null zu null" -> "0 zu 0"): a named cue's exemption follows it to
+    those words, so the resolved beat still starts on the word. An alias of a cue the
+    creator never named gets nothing."""
     if not settings.beat_phrase_timing_enabled:
         return {}
     from dataclasses import replace as dc_replace  # noqa: PLC0415
 
-    from app.services.phone_reaction_grounding import creator_named_cues  # noqa: PLC0415
+    from app.services.phone_reaction_grounding import (  # noqa: PLC0415
+        creator_named_cues,
+        fold_tokens,
+    )
 
-    return {"phrase_timing": dc_replace(base, word_cued=creator_named_cues(requirements))}
+    named = creator_named_cues(requirements)
+    aliases = {
+        folded
+        for written, heard in (heard_as or {}).items()
+        if " ".join(fold_tokens(written)) in named
+        for folded in (" ".join(fold_tokens(heard)),)
+        if folded
+    }
+    return {"phrase_timing": dc_replace(base, word_cued=named | aliases)}
+
+
+def _resolved_cue_aliases(beats: list, heard_as: dict[str, dict[str, str]]) -> dict[str, str]:
+    """KRI-1356 x KRI-1342: ``{creator's trigger: heard words}`` for every resolved trigger."""
+    out: dict[str, str] = {}
+    for index, beat in enumerate(beats):
+        if not isinstance(beat, dict):
+            continue
+        heard = heard_as.get(str(beat.get("beat_id") or f"beat-{index}"), {}).get("trigger")
+        written = " ".join(str(beat.get("trigger") or "").split())
+        if heard and written:
+            out[written] = heard
+    return out
 
 
 def _phone_narrated_reaction_lanes(
@@ -16170,7 +16201,9 @@ def _phone_narrated_reaction_lanes(
             clip_path=None,
             allow_fullscreen=bool(settings.phone_subtitled_fullscreen_overlays_enabled),
             **_beat_phrase_timing_kwargs(
-                phone_reaction_grounding_mod.VOICEOVER_PHRASE_TIMING, requirements
+                phone_reaction_grounding_mod.VOICEOVER_PHRASE_TIMING,
+                requirements,
+                heard_as=_resolved_cue_aliases(beats, heard_as),
             ),
         )
     except OperationalError:
