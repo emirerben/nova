@@ -83,8 +83,18 @@
   ],
   [
    "app/kria/brief_checks.py",
+   "Cut \"{quote}\" ({round_s_removed}s, take {take_index})",
+   "\"{quote}\" kesildi ({round_s_removed} sn, {take_index}. çekim)"
+  ],
+  [
+   "app/kria/brief_checks.py",
    "I couldn't find this moment in your clip, so I can't confirm it's the one playing",
    "Bu anı klipte bulamadım, o yüzden oynayanın o an olduğunu doğrulayamıyorum"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I couldn't measure the quiet parts of some of your takes, so I didn't shorten their shorter pauses",
+   "Bazı çekimlerindeki sessiz kısımları ölçemedim, o yüzden onların kısa duraklamalarını kısaltmadım"
   ],
   [
    "app/kria/brief_checks.py",
@@ -125,6 +135,11 @@
    "app/kria/brief_checks.py",
    "The recordings for {names} never show.",
    "{names} kayıtları hiç görünmüyor."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "There's background sound in some of your takes, so I only cut the long pauses in those",
+   "Çekimlerinin bazılarında arka plan sesi var, o yüzden onlarda yalnızca uzun duraklamaları kestim"
   ],
   [
    "app/kria/brief_checks.py",

@@ -9255,8 +9255,11 @@ def _named_cut_notes(req: BriefRequirement, facts: PlanFacts) -> tuple[list[str]
                 # KRI-720: a video made of several takes says which one the line was cut from.
                 notes.append(
                     say(
-                        en=f'Cut "{quote}" ({_round_s(removed)}s, take {take_index})',
-                        tr=f'"{quote}" kesildi ({_round_s(removed)} sn, {take_index}. çekim)',
+                        en='Cut "{quote}" ({round_s_removed}s, take {take_index})',
+                        tr='"{quote}" kesildi ({round_s_removed} sn, {take_index}. çekim)',
+                        quote=quote,
+                        round_s_removed=_round_s(removed),
+                        take_index=take_index,
                     )
                 )
                 continue
