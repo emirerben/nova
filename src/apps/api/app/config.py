@@ -501,6 +501,26 @@ class Settings(BaseSettings):
     # byte-identical to today. Rollback: `fly secrets set
     # CREATOR_CTA_ENDING_ENABLED=false --app nova-video` + restart api + worker.
     creator_cta_ending_enabled: bool = False
+    # KRI-1342 item 7 (corner text on phone Talking edits): the creator's corner lines
+    # (`strategy.pinned_texts`: 'a small "Yorumla" label top left for the whole video',
+    # "sağ altta @handle") stay on screen for their whole window at the asked corner,
+    # placed off every face the window shows (`app.pipeline.phone_talking_corner_text`).
+    # Needs the KRI-467 text lane (`phone_subtitled_title_supported`); no new recipe field,
+    # so every app build draws it. False: byte-identical to today (one top line becomes the
+    # opening title, anything else is asked about). Rollback: `fly secrets set
+    # PHONE_TALKING_CORNER_TEXT_ENABLED=false --app nova-video` + restart api + worker.
+    phone_talking_corner_text_enabled: bool = False
+    # KRI-1346 (closing card on phone Talking edits): "end on a red screen with yellow text
+    # 'follow for more'" appends a full-screen colour card with the creator's text AFTER the
+    # last word (`app.pipeline.phone_talking_closing_card`): the last frame holds silently
+    # (`freezeFrame`) under a solid visual fill, so no speech is cut. Needs the KRI-467
+    # text lane, "freezeFrame", "visualBlocks" and the device-qualification token
+    # "closingCard" in `phone_render_verified_features` (add it after a physical-iPhone
+    # preview + export check) and an app build stamped >= `freeze_frame_min_client_protocol`;
+    # see `app.services.phone_rollout.phone_talking_closing_card_planned_for`. False:
+    # byte-identical to today. Rollback: `fly secrets set
+    # PHONE_TALKING_CLOSING_CARD_ENABLED=false --app nova-video` + restart api + worker.
+    phone_talking_closing_card_enabled: bool = False
     # KRI-707 (text on a spoken word on phone Talking edits): a brief text ask with
     # its spoken cue ("big 'ATAKAN' when I say 'Atakan'": literal + `facts.triggers`)
     # renders as an editable text row from the moment the take says the word, off the
@@ -1370,11 +1390,12 @@ class Settings(BaseSettings):
     # TRUE; false + restart (api + worker) = byte-identical to before.
     kria_headsup_asked_only_enabled: bool = True
     # KRI-1346/1347 (yorum3): every hold / draft / review line comes from one capability
-    # answer. A closing-screen ask is answered as a closing screen (never "a plain colour behind
-    # you"), the card's treatments line leaves out a treatment the route's writer applies
+    # answer: the card's treatments line leaves out a treatment the route's writer applies
     # (`phone_subtitled_overlays_supported` on phone Talking), a "have a look" ask the plan
     # already shortened becomes one Partly line, and `app.kria.reply_consistency` drops a
-    # heads-up line a Done/Will-do line contradicts. Default FALSE; false + restart (api +
+    # heads-up line a Done/Will-do line contradicts; `contradictions` also flags a "can't" that
+    # names another capability (the closing card's own answer is
+    # `brief_checks._check_closing_card`, KRI-1346 / #2256). Default FALSE; false + restart (api +
     # worker) = byte-identical replies. Guard: `tests/kria/test_reply_consistency.py`.
     kria_honest_reply_lines_enabled: bool = False
 

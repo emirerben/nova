@@ -9232,11 +9232,14 @@ def _run_phone_subtitled_job(
         phone_subtitled_spoken_text_supported,
         phone_subtitled_title_supported,
         phone_subtitled_video_overlays_supported,
+        phone_talking_closing_card_planned_for,
+        phone_talking_corner_text_supported,
         phone_talking_head_supported,
         phone_talking_insert_clips_supported,
         phone_talking_mention_cutaways_supported,
         phone_talking_multi_clip_supported,
         phone_talking_multi_speaker_beats_supported,
+        stamped_client_protocol,
         validate_phone_pilot_recipe,
     )
     from app.services.phone_sources import (  # noqa: PLC0415
@@ -9484,6 +9487,31 @@ def _run_phone_subtitled_job(
     closing_text_rows: list[dict] = []
     closing_drawings: list[dict] = []
     closing_text_receipt: dict[str, Any] | None = None
+    # KRI-1342 item 7: the creator's corner text ('a small "Yorumla" label top left for the
+    # whole video'), kept at its corner for its window, off every face. KRI-1346: her colour
+    # card after the last word. Read only while their switches are on, so the flag-off recipe
+    # and variant stay byte-identical.
+    corner_pins: tuple = ()
+    corner_text_rows_placed: list[dict] = []
+    corner_text_receipt: dict[str, Any] | None = None
+    if phone_talking_corner_text_supported():
+        from app.pipeline.pinned_text import pins_from_strategy  # noqa: PLC0415
+
+        corner_pins = tuple(pins_from_strategy(talking_strategy))
+    closing_card_spec: Any = None
+    closing_card_receipt: dict[str, Any] | None = None
+    if phone_talking_closing_card_planned_for(
+        stamped_client_protocol(all_candidates.get("creator_client_protocol"))
+    ):
+        from app.pipeline.phone_talking_closing_card import (  # noqa: PLC0415
+            closing_card_from_requirements,
+        )
+
+        _card_strategy_title = talking_strategy.get("closing_title")
+        closing_card_spec = closing_card_from_requirements(
+            talking_requirements,
+            closing_title=_card_strategy_title if isinstance(_card_strategy_title, str) else None,
+        )
     # KRI-707: the creator's text on a word they say ("big 'ATAKAN' when I say 'Atakan'"),
     # read off the pinned brief. Read only while its rollout is on, so the flag-off recipe
     # and variant stay byte-identical.
@@ -10741,8 +10769,57 @@ def _run_phone_subtitled_job(
                     **text_canvas,
                 )
 
+            closing_card_row: dict | None = None
+            if closing_card_spec is not None:
+                from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
+                    _STORY_CANVAS as _CARD_CANVAS,
+                )
+                from app.pipeline.phone_talking_closing_card import (  # noqa: PLC0415
+                    closing_card_text_row,
+                )
+
+                closing_card_row = closing_card_text_row(
+                    closing_card_spec,
+                    start_s=talking_timeline_s,
+                    end_s=talking_timeline_s + closing_card_spec.duration_s,
+                    canvas=text_canvas.get("canvas", _CARD_CANVAS),
+                )
+                if closing_card_row is None:
+                    # Words the card's font cannot draw: no card, said on the receipt.
+                    closing_card_receipt = {
+                        **closing_card_spec.as_dict(),
+                        "status": "dropped",
+                        "reason": "undrawable_text",
+                    }
+                    closing_card_spec = None
+            if corner_pins:
+                corner_text_rows_placed, corner_text_receipt = _phone_talking_corner_rows(
+                    corner_pins,
+                    talk_end_s=talking_timeline_s,
+                    binding=binding,
+                    clip_path=clip_path,
+                    keep_segments=speaker_keep_segments,
+                    landscape_fit=framed_fit,
+                    position_x=speaker_position_x or 0.0,
+                    cues=cues,
+                    caption_style=caption_style,
+                    caption_look=protected_caption_look,
+                    avoid_rows=title_rows + spoken_text_rows,
+                    **text_canvas,
+                )
+
             def _closing_rows_for(photo_card: Any) -> tuple[list[dict], dict[str, Any] | None]:
+                # KRI-1342 item 7: the corner rows ride with the closing rows, so every
+                # compile path (plain, lanes, inserts) carries them; they come last.
+                rows, receipt = _closing_rows_only(photo_card)
+                return rows + [dict(row) for row in corner_text_rows_placed], receipt
+
+            def _closing_rows_only(photo_card: Any) -> tuple[list[dict], dict[str, Any] | None]:
                 closing_drawings[:] = []
+                if closing_card_row is not None:
+                    # KRI-1346: her colour card owns the ending words; the compiler times the
+                    # row to the card after the last word (no tag over the talk).
+                    return [dict(closing_card_row)], {"status": "closing_card"}
                 if not talking_closing_text:
                     return [], None
                 if extra_speaker_bindings:
@@ -11020,6 +11097,7 @@ def _run_phone_subtitled_job(
                     strategy=talking_strategy,
                     requirements=talking_requirements,
                     **({"inserts": inserts} if inserts else {}),
+                    **_closing_card_compile(closing_card_spec),
                     **framed_compile,
                 )
             else:
@@ -11832,6 +11910,7 @@ def _run_phone_subtitled_job(
                         strategy=talking_strategy,
                         requirements=talking_requirements,
                         **({"inserts": inserts} if inserts else {}),
+                        **_closing_card_compile(closing_card_spec),
                         **framed_compile,
                     )
 
@@ -11942,7 +12021,11 @@ def _run_phone_subtitled_job(
                             # (every row, and the arrow) runs to the very end, which the
                             # contract checks.
                             closing_text_rows = [
-                                {**row, "end_s": take_duration} for row in closing_text_rows
+                                # A ranged corner line keeps its own window (KRI-1342 item 7).
+                                row
+                                if (row.get("source_params") or {}).get("source") == "corner_text"
+                                else {**row, "end_s": take_duration}
+                                for row in closing_text_rows
                             ]
                             closing_drawings[:] = [
                                 {**drawing, "end_s": take_duration} for drawing in closing_drawings
@@ -12226,6 +12309,23 @@ def _run_phone_subtitled_job(
                     ],
                 }
 
+            if closing_card_spec is not None or corner_text_rows_placed:
+                # KRI-1346 / KRI-1342 item 7: the saved rows say what the recipe plays (the
+                # card's words on the card, corner text to the very end), and the card's
+                # receipt is read back from the compiled recipe, never from the plan.
+                from app.pipeline.phone_talking_closing_card import (  # noqa: PLC0415
+                    align_rows_to_recipe,
+                )
+                from app.pipeline.phone_talking_closing_card import (
+                    closing_card_receipt as _closing_card_receipt,
+                )
+
+                closing_text_rows = align_rows_to_recipe(closing_text_rows, recipe)
+                if closing_card_spec is not None:
+                    closing_card_receipt = _closing_card_receipt(
+                        closing_card_spec, recipe, closing_text_rows
+                    )
+
             from app.pipeline.explicit_speech_audio import (  # noqa: PLC0415
                 protect_explicit_speech_cut_audio,
             )
@@ -12429,8 +12529,16 @@ def _run_phone_subtitled_job(
         if list_label_receipt is not None:
             # Item 19: where each numbered list label landed, or why not.
             new_entry[LIST_LABEL_FIELD] = list_label_receipt
-        if closing_text_rows:
+        if closing_text_rows and closing_text_receipt is not None:
             new_entry["closing_title_placement"] = closing_text_receipt
+        if corner_text_receipt is not None:
+            # KRI-1342 item 7: where each corner line landed, or why it was left out.
+            new_entry["corner_text_placement"] = corner_text_receipt
+        if closing_card_receipt is not None:
+            # KRI-1346: the colour card the recipe ends on (or why not); the brief check reads it.
+            from app.pipeline.phone_talking_closing_card import CLOSING_CARD_FIELD  # noqa: PLC0415
+
+            new_entry[CLOSING_CARD_FIELD] = closing_card_receipt
         if closing_drawings_final:
             new_entry["drawings"] = closing_drawings_final
         if protected_caption_look is not None:
@@ -13703,6 +13811,9 @@ def _protected_style_rows(
         if "cta_part" in (row.get("source_params") or {})
         or (row.get("source_params") or {}).get("source") == "list_label"
         or (row.get("source_params") or {}).get("list_label_look") is True
+        # KRI-1342 item 7 / KRI-1346: corner text was placed off every face of its window and
+        # the closing card's words are sized to the card; a restyle would undo both.
+        or (row.get("source_params") or {}).get("source") in ("corner_text", "closing_card")
     }
     if fixed:
         rest = _style_rows_keeping_title_look(
@@ -14133,6 +14244,8 @@ def _phone_saved_title_rule() -> dict:
 def _cues_clear_of_cta(cues: Any, rows: list[dict], receipt: dict[str, Any] | None) -> Any:
     """KRI-1306: when the CTA ending could only be placed touching the captions, the captions
     stop where the ending starts, so no caption word lands on "comment"/the keyword."""
+    # KRI-1342 item 7: corner rows ride with the closing rows but are not the ending.
+    rows = [row for row in rows if (row.get("source_params") or {}).get("source") != "corner_text"]
     if not rows or not receipt or receipt.get("text_overlap") is not True:
         return cues
     stop = min(float(row["start_s"]) for row in rows)
@@ -14150,6 +14263,88 @@ def _cues_clear_of_cta(cues: Any, rows: list[dict], receipt: dict[str, Any] | No
             {**cue, "end_s": stop, **({"words": words} if cue.get("words") is not None else {})}
         )
     return out
+
+
+def _closing_card_compile(spec: Any) -> dict[str, Any]:
+    """The compiler's ``closing_card`` keyword for a pinned card spec; ``{}`` without one, so a
+    render with no card calls the compiler exactly as before (KRI-1346)."""
+    if spec is None:
+        return {}
+    return {
+        "closing_card": {"duration_s": spec.duration_s, "background_color": spec.background_color}
+    }
+
+
+def _phone_talking_corner_rows(
+    pins: Sequence[Any],
+    *,
+    talk_end_s: float,
+    binding: Any,
+    clip_path: str | None,
+    keep_segments: list[tuple[float, float]],
+    landscape_fit: str,
+    position_x: float = 0.0,
+    cues: Any = (),
+    caption_style: str = "",
+    caption_look: Any = None,
+    avoid_rows: Sequence[dict] = (),
+    canvas: Any = None,
+) -> tuple[list[dict], dict[str, Any]]:
+    """KRI-1342 item 7: the creator's corner text on a phone Talking edit, each row placed off
+    every face its window shows and clear of the captions / title rows sharing its window
+    (`phone_talking_corner_text`). Returns the rows kept and the placement receipt."""
+    from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_title import _measure_title_box  # noqa: PLC0415
+    from app.pipeline.phone_talking_corner_text import (  # noqa: PLC0415
+        corner_text_rows,
+        place_corner_text,
+    )
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    canvas = canvas if canvas is not None else _STORY_CANVAS
+    rows = corner_text_rows(pins, talk_end_s=talk_end_s, canvas=canvas)
+    display_width, display_height = display_dims(binding.original)
+    others = []
+    for row in avoid_rows:
+        try:
+            others.append(
+                (float(row["start_s"]), float(row["end_s"]), _measure_title_box(row, canvas=canvas))
+            )
+        except Exception:  # noqa: BLE001 - an unmeasurable row is not avoided, never fatal
+            continue
+
+    def _avoid(window: tuple[float, float]) -> list:
+        from app.pipeline.phone_spoken_text import caption_boxes  # noqa: PLC0415
+
+        boxes = list(
+            caption_boxes(
+                list(cues),
+                window=window,
+                caption_style=caption_style,
+                canvas=canvas,
+                look=caption_look,
+            )
+        )
+        boxes += [box for start, end, box in others if start < window[1] and window[0] < end]
+        return boxes
+
+    placed, receipt = place_corner_text(
+        rows,
+        clip_path=clip_path,
+        keep_segments=keep_segments,
+        display_width=display_width,
+        display_height=display_height,
+        canvas=canvas,
+        scale=fit_transform(display_width, display_height, canvas, landscape_fit).scale,
+        position_x=position_x,
+        caption_boxes=_avoid,
+    )
+    try:
+        record_pipeline_event("phone", "talking_corner_text_placement", receipt)
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return placed, receipt
 
 
 def _phone_talking_closing_rows(

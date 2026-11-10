@@ -2,6 +2,9 @@
 
 Parent incident: KRI-1342 (yorum3, thread `d9d7ad3d`, job `7eba9903`, Fly `4f6ed3014`).
 Switch: `KRIA_HONEST_REPLY_LINES_ENABLED` (default `false`; off = byte-identical replies).
+Integrated with #2256 (closing card + corner label, KRI-1346 render half): this branch carries
+#2256's commits, and the closing-card "can't" / promise / finished check is #2256's
+`_check_closing_card` (not behind this switch). This PR adds the cross-line consistency.
 
 ## What the creator saw
 
@@ -25,8 +28,12 @@ Montage edit).
    `closing` fact) stays a speaker-background ask.
 2. **Closing text without a colour** (`closing` only) must keep its current path: the new
    closing-card answer applies only to a closing ask that asks for a coloured screen.
-3. **Closing card supported later** (session for KRI-1348 ships a capability): when
-   `phone_rollout.phone_closing_card_supported()` exists and is true, nothing is declined here.
+3. **Closing card available** (#2256): the answer comes from #2256's
+   `brief_checks._check_closing_card` through the shared provider
+   `phone_rollout.phone_talking_closing_card_available()`, never a stand-in. With the card on,
+   the draft promises it and the finished video is judged by its `phone_closing_card` receipt;
+   no line may call an available card unsupported (`test_available_closing_card_is_never_called_unsupported`,
+   and the yorum3 replay with the card switched on).
 4. **Turkish**: the same facts give the Turkish twin; the reason is a format limit in both
    languages (prefix table), so the hold/approve flow behaves exactly as the old reason did.
 5. **Heads-up says a treatment won't be applied while the route's writer applies it.** The

@@ -109,12 +109,10 @@ def _treatments_line(strategy=YORUM3_STRATEGY) -> str | None:
 
 
 def test_flag_off_is_byte_identical_to_legacy(legacy, monkeypatch):
-    """Off: the closing card is still read as a speaker background (old answer), the
-    treatments line is the old one even with the overlays lane on, and every reconcile step
-    returns its input unchanged."""
+    """Off: the treatments line is the old one even with the overlays lane on, and every
+    reconcile step returns its input unchanged. (The closing card's own answer is #2256's
+    `_check_closing_card`, not behind this switch.)"""
     _overlays_lane(monkeypatch, True)
-    assert brief_checks.asks_speaker_background(CLOSING_CARD_ASK)
-    assert not brief_checks.closing_card_declined(CLOSING_CARD_ASK)
     assert _treatments_line() == lines.treatments(["overlays"], YORUM3_STRATEGY)
     heads_up = [Disclosure("not_applied_on_route", "optional_treatments", _treatments_line())]
     receipts = [_met("r7")]
@@ -138,22 +136,45 @@ def test_flag_off_is_byte_identical_to_legacy(legacy, monkeypatch):
 
 
 # --- 1. the right capability in a "can't" -------------------------------------------------
+#
+# The closing card is answered by `brief_checks._check_closing_card` (#2256) through the shared
+# provider `phone_rollout.phone_talking_closing_card_available`; these tests drive that real
+# provider through its settings, never a stand-in name.
 
 
-@pytest.mark.parametrize(
-    ("lang", "expected"),
-    [
-        ("en", "Ending on a coloured screen with your words on it isn't available yet."),
-        ("tr", "Videoyu üstünde yazın olan renkli bir ekranla bitirmek henüz mümkün değil."),
-    ],
-)
-def test_closing_screen_ask_names_the_closing_screen(honest, lang, expected):
-    facts = brief_checks.PlanFacts()
+@pytest.fixture
+def closing_card_on(monkeypatch):
+    """The closing card switched on and device-qualified, read by the real provider."""
+    from app.services import phone_rollout
+
+    monkeypatch.setattr(settings, "phone_talking_closing_card_enabled", True)
+    monkeypatch.setattr(settings, "phone_subtitled_title_enabled", True)
+    features = {
+        *settings.phone_render_verified_features,
+        *phone_rollout.PHONE_NARRATED_CAPTION_FEATURES,
+        *phone_rollout.CLOSING_CARD_ENGINE_FEATURES,
+    }
+    monkeypatch.setattr(settings, "phone_render_verified_features", sorted(features))
+    assert phone_rollout.phone_talking_closing_card_available()
+
+
+@pytest.fixture
+def closing_card_off(monkeypatch):
+    from app.services import phone_rollout
+
+    monkeypatch.setattr(settings, "phone_talking_closing_card_enabled", False)
+    assert not phone_rollout.phone_talking_closing_card_available()
+
+
+@pytest.mark.parametrize("lang", ["en", "tr"])
+def test_closing_screen_ask_names_the_closing_screen(honest, closing_card_off, lang):
+    facts = brief_checks.PlanFacts(phone_talking=True)
     with reply_language_for(lang):
         receipt = brief_checks.check_requirement(CLOSING_CARD_ASK, facts)
+        expected = brief_checks._loc(brief_checks._CC_UNAVAILABLE)  # noqa: SLF001
     assert receipt.status == "not_possible"
-    assert receipt.reason == expected
-    assert brief_checks.is_format_limit(receipt.reason)  # same hold flow as the old reason
+    assert receipt.reason.startswith(expected)
+    assert brief_checks.is_format_limit(receipt.reason)
     assert not contradictions([CLOSING_CARD_ASK], [receipt])
 
 
@@ -164,15 +185,43 @@ def test_colour_behind_the_speaker_stays_a_speaker_background(honest):
 
 def test_closing_words_without_a_colour_keep_their_own_check(honest):
     assert not brief_checks.asks_closing_card(CLOSING_TEXT_ONLY)
-    assert not brief_checks.closing_card_declined(CLOSING_TEXT_ONLY)
 
 
-def test_closing_card_capability_when_it_ships_is_not_declined(honest, monkeypatch):
-    monkeypatch.setattr(
-        "app.services.phone_rollout.phone_closing_card_supported", lambda: True, raising=False
+@pytest.mark.parametrize("lang", ["en", "tr"])
+def test_available_closing_card_is_never_called_unsupported(
+    honest, closing_card_on, monkeypatch, lang
+):
+    """Honest replies + closing card together (#2254 x #2256): the draft promises the card,
+    the finished video is judged by its own `phone_closing_card` receipt, and no line says an
+    available card is unsupported or names another capability."""
+    _overlays_lane(monkeypatch, True)
+    finished = {"resolved_archetype": "subtitled", "edit_format": "subtitled"}
+    with reply_language_for(lang):
+        draft = brief_checks.check_requirement(
+            CLOSING_CARD_ASK, brief_checks.PlanFacts(phone_talking=True)
+        )
+        planned = brief_checks._loc(brief_checks._CC_PLAN)  # noqa: SLF001
+        drawn = brief_checks.check_requirement(
+            CLOSING_CARD_ASK,
+            brief_checks.plan_facts_from_phone_variant(
+                {**finished, "phone_closing_card": {"status": "applied", "text_color": "#FFFF00"}}
+            ),
+        )
+        missing = brief_checks.check_requirement(
+            CLOSING_CARD_ASK,
+            brief_checks.plan_facts_from_phone_variant(finished),
+        )
+        not_drawn = brief_checks._loc(brief_checks._CC_NOT_DRAWN)  # noqa: SLF001
+    assert (draft.status, draft.reason) == ("partial", planned)
+    assert drawn.status == "met"
+    assert missing.status == "not_possible" and missing.reason.startswith(not_drawn)
+    unsupported = (
+        brief_checks._loc(brief_checks._CC_UNAVAILABLE),  # noqa: SLF001
+        brief_checks._loc(brief_checks._SBC_UNAVAILABLE),  # noqa: SLF001
     )
-    assert not brief_checks.closing_card_declined(CLOSING_CARD_ASK)
-    assert not brief_checks.asks_speaker_background(CLOSING_CARD_ASK)
+    for receipt in (draft, drawn, missing):
+        assert not str(receipt.reason or "").startswith(unsupported)
+        assert not contradictions([CLOSING_CARD_ASK], [receipt])
 
 
 def test_wrong_capability_is_detected():
@@ -301,12 +350,33 @@ def test_yorum3_replay_has_no_contradiction_with_the_switch_on():
         ("draft", "draft_self", VISUALS),
         ("draft", "render", VISUALS),
         ("held", "draft_self", VISUALS),
-        ("held", "wrong_capability", SPEAKER_BACKGROUND),
     }
     assert [r["contradictions"] for r in on] == [[]] * len(on)
     held_en = next(r["reply"] for r in on if r["variant"] == "held" and r["lang"] == "en")
-    assert "Ending on a coloured screen with your words on it isn't available yet" in held_en
+    assert brief_checks._CC_UNAVAILABLE in held_en  # noqa: SLF001
     assert "plain colour behind you" not in held_en
     draft_en = next(r["reply"] for r in on if r["variant"] == "draft" and r["lang"] == "en")
     assert "Done: When I mention the launch" in draft_en
     assert "treatments" not in draft_en
+
+    # #2254 x #2256: with the closing card switched on and device-qualified, the same replay
+    # promises the card (EN + TR) and still has no contradiction.
+    from app.services import phone_rollout
+    from tests._prod_profile import PROD_VERIFIED_FEATURES
+
+    card_on = module.check(
+        fx,
+        True,
+        settings_overrides={
+            "phone_talking_closing_card_enabled": True,
+            "phone_render_verified_features": sorted(
+                {*PROD_VERIFIED_FEATURES, *phone_rollout.CLOSING_CARD_ENGINE_FEATURES}
+            ),
+        },
+    )
+    assert [r["contradictions"] for r in card_on] == [[]] * len(card_on)
+    held = {r["lang"]: r["reply"] for r in card_on if r["variant"] == "held"}
+    assert brief_checks._CC_PLAN in held["en"]  # noqa: SLF001
+    assert brief_checks._REASON_TR[brief_checks._CC_PLAN] in held["tr"]  # noqa: SLF001
+    for reply in held.values():
+        assert brief_checks._CC_UNAVAILABLE not in reply  # noqa: SLF001

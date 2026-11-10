@@ -31,6 +31,7 @@ Visuals did.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import copy
 import importlib.util
 import json
@@ -109,7 +110,11 @@ def _held(fx: dict) -> dict | None:
     return held if reopened else None
 
 
-def check(fx: dict, flag: bool) -> list[dict[str, Any]]:
+def check(
+    fx: dict, flag: bool, settings_overrides: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
+    """``settings_overrides`` are applied on top of production's flags (a switch a later PR
+    turns on, e.g. the closing card and its ``closingCard`` device token)."""
     from app.config import settings
     from app.kria.brief import CreativeBrief
     from app.kria.reply_consistency import contradictions
@@ -121,8 +126,11 @@ def check(fx: dict, flag: bool) -> list[dict[str, Any]]:
         with (
             SR._prod_flags(),  # noqa: SLF001
             patch.object(settings, "kria_honest_reply_lines_enabled", flag),
+            contextlib.ExitStack() as overrides,
             patch.object(SR, "manifest", _prod_manifest(SR.manifest)),
         ):
+            for name, value in (settings_overrides or {}).items():
+                overrides.enter_context(patch.object(settings, name, value))
             cards = SR.approval_cards(case)
             live = CreativeBrief.model_validate(case["brief"]).live()
             for lang, card in cards.items():

@@ -67,6 +67,7 @@ from app.services.creator_capabilities import (
     TALKING_CLIP_INTENTS_DROPPED_NOTICE,
     CreatorSfxUnavailableError,
     compile_strategy_to_plan,
+    phone_talking_corner_text_open,
     phone_talking_title_lane_open,
     resolve_creator_image_media_ref,
     resolve_creator_visual_video_media_ref,
@@ -1043,6 +1044,8 @@ def _talking_top_text_as_title(
     pins = strategy.pinned_texts or []
     if (
         strategy.edit_format != "subtitled"
+        # KRI-1342 item 7: the phone Talking edit keeps corner text where it was asked.
+        or phone_talking_corner_text_open(manifest)
         or strategy.opening_title
         or len(pins) != 1
         or not pins[0].corner.startswith("top_")

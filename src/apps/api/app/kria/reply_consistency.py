@@ -118,7 +118,11 @@ def reason_capability(reason: object) -> str | None:
             for t in texts
         )
 
-    if starts(bc._CC_UNAVAILABLE):  # noqa: SLF001
+    if starts(
+        bc._CC_NOT_TALKING,  # noqa: SLF001
+        bc._CC_UNAVAILABLE,  # noqa: SLF001
+        bc._CC_NOT_DRAWN,  # noqa: SLF001
+    ):
         return CLOSING_CARD
     if starts(
         bc._SB_NOT_TALKING,  # noqa: SLF001

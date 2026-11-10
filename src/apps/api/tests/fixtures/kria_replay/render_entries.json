@@ -79,7 +79,8 @@
         "output_orientation",
         "clip_tilts",
         "inserts",
-        "background_focus_open"
+        "background_focus_open",
+        "closing_card"
       ],
       "recipe": {
         "title_animation": "text_layers[id^=text-].animation_phases.entrance",
