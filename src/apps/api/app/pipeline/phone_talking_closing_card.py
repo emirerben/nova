@@ -48,7 +48,11 @@ _MIN_SIZE_FRAC = 0.028
 _MAX_WIDTH_FRAC = 0.82
 _MAX_HEIGHT_FRAC = 0.42
 _SHRINK = 0.9
-_TEXT_MAX_CHARS = 160
+# A text row holds at most this many characters (`TextElement.text`); longer words are never cut
+# short to fit: the card is refused instead, and the receipt says why.
+CLOSING_CARD_TEXT_MAX_CHARS = 500
+TOO_LONG = "text_too_long"
+UNDRAWABLE = "undrawable_text"
 
 
 @dataclass(frozen=True)
@@ -152,7 +156,9 @@ def closing_card_from_requirements(
             return None
         raw_words = facts.get("closing")
         words = raw_words if isinstance(raw_words, str) and raw_words.strip() else req.literal
-        words = " ".join(str(words or closing_title or "").split())[:_TEXT_MAX_CHARS]
+        # Every word the creator wrote, whitespace normalised only: never cut short here. A text
+        # that does not fit the card is refused at layout (`closing_card_text_row_or_reason`).
+        words = " ".join(str(words or closing_title or "").split())
         if not words:
             return None
         asked_text = _hex(facts.get("text_color"))
@@ -177,15 +183,26 @@ def closing_card_from_requirements(
 def closing_card_text_row(
     spec: ClosingCardSpec, *, start_s: float, end_s: float, canvas: Any
 ) -> dict | None:
+    """The card's words as one row, or None when no card can carry them (see below)."""
+    return closing_card_text_row_or_reason(spec, start_s=start_s, end_s=end_s, canvas=canvas)[0]
+
+
+def closing_card_text_row_or_reason(
+    spec: ClosingCardSpec, *, start_s: float, end_s: float, canvas: Any
+) -> tuple[dict | None, str | None]:
     """The card's words as one editable text row centred on the canvas, shrunk until the
-    measured block fits inside the safe width and height. None when the words cannot be
-    drawn in the card's font (the receipt then says the card was not made)."""
+    measured block fits inside the safe width and height; ``(None, reason)`` when no card can
+    carry ALL of them: ``undrawable_text`` (a character the card's font cannot draw) or
+    ``text_too_long`` (over a text row's limit, or still too big at the smallest size). The
+    words are never cut short, so a card on the video always shows everything asked."""
     from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
     from app.pipeline.phone_subtitled_title import _measure_title_box  # noqa: PLC0415
     from app.pipeline.phone_text_style import undrawable_text  # noqa: PLC0415
 
+    if len(spec.text) > CLOSING_CARD_TEXT_MAX_CHARS:
+        return None, TOO_LONG
     if undrawable_text([spec.text], fonts=(_FONT,)) is not None:
-        return None
+        return None, UNDRAWABLE
     height = float(canvas.height)
     size = round(_SIZE_FRAC * height)
     min_size = round(_MIN_SIZE_FRAC * height)
@@ -211,8 +228,10 @@ def closing_card_text_row(
         ).model_dump(mode="json", exclude_none=True)
         box = _measure_title_box(row, canvas=canvas)
         fits = box.width <= _MAX_WIDTH_FRAC + 0.02 and box.height <= _MAX_HEIGHT_FRAC
-        if fits or size <= min_size:
-            return row
+        if fits:
+            return row, None
+        if size <= min_size:
+            return None, TOO_LONG
         size = max(min_size, round(size * _SHRINK))
 
 
@@ -272,6 +291,8 @@ def closing_card_receipt(
         }
     return {
         **base,
+        # What the card really shows (the brief check compares it with the creator's words).
+        "shown_text": " ".join(str(card_rows[0].get("text") or "").split()),
         "status": "applied",
         "start_s": round(float(fill.start), 3),
         "end_s": round(float(fill.end), 3),
