@@ -4746,6 +4746,79 @@ text matches the two rows joined (`creator_render_contract.verify_phone_recipe`)
 **Rollout.** `fly secrets set CREATOR_CTA_ENDING_ENABLED=true --app nova-video`, restart api + worker.
 Rollback: set it to `false`; endings already rendered keep their rows and arrow.
 
+## Corner text on phone Talking edits (KRI-1342 item 7, `PHONE_TALKING_CORNER_TEXT_ENABLED`)
+
+**What it does.** 'A small "Yorumla" label in the top left for the whole video', "keep @handle bottom
+right", "sol üstte 'bölüm 8' yazsın": the planner already records these as the strategy's `pinned_texts`
+(KRI-523/525: a corner, the whole video or a time range; EN and TR). A Talking edit had no lane for them,
+so KRI-1009 turned one top line into a 1-3 s opening title and asked about anything else. With the flag on,
+`_talking_top_text_as_title` leaves the pins alone, `compile_strategy_to_plan` accepts them for a phone
+Talking edit (`phone_talking_corner_text_open`), and the worker draws them.
+
+**Rows and placement.** `app.pipeline.phone_talking_corner_text`: the rows come from the shared pin builder
+(`pinned_text_elements`, ids `guided-pinned-<i>`, small, one line, stacked per corner), tagged
+`source_params.source = "corner_text"`. Each row is placed off every face the take shows during the row's
+window: faces are sampled in 2 s slices across the WHOLE window (`caption_window_faces`) and every face is
+protected (the KRI-183 fallback box when the sampler can't confirm one). The row keeps its corner: it steps
+inward (down from the top, up from the bottom, up to 0.20), then shrinks (0.85/0.72/0.6), preferring spots
+clear of the captions and title rows in its window. No clear spot: the row is dropped (`face_blocked`),
+never drawn on the face. Whole-video rows carry `whole_video` and the compiler stretches them to the
+video's real end (after an ending clip or the closing card). The shared style pass leaves them as placed.
+Receipt: `variants[i].corner_text_placement`; the brief's position and whole-video checks read the rows.
+
+**What the phone gets.** Ordinary positioned text rows above every picture layer (text composites last, so
+full-screen photos never hide the label). No new recipe field, protocol or token.
+
+**Known gaps.** Faces are sampled on the first speaker's take only (multi-clip Talking: later speakers and
+inserted clips are not sampled); faces inside full-screen photos are not checked; a speaker-background
+frame (cut-out in a corner) is not mapped, so check those renders by eye.
+
+**Rollout.** `fly secrets set PHONE_TALKING_CORNER_TEXT_ENABLED=true --app nova-video`, restart api +
+worker. Rollback: `false`; variants already rendered keep their rows. Tests:
+`tests/pipeline/test_phone_talking_corner_text.py`; native check:
+`scripts/ios/talking-label-endcard-render-e2e.py --mode after`.
+
+## Closing card on phone Talking edits (KRI-1346, `PHONE_TALKING_CLOSING_CARD_ENABLED`)
+
+**What it does.** "End on a red screen with yellow text 'follow for more brand and marketing content'"
+(Çiğdem's Yorumla end card; "kırmızı ekranla bitir, üstünde sarı 'takip et' yazsın"). The brief records one
+`text` requirement with `closing` + `background_color` (+ `text_color`, `duration_s`). Before this, its
+colour sent it to the speaker-background check, which refused it as "a plain colour behind you"; now
+`asks_closing_card` routes it to `_check_closing_card` whatever the flag says.
+
+**How it renders.** `app.pipeline.phone_talking_closing_card` + `compile_phone_subtitled_plan(closing_card=)`:
+after everything on the main track (the talk, then any ending clip) the last main clip holds its last frame
+for the card's seconds (`hold_duration`, `freezeFrame`; a held tail is silent on the device, so the talk's
+audio ends exactly where it did and nothing spoken is cut), a solid `visual_fills` entry `closing-card`
+(order 1000) covers the hold, and the words are one text row `closing-card-text` (TikTok Sans Bold, centred,
+shrunk to fit 0.82 wide) that the compiler times to the card. Colours: a hex or a named preset (EN + TR,
+`BACKGROUND_COLOR_PRESETS`); an unnamed shade makes no card. A text colour that would not read on the
+background (contrast < 2) is swapped to black/white and the receipt says so. Default 3 s, clamped 1-10 s.
+The card owns the ending words: no lime closing tag is drawn over the talk. The words are never
+cut short: over a text row's 500 characters, or still too big at the smallest size, the card is not
+made (`text_too_long`, "shorten them"); a finished card is "met" only when `shown_text` equals the
+creator's words. The draft reads the same gate as the render for the build that sent the message
+(`phone_talking_closing_card_planned_reason`): an older app is told to update, never promised a card. Receipt (read back from the
+compiled recipe): `variants[i].phone_closing_card` (`applied` with its window, or `dropped` + reason).
+The editor's Save keeps the card (`closing_card_from_recipe`); its words are an editable text row.
+
+**Gates.** `PHONE_TALKING_CLOSING_CARD_ENABLED` (default off) + the KRI-467 text lane + `freezeFrame`,
+`visualBlocks` and `closingCard` in `PHONE_RENDER_VERIFIED_FEATURES` + the approving build's
+`creator_client_protocol` >= `freeze_frame_min_client_protocol` (16). No new recipe field, so no protocol
+bump: every build that decodes a held frame and visual fills draws it. `closingCard` is a server-only
+qualification token because visual fills were never device-qualified on their own:
+`validate_phone_pilot_recipe` still rejects every fill except `closing-card` while the card is available.
+Cloud Talking edits have no card (the draft says so).
+
+**Rollout.** 1) Physical-iPhone check: a Talking edit asking for a red end card with yellow text, preview
+and export: the last word is heard in full, the card is the asked colour edge to edge, the words are on it,
+then the Kria outro. 2) Add `closingCard` to `PHONE_RENDER_VERIFIED_FEATURES` (validate the JSON first),
+3) `fly secrets set PHONE_TALKING_CLOSING_CARD_ENABLED=true --app nova-video`, restart api + worker.
+Rollback: the flag `false` (new drafts say "not available yet"; a Save on a carded variant drops the card).
+Tests: `tests/pipeline/test_phone_talking_closing_card.py`, `tests/kria/test_closing_card_brief_routing.py`;
+native check: `scripts/ios/talking-label-endcard-render-e2e.py --mode before|after` on the simulator
+(`DeviceMontageRenderE2ETests/testTalkingHeadCutawayRendersOnTheIPhone`, pixel samples on the card).
+
 ## Title look on phone Talking edits (Qendresa item 20)
 
 `TITLE_LOOK_ENABLED` (default **false**, API + worker; server only, no protocol or verified token).

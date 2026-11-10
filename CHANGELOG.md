@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.149.0] - 2026-11-10
+
+### Changed
+- fix(kria): recover legacy sequence copy before retry approval (KRI-1352) (#2267) <!-- release-pr: 2267 -->
+
+## [0.88.148.0] - 2026-11-10
+
+### Fixed
+- fix(captions): spell short typed names and the job's own media names in phone captions (KRI-1345) (#2253) <!-- release-pr: 2253 -->
+
+## [0.88.147.0] - 2026-11-10
+
+### Changed
+- feat(phone-talking): corner label for the whole video + colour end card (KRI-1342 item 7, KRI-1346) (#2256) <!-- release-pr: 2256 -->
+
 ## [0.88.146.0] - 2026-11-10
 
 ### Changed
