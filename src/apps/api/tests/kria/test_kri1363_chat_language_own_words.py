@@ -243,3 +243,30 @@ def test_a_bare_title_typed_as_the_answer_keeps_the_chat_language() -> None:
 def test_the_kill_switch_ignores_the_wording_question(old_detector) -> None:
     assert resolve_reply_language(BARE_TR_TITLE, previous="en", answers_video_text=True) == "tr"
     assert asks_for_video_text([("user", {}), _asked(TITLE_QUESTION)]) is False
+
+
+# KRI-1362 x KRI-1363 (both on): German follows the same "own words" rule.
+@pytest.mark.parametrize(
+    ("message", "previous", "expected"),
+    [
+        # English chat, German video text: quoted or after an English label -> stays English.
+        ('Make the title say "Heute ist ein schöner Tag für uns"', "en", "en"),
+        ("Title: Heute ist ein schöner Tag für uns", "en", "en"),
+        # German chat, English video text after a German label -> stays German.
+        ("Titel: Make it great today please", "de", "de"),
+        # The creator really writes German -> the chat follows.
+        ("Bitte mach die Untertitel größer und schöner", "en", "de"),
+    ],
+)
+def test_german_chat_follows_only_the_creators_own_words(
+    monkeypatch, message, previous, expected
+) -> None:  # noqa: ANN001
+    monkeypatch.setattr(settings, "kria_german_replies_enabled", True)
+    monkeypatch.setattr(settings, "kria_reply_language_own_words_enabled", True)
+    assert resolve_reply_language(message, previous=previous) == expected
+
+
+def test_german_switch_off_never_reads_german_labels(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(settings, "kria_german_replies_enabled", False)
+    assert resolve_reply_language("Titel: Make it great today please", previous="en") == "en"
+    assert detect_chat_language("Bitte mach die Untertitel größer und schöner") != "de"

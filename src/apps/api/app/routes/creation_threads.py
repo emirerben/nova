@@ -2983,12 +2983,14 @@ def _status_message(
     if job is not None and job.status not in PLAN_ITEM_JOB_TERMINAL:
         phase = str(job.current_phase or "").replace("_", " ").strip()
         # The phase is an English pipeline name, so the Turkish line leaves it out.
+        if phase:
+            return say(
+                en="Kria is rendering your video ({phase}). I’ll update this chat when it’s ready.",
+                tr="Kria videonu hazırlıyor. Hazır olunca bu sohbete yazacağım.",
+                phase=phase,
+            )
         return say(
-            en=(
-                f"Kria is rendering your video ({phase}). I’ll update this chat when it’s ready."
-                if phase
-                else "Kria is rendering your video. I’ll update this chat when it’s ready."
-            ),
+            en="Kria is rendering your video. I’ll update this chat when it’s ready.",
             tr="Kria videonu hazırlıyor. Hazır olunca bu sohbete yazacağım.",
         )
     creator_status = str(getattr(session, "status", "") or "")

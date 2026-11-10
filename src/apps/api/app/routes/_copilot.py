@@ -306,8 +306,9 @@ def _honest_outcome(
         if output.reply_notes:
             # A specific reason beats the generic line (e.g. which value was not accepted).
             return outcome, say(
-                en=f"I couldn't apply that: {output.reply_notes}",
-                tr=f"Bunu uygulayamadım: {output.reply_notes}",
+                en="I couldn't apply that: {output_reply_notes}",
+                tr="Bunu uygulayamadım: {output_reply_notes}",
+                output_reply_notes=output.reply_notes,
             )
         return outcome, say(
             en="I couldn't build a valid draft change for that request. Try again.",

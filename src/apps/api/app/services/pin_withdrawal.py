@@ -342,20 +342,30 @@ def _ways_forward(position: str, words: str, basis: str | None) -> str:
     else:
         filmed = basis == "filmed"
         clip = say(
-            en=f"the {'last' if last else 'first'} clip you {'filmed' if filmed else 'added'}",
-            tr=f"{'çektiğin' if filmed else 'eklediğin'} {'son' if last else 'ilk'} klip",
+            en="the {v1} clip you {v2}",
+            tr="{v3} {v4} klip",
+            v1="last" if last else "first",
+            v2="filmed" if filmed else "added",
+            v3="çektiğin" if filmed else "eklediğin",
+            v4="son" if last else "ilk",
         )
         then = (
-            say(en=f"leave it out and end on {clip}", tr=f"onu çıkarıp videoyu {clip}te bitireyim")
+            say(
+                en="leave it out and end on {clip}",
+                tr="onu çıkarıp videoyu {clip}te bitireyim",
+                clip=clip,
+            )
             if last
             else say(
-                en=f"leave it out and start with {clip}",
-                tr=f"onu çıkarıp videoya {clip} ile başlayayım",
+                en="leave it out and start with {clip}",
+                tr="onu çıkarıp videoya {clip} ile başlayayım",
+                clip=clip,
             )
         )
     ways = say(
-        en=f'You can tell me which clip shows it, or reply "skip it" and I\'ll {then}.',
-        tr=f'Hangi klipte olduğunu söyleyebilirsin ya da "boşver" yaz, {then}.',
+        en='You can tell me which clip shows it, or reply "skip it" and I\'ll {then}.',
+        tr='Hangi klipte olduğunu söyleyebilirsin ya da "boşver" yaz, {then}.',
+        then=then,
     )
     return f"{_pin_not_found(words)} {ways}"
 

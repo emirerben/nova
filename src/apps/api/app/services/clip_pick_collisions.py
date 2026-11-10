@@ -204,28 +204,33 @@ def _question_text(labels: list[tuple[str, str]]) -> str:
         asked, other = labels[0]
         return say(
             en=(
-                f'The same photo is down for both "{asked}" and "{other}". '
-                f'Which clip is "{asked}"? Tap it, or tell me there isn\'t one.'
+                'The same photo is down for both "{asked}" and "{other}". '
+                'Which clip is "{asked}"? Tap it, or tell me there isn\'t one.'
             ),
             tr=(
-                f'"{asked}" ve "{other}" için aynı fotoğraf seçilmiş. '
-                f'"{asked}" hangi klip? Ona dokun ya da olmadığını söyle.'
+                '"{asked}" ve "{other}" için aynı fotoğraf seçilmiş. '
+                '"{asked}" hangi klip? Ona dokun ya da olmadığını söyle.'
             ),
+            asked=asked,
+            other=other,
         )
     shown = ", ".join(f'"{asked}"' for asked, _other in labels[:4])
-    more = say(
-        en=f" and {len(labels) - 4} more" if len(labels) > 4 else "",
-        tr=f" ve {len(labels) - 4} tane daha" if len(labels) > 4 else "",
+    more = (
+        say(en=" and {count} more", tr=" ve {count} tane daha", count=len(labels) - 4)
+        if len(labels) > 4
+        else ""
     )
     return say(
         en=(
-            f"The same photo is down for more than one of your moments. Tap the clip for "
-            f"each of {shown}{more}, or mark the ones that have none."
+            "The same photo is down for more than one of your moments. Tap the clip for "
+            "each of {shown}{more}, or mark the ones that have none."
         ),
         tr=(
-            f"Birden fazla anın için aynı fotoğraf seçilmiş. Şunlar için klibi seç: "
-            f"{shown}{more}. Klibi olmayanları işaretle."
+            "Birden fazla anın için aynı fotoğraf seçilmiş. Şunlar için klibi seç: "
+            "{shown}{more}. Klibi olmayanları işaretle."
         ),
+        shown=shown,
+        more=more,
     )
 
 

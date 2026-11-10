@@ -1,0 +1,1340 @@
+{
+ "note": "KRI-1362: (file, en, tr) pairs this branch routes through say(); see test_codemod_kept_every_en_tr_pair. Regenerate by hand only for routed copy.",
+ "pairs": [
+  [
+   "app/agents/clip_intent_planner.py",
+   " (and {extra} more)",
+   " (ve {extra} tane daha)"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   " Please restate just those so I can add them.",
+   " Sadece bunları yeniden yazar mısın, ekleyeyim."
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "I can apply at most {max_intents} clip instructions at a time, so {overflow} more weren't included",
+   "Bir seferde en fazla {max_intents} klip talimatı uygulayabiliyorum, bu yüzden {overflow} talimat daha eklenmedi"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "I can't do {named} with your clips yet, so this draft leaves it out. I can use, skip, reorder, group, label or caption clips: tell me which of those you meant and I'll add it.",
+   "{named} isteğini kliplerinle henüz yapamıyorum, bu yüzden bu taslakta yok. Klipleri kullanabilir, atlayabilir, sıralayabilir, gruplayabilir, etiketleyebilir ya da üzerlerine yazı ekleyebilirim: hangisini kastettiğini söylersen eklerim."
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "I can't do {named} with your clips yet, so this draft leaves them out. I can use, skip, reorder, group, label or caption clips: tell me which of those you meant and I'll add it.",
+   "{named} isteklerini kliplerinle henüz yapamıyorum, bu yüzden bu taslakta yok. Klipleri kullanabilir, atlayabilir, sıralayabilir, gruplayabilir, etiketleyebilir ya da üzerlerine yazı ekleyebilirim: hangisini kastettiğini söylersen eklerim."
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "I couldn't safely verify {named}",
+   "Şunları güvenle doğrulayamadım: {named}"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "I understood {kept} of your clip instructions",
+   "Klip talimatlarından {kept} tanesini anladım"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "an instruction",
+   "bir talimat"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "caption",
+   "yazı"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "exclude",
+   "hariç tutma"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "group",
+   "grup"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "hide_part",
+   "bölüm gizleme"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "include",
+   "dahil etme"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "label",
+   "etiket"
+  ],
+  [
+   "app/agents/clip_intent_planner.py",
+   "order",
+   "sıra"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   " and ",
+   " ve "
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I couldn't find this moment in your clip, so I can't confirm it's the one playing",
+   "Bu anı klipte bulamadım, o yüzden oynayanın o an olduğunu doğrulayamıyorum"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I couldn't put your own words on it",
+   "Senin sözlerini üstüne koyamadım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I couldn't tell which clips",
+   "Hangi kliplerden söz ettiğini anlayamadım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I found no clips of it",
+   "Bununla ilgili klip bulamadım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "In a Talking edit the clips shown over your voice play without their own sound. ",
+   "Konuşmalı düzenlemede sesinin üzerinde gösterilen klipler kendi sesi olmadan oynar. "
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Speech cleanup cut what it heard as {joined_en} ({seconds:.1f} s).",
+   "Konuşma temizliği duyduğu şu sesleri kesti: {joined_tr} ({seconds_tr} sn)."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Speech cleanup cut what it heard as {joined_en}.",
+   "Konuşma temizliği duyduğu şu sesleri kesti: {joined_tr}."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The recording for {name} never shows.",
+   "{name} kaydı hiç görünmüyor."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The recordings for {names} never show.",
+   "{names} kayıtları hiç görünmüyor."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Your text colour wouldn't be readable on that background, so the text is black.",
+   "Yazı rengin o arka planda okunmazdı, o yüzden yazı siyah."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Your text colour wouldn't be readable on that background, so the text is white.",
+   "Yazı rengin o arka planda okunmazdı, o yüzden yazı beyaz."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "clip {tail}",
+   "{tail}. klip"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "clips stay in the order you filmed them, so ",
+   "klipler çektiğin sırada kalıyor, o yüzden "
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "clips {head} and {tail}",
+   "{head_tr} ve {tail}. klipler"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "first",
+   "ilk"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "group by {what}",
+   "gruplama: {what}"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "its clips are already in an earlier group",
+   "klipleri zaten önceki bir grupta"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "its clips are already placed at another spot",
+   "klipleri zaten başka bir yerde"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "last",
+   "son"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "no clip got one",
+   "hiçbir klibe gelmedi"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "text for {what}",
+   "{what} için yazı"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "the clips did not end up there",
+   "klipler oraya gelmedi"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "the order you described",
+   "tarif ettiğin sıra"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "the {what} name on its clips",
+   "kliplerindeki {what} adı"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "then",
+   "sonra"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "you chose grouping first, each group in the order you filmed it",
+   "önce gruplamayı seçtin, her grup çektiğin sırada"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "you chose strictly chronological order, so ",
+   "kesin kronolojik sırayı seçtin, o yüzden "
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "you didn't say what order its clips play in",
+   "kliplerinin hangi sırayla oynayacağını söylemedin"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "you let me pick this moment, so I chose it myself",
+   "bu anı seçmeyi bana bıraktın, ben seçtim"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "you told me this moment isn't in your clips",
+   "bu anın kliplerinde olmadığını söyledin"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{at} is past the end of the video ({end:.1f} s), so the small card of {name} isn't shown",
+   "{at} videonun sonundan sonra ({end:.1f} sn), o yüzden {name} küçük kartı gösterilmiyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{at} is past the end of the video, so the small card of {name} isn't shown",
+   "{at} videonun sonundan sonra, o yüzden {name} küçük kartı gösterilmiyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{names} shown above your title",
+   "{names} başlığının üstünde çıkıyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{prefix} around {times} in your clip",
+   "{prefix} (klibinde yaklaşık {times})"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{prefix} at {times} in the video",
+   "{prefix} (videoda {times})"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{prefix}, “{text}”, around {times} in your clip",
+   "{prefix}: “{text}” (klibinde yaklaşık {times})"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{prefix}, “{text}”, at {times} in the video",
+   "{prefix}: “{text}” (videoda {times})"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{what} is in {count} stretches",
+   "{what} {count} parçaya bölünüyor"
+  ],
+  [
+   "app/kria/clip_exclusions.py",
+   " and {count} more",
+   " ve {count} tane daha"
+  ],
+  [
+   "app/kria/clip_ties.py",
+   " and {count} more",
+   " ve {count} tane daha"
+  ],
+  [
+   "app/kria/narration_notes.py",
+   "The clip where you say {quote} closes the video.",
+   "{quote} dediğin klip videoyu kapatıyor."
+  ],
+  [
+   "app/kria/narration_notes.py",
+   "The clip where you say {quote} comes right after your opening shot.",
+   "{quote} dediğin klip açılış çekiminden hemen sonra geliyor."
+  ],
+  [
+   "app/kria/narration_notes.py",
+   "The clip where you say {quote} comes right before your last shot.",
+   "{quote} dediğin klip son çekiminden hemen önce geliyor."
+  ],
+  [
+   "app/kria/narration_notes.py",
+   "The clip where you say {quote} opens the video.",
+   "{quote} dediğin klip videoyu açıyor."
+  ],
+  [
+   "app/kria/plan_review.py",
+   "captions",
+   "altyazılar"
+  ],
+  [
+   "app/kria/plan_review.py",
+   "clips",
+   "klipler"
+  ],
+  [
+   "app/kria/plan_review.py",
+   "look",
+   "görünüm"
+  ],
+  [
+   "app/kria/plan_review.py",
+   "music",
+   "müzik"
+  ],
+  [
+   "app/kria/plan_review.py",
+   "overlays",
+   "katmanlar"
+  ],
+  [
+   "app/kria/plan_review.py",
+   "post caption",
+   "paylaşım metni"
+  ],
+  [
+   "app/kria/plan_review.py",
+   "sound effects",
+   "ses efektleri"
+  ],
+  [
+   "app/kria/plan_review.py",
+   "title",
+   "başlık"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "A lip-sync edit follows your song, so I'm not timing it to a recorded voiceover.",
+   "Dudak senkronlu düzenleme şarkını izler, o yüzden kaydedilmiş seslendirmeye göre zamanlamıyorum."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "A lip-sync edit follows your song, so I'm not using a day-vlog or single-hero shape.",
+   "Dudak senkronlu düzenleme şarkını izler, o yüzden günlük vlog ya da tek kahraman kurgusu kullanmıyorum."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Aiming the recordings isn't available yet, so they're centred.",
+   "Kayıtları istediğin yöne çevirmek henüz kullanılamıyor; şimdilik ortalı duruyorlar."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Aiming the recordings needs the latest Kria app, so they're centred.",
+   "Kayıtları istediğin yöne çevirmek için Kria uygulamasının son sürümü gerekiyor; şimdilik ortalı duruyorlar."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't add that at the end with its own sound: it's a photo, not a video. A photo can be the closing photo instead.",
+   "Bunu kendi sesiyle sona ekleyemedim: bu bir fotoğraf, video değil. Fotoğraf kapanış fotoğrafı olarak girebilir."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't add that at the end with its own sound: this iPhone can't mix its sound into the video yet.",
+   "Bunu kendi sesiyle sona ekleyemedim: bu iPhone sesini videoya karıştıramıyor henüz."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't add that clip at the end silent: one of your own clips can only end the video with its own sound.",
+   "Bu klibi sessiz olarak sona ekleyemedim: kendi kliplerinden biri videoyu ancak kendi sesiyle bitirebilir."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't add that clip at the end: ending on another of your clips needs a Talking edit with several clips, which isn't available yet.",
+   "Bu klibi sona ekleyemedim: başka bir klibinle bitirmek için birden çok klipli konuşmalı düzenleme gerekiyor ve o henüz yok."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't add that clip at the end: it is the only clip in this edit.",
+   "Bu klibi sona ekleyemedim: bu düzenlemedeki tek klip bu."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't add that clip at the end: you asked to leave it out of this edit.",
+   "Bu klibi sona ekleyemedim: bu düzenlemeden çıkarmamı istemiştin."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't add that video at the end with its own sound: only a talking-to-camera edit on your iPhone can end on another video.",
+   "Bu videoyu kendi sesiyle sona ekleyemedim: sadece iPhone'daki konuşmalı düzenlemeler başka bir videoyla bitebilir."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't add that video at the end: this iPhone can't play videos from Visuals yet.",
+   "Bu videoyu sona ekleyemedim: bu iPhone Visuals'taki videoları henüz oynatamıyor."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't add that video at the end: this iPhone render can't place pictures and videos around your talk yet.",
+   "Bu videoyu sona ekleyemedim: bu iPhone oluşturması konuşmanın çevresine resim ve video koyamıyor henüz."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't change the backgrounds or put you small in a corner: your iPhone app can't switch backgrounds yet. One background stays behind you for the whole video.",
+   "Arka planları değiştirip seni köşede küçük gösteremedim: iPhone uygulaman henüz arka plan değiştiremiyor. Bütün video boyunca arkanda tek bir arka plan duruyor."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't find \"{name}\"'s photo/sticker; left it out.",
+   "\"{name}\" için fotoğraf ya da çıkartma bulamadım; koymadım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't find some of the photos or videos you named for the changing background; left them out.",
+   "Değişen arka plan için söylediğin bazı fotoğraf ya da videoları bulamadım; onları çıkardım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't find the clip the small card should follow; left that card out.",
+   "Küçük kartın takip edeceği klibi bulamadım; o kartı koymadım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't find the closing badge you named; left it off.",
+   "Söylediğin kapanış rozetini bulamadım; koymadım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't find the closing photo you named; kept the normal ending.",
+   "Söylediğin kapanış fotoğrafını bulamadım; normal bitişi bıraktım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't find the photo or video you named for a small card; left it out.",
+   "Küçük kart için söylediğin fotoğrafı ya da videoyu bulamadım; koymadım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't find the photo or video you named for the background; kept your own background.",
+   "Arka plan için söylediğin fotoğraf ya da videoyu bulamadım; kendi arka planını bıraktım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't find the video you named for the end; kept the normal ending.",
+   "Son için söylediğin videoyu bulamadım; normal bitişi bıraktım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't put a plain colour behind you: your iPhone app can't show one yet; kept your own background.",
+   "Arkana düz bir renk koyamadım: iPhone uygulaman henüz bunu gösteremiyor; kendi arka planını bıraktım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't put that behind you: a photo or video background only works on a talking-to-camera edit rendered on your iPhone, and it isn't available here right now.",
+   "Bunu arkana koyamadım: fotoğraf ya da video arka planı sadece iPhone'da hazırlanan konuşmalı düzenlemelerde çalışıyor ve şu an burada kullanılamıyor."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't start you full screen before the background: it isn't available here right now.",
+   "Arka plandan önce seni tam ekran başlatamadım: bu şu an burada kullanılamıyor."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't start you full screen before the background: your iPhone app can't do that yet. Update the app and ask again.",
+   "Arka plandan önce seni tam ekran başlatamadım: iPhone uygulaman bunu henüz yapamıyor. Uygulamayı güncelleyip tekrar iste."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't use that as the background: this iPhone can't draw it behind you yet.",
+   "Bunu arka plan yapamadım: bu iPhone onu henüz arkanda çizemiyor."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't use that colour for your background; kept your own background. Try white, black, green, blue, red, yellow or grey.",
+   "Bu rengi arka planın için kullanamadım; kendi arka planını bıraktım. Beyaz, siyah, yeşil, mavi, kırmızı, sarı ya da gri dene."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Couldn't use the background you picked in the camera: it is no longer in this edit's photos and videos; kept your own background.",
+   "Kamerada seçtiğin arka planı kullanamadım: artık bu düzenlemenin fotoğraf ve videoları arasında değil; kendi arka planını bıraktım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Day vlog",
+   "Günlük vlog"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Full screen isn't available for this edit yet, so \"{name}\" shows as a small card in the corner instead.",
+   "Bu düzenlemede tam ekran henüz yok; \"{name}\" köşede küçük bir kart olarak çıkacak."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "I'll use your song as the background music for this edit.",
+   "Şarkını bu düzenlemede arka plan müziği olarak kullanacağım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Reading this as a montage in the day-vlog style.",
+   "Bunu günlük vlog tarzında bir montaj olarak okudum."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Reading this as a montage in the single-hero style.",
+   "Bunu tek kahraman tarzında bir montaj olarak okudum."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Single-hero",
+   "Tek kahraman"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Small cards at an exact time aren't available for this edit yet; left them out.",
+   "Tam zamanlı küçük kartlar bu düzenleme için henüz yok; koymadım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Sound and photo pop-ins timed to your words aren't available for this edit yet; left them out.",
+   "Sözlerine göre çıkan ses ve fotoğraflar bu düzenleme için henüz yok; koymadım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Sound effects can't render on your iPhone yet. Ask for this edit without the sound effect.",
+   "Ses efektleri iPhone'unda henüz hazırlanamıyor. Bu düzenlemeyi ses efektsiz iste."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Sound effects on iPhone are placed at the moments you named; the general sound-effect treatment was left out.",
+   "iPhone'da ses efektleri senin söylediğin anlara konuyor; genel ses efekti uygulamasını koymadım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Talking edits caption what you say, so I didn't add separate labels or captions to individual clips.",
+   "Konuşmalı düzenlemeler söylediklerini altyazıya çevirir, o yüzden tek tek kliplere ayrı etiket ya da altyazı eklemedim."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "The photo or video behind you is only the background, not also a pop-in on a spoken word.",
+   "Arkandaki fotoğraf ya da video sadece arka plan, söylediğin bir kelimede ayrıca çıkmıyor."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "The requested licensed sound effect is unavailable. Choose another effect.",
+   "İstediğin lisanslı ses efekti yok. Başka bir efekt seç."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "The requested licensed sound effect {name} is unavailable.",
+   "İstediğin lisanslı ses efekti ({name}) yok."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "The video you wanted at the end plays only there, not also on a spoken word.",
+   "Sonda istediğin video sadece orada oynuyor, söylediğin bir kelimede ayrıca çıkmıyor."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Upload the song first, then I'll build the edit around it. Or should I use licensed music instead?",
+   "Önce şarkıyı yükle, düzenlemeyi ona göre kurarım. Ya da lisanslı müzik kullanayım mı?"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Videos can't show as small cards in this edit yet; left that card out.",
+   "Bu düzenlemede videolar henüz küçük kart olarak çıkamıyor; o kartı koymadım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "You picked Lip-sync, so I'll sync your takes to your song, placing each one where it fits the music.",
+   "Dudak senkronu seçtin, o yüzden çekimlerini şarkına senkronluyorum; her birini müziğe uyduğu yere koyuyorum."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Your own song only works on edits that render on your iPhone. Should I make this with licensed music instead?",
+   "Kendi şarkın sadece iPhone'unda hazırlanan düzenlemelerde çalışıyor. Bunu lisanslı müzikle yapayım mı?"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "{shape} shape needs music; kept a regular montage.",
+   "{shape} kurgusu için müzik gerekiyor; normal bir montaj yaptım."
+  ],
+  [
+   "app/routes/creation_threads.py",
+   "Kria is rendering your video ({phase}). I’ll update this chat when it’s ready.",
+   "Kria videonu hazırlıyor. Hazır olunca bu sohbete yazacağım."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "A video of at most {requested:g} seconds cannot include these clips with their approved holds. Choose fewer clips or change those holds before rendering.",
+   "En fazla {requested:g} saniyelik bir video, onaylı bekleme süreleriyle bu klipleri kapsayamıyor. Oluşturmadan önce daha az klip seç ya da bekleme sürelerini değiştir."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Each {word} plays as one block; blocks start in the order they first appear, and clips inside a block keep the order you filmed them.",
+   "Her {tr_word} tek bir blok olarak oynar; bloklar ilk göründükleri sırayla başlar, blok içindeki klipler çektiğin sırayı korur."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Every clip gets at least {floor_s:g} seconds, so all {count} stay in.",
+   "Her klip en az {floor_s:g} saniye görünür, böylece {count} klibin hepsi kalır."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Extend it to {shown} seconds",
+   "Süreyi {shown} saniyeye uzat"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Group by {word}, chronological inside each {word}",
+   "Her {tr_word} bir blok olsun; blok içinde kronolojik sırala"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Keep it strictly chronological; {word}s may interleave",
+   "Tam kronolojik kalsın; {tr_word} klipleri iç içe geçebilir"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Keep those {kept_s} seconds",
+   "O {kept_s} saniyeyi kullan"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Keep {asked} seconds with {kept} clips",
+   "{asked} saniyeyi koru, {kept} klip kullan"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Keep {asked} seconds, photos at the usual pace",
+   "{asked} saniyeyi koru, fotoğraflar normal hızda"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Make it {shown} seconds",
+   "Videoyu {shown} saniye yap"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "That part can't make a {asked_s}-second edit without changing {lines_en}.",
+   "{lines_tr} değiştirmeden {asked_s} saniyelik bir video yapamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "That part runs longer than {asked_s} seconds, and I can't shorten it without changing {lines_en}.",
+   "O kısım {asked_s} saniyeden uzun ve {lines_tr} değiştirmeden kısaltamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "That {source} cannot make a {asked_s}-second edit without changing the source timing.",
+   "kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "That {source} cannot make an edit of at most {asked_s} seconds without changing the source timing.",
+   "kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video yapamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "The requested {requested:g} seconds cannot include these clips with their approved holds. Choose fewer clips or change those holds before rendering.",
+   "İstenen {requested:g} saniye, onaylı bekleme süreleriyle bu klipleri kapsayamıyor. Oluşturmadan önce daha az klip seç ya da bekleme sürelerini değiştir."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Trim it to {asked_s} seconds",
+   "{asked_s} saniyeye kısalt"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Use the available {capacity_s} seconds",
+   "Mevcut {capacity_s} saniyeyi kullan"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Use the supported trim for this {source}.",
+   "Bu {source_tr} için desteklenen kırpmayı kullanır."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Uses {kept} of your {count} clips, spread evenly through your footage; the others are left out.",
+   "{count} klibinden {kept} tanesini kullanır, çekimlerine eşit aralıklarla dağıtır; diğerleri dışarıda kalır."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "With the standard ending that part runs to {asked_s} seconds or more, and I can't shorten it without changing {lines_en}.",
+   "Standart kapanışla o kısım {asked_s} saniyeye ya da daha fazlasına çıkıyor ve {lines_tr} değiştirmeden kısaltamam."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "You asked for \"{text}\" when {speaker} says \"{trigger}\". \"{trigger}\" is said {times} time in the part of your take I'm keeping, and I can't tell who is speaking.",
+   "\"{trigger}\" denildiğinde \"{text}\" yazısını istedin. Koruduğum kısımda \"{trigger}\" {times} kez geçiyor ve kimin konuştuğunu ayırt edemiyorum."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "You asked for \"{text}\" when {speaker} says \"{trigger}\". \"{trigger}\" is said {times} times in the part of your take I'm keeping, and I can't tell who is speaking.",
+   "\"{trigger}\" denildiğinde \"{text}\" yazısını istedin. Koruduğum kısımda \"{trigger}\" {times} kez geçiyor ve kimin konuştuğunu ayırt edemiyorum."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "You asked me to cut \"{quote}\". It is said {times} times in the part of your take I'm keeping.",
+   "\"{quote}\" kısmını kesmemi istedin. Koruduğum kısımda {times} kez geçiyor."
+  ],
+  [
+   "app/services/clip_intent_resolution.py",
+   " and {count} more",
+   " ve {count} tane daha"
+  ],
+  [
+   "app/services/clip_order_sequence.py",
+   "You didn't say what order the clips in {quoted} should play in. Tell me the order, or say any order is fine.",
+   "{quoted} içindeki kliplerin hangi sırayla oynayacağını söylemedin. Sırayı yaz ya da herhangi bir sıranın olur olduğunu söyle."
+  ],
+  [
+   "app/services/clip_order_sequence.py",
+   "You didn't say what order these clips should play in. Tell me the order, or say any order is fine.",
+   "Bu kliplerin hangi sırayla oynayacağını söylemedin. Sırayı yaz ya da herhangi bir sıranın olur olduğunu söyle."
+  ],
+  [
+   "app/services/clip_pick_collisions.py",
+   " and {count} more",
+   " ve {count} tane daha"
+  ],
+  [
+   "app/services/clip_selection.py",
+   " and {count} more",
+   " ve {count} tane daha"
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "Exclude {font} from automatic {role} text selection.",
+   "{head} için otomatik yazı tipi seçiminde {font} kullanılmasın."
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "Favor {font} when automatically choosing {role} fonts.",
+   "{head} için yazı tipi otomatik seçilirken {font} tercih edilsin."
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "Place {role} text at {where} in future videos.",
+   "Gelecek videolarda {role} {where} kısımda dursun."
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "Use automatic {role} fonts and exclude {font} from selection.",
+   "{head} için yazı tipi otomatik seçilsin, {font} seçimden çıkarılsın."
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "Use {color} for {role} text in future videos.",
+   "Gelecek videolarda {role} için {color} rengi kullanılsın."
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "all_text",
+   "tüm yazılar"
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "bottom",
+   "alt"
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "bottom left",
+   "sol alt"
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "bottom right",
+   "sağ alt"
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "caption",
+   "altyazı"
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "label",
+   "etiket"
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "lyric",
+   "şarkı sözü"
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "middle",
+   "orta"
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "off",
+   "kapalı"
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "on",
+   "açık"
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "pinned",
+   "sabit yazı"
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "title",
+   "başlık"
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "top",
+   "üst"
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "top left",
+   "sol üst"
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "top right",
+   "sağ üst"
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "{label} outlines {outline} in future videos.",
+   "Gelecek videolarda {role} için kenar çizgisi {outline} olsun."
+  ],
+  [
+   "app/services/finished_style_learning.py",
+   "{label} shadows {state} in future videos.",
+   "Gelecek videolarda {role} için gölge {state} olsun."
+  ],
+  [
+   "app/services/named_moments.py",
+   "I showed you where each of my moments is.",
+   "Anlarımın her birinin nerede olduğunu gösterdim."
+  ],
+  [
+   "app/services/song_order.py",
+   "I confirmed where my clips go on the song timeline.",
+   "Kliplerimin şarkıda nereye geleceğini onayladım."
+  ],
+  [
+   "app/services/song_order.py",
+   "I marked the {label} on a frame.",
+   "{label} bir karede işaretledim."
+  ],
+  [
+   "app/services/song_order.py",
+   "I showed you where each of my moments is.",
+   "Anlarımın her birinin nerede olduğunu gösterdim."
+  ],
+  [
+   "app/services/song_order.py",
+   "I skipped your clip question, so pick those clips for me.",
+   "Klip sorusunu boş bıraktım, o klipleri sen belirle."
+  ],
+  [
+   "app/services/song_order.py",
+   "I tapped the clips you asked about.",
+   "Sorduğun klipleri seçtim."
+  ],
+  [
+   "app/services/song_order.py",
+   "I told you which part of the song I filmed.",
+   "Şarkının hangi kısmını çektiğimi söyledim."
+  ],
+  [
+   "app/tasks/generative_build.py",
+   "I couldn't safely place {words} on the recorded words. Check the phrase or choose a different moment.",
+   "{words} yazısını kayıttaki sözlere yerleştiremedim. Sözü kontrol et ya da başka bir an seç."
+  ],
+  [
+   "app/tasks/generative_build.py",
+   "I found repeated trigger words for {words}. Tell me first, last, or which occurrence.",
+   "{words} için beklenen sözler tekrarlanıyor. İlk, son ya da hangi tekrar olduğunu söyle."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "A voiceover can't render on your iPhone yet, and this project's videos render on this iPhone. Ask for this edit without a voiceover. No fallback edit was rendered.",
+   "iPhone'unda henüz seslendirmeli video oluşturulamıyor ve bu projenin videoları bu iPhone'da oluşturuluyor. Bu düzenlemeyi seslendirme olmadan iste. Yedek bir düzenleme oluşturulmadı."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Analyzing your footage didn't finish. Try again.",
+   "Çekimlerinin analizi tamamlanmadı. Tekrar dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Ask for a different format.",
+   "Farklı bir format iste."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Ask for a montage with your voice, or a different format.",
+   "Sesinle bir montaj ya da farklı bir format iste."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Ask for a montage, a subtitled clip, or a narrated edit.",
+   "Bir montaj, altyazılı bir klip ya da seslendirmeli bir düzenleme iste."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Ask for a spoken-excerpt montage on your iPhone, which can keep only that camera audio, or tell me to drop that requirement.",
+   "iPhone'unda yalnızca o kamera sesini koruyabilen, konuşma kesitli bir montaj iste ya da bu isteği bırakmamı söyle."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Ask for a spoken-excerpt montage on your iPhone, which keeps or mutes camera audio as you confirmed, or tell me to drop that requirement.",
+   "iPhone'unda kamera sesini onayladığın gibi koruyan ya da kısan, konuşma kesitli bir montaj iste ya da bu isteği bırakmamı söyle."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Ask for it to be rendered on your iPhone, where I can check it, or tell me to drop that requirement.",
+   "Kontrol edebilmem için iPhone'unda oluşturulmasını iste ya da bu isteği bırakmamı söyle."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Ask for it to be rendered on your iPhone, which renders clips in the order you confirmed, or tell me to drop that requirement.",
+   "Klipleri onayladığın sırayla oluşturan iPhone'unda oluşturulmasını iste ya da bu isteği bırakmamı söyle."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Ask me to make the change as a new edit instead.",
+   "Bunun yerine değişikliği yeni bir düzenleme olarak yapmamı iste."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Ask me to make the edit again from your latest request.",
+   "Düzenlemeyi son isteğine göre yeniden yapmamı iste."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Automatic music matching is turned off right now. Try again later.",
+   "Otomatik müzik eşleştirme şu anda kapalı. Daha sonra tekrar dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Choose another song or render with footage audio.",
+   "Başka bir şarkı seç ya da videoyu çekimlerin kendi sesiyle oluştur."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Choose either your recorded voice or the camera audio for this edit.",
+   "Bu düzenleme için ya kaydettiğin sesi ya da kamera sesini seç."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Choose one soundtrack: the camera audio, your voice, or your song.",
+   "Tek bir ses seç: kamera sesi, kendi sesin ya da şarkın."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Cleaning up the audio didn't finish. Try again, or turn off speech cleanup.",
+   "Sesi temizleme tamamlanmadı. Tekrar dene ya da konuşma temizlemeyi kapat."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I can rebuild the edit from your confirmed plan, or you can ask for a different edit.",
+   "Düzenlemeyi onayladığın plana göre yeniden kurabilirim ya da farklı bir düzenleme isteyebilirsin."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I can rebuild the edit so it shows this, or you can relax the requirement.",
+   "Düzenlemeyi bunu gösterecek şekilde yeniden kurabilirim ya da bu isteği esnetebilirsin."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I can rebuild the edit with that soundtrack playing once, or you can pick a different one.",
+   "Düzenlemeyi o ses bir kez çalacak şekilde yeniden kurabilirim ya da başka bir ses seçebilirsin."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I can rebuild the edit without that soundtrack, or you can ask for music.",
+   "Düzenlemeyi o ses olmadan yeniden kurabilirim ya da müzik isteyebilirsin."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I can render it again, or you can relax the requirement.",
+   "Videoyu yeniden oluşturabilirim ya da bu isteği esnetebilirsin."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I can't verify this ordering rule from the approved media.",
+   "Bu sıralama kuralını onaylanan çekimlerden doğrulayamıyorum."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I couldn't build the confirmed camera-audio edit.",
+   "Onayladığın kamera sesli düzenlemeyi kuramadım."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I couldn't find clear speech in your clips to build this edit.",
+   "Bu düzenlemeyi kurmak için kliplerinde net bir konuşma bulamadım."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I couldn't line your clips up with your song. Film with the song playing out loud, or sing along clearly, then try again.",
+   "Çekimlerini şarkınla hizalayamadım. Şarkı yüksek sesle çalarken çekim yap ya da sözleri net söyleyerek eşlik et, sonra tekrar dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I couldn't prepare the text while keeping your approved wording. Your draft and footage are saved. Try generating this edit again.",
+   "Onayladığın yazıyı koruyarak metni hazırlayamadım. Taslağın ve çekimlerin kayıtlı. Bu videoyu yeniden oluşturmayı dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I couldn't read the speech in your clip.",
+   "Klibindeki konuşmayı okuyamadım."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I couldn't tell which clips you want first or last, so I can't confirm their order.",
+   "Hangi klipleri başa ya da sona istediğini anlayamadım, o yüzden sıralarını doğrulayamıyorum."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I need capture times for every selected clip to verify chronological order.",
+   "Çekim sırasını doğrulamak için seçilen her klibin çekim zamanını bilmem gerekiyor."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "I need to know which clips are in the edit to verify their order.",
+   "Sıralarını doğrulamak için düzenlemede hangi kliplerin olduğunu bilmem gerekiyor."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Importing from Drive didn't finish. Try again.",
+   "Drive'dan içe aktarma tamamlanmadı. Tekrar dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Kria's AI service has reached its usage limit for now, so your video wasn't made. Your edit and footage are saved. Trying again right away won't help; try again later.",
+   "Kria'nın yapay zekâ hizmeti şimdilik kullanım sınırına ulaştı, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı. Hemen tekrar denemek işe yaramaz; daha sonra tekrar dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Matching your footage to music didn't finish. Try again.",
+   "Çekimlerini müzikle eşleştirme tamamlanmadı. Tekrar dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Narrating across several clips isn't on iPhone yet. Record a voiceover, or keep one clip for talking-to-camera.",
+   "Birden fazla klip üzerinde anlatım iPhone'da henüz yok. Bir seslendirme kaydet ya da kameraya konuşma için tek klip kullan."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "No matching music was found for this edit. Try again, or pick a track yourself.",
+   "Bu düzenleme için uygun müzik bulunamadı. Tekrar dene ya da müziği kendin seç."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "One of your clips couldn't be downloaded. Reattach it and try again.",
+   "Kliplerinden biri indirilemedi. Yeniden ekle ve tekrar dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "One of your clips couldn't be used (it may be corrupted or unsupported). Try a different clip.",
+   "Kliplerinden biri kullanılamadı (bozuk ya da desteklenmiyor olabilir). Farklı bir klip dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Only preview copies of your clips are uploaded (the originals stay on your iPhone), so this edit has to be made on your iPhone. Your edit is saved. Open the project on the iPhone that has the clips and ask Kria to make it again.",
+   "Kliplerinin yalnızca önizleme kopyaları yüklü (orijinaller iPhone'unda duruyor), bu yüzden bu düzenleme iPhone'unda yapılmalı. Düzenlemen kayıtlı. Projeyi klipler olan iPhone'da aç ve Kria'dan videoyu yeniden yapmasını iste."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Our AI took too long to plan this edit, so your video wasn't made. Your edit and footage are saved. Try again in a moment.",
+   "Yapay zekâ bu düzenlemeyi planlarken çok uzun sürdü, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı. Birazdan tekrar dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Pick a clip where you talk to use as the voice, or ask for a plain montage.",
+   "Ses olarak kullanmak için konuştuğun bir klip seç ya da düz bir montaj iste."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Pick a clip where you talk, record a voiceover, or ask for a montage.",
+   "Konuştuğun bir klip seç, bir seslendirme kaydet ya da bir montaj iste."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Pick a different clip to carry the speech, or ask for a plain montage.",
+   "Konuşmayı taşıyacak başka bir klip seç ya da düz bir montaj iste."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Processing timed out — your clips are heavy (likely 4K/HDR). Try fewer or shorter clips.",
+   "İşlem zaman aşımına uğradı; kliplerin çok ağır (muhtemelen 4K/HDR). Daha az ya da daha kısa klip dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Record it again and check that nothing is covering the microphone.",
+   "Yeniden kaydet ve mikrofonun üstünü hiçbir şeyin kapatmadığından emin ol."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Record or upload your voice, or tell me to use music instead.",
+   "Sesini kaydet ya da yükle; istersen bunun yerine müzik kullanmamı söyle."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Record your voice for this edit, or ask for a different format.",
+   "Bu düzenleme için sesini kaydet ya da farklı bir format iste."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Rendering ran out of memory — your clips are heavy. Try fewer or shorter clips.",
+   "Video hazırlanırken bellek yetmedi; kliplerin çok ağır. Daha az ya da daha kısa klip dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Saving your upload didn't finish. Try again.",
+   "Yüklemen kaydedilemedi. Tekrar dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Something broke while planning this edit, so your video wasn't made. Your edit and footage are saved. Try again, or ask for a change.",
+   "Bu düzenleme planlanırken bir şey bozuldu, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı. Tekrar dene ya da bir değişiklik iste."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Something changed while exporting. Try again.",
+   "Dışa aktarma sırasında bir şey değişti. Tekrar dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Something went wrong and this render didn't finish. Your direction and footage are still saved — try again.",
+   "Bir şeyler ters gitti ve bu video tamamlanmadı. Yönün ve çekimlerin hâlâ kayıtlı; tekrar dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Something went wrong while assembling your video. Try again.",
+   "Videon birleştirilirken bir şeyler ters gitti. Tekrar dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Something you approved changed before this edit could render, so I didn't make it. Ask Kria to prepare the edit again.",
+   "Onayladığın bir şey bu düzenleme oluşturulmadan önce değişti, bu yüzden videoyu yapmadım. Kria'dan düzenlemeyi yeniden hazırlamasını iste."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Talking-to-camera videos render on your iPhone with exactly one clip. Remove the extra clips (or add one) and try again. No fallback edit was rendered.",
+   "Kameraya konuşma videoları iPhone'unda tam olarak tek klipten oluşturulur. Fazla klipleri kaldır (ya da bir klip ekle) ve tekrar dene. Yedek bir düzenleme oluşturulmadı."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Talking-to-camera videos render on your iPhone with up to {max_clips} clips. Remove the extra clips and try again. No fallback edit was rendered.",
+   "Kameraya konuşma videoları iPhone'unda en fazla {max_clips} klipten oluşturulur. Fazla klipleri kaldır ve tekrar dene. Yedek bir düzenleme oluşturulmadı."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Tell me which length you want.",
+   "Hangi uzunluğu istediğini söyle."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Tell me which option you want and I'll continue.",
+   "Hangi seçeneği istediğini söyle, devam edeyim."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "The clip with your speech is too short to cut other footage into.",
+   "Konuştuğun klip, araya başka çekimler koymak için çok kısa."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "The render couldn't be handed to the queue. Give it another go.",
+   "Video sıraya iletilemedi. Bir kez daha dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This clip is too long for talking-to-camera on your iPhone. Use a shorter clip (under 5 minutes) and try again. No fallback edit was rendered.",
+   "Bu klip, iPhone'unda kameraya konuşma videosu için çok uzun. 5 dakikadan kısa bir klip kullan ve tekrar dene. Yedek bir düzenleme oluşturulmadı."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This edit belongs to a different approved revision.",
+   "Bu düzenleme onaylanmış başka bir sürüme ait."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This edit couldn't keep confirmed text on screen long enough.",
+   "Bu düzenleme onayladığın yazıyı ekranda yeterince uzun tutamadı."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This edit is missing confirmed on-screen text.",
+   "Bu düzenlemede onayladığın ekran yazısı eksik."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This edit keeps confirmed text on screen after the picture has ended.",
+   "Bu düzenleme onayladığın yazıyı görüntü bittikten sonra da ekranda tutuyor."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This edit needs a renderer that's temporarily turned off. Try again later.",
+   "Bu düzenleme şu anda geçici olarak kapalı bir oluşturucuya ihtiyaç duyuyor. Daha sonra tekrar dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This edit needs an iPhone rendering feature that's switched off right now. Your edit and footage are saved. Try again later, or ask for a different style.",
+   "Bu düzenleme için gereken bir iPhone oluşturma özelliği şu anda kapalı. Düzenlemen ve çekimlerin kayıtlı. Daha sonra tekrar dene ya da farklı bir stil iste."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This edit needs your confirmed recorded voice.",
+   "Bu düzenleme için onayladığın ses kaydın gerekiyor."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This edit plan needs approving again before it can render on your iPhone.",
+   "Bu düzenleme planının iPhone'unda videoya dönüşebilmesi için yeniden onaylanması gerekiyor."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This edit put confirmed text in the wrong place.",
+   "Bu düzenleme onayladığın yazıyı yanlış yere koydu."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This edit uses something your iPhone can't render yet. Start a new edit with a different clip or format.",
+   "Bu düzenleme iPhone'unun henüz oluşturamadığı bir şey içeriyor. Farklı bir klip ya da formatla yeni bir düzenleme başlat."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This edit was prepared by a newer version of Kria than the one rendering it. Ask Kria to prepare it again.",
+   "Bu düzenleme, onu oluşturan sürümden daha yeni bir Kria sürümüyle hazırlandı. Kria'dan yeniden hazırlamasını iste."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This export is no longer available.",
+   "Bu dışa aktarma artık kullanılamıyor."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This kind of video can't render on your iPhone right now. Choose a format that renders on this iPhone (Montage, or Talking to camera / Narrated where available). No fallback edit was rendered.",
+   "Bu tür bir video şu anda iPhone'unda oluşturulamıyor. iPhone'da oluşturulabilen bir format seç (Montaj, ya da uygun olduğunda Kameraya konuşma / Seslendirmeli). Yedek bir düzenleme oluşturulmadı."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This plan has a guided story but the edit format is audio-led. Pick one: the guided story, or the spoken/narrated edit.",
+   "Bu planda rehberli bir hikâye var ama düzenleme formatı sese dayalı. Birini seç: rehberli hikâye ya da konuşmalı/seslendirmeli düzenleme."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This project can only be rendered on our servers, and server rendering is switched off, so this version wasn't made. Start a new edit on your iPhone with these clips to make it there.",
+   "Bu proje yalnızca sunucularımızda oluşturulabiliyor ve sunucuda oluşturma şu anda kapalı, bu yüzden bu sürüm yapılmadı. Bu kliplerle iPhone'unda yeni bir düzenleme başlatarak videoyu orada yap."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This project cannot render entirely on this iPhone. Its existing video is unchanged.",
+   "Bu proje tamamen bu iPhone'da oluşturulamıyor. Mevcut videon değişmedi."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This project's footage lives on your iPhone and can't be rendered from this account right now.",
+   "Bu projenin çekimleri iPhone'unda duruyor ve şu anda bu hesaptan videoya dönüştürülemiyor."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This render was cancelled.",
+   "Bu video iptal edildi."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This renderer can't combine the confirmed soundtracks.",
+   "Bu video hazırlama yolu onayladığın sesleri birleştiremiyor."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This template has a configuration problem. Try a different one.",
+   "Bu şablonda bir yapılandırma sorunu var. Farklı bir tane dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This template is missing assets it needs. Try a different one.",
+   "Bu şablonun ihtiyaç duyduğu dosyalar eksik. Farklı bir tane dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Try a different clip of you talking, or ask for a montage.",
+   "Konuştuğun başka bir klibi dene ya da bir montaj iste."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Use a longer clip of you talking, or ask for a montage.",
+   "Konuştuğun daha uzun bir klip kullan ya da bir montaj iste."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Writing the on-screen text for this many clips took longer than our AI allows, so your video wasn't made. Your edit and footage are saved. Try again; if it happens again, use fewer clips or ask for less text.",
+   "Bu kadar klip için ekrandaki yazıları hazırlamak yapay zekânın izin verdiği süreden uzun sürdü, bu yüzden videon oluşturulmadı. Düzenlemen ve çekimlerin kayıtlı. Tekrar dene; yine olursa daha az klip kullan ya da daha az yazı iste."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Writing your video's captions didn't finish. Try again.",
+   "Videonun paylaşım metnini yazma tamamlanmadı. Tekrar dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Your confirmed edit lengths conflict, so I can't render it safely.",
+   "Onayladığın uzunluklar birbiriyle çelişiyor, o yüzden videoyu güvenle oluşturamıyorum."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Your finished video couldn't be saved. Try again.",
+   "Hazır videon kaydedilemedi. Tekrar dene."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Your own song can only be used in videos made on your iPhone right now. Ask for this edit without your song. No fallback edit was rendered.",
+   "Kendi şarkın şu anda yalnızca iPhone'unda hazırlanan videolarda kullanılabiliyor. Bu düzenlemeyi şarkın olmadan iste. Yedek bir düzenleme oluşturulmadı."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Your video has no sound, so there's nothing to caption or cut.",
+   "Videonda hiç ses yok, o yüzden altyazı eklenecek ya da kesilecek bir şey yok."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Your video has no sound, so there's nothing to caption or cut. Record it again and check that nothing is covering the microphone.",
+   "Videonda hiç ses yok, bu yüzden altyazı ekleyecek ya da kesecek bir şey bulamadım. Tekrar çek ve mikrofonun kapalı olmadığından emin ol."
+  ]
+ ]
+}

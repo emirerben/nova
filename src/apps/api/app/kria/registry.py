@@ -156,10 +156,9 @@ def _inspect_project(_args: BaseModel, snapshot: Mapping[str, Any]) -> BaseModel
         decision = str(
             snapshot.get("editorial_decision")
             or say(
-                en=(
-                    f"Open with {strongest}; it gives the story an immediate visual point of view."
-                ),
-                tr=f"{strongest} ile aç; hikâye ilk andan net bir görsel bakış açısı kazanır.",
+                en=("Open with {strongest}; it gives the story an immediate visual point of view."),
+                tr="{strongest} ile aç; hikâye ilk andan net bir görsel bakış açısı kazanır.",
+                strongest=strongest,
             )
         )
         next_action = "prepare_draft"

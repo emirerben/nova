@@ -327,14 +327,15 @@ def _export_text_notes(job: Job, verification_report: dict | None) -> list[str]:
         return [
             say(
                 en=(
-                    f"I couldn't confirm all the on-screen text in the finished video was "
-                    f"readable (around {at:.0f}s). If a line looks off, tell me and I'll fix it."
+                    "I couldn't confirm all the on-screen text in the finished video was "
+                    "readable (around {at:.0f}s). If a line looks off, tell me and I'll fix it."
                 ),
                 tr=(
-                    f"Bitmiş videodaki ekran yazılarının hepsinin okunaklı olduğunu "
-                    f"doğrulayamadım (yaklaşık {at:.0f}. saniye). Bir satır yanlış görünüyorsa "
-                    f"söyle, düzelteyim."
+                    "Bitmiş videodaki ekran yazılarının hepsinin okunaklı olduğunu "
+                    "doğrulayamadım (yaklaşık {at:.0f}. saniye). Bir satır yanlış görünüyorsa "
+                    "söyle, düzelteyim."
                 ),
+                at=at,
             )
         ]
 

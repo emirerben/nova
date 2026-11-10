@@ -44,10 +44,12 @@ def check_export_maximum(actual_s: float, maximum_s: float) -> None:
         return
     raise CreatorRenderContractError(
         say(
-            en=f"You asked for a video under {maximum_s:g} seconds including its ending; "
-            f"this video is {actual_s:g} seconds.",
-            tr=f"Kapanış dahil {maximum_s:g} saniyenin altında bir video istedin; "
-            f"bu video {actual_s:g} saniye.",
+            en="You asked for a video under {maximum_s:g} seconds including its ending; "
+            "this video is {actual_s:g} seconds.",
+            tr="Kapanış dahil {maximum_s:g} saniyenin altında bir video istedin; "
+            "bu video {actual_s:g} saniye.",
+            maximum_s=maximum_s,
+            actual_s=actual_s,
         ),
         decline_reason="requirement_conflict",
         field_path="target_duration_s",

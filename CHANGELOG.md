@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.157.0] - 2026-11-10
+
+### Fixed
+- feat(kria): chat sentences in one file per language, German behind a switch (KRI-1362) (#2269) <!-- release-pr: 2269 -->
+
 ## [0.88.156.0] - 2026-11-10
 
 ### Fixed

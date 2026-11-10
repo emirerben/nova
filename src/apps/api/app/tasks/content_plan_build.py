@@ -760,6 +760,14 @@ class DispatchResult:
 # earlier policy layer (`app.agents._schemas.creator_policy
 # .effective_render_program`) already raises for a proposed strategy before
 # a Job ever exists. Keep the two in sync if either wording changes.
+# The live `subtitled_clip_count_unsupported` sentence while multi-clip Talking is on; a
+# template so the chat copy (`kria_runtime._phone_gate_refusal_copy`) keys it once.
+TALKING_MULTI_CLIP_COUNT_MESSAGE = (
+    "Talking-to-camera videos render on your iPhone with up to {max_clips} clips. Remove the "
+    "extra clips and try again. No fallback edit was rendered."
+)
+
+
 class _PhoneGateMessages(dict[str, tuple[str, str]]):
     """`PHONE_GATE_MESSAGES` with one flag-aware entry (KRI-719).
 
@@ -785,9 +793,7 @@ class _PhoneGateMessages(dict[str, tuple[str, str]]):
             return stored
         return (
             stored[0],
-            "Talking-to-camera videos render on your iPhone with up to "
-            f"{TALKING_MULTI_CLIP_MAX_CLIPS} clips. Remove the extra clips and try "
-            "again. No fallback edit was rendered.",
+            TALKING_MULTI_CLIP_COUNT_MESSAGE.format(max_clips=TALKING_MULTI_CLIP_MAX_CLIPS),
         )
 
     def __getitem__(self, key: str) -> tuple[str, str]:
@@ -1020,7 +1026,7 @@ JOB_FAILURE_MESSAGES: dict[str, str] = {
 
 # Never blank: an unrecognized or None-but-status-failed code still needs a
 # real sentence, not a fallthrough to nothing.
-_DEFAULT_JOB_FAILURE_MESSAGE = (
+DEFAULT_JOB_FAILURE_MESSAGE = (
     "Something went wrong and this render didn't finish. Your direction and "
     "footage are still saved — try again."
 )
@@ -1051,7 +1057,7 @@ def humanize_job_failure_reason(failure_reason: str | None) -> str | None:
     """
     if not failure_reason:
         return None
-    return JOB_FAILURE_MESSAGES.get(failure_reason, _DEFAULT_JOB_FAILURE_MESSAGE)
+    return JOB_FAILURE_MESSAGES.get(failure_reason, DEFAULT_JOB_FAILURE_MESSAGE)
 
 
 def _guided_cleanup_matches_contract(
