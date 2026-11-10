@@ -1313,26 +1313,45 @@ def _neighbours_lost(
     """Words with no close match heard after the cut.
 
     Neighbours only match words heard on their own side of the seam (so a repeated "and"
-    inside the removed span cannot stand in for the redelivery "and" after it), one heard word
-    per neighbour. ``inside`` words may match anywhere in the window.
+    inside the removed span cannot stand in for the redelivery "and" after it); ``inside``
+    words may match anywhere in the window. Each heard word answers at most ONE judged word
+    across all three groups, so one heard "again" cannot vouch for both the word before the
+    cut and a second "again" the cut swallowed. The pairing is a maximum matching, so a heard
+    word that fits both sides near the seam is never spent on the wrong group first.
     """
 
-    lost: list[str] = []
-    for keys, on_side in (
-        (before, lambda t: t <= seam_s + 0.3),
-        (after, lambda t: t >= seam_s - 0.3),
-        (inside, lambda t: True),
-    ):
-        pool = [k for k, t in heard_after_cut if on_side(t) and not is_filler_token(k)]
-        for key in keys:
-            best = max(
-                pool, key=lambda other: SequenceMatcher(a=key, b=other).ratio(), default=None
-            )
-            if best is None or SequenceMatcher(a=key, b=best).ratio() < RELISTEN_MATCH_RATIO:
-                lost.append(key)
-            else:
-                pool.remove(best)
-    return lost
+    heard = [(k, t) for k, t in heard_after_cut if not is_filler_token(k)]
+    judged = [
+        (key, on_side)
+        for keys, on_side in (
+            (before, lambda t: t <= seam_s + 0.3),
+            (after, lambda t: t >= seam_s - 0.3),
+            (inside, lambda t: True),
+        )
+        for key in keys
+    ]
+    fits = [
+        [
+            j
+            for j, (other, t) in enumerate(heard)
+            if on_side(t) and SequenceMatcher(a=key, b=other).ratio() >= RELISTEN_MATCH_RATIO
+        ]
+        for key, on_side in judged
+    ]
+    owner: dict[int, int] = {}  # heard index -> judged index
+
+    def claim(i: int, seen: set[int]) -> bool:
+        for j in fits[i]:
+            if j in seen:
+                continue
+            seen.add(j)
+            if j not in owner or claim(owner[j], seen):
+                owner[j] = i
+                return True
+        return False
+
+    matched = {i for i in range(len(judged)) if claim(i, set())}
+    return [key for i, (key, _side) in enumerate(judged) if i not in matched]
 
 
 def _relistened_plan(

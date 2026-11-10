@@ -14,6 +14,13 @@ How this could fail (written before the code):
 - R5: a repeated word ("and" inside the span and right after it) is miscounted by the pool;
 - R6: a filler-only removal that takes a real word is no longer dropped;
 - R7: the slate cut (a retake-kind cut too) is dropped or judged on its own words.
+
+Added after review (one heard word reused across groups, PR #2255):
+- R8: one heard "again" answers both the word before the cut and a second "again" the cut
+  swallowed outside the span, so the over-long cut is kept;
+- R9: a heard word near the seam (fits both sides) is spent on the wrong group first, so a
+  word that WAS heard is called lost and a good restart is dropped;
+- R10: two equal neighbours on one side ("and ... and") share one heard word.
 """
 
 from __future__ import annotations
@@ -172,3 +179,40 @@ def test_real_word_inside_the_removal_but_outside_the_span_is_judged(monkeypatch
         retake_spans=((39, 45),),
     )
     assert kept.removed == [removal] and report["dropped"] == []
+
+
+def _words(*timed):
+    return [analysis.SpeechCleanupTimedWord(text=t, start_s=a, end_s=b) for t, a, b in timed]
+
+
+def test_one_heard_word_cannot_answer_two_neighbours_across_groups():
+    # R8, the reviewer's probe: "again | oh sorry again | good" with the span covering only
+    # "oh sorry", and a removal that also swallows the second "again". Hearing one "again"
+    # and "good" after the cut must leave the swallowed "again" lost.
+    words = _words(
+        ("again", 0.0, 0.4), ("oh", 0.5, 0.6), ("sorry", 0.6, 0.8),
+        ("again", 0.8, 1.0), ("good", 1.1, 1.4),
+    )  # fmt: skip
+    removal = Removal(start_s=0.45, end_s=1.05, reason=REASON_RETAKE)
+    neighbours = analysis._restart_neighbours(removal, words, ((1, 2),))
+    assert neighbours == (["again"], ["good"], ["again"])
+    heard = [("again", 0.7), ("good", 1.3)]
+    assert analysis._neighbours_lost(*neighbours, heard, 1.0) == ["again"]
+    # control: both "again"s heard -> nothing lost
+    heard_both = [("again", 0.7), ("again", 0.95), ("good", 1.3)]
+    assert analysis._neighbours_lost(*neighbours, heard_both, 1.0) == []
+
+
+def test_word_near_the_seam_goes_to_the_group_that_needs_it():
+    # R9: "so" sits within 0.3 s of the seam, so it fits both sides. "before" has two "so"s
+    # to find and only one heard word fits only the before side; a greedy pass that hands the
+    # seam "so" to "after" first would call a heard word lost.
+    lost = analysis._neighbours_lost(
+        ["so", "so"], ["so"], [], [("so", 0.2), ("so", 1.05), ("so", 1.6)], 1.0
+    )
+    assert lost == []
+
+
+def test_two_equal_neighbours_on_one_side_need_two_heard_words():
+    # R10
+    assert analysis._neighbours_lost([], ["and", "and"], [], [("and", 1.5)], 1.0) == ["and"]
