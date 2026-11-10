@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.149.0] - 2026-11-10
+
+### Changed
+- fix(kria): recover legacy sequence copy before retry approval (KRI-1352) (#2267) <!-- release-pr: 2267 -->
+
 ## [0.88.148.0] - 2026-11-10
 
 ### Fixed
