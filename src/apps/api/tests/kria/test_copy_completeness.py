@@ -138,3 +138,31 @@ def test_bound_language_reads_its_real_file(language: str) -> None:
             assert say(en=key, tr=keys[key]) == have[key]
     finally:
         reply_language_module._CURRENT.reset(token)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [b"{not json", b"\xff\xfe\x00broken", b'{"messages": ["not", "a", "map"]}'],
+)
+def test_an_unreadable_catalog_falls_back_to_english(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, content: bytes
+) -> None:
+    """Emir's review of 7476f5acc: a malformed or unreadable catalog file must fall back to
+    English like a missing line, never raise into a chat turn."""
+    from app.config import settings
+    from app.kria import copy_catalog
+    from app.kria.reply_language import _CURRENT, say
+
+    (tmp_path / "de.json").write_bytes(content)
+    monkeypatch.setattr(copy_catalog, "CATALOG_DIR", tmp_path)
+    monkeypatch.setattr(settings, "kria_german_replies_enabled", True, raising=False)
+    copy_catalog.catalog.cache_clear()
+    token = _CURRENT.set("de")
+    try:
+        assert say(en="Nothing is made yet.", tr="Henüz bir şey yapılmadı.") == (
+            "Nothing is made yet."
+        )
+        assert say(en="Done: {what}", tr="Yapıldı: {what}", what="x") == "Done: x"
+    finally:
+        _CURRENT.reset(token)
+        copy_catalog.catalog.cache_clear()

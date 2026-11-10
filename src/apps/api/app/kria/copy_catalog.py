@@ -17,6 +17,10 @@ from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 
+import structlog
+
+log = structlog.get_logger()
+
 CATALOG_DIR = Path(__file__).parent / "copy"
 # A test-only language: every sentence the catalog knows comes back wrapped, so a sentence that
 # shows up unwrapped is still hard-coded outside the catalog.
@@ -30,7 +34,13 @@ def catalog(language: str) -> Mapping[str, str]:
     path = CATALOG_DIR / f"{language}.json"
     if not path.is_file():
         return {}
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        # An unreadable or malformed file must not break a chat turn: every sentence then
+        # falls back to English, the same as a missing line (the completeness test catches it).
+        log.warning("copy_catalog.unreadable", language=language, error=str(exc)[:200])
+        return {}
     messages = data.get("messages") if isinstance(data, Mapping) else None
     if not isinstance(messages, Mapping):
         return {}
