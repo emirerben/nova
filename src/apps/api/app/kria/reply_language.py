@@ -44,6 +44,8 @@ LANGUAGE_NAMES: Mapping[str, str] = {"en": "English", "tr": "Turkish"}
 STATE_KEY = "reply_language"
 # Clear words a message needs to move an established chat to the other language.
 _SWITCH_STRENGTH = 3
+# Most words a "Title:"-style label before a colon has (KRI-1363).
+_LABEL_MAX_WORDS = 4
 
 _WORD = re.compile(r"[^\W\d_]+", re.UNICODE)
 # Letters only Turkish uses among the languages Kria creators write in.
@@ -210,7 +212,11 @@ def _detect(text: str | None) -> tuple[str | None, int]:
     """(language, strength) for one message; (None, 0) when it doesn't clearly say."""
     if not text or is_client_stock_message(text):
         return None, 0
-    tr, en, count = _scores(_own_words(text) if own_words_enabled() else text)
+    return _language_of(*_scores(_own_words(text) if own_words_enabled() else text))
+
+
+def _language_of(tr: int, en: int, count: int) -> tuple[str | None, int]:
+    """(language, strength) for ``_scores`` output; (None, 0) when it doesn't clearly say."""
     if count == 0:
         return None, 0
     if tr and tr >= 2 * en and tr / count >= 0.2:
@@ -240,12 +246,27 @@ def locale_language(header: str | None) -> str | None:
     return None
 
 
-def _still_speaks(language: str, message: str | None) -> bool:
-    """True when the creator's own words in ``message`` still hold a word of ``language``."""
+def _labels_video_text(language: str, detected: str, message: str | None) -> bool:
+    """True for "<short label in ``language``>: <text in ``detected``>" (KRI-1363).
+
+    "Title: Bugün İstanbul'da ..." in an English chat is the creator labelling text for the
+    video, not changing language. Only that shape holds the chat: a colon followed by
+    whitespace (so "0:05" is no label) after at most ``_LABEL_MAX_WORDS`` words that read as
+    ``language``, with the text after it reading as ``detected``. One stray word of the old
+    language anywhere else ("my son", "the İstanbul clip") never holds a clear switch.
+    """
     if not message or not own_words_enabled():
         return False
-    tr, en, _count = _scores(_own_words(message))
-    return bool(tr if language == "tr" else en)
+    own = _own_words(message)
+    colon = own.find(":")
+    while colon >= 0 and not own[colon + 1 : colon + 2].isspace():
+        colon = own.find(":", colon + 1)
+    if colon < 0:
+        return False
+    label_tr, label_en, label_count = _scores(own[:colon])
+    if not 1 <= label_count <= _LABEL_MAX_WORDS or not (label_tr if language == "tr" else label_en):
+        return False
+    return _language_of(*_scores(own[colon + 1 :]))[0] == detected
 
 
 def asks_for_video_text(events: Any) -> bool:
@@ -290,9 +311,9 @@ def resolve_reply_language(
     tap on a Turkish phone by a creator who types English).
 
     Only the creator's own words count (KRI-1363): quoted text and (``answers_video_text``)
-    a typed answer to a wording question are text for the video. An established chat moves
-    only when those own words hold nothing of its language, so "Title: <Turkish words>" in
-    an English chat stays English.
+    a typed answer to a wording question are text for the video, and so is the text after a
+    short label in the chat's language ("Title: <Turkish words>" in an English chat stays
+    English). One stray word of the old language never holds a clear switch.
     """
     previous = previous if previous in SUPPORTED_REPLY_LANGUAGES else None
     detected, strength = _detect(message)
@@ -301,7 +322,7 @@ def resolve_reply_language(
     if detected is not None and (
         previous is None
         or detected == previous
-        or (strength >= _SWITCH_STRENGTH and not _still_speaks(previous, message))
+        or (strength >= _SWITCH_STRENGTH and not _labels_video_text(previous, detected, message))
     ):
         return detected
     if previous is not None:

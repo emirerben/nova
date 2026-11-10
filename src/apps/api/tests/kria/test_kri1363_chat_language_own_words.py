@@ -21,6 +21,10 @@ Ways the fix could go wrong, written down before the code:
 9. Turkish chat + English video text has the same bug the other way.
 10. A message that is ONLY video text ("'Günaydın İstanbul'") sets the language of a new chat.
 11. The kill switch does not restore the old detector byte for byte.
+12. One ambiguous word of the old language (a Turkish dictionary word like 'son', a place name
+    like 'İstanbul') vetoes a clear switch (Emir's review on #2268). Only a short "Label:" in
+    the chat's language, followed by text in the other language, keeps the chat; a message
+    with no such label moves on its own clear words.
 """
 
 from __future__ import annotations
@@ -137,10 +141,58 @@ def test_the_chat_moves_back_on_the_next_clear_message() -> None:
     assert chat == "en"
 
 
-def test_unquoted_video_text_inside_the_creators_sentence_does_not_move_the_chat() -> None:
-    # The creator's own words are English ("add", "title", "that"); the rest is the title.
-    message = "Add a title that says Bugün İstanbul'da çok güzel bir gün geçirdik"
-    assert resolve_reply_language(message, previous="en") == "en"
+# -- 12: one ambiguous word of the old language never vetoes a clear switch ------------------
+
+
+@pytest.mark.parametrize(
+    ("message", "previous", "language"),
+    [
+        # Emir's review: "son" is a Turkish dictionary word, "İstanbul" has a Turkish letter.
+        ("Please make the clip of my son shorter and remove the music", "tr", "en"),
+        ("Please remove the İstanbul clip and make the rest shorter", "tr", "en"),
+        # The mirror: a song called "Hello" inside a Turkish request.
+        ("Videoyu kısalt ve Hello şarkısını kaldır, sonra ilk klibi sil lütfen", "en", "tr"),
+        ("Bugün İstanbul'a gittik, videoyu kısalt ve müziği kaldır lütfen", "en", "tr"),
+    ],
+)
+def test_one_ambiguous_word_does_not_hold_a_clear_switch(
+    message: str, previous: str, language: str
+) -> None:
+    assert resolve_reply_language(message, previous=previous) == language
+
+
+@pytest.mark.parametrize(
+    ("message", "previous"),
+    [
+        # A label in the chat's language keeps it; a time ("0:05") or a long lead-in is no label.
+        (LABEL_TR, "en"),
+        (LABEL_EN, "tr"),
+        ("Opening title: Bugün İstanbul'da çok güzel bir gün geçirdik", "en"),
+    ],
+)
+def test_a_label_in_the_chats_language_keeps_it(message: str, previous: str) -> None:
+    assert resolve_reply_language(message, previous=previous) == previous
+
+
+def test_a_label_in_the_new_language_or_a_long_lead_in_is_a_switch() -> None:
+    # "Başlık:" is Turkish: the creator labels in Turkish, so the chat follows them.
+    assert resolve_reply_language("Başlık: Bugün İstanbul'da çok güzel bir gün", previous="en") == (
+        "tr"
+    )
+    # A colon after a whole sentence is not a label.
+    message = "Şimdi şunu yap lütfen ve çabuk ol: müziği kapat, başlığı sil, videoyu kısalt"
+    assert resolve_reply_language(message, previous="en") == "tr"
+
+
+def test_video_text_inside_a_sentence_holds_the_chat_only_when_marked() -> None:
+    # 12 trade-off: with no quote and no label, the words alone cannot tell a title from the
+    # creator changing language, and the Turkish outweighs the English, so the chat follows it.
+    # Quoting the title or labelling it keeps the chat (the shapes the apps and Kria suggest).
+    title = "Bugün İstanbul'da çok güzel bir gün geçirdik"
+    assert resolve_reply_language(f"Add a title that says {title}", previous="en") == "tr"
+    assert resolve_reply_language(f'Add a title that says "{title}"', previous="en") == "en"
+    assert resolve_reply_language(f"Add a title that says: {title}", previous="en") == "tr"
+    assert resolve_reply_language(f"Add this title: {title}", previous="en") == "en"
 
 
 # -- 8: a typed answer to a wording question -------------------------------------------------
