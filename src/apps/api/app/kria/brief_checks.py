@@ -6915,6 +6915,11 @@ _TIGHT_STATIC_LINES: tuple[str, ...] = (
 # (even one with a retake) cannot prove it, so it says "may still be", never "stays". One
 # static string for every speech format: `_loc` translates exact keys only and the
 # review-note dedupe compares text.
+# KRI-720: with several-take cleanup on, pauses are cut in every take, but a named line,
+# opening or ending is still never cut from several takes (`_phone_opening_cut(multiple_takes=)`).
+_NAMED_CUTS_SEVERAL_TAKES = (
+    "I can't cut one exact line out of a video made of several takes yet, so it stays in"
+)
 _NAMED_CUTS_STAY = (
     "I can't cut out one exact line yet or confirm it's gone, so it may still be in your video"
 )
@@ -7392,6 +7397,9 @@ _REASON_TR: dict[str, str] = {
     _CLEANUP_DONE: "Konuşma temizliği uzun duraklamaları kesti",
     _CLEANUP_NOTHING_TO_CUT: "Konuşma temizliği kesilecek uzun bir duraklama bulmadı",
     _CLEANUP_NOT_RUN: ("Konuşma temizliği bu videoda çalışmadı, o yüzden uzun duraklamalar kaldı"),
+    _NAMED_CUTS_SEVERAL_TAKES: (
+        "Birkaç çekimden oluşan bir videodan henüz tek bir satırı kesemiyorum, o yüzden kalıyor"
+    ),
     _CLEANUP_SEVERAL_TAKES: (
         "Birkaç çekimden oluşan bir videodan henüz bir şey kesemiyorum, o yüzden kesmemi "
         "istediğin duraklamalar ve satırlar kalıyor"
@@ -7575,6 +7583,7 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _CLEANUP_IF_OFFERED,
     _CLEANUP_UNAVAILABLE,
     _CLEANUP_SEVERAL_TAKES,
+    _NAMED_CUTS_SEVERAL_TAKES,
     *_TIGHT_STATIC_LINES,
     _CLEANUP_DONE,
     _CLEANUP_NOTHING_TO_CUT,
@@ -8954,7 +8963,8 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         return _receipt(req, "partial", _CANT_CHECK_CLEANUP)
     if facts.rendered_variant:
         return _merge_cleanup_timing(req, facts, _check_rendered_cleanup(req, facts))
-    if facts.phone_talking and (facts.video_clip_count or 0) > 1:
+    several_takes = bool(facts.phone_talking and (facts.video_clip_count or 0) > 1)
+    if several_takes and not _multi_take_cleanup_on():
         # KRI-720 (S3 Yorum2, job 7416c94b): several takes render whole, whatever approval
         # offers, so no cleanup, named-line or restart promise is true here.
         cleanup = _receipt(req, "partial", _loc(_CLEANUP_SEVERAL_TAKES))
@@ -8974,7 +8984,11 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     if _wants_named_cuts(req):
         from app.kria.opening_cut_ask import named_cut_asks  # noqa: PLC0415
 
-        if (facts.phone_talking or _cuts_named_voiceover_lines(facts)) and named_cut_asks([req]):
+        if several_takes:
+            # KRI-720: every take's pauses are cut, but no named line is cut from several takes.
+            notes.append(_loc(_NAMED_CUTS_SEVERAL_TAKES))
+            status = "partial"
+        elif (facts.phone_talking or _cuts_named_voiceover_lines(facts)) and named_cut_asks([req]):
             # KRI-821: the phone Talking render cuts each named line it finds said once;
             # KRI-889: so does a narrated render, out of the recorded voiceover.
             # Not certain before the render finds the line, so never "Done" (KRI-792).
@@ -8992,6 +9006,16 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         status = "partial"
     cleanup = _receipt(req, status, "; ".join(notes) if status == "partial" else None)
     return _merge_cleanup_timing(req, facts, cleanup)
+
+
+def _multi_take_cleanup_on() -> bool:
+    """KRI-720: whether a several-take Talking edit gets speech cleanup (one gate, shared with
+    the resolver, dispatch and the worker)."""
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_talking_multi_take_cleanup_supported,
+    )
+
+    return phone_talking_multi_take_cleanup_supported()
 
 
 def _retake_detection_on(facts: PlanFacts | None = None) -> bool:

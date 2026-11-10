@@ -396,6 +396,15 @@ class Settings(BaseSettings):
     # Apply: `fly secrets set PHONE_TALKING_MULTI_SPEAKER_BEATS_ENABLED=true --app nova-video`
     # + restart api + worker.
     phone_talking_multi_speaker_beats_enabled: bool = False
+    # KRI-720: speech cleanup (pauses, fillers) for a Talking edit made of several takes. The
+    # preflight analyses every clip with sound as its own take (one analysis row, one payload
+    # per take), the creator consents once, and the phone render cuts each talking take with
+    # its own plan before joining them. False (default): byte-identical, several takes stay
+    # `ambiguous_embedded_source` and the draft says cleanup couldn't run. Needs several-clip
+    # Talking (`phone_talking_multi_clip_supported`). See
+    # `phone_rollout.phone_talking_multi_take_cleanup_supported`. Apply: `fly secrets set
+    # TALKING_MULTI_TAKE_CLEANUP_ENABLED=true --app nova-video` + restart api + worker.
+    talking_multi_take_cleanup_enabled: bool = False
     # KRI-1340 (Çiğdem S3 Yorum1): a talk-to-camera video attached through Visuals in a Talking
     # item becomes one of its talking takes, exactly as if it had been attached as footage. When
     # its analysis lands (`speech.to_camera`), the server makes the analysis proxy the phone would

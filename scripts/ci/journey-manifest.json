@@ -1160,11 +1160,12 @@
     {
       "id": "kri-719-talking-multi-clip",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_phone_talking_cutaways.py tests/tasks/test_phone_subtitled_narrated_dispatch.py tests/kria/test_s3_yorum2_talking_clip_order.py tests/tasks/test_s3_talking_pinned_take_order.py tests/tasks/test_s3_three_takes_fullscreen_photos.py",
+      "api_tests": "tests/pipeline/test_phone_talking_cutaways.py tests/tasks/test_phone_subtitled_narrated_dispatch.py tests/kria/test_s3_yorum2_talking_clip_order.py tests/tasks/test_s3_talking_pinned_take_order.py tests/tasks/test_s3_three_takes_fullscreen_photos.py tests/services/test_multi_take_speech_cleanup.py",
       "paths": [
         "src/apps/api/app/pipeline/phone_talking_cutaways.py",
         "src/apps/api/app/services/talking_clip_anchors.py",
         "src/apps/api/tests/fixtures/s3_yorum2_talking_order.json",
+        "src/apps/api/tests/fixtures/kri720_s3_take_observations.json",
         "src/apps/api/tests/pipeline/test_phone_talking_cutaways.py"
       ]
     },

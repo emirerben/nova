@@ -9378,7 +9378,15 @@ def _run_phone_subtitled_job(
     # exists, further down; this only normalizes the contract token.
     speech_cleanup_contract = str(snapshot.get("speech_cleanup_contract") or "legacy_auto")
     cleanup_required = speech_cleanup_contract == "required_v1"
-    if multi_clip and cleanup_required:
+    # KRI-720: a several-take Talking edit cuts every talking take with its own preflight plan.
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_talking_multi_take_cleanup_supported,
+    )
+
+    multi_take_cleanup = (
+        talking_multi and cleanup_required and phone_talking_multi_take_cleanup_supported()
+    )
+    if multi_clip and cleanup_required and not multi_take_cleanup:
         # KRI-136 v1: cutaway windows are scheduled on the uncut speaker
         # timeline only. The dispatch gate already refuses cleanup for a
         # multi-clip phone item (`speech_cleanup_unavailable_on_phone`); never
@@ -9974,16 +9982,40 @@ def _run_phone_subtitled_job(
             speech_cleanup_outcome_context: dict[str, Any] | None = None
             tight_pauses_report: dict[str, Any] | None = None
             long_pauses_report: dict[str, Any] | None = None
+            # KRI-720: each extra talking take's own cut (clip id -> plan) and words, and the
+            # per-take receipt the editor rebuilds them from. Empty unless several takes are cut.
+            extra_take_plans: dict[str, CutPlan] = {}
+            extra_take_snapshots: dict[str, HydratedSpeechCleanupSnapshot] = {}
+            extra_long_pauses: list[dict[str, Any]] = []
+            take_join_trims: list[dict[str, Any]] = []
             if cleanup_required:
                 try:
-                    speech_cleanup_snapshot = hydrate_job_speech_cleanup_snapshot(
-                        snapshot
-                    ).require_source(
+                    job_cleanup_snapshot = hydrate_job_speech_cleanup_snapshot(snapshot)
+                    if multi_take_cleanup:
+                        if not job_cleanup_snapshot.multi_take:
+                            raise SpeechCleanupSnapshotError("multi_take_snapshot")
+                        spine_take = job_cleanup_snapshot.take(gcs_path)
+                        if spine_take is None or spine_take.snapshot is None:
+                            raise SpeechCleanupSnapshotError("speaker_take")
+                        job_cleanup_snapshot = spine_take.snapshot
+                    elif job_cleanup_snapshot.multi_take:
+                        raise SpeechCleanupSnapshotError("multi_take_snapshot")
+                    speech_cleanup_snapshot = job_cleanup_snapshot.require_source(
                         kind="embedded_spine",
                         storage_path=gcs_path,
                         window_start_s=0.0,
                         window_duration_s=float(probe.duration_s),
                     )
+                    if multi_take_cleanup:
+                        extra_take_plans, extra_take_snapshots = _phone_extra_take_plans(
+                            hydrate_job_speech_cleanup_snapshot(snapshot),
+                            extra_speaker_ids=extra_speaker_ids,
+                            extra_speaker_bindings=extra_speaker_bindings,
+                            ending_media_id=ending_footage_media_id,
+                            clip_id_to_gcs=clip_id_to_gcs,
+                            clip_id_to_local=clip_id_to_local,
+                            probe_map=probe_map,
+                        )
                 except SpeechCleanupSnapshotError as exc:
                     raise SpeechCleanupFailure("snapshot_mismatch", exc.detail) from exc
                 cut_plan = speech_cleanup_snapshot.cut_plan
@@ -9996,18 +10028,19 @@ def _run_phone_subtitled_job(
                 speech_cleanup_outcome_context = speech_cleanup_snapshot.outcome_context(
                     analysis_view="full_clip"
                 )
-                if not multi_clip:
+                if not multi_clip or multi_take_cleanup:
                     # Qendresa 13: "cut all my pauses so it's tight" -- extra pause cuts on top
                     # of the consented plan, before the opening cut and before the outcome
                     # bookkeeping below, so they count as cleanup.
                     consented_plan = cut_plan
-                    cut_plan, tight_pauses_report = _phone_tight_pause_cut(
-                        snapshot,
-                        cut_plan,
-                        speech_cleanup_snapshot.source_words(),
-                        clip_path=clip_path,
-                        duration_s=float(probe.duration_s),
-                    )
+                    if not multi_clip:
+                        cut_plan, tight_pauses_report = _phone_tight_pause_cut(
+                            snapshot,
+                            cut_plan,
+                            speech_cleanup_snapshot.source_words(),
+                            clip_path=clip_path,
+                            duration_s=float(probe.duration_s),
+                        )
                     if tight_pauses_report is None:
                         # Emir's camera take: the cleanup default also cuts pauses the word
                         # stamps swallow (>= 0.6 s). Never when the creator asked for tight.
@@ -10025,6 +10058,65 @@ def _run_phone_subtitled_job(
                         )
                         speech_cleanup_outcome_context["output_removed_ms"] = max(
                             0, int(round(cut_plan.time_saved_s * 1000))
+                        )
+                    if multi_take_cleanup:
+                        # KRI-720: the same default long-pause pass on every other take, and
+                        # the public counts cover every take that was cut.
+                        for extra_id, extra_plan in list(extra_take_plans.items()):
+                            extra_local = clip_id_to_local[extra_id]
+                            extra_plan, extra_report = _phone_long_pause_cut(
+                                snapshot,
+                                extra_plan,
+                                extra_take_snapshots[extra_id].source_words(),
+                                clip_path=extra_local,
+                                duration_s=float(probe_map[extra_local].duration_s),
+                            )
+                            if not extra_plan.keep_segments or all(
+                                end <= start for start, end in extra_plan.keep_segments
+                            ):
+                                raise SpeechCleanupFailure(
+                                    "apply_failed", "speech cleanup removed a whole take"
+                                )
+                            extra_take_plans[extra_id] = extra_plan
+                            if extra_report is not None:
+                                extra_long_pauses.append(extra_report)
+                        # The joins between consecutive cut takes (the first take, then every
+                        # later take that has a plan, in play order).
+                        join_ids = [None, *(i for i in extra_speaker_ids if i in extra_take_plans)]
+                        joined, take_join_trims = _trim_take_joins(
+                            [
+                                (
+                                    cut_plan if cid is None else extra_take_plans[cid],
+                                    clip_path if cid is None else clip_id_to_local[cid],
+                                    float(
+                                        probe.duration_s
+                                        if cid is None
+                                        else probe_map[clip_id_to_local[cid]].duration_s
+                                    ),
+                                )
+                                for cid in join_ids
+                            ]
+                        )
+                        for cid, plan in zip(join_ids, joined, strict=True):
+                            if cid is None:
+                                cut_plan = plan
+                            else:
+                                extra_take_plans[cid] = plan
+                        speech_cleanup_outcome_context["output_removal_count"] = sum(
+                            _merged_removal_count(plan.removed)
+                            for plan in (cut_plan, *extra_take_plans.values())
+                        )
+                        speech_cleanup_outcome_context["output_removed_ms"] = max(
+                            0,
+                            int(
+                                round(
+                                    sum(
+                                        plan.time_saved_s
+                                        for plan in (cut_plan, *extra_take_plans.values())
+                                    )
+                                    * 1000
+                                )
+                            ),
                         )
             # KRI-628: "start the video at '...'" cuts the speech before that line out of
             # the cleanup plan (the plan's keep segments are the only trim this render has).
@@ -10335,6 +10427,58 @@ def _run_phone_subtitled_job(
                     timeline_words = remap_words(words, cut_plan)
                 if insert_asks:
                     insert_spoken_words = remap_words(words, cut_plan)
+                if multi_take_cleanup:
+                    # KRI-720: the first take's SPOKEN words on the cut timeline feed the mention
+                    # and beat grounders, as the uncut branch's do; then every other take's own
+                    # cut words, shifted to where it plays (after the takes before it, cut).
+                    spine_spoken = _cut_spoken_words(words, cut_plan, offset_s=0.0)
+                    if mention_ask is not None:
+                        mention_words = list(spine_spoken)
+                    if multi_speaker_beats:
+                        beat_words = [_beat_word(word, 0.0) for word in spine_spoken]
+                    extra_offset_s = _take_kept_s(cut_plan, float(binding.original.duration_s))
+                    for extra_id, extra_binding in zip(
+                        extra_speaker_ids, extra_speaker_bindings, strict=True
+                    ):
+                        extra_plan = extra_take_plans.get(extra_id)
+                        extra_snapshot = extra_take_snapshots.get(extra_id)
+                        extra_words = (
+                            _cut_spoken_words(
+                                extra_snapshot.source_words(), extra_plan, offset_s=extra_offset_s
+                            )
+                            if extra_snapshot is not None and extra_plan is not None
+                            else _cut_spoken_words(
+                                getattr(talking_transcripts.get(extra_id), "words", None) or [],
+                                None,
+                                offset_s=extra_offset_s,
+                            )
+                        )
+                        if extra_words:
+                            extra_caption_words = extra_words
+                            if caption_language_req is not None:
+                                extra_caption_words = _ensure_requested_caption_language(
+                                    extra_words,
+                                    requested=caption_language_req,
+                                    fallback_language=_clip_spoken_language(clip_metas, extra_id),
+                                    job_id=job_id,
+                                    variant_id="subtitled",
+                                    glossary=_caption_glossary(snapshot, all_candidates),
+                                ).words
+                            cues = cues + build_plain_cues(
+                                extra_caption_words, attach_words=True, budget=PHONE_CUE_BUDGET
+                            )
+                            if spoken_text_asks or list_label_asks:
+                                timeline_words.extend(
+                                    {"text": w.text, "start_s": w.start_s, "end_s": w.end_s}
+                                    for w in extra_words
+                                )
+                            if mention_ask is not None:
+                                mention_words.extend(extra_words)
+                            if multi_speaker_beats:
+                                beat_words.extend(_beat_word(word, 0.0) for word in extra_words)
+                        extra_offset_s += _take_kept_s(
+                            extra_plan, float(extra_binding.original.duration_s)
+                        )
             else:
                 # KRI-839: `transcript` is the SPOKEN pass -- always auto-language, even
                 # when the creator asked for captions in another language. Reaction
@@ -10521,6 +10665,24 @@ def _run_phone_subtitled_job(
                 clip_metas=clip_metas,
             )
 
+            # KRI-720: every other talking take's kept segments, by media id, for the compiler
+            # (`additional_speaker_keep_segments`); empty, and absent from the call, when none
+            # was cut, so the recipe stays byte-identical.
+            extra_keep_by_media: dict[str, list[tuple[float, float]]] = {
+                extra_binding.media_id: [
+                    (float(start), float(end))
+                    for start, end in extra_take_plans[extra_id].keep_segments
+                ]
+                for extra_id, extra_binding in zip(
+                    extra_speaker_ids, extra_speaker_bindings, strict=True
+                )
+                if extra_id in extra_take_plans and extra_take_plans[extra_id].removed
+            }
+            extra_keep_compile: dict[str, Any] = (
+                {"additional_speaker_keep_segments": extra_keep_by_media}
+                if extra_keep_by_media
+                else {}
+            )
             # The speaker's span exactly as the compiler plays it: the cleanup
             # cut, else the phone-measured clip (which can run a hair shorter
             # than the proxy `probe` measured).
@@ -10548,6 +10710,7 @@ def _run_phone_subtitled_job(
                             extra_speaker_ids, extra_speaker_bindings, strict=True
                         )
                     ),
+                    **({"extra_keep_segments": extra_keep_by_media} if extra_keep_by_media else {}),
                     **text_canvas,
                 )
             )
@@ -10610,7 +10773,11 @@ def _run_phone_subtitled_job(
             # plus every extra speaker in full.
             talking_timeline_s = sum(
                 max(0.0, end - start) for start, end in speaker_keep_segments
-            ) + sum(float(extra.original.duration_s) for extra in extra_speaker_bindings)
+            ) + sum(
+                # KRI-720: a cut take plays its kept seconds (no cut: its whole length).
+                _take_kept_s(extra_take_plans.get(extra_id), float(extra.original.duration_s))
+                for extra_id, extra in zip(extra_speaker_ids, extra_speaker_bindings, strict=True)
+            )
             if insert_asks:
                 # Parent KRI-1151: where each asked clip pauses the take. Everything below
                 # (cutaways, titles, lanes) is still laid out on the TAKE timeline, which has
@@ -10749,14 +10916,20 @@ def _run_phone_subtitled_job(
                     # The ending plays the LAST speaker: place the text off its
                     # face on its own clock, then move it to where it plays.
                     last = extra_speaker_bindings[-1]
-                    last_duration_s = float(last.original.duration_s)
+                    # KRI-720: a cut last take plays (and its ending is placed on) its kept span.
+                    last_plan = extra_take_plans.get(extra_speaker_ids[-1])
+                    last_duration_s = _take_kept_s(last_plan, float(last.original.duration_s))
                     rows, receipt, drawings = _phone_talking_closing_rows(
                         talking_closing_text,
                         photo_card=None,
                         photo_aspect=None,
                         binding=last,
                         clip_path=clip_id_to_local.get(extra_speaker_ids[-1]),
-                        keep_segments=[(0.0, last_duration_s)],
+                        keep_segments=(
+                            [(float(a), float(b)) for a, b in last_plan.keep_segments]
+                            if last_plan is not None and last_plan.removed
+                            else [(0.0, float(last.original.duration_s))]
+                        ),
                         landscape_fit=landscape_fit,
                         # KRI-903: kept off what was marked on this clip, as on the first one.
                         protected=_speaker_protection(protected_plan, last.media_id),
@@ -10934,6 +11107,7 @@ def _run_phone_subtitled_job(
                     cutaways=reserved.cutaways,
                     landscape_fit=landscape_fit,
                     additional_speakers=extra_speaker_bindings,
+                    **extra_keep_compile,
                     **({"inserts": inserts} if inserts else {}),
                     **framed_compile,
                 )
@@ -11017,6 +11191,7 @@ def _run_phone_subtitled_job(
                         title_rows or spoken_text_rows or closing_text_rows
                     ),
                     additional_speakers=extra_speaker_bindings,
+                    **extra_keep_compile,
                     strategy=talking_strategy,
                     requirements=talking_requirements,
                     **({"inserts": inserts} if inserts else {}),
@@ -11225,7 +11400,10 @@ def _run_phone_subtitled_job(
                             # ONE take's frames, so they are reported instead.
                             beats_to_ground, multi_take_held = _multi_take_fullscreen_beats(
                                 beats_to_ground + title_anchored,
-                                spine_cut=bool(cut_plan is not None and cut_plan.removed),
+                                # KRI-720: several cut takes put `beat_words` on the cut
+                                # timeline themselves, so a cut first take no longer holds them.
+                                spine_cut=bool(cut_plan is not None and cut_plan.removed)
+                                and not multi_take_cleanup,
                             )
                             title_anchored = []
                             if closing_to_ground:
@@ -11829,6 +12007,7 @@ def _run_phone_subtitled_job(
                         text_elements=moved.text_rows,
                         text_elements_user_edited=bool(text_rows),
                         additional_speakers=extra_speaker_bindings,
+                        **extra_keep_compile,
                         strategy=talking_strategy,
                         requirements=talking_requirements,
                         **({"inserts": inserts} if inserts else {}),
@@ -12513,6 +12692,34 @@ def _run_phone_subtitled_job(
                 "cutaways": list(talking_cutaway_windows),
                 "unplaced": list(talking_unplaced),
                 "clips": list(talking_roles.receipt),
+                # KRI-720: what cleanup cut from each later take, in its own source time (the
+                # first take's cut is `silence_cut`). The editor preview splits each take by it
+                # (iOS `NativePhoneTalkingSource.speakerRemovedSpans`). Absent when none was cut.
+                **(
+                    {
+                        "speaker_removed": [
+                            {
+                                "media_id": extra_binding.media_id,
+                                "removed": [
+                                    {"start_s": row["start_s"], "end_s": row["end_s"]}
+                                    for row in _phone_cut_summary(
+                                        extra_take_plans[extra_id],
+                                        probe_s=float(
+                                            probe_map[clip_id_to_local[extra_id]].duration_s
+                                        ),
+                                        original_s=float(extra_binding.original.duration_s),
+                                    )["removed"]
+                                ],
+                            }
+                            for extra_id, extra_binding in zip(
+                                extra_speaker_ids, extra_speaker_bindings, strict=True
+                            )
+                            if extra_id in extra_take_plans and extra_take_plans[extra_id].removed
+                        ]
+                    }
+                    if extra_keep_by_media
+                    else {}
+                ),
                 **({"lanes_skipped": "multiple_speakers"} if talking_lanes_skipped else {}),
                 **({"mention_cutaways": mention_receipt} if mention_receipt is not None else {}),
                 # KRI-841: the last speaker above is the creator's ending clip.
@@ -12570,6 +12777,12 @@ def _run_phone_subtitled_job(
             new_entry["tight_pauses"] = tight_pauses_report
         if long_pauses_report is not None:
             new_entry["long_pauses"] = long_pauses_report
+        if extra_long_pauses:
+            # KRI-720: the default long-pause pass on each later take (admin/debug evidence).
+            new_entry["long_pauses_other_takes"] = list(extra_long_pauses)
+        if take_join_trims:
+            # KRI-720: silence trimmed where two cut takes meet (take index in play order).
+            new_entry["take_join_trims"] = list(take_join_trims)
         if cut_plan is not None and not opening_cut_only:
             # The source `_speech_cleanup_outcome_context` the device-export completion route
             # (`app.routes.device_render._device_speech_cleanup_outcome`) reads to publish the
@@ -12979,6 +13192,167 @@ def _phone_tight_pause_cut(
     except Exception:  # noqa: BLE001 - observability only
         pass
     return new_plan, receipt
+
+
+def _phone_extra_take_plans(
+    job_snapshot: HydratedSpeechCleanupSnapshot,
+    *,
+    extra_speaker_ids: Sequence[str],
+    extra_speaker_bindings: Sequence[Any],
+    ending_media_id: str | None,
+    clip_id_to_gcs: Mapping[str, str],
+    clip_id_to_local: Mapping[str, str],
+    probe_map: Mapping[str, Any],
+) -> tuple[dict[str, CutPlan], dict[str, HydratedSpeechCleanupSnapshot]]:
+    """KRI-720: the consented cut of every talking take after the first, by clip id.
+
+    Each take is fenced exactly like the first one (its own path and the window this render
+    plays), so a plan never lands on another take's bytes. A creator's footage ending
+    (KRI-841) plays whole: it is not a take the creator spoke. A take the preflight heard no
+    speech in (no analysis) also plays whole: there is nothing in it to cut. A talking take
+    the preflight never saw (the item's takes changed after consent) fails closed.
+    Raises ``SpeechCleanupSnapshotError``.
+    """
+
+    plans: dict[str, CutPlan] = {}
+    snapshots: dict[str, HydratedSpeechCleanupSnapshot] = {}
+    for extra_id, extra_binding in zip(extra_speaker_ids, extra_speaker_bindings, strict=True):
+        if ending_media_id is not None and extra_binding.media_id == ending_media_id:
+            continue
+        extra_gcs = clip_id_to_gcs.get(extra_id)
+        extra_local = clip_id_to_local.get(extra_id)
+        extra_probe = probe_map.get(extra_local) if extra_local else None
+        if not extra_gcs or extra_probe is None:
+            raise SpeechCleanupSnapshotError("speaker_take")
+        take = job_snapshot.take(extra_gcs)
+        if take is None:
+            raise SpeechCleanupSnapshotError("speaker_take")
+        if take.snapshot is None:
+            continue
+        fenced = take.snapshot.require_source(
+            kind="embedded_spine",
+            storage_path=extra_gcs,
+            window_start_s=0.0,
+            window_duration_s=float(extra_probe.duration_s),
+        )
+        plan = fenced.cut_plan
+        if not plan.keep_segments or all(end <= start for start, end in plan.keep_segments):
+            raise SpeechCleanupSnapshotError("speaker_take_empty")
+        plans[extra_id] = plan
+        snapshots[extra_id] = fenced
+    return plans, snapshots
+
+
+def _cut_spoken_words(words: Sequence[Any], plan: CutPlan | None, *, offset_s: float) -> list[Any]:
+    """KRI-720: one take's spoken words on its cut timeline (fillers the cut removed are gone),
+    ``offset_s`` later. ``plan`` None (or a plan that cut nothing) keeps every word."""
+    from app.pipeline.silence_cut import is_filler_token, remap_words  # noqa: PLC0415
+    from app.pipeline.transcribe import Word  # noqa: PLC0415
+
+    if plan is None or not plan.removed:
+        return [
+            Word(
+                text=word.text,
+                start_s=float(word.start_s) + offset_s,
+                end_s=float(word.end_s) + offset_s,
+                confidence=getattr(word, "confidence", 1.0),
+            )
+            for word in words
+        ]
+    return [
+        Word(
+            text=item["text"],
+            start_s=float(item["start_s"]) + offset_s,
+            end_s=float(item["end_s"]) + offset_s,
+            confidence=1.0,
+        )
+        for item in remap_words(list(words), plan)
+        if not is_filler_token(item["text"])
+    ]
+
+
+# KRI-720: silence kept on EACH side of a join between two cut takes. Each take's own cleanup
+# sees only its own pauses, so the end of one take and the start of the next would otherwise add
+# up to one long pause where they meet (S3 native proof: 0.61 s at the C -> A join).
+TAKE_JOIN_KEEP_S = 0.15
+
+
+def _trim_take_joins(
+    takes: Sequence[tuple[CutPlan, str, float]],
+) -> tuple[list[CutPlan], list[dict[str, Any]]]:
+    """KRI-720: trim the silence at every join between consecutive cut takes.
+
+    ``takes`` is in play order: ``(plan, local clip path, take duration)``. A take's kept end
+    that sits in silence keeps only ``TAKE_JOIN_KEEP_S`` of it before the next take, and the
+    next take's kept start keeps only ``TAKE_JOIN_KEEP_S`` of its lead-in. Silence is measured
+    on the take's own audio with the pause cutter's definition; a take that cannot be measured
+    or that the trim would empty is left as it is. Returns the new plans and one receipt row per
+    trim.
+    """
+    from app.pipeline.silence_cut import REASON_SILENCE, Removal  # noqa: PLC0415
+    from app.pipeline.tight_pause_cut import measure_silence_spans  # noqa: PLC0415
+
+    plans = [plan for plan, _path, _duration in takes]
+    rows: list[dict[str, Any]] = []
+
+    def _cut(plan: CutPlan, start_s: float, end_s: float, duration_s: float) -> CutPlan | None:
+        keep = [
+            piece
+            for a, b in plan.keep_segments
+            for piece in ((a, min(b, start_s)), (max(a, end_s), b))
+            if piece[1] - piece[0] > 1e-6
+        ]
+        if not keep:
+            return None
+        removed = sorted(
+            [*plan.removed, Removal(start_s=start_s, end_s=end_s, reason=REASON_SILENCE)],
+            key=lambda r: r.start_s,
+        )
+        saved = max(0.0, duration_s - sum(b - a for a, b in keep))
+        return replace(plan, keep_segments=keep, removed=removed, time_saved_s=saved)
+
+    for index, (_plan, path, duration_s) in enumerate(takes):
+        spans = measure_silence_spans(path, duration_s=duration_s)
+        if not spans:
+            continue
+        plan = plans[index]
+        if index > 0 and plan.keep_segments:
+            start = float(plan.keep_segments[0][0])
+            lead = next((e for s, e in spans if s <= start + 1e-3 and e > start), None)
+            if lead is not None and lead - start > TAKE_JOIN_KEEP_S + 1e-3:
+                trimmed = _cut(plan, start, lead - TAKE_JOIN_KEEP_S, duration_s)
+                if trimmed is not None:
+                    rows.append(
+                        {
+                            "take": index,
+                            "edge": "start",
+                            "removed_s": round(lead - TAKE_JOIN_KEEP_S - start, 3),
+                        }
+                    )
+                    plan = trimmed
+        if index < len(takes) - 1 and plan.keep_segments:
+            end = float(plan.keep_segments[-1][1])
+            tail = next((s for s, e in spans if s < end and e >= end - 1e-3), None)
+            if tail is not None and end - tail > TAKE_JOIN_KEEP_S + 1e-3:
+                trimmed = _cut(plan, tail + TAKE_JOIN_KEEP_S, end, duration_s)
+                if trimmed is not None:
+                    rows.append(
+                        {
+                            "take": index,
+                            "edge": "end",
+                            "removed_s": round(end - tail - TAKE_JOIN_KEEP_S, 3),
+                        }
+                    )
+                    plan = trimmed
+        plans[index] = plan
+    return plans, rows
+
+
+def _take_kept_s(plan: CutPlan | None, full_s: float) -> float:
+    """How long one take plays: its kept seconds when cut, else its whole length."""
+    if plan is None or not plan.removed:
+        return float(full_s)
+    return float(sum(max(0.0, end - start) for start, end in plan.keep_segments))
 
 
 def _phone_long_pause_cut(
@@ -13743,6 +14117,7 @@ def _phone_protected_plan(
     caption_style: str,
     canvas: Any = None,
     extra_speakers: Sequence[tuple[Any, str | None]] = (),
+    extra_keep_segments: Mapping[str, Sequence[tuple[float, float]]] | None = None,
 ) -> tuple[Any, Any, dict[str, Any] | None]:
     """KRI-827: what the creator asked to keep text off ("no text on her face or on the
     plate"), tracked over the speaker's kept span, and the caption look that keeps the
@@ -13783,27 +14158,39 @@ def _phone_protected_plan(
     )
     if plan is None:
         return None, None, None
-    # The clips after the first play in full, each right after the one before it, on the
-    # same clock the caption cues were shifted onto (`extra_offset_s`).
-    offset_s = float(binding.original.duration_s) if extra_speakers else 0.0
-    speakers: list[tuple[Any, str | None, Any, float, float]] = []
+    # The clips after the first play each right after the one before it, on the same clock the
+    # caption cues were shifted onto (`extra_offset_s`): in full, or (KRI-720) their kept
+    # segments when cleanup cut that take (``extra_keep_segments``, by media id).
+    # The first take plays its kept seconds whether or not a later take was cut (an uncut
+    # first take's `kept` is its whole length, so this equals the old value then).
+    first_s = sum(b - a for a, b in kept) if extra_speakers else 0.0
+    offset_s = first_s
+    speakers: list[tuple[Any, str | None, Any, float, float, list]] = []
     for extra_binding, extra_path in extra_speakers:
-        length_s = float(extra_binding.original.duration_s)
+        full_s = float(extra_binding.original.duration_s)
+        extra_keep = [
+            (float(a), float(b))
+            for a, b in (extra_keep_segments or {}).get(extra_binding.media_id) or [(0.0, full_s)]
+            if float(b) > float(a)
+        ]
+        length_s = sum(b - a for a, b in extra_keep)
         extra_plan = resolve_protected_plan(
             raw_binding,
             media_id=extra_binding.media_id,
             generation=getattr(extra_binding, "generation", None),
             clip_path=extra_path,
-            source_span=(0.0, length_s),
+            source_span=(extra_keep[0][0], extra_keep[-1][1]),
         )
         if extra_plan is not None:
-            speakers.append((extra_binding, extra_path, extra_plan, offset_s, offset_s + length_s))
+            speakers.append(
+                (extra_binding, extra_path, extra_plan, offset_s, offset_s + length_s, extra_keep)
+            )
         offset_s += length_s
     plans = [plan, *(speaker[2] for speaker in speakers)]
     caption_receipt: dict[str, Any] | None = None
     look = None
     if any(p.objects or p.protect_all_faces for p in plans):
-        first_end_s = float(binding.original.duration_s) if extra_speakers else 0.0
+        first_end_s = first_s if extra_speakers else 0.0
         subjects: list[Any] = []
         face_receipts: list[dict[str, Any]] = []
         resolved: list[Any] = []
@@ -13811,8 +14198,8 @@ def _phone_protected_plan(
             entries = [
                 (binding, clip_path, plan, 0.0, first_end_s, kept, position_x),
                 *(
-                    (b, path, sp, start, end, [(0.0, end - start)], 0.0)
-                    for b, path, sp, start, end in speakers
+                    (b, path, sp, start, end, keep, 0.0)
+                    for b, path, sp, start, end, keep in speakers
                 ),
             ]
             for entry in entries:
@@ -13896,7 +14283,9 @@ def _phone_protected_plan(
                 target_rows=merge_target_rows(resolved),
                 speakers=tuple(
                     SpeakerSlice(media_id=sb.media_id, start_s=start, end_s=end, plan=rp)
-                    for (sb, _path, _sp, start, end), rp in zip(speakers, resolved[1:], strict=True)
+                    for (sb, _path, _sp, start, end, _keep), rp in zip(
+                        speakers, resolved[1:], strict=True
+                    )
                 ),
             )
             look, caption_receipt = choose_caption_look(

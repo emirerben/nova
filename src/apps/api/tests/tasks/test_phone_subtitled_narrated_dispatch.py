@@ -3571,3 +3571,152 @@ def test_multi_clip_talking_refuses_required_speech_cleanup(monkeypatch):
     snapshot["speech_cleanup_contract"] = "required_v1"
     with pytest.raises(gb.SpeechCleanupFailure):
         gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+
+# --- KRI-720: speech cleanup on a Talking edit made of several takes ---------
+#
+# Failure modes this pins (docs/reviews/kri-720-multi-take-cleanup.md): only the first
+# take cut (F11/F12), a take's plan landing on another take (wrong-take
+# control), later captions/cutaways drifting by the time cut from earlier takes
+# (F11/F14), footage or a silent take "cleaned" (F2/F15), a take the preflight
+# never analysed played uncut or cut with a stale plan (F3), and the flag-off
+# path changing at all (F20; the refusal above stays the flag-off control).
+
+
+def _multi_take_snapshot(takes: list[tuple[str, str, bool]]) -> dict:
+    """A schema-2 job snapshot: ``takes`` = [(media_id, storage_path, analysed)] in clip
+    order. Every analysed take carries the proven two-removal fixture analysis
+    (`_raw_preflight_snapshot`), so each take's exact CutPlan is known."""
+    from app.pipeline.speech_cleanup_analysis import (
+        SpeechCleanupMultiTakeResult,
+        SpeechCleanupTakeResult,
+        multi_take_public_receipt,
+    )
+
+    single = _raw_preflight_snapshot(storage_path="unused")
+    fingerprint = single["source"]["source_policy_fingerprint"]
+    analysis = single["analysis"]
+    rows = tuple(
+        SpeechCleanupTakeResult.model_validate(
+            {
+                "media_id": media_id,
+                "storage_path": path,
+                "generation": "1",
+                "window_start_s": 0.0,
+                "window_end_s": DURATION,
+                "speaker": analysed,
+                "analysis": analysis if analysed else None,
+            }
+        )
+        for media_id, path, analysed in takes
+    )
+    payload = SpeechCleanupMultiTakeResult(
+        source_fingerprint=fingerprint,
+        detector_version=single["detector_version"],
+        takes=rows,
+        public_receipt=multi_take_public_receipt(rows),
+    ).to_payload()
+    first_id, first_path, _ = takes[0]
+    return {
+        **single,
+        "schema_version": 2,
+        "source": {
+            **single["source"],
+            "media_identity": first_id,
+            "storage_path": first_path,
+            "window_end_s": DURATION,
+        },
+        "analysis": payload,
+    }
+
+
+def _setup_multi_take_cleanup(monkeypatch, *, analysed=None, flag=True):
+    clips = [("take1", DURATION, 8), ("street", 6.0, 0), ("take2", DURATION, 8)]
+    job, snapshot, bindings = _setup_talking_multi(monkeypatch, clips=clips)
+    monkeypatch.setattr(gb.settings, "talking_multi_take_cleanup_enabled", flag)
+    # The default long-pause pass reads the clip's audio; these fixtures have none.
+    monkeypatch.setattr(gb.settings, "speech_cleanup_long_pauses_enabled", False)
+    analysed = analysed or {"take1": True, "street": False, "take2": True}
+    snapshot["speech_cleanup_contract"] = "required_v1"
+    snapshot["_speech_cleanup_internal"] = {
+        "preflight_snapshot": _multi_take_snapshot(
+            [
+                (cid, bindings[cid].proxy_path, analysed[cid])
+                for cid, _, _ in clips
+                if cid in analysed
+            ]
+        )
+    }
+    return job, snapshot, bindings
+
+
+def test_several_takes_are_each_cut_with_their_own_plan(monkeypatch):
+    job, snapshot, _bindings = _setup_multi_take_cleanup(monkeypatch)
+
+    gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert job.status == "awaiting_device"
+    recipe = device_status(job, "subtitled").request.recipe
+    main = next(t for t in recipe.tracks if t.id == "subtitled").clips
+    kept = [(0.0, 0.88), (1.42, 1.08), (4.4, 2.1)]
+    # Both takes play their OWN kept segments, back to back; the footage is not on the main track.
+    assert [
+        (c.source_asset_id, round(c.source_start, 3), round(c.source_duration, 3)) for c in main
+    ] == [("take1", *k) for k in kept] + [("take2", *k) for k in kept]
+    cursor = 0.0
+    for clip in main:
+        assert clip.timeline_start == pytest.approx(cursor, abs=1e-6)
+        cursor += clip.source_duration
+    take_s = DURATION - (0.54 + 1.9)
+    assert recipe.duration == pytest.approx(2 * take_s, abs=1e-3)
+
+    variant = job.assembly_plan["variants"][0]
+    cues = variant["caption_cues"]
+    # Captions come from each take's own preflight words (never the classifier's transcript),
+    # fillers cut out, and the second take's words sit after the first take's KEPT seconds.
+    text = " ".join(cue["text"] for cue in cues)
+    assert "take1w" not in text and "take2w" not in text
+    assert text.lower().count("today") == 2 and "um" not in text.lower().split()
+    second = [cue for cue in cues if cue["start_s"] >= take_s - 1e-6]
+    assert second and min(cue["start_s"] for cue in second) == pytest.approx(take_s + 0.5)
+    assert all(cue["end_s"] <= recipe.duration + 1e-6 for cue in cues)
+    # The footage cutaway sits on the cut timeline.
+    cutaways = next(t for t in recipe.tracks if t.id == "talking-head-cutaways").clips
+    assert all(c.timeline_start + c.source_duration <= recipe.duration + 1e-6 for c in cutaways)
+
+    context = variant["_speech_cleanup_outcome_context"]
+    assert context["output_removal_count"] == 4
+    assert context["output_removed_ms"] == pytest.approx(4880, abs=2)
+    receipt = variant[gb.PHONE_TALKING_MULTI_CLIP_FIELD]
+    assert receipt["speaker_media_ids"] == ["take1", "take2"]
+    (row,) = receipt["speaker_removed"]
+    assert row["media_id"] == "take2"
+    assert [(r["start_s"], r["end_s"]) for r in row["removed"]] == [(0.88, 1.42), (2.5, 4.4)]
+    _assert_receipt_cutaways_match_recipe(receipt, recipe)
+
+
+def test_several_takes_refuse_a_talking_take_the_check_never_saw(monkeypatch):
+    """Wrong-take control: the consent covered take1 + footage only; take2 talks now."""
+    job, snapshot, _bindings = _setup_multi_take_cleanup(
+        monkeypatch, analysed={"take1": True, "street": False}
+    )
+    with pytest.raises(gb.SpeechCleanupFailure) as caught:
+        gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+    assert caught.value.reason == "snapshot_mismatch"
+
+
+def test_several_takes_refuse_a_plan_made_for_another_window(monkeypatch):
+    """A take's plan is fenced to the clip it plays: a take now longer than its analysis fails."""
+    job, snapshot, _bindings = _setup_multi_take_cleanup(monkeypatch)
+    ingest = gb._ingest_clips()
+    ingest["probe_map"]["/tmp/take2.mp4"] = SimpleNamespace(duration_s=DURATION + 1.0)
+    monkeypatch.setattr(gb, "_ingest_clips", lambda *a, **k: ingest, raising=False)
+    with pytest.raises(gb.SpeechCleanupFailure) as caught:
+        gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+    assert caught.value.reason == "snapshot_mismatch"
+
+
+def test_several_takes_flag_off_still_refuse_cleanup(monkeypatch):
+    job, snapshot, _bindings = _setup_multi_take_cleanup(monkeypatch, flag=False)
+    with pytest.raises(gb.SpeechCleanupFailure):
+        gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
