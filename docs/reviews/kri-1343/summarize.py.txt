@@ -1,0 +1,59 @@
+"""Summarize corpus_eval/results.json into before/after numbers (report.json + printed table)."""
+
+import json
+import sys
+from collections import defaultdict
+
+path = sys.argv[1]
+results = json.load(open(path))
+agg = defaultdict(lambda: {"videos": 0, "layers": 0, "readable": 0, "over_photo": 0,
+                           "photo_hits": 0, "videos_all_readable": 0, "videos_no_hits": 0,
+                           "errors": 0, "worst": []})
+by_ask = defaultdict(lambda: defaultdict(lambda: [0, 0]))
+fails_after = []
+for r in results:
+    key = "after" if r["flag"] else "before"
+    a = agg[key]
+    if "error" in r:
+        a["errors"] += 1
+        continue
+    a["videos"] += 1
+    layers = r["layers"]
+    ok = [l["contrast"] >= 4.5 for l in layers]
+    hits = [l for l in layers if l["text_hits"]]
+    a["layers"] += len(layers)
+    a["readable"] += sum(ok)
+    a["over_photo"] += sum(1 for l in layers if l["over_photo"])
+    a["photo_hits"] += len(hits)
+    a["videos_all_readable"] += all(ok)
+    a["videos_no_hits"] += not hits
+    a["worst"].append(min((l["contrast"] for l in layers), default=99))
+    by_ask[r["ask"]][key][0] += sum(ok)
+    by_ask[r["ask"]][key][1] += len(layers)
+    if r["flag"] and (not all(ok) or hits):
+        fails_after.append({"run": r["run"], "ask": r["ask"], "lang": r["lang"],
+                            "bad": [l for l in layers if l["contrast"] < 4.5 or l["text_hits"]],
+                            "receipt": r.get("receipt")})
+report = {}
+for key in ("before", "after"):
+    a = agg[key]
+    report[key] = {
+        "videos": a["videos"], "errors": a["errors"], "caption_lines": a["layers"],
+        "lines_readable_pct": round(100 * a["readable"] / max(1, a["layers"]), 1),
+        "videos_all_lines_readable": a["videos_all_readable"],
+        "lines_on_photo_text": a["photo_hits"],
+        "videos_with_no_photo_text_hit": a["videos_no_hits"],
+    }
+report["by_ask_readable_pct"] = {
+    ask: {k: round(100 * v[0] / max(1, v[1]), 1) for k, v in d.items()} for ask, d in by_ask.items()
+}
+langs = defaultdict(int)
+for r in results:
+    langs[r.get("lang")] += 1
+report["runs_by_language"] = dict(langs)
+report["after_failures"] = fails_after
+print(json.dumps({k: v for k, v in report.items() if k != "after_failures"}, indent=1))
+print("after failures:", len(fails_after))
+for f in fails_after[:15]:
+    print(f["run"], f["ask"], f["lang"], [(b["id"], b["contrast"], b["text_hits"], b["over_photo"]) for b in f["bad"]][:4], (f["receipt"] or {}).get("treatment"))
+json.dump(report, open(path.replace("results.json", "report.json"), "w"), indent=1)

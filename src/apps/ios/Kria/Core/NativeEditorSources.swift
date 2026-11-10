@@ -165,8 +165,15 @@ struct NativeEditorBaseSource: Sendable {
 ///
 /// Several videos (KRI-719): the server plays every speaker back to back on
 /// the main track, in the order of the variant's `phone_talking_multi_clip`
-/// receipt (`speaker_media_ids`). The first speaker carries any cut; the rest
-/// play in full. The receipt's `cutaways` windows (footage clips shown full
+/// receipt (`speaker_media_ids`). Each take is cut on its own (KRI-720): the
+/// receipt's `speaker_removed` rows (`{media_id, removed: [{start_s, end_s}]}`)
+/// give the source spans cleanup removed from that take, and the recipe plays
+/// one hard-cut clip per kept segment per take, so the preview splits every
+/// speaker the same way. The first speaker without a row keeps using
+/// `silence_cut.removed`; any other speaker without a row plays in full (and a
+/// receipt without the key previews exactly as before). A malformed row, or
+/// one naming a clip that is not a speaker, falls back to the finished MP4.
+/// The receipt's `cutaways` windows (footage clips shown full
 /// frame, muted, over the speakers) are drawn on top as locked preview
 /// clips: they never enter the document, so nothing can select, move or
 /// Save them (Save keeps them from the pinned recipe, `cutaways_from_recipe`).
@@ -285,6 +292,34 @@ enum NativePhoneTalkingSource {
         return result
     }
 
+    /// Per-take cleanup cuts (KRI-720) from the receipt's `speaker_removed` rows, keyed by speaker clip index,
+    /// each sorted by start. `[:]` when there is no receipt or no such key, so those previews are unchanged.
+    /// Nil when the key or any row or span is malformed, names a clip that is not one of `speakerIndices`, or
+    /// repeats a speaker: a preview that played a take uncut (or cut the wrong take) would put every later
+    /// caption on the wrong words, so the caller falls back to the finished MP4 instead.
+    static func speakerRemovedSpans(variant: [String: JSONValue], pool: NativeEditorSourcePool,
+                                    speakerIndices: [Int]) -> [Int: [(start: Double, end: Double)]]? {
+        guard let receiptValue = variant[multiClipReceiptField] else { return [:] }
+        guard let receipt = receiptValue.objectValue else { return nil }
+        guard let rowsValue = receipt["speaker_removed"] else { return [:] }
+        guard case .array(let rows) = rowsValue else { return nil }
+        var result: [Int: [(start: Double, end: Double)]] = [:]
+        for row in rows {
+            guard let fields = row.objectValue, let mediaID = fields["media_id"]?.stringValue,
+                  case .array(let spanRows)? = fields["removed"],
+                  let clip = pool.clips.first(where: { $0.nativeSource?.mediaID == mediaID }),
+                  speakerIndices.contains(clip.clipIndex), result[clip.clipIndex] == nil else { return nil }
+            var spans: [(start: Double, end: Double)] = []
+            for spanRow in spanRows {
+                guard let span = spanRow.objectValue, let start = span["start_s"]?.numberValue,
+                      let end = span["end_s"]?.numberValue, start.isFinite, end.isFinite, start >= 0, end > start else { return nil }
+                spans.append((start, end))
+            }
+            result[clip.clipIndex] = spans.sorted { $0.start < $1.start }
+        }
+        return result
+    }
+
     /// Source spans speech cleanup removed from this variant, sorted. Empty
     /// when no cleanup was applied.
     static func removedSpans(variant: [String: JSONValue]) -> [(start: Double, end: Double)] {
@@ -352,20 +387,27 @@ enum NativePhoneTalkingSource {
         try hydrate(document, speakers: [.init(clipIndex: clipIndex, duration: duration)], removed: removed)
     }
 
-    /// `removed` applies to the first speaker only (the server cuts only it); every later speaker plays in
-    /// full right after it. `inserts` pause the first speaker's kept seconds (take timeline): the take plays
-    /// up to each point, the inserted clip plays whole, and the take resumes from the second it stopped.
+    /// `removed` (`silence_cut.removed`) cuts the first speaker; `speakerRemoved` (KRI-720, keyed by clip index)
+    /// cuts any speaker and wins over `removed` for the first. Every speaker plays its kept segments back to
+    /// back, right after the one before; a later speaker with no entry plays in full. `inserts` pause the first
+    /// speaker's kept seconds (take timeline): the take plays up to each point, the inserted clip plays whole,
+    /// and the take resumes from the second it stopped.
     static func hydrate(_ document: EditorDocument, speakers: [Speaker],
                         removed: [(start: Double, end: Double)] = [],
+                        speakerRemoved: [Int: [(start: Double, end: Double)]] = [:],
                         inserts: [PlacedInsert] = []) throws -> EditorDocument {
         guard let first = speakers.first,
               speakers.allSatisfy({ $0.duration.isFinite && $0.duration > 0 }) else { throw APIError.invalidResponse }
         guard document.editorState != "empty" else { return document }
         guard document.clips.isEmpty || document.clips.allSatisfy({ $0.raw["native_composite_source"] == .bool(true) }) else { return document }
-        let kept = keptSegments(duration: first.duration, removed: removed)
+        let kept = keptSegments(duration: first.duration, removed: speakerRemoved[first.clipIndex] ?? removed)
         guard !kept.isEmpty else { throw RecipeError.invalidTimeline }
         let take = try takePieces(kept: kept, speaker: first, inserts: inserts)
-        let extra = speakers.dropFirst().map { Piece(clipIndex: $0.clipIndex, start: 0, end: $0.duration, sourceDuration: $0.duration) }
+        let extra = try speakers.dropFirst().flatMap { speaker -> [Piece] in
+            let segments = keptSegments(duration: speaker.duration, removed: speakerRemoved[speaker.clipIndex] ?? [])
+            guard !segments.isEmpty else { throw RecipeError.invalidTimeline }
+            return segments.map { Piece(clipIndex: speaker.clipIndex, start: $0.start, end: $0.end, sourceDuration: speaker.duration) }
+        }
         var result = document
         var insertCount = 0
         result.clips = (take + extra).enumerated().map { index, piece in

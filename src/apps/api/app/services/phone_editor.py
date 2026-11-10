@@ -63,6 +63,7 @@ from app.pipeline.phone_subtitled_lanes import (
 )
 from app.pipeline.phone_subtitled_plan import (
     SFX_DUCK_RECEIPT_FIELD,
+    additional_speaker_keep_segments_from_recipe,
     additional_speakers_from_recipe,
     compile_phone_subtitled_plan,
     cutaways_from_recipe,
@@ -1549,6 +1550,8 @@ def _compile_subtitled_editor_commit(
     speaker = bindings[0]
     cutaways: tuple = ()
     additional_speakers: tuple = ()
+    # KRI-720: each extra take's own cleanup cut, so a Save never plays a cut take uncut again.
+    additional_speaker_keep: dict = {}
     inserts: tuple = ()
     if isinstance(previous.recipe, EditRecipeV2):
         speaker = speaker_binding_from_recipe(previous.recipe, bindings)
@@ -1556,6 +1559,10 @@ def _compile_subtitled_editor_commit(
         if not phone_talking_cutaway_sound_supported():
             cutaways = tuple(c.model_copy(update={"sound": False}) for c in cutaways)
         additional_speakers = additional_speakers_from_recipe(previous.recipe, bindings)
+        if additional_speakers:
+            additional_speaker_keep = additional_speaker_keep_segments_from_recipe(
+                previous.recipe, bindings
+            )
         # Parent KRI-1151: a clip the take was paused for comes back where it was, whatever the
         # insert flag says now; the rows below are already on the final timeline.
         inserts = inserts_from_recipe(previous.recipe, bindings)
@@ -1617,6 +1624,11 @@ def _compile_subtitled_editor_commit(
         caption_look=caption_look,
         cutaways=cutaways,
         additional_speakers=additional_speakers,
+        **(
+            {"additional_speaker_keep_segments": additional_speaker_keep}
+            if additional_speaker_keep
+            else {}
+        ),
         **({"inserts": inserts} if inserts else {}),
         landscape_fit=landscape_fit,
         # KRI-467: the staged row's text (already this Save's, when it carries

@@ -112,3 +112,41 @@ def test_worker_reports_several_takes_for_a_multi_take_miss():
     assert [(r["status"], r["reason"]) for r in receipts["named_cuts"]] == [
         ("not_applied", "several_takes")
     ]
+
+
+# --- KRI-720 with several-take cleanup ON ----------------------------------------------
+#
+# 6. the honest "can't cut anything" line survives once every take IS cut (under-promise);
+# 7. the named "okay" is promised although no line is cut from several takes (over-promise);
+# 8. the pause cut is promised before approval offers the choice ("Done" too early).
+
+
+@pytest.fixture
+def _multi_take_cleanup_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.services.phone_rollout as rollout
+
+    monkeypatch.setattr(rollout, "phone_talking_multi_take_cleanup_supported", lambda: True)
+
+
+@pytest.mark.usefixtures("_multi_take_cleanup_on")
+def test_s3_with_cleanup_on_offers_the_pause_cut_but_never_the_named_line():
+    receipt = check_requirement(R2, _draft(3, offered=True))
+    reason = receipt.full_reason
+    assert bc._CLEANUP_SEVERAL_TAKES not in reason
+    assert bc._CLEANUP_AT_APPROVAL in reason
+    assert bc._NAMED_CUTS_SEVERAL_TAKES in reason
+    assert bc._NAMED_CUT_AT_RENDER not in reason
+    assert receipt.status == "partial"
+
+
+@pytest.mark.usefixtures("_multi_take_cleanup_on")
+def test_s3_with_cleanup_chosen_plans_the_pause_cut():
+    facts = PlanFacts(
+        edit_format="subtitled",
+        phone_talking=True,
+        video_clip_count=3,
+        speech_cleanup_enabled=True,
+        speech_cleanup_offered=True,
+    )
+    reason = check_requirement(R2, facts).full_reason
+    assert bc._CLEANUP_PLANNED in reason and bc._NAMED_CUTS_SEVERAL_TAKES in reason

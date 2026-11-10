@@ -1137,10 +1137,13 @@ def _speech_cleanup_dispatch_snapshot(
         # has no timeline-reshaping primitive at all, so THAT shape keeps the
         # refusal (surfaced to the creator as
         # `speech_cleanup_unavailable_on_phone`, not a generic failure).
+        # KRI-720: a several-take Talking source (`source.takes`, only resolved while
+        # `phone_talking_multi_take_cleanup_supported()`) is cut take by take on the phone.
         if (
             resolution.source is not None
             and is_analysis_proxy_path(resolution.source.storage_path)
             and len(item.clip_gcs_paths or []) != 1
+            and not getattr(resolution.source, "takes", ())
         ):
             return DispatchResult("speech_cleanup_unavailable_on_phone")
     try:

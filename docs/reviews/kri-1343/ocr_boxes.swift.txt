@@ -1,0 +1,37 @@
+// Free, local ground truth: Apple Vision text boxes for each image path given.
+// Prints one JSON line per image: {"path":..., "width":..., "height":..., "boxes":[[x0,y0,x1,y1,"text"],...]}
+// Boxes are fractions of the image, top-left origin.
+import Foundation
+import Vision
+import ImageIO
+
+for path in CommandLine.arguments.dropFirst() {
+    let url = URL(fileURLWithPath: path)
+    guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+          let image = CGImageSourceCreateImageAtIndex(src, 0, [kCGImageSourceShouldAllowFloat: false] as CFDictionary) else {
+        print("{\"path\":\"\(path)\",\"error\":\"decode\"}")
+        continue
+    }
+    let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any]
+    let orientationRaw = (props?[kCGImagePropertyOrientation] as? UInt32) ?? 1
+    let orientation = CGImagePropertyOrientation(rawValue: orientationRaw) ?? .up
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .accurate
+    request.usesLanguageCorrection = false
+    request.recognitionLanguages = ["en-US", "tr-TR"]
+    request.minimumTextHeight = 0.008
+    let handler = VNImageRequestHandler(cgImage: image, orientation: orientation, options: [:])
+    try? handler.perform([request])
+    var boxes: [[Any]] = []
+    for obs in request.results ?? [] {
+        guard let top = obs.topCandidates(1).first, top.confidence >= 0.3 else { continue }
+        let b = obs.boundingBox  // normalized, bottom-left origin, in oriented space
+        boxes.append([b.minX, 1 - b.maxY, b.maxX, 1 - b.minY, top.string])
+    }
+    let swapped = [CGImagePropertyOrientation.left, .right, .leftMirrored, .rightMirrored].contains(orientation)
+    let w = swapped ? image.height : image.width
+    let h = swapped ? image.width : image.height
+    let obj: [String: Any] = ["path": path, "width": w, "height": h, "boxes": boxes]
+    let data = try! JSONSerialization.data(withJSONObject: obj)
+    print(String(data: data, encoding: .utf8)!)
+}

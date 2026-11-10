@@ -20,6 +20,8 @@ from app.pipeline.phone_subtitled_plan import (
     CUTAWAY_TRACK_ID,
     SFX_SPEECH_DUCK_GAIN,
     PhoneCutaway,
+    PhoneInsert,
+    additional_speaker_keep_segments_from_recipe,
     additional_speakers_from_recipe,
     compile_phone_subtitled_plan,
     cutaways_from_recipe,
@@ -28,6 +30,7 @@ from app.pipeline.phone_subtitled_plan import (
     speaker_binding_from_recipe,
     speech_windows_from_cues,
 )
+from app.pipeline.phone_talking_inserts import inserts_from_recipe
 from app.pipeline.silence_cut import CutPlan, Removal, no_op_plan
 from app.services.phone_rollout import validate_phone_pilot_recipe
 from app.services.phone_sources import PhoneSourceBinding, PhoneVisualBinding
@@ -1841,6 +1844,218 @@ def test_speakers_and_cutaways_read_back_for_an_editor_save():
     assert recompiled.model_dump_json() == recipe.model_dump_json()
     single = compile_phone_subtitled_plan((first,), caption_cues=_CUES)
     assert additional_speakers_from_recipe(single, (first,)) == ()
+
+
+# --- KRI-720: speech cleanup on every take of a several-take Talking edit -----------
+
+
+def _main(recipe):
+    return [
+        (c.id, c.source_asset_id, c.source_start, c.source_duration, c.timeline_start)
+        for c in recipe.tracks[0].clips
+    ]
+
+
+def test_a_cut_extra_take_plays_one_clip_per_kept_segment_back_to_back():
+    first = _binding("take1", duration_s=10.0)
+    second = _binding("take2", duration_s=8.0)
+    third = _binding("take3", duration_s=5.0)
+    recipe = compile_phone_subtitled_plan(
+        (first,),
+        caption_cues=[*_CUES, {"text": "Last take", "start_s": 15.0, "end_s": 17.0}],
+        keep_segments=[(0.0, 4.0), (6.0, 10.0)],
+        additional_speakers=(second, third),
+        additional_speaker_keep_segments={"take2": [(0.5, 2.0), (3.0, 7.25)]},
+    )
+    assert _main(recipe) == [
+        ("clip-0", "take1", 0.0, 4.0, 0.0),
+        ("clip-1", "take1", 6.0, 4.0, 4.0),
+        ("speaker-1", "take2", 0.5, 1.5, 8.0),
+        ("speaker-1-1", "take2", 3.0, 4.25, 9.5),
+        # The take after a cut one starts where the cut take now ends, not where it used to.
+        ("speaker-2", "take3", 0.0, 5.0, 13.75),
+    ]
+    assert recipe.duration == pytest.approx(18.75)
+    assert all(c.volume != 0 for c in recipe.tracks[0].clips)
+    recipe.model_validate(recipe.model_dump(mode="json"))
+
+
+def test_extra_speaker_cut_omitted_or_empty_is_byte_identical():
+    first = _binding("take1", duration_s=10.0)
+    second = _binding("take2", duration_s=6.0)
+    baseline = compile_phone_subtitled_plan(
+        (first,), caption_cues=_CUES, additional_speakers=(second,)
+    ).model_dump_json()
+    for keep in (None, {}, {"take2": [(0.0, 6.0)]}, {"take2": [(0.0, 6.0000004)]}):
+        assert (
+            compile_phone_subtitled_plan(
+                (first,),
+                caption_cues=_CUES,
+                additional_speakers=(second,),
+                additional_speaker_keep_segments=keep,
+            ).model_dump_json()
+            == baseline
+        )
+
+
+def test_every_piece_of_a_cut_take_wears_the_speakers_tilt():
+    first = _binding("take1", duration_s=10.0)
+    second = _binding("take2", duration_s=8.0)
+    recipe = compile_phone_subtitled_plan(
+        (first,),
+        caption_cues=_CUES,
+        additional_speakers=(second,),
+        additional_speaker_keep_segments={"take2": [(0.0, 2.0), (3.0, 5.0), (6.0, 8.0)]},
+        clip_tilts={"speaker-1": {"rotation_deg": 15.0, "backdrop": {"kind": "blur"}}},
+    )
+    pieces = [c for c in recipe.tracks[0].clips if c.source_asset_id == "take2"]
+    assert [c.id for c in pieces] == ["speaker-1", "speaker-1-1", "speaker-1-2"]
+    assert {c.transform.rotation_degrees for c in pieces} == {15.0}
+    assert all(c.backdrop is not None and c.backdrop.kind == "blur" for c in pieces)
+    first_clip = recipe.tracks[0].clips[0]
+    assert first_clip.transform.rotation_degrees == 0
+    assert first_clip.backdrop is None
+
+
+def test_a_cut_extra_take_round_trips_through_an_editor_save():
+    first = _binding("take1", duration_s=10.0)
+    second = _binding("take2", duration_s=8.3)
+    third = _binding("take3", duration_s=5.0)
+    insert = PhoneInsert(binding=_binding("broll", duration_s=2.0), at_take_s=4.0)
+    cutaways = (_cutaway("broll-2", 13.0, 15.0),)
+    # Bindings come back in upload order, which need not be play order.
+    bindings = (third, insert.binding, second, cutaways[0].binding, first)
+    tilts = {"speaker-1": {"rotation_deg": -7.5, "backdrop": {"kind": "blur"}}}
+    kwargs = dict(caption_cues=_CUES, cutaways=cutaways, clip_tilts=tilts)
+    recipe = compile_phone_subtitled_plan(
+        (first,),
+        keep_segments=[(0.0, 4.0), (6.0, 10.0)],
+        additional_speakers=(second, third),
+        additional_speaker_keep_segments={
+            "take2": [(0.1234567891, 2.7182818), (3.1415926535, 8.3)],
+            "take3": [(1.0, 5.0)],
+        },
+        inserts=(insert,),
+        **kwargs,
+    )
+    keep = additional_speaker_keep_segments_from_recipe(recipe, bindings)
+    assert set(keep) == {"take2", "take3"}
+    assert keep["take3"] == [(1.0, 5.0)]
+    assert len(keep["take2"]) == 2
+    assert keep["take2"][0] == pytest.approx((0.123457, 2.718282))
+    assert keep["take2"][1] == pytest.approx((3.141593, 8.3))
+    recompiled = compile_phone_subtitled_plan(
+        (speaker_binding_from_recipe(recipe, bindings),),
+        keep_segments=[(0.0, 4.0), (6.0, 10.0)],
+        additional_speakers=additional_speakers_from_recipe(recipe, bindings),
+        additional_speaker_keep_segments=keep,
+        inserts=inserts_from_recipe(recipe, bindings),
+        **kwargs,
+    )
+    assert recompiled.model_dump_json() == recipe.model_dump_json()
+    # Each speaker comes back once, however many pieces it plays as.
+    assert additional_speakers_from_recipe(recipe, bindings) == (second, third)
+    assert speaker_binding_from_recipe(recipe, bindings) == first
+
+
+def test_an_uncut_several_take_recipe_reads_back_no_extra_cut():
+    first = _binding("take1", duration_s=10.0)
+    second = _binding("take2", duration_s=6.0)
+    insert = PhoneInsert(binding=_binding("broll", duration_s=2.0), at_take_s=3.0)
+    bindings = (first, second, insert.binding)
+    recipe = compile_phone_subtitled_plan(
+        (first,),
+        caption_cues=_CUES,
+        keep_segments=[(0.0, 4.0), (6.0, 10.0)],
+        additional_speakers=(second,),
+        inserts=(insert,),
+    )
+    assert additional_speaker_keep_segments_from_recipe(recipe, bindings) == {}
+    single = compile_phone_subtitled_plan((first,), caption_cues=_CUES)
+    assert additional_speaker_keep_segments_from_recipe(single, (first,)) == {}
+
+
+def test_a_visuals_ending_clip_is_not_read_back_as_a_cut_take():
+    first = _binding("take1", duration_s=10.0)
+    second = _binding("take2", duration_s=6.0)
+    lanes = PhoneSubtitledLanes(
+        ending_clip=SubtitledEndingClip(
+            media_id=VIDEO_ID, gcs_path=VIDEO_PATH, generation="88", trim_start_s=1.0
+        )
+    )
+    recipe = compile_phone_subtitled_plan(
+        (first,),
+        caption_cues=_CUES,
+        visuals=(_pool_video_visual(),),
+        lanes=lanes,
+        additional_speakers=(second,),
+        additional_speaker_keep_segments={"take2": [(0.0, 2.0), (4.0, 6.0)]},
+    )
+    assert [c.id for c in recipe.tracks[0].clips] == [
+        "clip-0",
+        "speaker-1",
+        "speaker-1-1",
+        "clip-ending",
+    ]
+    assert recipe.tracks[0].clips[-1].timeline_start == pytest.approx(14.0)
+    assert additional_speaker_keep_segments_from_recipe(recipe, (first, second)) == {
+        "take2": [(0.0, 2.0), (4.0, 6.0)]
+    }
+
+
+def test_a_sound_cutaway_over_a_cut_take_mutes_every_piece_it_covers():
+    first = _binding("take1", duration_s=4.0)
+    second = _binding("take2", duration_s=8.0)
+    recipe = compile_phone_subtitled_plan(
+        (first,),
+        caption_cues=_CUES,
+        additional_speakers=(second,),
+        additional_speaker_keep_segments={"take2": [(0.0, 2.0), (3.0, 6.0)]},
+        cutaways=(
+            PhoneCutaway(
+                binding=_binding("broll", duration_s=6.0), start_s=5.0, end_s=7.0, sound=True
+            ),
+        ),
+    )
+    assert [(w.clip_ids, w.start, w.end) for w in recipe.audio.mute_windows] == [
+        (["speaker-1", "speaker-1-1"], 5.0, 7.0)
+    ]
+
+
+@pytest.mark.parametrize(
+    "segments, match",
+    [
+        ([(0.0, 3.0), (2.0, 5.0)], "overlap or are out of order"),
+        ([(4.0, 5.0), (0.0, 2.0)], "overlap or are out of order"),
+        ([(-0.5, 2.0)], "outside its clip"),
+        ([(1.0, 6.5)], "outside its clip"),
+        ([(float("nan"), 2.0)], "not a number"),
+        ([(1.0, float("inf"))], "not a number"),
+        ([], "removed the entire clip"),
+        ([(2.0, 2.0), (3.0, 1.0)], "removed the entire clip"),
+    ],
+)
+def test_invalid_extra_speaker_segments_are_refused(segments, match):
+    with pytest.raises(UnsupportedPhonePlan, match=match):
+        compile_phone_subtitled_plan(
+            (_binding("take1", duration_s=10.0),),
+            caption_cues=_CUES,
+            additional_speakers=(_binding("take2", duration_s=6.0),),
+            additional_speaker_keep_segments={"take2": segments},
+        )
+
+
+def test_zero_length_extra_segments_are_dropped():
+    recipe = compile_phone_subtitled_plan(
+        (_binding("take1", duration_s=10.0),),
+        caption_cues=_CUES,
+        additional_speakers=(_binding("take2", duration_s=6.0),),
+        additional_speaker_keep_segments={"take2": [(0.0, 1.0), (2.0, 2.0), (3.0, 6.0)]},
+    )
+    assert _main(recipe)[1:] == [
+        ("speaker-1", "take2", 0.0, 1.0, 10.0),
+        ("speaker-1-1", "take2", 3.0, 3.0, 11.0),
+    ]
 
 
 # --- output_orientation="landscape": a 1920x1080 Talking edit ----------------
