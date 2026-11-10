@@ -168,7 +168,7 @@ def closing_card_off(monkeypatch):
 
 @pytest.mark.parametrize("lang", ["en", "tr"])
 def test_closing_screen_ask_names_the_closing_screen(honest, closing_card_off, lang):
-    facts = brief_checks.PlanFacts(phone_talking=True)
+    facts = brief_checks.PlanFacts(phone_talking=True, client_protocol=46)
     with reply_language_for(lang):
         receipt = brief_checks.check_requirement(CLOSING_CARD_ASK, facts)
         expected = brief_checks._loc(brief_checks._CC_UNAVAILABLE)  # noqa: SLF001
@@ -198,7 +198,7 @@ def test_available_closing_card_is_never_called_unsupported(
     finished = {"resolved_archetype": "subtitled", "edit_format": "subtitled"}
     with reply_language_for(lang):
         draft = brief_checks.check_requirement(
-            CLOSING_CARD_ASK, brief_checks.PlanFacts(phone_talking=True)
+            CLOSING_CARD_ASK, brief_checks.PlanFacts(phone_talking=True, client_protocol=46)
         )
         planned = brief_checks._loc(brief_checks._CC_PLAN)  # noqa: SLF001
         drawn = brief_checks.check_requirement(
@@ -380,3 +380,21 @@ def test_yorum3_replay_has_no_contradiction_with_the_switch_on():
     assert brief_checks._REASON_TR[brief_checks._CC_PLAN] in held["tr"]  # noqa: SLF001
     for reply in held.values():
         assert brief_checks._CC_UNAVAILABLE not in reply  # noqa: SLF001
+
+
+@pytest.mark.parametrize("lang", ["en", "tr"])
+def test_old_app_build_is_told_to_update_not_that_the_card_is_unsupported(
+    honest, closing_card_on, lang
+):
+    """#2256's build check: the card is available server-side but this app build can't hold
+    the frame, so the reply names the update (a closing-card reason), never "unavailable"."""
+    with reply_language_for(lang):
+        receipt = brief_checks.check_requirement(
+            CLOSING_CARD_ASK, brief_checks.PlanFacts(phone_talking=True, client_protocol=1)
+        )
+        too_old = brief_checks._loc(brief_checks._CC_APP_TOO_OLD)  # noqa: SLF001
+        unavailable = brief_checks._loc(brief_checks._CC_UNAVAILABLE)  # noqa: SLF001
+    assert receipt.status == "not_possible"
+    assert receipt.reason.startswith(too_old)
+    assert not receipt.reason.startswith(unavailable)
+    assert not contradictions([CLOSING_CARD_ASK], [receipt])

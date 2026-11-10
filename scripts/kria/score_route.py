@@ -725,6 +725,8 @@ def approval_card(fx: dict) -> dict[str, Any]:
         facts,
         phone_talking=talking_writer and fmt in {"subtitled", "talking_head"},
         caption_words_at_render=talking_writer,
+        # The draft turn binds the sending build (`kria_runtime`), as a recorded fixture does.
+        client_protocol=fx.get("client_protocol"),
         phone_text=defers_text_to_phone(creator_id=CREATOR_ID, clip_paths=paths),
         phone_narrated=defers_to_narrated_render(clip_paths=paths, **common),
         phone_montage=defers_to_unified_montage(clip_paths=paths, **common),

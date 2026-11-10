@@ -122,6 +122,10 @@ def reason_capability(reason: object) -> str | None:
         bc._CC_NOT_TALKING,  # noqa: SLF001
         bc._CC_UNAVAILABLE,  # noqa: SLF001
         bc._CC_NOT_DRAWN,  # noqa: SLF001
+        bc._CC_APP_TOO_OLD,  # noqa: SLF001
+        bc._CC_TOO_LONG,  # noqa: SLF001
+        bc._CC_UNDRAWABLE,  # noqa: SLF001
+        bc._CC_WORDS_DIFFER,  # noqa: SLF001
     ):
         return CLOSING_CARD
     if starts(
