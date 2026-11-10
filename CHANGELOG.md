@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.140.0] - 2026-11-10
+
+### Changed
+- fix(kria): talking takes attached through Visuals become Talking takes (KRI-1340) (#2250) <!-- release-pr: 2250 -->
+
 ## [0.88.139.0] - 2026-11-10
 
 ### Changed
