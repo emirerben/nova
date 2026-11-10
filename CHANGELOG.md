@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.158.0] - 2026-11-10
+
+### Fixed
+- fix(kria): shorten and speed-up follow-ups edit the ready video instead of replanning (KRI-1365) (#2271) <!-- release-pr: 2271 -->
+
 ## [0.88.157.0] - 2026-11-10
 
 ### Fixed

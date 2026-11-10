@@ -1117,6 +1117,15 @@
       ]
     },
     {
+      "id": "kri-1365-follow-up-edits-ready-video",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri1365_last_ready_edit_postgres.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kria_replay/kri1365_edit_route/",
+        "src/apps/api/tests/kria/test_kri1365_last_ready_edit_postgres.py"
+      ]
+    },
+    {
       "id": "kri-708-caption-correction",
       "needs_native": false,
       "api_tests": "tests/pipeline/test_caption_correct.py",

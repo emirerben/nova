@@ -4634,6 +4634,44 @@
         "The replacement question is generic; the exact non-timing cause is not named to the creator and was not established for the original turn."
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1365-follow-up-edits-ready-video",
+      "tickets": [
+        "KRI-1365"
+      ],
+      "symptom": "After approved wording, 'make the text faster' / 'make the video shorter' re-planned the whole video with a new approval, and a revert after a failed re-plan render could not reach the last ready video.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1365",
+      "paths": [
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/services/creative_copy_gate.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/prompts/brief_extractor.txt",
+        "src/apps/api/prompts/edit_copilot_ops/text.txt",
+        "src/apps/api/prompts/edit_copilot_ops/timeline.txt"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri1365_last_ready_edit_postgres.py"
+      ],
+      "harness": "real_with_db",
+      "evidence": {
+        "offline_replay": "make kria-replay FIXTURE=kri1365_edit_route: real planner, editor target loader, copilot parser, op compiler and copy gate on the incident's clip durations and a reconstructed bilingual word lane; assumed extractor and copilot outputs. Postgres submit-to-commit test for the ready and revert cases plus the approved-word rewrite control.",
+        "live_model": "Not run. Whether the live extractor and copilot follow the new prompt rules is unverified.",
+        "native_output": "Not checked. The iPhone export of the shorter draft after Save is unverified.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "open wording question still re-plans",
+        "approved word rewrite refused with nothing changed (ready and revert)",
+        "paired word sequences retimed to the same window"
+      ],
+      "neighbours_gap": [
+        "approved words split across separate non-sequence bars are not recognised as approved",
+        "a failed render that left failed variants (not none) does not fall back to the last ready video"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }
