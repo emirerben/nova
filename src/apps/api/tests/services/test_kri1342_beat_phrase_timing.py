@@ -326,6 +326,84 @@ def test_a_silent_footage_cutaway_starts_with_its_mention_phrase():
     assert abs(after[0].start_s - 5.0) <= 0.1
 
 
+def test_short_footage_stays_on_screen_through_its_mention():
+    """Review #2257: a cutaway shorter than the phrase keeps its own length, so moving it to
+    the phrase start must not make it disappear before "Maltepe stadium" is said. Every
+    footage length stays on screen while its mention starts and through its end when it can."""
+    from types import SimpleNamespace
+
+    from app.pipeline.phone_talking_mentions import (
+        FootageClip,
+        clip_keys,
+        schedule_mention_cutaways,
+    )
+
+    words = [
+        SimpleNamespace(text=w["text"], start_s=w["start_s"], end_s=w["end_s"])
+        for w in _timed(
+            "We@1.00-1.20 kept@1.20-1.50 going.@1.50-2.00 Then@5.00-5.30 we@5.30-5.50 "
+            "walked@5.50-5.90 into@5.90-6.10 the@6.10-6.20 Maltepe@6.20-6.70 "
+            "stadium@6.70-7.20 tonight.@7.20-7.70 Wow.@9.00-9.40"
+        )
+    ]
+    mention_start, mention_end = 6.2, 7.2
+
+    one_second = FootageClip("a", 1.0, clip_keys(["Maltepe stadium"]), max_window_s=4.0)
+    after, _u, _a = schedule_mention_cutaways(
+        [one_second], words=words, duration_s=20.0, phrase_starts=True
+    )
+    assert (after[0].start_s, after[0].end_s) == (6.2, 7.2)  # not (4.9, 5.9)
+
+    for footage_s in (0.6, 1.0, 1.5, 2.0, 2.5, 10.0):
+        clip = FootageClip("a", footage_s, clip_keys(["Maltepe stadium"]), max_window_s=4.0)
+        (window,), _u, _a = schedule_mention_cutaways(
+            [clip], words=words, duration_s=20.0, phrase_starts=True
+        )
+        length = window.end_s - window.start_s
+        assert window.start_s <= mention_start < window.end_s, footage_s
+        assert window.end_s >= min(mention_end, window.start_s + length) - 1e-6, footage_s
+
+
+def test_two_clips_named_in_one_phrase_each_stay_on_their_own_mention():
+    """Two cutaways named in one sentence: neither starts before the other's words, neither
+    loses its mention anchor, and each is on screen as its own name is said."""
+    from types import SimpleNamespace
+
+    from app.pipeline.phone_talking_mentions import (
+        BASIS_MENTION,
+        FootageClip,
+        clip_keys,
+        schedule_mention_cutaways,
+    )
+
+    words = [
+        SimpleNamespace(text=w["text"], start_s=w["start_s"], end_s=w["end_s"])
+        for w in _timed(
+            "We@1.00-1.20 kept@1.20-1.50 going.@1.50-2.00 Then@5.00-5.30 we@5.30-5.50 "
+            "saw@5.50-5.90 the@5.90-6.00 Kadikoy@6.00-6.40 ferry@6.40-6.80 and@6.80-7.00 "
+            "the@7.00-7.10 Maltepe@7.20-7.70 stadium@7.70-8.20 tonight.@8.20-8.70 "
+            "Wow.@11.00-11.40 Okay@13.00-13.40 bye.@13.40-13.80"
+        )
+    ]
+    said = {"ferry": (6.0, 6.8), "stad": (7.2, 8.2)}
+    for footage_s in (1.0, 2.0, 10.0):
+        clips = [
+            FootageClip("ferry", footage_s, clip_keys(["Kadikoy ferry"]), max_window_s=4.0),
+            FootageClip("stad", footage_s, clip_keys(["Maltepe stadium"]), max_window_s=4.0),
+        ]
+        windows, _u, anchors = schedule_mention_cutaways(
+            clips, words=words, duration_s=20.0, phrase_starts=True
+        )
+        assert [a.basis for a in anchors] == [BASIS_MENTION, BASIS_MENTION], footage_s
+        for window in windows:
+            start, end = said[window.clip_id]
+            assert window.start_s <= start < window.end_s, (footage_s, window)
+            assert window.end_s >= end - 1e-6 or window.end_s - window.start_s >= 1.5, (
+                footage_s,
+                window,
+            )
+
+
 def test_worker_passes_nothing_while_the_flag_is_off(monkeypatch):
     """Flag off: the grounding call gets no ``phrase_timing`` (byte-identical windows)."""
     from app.tasks import generative_build

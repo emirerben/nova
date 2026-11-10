@@ -335,7 +335,7 @@ def schedule_mention_cutaways(
     hi = max(duration - TAIL_FREE_S, lo)
     taken: list[tuple[float, float]] = [(float(a), float(b)) for a, b in blocked]
 
-    scored: list[tuple[float, float, float, FootageClip]] = []
+    found: list[tuple[FootageClip, tuple[float, float, float]]] = []
     spread: dict[str, str] = {}
     for clip in clips:
         if float(clip.footage_s) < MIN_WINDOW_S:
@@ -344,35 +344,69 @@ def schedule_mention_cutaways(
         if best is None:
             spread[clip.clip_id] = SPREAD_NO_MENTION
         else:
-            # A silent cutaway starts as the creator says it; one whose own sound plays
-            # starts once he has said it, so his mention stays audible.
-            sounding = clip.max_window_s > MAX_WINDOW_S
-            begin_s = best[2] if sounding else best[1]
-            if phrase_starts and not sounding:
-                window = phrase_window(
-                    words, best[1], best[1], min_s=MIN_SLOT_S, max_s=MAX_WINDOW_S
-                )
-                if window is not None:
-                    begin_s = min(begin_s, window.start_s)
-            scored.append((best[0], best[1], begin_s, clip))
+            found.append((clip, best))
 
-    mentions = sorted(begin_s for _score, _at, begin_s, _clip in scored)
+    # (score, mention start, window start, clip, mention end, start on the mention word)
+    scored: list[tuple[float, float, float, FootageClip, float, float]] = []
+    for clip, best in found:
+        # A silent cutaway starts as the creator says it; one whose own sound plays
+        # starts once he has said it, so his mention stays audible.
+        sounding = clip.max_window_s > MAX_WINDOW_S
+        word_begin_s = best[2] if sounding else best[1]
+        begin_s = word_begin_s
+        if phrase_starts and not sounding:
+            # Two clips named in one phrase: this one starts after the earlier one's words.
+            earlier = [other[2] for _c, other in found if other[1] < best[1] - 1e-9]
+            window = phrase_window(
+                words,
+                best[1],
+                best[1],
+                min_s=MIN_SLOT_S,
+                max_s=MAX_WINDOW_S,
+                not_before_s=max(earlier) if earlier else None,
+            )
+            if window is not None:
+                # The footage keeps its own length: start with the phrase only as far back
+                # as still leaves it on screen through the mention (review #2257: a 1 s
+                # clip must not end before "Maltepe stadium" is said).
+                length = min(clip.max_window_s, float(clip.footage_s))
+                covering = min(best[1], max(window.start_s, best[2] - length))
+                begin_s = min(begin_s, covering)
+        scored.append((best[0], best[1], begin_s, clip, best[2], word_begin_s))
+
+    mentions = sorted(row[2] for row in scored)
     placed: list[FootageCutawayWindow] = []
     at_mention: dict[str, float] = {}
-    for _score, at_s, begin_s, clip in sorted(scored, key=lambda row: (-row[0], row[1])):
-        length = min(clip.max_window_s, float(clip.footage_s))
+
+    def _fit_from(begin_s: float, clip: FootageClip) -> tuple[float, float, float, float] | None:
+        """``(start, end, untrimmed length, trimmed length)`` of ``clip`` placed from
+        ``begin_s``."""
+        full = min(clip.max_window_s, float(clip.footage_s))
+        length = full
         # A window stops where the next clip's mention starts, when that leaves it a slot.
         later = next((m for m in mentions if m > begin_s + 1e-9), None)
         if later is not None and later - max(begin_s, lo) >= MIN_SLOT_S:
             length = min(length, later - max(begin_s, lo))
-        free = _free_intervals(lo, hi, taken)
-        fit = _fit_at(max(begin_s, lo), length, free)
+        fit = _fit_at(max(begin_s, lo), length, _free_intervals(lo, hi, taken))
+        return None if fit is None else (fit[0], fit[1], full, length)
+
+    for _score, at_s, begin_s, clip, mention_end_s, word_begin_s in sorted(
+        scored, key=lambda row: (-row[0], row[1])
+    ):
+        fit = _fit_from(begin_s, clip)
+        if begin_s < word_begin_s and (
+            fit is None or fit[1] < min(mention_end_s, fit[0] + fit[2]) - 1e-6
+        ):
+            # Moved to the phrase start, the window finds no room or (trimmed by the next
+            # mention or the free time) is gone before its own mention is said: keep it on
+            # the word, as without phrase starts.
+            fit = _fit_from(word_begin_s, clip)
         if fit is None:
             spread[clip.clip_id] = SPREAD_NO_ROOM
             continue
         begin = math.ceil(fit[0] * 1000 - 1e-6) / 1000
         end = math.floor(fit[1] * 1000 + 1e-6) / 1000
-        if end - begin < min(MIN_WINDOW_S, length):
+        if end - begin < min(MIN_WINDOW_S, fit[3]):
             spread[clip.clip_id] = SPREAD_NO_ROOM
             continue
         placed.append(FootageCutawayWindow(clip.clip_id, begin, end))

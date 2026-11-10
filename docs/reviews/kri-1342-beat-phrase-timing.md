@@ -54,6 +54,14 @@ billboards." — the photo appeared as the phrase ended (output 19.25 s, the cap
     a short `hold_s`) moved back to the phrase start ends before its own word is said. Every
     window keeps its length but starts late enough to stay on screen through its cue
     (`phrase_window._covering_cue`); a phrase-sized window clamped to its maximum likewise.
+18. (Found in review, #2257) The same for a Talking own-footage cutaway: a 1 s clip moved to
+    the phrase start ("Then we walked into the Maltepe stadium") played 4.9–5.9 s and was gone
+    before "Maltepe stadium" (6.2 s). `schedule_mention_cutaways` now starts it only as far
+    back as its real display length (footage, capped) still covers the mention; a window
+    then trimmed by the next mention or with no room falls back to the word start (flag-off
+    placement). Two clips named in one phrase: the later one never starts before the earlier
+    one's words end. Tests: `test_short_footage_stays_on_screen_through_its_mention`,
+    `test_two_clips_named_in_one_phrase_each_stay_on_their_own_mention`.
 
 ## Pass metric
 
