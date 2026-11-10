@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.152.0] - 2026-11-10
+
+### Changed
+- fix(ios): the chat no longer goes blank after Send with many uploads and the keyboard up (KRI-1351) (#2265) <!-- release-pr: 2265 -->
+
 ## [0.88.151.0] - 2026-11-10
 
 ### Fixed
