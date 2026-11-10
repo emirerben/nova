@@ -128,8 +128,9 @@ def _coerce_set_background_color(
             "a plain colour behind you isn't available right now"
         )
         detail = say(
-            en=f"I can't put a plain colour behind you: {reason}.",
+            en="I can't put a plain colour behind you: {reason}.",
             tr="Arkana düz bir renk koyamıyorum: bu uygulama sürümünde henüz açık değil.",
+            reason=reason,
         )
         state.reject(op=name, reason="capability_unavailable", detail=detail)
         state.reply_notes.append(detail)
@@ -189,10 +190,12 @@ def _coerce_set_background_focus(
         if clamped != number:
             state.reply_notes.append(
                 say(
-                    en=f"I kept the zoom between {MIN_CHAT_FOCUS_ZOOM:g}x and "
-                    f"{MAX_CHAT_FOCUS_ZOOM:g}x.",
-                    tr=f"Yakınlaştırmayı {MIN_CHAT_FOCUS_ZOOM:g}x ile "
-                    f"{MAX_CHAT_FOCUS_ZOOM:g}x arasında tuttum.",
+                    en="I kept the zoom between {min_chat_focus_zoom:g}x and "
+                    "{max_chat_focus_zoom:g}x.",
+                    tr="Yakınlaştırmayı {min_chat_focus_zoom:g}x ile "
+                    "{max_chat_focus_zoom:g}x arasında tuttum.",
+                    min_chat_focus_zoom=MIN_CHAT_FOCUS_ZOOM,
+                    max_chat_focus_zoom=MAX_CHAT_FOCUS_ZOOM,
                 )
             )
         cleaned["zoom"] = clamped

@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
-from app.kria.reply_language import current_reply_language, prompt_language_line
+from app.kria.reply_language import current_reply_language, prompt_language_line, say_in
 from app.kria.speed_ask import says_clip_speed
 from app.kria.text_trim import trim_at_word
 from app.pipeline.prompt_loader import load_prompt
@@ -267,9 +267,9 @@ _OP_NAMES_TR = {
 }
 
 
-def _copy(language: str | None, *, en: str, tr: str) -> str:
+def _copy(language: str | None, *, en: str, tr: str, **values: object) -> str:
     """Server copy for ``language`` (the input's), else the turn's bound language."""
-    return tr if (language or current_reply_language()) == "tr" else en
+    return say_in(language or current_reply_language(), en=en, tr=tr, **values)
 
 
 def _preview(raw_intent: object, language: str | None = None) -> str:
@@ -308,14 +308,17 @@ def salvage_question(
     named = "; ".join(f'"{label}"' for label in labels[:3])
     extra = len(labels) - 3
     if extra > 0:
-        named += _copy(language, en=f" (and {extra} more)", tr=f" (ve {extra} tane daha)")
+        named += _copy(
+            language, en=" (and {extra} more)", tr=" (ve {extra} tane daha)", extra=extra
+        )
     pieces: list[str] = []
     if named:
         pieces.append(
             _copy(
                 language,
-                en=f"I couldn't safely verify {named}",
-                tr=f"Şunları güvenle doğrulayamadım: {named}",
+                en="I couldn't safely verify {named}",
+                tr="Şunları güvenle doğrulayamadım: {named}",
+                named=named,
             )
         )
     if overflow:
@@ -323,19 +326,22 @@ def salvage_question(
             _copy(
                 language,
                 en=(
-                    f"I can apply at most {MAX_CLIP_INTENTS} clip instructions at a time, "
-                    f"so {overflow} more weren't included"
+                    "I can apply at most {max_intents} clip instructions at a time, "
+                    "so {overflow} more weren't included"
                 ),
                 tr=(
-                    f"Bir seferde en fazla {MAX_CLIP_INTENTS} klip talimatı uygulayabiliyorum, "
-                    f"bu yüzden {overflow} talimat daha eklenmedi"
+                    "Bir seferde en fazla {max_intents} klip talimatı uygulayabiliyorum, "
+                    "bu yüzden {overflow} talimat daha eklenmedi"
                 ),
+                max_intents=MAX_CLIP_INTENTS,
+                overflow=overflow,
             )
         )
     lead = _copy(
         language,
-        en=f"I understood {kept} of your clip instructions",
-        tr=f"Klip talimatlarından {kept} tanesini anladım",
+        en="I understood {kept} of your clip instructions",
+        tr="Klip talimatlarından {kept} tanesini anladım",
+        kept=kept,
     )
     body = "; ".join(pieces)
     text = f"{lead}. {body}." if body else f"{lead}."
@@ -364,21 +370,31 @@ def unexpressed_notice(
     named = "; ".join(f'"{label}"' for label in unique[:3])
     extra = len(unique) - 3
     if extra > 0:
-        named += _copy(language, en=f" (and {extra} more)", tr=f" (ve {extra} tane daha)")
+        named += _copy(
+            language, en=" (and {extra} more)", tr=" (ve {extra} tane daha)", extra=extra
+        )
     one = len(unique) == 1
     return _copy(
         language,
         en=(
-            f"I can't do {named} with your clips yet, so this draft leaves "
-            f"{'it' if one else 'them'} out. I can use, skip, reorder, group, label or caption "
-            "clips: tell me which of those you meant and I'll add it."
+            "I can't do {named} with your clips yet, so this draft leaves it out. I can use, "
+            "skip, reorder, group, label or caption clips: tell me which of those you meant "
+            "and I'll add it."
+            if one
+            else "I can't do {named} with your clips yet, so this draft leaves them out. I can "
+            "use, skip, reorder, group, label or caption clips: tell me which of those you "
+            "meant and I'll add it."
         ),
         tr=(
-            f"{named} {'isteğini' if one else 'isteklerini'} kliplerinle henüz yapamıyorum, "
-            "bu yüzden bu taslakta yok. Klipleri kullanabilir, atlayabilir, sıralayabilir, "
-            "gruplayabilir, etiketleyebilir ya da üzerlerine yazı ekleyebilirim: hangisini "
-            "kastettiğini söylersen eklerim."
+            "{named} isteğini kliplerinle henüz yapamıyorum, bu yüzden bu taslakta yok. "
+            "Klipleri kullanabilir, atlayabilir, sıralayabilir, gruplayabilir, etiketleyebilir "
+            "ya da üzerlerine yazı ekleyebilirim: hangisini kastettiğini söylersen eklerim."
+            if one
+            else "{named} isteklerini kliplerinle henüz yapamıyorum, bu yüzden bu taslakta yok. "
+            "Klipleri kullanabilir, atlayabilir, sıralayabilir, gruplayabilir, etiketleyebilir "
+            "ya da üzerlerine yazı ekleyebilirim: hangisini kastettiğini söylersen eklerim."
         ),
+        named=named,
     )
 
 

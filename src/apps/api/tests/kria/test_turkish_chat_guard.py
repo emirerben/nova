@@ -986,6 +986,7 @@ _LOOKUP_TABLES = frozenset(
         "app.kria.brief_checks._FORMAT_TR",  # machine edit format
         "app.kria.brief_checks._REASON_TR",  # exact English reason text
         "app.kria.brief_checks._OUTCOME_REASON_TR",  # exact English outcome text
+        "app.kria.brief_checks._OUTCOME_STRETCH_PREFIX_TR",  # exact English outcome prefix
         "app.services.choice_questions._COVERAGE_LABELS_TR",
         "app.services.kria_editor_ops_diff._ENTRANCE_TR",
         "app.services.kria_editor_ops_diff._CASE_TR",

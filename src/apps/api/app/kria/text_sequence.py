@@ -280,8 +280,10 @@ def recovered_copy_notice(
     restored = recover_overflowed_literals(prior, ())
     lines = [
         say(
-            en=f'Review the restored text for {update.description}: "{update.literal}"',
-            tr=f'Geri yüklenen metni gözden geçir ({update.description}): "{update.literal}"',
+            en='Review the restored text for {update_description}: "{update_literal}"',
+            tr='Geri yüklenen metni gözden geçir ({update_description}): "{update_literal}"',
+            update_description=update.description,
+            update_literal=update.literal,
         )
         for update in updates
         if update in restored

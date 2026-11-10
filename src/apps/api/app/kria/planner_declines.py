@@ -24,8 +24,9 @@ def _title_animation(value: object) -> str | None:
     if not str(value or "").strip():
         return None
     return say(
-        en=f"I don't have a \"{clip(value, 40)}\" animation for the title yet, so it won't be used",
-        tr=f'Başlık için henüz "{clip(value, 40)}" animasyonum yok, o yüzden kullanılmayacak',
+        en="I don't have a \"{clip_value}\" animation for the title yet, so it won't be used",
+        tr='Başlık için henüz "{clip_value}" animasyonum yok, o yüzden kullanılmayacak',
+        clip_value=clip(value, 40),
     )
 
 
@@ -34,13 +35,14 @@ def _label_position(value: object) -> str | None:
         return None
     return say(
         en=(
-            f'I can\'t place the clip labels "{clip(value, 40)}" yet, so they stay where the '
+            'I can\'t place the clip labels "{clip_value}" yet, so they stay where the '
             "layout puts them"
         ),
         tr=(
-            f'Klip etiketlerini henüz "{clip(value, 40)}" konumuna yerleştiremiyorum, o yüzden '
+            'Klip etiketlerini henüz "{clip_value}" konumuna yerleştiremiyorum, o yüzden '
             "düzenin koyduğu yerde kalıyorlar"
         ),
+        clip_value=clip(value, 40),
     )
 
 

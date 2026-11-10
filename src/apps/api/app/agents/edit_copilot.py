@@ -3078,26 +3078,31 @@ def _bulk_capacity_clarification(
 
     detail = say(
         en=(
-            f"The current {current_slots}-slot edit leaves room for only {available} additional "
-            f"slots under the {_GUIDED_TIMELINE_MAX_SLOTS}-slot Save limit, but all "
-            f"{requested} ready unused sources "
+            "The current {current_slots}-slot edit leaves room for only {available} additional "
+            "slots under the {guided_timeline_max_slots}-slot Save limit, but all "
+            "{requested} ready unused sources "
             "were requested."
         ),
         tr=(
-            f"Şu anki düzenlemede {current_slots} klip yeri dolu; {_GUIDED_TIMELINE_MAX_SLOTS} "
-            f"yerlik kaydetme sınırına kadar yalnızca {available} yer daha var, ama "
-            f"kullanılmayan {requested} hazır kaynağın hepsi istendi."
+            "Şu anki düzenlemede {current_slots} klip yeri dolu; {guided_timeline_max_slots} "
+            "yerlik kaydetme sınırına kadar yalnızca {available} yer daha var, ama "
+            "kullanılmayan {requested} hazır kaynağın hepsi istendi."
         ),
+        current_slots=current_slots,
+        available=available,
+        guided_timeline_max_slots=_GUIDED_TIMELINE_MAX_SLOTS,
+        requested=requested,
     )
     return detail + say(
         en=(
-            f" Choose a media kind and count of at most {available} while retaining the "
+            " Choose a media kind and count of at most {available} while retaining the "
             "current edit, or remove existing content first."
         ),
         tr=(
-            f" Mevcut düzenleme korunarak en fazla {available} olacak şekilde bir medya "
+            " Mevcut düzenleme korunarak en fazla {available} olacak şekilde bir medya "
             "türü ve sayı seç ya da önce var olan içerikten kaldır."
         ),
+        available=available,
     )
 
 
@@ -3520,13 +3525,13 @@ def _drop_normalized_no_effect_ops(
     if removed_trim_start is not None and not filtered:
         message = say(
             en=(
-                f"The draft already starts at {removed_trim_start:g} seconds, "
-                "so I didn't change it."
+                "The draft already starts at {removed_trim_start:g} seconds, so I didn't change it."
             ),
             tr=(
-                f"Taslak zaten {removed_trim_start:g} saniyede başlıyor, "
+                "Taslak zaten {removed_trim_start:g} saniyede başlıyor, "
                 "o yüzden bir şey değiştirmedim."
             ),
+            removed_trim_start=removed_trim_start,
         )
     if appearance_unchanged and not filtered and message is None:
         message = say(
@@ -3960,11 +3965,10 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 )
             else:
                 reply = say(
-                    en=f"How short should the {referent or 'clips'} be?",
-                    tr=(
-                        f"{_TR_REFERENT_NOUNS.get(referent or 'clips', 'Klipler')} "
-                        "ne kadar kısa olsun?"
-                    ),
+                    en="How short should the {v1} be?",
+                    tr=("{v2} ne kadar kısa olsun?"),
+                    v1=referent or "clips",
+                    v2=_TR_REFERENT_NOUNS.get(referent or "clips", "Klipler"),
                 )
         if not ops and state.invalid_notes:
             state.reply_notes.extend(state.invalid_notes)
@@ -4183,15 +4187,19 @@ def _server_reply(ops: list[dict], notes: str) -> str:
             if op.get("mode") == "append":
                 parts.append(
                     say(
-                        en=f"Added the filming hour to {count} clip{'s' if count != 1 else ''}.",
-                        tr=f"{count} klibe çekim saatini ekledim.",
+                        en="Added the filming hour to {count} clip{v1}.",
+                        tr="{count} klibe çekim saatini ekledim.",
+                        count=count,
+                        v1="s" if count != 1 else "",
                     )
                 )
             else:
                 parts.append(
                     say(
-                        en=f"Labelled {count} clip{'s' if count != 1 else ''}.",
-                        tr=f"{count} klibe etiket ekledim.",
+                        en="Labelled {count} clip{v1}.",
+                        tr="{count} klibe etiket ekledim.",
+                        count=count,
+                        v1="s" if count != 1 else "",
                     )
                 )
         else:
@@ -4861,12 +4869,19 @@ def _effect_removal_pass(
     }
     if len(names) == 1:
         label = say(
-            en=f"the {sorted(names)[0]} animation",
-            tr=f"{sorted(names)[0]} animasyonunu",
+            en="the {sorted_names_0} animation",
+            tr="{sorted_names_0} animasyonunu",
+            sorted_names_0=sorted(names)[0],
         )
     else:
         label = say(en="the text animation", tr="yazı animasyonunu")
-    note = say(en=f"I turned off {label}", tr=f"{label[:1].upper()}{label[1:]} kapattım")
+    note = say(
+        en="I turned off {label}",
+        tr="{v1}{v2} kapattım",
+        label=label,
+        v1=label[:1].upper(),
+        v2=label[1:],
+    )
     if not wants_shadow:
         note += say(
             en="; say if you also want the shadow gone",
@@ -4950,17 +4965,23 @@ def _ground_descriptive_captions(
         state.reply_notes.append(
             say(
                 en=(
-                    f"Clip{'s' if len(mismatched) != 1 else ''} {names} "
-                    f'{"don" if len(mismatched) != 1 else "doesn"}\'t look like "{words}" from '
+                    "Clip{v1} {names} "
+                    '{v2}\'t look like "{words}" from '
                     "what I saw, so I didn't put that wording on "
-                    f"{'them' if len(mismatched) != 1 else 'it'}. Tell me what "
-                    f"{'they are' if len(mismatched) != 1 else 'it is'}, or ask me to describe "
+                    "{v3}. Tell me what "
+                    "{v4}, or ask me to describe "
                     "what I see."
                 ),
                 tr=(
-                    f'Klip {names} gördüğüm kadarıyla "{words}" gibi görünmüyor, o yüzden bu '
+                    'Klip {names} gördüğüm kadarıyla "{words}" gibi görünmüyor, o yüzden bu '
                     "ifadeyi koymadım. Ne olduğunu söyle ya da gördüğümü anlatmamı iste."
                 ),
+                v1="s" if len(mismatched) != 1 else "",
+                names=names,
+                v2="don" if len(mismatched) != 1 else "doesn",
+                words=words,
+                v3="them" if len(mismatched) != 1 else "it",
+                v4="they are" if len(mismatched) != 1 else "it is",
             )
         )
     if not written:
@@ -5002,23 +5023,27 @@ def _ground_descriptive_captions(
         state.reply_notes.append(
             say(
                 en=(
-                    f"I left out clip{plural} {', '.join(unseen)}: I can't tell what "
-                    f"{'they show' if plural else 'it shows'}. Tell me and I'll add "
-                    f"{'them' if plural else 'it'}."
+                    "I left out clip{plural} {join_unseen}: I can't tell what "
+                    "{v1}. Tell me and I'll add "
+                    "{v2}."
                 ),
                 tr=(
-                    f"Klip {', '.join(unseen)} dışarıda kaldı: ne gösterdiğini anlayamadım. "
+                    "Klip {join_unseen} dışarıda kaldı: ne gösterdiğini anlayamadım. "
                     "Söylersen ekleyeyim."
                 ),
+                plural=plural,
+                join_unseen=", ".join(unseen),
+                v1="they show" if plural else "it shows",
+                v2="them" if plural else "it",
             )
         )
     if skipped:
         state.reply_notes.append(
             say(
-                en=(
-                    f"I didn't caption clip{'s' if len(skipped) != 1 else ''} {', '.join(skipped)}."
-                ),
-                tr=f"Klip {', '.join(skipped)} için yazı eklemedim.",
+                en=("I didn't caption clip{v1} {join_skipped}."),
+                tr="Klip {join_skipped} için yazı eklemedim.",
+                v1="s" if len(skipped) != 1 else "",
+                join_skipped=", ".join(skipped),
             )
         )
     return kept
@@ -5220,8 +5245,10 @@ def _coerce_label_each_clip(
             plural = "s" if len(untimed) != 1 else ""
             state.reply_notes.append(
                 say(
-                    en=f"No filming time for clip{plural} {', '.join(untimed)}.",
-                    tr=f"Klip {', '.join(untimed)} için çekim saati yok.",
+                    en="No filming time for clip{plural} {join_untimed}.",
+                    tr="Klip {join_untimed} için çekim saati yok.",
+                    plural=plural,
+                    join_untimed=", ".join(untimed),
                 )
             )
         if labels:
@@ -6315,8 +6342,9 @@ def _coerce_patch(patch: dict, state: _ParseState) -> dict:
             if not isinstance(value, str) or value not in _ALLOWED_FONTS:
                 state.invalid_value(
                     say(
-                        en=f"I don't have a font called {value!r}",
-                        tr=f"{value!r} adında bir yazı tipim yok",
+                        en="I don't have a font called {value!r}",
+                        tr="{value!r} adında bir yazı tipim yok",
+                        value=value,
                     )
                 )
                 return {}
@@ -6325,8 +6353,9 @@ def _coerce_patch(patch: dict, state: _ParseState) -> dict:
             if not isinstance(value, str) or value not in _ALLOWED_EFFECTS:
                 state.invalid_value(
                     say(
-                        en=f"I couldn't set the effect to {value!r}; the options are ",
-                        tr=f"Efekti {value!r} yapamadım; seçenekler: ",
+                        en="I couldn't set the effect to {value!r}; the options are ",
+                        tr="Efekti {value!r} yapamadım; seçenekler: ",
+                        value=value,
                     )
                     + ", ".join(sorted(_ALLOWED_EFFECTS))
                 )
@@ -6350,12 +6379,13 @@ def _coerce_patch(patch: dict, state: _ParseState) -> dict:
                     say(
                         en=(
                             "I couldn't set the letter case to "
-                            f"{value!r}; the options are none, upper, lower, title"
+                            "{value!r}; the options are none, upper, lower, title"
                         ),
                         tr=(
-                            f"Harf biçimini {value!r} yapamadım; "
+                            "Harf biçimini {value!r} yapamadım; "
                             "seçenekler: none, upper, lower, title"
                         ),
+                        value=value,
                     )
                 )
                 return {}

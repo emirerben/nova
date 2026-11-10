@@ -572,13 +572,15 @@ def zero_match_message(selector: dict[str, Any], *, find: str | None = None) -> 
 
     return say(
         en=(
-            f"I couldn't find {describe_selector(selector, find=find)}, so I changed nothing. "
+            "I couldn't find {describe_selector_selector}, so I changed nothing. "
             "Which text did you mean?"
         ),
         tr=(
-            f"{_describe_selector_tr(selector, find=find)} bulamadım, bu yüzden hiçbir şeyi "
+            "{describe_selector_tr_selector} bulamadım, bu yüzden hiçbir şeyi "
             "değiştirmedim. Hangi yazıyı kastettin?"
         ),
+        describe_selector_selector=describe_selector(selector, find=find),
+        describe_selector_tr_selector=_describe_selector_tr(selector, find=find),
     )
 
 
