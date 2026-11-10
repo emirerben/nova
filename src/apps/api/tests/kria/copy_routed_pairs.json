@@ -128,6 +128,16 @@
   ],
   [
    "app/kria/brief_checks.py",
+   "Your text colour wouldn't be readable on that background, so the text is black.",
+   "Yazı rengin o arka planda okunmazdı, o yüzden yazı siyah."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Your text colour wouldn't be readable on that background, so the text is white.",
+   "Yazı rengin o arka planda okunmazdı, o yüzden yazı beyaz."
+  ],
+  [
+   "app/kria/brief_checks.py",
    "clip {tail}",
    "{tail}. klip"
   ],
