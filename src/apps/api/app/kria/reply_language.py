@@ -36,12 +36,29 @@ from typing import Any
 from app.kria.brief_route import fold_text, loose_text
 
 SUPPORTED_REPLY_LANGUAGES: frozenset[str] = frozenset({"en", "tr"})
+# Languages whose chat sentences come from `app/kria/copy/<language>.json` (B, KRI-1362).
+# Each is offered only while its switch is on (`_supported`), so the default stays en/tr.
+CATALOG_REPLY_LANGUAGES: frozenset[str] = frozenset({"de"})
 
 # Prompt names for the languages a model is told to write in.
-LANGUAGE_NAMES: Mapping[str, str] = {"en": "English", "tr": "Turkish"}
+LANGUAGE_NAMES: Mapping[str, str] = {"en": "English", "tr": "Turkish", "de": "German"}
 
 # The chat's language lives on the thread row, next to the rest of its state.
 STATE_KEY = "reply_language"
+
+
+def german_enabled() -> bool:
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(getattr(settings, "kria_german_replies_enabled", False))
+
+
+def _supported() -> frozenset[str]:
+    """The reply languages offered now: English, Turkish, plus German behind its switch."""
+    extra = CATALOG_REPLY_LANGUAGES if german_enabled() else frozenset()
+    return SUPPORTED_REPLY_LANGUAGES | extra
+
+
 # Clear words a message needs to move an established chat to the other language.
 _SWITCH_STRENGTH = 3
 
@@ -85,6 +102,24 @@ _EN_WORDS = frozenset(
 # Sentences the iOS/web apps send as the creator's message for a tap or an
 # attachment-only send. They are English on the wire (some are server commands),
 # so they say nothing about the language the creator writes in.
+# German (KRI-1362, behind `KRIA_GERMAN_REPLIES_ENABLED`): letters German has and Turkish and
+# English never use, plus everyday edit-chat words, loose-folded ("über" -> "uber",
+# "größer" -> "grosser"). Words English or Turkish also use as plain words are left out.
+_STRONG_DE_LETTERS = frozenset("äßÄẞ")
+_DE_WORDS = frozenset(
+    """
+    und ist nicht das der ein eine einen einem mit bitte mach mache macht zeig zeige ich du
+    wir mein meine meinen dein deine kein keine ohne auch noch nur hier jetzt dann aber oder
+    wie was wann warum ja nein danke gut schon schoen schon video videos titel untertitel
+    musik lied foto fotos bild bilder anfang ende kurzer laenger kuerzer langer schneller
+    langsamer grosser kleiner andern aendern entfernen losche loesche loschen hinzufugen
+    fuge fuege stumm ton stimme bei auf fur fuer von zum zur im den dem des sie es sich
+    wird werden soll sollen kann konnen moechte mochte will lass lasse lassen sonst alles
+    andere anderen wort worter woerter ueber uber nach vor hab habe hinzugefugt hinzufuegen
+    gemacht zeigen sag sage gesagt
+    """.split()
+)
+
 _CLIENT_STOCK_MESSAGES = frozenset(
     {
         "suggest an edit",
@@ -151,10 +186,37 @@ def _scores(text: str) -> tuple[int, int, int]:
     return tr, en, len(words)
 
 
+def _strong_turkish_score(text: str) -> int:
+    words = _WORD.findall(unicodedata.normalize("NFC", text))
+    return sum(
+        1 for word in words if _STRONG_TR_LETTERS.search(word) or loose_text(word) in _TR_WORDS
+    )
+
+
+def _german_score(text: str) -> int:
+    """German evidence in one message: words with German-only letters or German words."""
+    words = _WORD.findall(unicodedata.normalize("NFC", text))
+    return sum(
+        1
+        for word in words
+        if not _STRONG_DE_LETTERS.isdisjoint(word) or loose_text(word) in _DE_WORDS
+    )
+
+
 def _detect(text: str | None) -> tuple[str | None, int]:
     """(language, strength) for one message; (None, 0) when it doesn't clearly say."""
     if not text or is_client_stock_message(text):
         return None, 0
+    if german_enabled():
+        de = _german_score(text)
+        if de:
+            # ö/ü are German letters too: only Turkish-only evidence counts against German.
+            tr_ = _strong_turkish_score(text)
+            _tr, en_, count_ = _scores(text)
+            if count_ and de >= 2 * max(en_, tr_) and de / count_ >= 0.25:
+                return "de", de
+            if de >= max(en_, tr_):
+                return None, 0  # German-led but not clear: never guess English or Turkish
     tr, en, count = _scores(text)
     if count == 0:
         return None, 0
@@ -166,22 +228,23 @@ def _detect(text: str | None) -> tuple[str | None, int]:
 
 
 def detect_chat_language(text: str | None) -> str | None:
-    """ "tr"/"en" when one creator message clearly reads as that language, else None."""
+    """ "tr"/"en" (or "de" behind its switch) when one creator message clearly reads as that
+    language, else None."""
     return _detect(text)[0]
 
 
 def locale_language(header: str | None) -> str | None:
     """The first supported primary language in an ``Accept-Language`` value.
 
-    Only the creator's top preference counts: "de-DE,tr;q=0.8" is a German device,
-    and Kria has no German copy, so this returns None rather than Turkish.
+    Only the creator's top preference counts: "de-DE,tr;q=0.8" is a German device, so this
+    returns "de" while German replies are on and None (never Turkish) while they are off.
     """
     for part in (header or "").split(","):
         tag = part.split(";", 1)[0].strip().lower()
         if not tag or tag == "*":
             continue
         primary = tag.replace("_", "-").split("-", 1)[0]
-        return primary if primary in SUPPORTED_REPLY_LANGUAGES else None
+        return primary if primary in _supported() else None
     return None
 
 
@@ -202,7 +265,7 @@ def resolve_reply_language(
     chat nothing has told yet it comes before the device (Green 5: a "Suggest an edit."
     tap on a Turkish phone by a creator who types English).
     """
-    previous = previous if previous in SUPPORTED_REPLY_LANGUAGES else None
+    previous = previous if previous in _supported() else None
     detected, strength = _detect(message)
     if detected is not None and (
         previous is None or detected == previous or strength >= _SWITCH_STRENGTH
@@ -210,7 +273,7 @@ def resolve_reply_language(
         return detected
     if previous is not None:
         return previous
-    if typed_elsewhere in SUPPORTED_REPLY_LANGUAGES:
+    if typed_elsewhere in _supported():
         return typed_elsewhere
     return locale_language(locale)
 
@@ -223,11 +286,7 @@ def history_enabled() -> bool:
 
 def needs_typed_history(message: str | None, previous: str | None) -> bool:
     """Only a chat nothing has told yet, on a message that does not say, reads the history."""
-    return (
-        history_enabled()
-        and previous not in SUPPORTED_REPLY_LANGUAGES
-        and _detect(message)[0] is None
-    )
+    return history_enabled() and previous not in _supported() and _detect(message)[0] is None
 
 
 # How many of the creator's latest messages in other chats are read for their language.
@@ -285,12 +344,12 @@ def thread_reply_language(thread: Any) -> str | None:
         return None
     state = getattr(thread, "state", None)
     stored = state.get(STATE_KEY) if isinstance(state, Mapping) else None
-    return stored if stored in SUPPORTED_REPLY_LANGUAGES else None
+    return stored if stored in _supported() else None
 
 
 def remember_reply_language(thread: Any, language: str | None) -> None:
     """Store the chat's language on the locked thread row; a no-op when unchanged."""
-    if language not in SUPPORTED_REPLY_LANGUAGES or not enabled():
+    if language not in _supported() or not enabled():
         return
     state = getattr(thread, "state", None)
     current = dict(state) if isinstance(state, Mapping) else {}
@@ -306,7 +365,7 @@ def bind_reply_language(language: str | None) -> contextvars.Token[str | None]:
     For long task bodies that already end in try/finally; prefer
     ``reply_language_for`` everywhere else.
     """
-    bound = language if language in SUPPORTED_REPLY_LANGUAGES and enabled() else None
+    bound = language if language in _supported() and enabled() else None
     return _CURRENT.set(bound)
 
 
@@ -329,9 +388,24 @@ def current_reply_language() -> str | None:
     return _CURRENT.get()
 
 
-def say(*, en: str, tr: str) -> str:
-    """Pick server copy for the current turn's language. English unless bound to tr."""
-    return tr if _CURRENT.get() == "tr" else en
+def say(*, en: str, tr: str, **values: object) -> str:
+    """Pick server copy for the current turn's language. English unless bound otherwise.
+
+    Turkish is the code's own ``tr`` text. Another language (German) is looked up by the English
+    sentence in its catalog file and falls back to English when the file has no line for it.
+    With ``values``, ``en``/``tr`` are templates (``"No pop-in for {names}"``) filled after the
+    language is picked, so a sentence with names in it has one key on every turn.
+    """
+    language = _CURRENT.get()
+    if language == "tr":
+        text = tr
+    elif language is None or language == "en":
+        text = en
+    else:
+        from app.kria.copy_catalog import translate  # noqa: PLC0415
+
+        text = translate(language, en) or en
+    return text.format(**values) if values else text
 
 
 def prompt_language_line(language: str | None) -> str:
@@ -340,7 +414,7 @@ def prompt_language_line(language: str | None) -> str:
     English and unknown languages render nothing, so those prompts stay
     byte-identical and the model keeps mirroring the creator as before.
     """
-    if language not in SUPPORTED_REPLY_LANGUAGES or language == "en":
+    if language not in _supported() or language == "en":
         return ""
     name = LANGUAGE_NAMES[language]
     return (
@@ -392,6 +466,11 @@ def _strict_scores(text: str) -> tuple[int, int, int, int]:
 def _strict_detect(text: str) -> str | None:
     if not text or is_client_stock_message(text):
         return None
+    if german_enabled():
+        words = _WORD.findall(unicodedata.normalize("NFC", text))
+        grammar = sum(1 for word in words if loose_text(word) in _DE_WORDS)
+        if words and grammar >= 2 and grammar / len(words) >= 0.2:
+            return "de"
     tr, grammar, en, count = _strict_scores(text)
     if count == 0:
         return None
@@ -439,7 +518,7 @@ def agent_reply_language(explicit: str | None, *creator_texts: object) -> str | 
     """
     if not enabled():
         return None
-    if explicit in SUPPORTED_REPLY_LANGUAGES:
+    if explicit in _supported():
         return explicit
     return current_reply_language() or creator_text_language(*creator_texts)
 

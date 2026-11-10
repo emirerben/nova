@@ -1393,6 +1393,11 @@ class Settings(BaseSettings):
     # their chats before the device language (`reply_language.creator_typed_language`). Default
     # TRUE; false + restart (api) = byte-identical (device language, KRI-784).
     kria_reply_language_history_enabled: bool = True
+    # KRI-1362 (B): German chat replies. Chat sentences come from app/kria/copy/de.json, keyed
+    # by the English sentence (missing line = English); German is detected from the creator's
+    # words and the device language, and the models are told to reply in German. Default
+    # FALSE until a German speaker has reviewed de.json; false = en/tr only, byte-identical.
+    kria_german_replies_enabled: bool = False
     # KRI-1097 wave 2 (prompt fidelity on every route). ROUTE_REGISTRY_ENABLED: each render
     # route reads its own capability table (`app.kria.route_capabilities`), so voiceover,
     # Talking, Narrated, creator-song, spoken-excerpt and slide drafts get their own honest
