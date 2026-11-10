@@ -842,8 +842,9 @@ struct EditorDocument: Equatable, Sendable {
     /// moves the moments from it onto the current Range edit exactly like the server's `reproject_color_moments` does
     /// at Save. Empty whenever the edit has no lane, so every other document is unchanged.
     var colorMomentsBaseSlots: [EditorTimelineSlot] = []
-    /// KRI-1350: the moment-owned sounds (`cmsfx-…`) as loaded, so a sound that disappears while its moment is trimmed
-    /// away returns when a later Range edit brings the moment back. Empty without a lane.
+    /// KRI-1350: the moment-owned sounds (`cmsfx-…`) with the latest settings each had while visible (loaded, then
+    /// refreshed on every Range edit), so a sound that disappears while its moment is trimmed away returns, unchanged,
+    /// when a later Range edit brings the moment back. Empty without a lane.
     var colorMomentSoundsBase: [EditorTimedEffect] = []
     var carouselMoment: [String: JSONValue]?
     var lyrics: [String: JSONValue]?

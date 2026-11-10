@@ -295,6 +295,15 @@ enum NativeSpeechTimelineProjection {
         // The sounds as they are now, plus any loaded one an earlier trim took away with its moment (never one the
         // creator deleted), so extending the footage back restores both the moment and its sound.
         let currentMomentSounds = next.soundEffects.filter { $0.id.hasPrefix(colorMomentSoundPrefix) }
+        // Refresh the remembered copy with each visible sound's latest settings (gain, sound trim) before this edit can
+        // hide it, so a sound a later edit restores comes back exactly as the creator left it.
+        for sound in currentMomentSounds {
+            if let index = next.colorMomentSoundsBase.firstIndex(where: { $0.id == sound.id }) {
+                next.colorMomentSoundsBase[index] = sound
+            } else {
+                next.colorMomentSoundsBase.append(sound)
+            }
+        }
         let deletedSounds = Set(next.deletions.filter { $0.kind == "sound_effect" }.map(\.id))
         let momentSounds = currentMomentSounds + next.colorMomentSoundsBase.filter { base in
             !deletedSounds.contains(base.id) && !currentMomentSounds.contains { $0.id == base.id }

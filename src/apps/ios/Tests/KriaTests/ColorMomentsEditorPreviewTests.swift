@@ -142,4 +142,21 @@ final class ColorMomentsEditorPreviewTests: XCTestCase {
         XCTAssertEqual(previewMoments(back).count, 1, "the moment is the server's; only the sound was deleted")
         XCTAssertTrue(back.soundEffects.isEmpty)
     }
+
+    func testARestoredSoundKeepsTheCreatorsUnsavedGainAndTrim() throws {
+        var document = try talkingDocument(start: 0.5, end: 3, soundAt: 0.5)
+        // The editor's own sound controls (setSoundEffectGain / the sound trim) before the Range edits.
+        document.soundEffects[0].raw["gain"] = .number(0.2)
+        document.soundEffects[0].raw["trim_start_s"] = .number(0.1)
+        document.soundEffects[0].raw["trim_end_s"] = .number(0.4)
+        let away = window(document, inS: 3.5, duration: 0.5)
+        XCTAssertTrue(away.soundEffects.isEmpty)
+        let back = window(away, inS: 0, duration: 4)
+        let sound = try XCTUnwrap(back.soundEffects.first)
+        XCTAssertEqual(sound.id, "cmsfx-cm1-enter")
+        XCTAssertEqual(sound.raw["gain"], .number(0.2))
+        XCTAssertEqual(sound.raw["trim_start_s"], .number(0.1))
+        XCTAssertEqual(sound.raw["trim_end_s"], .number(0.4))
+        XCTAssertEqual(try XCTUnwrap(sound.pointS), 0.5, accuracy: 1e-9)
+    }
 }
