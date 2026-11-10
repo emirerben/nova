@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.135.0] - 2026-11-10
+
+### Changed
+- feat(ios): redesign split-screen flow, Split tool in the island (KRI-1335) (#2245) <!-- release-pr: 2245 -->
+
 ## [0.88.134.0] - 2026-11-09
 
 ### Changed
