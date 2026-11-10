@@ -314,6 +314,8 @@ enum NativeEditorRenderError: Error, Equatable {
             // Guided stories apply their authored fit before adding a final-frame hold
             // (`phone_guided_plan`); other formats retain `_fit_eligible` behavior.
             var footageCanvas = canvas
+            // Fit uses the full layout's panel height. A collapse section grows the panel later, so a sideways clip's
+            // bars there are approximate (the compositor still clips to the panel it draws).
             if let sectionID = authoredSlot?.splitSectionID, let panel = authoredSlot?.splitPanelIndex,
                let section = document.splitScreenSections.first(where: { $0.id == sectionID }) {
                 let height = (1 - section.gutter * Double(section.panelCount - 1)) * section.panelWeights[panel] / section.panelWeights.reduce(0, +)
@@ -1073,7 +1075,8 @@ enum NativeEditorRenderError: Error, Equatable {
                   let window = splitProjection.clipWindows.first(where: { $0.sourceIndex == index }) else { return nil }
             let start = window.start - document.clips[index].splitOffsetS
             return SplitScreenSection(id: section.id, start: start, end: start + section.durationS,
-                                      panelWeights: section.panelWeights, gutter: section.gutter, backgroundColor: section.backgroundColor)
+                                      panelWeights: section.panelWeights, gutter: section.gutter, backgroundColor: section.backgroundColor,
+                                      collapseEmptyPanels: section.collapseEmptyPanels)
         }
         // KRI-589: drawings follow the timeline the cuts left them (the projected window), then take the
         // same clamp the server's `compile_drawing_layers` applies; both are pinned by compile_v1.json.

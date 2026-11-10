@@ -1658,7 +1658,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var timelinePinching = false
     private var activeTrim: ActiveTrim?
     private var transactionBaseline: EditorDocument?
-    private var splitDividerDrag: (sectionID: String, boundary: Int, weights: [Double], ownsTransaction: Bool)?
+    private var splitDividerDrag: (sectionID: String, upper: Int, lower: Int, active: [Int], weights: [Double], ownsTransaction: Bool)?
     /// Imports bound for a split panel, by placement id. In memory only: a relaunch places them as ordinary clips.
     private var splitPanelPlacements: [UUID: (sectionID: String, panel: Int, offset: Double)] = [:]
     private var draftProjectionCache: EditorDraft?
@@ -5261,7 +5261,8 @@ struct NativeEditorTemporaryVideo: Sendable {
             let offset = slot.splitOffsetS
             let peers = next.clips.filter { $0.id != slot.id && $0.splitSectionID == id && $0.splitPanelIndex == slot.splitPanelIndex }
             let previousEnd = peers.filter { $0.splitOffsetS < offset }.map { $0.splitOffsetS + ($0.durationS ?? 0) }.max() ?? 0
-            let nextStart = peers.filter { $0.splitOffsetS >= offset }.map(\.splitOffsetS).min() ?? section.durationS
+            // A collapse section follows its longest member, so a trailing trim may grow it (the timeline cap still holds).
+            let nextStart = peers.filter { $0.splitOffsetS >= offset }.map(\.splitOffsetS).min() ?? (section.collapseEmptyPanels ? 1800 : section.durationS)
             switch active.edge {
             case .leading:
                 let delta = min(max((resized.start - sourceIn) / rate, previousEnd - offset), currentDuration - minimumClipDuration)
@@ -5287,9 +5288,12 @@ struct NativeEditorTemporaryVideo: Sendable {
             slot = clock.sliced(from: delta, to: end).applying(to: slot)
         }
         slot.durationBeats = nil; next.clips[index] = slot
+        next.fitCollapseSectionDurations()
+        guard next.splitScreenIsValid else { return }
+        // A section that grew or shrank moves the canvas lanes behind it, exactly as setSplitScreenDuration does.
+        if next.splitScreenSections != active.baseline.splitScreenSections { NativeSplitTimelineRebase.rebase(&next, from: active.baseline) }
         // Later clips ripple by construction (windows are a walk of the slot durations); the
         // per-clip labels must ripple with them, derived from the gesture baseline every update.
-        guard next.splitScreenIsValid else { return }
         rebaseGuidedLabels(&next, from: active.baseline)
 
         if next == active.baseline {
@@ -9047,6 +9051,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         var next = document; body(&next)
         let retainedSplitIDs = Set(next.clips.filter { !$0.removed }.compactMap(\.splitSectionID))
         next.splitScreenSections.removeAll { !retainedSplitIDs.contains($0.id) }
+        next.fitCollapseSectionDurations()
         guard next.splitScreenIsValid else { return }
         if !next.clips.isEmpty { next.editorState = "renderable" }
         guard next != document else { return }
@@ -9259,7 +9264,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         // through `.timeline` so the speech projection moves the captions and Save sends the rows.
         if let sectionID = found.slot.splitSectionID,
            let section = document.splitScreenSections.first(where: { $0.id == sectionID }),
-           found.slot.splitOffsetS + window.length > section.durationS + 0.000001 { return false }
+           !section.collapseEmptyPanels, found.slot.splitOffsetS + window.length > section.durationS + 0.000001 { return false }
         mutateClip(clipID: selection.id, gatedByTimeline: !talking) { slot in
             slot.inS = max(0, window.start)
             if moved { slot.raw["source_start_locked"] = .bool(true) }
@@ -11136,6 +11141,15 @@ extension NativeEditorSession {
         canEditSplitScreen && selectedSplitScreenSectionID == nil && selection?.kind == .clip
     }
 
+    /// Collapse needs this build at protocol 47 or later and the server's say-so: the editor capability
+    /// `split_collapse` the server sends with the edit, or `splitCollapse` among the phone-render features it
+    /// verified. Until the server offers it, new sections stay fixed-layout and the control stays hidden.
+    var canCollapseSplitPanels: Bool {
+        KriaClientProtocolContract.version >= 47
+            && (document.capabilities["split_collapse"]?.editable == true
+                || lastPhoneRenderingCapabilities?.verifiedFeatures.contains("splitCollapse") == true)
+    }
+
     var canSplitSelectedClip: Bool {
         guard canEditTimeline, let selection, let found = sourceWindowSlot(for: selection) else { return false }
         let offset = currentTime - found.clip.start
@@ -11149,7 +11163,7 @@ extension NativeEditorSession {
         guard let section = document.splitScreenSections.first(where: { $0.id == id }) else { return false }
         let start = slot.splitOffsetS + (slot.durationS ?? 0)
         let end = start + (slot.durationS ?? 0)
-        return end <= section.durationS + 0.000001 && !document.clips.contains {
+        return (section.collapseEmptyPanels || end <= section.durationS + 0.000001) && !document.clips.contains {
             $0.id != slot.id && $0.splitSectionID == id && $0.splitPanelIndex == slot.splitPanelIndex
                 && $0.splitOffsetS < end && $0.splitOffsetS + ($0.durationS ?? 0) > start
         }
@@ -11175,8 +11189,9 @@ extension NativeEditorSession {
             guard canCreateSplitScreen, let selection, let index = clipSlotIndex(selection.id),
                   let duration = document.clips[index].durationS, duration >= minimumClipDuration else { return }
             let id = UUID().uuidString
+            let collapse = canCollapseSplitPanels
             transactDocument(section: .timeline) { value in
-                value.splitScreenSections.append(EditorSplitScreenSection(id: id, durationS: duration, panelCount: panelCount))
+                value.splitScreenSections.append(EditorSplitScreenSection(id: id, durationS: duration, panelCount: panelCount, collapseEmptyPanels: collapse))
                 value.clips[index] = Self.pinningSpeakerSubject(value.clips[index])
                 value.clips[index].setSplitMembership(sectionID: id, panelIndex: 0, offset: 0)
             }
@@ -11213,7 +11228,7 @@ extension NativeEditorSession {
             end = max(end, window.end - origin, offset + duration)
             previous = slot
         }
-        next.splitScreenSections = [EditorSplitScreenSection(id: id, durationS: end, panelCount: panelCount)]
+        next.splitScreenSections = [EditorSplitScreenSection(id: id, durationS: end, panelCount: panelCount, collapseEmptyPanels: canCollapseSplitPanels)]
         return next.splitScreenIsValid ? next : nil
     }
 
@@ -11243,8 +11258,10 @@ extension NativeEditorSession {
             // The playhead parks on the last instant once playback ends; that frame still shows this section.
             guard start <= currentTime, currentTime < end || (currentTime <= end && end >= projection.totalDuration - 0.000001) else { continue }
             let filled = Set(members.compactMap { document.clips[$0].splitPanelIndex })
+            let local = max(0, min(currentTime - start, section.durationS - 0.000001))
             return NativeSplitContext(sectionID: section.id, sectionStart: start, section: section,
-                                      emptyPanels: (0..<section.panelCount).filter { !filled.contains($0) })
+                                      emptyPanels: (0..<section.panelCount).filter { !filled.contains($0) },
+                                      activePanels: NativeSplitPanelLayout.activePanels(in: section, members: members.map { document.clips[$0] }, at: local))
         }
         return nil
     }
@@ -11271,19 +11288,24 @@ extension NativeEditorSession {
         }
     }
 
-    func beginSplitDividerDrag(sectionID: String, boundary: Int) {
+    /// `upper` and `lower` are the two panels the divider sits between: neighbours among the panels drawn at the
+    /// playhead, which in a collapse section can skip a panel that has ended.
+    func beginSplitDividerDrag(sectionID: String, between upper: Int, and lower: Int) {
         if splitDividerDrag != nil { endSplitDividerDrag() }
         guard canEditSplitScreen, let section = document.splitScreenSections.first(where: { $0.id == sectionID }),
-              boundary >= 0, boundary + 1 < section.panelCount else { return }
+              (0..<section.panelCount).contains(upper), (0..<section.panelCount).contains(lower), upper < lower else { return }
+        let active = splitContextAtPlayhead.flatMap { $0.sectionID == sectionID ? $0.activePanels : nil }
+            ?? (section.collapseEmptyPanels ? [] : Array(0..<section.panelCount))
+        guard let position = active.firstIndex(of: upper), active.indices.contains(position + 1), active[position + 1] == lower else { return }
         let owns = transactionBaseline == nil
         if owns { beginTransaction() }
-        splitDividerDrag = (sectionID, boundary, section.panelWeights, owns)
+        splitDividerDrag = (sectionID, upper, lower, active, section.panelWeights, owns)
     }
 
     func updateSplitDividerDrag(deltaFraction: Double) {
         guard let drag = splitDividerDrag,
               let index = document.splitScreenSections.firstIndex(where: { $0.id == drag.sectionID }) else { return }
-        let weights = NativeSplitPanelLayout.draggedWeights(drag.weights, boundary: drag.boundary,
+        let weights = NativeSplitPanelLayout.draggedWeights(drag.weights, between: drag.upper, and: drag.lower, active: drag.active,
             gutter: document.splitScreenSections[index].gutter, deltaFraction: deltaFraction)
         transactDocument(section: .timeline) { $0.splitScreenSections[index].panelWeights = weights }
     }
@@ -11304,6 +11326,15 @@ extension NativeEditorSession {
         } else if let index = document.splitScreenSections.firstIndex(where: { $0.id == drag.sectionID }) {
             transactDocument(section: .timeline) { $0.splitScreenSections[index].panelWeights = drag.weights }
         }
+    }
+
+    /// One undo step. Turning it on needs `canCollapseSplitPanels` and makes the section last until its longest
+    /// clip ends; turning it off keeps the length the section has.
+    func setSplitCollapse(sectionID: String, _ on: Bool) {
+        guard canEditSplitScreen, !on || canCollapseSplitPanels,
+              let index = document.splitScreenSections.firstIndex(where: { $0.id == sectionID }),
+              document.splitScreenSections[index].collapseEmptyPanels != on else { return }
+        transactDocument(section: .timeline) { $0.splitScreenSections[index].collapseEmptyPanels = on }
     }
 
     /// Where a panel add lands, in section seconds, judged from the playhead when it is inside this section.

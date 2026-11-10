@@ -1400,7 +1400,11 @@ enum KriaClientProtocolContract {
     /// `generated_overlay` card only to this protocol, because an older build would spend on one touch.
     ///
     /// 46 (KRI-1231) preserves editable split-screen sections and renders ordinary media in independent panel viewports.
-    static let version = 46
+    ///
+    /// 47 (KRI-1335) round-trips a split section's `collapse_empty_panels` and renders it: the panels still playing grow
+    /// to fill the screen when another panel's clips end. A build below it would drop the key on Save, so the server
+    /// offers collapse (and `splitCollapse`) only to this protocol.
+    static let version = 47
     static let header = "X-Kria-Client-Protocol"
 }
 

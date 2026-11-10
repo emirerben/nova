@@ -145,7 +145,7 @@ final class NativeSplitScreenFlowTests: XCTestCase {
         let session = makeSession(document)
         session.currentTime = 1
         let before = NativeSplitPanelLayout.dividerYs(weights: [1, 1, 1], gutter: 0.05)
-        session.beginSplitDividerDrag(sectionID: "s", boundary: 1)
+        session.beginSplitDividerDrag(sectionID: "s", between: 1, and: 2)
         session.updateSplitDividerDrag(deltaFraction: -0.05)
         session.updateSplitDividerDrag(deltaFraction: -0.1)
         XCTAssertFalse(session.canUndo, "Live updates add no undo snapshot")
@@ -170,7 +170,7 @@ final class NativeSplitScreenFlowTests: XCTestCase {
         document.splitScreenSections = [.init(id: "s", durationS: 4, panelCount: 2)]
         let session = makeSession(document)
         session.currentTime = 1
-        session.beginSplitDividerDrag(sectionID: "s", boundary: 0)
+        session.beginSplitDividerDrag(sectionID: "s", between: 0, and: 1)
         session.updateSplitDividerDrag(deltaFraction: 0.6)
         var weights = try XCTUnwrap(session.splitContextAtPlayhead).section.panelWeights
         XCTAssertEqual(weights[0], 1.7, accuracy: 1e-9)

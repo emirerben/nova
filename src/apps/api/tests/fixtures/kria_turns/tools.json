@@ -3930,6 +3930,11 @@
               "title": "Background Color",
               "type": "string"
             },
+            "collapse_empty_panels": {
+              "default": false,
+              "title": "Collapse Empty Panels",
+              "type": "boolean"
+            },
             "duration_s": {
               "maximum": 1800,
               "minimum": 0.1,

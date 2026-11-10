@@ -89,6 +89,16 @@ def split_screen_available(job: Any, variant: dict[str, Any]) -> bool:
     )
 
 
+def split_collapse_available(job: Any, variant: dict[str, Any]) -> bool:
+    """May an edit set `collapse_empty_panels`? Reads the sending build, as the request does."""
+    from app.services.client_protocol import current_client_protocol
+    from app.services.phone_rollout import split_collapse_planned_for
+
+    return split_screen_available(job, variant) and split_collapse_planned_for(
+        current_client_protocol()
+    )
+
+
 def _variant_split_sections(variant: dict[str, Any]) -> list[dict[str, Any]]:
     timeline = variant.get("user_timeline") or variant.get("ai_timeline") or {}
     return copy.deepcopy(timeline.get("split_screen_sections") or [])

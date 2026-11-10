@@ -469,7 +469,7 @@ struct NativeVideoPreview: View {
             lastTapPoint = nil
             // Inside a split section a tap on a panel selects it. Only a tap outside every panel falls through.
             if !session.isPlaying, let context = session.splitContextAtPlayhead,
-               let panel = NativeSplitPreviewOverlay.panel(at: point, in: size, section: context.section) {
+               let panel = NativeSplitPreviewOverlay.panel(at: point, in: size, context: context) {
                 NativeSplitPreviewOverlay.choose(panel: panel, context: context, session: session, pick: $splitPanelPick)
                 return
             }
@@ -3404,11 +3404,7 @@ private struct NativeClipSurface: View {
     var body: some View {
         ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isSelected ? KriaColor.sky.opacity(0.24) : .clear)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(isSelected ? KriaColor.sky : .white.opacity(0.15), lineWidth: isSelected ? 2 : 1)
-                }
+                .fill(isSelected ? KriaColor.sky.opacity(0.34) : .clear)
                 .contentShape(Rectangle())
                 .onTapGesture(perform: onSelect)
                 .simultaneousGesture(
