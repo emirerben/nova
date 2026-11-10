@@ -105,6 +105,33 @@ round), and one composer shaping pass. The failed incident made two composer cal
 and four caption writes. No call was added to other routes. The reviewer prompt changes only when
 layers are present.
 
+## Approved wording that later failed
+
+The creator then asked the chat to write the text, and approved the wording it showed: a Turkish
+paragraph for the middle and its English translation for the bottom, both word by word. The
+server's wording question captured only the Turkish paragraph (196 characters) as its structured
+candidate; the English was in the assistant's message only. The brief kept the Turkish as a literal.
+The English paragraph is longer than the 200-character brief literal, so it was filed as a
+description with no literal. The plan seeded no bar for it, and the text pass could not add a bar
+and split it in one bundle. The job recorded that reason, and the render failed as
+`creation_text_failed`.
+
+The fix:
+
+- `text_sequence` literals take up to 280 characters; every other kind keeps 200. Quoted sequence
+  words follow the same bound; other quote readers keep 200.
+- The plan does not seed a sentence longer than a clip label as a label.
+- The text pass adds a whole-video bar at the asked place for a word sequence no bar holds, as
+  confirmed copy. The composer shapes it in a second bundle. The program records each approved
+  sequence's place, unit, and that sequences at different places are shown together, and every
+  replay checks them.
+
+`tests/kria/test_approved_long_sequence_copy.py` runs synthetic paragraphs of the same lengths
+through the brief, the planner and the text pass. Wrong shapes (multiword pieces, both layers at the
+top, one language after the other), a reworded translation, an unrequested extra line under
+asked-only, and a saved program edited after composition all fail or are dropped. Whether the live
+composer shapes both paragraphs is not verified.
+
 ## Gaps
 
 - Live accuracy: whether the layer writer cites the right facts, whether its translation is
