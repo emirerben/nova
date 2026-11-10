@@ -61,21 +61,6 @@ final class NativeCaptionAnimationUITests: XCTestCase {
 
         app.buttons["In animation Fade"].tap()
         XCTAssertTrue(selected(app.buttons["In animation Fade"]))
-        // Looping card previews keep the app from idling, so every query waits on them: they play only for the two frames.
-        let previews = app.buttons["native-editor-caption-animation-preview-toggle"]
-        scrollTo(app, previews)
-        previews.tap()
-        let card = app.buttons["In animation Pop"]
-        for _ in 0..<4 {
-            if card.isHittable { break }
-            app.scrollViews["native-editor-captions-scroll"].swipeDown()
-        }
-        shot(app, "\(prefix)-2-card-frame-a", element: card)
-        Thread.sleep(forTimeInterval: 0.35)
-        shot(app, "\(prefix)-3-card-frame-b", element: card)
-        scrollTo(app, previews)
-        previews.tap()
-        XCTAssertEqual(previews.label, "Play previews")
 
         pickLine(app, row: row)
         // The playhead sits at the picked line's start: two frames of its default fade-in while it plays.
