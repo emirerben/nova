@@ -413,6 +413,39 @@ def _preserve_label_offsets(
     return out_start, out_end
 
 
+def _on_recorded_clip(
+    link: dict[str, Any] | None,
+    media_id: str | None,
+    start: float,
+    end: float,
+    old_segments: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, bool, bool]:
+    """``(segment, fits, runs_on)`` for a text bound by the clip it records (KRI-1332).
+
+    It follows that clip only while it still starts on it, so a text the creator moved
+    elsewhere stays where they put it: one that fits the clip is re-windowed like a label,
+    a title that runs on past it keeps its start on the clip and its end on its footage.
+    A participant label that no longer fits its clip is the creator's own placement.
+    """
+    if not link or not link.get("recorded"):
+        return None, False, False
+    segment = _identify_old_segment(
+        {"segment_id": link.get("segment_id"), "start_s": start, "end_s": end},
+        media_id,
+        old_segments,
+    )
+    if segment is None or not (
+        float(segment["output_start_s"]) - _SEGMENT_FIT_TOLERANCE_S
+        <= start
+        < float(segment["output_end_s"])
+    ):
+        return None, False, False
+    fits = end <= float(segment["output_end_s"]) + _SEGMENT_FIT_TOLERANCE_S
+    if not fits and not link.get("runs_on"):
+        return None, False, False
+    return segment, fits, not fits
+
+
 def rebase_guided_text(
     state: Any,
     guided: dict[str, Any] | None,
@@ -481,6 +514,7 @@ def rebase_guided_text(
     project_end = (
         make_time_projector(old_segments, new_segments, interval_end=True) if retimed else None
     )
+    project_tail = project_end or make_time_projector(old_segments, new_segments, interval_end=True)
     old_index = {str(s.get("segment_id")): i for i, s in enumerate(old_segments)}
 
     notes: list[str] = []
@@ -513,8 +547,12 @@ def rebase_guided_text(
         media_id = _bar_media(bar, links, cut_media)
         bar_id = str(bar.get("id") or "")
         is_label = bar_id.startswith(_CLIP_TEXT_PREFIXES)
-        old_segment = None
-        clip_bound = False
+        old_segment, clip_bound, runs_on = None, False, False
+        if not is_label:
+            old_segment, clip_bound, runs_on = _on_recorded_clip(
+                links.get(bar_id), media_id, start, end, old_segments
+            )
+        keep_offsets = is_label or clip_bound
         if is_label:
             old_segment = _identify_old_segment(bar, media_id, old_segments)
             # A per-shot montage text whose clip cannot be identified is ordinary
@@ -535,7 +573,7 @@ def rebase_guided_text(
                 )
             ):
                 clip_bound = False
-        elif bar.get("segment_id") and not _is_anchored(bar, old_total):
+        elif not old_segment and bar.get("segment_id") and not _is_anchored(bar, old_total):
             candidate = _identify_old_segment(bar, None, old_segments)
             if (
                 candidate is not None
@@ -550,7 +588,9 @@ def rebase_guided_text(
         opening = start <= _EDGE_S
         closing = old_total > 0 and end >= old_total - _EDGE_S
         anchored = (opening and closing) or ((opening or closing) and _is_edge_titled(bar_id))
-        if text_timing == "preserve_absolute" and (sequential or not (clip_bound or anchored)):
+        if text_timing == "preserve_absolute" and (
+            sequential or not (clip_bound or anchored or runs_on)
+        ):
             if end > new_total + 1e-6:
                 overflowing_text.append(bar)
             rebased.append(bar)
@@ -562,10 +602,22 @@ def rebase_guided_text(
                 continue
             updated = dict(bar)
             new_start, new_end = window[0], window[1]
-            if is_label and old_segment is not None:
+            if keep_offsets and old_segment is not None:
                 new_start, new_end = _preserve_label_offsets(
                     start, end, old_segment, (window[0], window[1])
                 )
+            updated["start_s"], updated["end_s"] = _round(new_start), _round(new_end)
+            updated["segment_id"] = window[2]
+            rebased.append(updated)
+            continue
+        if runs_on and (window := _follow_window(old_segment, media_id, new_segments)):
+            old_end = float(old_segment["output_end_s"])
+            new_start = _preserve_label_offsets(start, old_end, old_segment, window[:2])[0]
+            span = _project_span(project, old_segments, start, end, project_end=project_tail)
+            tail = span[1][0] if span is not None else window[1]
+            # Never longer past its clip than before: a reorder can carry its footage away.
+            new_end = min(new_total, max(window[1], min(tail, window[1] + end - old_end)))
+            updated = dict(bar)
             updated["start_s"], updated["end_s"] = _round(new_start), _round(new_end)
             updated["segment_id"] = window[2]
             rebased.append(updated)

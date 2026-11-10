@@ -237,6 +237,8 @@ struct CreationConfirmationStage: View {
     /// the keys), so the picker is shown only where a `generate` button is.
     var renderShape: (offer: RenderShapeOffer, choice: Binding<RenderShapeChoice>)? = nil
     var refreshDirection: () -> Void = {}
+    /// See `DirectionStage.speechCheckTimedOut`.
+    var speechCheckTimedOut = false
     let action: (String, [String: JSONValue]) -> Void
 
     private var cleanup: [String: JSONValue] { thread.speechCleanup ?? [:] }
@@ -310,7 +312,12 @@ struct CreationConfirmationStage: View {
             if hasCleanup {
                 if let identifier = analysis["id"]?.stringValue { cleanupActions(identifier: identifier) }
                 else {
-                    ProgressView("Preparing the speech check…")
+                    if speechCheckTimedOut {
+                        Text("This is taking longer than usual.")
+                            .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+                    } else {
+                        ProgressView("Preparing the speech check…")
+                    }
                     Button("Create without cleanup") { action("create_without_cleanup", [:]) }
                         .buttonStyle(CanonicalPrimaryButtonStyle()).disabled(isBusy || !hasVideo)
                 }
@@ -387,7 +394,14 @@ struct CreationConfirmationStage: View {
         let outcomeFailed = cleanup["outcome"]?.objectValue?["status"]?.stringValue == "failed"
         switch analysis["status"]?.stringValue {
         case "queued", "running":
-            ProgressView("Checking speech…")
+            if speechCheckTimedOut {
+                Text("This is taking longer than usual.")
+                    .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+                Button("Create without cleanup") { action("create_without_cleanup", payload) }
+                    .buttonStyle(CanonicalPrimaryButtonStyle()).disabled(isBusy || !hasVideo)
+            } else {
+                ProgressView("Checking speech…")
+            }
         case "failed" where analysis["error"]?.objectValue?["code"]?.stringValue == "no_speech_track":
             // KRI-653: nothing audible. Cleanup cannot help and rendering without it only captions silence.
             NoSpeechRecoveryCard(recordAgain: recordAgain, chooseAnother: chooseAnother)

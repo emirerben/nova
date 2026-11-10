@@ -72,6 +72,7 @@ celery_app = Celery(
         "app.tasks.kria_runtime",
         "app.tasks.render_review",
         "app.tasks.kria_clip_understanding",
+        "app.tasks.visual_talking_takes",
         "app.tasks.kria_suggester",
         "app.tasks.user_song",
         "app.tasks.media_library",

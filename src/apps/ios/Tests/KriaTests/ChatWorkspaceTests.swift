@@ -618,3 +618,49 @@ final class ChatWorkspaceTests: XCTestCase {
         )
     }
 }
+
+final class EditorWarmPlanTests: XCTestCase {
+    private func project(revision: Int = 3, job: UUID? = UUID(uuidString: "11111111-1111-1111-1111-111111111111"),
+                         variant: String? = "variant", title: String = "Chat") -> ProjectSummary {
+        ProjectSummary(id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!, title: title, status: .ready,
+                       updatedAt: .now, posterURL: nil, outputVariantID: variant, serverRevision: revision,
+                       activeJobID: job, activePlanItemID: "item")
+    }
+
+    private var ready: EditorWarmPlan.Facts {
+        .init(videoIsReady: true, formatIsKnown: true, isSlidePost: false, canOpenVideoEditor: true,
+              sceneIsActive: true, chatIsIdle: true, isOnline: true, isLowDataMode: false)
+    }
+
+    func testWarmsWhenTheVideoIsReadyAndTheChatIsIdle() {
+        XCTAssertTrue(EditorWarmPlan(project: project(), facts: ready).isWarmable)
+    }
+
+    func testEveryBlockingConditionStopsTheWarmUp() {
+        let blockers: [(String, (inout EditorWarmPlan.Facts) -> Void)] = [
+            ("video still rendering", { $0.videoIsReady = false }),
+            ("format unknown", { $0.formatIsKnown = false }),
+            ("slide post", { $0.isSlidePost = true }),
+            ("editor not offered", { $0.canOpenVideoEditor = false }),
+            ("app not active", { $0.sceneIsActive = false }),
+            ("chat sending or thinking", { $0.chatIsIdle = false }),
+            ("offline", { $0.isOnline = false }),
+            ("Low Data Mode", { $0.isLowDataMode = true }),
+        ]
+        for (name, change) in blockers {
+            var facts = ready
+            change(&facts)
+            XCTAssertFalse(EditorWarmPlan(project: project(), facts: facts).isWarmable, name)
+        }
+        XCTAssertFalse(EditorWarmPlan(project: project(job: nil), facts: ready).isWarmable, "no rendered job to open")
+    }
+
+    /// `.task(id:)` restarts the warm-up whenever this value changes, so a chat poll that only moves the thread
+    /// revision, title or timestamp must not change it.
+    func testChatPollsDoNotChangeThePlanButANewJobOrVariantDoes() {
+        let base = EditorWarmPlan(project: project(), facts: ready)
+        XCTAssertEqual(base, EditorWarmPlan(project: project(revision: 9, title: "Renamed"), facts: ready))
+        XCTAssertNotEqual(base, EditorWarmPlan(project: project(job: UUID()), facts: ready))
+        XCTAssertNotEqual(base, EditorWarmPlan(project: project(variant: "other"), facts: ready))
+    }
+}
