@@ -133,6 +133,61 @@ def is_client_stock_message(text: str | None) -> bool:
     return bool(pieces) and all(_is_stock_piece(piece) for piece in pieces)
 
 
+# KRI-1363: marks that open and close text meant for the video. A straight or single mark is
+# its own closer; an apostrophe inside a word ("Kadıköy'de", "don't", "İstanbul’da") is neither.
+_QUOTE_CLOSERS = {'"': '"', "“": "”", "„": "“", "«": "»", "‹": "›", "'": "'", "‘": "’"}
+_APOSTROPHES = frozenset({"'", "’"})
+
+
+def own_words_enabled() -> bool:
+    from app.config import settings  # noqa: PLC0415
+
+    return enabled() and bool(getattr(settings, "kria_reply_language_own_words_enabled", True))
+
+
+def _closing_quote(text: str, start: int, closer: str) -> int:
+    """Index of the mark closing a quote opened just before ``start``, or -1."""
+    for index in range(start, len(text)):
+        if text[index] != closer:
+            continue
+        after = text[index + 1] if index + 1 < len(text) else ""
+        if closer in _APOSTROPHES and after.isalnum():
+            continue  # an apostrophe inside a quoted word, not the end of the quote
+        return index
+    return -1
+
+
+def _without_quotes(text: str) -> str:
+    kept: list[str] = []
+    index = 0
+    while index < len(text):
+        char = text[index]
+        closer = _QUOTE_CLOSERS.get(char)
+        before = text[index - 1] if index else ""
+        if closer is None or (char in _APOSTROPHES and before.isalnum()):
+            kept.append(char)
+            index += 1
+            continue
+        end = _closing_quote(text, index + 1, closer)
+        if end < 0:  # never closed: not a quote, the creator's own words
+            kept.append(char)
+            index += 1
+            continue
+        kept.append(" ")
+        index = end + 1
+    return "".join(kept)
+
+
+def _own_words(text: str) -> str:
+    """The words the creator says to Kria: ``text`` without the quoted text for the video.
+
+    Quoted text is what the video should show, in whatever language the video is in
+    (KRI-1363). No word is read to decide this. Text after a colon is NOT dropped: creators
+    open a whole request with "Episode 9: ..." (Green 4).
+    """
+    return _without_quotes(unicodedata.normalize("NFC", text))
+
+
 def _scores(text: str) -> tuple[int, int, int]:
     """(Turkish evidence, English evidence, word count) for one message."""
     normalized = unicodedata.normalize("NFC", text)
@@ -155,7 +210,7 @@ def _detect(text: str | None) -> tuple[str | None, int]:
     """(language, strength) for one message; (None, 0) when it doesn't clearly say."""
     if not text or is_client_stock_message(text):
         return None, 0
-    tr, en, count = _scores(text)
+    tr, en, count = _scores(_own_words(text) if own_words_enabled() else text)
     if count == 0:
         return None, 0
     if tr and tr >= 2 * en and tr / count >= 0.2:
@@ -185,12 +240,44 @@ def locale_language(header: str | None) -> str | None:
     return None
 
 
+def _still_speaks(language: str, message: str | None) -> bool:
+    """True when the creator's own words in ``message`` still hold a word of ``language``."""
+    if not message or not own_words_enabled():
+        return False
+    tr, en, _count = _scores(_own_words(message))
+    return bool(tr if language == "tr" else en)
+
+
+def asks_for_video_text(events: Any) -> bool:
+    """True when the open question asks the creator to type words for the video (KRI-1363).
+
+    ``events`` are ``(role, payload)`` in order, as `choice_questions.tag_event` builds them.
+    A title's words typed as the answer are the video's language, not the chat's.
+    """
+    if not own_words_enabled():
+        return False
+    from app.services.choice_questions import (  # noqa: PLC0415
+        CONFLICT_TITLE_TEXT,
+        latest_open_choice_question,
+    )
+    from app.services.creative_copy_decisions import (  # noqa: PLC0415
+        latest_open_creative_question,
+    )
+
+    events = list(events)
+    question = latest_open_choice_question(events)
+    if question is not None and question.get("conflict") == CONFLICT_TITLE_TEXT:
+        return True
+    return latest_open_creative_question(events) is not None
+
+
 def resolve_reply_language(
     message: str | None,
     *,
     previous: str | None = None,
     locale: str | None = None,
     typed_elsewhere: str | None = None,
+    answers_video_text: bool = False,
 ) -> str | None:
     """The chat's reply language after ``message``.
 
@@ -201,11 +288,20 @@ def resolve_reply_language(
     language the creator last typed in another chat (`creator_typed_language`): for a
     chat nothing has told yet it comes before the device (Green 5: a "Suggest an edit."
     tap on a Turkish phone by a creator who types English).
+
+    Only the creator's own words count (KRI-1363): quoted text and (``answers_video_text``)
+    a typed answer to a wording question are text for the video. An established chat moves
+    only when those own words hold nothing of its language, so "Title: <Turkish words>" in
+    an English chat stays English.
     """
     previous = previous if previous in SUPPORTED_REPLY_LANGUAGES else None
     detected, strength = _detect(message)
+    if previous is not None and answers_video_text and own_words_enabled():
+        detected = None  # the words typed for a title are the video's language (KRI-1363)
     if detected is not None and (
-        previous is None or detected == previous or strength >= _SWITCH_STRENGTH
+        previous is None
+        or detected == previous
+        or (strength >= _SWITCH_STRENGTH and not _still_speaks(previous, message))
     ):
         return detected
     if previous is not None:
