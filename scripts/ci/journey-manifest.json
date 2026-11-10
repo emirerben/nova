@@ -1609,7 +1609,7 @@
     {
       "id": "troya-footage-research",
       "needs_native": true,
-      "api_tests": "tests/evals/request_following/test_troya_context_journey.py tests/evals/request_following/test_researched_text.py tests/evals/request_following/test_kri816_talking_research.py tests/evals/request_following/test_kri816_historical_journey.py tests/evals/request_following/test_kri881_research_before_approval.py tests/services/test_kria_editor_clip_context.py tests/evals/request_following/test_research_feeds_text_sequences.py tests/kria/test_approved_long_sequence_copy.py",
+      "api_tests": "tests/evals/request_following/test_troya_context_journey.py tests/evals/request_following/test_researched_text.py tests/evals/request_following/test_kri816_talking_research.py tests/evals/request_following/test_kri816_historical_journey.py tests/evals/request_following/test_kri881_research_before_approval.py tests/services/test_kria_editor_clip_context.py tests/evals/request_following/test_research_feeds_text_sequences.py tests/kria/test_approved_long_sequence_copy.py tests/kria/test_legacy_overflow_literal_recovery.py tests/kria/test_legacy_overflow_retry_planner.py tests/kria/test_legacy_overflow_retry_postgres.py",
       "xctests": [
         "KriaTests/NativeResearchSourcesTests/testSourcesSurviveDocumentSaveAndFlagChangedCopy",
         "KriaTests/NativeResearchSourcesTests/testUnsafeSourceSchemesAndPrivateHostsCannotOpen",
@@ -1625,6 +1625,10 @@
         "src/apps/api/tests/evals/request_following/test_researched_text.py",
         "src/apps/api/tests/evals/request_following/test_research_feeds_text_sequences.py",
         "src/apps/api/tests/kria/test_approved_long_sequence_copy.py",
+        "src/apps/api/app/kria/text_sequence.py",
+        "src/apps/api/tests/kria/test_legacy_overflow_literal_recovery.py",
+        "src/apps/api/tests/kria/test_legacy_overflow_retry_planner.py",
+        "src/apps/api/tests/kria/test_legacy_overflow_retry_postgres.py",
         "src/apps/api/tests/fixtures/kria_replay/kri1352_bilingual_research/README.md",
         "src/apps/api/tests/fixtures/kria_replay/kri1352_bilingual_research/expectation.json",
         "src/apps/api/tests/evals/request_following/test_kri816_talking_research.py",

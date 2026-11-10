@@ -4020,6 +4020,7 @@ def _complete_draft_turn(
         )
         db.add(render_execution)
         db.flush()
+        copy_notice = _restored_copy_notice(db, thread.id, planned)
         approval = CreatorAgentApproval(
             creator_id=thread.creator_id,
             thread_id=thread.id,
@@ -4034,11 +4035,13 @@ def _complete_draft_turn(
             target_ownership_epoch=int(session.ownership_epoch),
             execution_ids=[str(render_execution.id)],
             # KRI-689: the speed heads-up rides on the card too, unless the KRI-700 reply
-            # (which already ends with it) became the summary.
+            # (which already ends with it) became the summary. KRI-1352: words the server
+            # restored to the brief are shown on the card before anyone approves them.
             consequence_summary=" ".join(
                 part
                 for part in (
                     f"Render this draft: {approval_summary}",
+                    copy_notice,
                     speed_notice if speed_notice and speed_notice not in approval_summary else None,
                     route_notice if route_notice and route_notice not in approval_summary else None,
                 )
@@ -4307,6 +4310,28 @@ async def _plan_with_live_agent(
             await heartbeat
         finally:
             await engine.dispose()
+
+
+def _restored_copy_notice(
+    db,  # noqa: ANN001 - SQLAlchemy Session
+    thread_id: uuid.UUID,
+    planned: PlannedKriaTurn,
+) -> str | None:
+    """The approval card's line for paragraphs this turn restored to the brief (KRI-1352)."""
+    if not planned.brief_updates or planned.brief_expected_version is None:
+        return None
+    from app.kria.brief import load_brief_history_sync  # noqa: PLC0415
+    from app.kria.text_sequence import recovered_copy_notice  # noqa: PLC0415
+
+    prior = next(
+        (
+            brief
+            for brief in load_brief_history_sync(db, thread_id)
+            if brief.version == planned.brief_expected_version
+        ),
+        None,
+    )
+    return recovered_copy_notice(prior, planned.brief_updates)
 
 
 async def _with_approval_readiness(

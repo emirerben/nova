@@ -132,6 +132,43 @@ top, one language after the other), a reworded translation, an unrequested extra
 asked-only, and a saved program edited after composition all fail or are dropped. Whether the live
 composer shapes both paragraphs is not verified.
 
+## Retry from a brief written before the fix
+
+After the 280-character sequence literal shipped, a "Try again" on the same chat failed again. The
+retry reused the brief written before the fix: the English word sequence still had no literal, and
+its paragraph sat in the description behind "(exceeds literal length limit): ". The new approval
+pinned that brief, no bar held the paragraph, and the composer reported it could only split
+existing text.
+
+`recover_overflowed_literals` (`app/kria/text_sequence.py`) restores that paragraph as the
+requirement's literal on a turn that proposes a draft (`_plan_live_turn`, after
+`_with_approved_copy`). It writes a server change with the requirement's id, kind, scope and facts
+kept, so it becomes a new brief version before the next approval. Approved briefs are never edited.
+Only an exact legacy shape qualifies: an open title/global `text_sequence` with no literal, one marker, a label
+and paragraph without leading/trailing whitespace, a paragraph over 200 and at most 280 characters, no
+trailing ellipsis, and a description below its 300-character limit. A question or answer turn, the creator's
+own change or removal in the same turn, a non-open requirement, and a malformed marker are left
+alone. It authors no words. The approval consequence includes the restored paragraph verbatim
+with a request to review it; the generic model-written summary alone is not treated as disclosure.
+
+Synthetic checks:
+
+- `tests/kria/test_legacy_overflow_literal_recovery.py`: the exact recovery and every refusal case,
+  and the recovered brief rendering both paragraphs word by word.
+- `tests/kria/test_legacy_overflow_retry_planner.py`: the real `_plan_live_turn` with only the
+  model and clip loaders stubbed. A regeneration turn emits the change; a question turn does not;
+  the creator's own change or removal wins.
+- `tests/kria/test_legacy_overflow_retry_postgres.py`: real turns, brief persistence and approval
+  binding. The real runtime commits the retry's update as brief version 2; version 1 and the old
+  approval's binding stay unchanged. The fresh approval and its API payload show the restored
+  paragraph verbatim, and fresh approval succeeds. A separate real stale-approve attempt rejects
+  with `approval_requirements_not_ready` and cancels that approval. Provider planning and the
+  capability manifest are synthetic; persistence, readiness assessment and decisions are real.
+
+Offline validation: 96 focused tests and 871 mapped gates passed against an isolated scratch
+database. No environment skips in those runs. A live retry and original native export remain
+unverified; this follow-up has not yet been deployed.
+
 ## Gaps
 
 - Live accuracy: whether the layer writer cites the right facts, whether its translation is
