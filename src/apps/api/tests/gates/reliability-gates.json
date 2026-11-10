@@ -4571,7 +4571,7 @@
       "harness": "mocked_provider",
       "evidence": {
         "offline_replay": "Synthetic founder-day fixture through the real composer parse, op coercion, text replay and plan compile, with provider answers stubbed: the incident shape (research decided at render, no approved research) writes reviewed layers, splits them into two concurrent cited word sequences and keeps the footage-window path for plain explanations. Wrong-facts, invented-date, uncited-fact, unlabelled-identity, changed-number and mistranslation answers fail; shaping that writes, rewords, moves, retimes or mis-splits reviewed text fails at compose and on saved replay; approved layers on re-cut footage fail without a new search.",
-        "live_model": "Pending: one approved text-only replay capped at USD 3 (harness prepared, not run). Stubbed reviewer approvals prove orchestration only, not translation or factual accuracy.",
+        "live_model": "One approved text-only replay ran on 2026-11-10 (3 calls, USD 0.102215 settled, no unknown spend) and failed before shaping: the layer writer reported that the facts it received did not mention the date. Facts and layers were not captured, so the cause is unknown. Stubbed reviewer approvals prove orchestration only, not translation or factual accuracy.",
         "native_output": "Not run on a device: the checks read the compiled text lane, not an exported video.",
         "production": "Not deployed."
       },
