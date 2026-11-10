@@ -958,6 +958,9 @@ follow-up requests to remove extra text: preserve existing subtitle language and
 Only an explicit request to remove captions/subtitles, or all writing INCLUDING
 subtitles, turns off that speech-caption requirement. A named smaller heading under a
 title remains authored text. Keep explicit wording, scope and later corrections intact.
+An explicit ask for NO title, in any language ("no title", "kein Titel", "başlık olmasın"), is
+{"kind": "text", "scope": "title", "literal": null, "description": "<their words>", "facts":
+{"title": "off"}}: never a wish for a title the creator did not word. Only that ask sets it.
 
 Words shown on screen a piece at a time are NOT captions. When the creator quotes words, or
 says show / display / title / write, and asks for them one word (or phrase) at a time ("show
@@ -1355,6 +1358,20 @@ def brief_prompt_section(insert_clips_open: bool = False, full_opening_open: boo
     return with_full_opening_brief(section) if full_opening_open else section
 
 
+# KRI-1360: appended to the Main Creator and brief extractor prompts only for the message that
+# answers a "Change my request" tap. The model decides what the new request drops.
+CHANGED_REQUEST_SECTION = """CHANGED REQUEST
+The creator just tapped "Change my request" on a draft that was held. Read the CURRENT USER
+MESSAGE as their new request for the CONTENT of the edit: what to show, where or when to show
+it, which clips or photos to use, the order, the length, the text to print. `remove` each
+earlier content requirement in the contract that this message changes or no longer asks for,
+unless it says to keep it or only adds to it. Restrictions the creator set stay in force even
+when this message does not repeat them: no title, no captions, muted or kept-down sound, a clip
+or photo to leave out, anything they said not to do. Change or remove a restriction only when
+this message contradicts it or asks for that very thing. Record what the message asks as
+usual."""
+
+
 class MainCreatorInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1381,6 +1398,9 @@ class MainCreatorInput(BaseModel):
     # gates contradict (`app.kria.ask_refusals`). Empty => the prompt is byte-identical and the
     # field is left out of input dumps. Server-authored; never the creator's words.
     server_note: str = Field(default="", max_length=1000, exclude_if=lambda v: not v)
+    # KRI-1360: this message answers the creator's "Change my request" tap. False => the prompt
+    # is byte-identical and the field is left out of input dumps.
+    changes_request: bool = Field(default=False, exclude_if=lambda v: not v)
 
 
 class MainCreatorOutput(BaseModel):
@@ -1662,6 +1682,8 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         language_line = prompt_language_line(input.reply_language)
         if input.server_note:
             prompt = f"{prompt.rstrip(chr(10))}\n\nSERVER CHECK\n{input.server_note}\n"
+        if input.changes_request and input.brief_enabled:
+            prompt = f"{prompt.rstrip(chr(10))}\n\n{CHANGED_REQUEST_SECTION}\n"
         return f"{prompt.rstrip(chr(10))}\n\n{language_line}\n" if language_line else prompt
 
     def parse(self, raw_text: str, input: MainCreatorInput) -> MainCreatorOutput:  # noqa: A002

@@ -15,6 +15,7 @@ from app.agents._schemas.brief_extractor import (
 )
 from app.agents.main_creator import (
     _BRIEF_PROMPT_SECTION,
+    CHANGED_REQUEST_SECTION,
     with_full_opening_brief,
     with_insert_clip_brief,
     with_long_request_cap,
@@ -166,7 +167,7 @@ class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
     max_output_tokens = 4_096
 
     def render_prompt(self, input: BriefExtractionInput) -> str:  # noqa: A002
-        return load_prompt(
+        prompt = load_prompt(
             "brief_extractor",
             creator_request=input.creator_request or "(none)",
             user_message=input.user_message,
@@ -174,6 +175,10 @@ class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
             # Parent KRI-1151: the planner says whether the item can pause the take for a clip.
             brief_section=_narrow_brief_section(input.insert_clips_open),
         )
+        if input.changes_request:
+            # KRI-1360: the message answers "Change my request"; unset, the prompt is unchanged.
+            prompt = f"{prompt.rstrip(chr(10))}\n\n{CHANGED_REQUEST_SECTION}\n"
+        return prompt
 
     def parse(self, raw_text: str, input: BriefExtractionInput) -> BriefExtractionOutput:  # noqa: A002, ARG002
         try:

@@ -1924,6 +1924,10 @@ class Settings(BaseSettings):
     # fixed it 2/2). ~$0.005/render. Set to gpt-4o-mini to trade accuracy for cost.
     subtitled_caption_correction_enabled: bool = True
     caption_correction_model: str = "gpt-4o"
+    # KRI-1361: the phone Voiceover job hands the proofreader the names its Visuals and
+    # footage show (brands, on-screen text), so "Bayern Arena" -> "BayArena" lands when the
+    # creator's own photo spells it. false = no hints, byte-identical correction request.
+    caption_media_spelling_hints_enabled: bool = True
 
     # Caption translation (KRI-838): a whisper language hint does not reliably translate (a
     # Turkish hint on English speech wrote the English again in local tests), so when the
@@ -3005,6 +3009,39 @@ class Settings(BaseSettings):
     # after a failed render goes to the copilot, and a missing text sequence is composed rather
     # than asked about. false = the previous routing, replies and ops, byte-identical.
     kria_compose_unmet_with_ops_enabled: bool = False
+    # KRI-1358 (de1): approval readiness reads the same "the phone Voiceover compiler renders
+    # this" fact the draft turn reads, so one clip's own sound under the voice is judged on the
+    # phone draft instead of refused as "only works in a voiceover edit made on your iPhone".
+    # false = readiness without the fact, byte-identical.
+    narrated_readiness_phone_facts_enabled: bool = True
+    # KRI-1356 (de1): a phone Voiceover reaction beat whose trigger the exact phrase matcher
+    # never hears ("Null zu null" said and transcribed "0 zu 0") is located by one
+    # `nova.compose.spoken_cue_resolver` call per render (meaning, not word tables); the
+    # receipt keeps the creator's trigger plus `heard_as`. Fails open to never_heard.
+    # false = no resolver call, byte-identical grounding.
+    spoken_cue_resolver_enabled: bool = True
+    # KRI-1356 (de1): on a phone Voiceover DRAFT a word-triggered pop-in ask reads as a render
+    # promise ("I'll show it when I hear those words in your voiceover"), not "met": no voice
+    # has been matched yet. The finished render's beat receipt decides. false = "met".
+    narrated_beat_render_promise_enabled: bool = True
+    # KRI-1357 (de1): on a phone Voiceover DRAFT a named spoken cue with no pop-in planned
+    # ("show the fans clip at '1. FC Nürnberg'", footage the narration places) is a render
+    # promise instead of "No pop-in for X"; the finished render reports which clip played
+    # under those words (`narrated_alignment` steps). false = "No pop-in", byte-identical.
+    narrated_footage_cue_promise_enabled: bool = True
+    # KRI-1354 (de1): "Make it without these" looped. A "simpler version" tap on a strategy
+    # refusal still counts on later turns that are only choice taps (e.g. the readiness hold's
+    # card), with no draft since, for the same dropped fields. false = per-turn consent only,
+    # byte-identical.
+    narrated_simpler_consent_fixes_enabled: bool = True
+    # KRI-1355 (de1): a title ask typed `facts.title == "off"` ("Kein Titel") is met when the
+    # draft has no title and "Couldn't" when it has one. false = the checker ignores the fact,
+    # receipts byte-identical (the brief prompt line that records the fact stays).
+    title_off_fact_enabled: bool = True
+    # KRI-1360 (de1): the message right after a "Change my request" tap is marked for the brief
+    # model as the creator's new request, so it removes earlier asks the message no longer
+    # includes. false = the brief model's input unchanged.
+    change_request_fresh_brief_enabled: bool = True
     # KRI-219 latency: serve short in-place text/label/order edits with the fast copilot
     # BEFORE the pro-model requirement extraction (which then runs off the critical
     # path). false = the previous extract-first order for every post-render turn.
