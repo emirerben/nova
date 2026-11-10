@@ -44,6 +44,14 @@ Ways this can fail, written before the code, and the test that catches each:
                                     -> test_hint_builder_reraises_operational_error
   F18 the pool is queried although caption correction will not run
                                                       -> test_no_pool_query_when_correction_skips
+  Review round 2 (KRI-1361), a hint may fix spelling or spacing, never the product itself:
+  F19 a hinted replace changes the number in a name ("my PS4" -> "my PS5" under brand
+      "PS5", "iPhone13" -> "iPhone15" under "iPhone15") -> test_hinted_replace_keeps_numbers
+  F20 the hinted "number-only" insert slips in a one-letter word ("Bathing Ape" ->
+      "A Bathing Ape" under brand "A Bathing Ape")  -> test_hinted_prefix_inserts_numbers_only
+  F21 fixing F19/F20 breaks the de1 repairs ("Bayern Arena" -> "BayArena", "den FC
+      Nürnberg" -> "den 1. FC Nürnberg"), or a no-hint run behaves differently
+                                    -> test_de1_repairs_survive_the_number_rules
 Not covered here: whether the live model actually proposes the hinted spellings (paid call).
 """
 
@@ -362,7 +370,18 @@ def test_de1_visuals_yield_the_names(monkeypatch) -> None:
     monkeypatch.setattr(pool_mod, "_load_ready_pool_assets", lambda *a, **k: _pool_rows())
     monkeypatch.setattr(gb.settings, "caption_media_spelling_hints_enabled", True)
     monkeypatch.setattr(gb.settings, "subtitled_caption_correction_enabled", True)
-    footage = [SimpleNamespace(clip_brands=["Bayer 04 Leverkusen"])]
+    from app.pipeline.agents.gemini_analyzer import ClipMeta
+
+    footage = [
+        ClipMeta(
+            clip_id="c1",
+            transcript="",
+            hook_text="",
+            hook_score=0.0,
+            best_moments=[],
+            clip_brands=["Bayer 04 Leverkusen"],
+        )
+    ]
     hints = gb._narrated_caption_spelling_hints("job-1", footage, cues=_CUES)
     assert len(hints.all) <= 40
     # m005's brand "1. FC Nürnberg" (m006's "1.FC Nürnberg" folds onto it) is a brand hint;
@@ -393,3 +412,48 @@ def test_de1_line_gets_both_names(monkeypatch) -> None:
     # Without the hints the same proposal keeps what whisper heard for both names.
     unhinted = cc.correct_caption_cues([before], "de", model="gpt-4o")[0]
     assert unhinted["text"] == before["text"]
+
+
+# F19 / F20 / F21 ──────────────────────────────────────────────────────────────
+
+
+def test_hinted_replace_keeps_numbers(monkeypatch) -> None:
+    # The reviewer's probes: a hint must never change which product is named.
+    text = "my PS4 is broken"
+    proposal = "my PS5 is broken"
+    assert _run(monkeypatch, text, proposal, [])["text"] == text
+    assert _run(monkeypatch, text, proposal, cc.SpellingHints(brands=("PS5",)))["text"] == text
+    text = "my iPhone13 is broken"
+    proposal = "my iPhone15 is broken"
+    brand = cc.SpellingHints(brands=("iPhone15",))
+    assert _run(monkeypatch, text, proposal, brand)["text"] == text
+    # Merging words does not launder a number change either ("iPhone 13" -> "iPhone15").
+    text = "my iPhone 13 is broken"
+    assert _run(monkeypatch, text, proposal, brand)["text"] == text
+    # Same digits, only the spacing changes: still a spelling fix the hint may make.
+    ps5 = cc.SpellingHints(brands=("PS5",))
+    assert _run(monkeypatch, "my PS 5 is broken", "my PS5 is broken", ps5)["text"] == (
+        "my PS5 is broken"
+    )
+
+
+def test_hinted_prefix_inserts_numbers_only(monkeypatch) -> None:
+    text = "we love Bathing Ape"
+    proposal = "we love A Bathing Ape"
+    assert _run(monkeypatch, text, proposal, [])["text"] == text
+    brand = cc.SpellingHints(brands=("A Bathing Ape",))
+    assert _run(monkeypatch, text, proposal, brand)["text"] == text
+    # A digit with letters stuck to it is not the number form either ("1a." before "FC").
+    club = cc.SpellingHints(brands=("1a. FC Nürnberg",))
+    text = "gegen den FC Nürnberg."
+    assert _run(monkeypatch, text, "gegen den 1a. FC Nürnberg.", club)["text"] == text
+
+
+@pytest.mark.parametrize("hint", ["1. FC Nürnberg", "1.FC Nürnberg"])
+def test_de1_repairs_survive_the_number_rules(monkeypatch, hint: str) -> None:
+    hints = cc.SpellingHints(brands=(hint,), names=("BayArena Leverkusen",))
+    text = "in der Bayern Arena gegen den FC Nürnberg."
+    proposal = "in der BayArena gegen den 1. FC Nürnberg."
+    assert _run(monkeypatch, text, proposal, hints)["text"] == proposal
+    # Without hints both repairs are still refused, exactly as before KRI-1361.
+    assert _run(monkeypatch, text, proposal, [])["text"] == text

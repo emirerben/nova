@@ -438,10 +438,16 @@ def _hinted_replace(
 
     Word for word, the written run must be a WHOLE trusted hint (a brand, or a name-shaped
     on-screen name); two heard words written as one (or one as two) may write a run of
-    one ("Bayern Arena" -> "BayArena"). Other shapes are never hinted.
+    one ("Bayern Arena" -> "BayArena"). Other shapes are never hinted. A hint fixes
+    spelling or spacing only, never which product is named: the numbers must stay the
+    same, in order ("PS4" never becomes "PS5", "iPhone 13" never "iPhone15").
     """
 
     if hints is None or not written:
+        return False
+    heard = " ".join(str(word["text"]) for word in spoken)
+    run = " ".join(written)
+    if _numeric_sequence(heard) != _numeric_sequence(run):
         return False
     if len(spoken) == len(written):
         allowed = hints.whole
@@ -449,11 +455,9 @@ def _hinted_replace(
         allowed = hints.runs
     else:
         return False
-    run = " ".join(written)
     key = _hint_key(run)
     if _letter_count(key) < 2 or key not in allowed:
         return False
-    heard = " ".join(str(word["text"]) for word in spoken)
     return _phonetic_overlap(heard, run) >= _PROPOSAL_MIN_OVERLAP
 
 
@@ -464,11 +468,12 @@ def _hinted_prefix(
     next_opcode: tuple[str, int, int, int, int] | None,
     hints: _HintRuns | None,
 ) -> bool:
-    """A refused insert of one number-like token ("1.") that, with the spoken words right
-    after it, completes a WHOLE brand hint ("1. FC Nürnberg"). Words with letters are never
-    inserted, and on-screen text never unlocks it ("2. Bundesliga Tabelle")."""
+    """A refused insert of one number token ("1.", "04") that, with the spoken words right
+    after it, completes a WHOLE brand hint ("1. FC Nürnberg"). Only digits with an optional
+    trailing period are inserted -- no letter at all ("A Bathing Ape", "1a.") -- and
+    on-screen text never unlocks it ("2. Bundesliga Tabelle")."""
 
-    if hints is None or j2 - j1 != 1 or _letter_count(tokens[j1]) > 1:
+    if hints is None or j2 - j1 != 1 or not _INSERTED_NUMBER.fullmatch(tokens[j1]):
         return False
     if next_opcode is None or next_opcode[0] != "equal":
         return False
@@ -477,6 +482,23 @@ def _hinted_prefix(
         if _hint_key(" ".join(tokens[j1 : j2 + k])) in hints.prefix:
             return True
     return False
+
+
+_INSERTED_NUMBER = re.compile(r"\d+\.?")
+
+
+def _numeric_sequence(text: str) -> tuple[str, ...]:
+    """The numerals of ``text`` in order, compatibility forms folded like
+    ``_has_numeric_content`` ("㎟" -> "2"), so a hinted edit can prove it kept them."""
+
+    out: list[str] = []
+    for ch in text:
+        folded = [c for c in unicodedata.normalize("NFKD", ch) if c.isnumeric()]
+        if folded:
+            out.extend(folded)
+        elif ch.isnumeric():
+            out.append(ch)
+    return tuple(out)
 
 
 def _has_numeric_content(text: str) -> bool:

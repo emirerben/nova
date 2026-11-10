@@ -16044,6 +16044,7 @@ def _narrated_caption_spelling_hints(
     pre-hint one. A transient DB error re-raises for the Celery retry, like the other pool
     loads here; any other failure means no hints, never a failed job.
     """
+    from app.pipeline.agents.gemini_analyzer import ClipMeta  # noqa: PLC0415
     from app.pipeline.caption_correct import SpellingHints, media_spelling_hints  # noqa: PLC0415
 
     if (
@@ -16063,7 +16064,9 @@ def _narrated_caption_spelling_hints(
             brands.extend(record.brands)
             texts.append(record.on_screen_text)
         for meta in clip_metas:
-            brands.extend(str(brand) for brand in (getattr(meta, "clip_brands", None) or []))
+            # Wired on purpose (KRI-127 guard): only an analysed ClipMeta carries brands.
+            if isinstance(meta, ClipMeta):
+                brands.extend(str(brand) for brand in (meta.clip_brands or []))
         return media_spelling_hints(brands, texts)
     except OperationalError:
         raise  # transient DB -> Celery autoretry
