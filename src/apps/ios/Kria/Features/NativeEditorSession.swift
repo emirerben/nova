@@ -101,6 +101,8 @@ struct NativeEditorTemporaryVideo: Sendable {
 
 /// Local-first state for the Paper native editor. Every edit is a synchronous
 /// value transaction; persistence happens only from the explicit Save action.
+enum EditorOpenIntent { case warm, open }
+
 @MainActor final class NativeEditorSession: ObservableObject {
     /// Canonical mutable editor state. The legacy `draft` accessor below is a
     /// compatibility projection for first-pass views and test fixtures.
@@ -938,6 +940,9 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var previewTalkingCutaways: [NativePhoneTalkingSource.Cutaway] = []
     private var sourcePreviewTask: Task<Void, Never>?
     private var sourcePreviewSequence = 0
+    #if DEBUG
+    private(set) var sourcePreviewBuildCountForTesting = 0
+    #endif
     /// The last `sourcePreviewSequence` a `rebuildSourcePreview` attempt
     /// actually settled (success or failure) — never a superseded/cancelled
     /// attempt. `sourcePreviewTask` itself is never reset to nil on
@@ -1224,6 +1229,11 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var redoStack: [EditorDocument] = []
     private var saveHistory: EditorSaveHistory<EditorDocument>?
     private var cleanDocument: EditorDocument
+    /// What the live preview was last built from: the server document as it arrived (`raw`) and the clean
+    /// document after source hydration (`hydrated`). Hydration rewrites `cleanDocument`, so a reopen can only
+    /// recognise an unchanged server document by comparing like with like. A save, rebase or merge that
+    /// rewrites `cleanDocument` breaks the second equality, which retires the pair with no hook at those sites.
+    private var serverBaseline: (raw: EditorDocument, hydrated: EditorDocument)?
     private var api: (any KriaAPIClient)?
     private weak var mediaUploads: BackgroundUploadCoordinator?
     private var pendingPlacementIDs: Set<UUID> = []
@@ -1257,6 +1267,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// Seam over `UIApplication.beginBackgroundTask` so a test can drive expiration.
     var backgroundActivity: any BackgroundActivityAssertion = UIKitBackgroundActivityAssertion()
     @Published var addClipError: String?
+    /// The Split picker shows `addClipError` inline, so the timeline's "Couldn’t add clip" alert stays quiet while it is open.
+    @Published var addClipAlertSuppressed = false
     /// Default window given to a freshly added timeline clip/photo. The server
     /// has never probed this source, so it can't bound the window itself — see
     /// `resolve_timeline_slots_for_edit`'s "New clips the AI never probed have
@@ -1569,6 +1581,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         previewWork.end(ticket)
         previewResumeIntent = nil
         retirePreviousPreview()
+        Perf.end("editor.tap.toFrame")
         return true
     }
     private func acceptInPlaceFrame(_ ticket: NativeEditorPreviewWork, item: AVPlayerItem,
@@ -1648,6 +1661,9 @@ struct NativeEditorTemporaryVideo: Sendable {
     private var timelinePinching = false
     private var activeTrim: ActiveTrim?
     private var transactionBaseline: EditorDocument?
+    private var splitDividerDrag: (sectionID: String, boundary: Int, weights: [Double], ownsTransaction: Bool)?
+    /// Imports bound for a split panel, by placement id. In memory only: a relaunch places them as ordinary clips.
+    private var splitPanelPlacements: [UUID: (sectionID: String, panel: Int, offset: Double)] = [:]
     private var draftProjectionCache: EditorDraft?
     private var activeTimedEdit: ActiveTimedEdit?
     private var timelineItemsCache: [NativeEditorTimelineItem]?
@@ -2535,6 +2551,8 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     private func synchronizePromptRevision(identity: EditorOperationIdentity, owner: String?) async {
         guard !isReviewingPreviousMerge, editorOperationIdentity == identity, api?.mediaLibraryOwner == owner else { return }
+        // The open holds the session until its preview is built; runPromptRevisionSync would drop this, so remember it.
+        if openFlight != nil, isSaving || loadState != .loaded { syncDroppedByOpen = true }
         // A concurrent save/hydration can change the clean baseline while this
         // suspends; retain the initiating account through every baseline retry.
         for attempt in 0..<3 {
@@ -2635,6 +2653,13 @@ struct NativeEditorTemporaryVideo: Sendable {
             guard transactionBaseline == nil, !isTimingGestureActive else { return }
             if sameTarget { refreshEditingPermissions(from: variant, document: nextDocument) }
             guard !sameTarget || nextDocument != cleanDocument || staged != nil else { return }
+            if sameTarget, staged == nil, sourcePreviewState == .ready, let known = serverBaseline,
+               cleanDocument == known.hydrated, nextDraft.etag == etag {
+                // The draft setter stamps the server revision onto the document it builds; compare with that stamp.
+                var arrived = nextDocument
+                arrived.revision.number = nextDraft.revision
+                if arrived == known.raw { return }
+            }
             let retentionSequence = sourcePreviewSequence
             if sameTarget { retainAdmittedPreview() }
             defer {
@@ -2912,6 +2937,143 @@ struct NativeEditorTemporaryVideo: Sendable {
         guard hasOwnEdits, !isSaving else { return false }
         _ = await reloadLatestKeepingLocalEdits()
         return true
+    }
+
+    // MARK: - Open and warm
+
+    /// What one open or warm run is for. Runs with an equal target share one flight.
+    private struct EditorOpenTarget: Equatable {
+        let threadID: UUID
+        let jobID: UUID?
+        let variantID: String?
+        let libraryJobID: UUID?
+        let owner: String?
+    }
+
+    /// The one open in progress. `claimed` is set once the creator asked for the editor, which a chat that merely
+    /// stopped being warmable must not undo.
+    private struct OpenFlight {
+        let id: UUID
+        let target: EditorOpenTarget
+        let task: Task<Void, Never>
+        var claimed: Bool
+    }
+
+    private var openFlight: OpenFlight?
+    /// A chat sync arrived while an open held the session; it is replayed once the open is done.
+    private var syncDroppedByOpen = false
+
+    /// The creator asked for the editor (the chat's Open editor tap): the flight in progress is theirs now.
+    func claimWarm() { openFlight?.claimed = true }
+
+    /// The open path: follow a newer job, reconcile or reload, then show a finished device render. The editor view
+    /// calls it when the creator opens the editor (`.open`) and the chat calls it while the video is ready and the
+    /// chat is idle (`.warm`), so the editor is already loaded at the tap.
+    ///
+    /// One flight at a time. A call for the same target joins the flight and returns when it is done; a call for a
+    /// different target (another job, account or thread) retires an unfinished flight and starts its own. A warm that
+    /// fails leaves the session idle, so the tap loads from scratch exactly as it did before warming existed.
+    func openOrWarm(project: ProjectSummary, libraryJobID: UUID?, api: any KriaAPIClient,
+                    deviceRenders: DeviceRenderSessions, uploads: BackgroundUploadCoordinator,
+                    intent: EditorOpenIntent = .open) async {
+        let target = EditorOpenTarget(threadID: project.id, jobID: project.activeJobID, variantID: project.outputVariantID,
+                                      libraryJobID: libraryJobID, owner: api.mediaLibraryOwner)
+        while let flight = openFlight {
+            if flight.target == target {
+                if intent == .open { openFlight?.claimed = true }
+                await flight.task.value
+                if loadState == .loaded || intent == .warm { return }
+                continue
+            }
+            if loadState == .loaded { await flight.task.value } else { retireOpenFlight() }
+        }
+        // Chat events keep a loaded session current (`synchronizePromptRevision`, `adoptLatestJob`); asking again for
+        // the same job costs nothing.
+        if intent == .warm, loadState == .loaded, !isBehindActiveJob(project) { return }
+        let id = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.syncDroppedByOpen = false
+            await self.performOpen(project: project, libraryJobID: libraryJobID, api: api, deviceRenders: deviceRenders, uploads: uploads)
+            // A retired flight must not touch the session its replacement now owns.
+            guard self.openFlight?.id == id else { return }
+            if self.syncDroppedByOpen {
+                self.syncDroppedByOpen = false
+                if self.loadState == .loaded, self.conversationRuntimeVersion == 2 { await self.synchronizePromptRevision() }
+            }
+            guard self.openFlight?.id == id else { return }
+            if intent == .warm, self.loadState != .loaded { self.abandonUnfinishedLoad() }
+            self.openFlight = nil
+        }
+        openFlight = OpenFlight(id: id, target: target, task: task, claimed: intent == .open)
+        await task.value
+    }
+
+    private func performOpen(project: ProjectSummary, libraryJobID: UUID?, api: any KriaAPIClient,
+                             deviceRenders: DeviceRenderSessions, uploads: BackgroundUploadCoordinator) async {
+        useDeviceRendering(deviceRenders)
+        useMediaUploads(uploads)
+        if isBehindActiveJob(project) {
+            await adoptLatestJob(project, api: api)
+            return
+        }
+        guard needsReload(for: project) else {
+            // Already loaded: a chat draft may have landed while this tab was hidden.
+            if project.runtimeVersion == 2 { await synchronizePromptRevision() }
+            return
+        }
+        let lifetime = editorLifetimeID
+        if libraryJobID == nil {
+            // KRI-529: a thread revision bump alone (a chat turn) must not reload the editor.
+            if await reconcileOnOpen(project: project, api: api) { return }
+        }
+        guard let loadedLifetime = await loadForEditorOpen(project: project, libraryJobID: libraryJobID,
+            api: api, expectedLifetime: lifetime), editorLifetimeID == loadedLifetime else { return }
+        if let key = deviceRenderKey, let file = deviceRenders.presentations[key]?.localFile { showDeviceOutput(file) }
+    }
+
+    /// The chat stopped being warmable (a turn started, the app left the foreground, the creator left the chat):
+    /// drop a warm load that is still fetching. A load that already has its document keeps going, and a flight the
+    /// creator claimed with a tap is never cancelled from here.
+    func cancelWarm() {
+        guard let flight = openFlight, !flight.claimed, loadState != .loaded else { return }
+        retireOpenFlight()
+    }
+
+    private func retireOpenFlight() {
+        guard let flight = openFlight else { return }
+        openFlight = nil
+        flight.task.cancel()
+        abandonUnfinishedLoad()
+    }
+
+    /// Fences every continuation of an unfinished load (its epoch is replaced) and returns the session to the state a
+    /// first open starts from: idle, no error surface, no retry scheduled.
+    private func abandonUnfinishedLoad() {
+        guard loadState != .loaded else { return }
+        _ = beginEditorLoad()
+        isSaving = false; isLoadingEditor = false
+        loadRetryTask?.cancel(); loadRetryTask = nil
+        pendingLoadObservation = nil
+        loadWaitingMessage = nil
+        loadState = .idle
+        saveState = .idle
+    }
+
+    /// iOS asked for memory back. A warm session nobody is looking at gives up its composition and player; the tap then
+    /// loads it again from the cold path. A session the creator is using, or holds their own edits, is never touched.
+    func releaseWarmForMemoryPressure() {
+        guard !previewPresentationActive, openFlight?.claimed != true else { return }
+        if loadState != .loaded { retireOpenFlight(); return }
+        guard openFlight == nil, !isSaving, pendingText == nil, !hasUnsavedChanges || hasOnlyChatStagedChanges else { return }
+        _ = beginEditorLoad()
+        isSaving = false; isLoadingEditor = false
+        discardPlaybackForNewJob()
+        serverBaseline = nil
+        hasUnsavedChanges = false
+        chatStagedDocument = nil; chatStagedSections = []; appliedChatDraftRevision = nil
+        loadState = .idle
+        saveState = .idle
     }
 
     func loadForEditorOpen(project: ProjectSummary, libraryJobID: UUID?, api: any KriaAPIClient,
@@ -4007,6 +4169,10 @@ struct NativeEditorTemporaryVideo: Sendable {
     func prepareSourcePreview() async {
         guard !isReviewingPreviousMerge else { return }
         guard let api, let jobID, let variantKey else { return }
+        #if DEBUG
+        sourcePreviewBuildCountForTesting += 1
+        #endif
+        Perf.event("editor.preview.build")
         Perf.begin("editor.preview", id: jobID.uuidString)
         defer { Perf.end("editor.preview", id: jobID.uuidString) }
         sourcePreviewTask?.cancel()
@@ -4018,6 +4184,8 @@ struct NativeEditorTemporaryVideo: Sendable {
                 abandonPreviewWork(workTicket)
             }
         }
+        let rawBaseline = cleanDocument
+        serverBaseline = nil
         let generation = document.revision.baseGeneration
         sourcePreviewGeneration = generation
         sourcePreviewState = .preparing
@@ -4161,7 +4329,11 @@ struct NativeEditorTemporaryVideo: Sendable {
             sourcePool = pool
             resolvedSources = sources
             previewTalkingCutaways = phoneTalkingIndices == nil ? [] : phoneTalkingCutaways
+            let hydratedBaseline = cleanDocument
             await rebuildSourcePreview(sequence: sequence)
+            if sequence == sourcePreviewSequence, !Task.isCancelled, !sourcePreviewState.isFailure {
+                serverBaseline = (rawBaseline, hydratedBaseline)
+            }
         } catch {
             guard sequence == sourcePreviewSequence, !Task.isCancelled else { return }
             #if DEBUG
@@ -6270,6 +6442,21 @@ struct NativeEditorTemporaryVideo: Sendable {
             resolvedSources = sources; sourceCompiler = compiler
             sourcePreviewGeneration = placement.target.baseGeneration
             sourcePreviewState = .preparing
+            if let target = splitPanelPlacements[placement.id] {
+                guard let opening = document.splitPanelOpening(sectionID: target.sectionID, panel: target.panel, near: target.offset),
+                      opening.end - opening.start >= minimumClipDuration else { throw APIError.conflict }
+                let slot = EditorTimelineSlot(id: placementID, clipIndex: index, inS: 0, durationS: min(duration, opening.end - opening.start), raw: [
+                    "source_duration_s": .number(sourceDuration(response) ?? placement.localDurationS ?? duration + 0.05),
+                    "editor_source_placement_id": .string(placementID),
+                ])
+                transactDocument(section: .timeline) { Self.insertSplitMember(slot, into: &$0, sectionID: target.sectionID, panel: target.panel, offset: opening.start) }
+                guard document.clips.contains(where: { $0.id == placementID }) else { throw APIError.invalidResponse }
+                splitPanelPlacements[placement.id] = nil
+                select(.init(kind: .clip, id: placementID), seekToStart: false)
+                mediaUploads?.acknowledgeEditorPlacement(placement.id)
+                await sourcePreviewTask?.value
+                return
+            }
             if let targetID = placement.replacingSlotID {
                 guard let targetIndex = clipSlotIndex(targetID), document.clips[targetIndex].splitSectionID != nil else {
                     throw APIError.conflict
@@ -6370,6 +6557,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     }
 
     func dismissPendingEditorImport(_ placement: PendingEditorSourcePlacement) async {
+        splitPanelPlacements[placement.id] = nil
         await mediaUploads?.discardEditorPlacement(placement.id)
         if placement.lane == .timeline { addClipError = nil } else { visualError = nil }
     }
@@ -6377,7 +6565,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// Device renders retain a local footage original and send only its
     /// analysis proxy through the existing project reservation.  Completion is
     /// admitted to this variant, never attached to its creation thread.
-    func addDeviceTimelineMedia(fileURL: URL, source: UploadSource, alreadyPreparing: Bool = false, replacingSlotID: String? = nil) async {
+    func addDeviceTimelineMedia(fileURL: URL, source: UploadSource, alreadyPreparing: Bool = false, replacingSlotID: String? = nil,
+                                splitPanel: (sectionID: String, panel: Int, offset: Double)? = nil) async {
         guard canAddTimelineMedia, let uploads = mediaUploads else {
             addClipError = "Adding media isn’t available for this edit right now."
             return
@@ -6404,6 +6593,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             let placement = PendingEditorSourcePlacement(id: recordID, target: target, lane: .timeline, visual: nil,
                                                          localDurationS: localDuration, replacingSlotID: replacingSlotID)
             uploads.beginEditorPlacement(placement)
+            if let splitPanel { splitPanelPlacements[recordID] = splitPanel }
             importID = placement.id
             pendingPlacementIDs.insert(placement.id)
             defer { pendingPlacementIDs.remove(placement.id) }
@@ -8994,7 +9184,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         transactDocument(sections: [section], body)
     }
 
-    private func transactDocument(sections: Set<EditorSection>, _ body: (inout EditorDocument) -> Void) {
+    /// `rebasesSplitLanes: false` is only for an edit that keeps every clip's window where it was.
+    private func transactDocument(sections: Set<EditorSection>, rebasesSplitLanes: Bool = true, _ body: (inout EditorDocument) -> Void) {
         guard !isReviewingPreviousMerge else { return }
         var next = document; body(&next)
         let retainedSplitIDs = Set(next.clips.filter { !$0.removed }.compactMap(\.splitSectionID))
@@ -9003,7 +9194,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         if !next.clips.isEmpty { next.editorState = "renderable" }
         guard next != document else { return }
         NativeSpeechTimelineProjection.acknowledgeCaptionEdits(&next, from: document)
-        NativeSplitTimelineRebase.rebase(&next, from: document)
+        if rebasesSplitLanes { NativeSplitTimelineRebase.rebase(&next, from: document) }
         rebaseGuidedLabels(&next, from: document)
         invalidateDurationSources(for: sections)
         if transactionBaseline == nil { appendUndo(document); redoStack.removeAll() }
@@ -9587,7 +9778,7 @@ struct NativeEditorTemporaryVideo: Sendable {
             // differ in shape without representing a user edit.
             let differs: Bool
             switch section {
-            case .timeline: differs = document.clips != cleanDocument.clips || document.tombstones != cleanDocument.tombstones || document.splitScreenSections != cleanDocument.splitScreenSections
+            case .timeline: differs = !document.hasSameTimelineSlots(as: cleanDocument) || document.splitScreenSections != cleanDocument.splitScreenSections
             case .text: differs = document.textElements != cleanDocument.textElements
             case .captions: differs = document.captionCues != cleanDocument.captionCues
             case .captionMeta: differs = document.captionMeta != cleanDocument.captionMeta
@@ -10154,7 +10345,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         player?.pause()
         isPlaying = false
         failureHandledItem = nil
-        activatePreviewAudio()
+        if wantsPlayback || previewPresentationActive { activatePreviewAudio() }
         if player != nil, player === finishedRenderPlayer, let url = playableDeviceOutputURL ?? finishedRenderURL {
             reinstallFinishedRender(url: url, preferredDuration: finishedRenderDuration)
         }
@@ -11115,55 +11306,224 @@ extension NativeEditorSession {
         return measured.union(admitted).sorted().map { ($0, "Clip \($0 + 1)") }
     }
 
-    func createSplitScreen(panelCount: Int) {
-        guard canCreateSplitScreen, (2...3).contains(panelCount), let selection,
-              let index = clipSlotIndex(selection.id) else { return }
-        let original = document.clips[index]
-        let id = UUID().uuidString
-        let duration = original.durationS ?? 0
-        guard duration >= minimumClipDuration else { return }
-        transactDocument(section: .timeline) { value in
-            value.splitScreenSections.append(EditorSplitScreenSection(id: id, durationS: duration, panelCount: panelCount))
-            var members: [EditorTimelineSlot] = []
-            for panel in 0..<panelCount {
-                var member = original
-                if member.raw["speaker_subject"]?.boolValue == nil,
-                   NativePhoneTalkingSource.isSourceSlot(original) || original.parentSegmentID?.hasPrefix("native-phone-talking-source") == true {
-                    member.raw["speaker_subject"] = .bool(true)
-                }
-                if panel > 0 { member.id = UUID().uuidString; member.parentSegmentID = nil }
-                member.setSplitMembership(sectionID: id, panelIndex: panel, offset: 0)
-                members.append(member)
+    var canCreateWholeVideoSplit: Bool {
+        canEditSplitScreen && wholeVideoSplit(panelCount: 2) != nil
+    }
+
+    /// New panels start empty: the section shows its background there until footage is added.
+    func createSplitScreen(panelCount: Int, scope: NativeSplitScope) {
+        guard (2...3).contains(panelCount) else { return }
+        switch scope {
+        case .selectedClip:
+            guard canCreateSplitScreen, let selection, let index = clipSlotIndex(selection.id),
+                  let duration = document.clips[index].durationS, duration >= minimumClipDuration else { return }
+            let id = UUID().uuidString
+            transactDocument(section: .timeline) { value in
+                value.splitScreenSections.append(EditorSplitScreenSection(id: id, durationS: duration, panelCount: panelCount))
+                value.clips[index] = Self.pinningSpeakerSubject(value.clips[index])
+                value.clips[index].setSplitMembership(sectionID: id, panelIndex: 0, offset: 0)
             }
-            value.clips.replaceSubrange(index...index, with: members)
+        case .wholeVideo:
+            guard canEditSplitScreen, let next = wholeVideoSplit(panelCount: panelCount),
+                  let id = next.splitScreenSections.first?.id else { return }
+            // Every clip keeps its window, so timed lanes stay where they are. The unit rebase would instead
+            // map each former clip onto the start of the one new section.
+            transactDocument(sections: [.timeline], rebasesSplitLanes: false) { $0 = next }
+            if selectedSplitScreenSectionID != id { selectSplitPanel(sectionID: id, panel: 0) }
         }
     }
 
+    /// Every ordinary clip becomes a top-panel clip at its current place in the video, transitions included.
+    private func wholeVideoSplit(panelCount: Int) -> EditorDocument? {
+        guard document.splitScreenSections.isEmpty else { return nil }
+        let windows = NativeEditorInteraction.timelineProjection(slots: document.clips, carousel: nil).baseClipWindows
+        guard let origin = windows.first?.start else { return nil }
+        let id = UUID().uuidString
+        var next = document
+        var previous: EditorTimelineSlot?
+        var end = 0.0
+        for window in windows {
+            var slot = Self.pinningSpeakerSubject(next.clips[window.sourceIndex])
+            guard let duration = slot.durationS else { return nil }
+            var offset = window.start - origin
+            if let previous, let length = previous.durationS {
+                let overlap = previous.transitionAfter == "cut" ? 0
+                    : min(0.3, previous.transitionDurationS ?? 0.3, length * 0.3, duration * 0.3)
+                offset = max(offset, previous.splitOffsetS + length - (overlap >= 0.1 ? overlap : 0))
+            }
+            slot.setSplitMembership(sectionID: id, panelIndex: 0, offset: offset)
+            next.clips[window.sourceIndex] = slot
+            end = max(end, window.end - origin, offset + duration)
+            previous = slot
+        }
+        next.splitScreenSections = [EditorSplitScreenSection(id: id, durationS: end, panelCount: panelCount)]
+        return next.splitScreenIsValid ? next : nil
+    }
+
+    private static func pinningSpeakerSubject(_ slot: EditorTimelineSlot) -> EditorTimelineSlot {
+        var slot = slot
+        if slot.raw["speaker_subject"]?.boolValue == nil,
+           NativePhoneTalkingSource.isSourceSlot(slot) || slot.parentSegmentID?.hasPrefix("native-phone-talking-source") == true {
+            slot.raw["speaker_subject"] = .bool(true)
+        }
+        return slot
+    }
+
+    private static func insertSplitMember(_ slot: EditorTimelineSlot, into value: inout EditorDocument, sectionID: String, panel: Int, offset: Double) {
+        var member = slot
+        member.setSplitMembership(sectionID: sectionID, panelIndex: panel, offset: offset)
+        guard let last = value.clips.lastIndex(where: { $0.splitSectionID == sectionID }) else { return }
+        value.clips.insert(member, at: last + 1)
+    }
+
+    var splitContextAtPlayhead: NativeSplitContext? {
+        let projection = timelineProjection
+        for section in document.splitScreenSections {
+            let members = document.clips.indices.filter { !document.clips[$0].removed && document.clips[$0].splitSectionID == section.id }
+            guard let first = members.first, let window = projection.clipWindows.first(where: { $0.sourceIndex == first }) else { continue }
+            let start = window.start - document.clips[first].splitOffsetS
+            let end = start + section.durationS
+            // The playhead parks on the last instant once playback ends; that frame still shows this section.
+            guard start <= currentTime, currentTime < end || (currentTime <= end && end >= projection.totalDuration - 0.000001) else { continue }
+            let filled = Set(members.compactMap { document.clips[$0].splitPanelIndex })
+            return NativeSplitContext(sectionID: section.id, sectionStart: start, section: section,
+                                      emptyPanels: (0..<section.panelCount).filter { !filled.contains($0) })
+        }
+        return nil
+    }
+
+    func selectSplitPanel(sectionID: String, panel: Int) {
+        guard let context = splitContextAtPlayhead, context.sectionID == sectionID else { return }
+        let local = min(currentTime - context.sectionStart, context.section.durationS - 0.000001)
+        guard let slot = document.clips.filter({
+            !$0.removed && $0.splitSectionID == sectionID && $0.splitPanelIndex == panel
+                && $0.splitOffsetS <= local && local < $0.splitOffsetS + ($0.durationS ?? 0)
+        }).max(by: { $0.splitOffsetS < $1.splitOffsetS }) else { return }
+        select(.init(kind: .clip, id: clipID(for: slot.id).uuidString), seekToStart: false)
+    }
+
+    func swapSplitPanels(sectionID: String, _ a: Int, _ b: Int) {
+        guard canEditSplitScreen, a != b, let section = document.splitScreenSections.first(where: { $0.id == sectionID }),
+              (0..<section.panelCount).contains(a), (0..<section.panelCount).contains(b) else { return }
+        transactDocument(section: .timeline) { value in
+            for i in value.clips.indices where value.clips[i].splitSectionID == sectionID {
+                let panel = value.clips[i].splitPanelIndex
+                if panel == a { value.clips[i].raw["split_panel_index"] = .number(Double(b)) }
+                else if panel == b { value.clips[i].raw["split_panel_index"] = .number(Double(a)) }
+            }
+        }
+    }
+
+    func beginSplitDividerDrag(sectionID: String, boundary: Int) {
+        if splitDividerDrag != nil { endSplitDividerDrag() }
+        guard canEditSplitScreen, let section = document.splitScreenSections.first(where: { $0.id == sectionID }),
+              boundary >= 0, boundary + 1 < section.panelCount else { return }
+        let owns = transactionBaseline == nil
+        if owns { beginTransaction() }
+        splitDividerDrag = (sectionID, boundary, section.panelWeights, owns)
+    }
+
+    func updateSplitDividerDrag(deltaFraction: Double) {
+        guard let drag = splitDividerDrag,
+              let index = document.splitScreenSections.firstIndex(where: { $0.id == drag.sectionID }) else { return }
+        let weights = NativeSplitPanelLayout.draggedWeights(drag.weights, boundary: drag.boundary,
+            gutter: document.splitScreenSections[index].gutter, deltaFraction: deltaFraction)
+        transactDocument(section: .timeline) { $0.splitScreenSections[index].panelWeights = weights }
+    }
+
+    func endSplitDividerDrag() {
+        guard let drag = splitDividerDrag else { return }
+        splitDividerDrag = nil
+        if drag.ownsTransaction { endTransaction() }
+    }
+
+    func cancelSplitDividerDrag() {
+        guard let drag = splitDividerDrag else { return }
+        splitDividerDrag = nil
+        if drag.ownsTransaction, let baseline = transactionBaseline {
+            transactionBaseline = nil
+            document = baseline
+            refreshDirtyState(); refreshDuration()
+        } else if let index = document.splitScreenSections.firstIndex(where: { $0.id == drag.sectionID }) {
+            transactDocument(section: .timeline) { $0.splitScreenSections[index].panelWeights = drag.weights }
+        }
+    }
+
+    /// Where a panel add lands, in section seconds, judged from the playhead when it is inside this section.
+    private func splitPanelOpening(sectionID: String, panel: Int) -> (start: Double, end: Double)? {
+        let context = splitContextAtPlayhead
+        let local = context?.sectionID == sectionID ? context.map { currentTime - $0.sectionStart } : nil
+        guard let opening = document.splitPanelOpening(sectionID: sectionID, panel: panel, near: local),
+              opening.end - opening.start >= minimumClipDuration else { return nil }
+        return opening
+    }
+
+    func addSplitPanelClip(sectionID: String, panel: Int, fileURL: URL) async {
+        guard canEditSplitScreen, !isAddingClip else { return }
+        guard let opening = splitPanelOpening(sectionID: sectionID, panel: panel) else {
+            splitScreenActionError = "This panel is full. Shorten a clip in it to make room."
+            return
+        }
+        splitScreenActionError = nil
+        isAddingClip = true
+        defer { isAddingClip = false }
+        await addDeviceTimelineMedia(fileURL: fileURL, source: .files, alreadyPreparing: true,
+                                     splitPanel: (sectionID, panel, opening.start))
+    }
+
+    func addSplitPanelClip(sectionID: String, panel: Int, sourceClipIndex: Int) {
+        guard canEditSplitScreen, splitScreenSourceChoices.contains(where: { $0.clipIndex == sourceClipIndex }) else { return }
+        guard let opening = splitPanelOpening(sectionID: sectionID, panel: panel) else {
+            splitScreenActionError = "This panel is full. Shorten a clip in it to make room."
+            return
+        }
+        let traits = sourceTraits(sourceClipIndex)
+        if resolvedSources?[sourceClipIndex] == nil, !traits.isPhoto, traits.measured == nil,
+           let pool = sourcePool, let resolver = sourceResolver {
+            let generation = document.revision.baseGeneration
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    let sources = try await resolver.resolve(pool, generation: generation, requiredIndices: Set([sourceClipIndex]))
+                    guard self.document.revision.baseGeneration == generation, self.canEditSplitScreen else { return }
+                    self.resolvedSources = (self.resolvedSources ?? [:]).merging(sources) { _, new in new }
+                    self.insertSplitPanelSource(sourceClipIndex, sectionID: sectionID, panel: panel, offset: opening.start)
+                } catch { self.splitScreenActionError = "This media could not be opened. Try again." }
+            }
+            return
+        }
+        insertSplitPanelSource(sourceClipIndex, sectionID: sectionID, panel: panel, offset: opening.start)
+    }
+
+    private func insertSplitPanelSource(_ clipIndex: Int, sectionID: String, panel: Int, offset: Double) {
+        guard let opening = document.splitPanelOpening(sectionID: sectionID, panel: panel, near: offset) else { return }
+        let traits = sourceTraits(clipIndex)
+        let length = min(traits.isPhoto ? Self.addedClipDurationS : traits.measured ?? 0, opening.end - opening.start)
+        guard length >= minimumClipDuration else {
+            splitScreenActionError = traits.isPhoto ? "This panel is full. Shorten a clip in it to make room." : "This video is too short to add."
+            return
+        }
+        splitScreenActionError = nil
+        var raw: [String: JSONValue] = ["media_kind": .string(traits.isPhoto ? "image" : "video")]
+        if let template = traits.template { for key in ["asset_id", "media_id"] { raw[key] = template.raw[key] } }
+        if let source = resolvedSources?[clipIndex] { raw["media_id"] = .string(source.mediaID) }
+        if !traits.isPhoto, let measured = traits.measured { raw["source_duration_s"] = .number(measured) }
+        let slot = EditorTimelineSlot(id: UUID().uuidString, clipIndex: clipIndex, inS: 0, durationS: length, raw: raw)
+        transactDocument(section: .timeline) { Self.insertSplitMember(slot, into: &$0, sectionID: sectionID, panel: panel, offset: opening.start) }
+        guard document.clips.contains(where: { $0.id == slot.id }) else { return }
+        select(.init(kind: .clip, id: clipID(for: slot.id).uuidString), seekToStart: false)
+    }
+
+    /// Adds an empty panel, or removes the bottom one while another panel still holds footage.
     func setSplitScreenPanelCount(_ count: Int) {
         guard canEditSplitScreen, (2...3).contains(count), let id = selectedSplitScreenSectionID,
               let sectionIndex = document.splitScreenSections.firstIndex(where: { $0.id == id }),
-              document.splitScreenSections[sectionIndex].panelCount != count else { return }
+              document.splitScreenSections[sectionIndex].panelCount != count,
+              document.clips.contains(where: { !$0.removed && $0.splitSectionID == id && ($0.splitPanelIndex ?? 0) < count }) else { return }
         transactDocument(section: .timeline) { value in
-            let previous = value.splitScreenSections[sectionIndex].panelCount
             value.splitScreenSections[sectionIndex].panelCount = count
             value.splitScreenSections[sectionIndex].panelWeights = Array(repeating: 1, count: count)
-            if count < previous {
-                value.clips.removeAll { $0.splitSectionID == id && ($0.splitPanelIndex ?? 0) >= count }
-            } else {
-                let templates = value.clips.filter { $0.splitSectionID == id && $0.splitPanelIndex == 0 }
-                guard let insertion = value.clips.lastIndex(where: { $0.splitSectionID == id }) else { return }
-                let copies = templates.map { slot -> EditorTimelineSlot in
-                    var copy = slot
-                    if copy.raw["speaker_subject"]?.boolValue == nil,
-                       NativePhoneTalkingSource.isSourceSlot(copy) || copy.parentSegmentID?.hasPrefix("native-phone-talking-source") == true {
-                        copy.raw["speaker_subject"] = .bool(true)
-                    }
-                    copy.id = UUID().uuidString; copy.parentSegmentID = nil
-                    copy.setSplitMembership(sectionID: id, panelIndex: 2, offset: slot.splitOffsetS)
-                    return copy
-                }
-                value.clips.insert(contentsOf: copies, at: insertion + 1)
-            }
+            value.clips.removeAll { $0.splitSectionID == id && ($0.splitPanelIndex ?? 0) >= count }
         }
         if let selection, clipSlotIndex(selection.id) == nil,
            let slot = document.clips.first(where: { $0.splitSectionID == id }) { select(.init(kind: .clip, id: clipID(for: slot.id).uuidString)) }
@@ -11192,20 +11552,6 @@ extension NativeEditorSession {
                 if value.clips[i].raw["source_end_s"] != nil {
                     value.clips[i].raw["source_end_s"] = .number(value.clips[i].inS + length * Self.explicitPlaybackRate(value.clips[i]))
                 }
-            }
-        }
-    }
-
-    func moveSelectedSplitScreenPanel(to index: Int) {
-        guard canEditSplitScreen, let id = selectedSplitScreenSectionID, let selection,
-              let slotIndex = clipSlotIndex(selection.id), let from = document.clips[slotIndex].splitPanelIndex,
-              let section = document.splitScreenSections.first(where: { $0.id == id }),
-              (0..<section.panelCount).contains(index), from != index else { return }
-        transactDocument(section: .timeline) { value in
-            for i in value.clips.indices where value.clips[i].splitSectionID == id {
-                let panel = value.clips[i].splitPanelIndex
-                if panel == from { value.clips[i].raw["split_panel_index"] = .number(Double(index)) }
-                else if panel == index { value.clips[i].raw["split_panel_index"] = .number(Double(from)) }
             }
         }
     }
@@ -11243,11 +11589,7 @@ extension NativeEditorSession {
     func duplicateSelectedClip() {
         guard canDuplicateSelectedClip, let selection, let index = clipSlotIndex(selection.id) else { return }
         transactDocument(section: .timeline) { value in
-            var copy = value.clips[index]
-            if copy.raw["speaker_subject"]?.boolValue == nil,
-               NativePhoneTalkingSource.isSourceSlot(copy) || copy.parentSegmentID?.hasPrefix("native-phone-talking-source") == true {
-                copy.raw["speaker_subject"] = .bool(true)
-            }
+            var copy = Self.pinningSpeakerSubject(value.clips[index])
             copy.parentSegmentID = nil; copy.id = UUID().uuidString
             if copy.splitSectionID != nil { copy.raw["split_offset_s"] = .number(copy.splitOffsetS + (copy.durationS ?? 0)) }
             value.clips.insert(copy, at: index + 1)
@@ -11275,13 +11617,19 @@ extension NativeEditorSession {
         replaceClipSource(slotID: slotID, clipIndex: clipIndex)
     }
 
-    private func replaceClipSource(slotID: String, clipIndex: Int, placementID: String? = nil) {
-        guard canEditTimeline, let index = clipSlotIndex(slotID) else { return }
+    /// What the edit already knows about an admitted source: a slot that uses it, its measured length, whether it is a photo.
+    private func sourceTraits(_ clipIndex: Int) -> (template: EditorTimelineSlot?, measured: Double?, isPhoto: Bool) {
         let template = document.clips.first(where: { $0.clipIndex == clipIndex })
         let measured = resolvedSources?[clipIndex]?.asset.duration
             ?? template.flatMap { Self.number($0.raw["source_duration_s"] ?? $0.raw["source_duration"]) }
         let isPhoto = resolvedSources?[clipIndex].map { isStill($0.url) }
             ?? ((template?.raw["media_kind"]?.stringValue ?? template?.raw["kind"]?.stringValue) == "image")
+        return (template, measured, isPhoto)
+    }
+
+    private func replaceClipSource(slotID: String, clipIndex: Int, placementID: String? = nil) {
+        guard canEditTimeline, let index = clipSlotIndex(slotID) else { return }
+        let (template, measured, isPhoto) = sourceTraits(clipIndex)
         let frameOverride = document.clips[index].raw["speaker_frame_override"].flatMap { EditorSpeakerFrameOverride(json: $0) }
         let preservesSpeaker = frameOverride != nil && frameOverride != .inherit
         if isPhoto && preservesSpeaker {

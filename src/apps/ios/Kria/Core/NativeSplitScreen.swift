@@ -1,4 +1,57 @@
+import CoreGraphics
 import Foundation
+
+enum NativeSplitScope: Equatable { case selectedClip, wholeVideo }
+
+/// Panel geometry in top-origin unit space: x 0, width 1, y and height as fractions of the canvas height.
+/// Heights follow the compiler and engine: the gutters come off first, the rest is shared by weight.
+struct NativeSplitPanelLayout {
+    static let minimumPairShare = 0.15
+    static let equalSnapShare = 0.02
+
+    static func panelRects(weights: [Double], gutter: Double) -> [CGRect] {
+        let total = weights.reduce(0, +)
+        guard !weights.isEmpty, total.isFinite, total > 0 else { return [] }
+        let usable = 1 - gutter * Double(weights.count - 1)
+        var top = 0.0
+        return weights.map { weight in
+            let height = usable * weight / total
+            defer { top += height + gutter }
+            return CGRect(x: 0, y: top, width: 1, height: height)
+        }
+    }
+
+    static func dividerYs(weights: [Double], gutter: Double) -> [Double] {
+        panelRects(weights: weights, gutter: gutter).dropLast().map { Double($0.maxY) + gutter / 2 }
+    }
+
+    /// Moves the divider below panel `boundary` by `deltaFraction` of the canvas height. Only that panel and the
+    /// next change, and their sum is kept, so every other panel keeps its height.
+    static func draggedWeights(_ weights: [Double], boundary: Int, gutter: Double, deltaFraction: Double) -> [Double] {
+        guard boundary >= 0, weights.indices.contains(boundary + 1), deltaFraction.isFinite else { return weights }
+        let total = weights.reduce(0, +)
+        let usable = 1 - gutter * Double(weights.count - 1)
+        let pair = weights[boundary] + weights[boundary + 1]
+        guard total.isFinite, total > 0, usable > 0, pair > 0 else { return weights }
+        let share = min(1 - minimumPairShare, max(minimumPairShare, (weights[boundary] + deltaFraction * total / usable) / pair))
+        var result = weights
+        if abs(share - 0.5) <= equalSnapShare {
+            result[boundary] = pair / 2; result[boundary + 1] = pair / 2
+        } else {
+            result[boundary] = pair * share; result[boundary + 1] = pair - pair * share
+        }
+        return result
+    }
+}
+
+struct NativeSplitContext: Equatable {
+    let sectionID: String
+    /// Timeline seconds.
+    let sectionStart: Double
+    let section: EditorSplitScreenSection
+    /// Panels with no clips at all.
+    let emptyPanels: [Int]
+}
 
 struct EditorSplitScreenSection: Equatable, Sendable, Identifiable {
     var id: String
@@ -99,5 +152,19 @@ extension EditorDocument {
         }
         guard seen == Set(splitScreenSections.map(\.id)) else { return false }
         return splitScreenSections.isEmpty || NativeEditorInteraction.timelineProjection(slots: clips, carousel: nil, splitSections: splitScreenSections).totalDuration <= 1800
+    }
+
+    /// The free part of a panel a new clip goes into, in section seconds: the gap at `local` when `local` falls
+    /// in one, else everything after the panel's last clip.
+    func splitPanelOpening(sectionID: String, panel: Int, near local: Double?) -> (start: Double, end: Double)? {
+        guard let section = splitScreenSections.first(where: { $0.id == sectionID }), (0..<section.panelCount).contains(panel) else { return nil }
+        let spans = clips.filter { !$0.removed && $0.splitSectionID == sectionID && $0.splitPanelIndex == panel }
+            .map { (start: $0.splitOffsetS, end: $0.splitOffsetS + ($0.durationS ?? 0)) }
+        if let local, local >= 0, local < section.durationS,
+           !spans.contains(where: { $0.start <= local + 0.000001 && local < $0.end - 0.000001 }) {
+            return (spans.map(\.end).filter { $0 <= local + 0.000001 }.max() ?? 0,
+                    spans.map(\.start).filter { $0 > local }.min() ?? section.durationS)
+        }
+        return (spans.map(\.end).max() ?? 0, section.durationS)
     }
 }

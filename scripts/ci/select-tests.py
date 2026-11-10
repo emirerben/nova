@@ -103,21 +103,35 @@ LEG_JOURNEYS = {
 }
 
 
-def native_legs(ids, event=None):
-    """Matrix legs to start: `unit`, plus each leg owning a selected journey.
+def native_legs(ids, event=None, ui_shards=1):
+    """Matrix legs to start: `unit`, each leg owning a selected journey, and
+    one `ui-<i>` leg per PR UI shard.
 
-    Pull requests stop at PR_NATIVE_LEGS; nightly and manual runs start every
-    leg that owns a selected journey."""
+    Pull requests stop at PR_NATIVE_LEGS plus their UI shards; nightly and
+    manual runs start every leg that owns a selected journey. An editor PR's
+    UI group ran 70-105 min serially after build and unit tests (#2225,
+    #2234), so a selection of more than one shard leaves the unit leg to build
+    and unit tests and runs each shard on its own Mac (ui_tests.py partition).
+    """
     selected = set(ids)
     known = {journey["id"] for journey in JOURNEYS}
     if selected - known:
         raise ValueError(f"Unknown journey ids: {sorted(selected - known)}")
-    return ["unit"] + [
-        leg
-        for leg, journeys in LEG_JOURNEYS.items()
-        if selected & set(journeys)
-        and (event != "pull_request" or leg in PR_NATIVE_LEGS)
-    ]
+    shards = (
+        [f"ui-{index}" for index in range(1, ui_shards + 1)]
+        if event == "pull_request" and ui_shards > 1
+        else []
+    )
+    return (
+        ["unit"]
+        + [
+            leg
+            for leg, journeys in LEG_JOURNEYS.items()
+            if selected & set(journeys)
+            and (event != "pull_request" or leg in PR_NATIVE_LEGS)
+        ]
+        + shards
+    )
 
 
 def journey_native_for_ids(ids):
@@ -461,14 +475,23 @@ def selection(event, base, head):
 
 
 def ui_shards(event, groups):
-    """PR/main use one Mac; nightly/manual shard the full suite to fit the cap."""
+    """UI legs for the executed selection.
 
-    if event in ("pull_request", "push"):
+    Main runs smoke on one Mac. PRs run `full` as smoke, so it stays on one leg;
+    a longer PR selection gets one leg per ui_tests.PR_SHARD_TARGET_SECONDS.
+    Nightly/manual shard the full suite in ios.yml.
+    """
+    if event == "push" or groups == "none":
         return 1
-    if groups == "none":
+    if event == "pull_request" and groups == "full":
         return 1
+    target = (
+        ui_tests.PR_SHARD_TARGET_SECONDS
+        if event == "pull_request"
+        else ui_tests.SHARD_TARGET_SECONDS
+    )
     try:
-        return ui_tests.shard_count(groups)
+        return ui_tests.shard_count(groups, target=target)
     except (OSError, ValueError, KeyError, TypeError):
         # The UI step fails closed on the same error; one leg reports it.
         return 1
@@ -547,6 +570,17 @@ def gate_journey(needs, event):
     )
     if outputs["native_validation"] != str(native).lower():
         raise ValueError("Native execution does not match event and selection")
+    # journey-native's result covers only the legs its matrix started, so the
+    # matrix itself must be every leg this selection needs: a dropped UI shard
+    # would otherwise pass with its tests never run.
+    groups = ui_tests.validate_execution(outputs.get("ios_ui_groups"))
+    shards = ui_shards(event, groups)
+    if outputs.get("ios_ui_shards") != str(shards):
+        raise ValueError("Missing or inconsistent iOS UI shard count")
+    if native and outputs.get("native_legs") != json.dumps(
+        native_legs(selected, event, shards)
+    ):
+        raise ValueError("Missing or inconsistent iPhone validation legs")
     for job, selected in (
         ("journey-mapping", journey),
         ("journey-offline", journey),
@@ -711,7 +745,7 @@ def main():
     )
     selected_ids = journey_ids.split(",") if journey_ids else ()
     native = journey_native_for_ids(selected_ids)
-    legs = native_legs(selected_ids, event)
+    legs = native_legs(selected_ids, event, shards)
     output += (
         f"native_validation={str(native_validation(event, suites, native)).lower()}\n"
     )

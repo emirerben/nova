@@ -8,27 +8,22 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
         let first = clip(1, in: app)
         XCTAssertTrue(first.waitForExistence(timeout: 30))
         first.tap()
-        app.buttons["native-editor-adjust"].tap()
-        reveal(app.buttons["native-editor-split-create-3"], in: app).tap()
-        let height = reveal(app.sliders["native-editor-split-weight-0"], in: app)
-        height.adjust(toNormalizedSliderPosition: 0.7)
+        createSplit(panels: 3, in: app)
+        fillEmptyPanel("Middle", withFootage: "Clip 2", in: app) // the blue clip
+        fillEmptyPanel("Bottom", withFootage: "Clip 1", in: app) // red again
+        let layout = app.buttons["native-editor-split-layout-toggle"]
+        XCTAssertTrue(layout.waitForExistence(timeout: 10))
+        layout.tap()
         reveal(app.sliders["native-editor-split-gutter"], in: app)
             .adjust(toNormalizedSliderPosition: 0.5)
-        app.buttons["native-editor-inspector-done"].tap()
+        app.buttons["native-editor-split-done"].tap()
 
-        selectClip(2, in: app)
-        app.buttons["native-editor-adjust"].tap()
-        reveal(app.buttons["native-editor-split-replace"], in: app).tap()
-        XCTAssertTrue(app.buttons["Clip 2"].waitForExistence(timeout: 5))
-        app.buttons["Clip 2"].tap()
-        app.buttons["native-editor-inspector-done"].tap()
         let authored = try sections(app)
-        let layout = try XCTUnwrap((authored["split_screen_sections"] as? [[String: Any]])?.first)
-        let weights = try XCTUnwrap(layout["panel_weights"] as? [Double])
+        let section = try XCTUnwrap((authored["split_screen_sections"] as? [[String: Any]])?.first)
+        let weights = try XCTUnwrap(section["panel_weights"] as? [Double])
         XCTAssertEqual(weights.count, 3)
-        XCTAssertEqual(try XCTUnwrap(layout["duration_s"] as? Double), 4, accuracy: 0.001)
-        XCTAssertGreaterThan(weights[0], weights[1] * 2)
-        XCTAssertEqual(try XCTUnwrap(layout["gutter"] as? Double), 0.05, accuracy: 0.006)
+        XCTAssertEqual(try XCTUnwrap(section["duration_s"] as? Double), 4, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(section["gutter"] as? Double), 0.05, accuracy: 0.006)
         XCTAssertEqual((authored["timeline_slots"] as? [Any])?.count, 4)
         try assertAuthoredDuration(authored)
         assertPanelPicture(app)
@@ -69,9 +64,9 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
         let app = launch(reset: true, globalLayers: true)
         XCTAssertTrue(clip(1, in: app).waitForExistence(timeout: 30))
         clip(1, in: app).tap()
-        app.buttons["native-editor-adjust"].tap()
-        reveal(app.buttons["native-editor-split-create-2"], in: app).tap()
-        app.buttons["native-editor-inspector-done"].tap()
+        createSplit(panels: 2, in: app)
+        fillEmptyPanel("Bottom", withFootage: "Clip 1", in: app)
+        app.buttons["native-editor-split-done"].tap()
         let baseline = try sections(app)
         try checkGlobalBoundary(app, baseline: baseline)
         let save = app.buttons["native-editor-save"]
@@ -108,11 +103,12 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
             XCTAssertEqual(parts.count, 2)
             return (parts.first ?? 0) * 60 + (parts.last ?? 0)
         }
-        scrub(-0.5)
-        XCTAssertLessThan(try time(), 4)
+        // A fill covers its panel for 3 s (the default added-clip length), so stay inside that window.
+        scrub(-1.5)
+        XCTAssertLessThan(try time(), 3)
         assertGlobalPixels(app, redBackground: true)
         attach(app, name: "Global layers before split boundary")
-        scrub(1)
+        scrub(2)
         XCTAssertGreaterThan(try time(), 4)
         XCTAssertLessThan(try time(), 6)
         assertGlobalPixels(app, redBackground: false)
@@ -163,6 +159,27 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
         app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
         app.launch()
         return app
+    }
+
+    /// The Split tool is the only way in: tool rail, then a layout card. Leaves the panel open on the first empty panel.
+    private func createSplit(panels: Int, in app: XCUIApplication) {
+        let tool = app.buttons["native-editor-tool-split"]
+        let rail = app.descendants(matching: .any)["native-editor-tool-rail"].firstMatch
+        for _ in 0..<3 where !tool.isHittable { rail.swipeLeft() }
+        XCTAssertTrue(tool.isHittable, "Split is the last tool on the rail")
+        tool.tap()
+        let card = app.buttons["native-editor-split-create-\(panels)"]
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        card.tap()
+    }
+
+    /// Fills the panel the Split panel is asking for from footage already in the edit (the real pickers need Photos).
+    private func fillEmptyPanel(_ panel: String, withFootage label: String, in app: XCUIApplication) {
+        XCTAssertTrue(app.staticTexts["Add to \(panel)"].waitForExistence(timeout: 10), "The Split panel must ask for the \(panel) panel")
+        let source = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'native-editor-split-source-' AND label == %@", label)).firstMatch
+        XCTAssertTrue(source.waitForExistence(timeout: 10), "The Split panel must offer \(label) for the empty panel")
+        source.tap()
     }
 
     private func clip(_ index: Int, in app: XCUIApplication) -> XCUIElement {
@@ -227,8 +244,10 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
                        "The branded playback outro must not extend authored footage")
     }
 
+    // Equal panel heights with a 5.5% gutter: panels span 0-0.297, 0.352-0.648 and 0.703-1. A 3pt white divider line
+    // (with its swap handle) sits on each gutter's centre, so black is sampled beside it, not on it.
     private func assertPanelPicture(_ app: XCUIApplication) {
-        assertPicture(app, redAt: [0.2, 0.9], blueAt: [0.7], blackAt: [0.6, 0.8])
+        assertPicture(app, redAt: [0.15, 0.85], blueAt: [0.5], blackAt: [0.31, 0.34, 0.66, 0.69])
     }
 
     private func assertPicture(_ app: XCUIApplication, redAt: [CGFloat], blueAt: [CGFloat], blackAt: [CGFloat]) {
@@ -238,7 +257,7 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
             let scale = CGFloat(image.width) / app.frame.width
             let frame = preview.frame
             func matches(_ y: CGFloat, _ color: (UInt8, UInt8, UInt8) -> Bool) -> Bool {
-                let rect = CGRect(x: (frame.midX - 2) * scale, y: (frame.minY + frame.height * y - 2) * scale,
+                let rect = CGRect(x: (frame.minX + frame.width * 0.25 - 2) * scale, y: (frame.minY + frame.height * y - 2) * scale,
                                   width: 4 * scale, height: 4 * scale)
                 guard let crop = image.cropping(to: rect) else { return false }
                 var bytes = [UInt8](repeating: 0, count: crop.width * crop.height * 4)
@@ -251,7 +270,7 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
                 }.count
                 return matching * 4 > bytes.count * 3 / 4
             }
-            return redAt.allSatisfy { matches($0) { r, g, b in r > 200 && g < 50 && b < 50 } }
+            return redAt.allSatisfy { matches($0) { r, g, b in r > 190 && g < 120 && b < 130 && Int(r) > Int(b) + 60 } } // the selected panel wears a light wash
                 && blueAt.allSatisfy { matches($0) { r, g, b in b > 200 && r < 50 && g < 50 } }
                 && blackAt.allSatisfy { matches($0) { r, g, b in r < 35 && g < 35 && b < 35 } }
         }
