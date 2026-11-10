@@ -761,6 +761,97 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(reachedUpload.waitForExistence(timeout: 25), app.debugDescription)
     }
 
+    /// KRI-1351: fifteen videos picked through the composer's +, then a long prompt typed and sent with the keyboard
+    /// up. The sent prompt and the clips above it stay on screen. Before the fix the fifteen receipts were one lazy
+    /// row far taller than the chat left visible above the keyboard, and Send left the transcript blank (top bar
+    /// and composer only) until the reader dragged it.
+    func testSendingALongPromptWithTheKeyboardUpAfterFifteenUploadsKeepsTheChatOnScreen() {
+        let app = XCUIApplication()
+        app.resetAuthorizationStatus(for: .photos)
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-seed-photo-video", "-ui-testing-seed-photo-videos"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
+        // The picks reserve, upload and attach like on the real server, so the pending rows become receipts.
+        app.launchEnvironment["KRIA_CHAT_UPLOADS_LAND"] = "1"
+        // The reported chat (thread 147eb928) had 15 videos.
+        let picks = 15
+        app.launchEnvironment["KRIA_SEED_PHOTO_VIDEO_COUNT"] = "\(picks)"
+        app.launchEnvironment["KRIA_CHAT_MONTAGE_MAX_CLIPS"] = "20"
+        app.launch()
+        createFreshChat(in: app)
+        let card = app.buttons["format-montage"]
+        if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.tap()
+        func allowFullAccess(_ alert: XCUIElement) -> Bool {
+            guard alert.buttons.count == 3 else { return false }
+            alert.buttons.element(boundBy: 1).tap()
+            return true
+        }
+        let monitor = addUIInterruptionMonitor(withDescription: "Photos access", handler: allowFullAccess)
+        defer { removeUIInterruptionMonitor(monitor) }
+        func snapshot(_ name: String) {
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = name
+            shot.lifetime = .keepAlways
+            add(shot)
+        }
+
+        let plus = app.buttons["chat-attach"]
+        XCTAssertTrue(plus.waitForExistence(timeout: 10))
+        plus.tap()
+        let upload = app.buttons["attach-upload"]
+        XCTAssertTrue(upload.waitForExistence(timeout: 5))
+        upload.tap()
+        let photos = app.buttons["upload-source-photos"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 5))
+        photos.tap()
+        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
+
+        let count = app.staticTexts["gallery-count"]
+        for index in 0..<picks {
+            let tile = app.buttons["gallery-tile-\(index)"]
+            XCTAssertTrue(tile.waitForExistence(timeout: 40), app.debugDescription)
+            if !tile.isHittable { app.swipeUp() }
+            tile.tap()
+            XCTAssertTrue(eventually { count.label.hasPrefix("\(index + 1) of") }, count.label)
+        }
+        app.buttons["photos-picker-done"].tap()
+        XCTAssertTrue(app.buttons["attachment-close"].waitForNonExistence(timeout: 10), "the pick ends back in the chat")
+        let pending = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'chat-upload-'"))
+        XCTAssertTrue(eventually(timeout: 60) { pending.count == 0 }, "uploads still pending: \(pending.count)")
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'couldn\u{2019}t be read'")).firstMatch.exists,
+                       "the picks were read and uploaded")
+        let clips = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'chat-media-'"))
+        XCTAssertTrue(eventually(timeout: 5) { clips.allElementsBoundByIndex.contains { $0.isHittable } },
+                      "the newest clips are on screen\n\(app.debugDescription)")
+
+        // The prompt is typed and sent with the keyboard up, as on the phone.
+        let prompt = "I want a text that explains the importance of 10 November in Turkey. It should not sound formal but should be respectful. I want one large text in the middle, word by word of the text block. In the bottom of the screen, I want the same but for the english translation"
+        let field = app.textFields["Message Kria"]
+        let composer = field.waitForExistence(timeout: 10) ? field : app.textViews["Message Kria"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10), app.debugDescription)
+        composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "the software keyboard is up: it is what leaves so little of the chat visible")
+        composer.typeText(prompt)
+        snapshot("1-prompt-typed")
+        let send = app.buttons["chat-send-message"]
+        XCTAssertTrue(eventually(timeout: 10) { send.isEnabled })
+        send.tap()
+
+        let sent = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "word by word")).firstMatch
+        XCTAssertTrue(sent.waitForExistence(timeout: 10), "the sent prompt is drawn\n\(app.debugDescription)")
+        // Still there once the reply has landed and the transcript has settled, with the keyboard still up.
+        RunLoop.current.run(until: Date().addingTimeInterval(5))
+        snapshot("2-after-send")
+        XCTAssertTrue(app.keyboards.firstMatch.exists)
+        let transcript = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'chat-media-' OR identifier BEGINSWITH 'chat-message-'"))
+        XCTAssertTrue(sent.exists, "the sent prompt is still drawn\n\(app.debugDescription)")
+        XCTAssertTrue(transcript.allElementsBoundByIndex.contains { $0.isHittable },
+                      "the transcript is on screen, not blank\n\(app.debugDescription)")
+    }
+
     /// Full-access Photos returns to the attachment flow on Done. A selected
     /// talking-to-camera clip advances to overlays; Done there returns to chat.
     /// The single pick closes Apple's picker on its own only while the server

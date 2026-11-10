@@ -427,7 +427,8 @@ struct FootagePickerView: View {
     /// `nonisolated` so the change block isn't MainActor-isolated: Photos runs it on its own queue,
     /// and the isolation check traps (SIGTRAP) there.
     private nonisolated static func seedUITestVideo() async {
-        let wanted = ProcessInfo.processInfo.arguments.contains("-ui-testing-seed-photo-videos") ? 6 : 1
+        let wanted = ProcessInfo.processInfo.arguments.contains("-ui-testing-seed-photo-videos")
+            ? (ProcessInfo.processInfo.environment["KRIA_SEED_PHOTO_VIDEO_COUNT"].flatMap(Int.init) ?? 6) : 1
         let existing = PHAsset.fetchAssets(with: .video, options: nil).count
         guard existing < wanted, let url = KriaBranding.outroURL() else { return }
         try? await PHPhotoLibrary.shared().performChanges {

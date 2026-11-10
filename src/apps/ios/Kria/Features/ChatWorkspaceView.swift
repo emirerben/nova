@@ -872,6 +872,7 @@ private struct CreationWorkspaceView: View {
         derived.timelineKey = cacheable ? key : nil
         derived.timeline = built
         derived.timelineMessages = nil
+        derived.timelineRows = nil
         return built
     }
 
@@ -885,6 +886,16 @@ private struct CreationWorkspaceView: View {
         }
         if derived.timelineKey != nil { derived.timelineMessages = messages }
         return messages
+    }
+
+    /// The timeline as the lazy stack's rows, kept with the timeline it came from (each media receipt is parsed to
+    /// count its files).
+    private var timelineRows: [ChatTimelineRow] {
+        let entries = timeline
+        if let cached = derived.timelineRows, derived.timelineKey != nil { return cached }
+        let rows = ChatTimelineRow.rows(entries)
+        if derived.timelineKey != nil { derived.timelineRows = rows }
+        return rows
     }
 
     /// The newest reply that carries requirement receipts; a new one means the brief may have changed.
@@ -1372,12 +1383,13 @@ private struct CreationWorkspaceView: View {
         if workspaceStage == .footage, let selectedFormat {
             VideoTypeRow(format: selectedFormat) { isChoosingFormat = true }
         }
-        ForEach(ChatTimelineGroup.group(timeline)) { group in
-            if case .media = group.entries[0].content {
-                mediaReceipts(group.entries)
+        ForEach(timelineRows) { row in
+            if let index = row.mediaIndex {
+                mediaReceipt(row.entry, index: index)
+                    .padding(.top, row.joinsMediaAbove ? ChatConversationSpacing.mediaStrip - ChatConversationSpacing.row : 0)
             } else {
-                timelineRow(group.entries[0])
-                    .transition(Self.rowTransition(for: group.entries[0], reduceMotion: reduceMotion))
+                timelineRow(row.entry)
+                    .transition(Self.rowTransition(for: row.entry, reduceMotion: reduceMotion))
             }
         }
         if currentProject.status == .ready {
@@ -1467,7 +1479,7 @@ private struct CreationWorkspaceView: View {
         case .thoughts(let summaries):
             ThoughtSummaryDisclosure(summaries: summaries).id(entry.id)
         case .media:
-            EmptyView() // Consecutive receipts are rendered together above.
+            EmptyView() // Drawn one file per row by `mediaReceipt`.
         }
     }
 
@@ -1752,14 +1764,12 @@ private struct CreationWorkspaceView: View {
         composerFocused = true
     }
 
-    private func mediaReceipts(_ entries: [ChatTimelineEntry]) -> some View {
-        let media = entries.flatMap { entry -> [CreationAttachedMedia] in
-            guard case .media(let event) = entry.content else { return [] }
-            let current = Dictionary(CreationAttachedMedia.parse(threadState).map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
-            return CreationAttachedMedia.parse(event.payload ?? [:]).map { current[$0.id] ?? $0 }
-        }
-        return VStack(spacing: 8) {
-            ForEach(Array(media.enumerated()), id: \.offset) { _, attachment in
+    /// One file of a media receipt, as the project holds it now (a poster that arrived later, a new name).
+    @ViewBuilder private func mediaReceipt(_ entry: ChatTimelineEntry, index: Int) -> some View {
+        if case .media(let event) = entry.content {
+            let received = CreationAttachedMedia.parse(event.payload ?? [:])
+            if received.indices.contains(index) {
+                let attachment = CreationAttachedMedia.parse(threadState).last { $0.id == received[index].id } ?? received[index]
                 KriaMediaRow(name: attachment.displayName,
                              status: .ready(attachment.isSong ? "Song · Ready" : attachment.isVoiceover ? "Voiceover · Ready" : "Video · Ready"),
                              trailing: .check, onFill: true) {
@@ -3798,6 +3808,8 @@ final class ChatDerivedMemo {
     var timeline: [ChatTimelineEntry] = []
     /// The `.message` entries of `timeline`; nil until read after each rebuild.
     var timelineMessages: [ChatTranscriptMessage]?
+    /// The lazy stack's rows for `timeline`; nil until read after each rebuild.
+    var timelineRows: [ChatTimelineRow]?
     var feedKey: Int?
     var feed: PlanBlockFeedState?
     var clipQuestionKey: Int?
