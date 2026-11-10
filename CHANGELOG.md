@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.154.0] - 2026-11-10
+
+### Fixed
+- fix(kria): the chat answers in the language the creator writes, not the video's (KRI-1363) (#2268) <!-- release-pr: 2268 -->
+
 ## [0.88.153.0] - 2026-11-10
 
 ### Changed
