@@ -135,6 +135,7 @@ struct NativeVideoPreview: View {
     @State private var dangerGuideLast = ""
     @State private var textAlignmentFeedback = NativeTextAlignmentFeedback()
     @State private var textAlignmentHaptic = UISelectionFeedbackGenerator()
+    @State private var splitPanelPick: NativeSplitPanelPick?
 
     init(session: NativeEditorSession, onEmptyTap: (() -> Void)? = nil, onFindOriginals: (() -> Void)? = nil, onAddClip: ((AddClipLaunch) -> Void)? = nil) {
         self.session = session
@@ -453,6 +454,9 @@ struct NativeVideoPreview: View {
     }
 
     private func selectPreviewObject(at point: CGPoint, in size: CGSize) {
+        // A drag or pinch can also report a tap where the finger lifts; that is not a selection (it switched a dragged
+        // caption to the drawing it was dropped on).
+        guard Date().timeIntervalSince(dragClock.lastChange) > 0.4 else { return }
         let candidates = NativeEditorInteraction.previewOrder(
             NativeEditorInteraction.visible(objects.map(\.item), at: clock.currentTime)
         ).reversed().filter { item in
@@ -463,10 +467,15 @@ struct NativeVideoPreview: View {
         guard !candidates.isEmpty else {
             lastTapIDs = []
             lastTapPoint = nil
+            // Inside a split section a tap on a panel selects it. Only a tap outside every panel falls through.
+            if !session.isPlaying, let context = session.splitContextAtPlayhead,
+               let panel = NativeSplitPreviewOverlay.panel(at: point, in: size, context: context) {
+                NativeSplitPreviewOverlay.choose(panel: panel, context: context, session: session, pick: $splitPanelPick)
+                return
+            }
             // A near-miss on the selected object's rotate/scale corner (its 22pt
             // zone extends outside the frame) must not open fullscreen.
-            if !isNearSelectedCorner(point, in: size),
-               Date().timeIntervalSince(dragClock.lastChange) > 0.4 { onEmptyTap?() }
+            if !isNearSelectedCorner(point, in: size) { onEmptyTap?() }
             return
         }
         let ordered = candidates.map(\.selection)
@@ -1082,6 +1091,11 @@ struct NativeVideoPreview: View {
             .opacity(session.isShowingPreviousPreview ? 0 : 1)
             .accessibilityHidden(session.isShowingPreviousPreview)
             .allowsHitTesting(!session.isShowingPreviousPreview && session.document.editorState != "empty" && !(session.sourcePreviewState.isFailure && !session.isShowingRenderedFallback))
+
+            // Above the canvas gesture surface: a touch on a divider band never reaches the canvas move or empty tap.
+            if session.document.editorState != "empty" {
+                NativeSplitPreviewOverlay(session: session, pick: $splitPanelPick)
+            }
 
             if session.showsEditApplied {
                 Label("Edit applied", systemImage: "checkmark.circle.fill")
@@ -1946,7 +1960,7 @@ struct NativeMiniStrip: View {
         // The add-clip sheet closes as soon as a file is chosen, so a failure has to surface here.
         // Suppressed while the sheet is open, where it shows the same error inline.
         .alert("Couldn’t add clip", isPresented: Binding(
-            get: { session.addClipError != nil && !isPresentingAddClip },
+            get: { session.addClipError != nil && !isPresentingAddClip && !session.addClipAlertSuppressed },
             set: { if !$0 { session.addClipError = nil } }
         )) {
             Button("OK", role: .cancel) {}
@@ -2198,10 +2212,13 @@ struct NativeMiniStrip: View {
         return VStack(spacing: rowGap) {
             Color.clear.frame(height: 18)
             ForEach(footageRows.titles, id: \.self) { title in
+                // Split rows carry no visible name: the preview is the control surface. VoiceOver keeps it.
                 Text(title)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .frame(height: filmstripHeight)
+                    .foregroundStyle(title == "Video" ? KriaColor.zinc : Color.clear)
+                    .accessibilityLabel(title)
                     .accessibilityIdentifier(title == "Video"
                         ? (rowsList.isEmpty && !hasAudioLane ? "native-editor-lane-label-last" : "native-editor-lane-label-video")
                         : "native-editor-lane-label-split-\(title.lowercased())")
@@ -3387,11 +3404,7 @@ private struct NativeClipSurface: View {
     var body: some View {
         ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isSelected ? KriaColor.sky.opacity(0.24) : .clear)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(isSelected ? KriaColor.sky : .white.opacity(0.15), lineWidth: isSelected ? 2 : 1)
-                }
+                .fill(isSelected ? KriaColor.sky.opacity(0.34) : .clear)
                 .contentShape(Rectangle())
                 .onTapGesture(perform: onSelect)
                 .simultaneousGesture(

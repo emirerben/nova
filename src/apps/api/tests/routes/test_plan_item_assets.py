@@ -2373,3 +2373,43 @@ def test_asset_out_source_signing_failure_preserves_image_preview():
         out = routes._asset_out(asset)
     assert out.source_url is None
     assert out.display_url == "https://signed/preview.jpg"
+
+
+def test_delete_drops_the_talking_take_adopted_from_this_visual(client: TestClient):
+    """KRI-1340: a Visual adopted as a Talking take (`pool_source`) leaves the edit with it;
+    the footage take stays."""
+    user = _user()
+    item, plan = _owned_item(user.id)
+    asset = _asset_row(item.id, user.id)
+    asset.gcs_generation = "42"
+    footage = {"gcs_path": "users/u/creation-threads/t/analysis-proxy-a.mp4", "media_id": "a"}
+    take = {
+        "gcs_path": "users/u/creation-threads/t/analysis-proxy-visual-x.mp4",
+        "media_id": "analysis-proxy-visual-x.mp4",
+        "pool_source": {"asset_id": str(asset.id), "gcs_path": asset.gcs_path, "generation": "42"},
+    }
+    item.clip_assignments = [footage, take]
+    item.clip_gcs_paths = [footage["gcs_path"], take["gcs_path"]]
+    db = _db(
+        [
+            _scalar_result(item),
+            _scalar_result(asset),
+            _scalar_result(0),
+            _scalar_result(asset),
+            _scalar_result(0),
+        ],
+        plan,
+    )
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch(
+            "app.routes.plan_items.storage.delete_object_generation_best_effort",
+            return_value=True,
+        ),
+    ):
+        resp = client.delete(f"/plan-items/{item.id}/assets/{asset.id}")
+    assert resp.status_code == 200
+    assert [row["media_id"] for row in item.clip_assignments] == ["a"]
+    assert item.clip_gcs_paths == [footage["gcs_path"]]
+    db.delete.assert_awaited_once_with(asset)

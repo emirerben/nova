@@ -108,6 +108,8 @@ class EditRecipeV2(EditRecipeV1):
             raise ValueError("split section has no clips")
         if sections:
             self.required_capabilities |= {"splitScreen"}
+        if any(section.collapse_empty_panels for section in sections.values()):
+            self.required_capabilities |= {"splitCollapse"}
         return self
 
     @model_validator(mode="after")

@@ -9,7 +9,11 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agents.editor_ops_v2 import OpSpec
-from app.kria.split_screen import SplitScreenSection, layout_split_timeline
+from app.kria.split_screen import (
+    SplitScreenSection,
+    layout_split_timeline,
+    sync_collapsed_section_durations,
+)
 
 
 class SectionCommand(BaseModel):
@@ -26,6 +30,7 @@ class CreateSection(SectionCommand):
     panel_weights: list[float] | None = None
     gutter: float = Field(default=0, ge=0, le=0.1)
     background_color: str = Field(default="#000000", pattern=r"^#[0-9a-fA-F]{6}$")
+    collapse_empty_panels: bool | None = None
 
 
 class UpdateSection(SectionCommand):
@@ -35,6 +40,7 @@ class UpdateSection(SectionCommand):
     panel_weights: list[float] | None = None
     gutter: float | None = Field(default=None, ge=0, le=0.1)
     background_color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
+    collapse_empty_panels: bool | None = None
 
 
 class AssignPanel(SectionCommand):
@@ -186,6 +192,7 @@ def validate_state(state: Any) -> None:
     ]
     try:
         layout_split_timeline(state.slots, state.split_screen_sections)
+        sync_collapsed_section_durations(state.slots, state.split_screen_sections)
     except (ValueError, TypeError) as exc:
         raise KriaEditorOpError(str(exc)) from exc
 
@@ -216,6 +223,10 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
             .model_validate({k: v for k, v in op.items() if k != "op"})
             .model_dump(exclude_none=True)
         )
+        if command.get("collapse_empty_panels") and not editor.split_collapse_available(
+            state.job, state.variant
+        ):
+            raise ValueError("Collapsing panels is unavailable for this edit")
         if name == "create_split_screen":
             indexes = [editor._snapshot_slot_index(state, i) for i in command["slot_indexes"]]
             if len(set(indexes)) != len(indexes) or sorted(indexes) != list(
@@ -261,6 +272,7 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
                 panel_weights=command.get("panel_weights", [1] * count),
                 gutter=command["gutter"],
                 background_color=command["background_color"],
+                collapse_empty_panels=command.get("collapse_empty_panels", False),
             ).model_dump()
             members = []
             for panel in range(count):
@@ -323,6 +335,7 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
                                 if r.get("split_section_id") == section["id"]
                             )
                             state.slots.insert(position + 1, row)
+                section.pop("collapse_empty_panels", None)
                 section.update(revised)
             elif name == "assign_split_panel":
                 index = editor._snapshot_slot_index(state, command["slot_index"])

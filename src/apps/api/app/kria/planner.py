@@ -342,7 +342,10 @@ async def _snapshot_visual_rows(db: AsyncSession, item: PlanItem) -> list:
         )
         .order_by(PlanItemAsset.created_at, PlanItemAsset.id)
     )
-    return list(rows.scalars())
+    from app.services.visual_talking_takes import without_adopted  # noqa: PLC0415
+
+    # KRI-1340: a Visual adopted as a Talking take is footage now, never also a Visual.
+    return without_adopted(rows.scalars(), item.clip_assignments)
 
 
 def _timing_profile(strategy: Mapping[str, Any]) -> MixedMediaTimingProfile | None:
@@ -7793,6 +7796,13 @@ async def _plan_live_turn(
         updates=updates,
         states=inputs.creative_copy_state or {},
     )
+    from app.kria.text_sequence import recover_overflowed_literals  # noqa: PLC0415
+
+    # KRI-1352: regenerating from a brief written before 280-character sequence literals gets its
+    # approved paragraph back as the literal, as a new brief version before approval. Only a turn
+    # that proposes a draft: a question or answer turn does not rewrite the brief.
+    if output.action.kind == "propose_strategy":
+        updates = recover_overflowed_literals(prior_brief, updates)
     updates, pin_notices = await _withdraw_stuck_pins(
         db, thread_id=thread_id, prior=prior_brief, updates=updates, user_message=user_message
     )

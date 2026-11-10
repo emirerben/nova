@@ -147,6 +147,7 @@ from app.services.phone_text_styling import (
     caption_spot_is_asked,
     current_phone_text_policy,
     generation_caption_cues,
+    generation_persisted_cues,
     generation_style_fields,
     generation_style_rows,
     phone_text_generation,
@@ -9232,11 +9233,14 @@ def _run_phone_subtitled_job(
         phone_subtitled_spoken_text_supported,
         phone_subtitled_title_supported,
         phone_subtitled_video_overlays_supported,
+        phone_talking_closing_card_planned_for,
+        phone_talking_corner_text_supported,
         phone_talking_head_supported,
         phone_talking_insert_clips_supported,
         phone_talking_mention_cutaways_supported,
         phone_talking_multi_clip_supported,
         phone_talking_multi_speaker_beats_supported,
+        stamped_client_protocol,
         validate_phone_pilot_recipe,
     )
     from app.services.phone_sources import (  # noqa: PLC0415
@@ -9378,7 +9382,15 @@ def _run_phone_subtitled_job(
     # exists, further down; this only normalizes the contract token.
     speech_cleanup_contract = str(snapshot.get("speech_cleanup_contract") or "legacy_auto")
     cleanup_required = speech_cleanup_contract == "required_v1"
-    if multi_clip and cleanup_required:
+    # KRI-720: a several-take Talking edit cuts every talking take with its own preflight plan.
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_talking_multi_take_cleanup_supported,
+    )
+
+    multi_take_cleanup = (
+        talking_multi and cleanup_required and phone_talking_multi_take_cleanup_supported()
+    )
+    if multi_clip and cleanup_required and not multi_take_cleanup:
         # KRI-136 v1: cutaway windows are scheduled on the uncut speaker
         # timeline only. The dispatch gate already refuses cleanup for a
         # multi-clip phone item (`speech_cleanup_unavailable_on_phone`); never
@@ -9484,6 +9496,31 @@ def _run_phone_subtitled_job(
     closing_text_rows: list[dict] = []
     closing_drawings: list[dict] = []
     closing_text_receipt: dict[str, Any] | None = None
+    # KRI-1342 item 7: the creator's corner text ('a small "Yorumla" label top left for the
+    # whole video'), kept at its corner for its window, off every face. KRI-1346: her colour
+    # card after the last word. Read only while their switches are on, so the flag-off recipe
+    # and variant stay byte-identical.
+    corner_pins: tuple = ()
+    corner_text_rows_placed: list[dict] = []
+    corner_text_receipt: dict[str, Any] | None = None
+    if phone_talking_corner_text_supported():
+        from app.pipeline.pinned_text import pins_from_strategy  # noqa: PLC0415
+
+        corner_pins = tuple(pins_from_strategy(talking_strategy))
+    closing_card_spec: Any = None
+    closing_card_receipt: dict[str, Any] | None = None
+    if phone_talking_closing_card_planned_for(
+        stamped_client_protocol(all_candidates.get("creator_client_protocol"))
+    ):
+        from app.pipeline.phone_talking_closing_card import (  # noqa: PLC0415
+            closing_card_from_requirements,
+        )
+
+        _card_strategy_title = talking_strategy.get("closing_title")
+        closing_card_spec = closing_card_from_requirements(
+            talking_requirements,
+            closing_title=_card_strategy_title if isinstance(_card_strategy_title, str) else None,
+        )
     # KRI-707: the creator's text on a word they say ("big 'ATAKAN' when I say 'Atakan'"),
     # read off the pinned brief. Read only while its rollout is on, so the flag-off recipe
     # and variant stay byte-identical.
@@ -9974,16 +10011,40 @@ def _run_phone_subtitled_job(
             speech_cleanup_outcome_context: dict[str, Any] | None = None
             tight_pauses_report: dict[str, Any] | None = None
             long_pauses_report: dict[str, Any] | None = None
+            # KRI-720: each extra talking take's own cut (clip id -> plan) and words, and the
+            # per-take receipt the editor rebuilds them from. Empty unless several takes are cut.
+            extra_take_plans: dict[str, CutPlan] = {}
+            extra_take_snapshots: dict[str, HydratedSpeechCleanupSnapshot] = {}
+            extra_long_pauses: list[dict[str, Any]] = []
+            take_join_trims: list[dict[str, Any]] = []
             if cleanup_required:
                 try:
-                    speech_cleanup_snapshot = hydrate_job_speech_cleanup_snapshot(
-                        snapshot
-                    ).require_source(
+                    job_cleanup_snapshot = hydrate_job_speech_cleanup_snapshot(snapshot)
+                    if multi_take_cleanup:
+                        if not job_cleanup_snapshot.multi_take:
+                            raise SpeechCleanupSnapshotError("multi_take_snapshot")
+                        spine_take = job_cleanup_snapshot.take(gcs_path)
+                        if spine_take is None or spine_take.snapshot is None:
+                            raise SpeechCleanupSnapshotError("speaker_take")
+                        job_cleanup_snapshot = spine_take.snapshot
+                    elif job_cleanup_snapshot.multi_take:
+                        raise SpeechCleanupSnapshotError("multi_take_snapshot")
+                    speech_cleanup_snapshot = job_cleanup_snapshot.require_source(
                         kind="embedded_spine",
                         storage_path=gcs_path,
                         window_start_s=0.0,
                         window_duration_s=float(probe.duration_s),
                     )
+                    if multi_take_cleanup:
+                        extra_take_plans, extra_take_snapshots = _phone_extra_take_plans(
+                            hydrate_job_speech_cleanup_snapshot(snapshot),
+                            extra_speaker_ids=extra_speaker_ids,
+                            extra_speaker_bindings=extra_speaker_bindings,
+                            ending_media_id=ending_footage_media_id,
+                            clip_id_to_gcs=clip_id_to_gcs,
+                            clip_id_to_local=clip_id_to_local,
+                            probe_map=probe_map,
+                        )
                 except SpeechCleanupSnapshotError as exc:
                     raise SpeechCleanupFailure("snapshot_mismatch", exc.detail) from exc
                 cut_plan = speech_cleanup_snapshot.cut_plan
@@ -9996,18 +10057,19 @@ def _run_phone_subtitled_job(
                 speech_cleanup_outcome_context = speech_cleanup_snapshot.outcome_context(
                     analysis_view="full_clip"
                 )
-                if not multi_clip:
+                if not multi_clip or multi_take_cleanup:
                     # Qendresa 13: "cut all my pauses so it's tight" -- extra pause cuts on top
                     # of the consented plan, before the opening cut and before the outcome
                     # bookkeeping below, so they count as cleanup.
                     consented_plan = cut_plan
-                    cut_plan, tight_pauses_report = _phone_tight_pause_cut(
-                        snapshot,
-                        cut_plan,
-                        speech_cleanup_snapshot.source_words(),
-                        clip_path=clip_path,
-                        duration_s=float(probe.duration_s),
-                    )
+                    if not multi_clip:
+                        cut_plan, tight_pauses_report = _phone_tight_pause_cut(
+                            snapshot,
+                            cut_plan,
+                            speech_cleanup_snapshot.source_words(),
+                            clip_path=clip_path,
+                            duration_s=float(probe.duration_s),
+                        )
                     if tight_pauses_report is None:
                         # Emir's camera take: the cleanup default also cuts pauses the word
                         # stamps swallow (>= 0.6 s). Never when the creator asked for tight.
@@ -10025,6 +10087,65 @@ def _run_phone_subtitled_job(
                         )
                         speech_cleanup_outcome_context["output_removed_ms"] = max(
                             0, int(round(cut_plan.time_saved_s * 1000))
+                        )
+                    if multi_take_cleanup:
+                        # KRI-720: the same default long-pause pass on every other take, and
+                        # the public counts cover every take that was cut.
+                        for extra_id, extra_plan in list(extra_take_plans.items()):
+                            extra_local = clip_id_to_local[extra_id]
+                            extra_plan, extra_report = _phone_long_pause_cut(
+                                snapshot,
+                                extra_plan,
+                                extra_take_snapshots[extra_id].source_words(),
+                                clip_path=extra_local,
+                                duration_s=float(probe_map[extra_local].duration_s),
+                            )
+                            if not extra_plan.keep_segments or all(
+                                end <= start for start, end in extra_plan.keep_segments
+                            ):
+                                raise SpeechCleanupFailure(
+                                    "apply_failed", "speech cleanup removed a whole take"
+                                )
+                            extra_take_plans[extra_id] = extra_plan
+                            if extra_report is not None:
+                                extra_long_pauses.append(extra_report)
+                        # The joins between consecutive cut takes (the first take, then every
+                        # later take that has a plan, in play order).
+                        join_ids = [None, *(i for i in extra_speaker_ids if i in extra_take_plans)]
+                        joined, take_join_trims = _trim_take_joins(
+                            [
+                                (
+                                    cut_plan if cid is None else extra_take_plans[cid],
+                                    clip_path if cid is None else clip_id_to_local[cid],
+                                    float(
+                                        probe.duration_s
+                                        if cid is None
+                                        else probe_map[clip_id_to_local[cid]].duration_s
+                                    ),
+                                )
+                                for cid in join_ids
+                            ]
+                        )
+                        for cid, plan in zip(join_ids, joined, strict=True):
+                            if cid is None:
+                                cut_plan = plan
+                            else:
+                                extra_take_plans[cid] = plan
+                        speech_cleanup_outcome_context["output_removal_count"] = sum(
+                            _merged_removal_count(plan.removed)
+                            for plan in (cut_plan, *extra_take_plans.values())
+                        )
+                        speech_cleanup_outcome_context["output_removed_ms"] = max(
+                            0,
+                            int(
+                                round(
+                                    sum(
+                                        plan.time_saved_s
+                                        for plan in (cut_plan, *extra_take_plans.values())
+                                    )
+                                    * 1000
+                                )
+                            ),
                         )
             # KRI-628: "start the video at '...'" cuts the speech before that line out of
             # the cleanup plan (the plan's keep segments are the only trim this render has).
@@ -10335,6 +10456,58 @@ def _run_phone_subtitled_job(
                     timeline_words = remap_words(words, cut_plan)
                 if insert_asks:
                     insert_spoken_words = remap_words(words, cut_plan)
+                if multi_take_cleanup:
+                    # KRI-720: the first take's SPOKEN words on the cut timeline feed the mention
+                    # and beat grounders, as the uncut branch's do; then every other take's own
+                    # cut words, shifted to where it plays (after the takes before it, cut).
+                    spine_spoken = _cut_spoken_words(words, cut_plan, offset_s=0.0)
+                    if mention_ask is not None:
+                        mention_words = list(spine_spoken)
+                    if multi_speaker_beats:
+                        beat_words = [_beat_word(word, 0.0) for word in spine_spoken]
+                    extra_offset_s = _take_kept_s(cut_plan, float(binding.original.duration_s))
+                    for extra_id, extra_binding in zip(
+                        extra_speaker_ids, extra_speaker_bindings, strict=True
+                    ):
+                        extra_plan = extra_take_plans.get(extra_id)
+                        extra_snapshot = extra_take_snapshots.get(extra_id)
+                        extra_words = (
+                            _cut_spoken_words(
+                                extra_snapshot.source_words(), extra_plan, offset_s=extra_offset_s
+                            )
+                            if extra_snapshot is not None and extra_plan is not None
+                            else _cut_spoken_words(
+                                getattr(talking_transcripts.get(extra_id), "words", None) or [],
+                                None,
+                                offset_s=extra_offset_s,
+                            )
+                        )
+                        if extra_words:
+                            extra_caption_words = extra_words
+                            if caption_language_req is not None:
+                                extra_caption_words = _ensure_requested_caption_language(
+                                    extra_words,
+                                    requested=caption_language_req,
+                                    fallback_language=_clip_spoken_language(clip_metas, extra_id),
+                                    job_id=job_id,
+                                    variant_id="subtitled",
+                                    glossary=_caption_glossary(snapshot, all_candidates),
+                                ).words
+                            cues = cues + build_plain_cues(
+                                extra_caption_words, attach_words=True, budget=PHONE_CUE_BUDGET
+                            )
+                            if spoken_text_asks or list_label_asks:
+                                timeline_words.extend(
+                                    {"text": w.text, "start_s": w.start_s, "end_s": w.end_s}
+                                    for w in extra_words
+                                )
+                            if mention_ask is not None:
+                                mention_words.extend(extra_words)
+                            if multi_speaker_beats:
+                                beat_words.extend(_beat_word(word, 0.0) for word in extra_words)
+                        extra_offset_s += _take_kept_s(
+                            extra_plan, float(extra_binding.original.duration_s)
+                        )
             else:
                 # KRI-839: `transcript` is the SPOKEN pass -- always auto-language, even
                 # when the creator asked for captions in another language. Reaction
@@ -10519,8 +10692,27 @@ def _run_phone_subtitled_job(
                 all_candidates=all_candidates,
                 cut_plan=cut_plan,
                 clip_metas=clip_metas,
+                job_id=job_id,
             )
 
+            # KRI-720: every other talking take's kept segments, by media id, for the compiler
+            # (`additional_speaker_keep_segments`); empty, and absent from the call, when none
+            # was cut, so the recipe stays byte-identical.
+            extra_keep_by_media: dict[str, list[tuple[float, float]]] = {
+                extra_binding.media_id: [
+                    (float(start), float(end))
+                    for start, end in extra_take_plans[extra_id].keep_segments
+                ]
+                for extra_id, extra_binding in zip(
+                    extra_speaker_ids, extra_speaker_bindings, strict=True
+                )
+                if extra_id in extra_take_plans and extra_take_plans[extra_id].removed
+            }
+            extra_keep_compile: dict[str, Any] = (
+                {"additional_speaker_keep_segments": extra_keep_by_media}
+                if extra_keep_by_media
+                else {}
+            )
             # The speaker's span exactly as the compiler plays it: the cleanup
             # cut, else the phone-measured clip (which can run a hair shorter
             # than the proxy `probe` measured).
@@ -10548,6 +10740,7 @@ def _run_phone_subtitled_job(
                             extra_speaker_ids, extra_speaker_bindings, strict=True
                         )
                     ),
+                    **({"extra_keep_segments": extra_keep_by_media} if extra_keep_by_media else {}),
                     **text_canvas,
                 )
             )
@@ -10610,7 +10803,11 @@ def _run_phone_subtitled_job(
             # plus every extra speaker in full.
             talking_timeline_s = sum(
                 max(0.0, end - start) for start, end in speaker_keep_segments
-            ) + sum(float(extra.original.duration_s) for extra in extra_speaker_bindings)
+            ) + sum(
+                # KRI-720: a cut take plays its kept seconds (no cut: its whole length).
+                _take_kept_s(extra_take_plans.get(extra_id), float(extra.original.duration_s))
+                for extra_id, extra in zip(extra_speaker_ids, extra_speaker_bindings, strict=True)
+            )
             if insert_asks:
                 # Parent KRI-1151: where each asked clip pauses the take. Everything below
                 # (cutaways, titles, lanes) is still laid out on the TAKE timeline, which has
@@ -10741,22 +10938,91 @@ def _run_phone_subtitled_job(
                     **text_canvas,
                 )
 
+            closing_card_row: dict | None = None
+            if closing_card_spec is not None:
+                from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
+                    _STORY_CANVAS as _CARD_CANVAS,
+                )
+                from app.pipeline.phone_talking_closing_card import (  # noqa: PLC0415
+                    closing_card_text_row_or_reason,
+                )
+
+                closing_card_row, _card_problem = closing_card_text_row_or_reason(
+                    closing_card_spec,
+                    start_s=talking_timeline_s,
+                    end_s=talking_timeline_s + closing_card_spec.duration_s,
+                    canvas=text_canvas.get("canvas", _CARD_CANVAS),
+                )
+                if closing_card_row is None:
+                    # Words the card can't carry in full (a character its font can't draw, or
+                    # too long even at the smallest size): no card, said on the receipt. The
+                    # words are never cut short to make them fit.
+                    closing_card_receipt = {
+                        **closing_card_spec.as_dict(),
+                        "status": "dropped",
+                        "reason": _card_problem or "undrawable_text",
+                    }
+                    closing_card_spec = None
+            if corner_pins:
+                corner_text_rows_placed, corner_text_receipt = _phone_talking_corner_rows(
+                    corner_pins,
+                    talk_end_s=talking_timeline_s,
+                    binding=binding,
+                    clip_path=clip_path,
+                    keep_segments=speaker_keep_segments,
+                    landscape_fit=framed_fit,
+                    position_x=speaker_position_x or 0.0,
+                    cues=cues,
+                    caption_style=caption_style,
+                    caption_look=protected_caption_look,
+                    avoid_rows=title_rows + spoken_text_rows,
+                    clip_windows=_talking_clip_windows(
+                        speaker_keep_segments,
+                        [
+                            # KRI-720: a cut take plays its kept seconds, as on the timeline.
+                            _take_kept_s(
+                                extra_take_plans.get(extra_id), float(extra.original.duration_s)
+                            )
+                            for extra_id, extra in zip(
+                                extra_speaker_ids, extra_speaker_bindings, strict=True
+                            )
+                        ],
+                    ),
+                    **text_canvas,
+                )
+
             def _closing_rows_for(photo_card: Any) -> tuple[list[dict], dict[str, Any] | None]:
+                # KRI-1342 item 7: the corner rows ride with the closing rows, so every
+                # compile path (plain, lanes, inserts) carries them; they come last.
+                rows, receipt = _closing_rows_only(photo_card)
+                return rows + [dict(row) for row in corner_text_rows_placed], receipt
+
+            def _closing_rows_only(photo_card: Any) -> tuple[list[dict], dict[str, Any] | None]:
                 closing_drawings[:] = []
+                if closing_card_row is not None:
+                    # KRI-1346: her colour card owns the ending words; the compiler times the
+                    # row to the card after the last word (no tag over the talk).
+                    return [dict(closing_card_row)], {"status": "closing_card"}
                 if not talking_closing_text:
                     return [], None
                 if extra_speaker_bindings:
                     # The ending plays the LAST speaker: place the text off its
                     # face on its own clock, then move it to where it plays.
                     last = extra_speaker_bindings[-1]
-                    last_duration_s = float(last.original.duration_s)
+                    # KRI-720: a cut last take plays (and its ending is placed on) its kept span.
+                    last_plan = extra_take_plans.get(extra_speaker_ids[-1])
+                    last_duration_s = _take_kept_s(last_plan, float(last.original.duration_s))
                     rows, receipt, drawings = _phone_talking_closing_rows(
                         talking_closing_text,
                         photo_card=None,
                         photo_aspect=None,
                         binding=last,
                         clip_path=clip_id_to_local.get(extra_speaker_ids[-1]),
-                        keep_segments=[(0.0, last_duration_s)],
+                        keep_segments=(
+                            [(float(a), float(b)) for a, b in last_plan.keep_segments]
+                            if last_plan is not None and last_plan.removed
+                            else [(0.0, float(last.original.duration_s))]
+                        ),
                         landscape_fit=landscape_fit,
                         # KRI-903: kept off what was marked on this clip, as on the first one.
                         protected=_speaker_protection(protected_plan, last.media_id),
@@ -10863,6 +11129,7 @@ def _run_phone_subtitled_job(
                         duration_s=talking_timeline_s,
                         blocked=footage_blocked,
                         word_starts=word_starts,
+                        **({"phrase_starts": True} if settings.beat_phrase_timing_enabled else {}),
                     )
                     mention_receipt["placements"] = [
                         {
@@ -10934,6 +11201,7 @@ def _run_phone_subtitled_job(
                     cutaways=reserved.cutaways,
                     landscape_fit=landscape_fit,
                     additional_speakers=extra_speaker_bindings,
+                    **extra_keep_compile,
                     **({"inserts": inserts} if inserts else {}),
                     **framed_compile,
                 )
@@ -11017,9 +11285,11 @@ def _run_phone_subtitled_job(
                         title_rows or spoken_text_rows or closing_text_rows
                     ),
                     additional_speakers=extra_speaker_bindings,
+                    **extra_keep_compile,
                     strategy=talking_strategy,
                     requirements=talking_requirements,
                     **({"inserts": inserts} if inserts else {}),
+                    **_closing_card_compile(closing_card_spec),
                     **framed_compile,
                 )
             else:
@@ -11225,7 +11495,10 @@ def _run_phone_subtitled_job(
                             # ONE take's frames, so they are reported instead.
                             beats_to_ground, multi_take_held = _multi_take_fullscreen_beats(
                                 beats_to_ground + title_anchored,
-                                spine_cut=bool(cut_plan is not None and cut_plan.removed),
+                                # KRI-720: several cut takes put `beat_words` on the cut
+                                # timeline themselves, so a cut first take no longer holds them.
+                                spine_cut=bool(cut_plan is not None and cut_plan.removed)
+                                and not multi_take_cleanup,
                             )
                             title_anchored = []
                             if closing_to_ground:
@@ -11274,6 +11547,10 @@ def _run_phone_subtitled_job(
                                         {"card_layout": card_layout}
                                         if card_layout is not None
                                         else {}
+                                    ),
+                                    **_beat_phrase_timing_kwargs(
+                                        phone_reaction_grounding_mod.TALKING_PHRASE_TIMING,
+                                        talking_requirements,
                                     ),
                                 )
                         except OperationalError:
@@ -11829,9 +12106,11 @@ def _run_phone_subtitled_job(
                         text_elements=moved.text_rows,
                         text_elements_user_edited=bool(text_rows),
                         additional_speakers=extra_speaker_bindings,
+                        **extra_keep_compile,
                         strategy=talking_strategy,
                         requirements=talking_requirements,
                         **({"inserts": inserts} if inserts else {}),
+                        **_closing_card_compile(closing_card_spec),
                         **framed_compile,
                     )
 
@@ -11942,7 +12221,11 @@ def _run_phone_subtitled_job(
                             # (every row, and the arrow) runs to the very end, which the
                             # contract checks.
                             closing_text_rows = [
-                                {**row, "end_s": take_duration} for row in closing_text_rows
+                                # A ranged corner line keeps its own window (KRI-1342 item 7).
+                                row
+                                if (row.get("source_params") or {}).get("source") == "corner_text"
+                                else {**row, "end_s": take_duration}
+                                for row in closing_text_rows
                             ]
                             closing_drawings[:] = [
                                 {**drawing, "end_s": take_duration} for drawing in closing_drawings
@@ -12226,6 +12509,23 @@ def _run_phone_subtitled_job(
                     ],
                 }
 
+            if closing_card_spec is not None or corner_text_rows_placed:
+                # KRI-1346 / KRI-1342 item 7: the saved rows say what the recipe plays (the
+                # card's words on the card, corner text to the very end), and the card's
+                # receipt is read back from the compiled recipe, never from the plan.
+                from app.pipeline.phone_talking_closing_card import (  # noqa: PLC0415
+                    align_rows_to_recipe,
+                )
+                from app.pipeline.phone_talking_closing_card import (
+                    closing_card_receipt as _closing_card_receipt,
+                )
+
+                closing_text_rows = align_rows_to_recipe(closing_text_rows, recipe)
+                if closing_card_spec is not None:
+                    closing_card_receipt = _closing_card_receipt(
+                        closing_card_spec, recipe, closing_text_rows
+                    )
+
             from app.pipeline.explicit_speech_audio import (  # noqa: PLC0415
                 protect_explicit_speech_cut_audio,
             )
@@ -12346,7 +12646,8 @@ def _run_phone_subtitled_job(
             "render_finished_at": None,
             "resolved_archetype": "subtitled",
             "duration_s": recipe.duration,
-            "caption_cues": cues,
+            # KRI-1344: lines hidden over a text-dense full-screen picture keep it.
+            "caption_cues": generation_persisted_cues(cues),
             "voiceover_caption_style": caption_style,
             "caption_language": detected_lang,
             "ok": False,
@@ -12429,8 +12730,16 @@ def _run_phone_subtitled_job(
         if list_label_receipt is not None:
             # Item 19: where each numbered list label landed, or why not.
             new_entry[LIST_LABEL_FIELD] = list_label_receipt
-        if closing_text_rows:
+        if closing_text_rows and closing_text_receipt is not None:
             new_entry["closing_title_placement"] = closing_text_receipt
+        if corner_text_receipt is not None:
+            # KRI-1342 item 7: where each corner line landed, or why it was left out.
+            new_entry["corner_text_placement"] = corner_text_receipt
+        if closing_card_receipt is not None:
+            # KRI-1346: the colour card the recipe ends on (or why not); the brief check reads it.
+            from app.pipeline.phone_talking_closing_card import CLOSING_CARD_FIELD  # noqa: PLC0415
+
+            new_entry[CLOSING_CARD_FIELD] = closing_card_receipt
         if closing_drawings_final:
             new_entry["drawings"] = closing_drawings_final
         if protected_caption_look is not None:
@@ -12513,6 +12822,34 @@ def _run_phone_subtitled_job(
                 "cutaways": list(talking_cutaway_windows),
                 "unplaced": list(talking_unplaced),
                 "clips": list(talking_roles.receipt),
+                # KRI-720: what cleanup cut from each later take, in its own source time (the
+                # first take's cut is `silence_cut`). The editor preview splits each take by it
+                # (iOS `NativePhoneTalkingSource.speakerRemovedSpans`). Absent when none was cut.
+                **(
+                    {
+                        "speaker_removed": [
+                            {
+                                "media_id": extra_binding.media_id,
+                                "removed": [
+                                    {"start_s": row["start_s"], "end_s": row["end_s"]}
+                                    for row in _phone_cut_summary(
+                                        extra_take_plans[extra_id],
+                                        probe_s=float(
+                                            probe_map[clip_id_to_local[extra_id]].duration_s
+                                        ),
+                                        original_s=float(extra_binding.original.duration_s),
+                                    )["removed"]
+                                ],
+                            }
+                            for extra_id, extra_binding in zip(
+                                extra_speaker_ids, extra_speaker_bindings, strict=True
+                            )
+                            if extra_id in extra_take_plans and extra_take_plans[extra_id].removed
+                        ]
+                    }
+                    if extra_keep_by_media
+                    else {}
+                ),
                 **({"lanes_skipped": "multiple_speakers"} if talking_lanes_skipped else {}),
                 **({"mention_cutaways": mention_receipt} if mention_receipt is not None else {}),
                 # KRI-841: the last speaker above is the creator's ending clip.
@@ -12570,6 +12907,12 @@ def _run_phone_subtitled_job(
             new_entry["tight_pauses"] = tight_pauses_report
         if long_pauses_report is not None:
             new_entry["long_pauses"] = long_pauses_report
+        if extra_long_pauses:
+            # KRI-720: the default long-pause pass on each later take (admin/debug evidence).
+            new_entry["long_pauses_other_takes"] = list(extra_long_pauses)
+        if take_join_trims:
+            # KRI-720: silence trimmed where two cut takes meet (take index in play order).
+            new_entry["take_join_trims"] = list(take_join_trims)
         if cut_plan is not None and not opening_cut_only:
             # The source `_speech_cleanup_outcome_context` the device-export completion route
             # (`app.routes.device_render._device_speech_cleanup_outcome`) reads to publish the
@@ -12979,6 +13322,167 @@ def _phone_tight_pause_cut(
     except Exception:  # noqa: BLE001 - observability only
         pass
     return new_plan, receipt
+
+
+def _phone_extra_take_plans(
+    job_snapshot: HydratedSpeechCleanupSnapshot,
+    *,
+    extra_speaker_ids: Sequence[str],
+    extra_speaker_bindings: Sequence[Any],
+    ending_media_id: str | None,
+    clip_id_to_gcs: Mapping[str, str],
+    clip_id_to_local: Mapping[str, str],
+    probe_map: Mapping[str, Any],
+) -> tuple[dict[str, CutPlan], dict[str, HydratedSpeechCleanupSnapshot]]:
+    """KRI-720: the consented cut of every talking take after the first, by clip id.
+
+    Each take is fenced exactly like the first one (its own path and the window this render
+    plays), so a plan never lands on another take's bytes. A creator's footage ending
+    (KRI-841) plays whole: it is not a take the creator spoke. A take the preflight heard no
+    speech in (no analysis) also plays whole: there is nothing in it to cut. A talking take
+    the preflight never saw (the item's takes changed after consent) fails closed.
+    Raises ``SpeechCleanupSnapshotError``.
+    """
+
+    plans: dict[str, CutPlan] = {}
+    snapshots: dict[str, HydratedSpeechCleanupSnapshot] = {}
+    for extra_id, extra_binding in zip(extra_speaker_ids, extra_speaker_bindings, strict=True):
+        if ending_media_id is not None and extra_binding.media_id == ending_media_id:
+            continue
+        extra_gcs = clip_id_to_gcs.get(extra_id)
+        extra_local = clip_id_to_local.get(extra_id)
+        extra_probe = probe_map.get(extra_local) if extra_local else None
+        if not extra_gcs or extra_probe is None:
+            raise SpeechCleanupSnapshotError("speaker_take")
+        take = job_snapshot.take(extra_gcs)
+        if take is None:
+            raise SpeechCleanupSnapshotError("speaker_take")
+        if take.snapshot is None:
+            continue
+        fenced = take.snapshot.require_source(
+            kind="embedded_spine",
+            storage_path=extra_gcs,
+            window_start_s=0.0,
+            window_duration_s=float(extra_probe.duration_s),
+        )
+        plan = fenced.cut_plan
+        if not plan.keep_segments or all(end <= start for start, end in plan.keep_segments):
+            raise SpeechCleanupSnapshotError("speaker_take_empty")
+        plans[extra_id] = plan
+        snapshots[extra_id] = fenced
+    return plans, snapshots
+
+
+def _cut_spoken_words(words: Sequence[Any], plan: CutPlan | None, *, offset_s: float) -> list[Any]:
+    """KRI-720: one take's spoken words on its cut timeline (fillers the cut removed are gone),
+    ``offset_s`` later. ``plan`` None (or a plan that cut nothing) keeps every word."""
+    from app.pipeline.silence_cut import is_filler_token, remap_words  # noqa: PLC0415
+    from app.pipeline.transcribe import Word  # noqa: PLC0415
+
+    if plan is None or not plan.removed:
+        return [
+            Word(
+                text=word.text,
+                start_s=float(word.start_s) + offset_s,
+                end_s=float(word.end_s) + offset_s,
+                confidence=getattr(word, "confidence", 1.0),
+            )
+            for word in words
+        ]
+    return [
+        Word(
+            text=item["text"],
+            start_s=float(item["start_s"]) + offset_s,
+            end_s=float(item["end_s"]) + offset_s,
+            confidence=1.0,
+        )
+        for item in remap_words(list(words), plan)
+        if not is_filler_token(item["text"])
+    ]
+
+
+# KRI-720: silence kept on EACH side of a join between two cut takes. Each take's own cleanup
+# sees only its own pauses, so the end of one take and the start of the next would otherwise add
+# up to one long pause where they meet (S3 native proof: 0.61 s at the C -> A join).
+TAKE_JOIN_KEEP_S = 0.15
+
+
+def _trim_take_joins(
+    takes: Sequence[tuple[CutPlan, str, float]],
+) -> tuple[list[CutPlan], list[dict[str, Any]]]:
+    """KRI-720: trim the silence at every join between consecutive cut takes.
+
+    ``takes`` is in play order: ``(plan, local clip path, take duration)``. A take's kept end
+    that sits in silence keeps only ``TAKE_JOIN_KEEP_S`` of it before the next take, and the
+    next take's kept start keeps only ``TAKE_JOIN_KEEP_S`` of its lead-in. Silence is measured
+    on the take's own audio with the pause cutter's definition; a take that cannot be measured
+    or that the trim would empty is left as it is. Returns the new plans and one receipt row per
+    trim.
+    """
+    from app.pipeline.silence_cut import REASON_SILENCE, Removal  # noqa: PLC0415
+    from app.pipeline.tight_pause_cut import measure_silence_spans  # noqa: PLC0415
+
+    plans = [plan for plan, _path, _duration in takes]
+    rows: list[dict[str, Any]] = []
+
+    def _cut(plan: CutPlan, start_s: float, end_s: float, duration_s: float) -> CutPlan | None:
+        keep = [
+            piece
+            for a, b in plan.keep_segments
+            for piece in ((a, min(b, start_s)), (max(a, end_s), b))
+            if piece[1] - piece[0] > 1e-6
+        ]
+        if not keep:
+            return None
+        removed = sorted(
+            [*plan.removed, Removal(start_s=start_s, end_s=end_s, reason=REASON_SILENCE)],
+            key=lambda r: r.start_s,
+        )
+        saved = max(0.0, duration_s - sum(b - a for a, b in keep))
+        return replace(plan, keep_segments=keep, removed=removed, time_saved_s=saved)
+
+    for index, (_plan, path, duration_s) in enumerate(takes):
+        spans = measure_silence_spans(path, duration_s=duration_s)
+        if not spans:
+            continue
+        plan = plans[index]
+        if index > 0 and plan.keep_segments:
+            start = float(plan.keep_segments[0][0])
+            lead = next((e for s, e in spans if s <= start + 1e-3 and e > start), None)
+            if lead is not None and lead - start > TAKE_JOIN_KEEP_S + 1e-3:
+                trimmed = _cut(plan, start, lead - TAKE_JOIN_KEEP_S, duration_s)
+                if trimmed is not None:
+                    rows.append(
+                        {
+                            "take": index,
+                            "edge": "start",
+                            "removed_s": round(lead - TAKE_JOIN_KEEP_S - start, 3),
+                        }
+                    )
+                    plan = trimmed
+        if index < len(takes) - 1 and plan.keep_segments:
+            end = float(plan.keep_segments[-1][1])
+            tail = next((s for s, e in spans if s < end and e >= end - 1e-3), None)
+            if tail is not None and end - tail > TAKE_JOIN_KEEP_S + 1e-3:
+                trimmed = _cut(plan, tail + TAKE_JOIN_KEEP_S, end, duration_s)
+                if trimmed is not None:
+                    rows.append(
+                        {
+                            "take": index,
+                            "edge": "end",
+                            "removed_s": round(end - tail - TAKE_JOIN_KEEP_S, 3),
+                        }
+                    )
+                    plan = trimmed
+        plans[index] = plan
+    return plans, rows
+
+
+def _take_kept_s(plan: CutPlan | None, full_s: float) -> float:
+    """How long one take plays: its kept seconds when cut, else its whole length."""
+    if plan is None or not plan.removed:
+        return float(full_s)
+    return float(sum(max(0.0, end - start) for start, end in plan.keep_segments))
 
 
 def _phone_long_pause_cut(
@@ -13703,6 +14207,9 @@ def _protected_style_rows(
         if "cta_part" in (row.get("source_params") or {})
         or (row.get("source_params") or {}).get("source") == "list_label"
         or (row.get("source_params") or {}).get("list_label_look") is True
+        # KRI-1342 item 7 / KRI-1346: corner text was placed off every face of its window and
+        # the closing card's words are sized to the card; a restyle would undo both.
+        or (row.get("source_params") or {}).get("source") in ("corner_text", "closing_card")
     }
     if fixed:
         rest = _style_rows_keeping_title_look(
@@ -13743,6 +14250,7 @@ def _phone_protected_plan(
     caption_style: str,
     canvas: Any = None,
     extra_speakers: Sequence[tuple[Any, str | None]] = (),
+    extra_keep_segments: Mapping[str, Sequence[tuple[float, float]]] | None = None,
 ) -> tuple[Any, Any, dict[str, Any] | None]:
     """KRI-827: what the creator asked to keep text off ("no text on her face or on the
     plate"), tracked over the speaker's kept span, and the caption look that keeps the
@@ -13783,27 +14291,39 @@ def _phone_protected_plan(
     )
     if plan is None:
         return None, None, None
-    # The clips after the first play in full, each right after the one before it, on the
-    # same clock the caption cues were shifted onto (`extra_offset_s`).
-    offset_s = float(binding.original.duration_s) if extra_speakers else 0.0
-    speakers: list[tuple[Any, str | None, Any, float, float]] = []
+    # The clips after the first play each right after the one before it, on the same clock the
+    # caption cues were shifted onto (`extra_offset_s`): in full, or (KRI-720) their kept
+    # segments when cleanup cut that take (``extra_keep_segments``, by media id).
+    # The first take plays its kept seconds whether or not a later take was cut (an uncut
+    # first take's `kept` is its whole length, so this equals the old value then).
+    first_s = sum(b - a for a, b in kept) if extra_speakers else 0.0
+    offset_s = first_s
+    speakers: list[tuple[Any, str | None, Any, float, float, list]] = []
     for extra_binding, extra_path in extra_speakers:
-        length_s = float(extra_binding.original.duration_s)
+        full_s = float(extra_binding.original.duration_s)
+        extra_keep = [
+            (float(a), float(b))
+            for a, b in (extra_keep_segments or {}).get(extra_binding.media_id) or [(0.0, full_s)]
+            if float(b) > float(a)
+        ]
+        length_s = sum(b - a for a, b in extra_keep)
         extra_plan = resolve_protected_plan(
             raw_binding,
             media_id=extra_binding.media_id,
             generation=getattr(extra_binding, "generation", None),
             clip_path=extra_path,
-            source_span=(0.0, length_s),
+            source_span=(extra_keep[0][0], extra_keep[-1][1]),
         )
         if extra_plan is not None:
-            speakers.append((extra_binding, extra_path, extra_plan, offset_s, offset_s + length_s))
+            speakers.append(
+                (extra_binding, extra_path, extra_plan, offset_s, offset_s + length_s, extra_keep)
+            )
         offset_s += length_s
     plans = [plan, *(speaker[2] for speaker in speakers)]
     caption_receipt: dict[str, Any] | None = None
     look = None
     if any(p.objects or p.protect_all_faces for p in plans):
-        first_end_s = float(binding.original.duration_s) if extra_speakers else 0.0
+        first_end_s = first_s if extra_speakers else 0.0
         subjects: list[Any] = []
         face_receipts: list[dict[str, Any]] = []
         resolved: list[Any] = []
@@ -13811,8 +14331,8 @@ def _phone_protected_plan(
             entries = [
                 (binding, clip_path, plan, 0.0, first_end_s, kept, position_x),
                 *(
-                    (b, path, sp, start, end, [(0.0, end - start)], 0.0)
-                    for b, path, sp, start, end in speakers
+                    (b, path, sp, start, end, keep, 0.0)
+                    for b, path, sp, start, end, keep in speakers
                 ),
             ]
             for entry in entries:
@@ -13896,7 +14416,9 @@ def _phone_protected_plan(
                 target_rows=merge_target_rows(resolved),
                 speakers=tuple(
                     SpeakerSlice(media_id=sb.media_id, start_s=start, end_s=end, plan=rp)
-                    for (sb, _path, _sp, start, end), rp in zip(speakers, resolved[1:], strict=True)
+                    for (sb, _path, _sp, start, end, _keep), rp in zip(
+                        speakers, resolved[1:], strict=True
+                    )
                 ),
             )
             look, caption_receipt = choose_caption_look(
@@ -14133,6 +14655,8 @@ def _phone_saved_title_rule() -> dict:
 def _cues_clear_of_cta(cues: Any, rows: list[dict], receipt: dict[str, Any] | None) -> Any:
     """KRI-1306: when the CTA ending could only be placed touching the captions, the captions
     stop where the ending starts, so no caption word lands on "comment"/the keyword."""
+    # KRI-1342 item 7: corner rows ride with the closing rows but are not the ending.
+    rows = [row for row in rows if (row.get("source_params") or {}).get("source") != "corner_text"]
     if not rows or not receipt or receipt.get("text_overlap") is not True:
         return cues
     stop = min(float(row["start_s"]) for row in rows)
@@ -14150,6 +14674,109 @@ def _cues_clear_of_cta(cues: Any, rows: list[dict], receipt: dict[str, Any] | No
             {**cue, "end_s": stop, **({"words": words} if cue.get("words") is not None else {})}
         )
     return out
+
+
+def _talking_clip_windows(
+    keep_segments: Sequence[tuple[float, float]], extra_durations_s: Sequence[float]
+) -> list[tuple[float, float]]:
+    """The Talking edit's clips in play order on the take timeline (before inserts): the first
+    speaker's cut take, then each further speaker for the seconds it plays (KRI-719, KRI-720),
+    the same sum as ``talking_timeline_s``. A corner line scoped to "clip N" runs over the N-th
+    (review of #2256)."""
+    cursor = sum(max(0.0, end - start) for start, end in keep_segments)
+    windows = [(0.0, round(cursor, 3))]
+    for duration_s in extra_durations_s:
+        end = cursor + float(duration_s)
+        windows.append((round(cursor, 3), round(end, 3)))
+        cursor = end
+    return windows
+
+
+def _closing_card_compile(spec: Any) -> dict[str, Any]:
+    """The compiler's ``closing_card`` keyword for a pinned card spec; ``{}`` without one, so a
+    render with no card calls the compiler exactly as before (KRI-1346)."""
+    if spec is None:
+        return {}
+    return {
+        "closing_card": {"duration_s": spec.duration_s, "background_color": spec.background_color}
+    }
+
+
+def _phone_talking_corner_rows(
+    pins: Sequence[Any],
+    *,
+    talk_end_s: float,
+    binding: Any,
+    clip_path: str | None,
+    keep_segments: list[tuple[float, float]],
+    landscape_fit: str,
+    position_x: float = 0.0,
+    cues: Any = (),
+    caption_style: str = "",
+    caption_look: Any = None,
+    avoid_rows: Sequence[dict] = (),
+    clip_windows: Sequence[tuple[float, float]] | None = None,
+    canvas: Any = None,
+) -> tuple[list[dict], dict[str, Any]]:
+    """KRI-1342 item 7: the creator's corner text on a phone Talking edit, each row placed off
+    every face its window shows and clear of the captions / title rows sharing its window
+    (`phone_talking_corner_text`). Returns the rows kept and the placement receipt."""
+    from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_title import _measure_title_box  # noqa: PLC0415
+    from app.pipeline.phone_talking_corner_text import (  # noqa: PLC0415
+        corner_text_rows,
+        place_corner_text,
+        unplaced_pins,
+    )
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    canvas = canvas if canvas is not None else _STORY_CANVAS
+    rows = corner_text_rows(pins, talk_end_s=talk_end_s, canvas=canvas, clip_windows=clip_windows)
+    display_width, display_height = display_dims(binding.original)
+    others = []
+    for row in avoid_rows:
+        try:
+            others.append(
+                (float(row["start_s"]), float(row["end_s"]), _measure_title_box(row, canvas=canvas))
+            )
+        except Exception:  # noqa: BLE001 - an unmeasurable row is not avoided, never fatal
+            continue
+
+    def _avoid(window: tuple[float, float]) -> list:
+        from app.pipeline.phone_spoken_text import caption_boxes  # noqa: PLC0415
+
+        boxes = list(
+            caption_boxes(
+                list(cues),
+                window=window,
+                caption_style=caption_style,
+                canvas=canvas,
+                look=caption_look,
+            )
+        )
+        boxes += [box for start, end, box in others if start < window[1] and window[0] < end]
+        return boxes
+
+    placed, receipt = place_corner_text(
+        rows,
+        clip_path=clip_path,
+        keep_segments=keep_segments,
+        display_width=display_width,
+        display_height=display_height,
+        canvas=canvas,
+        scale=fit_transform(display_width, display_height, canvas, landscape_fit).scale,
+        position_x=position_x,
+        caption_boxes=_avoid,
+    )
+    missing = unplaced_pins(pins, talk_end_s=talk_end_s, clip_windows=clip_windows)
+    if missing:
+        receipt = {**receipt, "rows": [*receipt.get("rows", []), *missing]}
+    try:
+        record_pipeline_event("phone", "talking_corner_text_placement", receipt)
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return placed, receipt
 
 
 def _phone_talking_closing_rows(
@@ -14325,9 +14952,11 @@ def _phone_talking_caption_text(
     all_candidates: dict,
     cut_plan: Any,
     clip_metas: Any = None,
+    job_id: str | None = None,
 ) -> tuple[list, dict | None]:
     """The phone Talking caption words after whisper, in the job's order: the model spelling
-    fix, sentence split, the creator's spellings, unclear words, then the creator's case ask.
+    fix, sentence split, the creator's spellings (KRI-1345: and the job's own names, which read
+    the Visuals pool of ``job_id``), unclear words, then the creator's case ask.
 
     One function so a replay of a real job runs exactly these steps (Green 4/5, 2026-11-04).
     ``clip_metas`` are the job's Gemini clip records. Returns ``(cues, unclear_words_receipt)``.
@@ -14361,16 +14990,27 @@ def _phone_talking_caption_text(
     # to Kervan" types both) or a spelling above; a name typed in a "don't" clause is none.
     request = _creator_request_text(all_candidates)
     names = creator_request_names(request) if settings.caption_request_names_enabled else ()
+    targets = _phone_caption_spellings(
+        snapshot,
+        extract_spelling_asks(request),
+        typed=creator_typed_words(request) if request.strip() else None,
+    )
     cues = _apply_creator_spellings(
         cues,
-        _phone_caption_spellings(
-            snapshot,
-            extract_spelling_asks(request),
-            typed=creator_typed_words(request) if request.strip() else None,
-        ),
+        targets,
         request_names=names,
         typed=creator_typed_words(request) if names else (),
     )
+    # KRI-1345: the names that rule leaves out (4-letter typed names, the media's own names).
+    if settings.caption_name_vocabulary_enabled:
+        cues = _apply_caption_name_vocabulary(
+            cues,
+            request=request,
+            snapshot=snapshot,
+            job_id=job_id,
+            references=[str(getattr(m, "transcript", None) or "") for m in clip_metas or ()],
+            protected=(*targets, *names),
+        )
     # KRI-849: "if you can't tell what he says, ask me": leave the unclear word out.
     cues, unclear_words_receipt = _apply_unclear_words(
         cues,
@@ -14381,6 +15021,124 @@ def _phone_talking_caption_text(
     # KRI-1177: "captions lowercase" is the cue text itself, so the drawn layers, the
     # editor and a Save all carry it.
     return generation_caption_cues(cues, language=detected_lang), unclear_words_receipt
+
+
+def _narrated_caption_names(
+    cues: list, *, snapshot: dict, all_candidates: dict, job_id: str | None
+) -> list:
+    """KRI-1345: the phone Narrated captions get the Talking spelling steps: the quoted and
+    brief spellings, the names the creator typed (``CAPTION_REQUEST_NAMES_ENABLED``) and the
+    job's own names. The voiceover has no second hearing, so whisper's casing is the evidence."""
+    from app.pipeline.caption_spelling import (  # noqa: PLC0415
+        creator_request_names,
+        creator_typed_words,
+    )
+
+    request = _creator_request_text(all_candidates)
+    targets = _caption_glossary(snapshot, all_candidates)
+    names = creator_request_names(request) if settings.caption_request_names_enabled else ()
+    cues = _apply_creator_spellings(
+        cues,
+        targets,
+        request_names=names,
+        typed=creator_typed_words(request) if names else (),
+    )
+    return _apply_caption_name_vocabulary(
+        cues,
+        request=request,
+        snapshot=snapshot,
+        job_id=job_id,
+        references=(),
+        protected=(*targets, *names),
+    )
+
+
+def _caption_media_rows(snapshot: dict, job_id: str | None) -> tuple[list[dict], str]:
+    """KRI-1345: the job's media records the caption names read: the approved clips (with their
+    stored understanding) and the Visuals-pool assets the approval pinned (all ready ones for a
+    snapshot without a visuals list). Returns ``(rows, pool_state)``; a pool that cannot be read
+    adds nothing (names are best effort, never a reason to fail or retry a render)."""
+    rows: list[dict] = []
+    pinned: set[str] | None = None
+    binding = snapshot.get("creator_brief_binding")
+    media = binding.get("media_snapshot") if isinstance(binding, dict) else None
+    if isinstance(media, dict):
+        rows.extend(r for r in media.get("clip_assignments") or [] if isinstance(r, dict))
+        if isinstance(media.get("visuals"), list):
+            pinned = {
+                str(r.get("media_id"))
+                for r in media["visuals"]
+                if isinstance(r, dict) and r.get("media_id")
+            }
+    if not job_id or pinned == set():
+        return rows, "none"
+    import app.services.phone_overlay_grounding as grounding  # noqa: PLC0415
+
+    try:
+        pool = grounding._load_ready_pool_assets(_sync_session, job_id=job_id)
+    except Exception as exc:  # noqa: BLE001 - best effort
+        log.warning("caption_names.pool_unavailable", job_id=job_id, error=str(exc)[:200])
+        return rows, "unavailable"
+    rows.extend(r for r in pool if pinned is None or f"asset-{r.get('id')}" in pinned)
+    return rows, "read"
+
+
+def _apply_caption_name_vocabulary(
+    cues: list,
+    *,
+    request: str,
+    snapshot: dict,
+    job_id: str | None,
+    references: Any,
+    protected: Any,
+) -> list:
+    """KRI-1345: ``cues`` with the job's evidence-gated names applied
+    (`app.pipeline.caption_names`), after the creator spellings; a `captions/name_vocabulary`
+    trace event lists the names, their sources and every changed line. Never raises: any error
+    leaves the captions as the creator spellings wrote them."""
+    from app.pipeline.caption_names import (  # noqa: PLC0415
+        apply_name_vocabulary,
+        name_vocabulary,
+    )
+    from app.pipeline.caption_spelling import creator_typed_words  # noqa: PLC0415
+
+    try:
+        rows, pool_state = _caption_media_rows(snapshot, job_id)
+        typed = creator_typed_words(request) if request.strip() else ()
+        vocab = name_vocabulary(request, rows, typed_names=(*protected, *typed))
+        out, plan = apply_name_vocabulary(
+            cues,
+            vocab.names,
+            references=[r for r in references or () if r],
+            protected=(*protected, *typed),
+        )
+    except Exception as exc:  # noqa: BLE001 - the captions never fail on a name
+        log.warning("caption_names.failed", job_id=job_id, error=str(exc)[:200])
+        return cues
+    changes = [
+        {"before": str(old.get("text") or "")[:200], "after": str(new.get("text") or "")[:200]}
+        for old, new in zip(cues, out, strict=True)
+        if old.get("text") != new.get("text")
+    ]
+    try:
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        record_pipeline_event(
+            "captions",
+            "name_vocabulary",
+            {
+                "short_names": list(vocab.short_names),
+                "media_names": list(vocab.media_names),
+                "media_rows": len(rows),
+                "pool": pool_state,
+                "respelled": dict(plan),
+                "changed": len(changes),
+                "changes": changes[:20],
+            },
+        )
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return out
 
 
 def _settle_caption_case(cues: list, clip_metas: Any) -> list:
@@ -15209,6 +15967,19 @@ def _narrated_caption_transcript(
     return requested, ensured.language
 
 
+def _beat_phrase_timing_kwargs(base: Any, requirements: Sequence[Any]) -> dict[str, Any]:
+    """KRI-1342: ``{"phrase_timing": ...}`` for the beat grounding while
+    ``BEAT_PHRASE_TIMING_ENABLED`` is on, carrying the spoken words the creator named (those
+    beats keep their exact word timing). ``{}`` when off, so the call is byte-identical."""
+    if not settings.beat_phrase_timing_enabled:
+        return {}
+    from dataclasses import replace as dc_replace  # noqa: PLC0415
+
+    from app.services.phone_reaction_grounding import creator_named_cues  # noqa: PLC0415
+
+    return {"phrase_timing": dc_replace(base, word_cued=creator_named_cues(requirements))}
+
+
 def _phone_narrated_reaction_lanes(
     job_id: str,
     *,
@@ -15216,6 +15987,7 @@ def _phone_narrated_reaction_lanes(
     closing: dict | None,
     words: list[dict],
     duration_s: float,
+    requirements: Sequence[Any] = (),
 ) -> tuple[Any, tuple, dict]:
     """KRI-519: ground a phone Voiceover edit's reaction beats against the
     voiceover's own words into the KRI-281 lanes -> ``(lanes | None, visuals,
@@ -15243,6 +16015,9 @@ def _phone_narrated_reaction_lanes(
             duration_s=duration_s,
             clip_path=None,
             allow_fullscreen=bool(settings.phone_subtitled_fullscreen_overlays_enabled),
+            **_beat_phrase_timing_kwargs(
+                phone_reaction_grounding_mod.VOICEOVER_PHRASE_TIMING, requirements
+            ),
         )
     except OperationalError:
         raise  # transient DB -> Celery autoretry, never a lane drop
@@ -16001,7 +16776,15 @@ def _run_phone_narrated_job(
                 cues = resplit_cues_into_sentences(cues)
                 # KRI-961: the creator's spellings (quoted asks + the approved brief's list),
                 # applied last as Talking does (KRI-793), so "Olloda bife" reads "ojo de bife".
-                cues = _apply_creator_spellings(cues, _caption_glossary(snapshot, all_candidates))
+                # KRI-1345: plus, as Talking, the names the creator typed and the job's own names.
+                if settings.caption_name_vocabulary_enabled:
+                    cues = _narrated_caption_names(
+                        cues, snapshot=snapshot, all_candidates=all_candidates, job_id=job_id
+                    )
+                else:
+                    cues = _apply_creator_spellings(
+                        cues, _caption_glossary(snapshot, all_candidates)
+                    )
                 # KRI-1177: this writer draws the typed caption look too, so the asked case is
                 # the cue text here as well (else its receipt reads as a look later changed).
                 cues = generation_caption_cues(cues, language=detected_lang)
@@ -16198,6 +16981,7 @@ def _run_phone_narrated_job(
                         for word in transcript.words
                     ],
                     duration_s=voiceover_duration_s,
+                    requirements=_phone_brief_live_requirements(snapshot),
                 )
             # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED): grounded on the
             # voice timeline (each step's window IS the output clock) and merged into the
@@ -37166,7 +37950,10 @@ def _burn_persisted_captions_onto_base(
     from app.pipeline.text_overlay import FONTS_DIR  # noqa: PLC0415
 
     archetype = variant.get("resolved_archetype")
-    cues = list(variant.get("caption_cues") or [])
+    # KRI-1344: a line hidden over a text-dense full-screen picture stays hidden on a reburn too.
+    from app.pipeline.caption_legibility import visible_cues  # noqa: PLC0415
+
+    cues = visible_cues(list(variant.get("caption_cues") or []))
     captions_enabled = variant.get("captions_enabled", True) is not False
     if not (captions_enabled and cues):
         # Off (regardless of stored cue count) or genuinely no cues → caption-free.

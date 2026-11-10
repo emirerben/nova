@@ -55,7 +55,11 @@ from app.kria.reply_language import current_reply_language, say
 from app.kria.voiceover_scope import lost_visual_asks, resolve_native_all_scope
 from app.pipeline.narrated_title import TITLE_MAX_CHARS
 from app.schemas.clip_intents import ClipIntent
-from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS, PINNED_TEXT_MAX_CHARS
+from app.schemas.edit_proposal import (
+    MAX_CREATOR_PINNED_TEXTS,
+    PINNED_TEXT_MAX_CHARS,
+    binds_mixed_media_timing,
+)
 from app.services.creator_capabilities import (
     BACKGROUND_FOCUS_NOTICES,
     CAPABILITY_REACTION_BEATS,
@@ -67,6 +71,7 @@ from app.services.creator_capabilities import (
     TALKING_CLIP_INTENTS_DROPPED_NOTICE,
     CreatorSfxUnavailableError,
     compile_strategy_to_plan,
+    phone_talking_corner_text_open,
     phone_talking_title_lane_open,
     resolve_creator_image_media_ref,
     resolve_creator_visual_video_media_ref,
@@ -752,7 +757,9 @@ def _refusal_question(exc: ValueError, strategy: CreativeStrategy) -> RefusedStr
             ),
             code="montage_cadence_unavailable",
         )
-    if isinstance(exc, MixedMediaTimingUnavailableError):
+    if isinstance(exc, MixedMediaTimingUnavailableError) and binds_mixed_media_timing(
+        strategy.mixed_media_timing
+    ):
         return RefusedStrategy(
             question=say(
                 en=(
@@ -771,7 +778,9 @@ def _refusal_question(exc: ValueError, strategy: CreativeStrategy) -> RefusedStr
         return RefusedStrategy(
             question=localize_known_message(_USER_SONG_REFUSALS[exc.code]), code=exc.code
         )
-    if isinstance(exc, CreatorCapabilityError):
+    # The mixed-media error also carries phone-format, unverified-source and missing-capability
+    # limits; without a timing ask (above) they are this edit being unavailable here.
+    if isinstance(exc, (CreatorCapabilityError, MixedMediaTimingUnavailableError)):
         return RefusedStrategy(
             question=say(
                 en=(
@@ -783,7 +792,7 @@ def _refusal_question(exc: ValueError, strategy: CreativeStrategy) -> RefusedStr
                     "olarak yapayım mı?"
                 ),
             ),
-            code=exc.code,
+            code=exc.code if isinstance(exc, CreatorCapabilityError) else "edit_unavailable",
         )
     return RefusedStrategy(
         question=say(
@@ -1043,6 +1052,8 @@ def _talking_top_text_as_title(
     pins = strategy.pinned_texts or []
     if (
         strategy.edit_format != "subtitled"
+        # KRI-1342 item 7: the phone Talking edit keeps corner text where it was asked.
+        or phone_talking_corner_text_open(manifest)
         or strategy.opening_title
         or len(pins) != 1
         or not pins[0].corner.startswith("top_")

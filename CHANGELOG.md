@@ -2,6 +2,116 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.155.0] - 2026-11-10
+
+### Changed
+- feat(split-screen): panels collapse when one ends, protocol 47 (KRI-1335) (#2262) <!-- release-pr: 2262 -->
+
+## [0.88.154.0] - 2026-11-10
+
+### Fixed
+- fix(kria): the chat answers in the language the creator writes, not the video's (KRI-1363) (#2268) <!-- release-pr: 2268 -->
+
+## [0.88.153.0] - 2026-11-10
+
+### Changed
+- test(ios): await the queued first Resume in the two-taps restoration test (KRI-1364) (#2270) <!-- release-pr: 2270 -->
+
+## [0.88.152.0] - 2026-11-10
+
+### Changed
+- fix(ios): the chat no longer goes blank after Send with many uploads and the keyboard up (KRI-1351) (#2265) <!-- release-pr: 2265 -->
+
+## [0.88.151.0] - 2026-11-10
+
+### Fixed
+- fix(kria): a word-cued picture starts with the phrase that names it (KRI-1342 item 8) (#2257) <!-- release-pr: 2257 -->
+
+## [0.88.150.0] - 2026-11-10
+
+### Fixed
+- fix(kria): one capability answer for hold / draft / review lines (KRI-1346, KRI-1347) (#2254) <!-- release-pr: 2254 -->
+
+## [0.88.149.0] - 2026-11-10
+
+### Changed
+- fix(kria): recover legacy sequence copy before retry approval (KRI-1352) (#2267) <!-- release-pr: 2267 -->
+
+## [0.88.148.0] - 2026-11-10
+
+### Fixed
+- fix(captions): spell short typed names and the job's own media names in phone captions (KRI-1345) (#2253) <!-- release-pr: 2253 -->
+
+## [0.88.147.0] - 2026-11-10
+
+### Changed
+- feat(phone-talking): corner label for the whole video + colour end card (KRI-1342 item 7, KRI-1346) (#2256) <!-- release-pr: 2256 -->
+
+## [0.88.146.0] - 2026-11-10
+
+### Changed
+- fix(kria): preserve researched bilingual text sequences (KRI-1352) (#2264) <!-- release-pr: 2264 -->
+
+## [0.88.145.0] - 2026-11-10
+
+### Changed
+- fix(kria): cut any off-script opening before the first real sentence, by word role (KRI-1348) (#2252) <!-- release-pr: 2252 -->
+
+## [0.88.144.0] - 2026-11-10
+
+### Fixed
+- fix(kria): captions readable on any background, off full-screen photo text (KRI-1343, KRI-1344) (#2258) <!-- release-pr: 2258 -->
+
+## [0.88.143.0] - 2026-11-10
+
+### Added
+- feat(kria): speech cleanup across several Talking takes (KRI-720) (#2251) <!-- release-pr: 2251 -->
+
+## [0.88.142.0] - 2026-11-10
+
+### Changed
+- fix(kria): group the editor warm-up calls as not-an-edit (KRI-1230) (#2263) <!-- release-pr: 2263 -->
+
+## [0.88.141.0] - 2026-11-10
+
+### Changed
+- feat(ios): warm the editor while the chat is on screen (#2261) <!-- release-pr: 2261 -->
+
+## [0.88.140.0] - 2026-11-10
+
+### Changed
+- fix(kria): talking takes attached through Visuals become Talking takes (KRI-1340) (#2250) <!-- release-pr: 2250 -->
+
+## [0.88.139.0] - 2026-11-10
+
+### Changed
+- fix(ios): reopening an unchanged editor no longer rebuilds the preview (#2225) <!-- release-pr: 2225 -->
+
+## [0.88.138.0] - 2026-11-10
+
+### Changed
+- test(ios): stop caption animation tests playing card previews mid-query (#2260) <!-- release-pr: 2260 -->
+
+## [0.88.137.0] - 2026-11-10
+
+### Changed
+- fix(ios): a chat edit on a narrated or talking project no longer counts as a timeline change (#2234) <!-- release-pr: 2234 -->
+
+## [0.88.136.0] - 2026-11-10
+
+### Changed
+- fix(ios): stop drag-lift taps reselecting preview items; stabilize editor UI tests (#2247) <!-- release-pr: 2247 -->
+
+## [0.88.135.0] - 2026-11-10
+
+### Changed
+- feat(ios): redesign split-screen flow, Split tool in the island (KRI-1335) (#2245) <!-- release-pr: 2245 -->
+
+## [0.88.134.0] - 2026-11-09
+
+### Changed
+- fix(kria): a title linked to its clip follows it, and realign re-attaches it (KRI-1332) (#2244) <!-- release-pr: 2244 -->
+
 ## [0.88.133.0] - 2026-11-09
 
 ### Changed

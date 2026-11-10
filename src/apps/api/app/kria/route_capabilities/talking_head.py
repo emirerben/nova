@@ -69,6 +69,15 @@ def _animation_not_played(
     )
 
 
+def _overlays_drawn() -> bool:
+    """The writer grounds Visuals cards (and full-screen pictures) from the Visuals pool
+    (`phone_rollout.phone_subtitled_overlays_supported`, the predicate the manifest reads to
+    advertise ``media_overlays`` and `_run_phone_subtitled_job` reads to draw them)."""
+    from app.services.phone_rollout import phone_subtitled_overlays_supported  # noqa: PLC0415
+
+    return phone_subtitled_overlays_supported()
+
+
 FIELD_HANDLING: dict[str, Handling] = {
     "intro_hook": NotApplied(lines.hook),
     "story_structure": NotApplied(lines.story),
@@ -88,7 +97,8 @@ FIELD_HANDLING: dict[str, Handling] = {
     ),
     "title_animation": NotApplied(WithAsks(_title_animation)),
     "label_position": NotApplied(lines.label_position),
-    "optional_treatments": NotApplied(lines.treatments),
+    # KRI-1347: the overlays the writer draws are not "won't be applied" (switch-gated).
+    "optional_treatments": NotApplied(lines.treatments_unless({"overlays": _overlays_drawn})),
     "archetype": NotApplied(lines.archetype),
     "hero_media_id": NotApplied(lines.hero),
     "licensed_sfx": NotApplied(lines.sfx),

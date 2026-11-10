@@ -94,6 +94,7 @@ from app.pipeline.caption_language import (
 )
 from app.pipeline.caption_spelling import extract_spelling_asks, is_mishearing
 from app.pipeline.explicit_speech_cut import speech_cut_tokens
+from app.pipeline.phone_talking_closing_card import asks_closing_card
 from app.pipeline.sequence_text_evidence import complete_sequences, sequence_lineage
 from app.pipeline.song_captions import mentions_lipsync
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
@@ -888,6 +889,8 @@ class PlanFacts:
     # the REPAIRED strategy, the render its own `phone_ending_clip` receipt, never the strategy.
     ending_clip: EndingClipFact | None = None
     ending_clip_known: bool = False
+    # KRI-1346: the finished Talking render's ``phone_closing_card`` receipt (None: no card).
+    closing_card: Mapping[str, Any] | None = None
     # Parent KRI-1151: clips played while the take is paused, one fact per asked clip. As above,
     # only where ``insert_clips_known`` can an empty tuple mean "none was kept".
     insert_clips: tuple[InsertClipFact, ...] = ()
@@ -3117,6 +3120,8 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
         # KRI-841: a finished Talking render says whether it really ended on the video.
         changes["ending_clip_known"] = True
         changes["ending_clip"] = _ending_clip_receipt_fact(variant.get("phone_ending_clip"))
+        card = variant.get("phone_closing_card")
+        changes["closing_card"] = card if isinstance(card, Mapping) else None  # KRI-1346
         changes["speaker_background"] = _rendered_speaker_background_fact(variant)  # KRI-1161
         # Parent KRI-1151: and whether it really paused the take for the clips asked.
         changes["insert_clips_known"] = True
@@ -5183,6 +5188,23 @@ _SBC_NOTHING_TO_SWITCH = (
     "The plain colour stays behind you the whole time; no photos or videos are attached to take "
     "turns over it. Attach them in Visuals"
 )
+# KRI-1346: a full-screen colour card with the creator's words after the last word (phone
+# Talking, `phone_talking_closing_card`). The first two are format limits.
+_CC_NOT_TALKING = (
+    "Only a talking-to-camera edit made on your iPhone can end on a full-screen colour with "
+    "your text"
+)
+_CC_UNAVAILABLE = "Ending on a full-screen colour with your text isn't available on your iPhone yet"
+_CC_PLAN = "I'll end the video on that colour screen with your text, after your last word"
+_CC_NOT_DRAWN = "The finished video doesn't end on your colour screen"
+_CC_UNNAMED_COLOR = "Tell me the colour as a name like red or a code like #FF0000"
+_CC_APP_TOO_OLD = (
+    "Your iPhone app is too old to end on a full-screen colour with your text; update it first"
+)
+# Not limits of the format: the creator can shorten the words or change a character.
+_CC_TOO_LONG = "Your end-screen words are too long to fit on one screen; shorten them"
+_CC_UNDRAWABLE = "Your end-screen words have a character I can't draw on the card"
+_CC_WORDS_DIFFER = "The end screen doesn't show all of your words"
 _SB_FORMAT_LIMITS: tuple[str, ...] = (
     _SB_NOT_TALKING,
     _SB_UNAVAILABLE,
@@ -5194,7 +5216,87 @@ _SB_FORMAT_LIMITS: tuple[str, ...] = (
     _SB_FULL_SIZE,
     _SB_ONLY_ONE_ATTACHED,
     _SBC_NO_SWITCHING,
+    _CC_NOT_TALKING,
+    _CC_UNAVAILABLE,
+    _CC_APP_TOO_OLD,
 )
+
+
+def honest_reply_lines() -> bool:
+    """KRI-1346/1347 switch (``KRIA_HONEST_REPLY_LINES_ENABLED``): one capability answer for
+    every hold / draft / review line. Off: byte-identical to before."""
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(getattr(settings, "kria_honest_reply_lines_enabled", False))
+
+
+def _check_closing_card(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """KRI-1346: "end on a red screen with yellow text '...'".
+
+    A finished video is judged by its own ``phone_closing_card`` receipt (read back from the
+    compiled recipe); a draft by whether a phone Talking edit can make it at all. The colour has
+    to be one Kria can name exactly: a guessed shade is not the creator's colour.
+    """
+    from app.agents._schemas.reaction_beats import normalise_background_color  # noqa: PLC0415
+    from app.pipeline.phone_talking_closing_card import (  # noqa: PLC0415
+        CLOSING_CARD_TEXT_MAX_CHARS,
+        TOO_LONG,
+        UNDRAWABLE,
+    )
+    from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_talking_closing_card_planned_reason,
+    )
+
+    raw_words = req.facts.get("closing")
+    wanted = " ".join(str(raw_words if isinstance(raw_words, str) else req.literal or "").split())
+    if facts.rendered_variant:
+        card = facts.closing_card or {}
+        if card.get("status") != "applied":
+            reason = {TOO_LONG: _CC_TOO_LONG, UNDRAWABLE: _CC_UNDRAWABLE}.get(
+                str(card.get("reason") or ""), _CC_NOT_DRAWN
+            )
+            return _receipt(req, "not_possible", reason, stage="checked")
+        # Review of #2256: "done" only when the card shows every word asked, never a shortened
+        # line (an older receipt without `shown_text` is judged by the words it was made from).
+        shown = " ".join(str(card.get("shown_text") or card.get("text") or "").split())
+        if wanted and shown and _fold(shown) != _fold(wanted):
+            return _receipt(req, "partial", _CC_WORDS_DIFFER, stage="checked")
+        if card.get("text_color_swapped"):
+            shown = "black" if card.get("text_color") == "#000000" else "white"
+            return _receipt(
+                req,
+                "partial",
+                say(
+                    en=(
+                        "Your text colour wouldn't be readable on that background, so the "
+                        f"text is {shown}."
+                    ),
+                    tr=(
+                        "Yazı rengin o arka planda okunmazdı, o yüzden yazı "
+                        + ("siyah." if shown == "black" else "beyaz.")
+                    ),
+                ),
+                stage="checked",
+            )
+        return _receipt(req, "met", None, stage="checked")
+    if not facts.phone_talking:
+        return _receipt(req, "not_possible", _CC_NOT_TALKING)
+    # The same gate the render uses, for the build that sent the message (a draft never
+    # promises a card an older app would be told to update for).
+    build = (
+        facts.client_protocol if facts.client_protocol is not None else current_client_protocol()
+    )
+    closed = phone_talking_closing_card_planned_reason(build)
+    if closed == "unavailable":
+        return _receipt(req, "not_possible", _CC_UNAVAILABLE)
+    if closed == "app_too_old":
+        return _receipt(req, "not_possible", _CC_APP_TOO_OLD)
+    if len(wanted) > CLOSING_CARD_TEXT_MAX_CHARS:
+        return _receipt(req, "not_possible", _CC_TOO_LONG)
+    if normalise_background_color(req.facts.get("background_color")) is None:
+        return _receipt(req, "partial", _CC_UNNAMED_COLOR)
+    return _receipt(req, "partial", _CC_PLAN)
 
 
 def asks_speaker_background(req: BriefRequirement) -> bool:
@@ -5205,6 +5307,11 @@ def asks_speaker_background(req: BriefRequirement) -> bool:
     never the creator's words. So "background music" / "arka plan müziği" / "no music", which
     record no such fact, can never be read as this ask.
     """
+    # KRI-1346: "end on a red screen with yellow text '...'" records the colour on the ending
+    # words' row (`closing` + `background_color`): that is the closing card, judged by
+    # `_check_closing_card`, never "a plain colour behind you".
+    if asks_closing_card(req) and not req.facts.get("speaker_background"):
+        return False
     # KRI-1173: a plain colour ask records `background_color` (and `speaker_background: true`).
     return bool(req.facts.get("speaker_background")) or _asked_background_color(req) is not None
 
@@ -6915,6 +7022,11 @@ _TIGHT_STATIC_LINES: tuple[str, ...] = (
 # (even one with a retake) cannot prove it, so it says "may still be", never "stays". One
 # static string for every speech format: `_loc` translates exact keys only and the
 # review-note dedupe compares text.
+# KRI-720: with several-take cleanup on, pauses are cut in every take, but a named line,
+# opening or ending is still never cut from several takes (`_phone_opening_cut(multiple_takes=)`).
+_NAMED_CUTS_SEVERAL_TAKES = (
+    "I can't cut one exact line out of a video made of several takes yet, so it stays in"
+)
 _NAMED_CUTS_STAY = (
     "I can't cut out one exact line yet or confirm it's gone, so it may still be in your video"
 )
@@ -7102,6 +7214,8 @@ RENDER_PROMISE_REASONS: tuple[str, ...] = (
     _TIGHT_IF_OFFERED,
     # Qendresa 14: the arrow beside the "comment WORD" ending.
     _CLOSING_ARROW_PLAN,
+    # KRI-1346: the colour card after the last word.
+    _CC_PLAN,
     # KRI-1322: the picture above the opening title.
     _TITLE_PICTURE_PLAN,
     # KRI-1304 leftover: the zoom onto the recordings' text.
@@ -7392,6 +7506,9 @@ _REASON_TR: dict[str, str] = {
     _CLEANUP_DONE: "Konuşma temizliği uzun duraklamaları kesti",
     _CLEANUP_NOTHING_TO_CUT: "Konuşma temizliği kesilecek uzun bir duraklama bulmadı",
     _CLEANUP_NOT_RUN: ("Konuşma temizliği bu videoda çalışmadı, o yüzden uzun duraklamalar kaldı"),
+    _NAMED_CUTS_SEVERAL_TAKES: (
+        "Birkaç çekimden oluşan bir videodan henüz tek bir satırı kesemiyorum, o yüzden kalıyor"
+    ),
     _CLEANUP_SEVERAL_TAKES: (
         "Birkaç çekimden oluşan bir videodan henüz bir şey kesemiyorum, o yüzden kesmemi "
         "istediğin duraklamalar ve satırlar kalıyor"
@@ -7507,6 +7624,22 @@ _REASON_TR: dict[str, str] = {
         "Arkana düz renk yalnızca iPhone'da hazırlanan konuşmalı düzenlemede konabilir"
     ),
     _SBC_UNAVAILABLE: "Arkana düz renk koymak iPhone'unda henüz kullanılamıyor",
+    _CC_NOT_TALKING: (
+        "Videoyu yazılı tam ekran bir renkle yalnızca iPhone'unda yapılan kameraya konuşma "
+        "düzenlemesi bitirebilir"
+    ),
+    _CC_UNAVAILABLE: (
+        "Videoyu yazılı tam ekran bir renkle bitirmek iPhone'unda henüz kullanılamıyor"
+    ),
+    _CC_PLAN: "Son sözünden sonra videoyu o renkli ekranla ve yazınla bitireceğim",
+    _CC_NOT_DRAWN: "Bitmiş video senin renkli ekranınla bitmiyor",
+    _CC_UNNAMED_COLOR: "Rengi kırmızı gibi bir adla ya da #FF0000 gibi bir kodla söyle",
+    _CC_APP_TOO_OLD: (
+        "iPhone uygulaman videoyu yazılı tam ekran bir renkle bitirmek için çok eski; önce güncelle"
+    ),
+    _CC_TOO_LONG: "Son ekran yazın tek bir ekrana sığmayacak kadar uzun; kısalt",
+    _CC_UNDRAWABLE: "Son ekran yazında kartta çizemediğim bir karakter var",
+    _CC_WORDS_DIFFER: "Son ekran yazının tamamını göstermiyor",
     _SBC_APP_TOO_OLD: "iPhone uygulaman arkana düz renk koymak için çok eski; önce güncelle",
     _SBC_NOT_PLANNED: "Bu taslak arkana düz renk koymuyor",
     _SBC_NOT_DRAWN: "Biten videoda arkanda düz renk yok",
@@ -7575,6 +7708,7 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _CLEANUP_IF_OFFERED,
     _CLEANUP_UNAVAILABLE,
     _CLEANUP_SEVERAL_TAKES,
+    _NAMED_CUTS_SEVERAL_TAKES,
     *_TIGHT_STATIC_LINES,
     _CLEANUP_DONE,
     _CLEANUP_NOTHING_TO_CUT,
@@ -8954,7 +9088,8 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         return _receipt(req, "partial", _CANT_CHECK_CLEANUP)
     if facts.rendered_variant:
         return _merge_cleanup_timing(req, facts, _check_rendered_cleanup(req, facts))
-    if facts.phone_talking and (facts.video_clip_count or 0) > 1:
+    several_takes = bool(facts.phone_talking and (facts.video_clip_count or 0) > 1)
+    if several_takes and not _multi_take_cleanup_on():
         # KRI-720 (S3 Yorum2, job 7416c94b): several takes render whole, whatever approval
         # offers, so no cleanup, named-line or restart promise is true here.
         cleanup = _receipt(req, "partial", _loc(_CLEANUP_SEVERAL_TAKES))
@@ -8974,7 +9109,11 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     if _wants_named_cuts(req):
         from app.kria.opening_cut_ask import named_cut_asks  # noqa: PLC0415
 
-        if (facts.phone_talking or _cuts_named_voiceover_lines(facts)) and named_cut_asks([req]):
+        if several_takes:
+            # KRI-720: every take's pauses are cut, but no named line is cut from several takes.
+            notes.append(_loc(_NAMED_CUTS_SEVERAL_TAKES))
+            status = "partial"
+        elif (facts.phone_talking or _cuts_named_voiceover_lines(facts)) and named_cut_asks([req]):
             # KRI-821: the phone Talking render cuts each named line it finds said once;
             # KRI-889: so does a narrated render, out of the recorded voiceover.
             # Not certain before the render finds the line, so never "Done" (KRI-792).
@@ -8992,6 +9131,16 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         status = "partial"
     cleanup = _receipt(req, status, "; ".join(notes) if status == "partial" else None)
     return _merge_cleanup_timing(req, facts, cleanup)
+
+
+def _multi_take_cleanup_on() -> bool:
+    """KRI-720: whether a several-take Talking edit gets speech cleanup (one gate, shared with
+    the resolver, dispatch and the worker)."""
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_talking_multi_take_cleanup_supported,
+    )
+
+    return phone_talking_multi_take_cleanup_supported()
 
 
 def _retake_detection_on(facts: PlanFacts | None = None) -> bool:
@@ -13550,7 +13699,7 @@ def _check_research(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
         return None
     if prepared.status == "failed":
         return research_preview.blocker_receipt(prepared, req)
-    if not prepared.texts:
+    if not prepared.texts and not prepared.layers:
         return None
     return _receipt(req, "met", None, verification="checked", stage="applied")
 
@@ -14338,6 +14487,8 @@ def _has_checker(req: BriefRequirement) -> bool:
         return True
     if _ending_clip_fact(req):
         return True  # KRI-841: judged against the plan's / render's ending video
+    if asks_closing_card(req):
+        return True  # KRI-1346: judged against the render's closing card
     if asks_speaker_background(req) or _full_opening_asked(req):
         return True  # KRI-1161 / item 16: judged against the plan's / render's background
     if wants_no_music(req):
@@ -14944,6 +15095,10 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         # This must own a timing/select row before generic timing sees its ordinal as ordinary
         # timing.  A receipt is source-space evidence, not a claim based on captions.
         return _check_explicit_speech_cut(req, speech_cut, facts)
+    if asks_closing_card(req):
+        # KRI-1346: the colour card after the last word, ahead of the background and the
+        # closing-text readers (its colour is not "behind you", its words are on the card).
+        return _check_closing_card(req, facts)
     if asks_speaker_background(req):
         # KRI-1161: "put the photo behind me" / a green screen is judged against the background
         # the plan (or the render) holds, ahead of the framing and generic Talking answers.
@@ -16023,7 +16178,9 @@ __all__ = [
     "ExplicitSpeechCutFact",
     "EndingClipFact",
     "SpeakerBackgroundFact",
+    "asks_closing_card",
     "asks_speaker_background",
+    "honest_reply_lines",
     "InsertClipFact",
     "NO_TITLE_REASON",
     "NARRATED_ALIGNMENT_RECOVERY",

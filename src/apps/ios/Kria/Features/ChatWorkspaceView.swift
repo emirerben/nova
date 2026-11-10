@@ -542,6 +542,7 @@ private struct CreationWorkspaceView: View {
     @State private var transcriptIsFresh = true
     @StateObject private var responsePresentation = ChatResponsePresentation()
     @Environment(\.scenePhase) private var scenePhase
+    @ObservedObject private var reachability = NetworkReachability.shared
     @State private var pendingTurnSubmission: ChatTurnSubmissionIdentity?
     @State private var sendReceipt: ChatSendReceipt?
     @State private var approval: ApprovalSnapshot?
@@ -871,6 +872,7 @@ private struct CreationWorkspaceView: View {
         derived.timelineKey = cacheable ? key : nil
         derived.timeline = built
         derived.timelineMessages = nil
+        derived.timelineRows = nil
         return built
     }
 
@@ -884,6 +886,16 @@ private struct CreationWorkspaceView: View {
         }
         if derived.timelineKey != nil { derived.timelineMessages = messages }
         return messages
+    }
+
+    /// The timeline as the lazy stack's rows, kept with the timeline it came from (each media receipt is parsed to
+    /// count its files).
+    private var timelineRows: [ChatTimelineRow] {
+        let entries = timeline
+        if let cached = derived.timelineRows, derived.timelineKey != nil { return cached }
+        let rows = ChatTimelineRow.rows(entries)
+        if derived.timelineKey != nil { derived.timelineRows = rows }
+        return rows
     }
 
     /// The newest reply that carries requirement receipts; a new one means the brief may have changed.
@@ -1371,12 +1383,13 @@ private struct CreationWorkspaceView: View {
         if workspaceStage == .footage, let selectedFormat {
             VideoTypeRow(format: selectedFormat) { isChoosingFormat = true }
         }
-        ForEach(ChatTimelineGroup.group(timeline)) { group in
-            if case .media = group.entries[0].content {
-                mediaReceipts(group.entries)
+        ForEach(timelineRows) { row in
+            if let index = row.mediaIndex {
+                mediaReceipt(row.entry, index: index)
+                    .padding(.top, row.joinsMediaAbove ? ChatConversationSpacing.mediaStrip - ChatConversationSpacing.row : 0)
             } else {
-                timelineRow(group.entries[0])
-                    .transition(Self.rowTransition(for: group.entries[0], reduceMotion: reduceMotion))
+                timelineRow(row.entry)
+                    .transition(Self.rowTransition(for: row.entry, reduceMotion: reduceMotion))
             }
         }
         if currentProject.status == .ready {
@@ -1466,7 +1479,7 @@ private struct CreationWorkspaceView: View {
         case .thoughts(let summaries):
             ThoughtSummaryDisclosure(summaries: summaries).id(entry.id)
         case .media:
-            EmptyView() // Consecutive receipts are rendered together above.
+            EmptyView() // Drawn one file per row by `mediaReceipt`.
         }
     }
 
@@ -1751,14 +1764,12 @@ private struct CreationWorkspaceView: View {
         composerFocused = true
     }
 
-    private func mediaReceipts(_ entries: [ChatTimelineEntry]) -> some View {
-        let media = entries.flatMap { entry -> [CreationAttachedMedia] in
-            guard case .media(let event) = entry.content else { return [] }
-            let current = Dictionary(CreationAttachedMedia.parse(threadState).map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
-            return CreationAttachedMedia.parse(event.payload ?? [:]).map { current[$0.id] ?? $0 }
-        }
-        return VStack(spacing: 8) {
-            ForEach(Array(media.enumerated()), id: \.offset) { _, attachment in
+    /// One file of a media receipt, as the project holds it now (a poster that arrived later, a new name).
+    @ViewBuilder private func mediaReceipt(_ entry: ChatTimelineEntry, index: Int) -> some View {
+        if case .media(let event) = entry.content {
+            let received = CreationAttachedMedia.parse(event.payload ?? [:])
+            if received.indices.contains(index) {
+                let attachment = CreationAttachedMedia.parse(threadState).last { $0.id == received[index].id } ?? received[index]
                 KriaMediaRow(name: attachment.displayName,
                              status: .ready(attachment.isSong ? "Song · Ready" : attachment.isVoiceover ? "Voiceover · Ready" : "Video · Ready"),
                              trailing: .check, onFill: true) {
@@ -1793,9 +1804,38 @@ private struct CreationWorkspaceView: View {
             isChoosingFormat = false
             return
         }
+        // The flight the chat started while it was idle is the creator's from here on.
+        editorSession.claimWarm()
+        Perf.begin("editor.tap.toFrame")
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) { showsResult = true }
+    }
+
+    /// Whether the chat may prepare its editor now. The value is the `.task(id:)` identity, so the warm-up restarts only
+    /// when the job, the variant or the permission changes, never on a chat poll.
+    private var editorWarmPlan: EditorWarmPlan {
+        var warmable = true
+        #if DEBUG
+        warmable = ProcessInfo.processInfo.environment["KRIA_EDITOR_WARM_DISABLED"] != "1"
+        #endif
+        return EditorWarmPlan(project: currentProject, facts: .init(
+            videoIsReady: currentProject.status == .ready && warmable, formatIsKnown: isFormatKnown,
+            isSlidePost: isSlidePostProject, canOpenVideoEditor: canOpenVideoEditor,
+            sceneIsActive: scenePhase == .active, chatIsIdle: !isSending && !isActing && !isThinking,
+            isOnline: reachability.isOnline, isLowDataMode: reachability.isConstrained))
+    }
+
+    /// Prepares the editor (variant, draft, sources, composition) while the creator reads the chat, so the tap finds it
+    /// loaded. A load that fails leaves the editor as it was: the tap opens it the way it always has.
+    private func warmEditor() async {
+        let plan = editorWarmPlan
+        guard plan.isWarmable, !showsResult else { editorSession.cancelWarm(); return }
+        // Let the chat finish drawing and reading before competing with it; a plan that flips back cancels this sleep.
+        try? await Task.sleep(for: EditorWarmPlan.settleDelay)
+        guard !Task.isCancelled else { return }
+        await editorSession.openOrWarm(project: currentProject, libraryJobID: nil, api: model.api,
+                                       deviceRenders: model.deviceRenders, uploads: model.uploads, intent: .warm)
     }
 
     private func dismissEditor() {
@@ -2042,6 +2082,11 @@ private struct CreationWorkspaceView: View {
             await capabilities
         }
         .task(id: suggestionFetchKey) { await loadSuggestions() }
+        .task(id: editorWarmPlan) { await warmEditor() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+            editorSession.releaseWarmForMemoryPressure()
+        }
+        .onDisappear { editorSession.cancelWarm() }
         // An editor Save changes the Job without a new thread revision, so cards built on the old edit are asked about again.
         .onChange(of: editorSession.saveState) { old, new in
             if case .saving = old, new == .saved || new == .previewPending { suggestionLedger.requestRefresh() }
@@ -3763,6 +3808,8 @@ final class ChatDerivedMemo {
     var timeline: [ChatTimelineEntry] = []
     /// The `.message` entries of `timeline`; nil until read after each rebuild.
     var timelineMessages: [ChatTranscriptMessage]?
+    /// The lazy stack's rows for `timeline`; nil until read after each rebuild.
+    var timelineRows: [ChatTimelineRow]?
     var feedKey: Int?
     var feed: PlanBlockFeedState?
     var clipQuestionKey: Int?

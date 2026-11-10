@@ -293,6 +293,9 @@ MediaCapability = Literal[
     # aimed at its readable text ({x, y, zoom}). Derived from the layer; own verified token.
     "backgroundFocus",
     "splitScreen",
+    # Protocol 47: a split section whose ended panels give their height to the rest
+    # (`split_screen_sections[].collapse_empty_panels`). Always accompanies `splitScreen`.
+    "splitCollapse",
     # A tilted clip (`transform.rotation_degrees != 0`) and/or a `backdrop` under a main-track
     # clip, drawn on device by `KriaMediaEngine`'s compositor (KRI-1134).
     "clipTilt",

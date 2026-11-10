@@ -352,6 +352,13 @@ class Settings(BaseSettings):
     # PHONE_SUBTITLED_FULLSCREEN_OVERLAYS_ENABLED=false --app nova-video` +
     # `fly machine restart <id>` (api + worker).
     phone_subtitled_fullscreen_overlays_enabled: bool = True
+    # KRI-1342 item 8: a photo/video the planner cued by what the talk is ABOUT (no spoken word
+    # the creator named) starts with the phrase holding its cue word, and a full-screen photo
+    # with no stated length is held for that phrase (never cut off mid-way through the next
+    # sentence). Phone Talking and Voiceover beats (`phone_reaction_grounding.PhraseTiming`).
+    # Default off: windows stay on the cue word, byte-identical. Apply: `fly secrets set
+    # BEAT_PHRASE_TIMING_ENABLED=true -a nova-video`, then restart the worker.
+    beat_phrase_timing_enabled: bool = False
     # KRI-547 kill switch: when the approved brief asks for a vertical / 9:16 /
     # full-screen / "keep my face in frame" video and the phone Talking speaker
     # clip is landscape, `_run_phone_subtitled_job` samples the face across the
@@ -396,6 +403,24 @@ class Settings(BaseSettings):
     # Apply: `fly secrets set PHONE_TALKING_MULTI_SPEAKER_BEATS_ENABLED=true --app nova-video`
     # + restart api + worker.
     phone_talking_multi_speaker_beats_enabled: bool = False
+    # KRI-720: speech cleanup (pauses, fillers) for a Talking edit made of several takes. The
+    # preflight analyses every clip with sound as its own take (one analysis row, one payload
+    # per take), the creator consents once, and the phone render cuts each talking take with
+    # its own plan before joining them. False (default): byte-identical, several takes stay
+    # `ambiguous_embedded_source` and the draft says cleanup couldn't run. Needs several-clip
+    # Talking (`phone_talking_multi_clip_supported`). See
+    # `phone_rollout.phone_talking_multi_take_cleanup_supported`. Apply: `fly secrets set
+    # TALKING_MULTI_TAKE_CLEANUP_ENABLED=true --app nova-video` + restart api + worker.
+    talking_multi_take_cleanup_enabled: bool = False
+    # KRI-1340 (Çiğdem S3 Yorum1): a talk-to-camera video attached through Visuals in a Talking
+    # item becomes one of its talking takes, exactly as if it had been attached as footage. When
+    # its analysis lands (`speech.to_camera`), the server makes the analysis proxy the phone would
+    # have made and appends a normal clip row whose `pool_source` lets the phone download the
+    # take's bytes from the Visuals pool (`app.services.visual_talking_takes`). Needs multi-clip
+    # Talking (`phone_talking_multi_clip_supported`). False (default): byte-identical, the video
+    # stays a Visual. Apply: `fly secrets set VISUAL_TALKING_TAKES_ENABLED=true --app nova-video`
+    # + restart api + worker.
+    visual_talking_takes_enabled: bool = False
     # Re-record a take: `POST /creation-threads/{id}/media/replace` swaps one attached
     # speaker clip for a new upload in a single transaction, and `upload-urls` accepts
     # `replaces_media_id` for the clip cap. False (default): the route and the field
@@ -501,6 +526,26 @@ class Settings(BaseSettings):
     # byte-identical to today. Rollback: `fly secrets set
     # CREATOR_CTA_ENDING_ENABLED=false --app nova-video` + restart api + worker.
     creator_cta_ending_enabled: bool = False
+    # KRI-1342 item 7 (corner text on phone Talking edits): the creator's corner lines
+    # (`strategy.pinned_texts`: 'a small "Yorumla" label top left for the whole video',
+    # "sağ altta @handle") stay on screen for their whole window at the asked corner,
+    # placed off every face the window shows (`app.pipeline.phone_talking_corner_text`).
+    # Needs the KRI-467 text lane (`phone_subtitled_title_supported`); no new recipe field,
+    # so every app build draws it. False: byte-identical to today (one top line becomes the
+    # opening title, anything else is asked about). Rollback: `fly secrets set
+    # PHONE_TALKING_CORNER_TEXT_ENABLED=false --app nova-video` + restart api + worker.
+    phone_talking_corner_text_enabled: bool = False
+    # KRI-1346 (closing card on phone Talking edits): "end on a red screen with yellow text
+    # 'follow for more'" appends a full-screen colour card with the creator's text AFTER the
+    # last word (`app.pipeline.phone_talking_closing_card`): the last frame holds silently
+    # (`freezeFrame`) under a solid visual fill, so no speech is cut. Needs the KRI-467
+    # text lane, "freezeFrame", "visualBlocks" and the device-qualification token
+    # "closingCard" in `phone_render_verified_features` (add it after a physical-iPhone
+    # preview + export check) and an app build stamped >= `freeze_frame_min_client_protocol`;
+    # see `app.services.phone_rollout.phone_talking_closing_card_planned_for`. False:
+    # byte-identical to today. Rollback: `fly secrets set
+    # PHONE_TALKING_CLOSING_CARD_ENABLED=false --app nova-video` + restart api + worker.
+    phone_talking_closing_card_enabled: bool = False
     # KRI-707 (text on a spoken word on phone Talking edits): a brief text ask with
     # its spoken cue ("big 'ATAKAN' when I say 'Atakan'": literal + `facts.triggers`)
     # renders as an editable text row from the moment the take says the word, off the
@@ -1381,12 +1426,27 @@ class Settings(BaseSettings):
     # ask), and the "<pace> pacing" chip is left off a card whose route ignores pacing. Default
     # TRUE; false + restart (api + worker) = byte-identical to before.
     kria_headsup_asked_only_enabled: bool = True
+    # KRI-1346/1347 (yorum3): every hold / draft / review line comes from one capability
+    # answer: the card's treatments line leaves out a treatment the route's writer applies
+    # (`phone_subtitled_overlays_supported` on phone Talking), a "have a look" ask the plan
+    # already shortened becomes one Partly line, and `app.kria.reply_consistency` drops a
+    # heads-up line a Done/Will-do line contradicts; `contradictions` also flags a "can't" that
+    # names another capability (the closing card's own answer is
+    # `brief_checks._check_closing_card`, KRI-1346 / #2256). Default FALSE; false + restart (api +
+    # worker) = byte-identical replies. Guard: `tests/kria/test_reply_consistency.py`.
+    kria_honest_reply_lines_enabled: bool = False
 
     # Green 5 (2026-11-04): a chat nothing has told its language yet (a "Suggest an edit." tap,
     # media only, "ok") takes the language of the creator's latest message typed in another of
     # their chats before the device language (`reply_language.creator_typed_language`). Default
     # TRUE; false + restart (api) = byte-identical (device language, KRI-784).
     kria_reply_language_history_enabled: bool = True
+    # KRI-1363: the chat language follows only the words the creator says to Kria. Quoted
+    # text and a typed answer to a wording question are text for the video and never move
+    # the chat to the video's language; an established chat moves only on a message with no
+    # word of its language. Default TRUE; false + restart (api) = the previous detector,
+    # byte-identical.
+    kria_reply_language_own_words_enabled: bool = True
     # KRI-1097 wave 2 (prompt fidelity on every route). ROUTE_REGISTRY_ENABLED: each render
     # route reads its own capability table (`app.kria.route_capabilities`), so voiceover,
     # Talking, Narrated, creator-song, spoken-excerpt and slide drafts get their own honest
@@ -1907,6 +1967,13 @@ class Settings(BaseSettings):
     # that word lowercase mid-sentence. Both default TRUE; false + worker restart = byte-identical.
     caption_request_names_enabled: bool = True
     caption_case_reference_enabled: bool = True
+    # KRI-1345, phone Talking + Narrated captions. CAPTION_NAME_VOCABULARY_ENABLED: the job's own
+    # names respell a mishearing even when the 5+ letter request-name rule above cannot: 4-letter
+    # names the creator typed ("Vela" heard "Vila") and names read off the job's media (photo
+    # text, photo brand labels, file names), each only where the take itself writes the heard
+    # word as a name (`app.pipeline.caption_names`). Narrated also gets the request names above.
+    # Default FALSE; false = byte-identical. Apply: fly secret + restart api+worker.
+    caption_name_vocabulary_enabled: bool = False
 
     # Self-narration for narrated walkthroughs: a NARRATED_EDIT_FORMATS item with NO
     # recorded voiceover may still generate when its footage carries the voice — the
@@ -1954,15 +2021,17 @@ class Settings(BaseSettings):
 
     speech_cleanup_slate_cut_enabled: bool = Field(
         default=False,
-        description="Speech cleanup also cuts a production slate that opens a take: the first "
-        'utterance, when it is only recording / rolling / countdown / mic-check talk ("okay, '
-        'we\'re recording", "tamam, kayıttayız", "three two one"), ends with a full stop, a '
-        "gap or a silence, lasts under 3 s and leaves at least 3 words "
-        "(`app/pipeline/speech_slate.py`; Çiğdem S2, docs/reviews/cigdem-s2-failure-modes.md). "
-        "It is cut like an abandoned take, so it also needs RETAKE_CUT_ENABLED and "
-        "SPEECH_CLEANUP_RETAKES_ENABLED. Default off: no span is added and every plan and "
-        "receipt is byte-identical to before. Kill switch: `fly secrets set "
-        "SPEECH_CLEANUP_SLATE_CUT_ENABLED=false --app nova-video` + api and worker restart.",
+        description="Speech cleanup also cuts off-script pre-roll that opens a take: the first "
+        'utterances, when every word in them is talk about the recording itself ("okay, '
+        'starting", "we\'re recording", "three two one", "testing, one two", "tamam, '
+        'kayıttayız", "başlıyorum"; cue words such as "is this on?" or "let\'s go" only before '
+        "a clear pause). A word with no production role keeps the utterance, so a real first "
+        "sentence is never cut (`app/pipeline/speech_slate.py`; KRI-1326, KRI-1348, "
+        "docs/reviews/kri-1348-preroll-failure-modes.md). It is cut like an abandoned take, so "
+        "it also needs RETAKE_CUT_ENABLED and SPEECH_CLEANUP_RETAKES_ENABLED. Default off: no "
+        "span is added and every plan and receipt is byte-identical to before. Kill switch: "
+        "`fly secrets set SPEECH_CLEANUP_SLATE_CUT_ENABLED=false --app nova-video` + api and "
+        "worker restart (the worker also runs preflight analysis).",
     )
 
     speech_cleanup_long_pauses_enabled: bool = Field(
@@ -2891,6 +2960,15 @@ class Settings(BaseSettings):
     # captions are white with a black outline. Edits without a background are unchanged. Default
     # TRUE; false + worker restart = byte-identical (`phone_text_styling._background_frames`).
     caption_background_contrast_enabled: bool = True
+    # KRI-1343 / KRI-1344 (2026-11-09): captions stay readable on any background. The worst
+    # contrast under the caption (take frames, full-screen photos/videos, B-roll) below 4.5:1 adds
+    # an outline sized to the text in the readable ink, even when the creator chose the colour
+    # (unless they set the outline / shadow themselves); while a full-screen picture is up a line
+    # moves to its nearest calm band, or hides there when the picture is text-dense. Default
+    # FALSE; false = byte-identical (`pipeline/caption_legibility.py`,
+    # `phone_text_styling.caption_legibility_pass`). Apply: fly secret
+    # `CAPTION_LEGIBILITY_ENABLED=true` (api + worker) + restart.
+    caption_legibility_enabled: bool = False
     # Qendresa case 1 (2026-11-06): on a speaker-background edit with the speaker in a corner
     # frame, caption and text placement dodge her face where the phone DRAWS it (the take scaled
     # into the frame), not where it sits in the full-frame take; inside a full-screen window

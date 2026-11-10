@@ -260,6 +260,8 @@ def scheduler_will_redo(row: Any, item: Any, source: Any) -> bool:
     payload = row.analysis_payload
     if not isinstance(payload, dict):
         return False
+    if payload.get("schema_version") == 2:
+        return False  # KRI-720: several takes are never redone for language (see preflight)
     diagnostics = payload.get("diagnostics")
     if isinstance(diagnostics, dict) and "language_crosscheck" in diagnostics:
         return False

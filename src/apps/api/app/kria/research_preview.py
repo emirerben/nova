@@ -352,7 +352,9 @@ def prepare(inputs: ResearchInputs, *, visuals: Any, ctx: Any = None) -> Prepare
     from app.services.creation_text_composition import (  # noqa: PLC0415
         _lanes,
         creation_model_snapshot,
+        research_needs_text_layers,
         snapshot_copy_constraints,
+        uncovered_layer_asks,
     )
     from app.services.phone_montage_preflight import (  # noqa: PLC0415
         MontagePreflightSkip,
@@ -360,8 +362,10 @@ def prepare(inputs: ResearchInputs, *, visuals: Any, ctx: Any = None) -> Prepare
     )
     from app.services.researched_text import (  # noqa: PLC0415
         ResearchUnavailable,
+        prepared_layers,
         prepared_research_texts,
         run_researched_revision,
+        write_research_layers,
     )
 
     requirement, request = inputs.found
@@ -409,6 +413,44 @@ def prepare(inputs: ResearchInputs, *, visuals: Any, ctx: Any = None) -> Prepare
         constraints=snapshot_copy_constraints(snapshot, execution),
         text_requirements=inputs.brief.live(),
     )
+    if research_needs_text_layers(inputs.brief.live()):
+        # Words shown a piece at a time or a translated layer: footage explanations cannot be
+        # either, so the creator approves the reviewed text layers the render will shape.
+        try:
+            written, evidence = write_research_layers(
+                request, utterance=inputs.creator_request, snapshot=model_snapshot, ctx=ctx
+            )
+        except ResearchUnavailable as exc:
+            return _failed(request, requirement.id, basis, str(exc))
+        except AgentError as exc:
+            if _schema_failure(exc) is not None:
+                return _failed(
+                    request,
+                    requirement.id,
+                    basis,
+                    "The source search returned no usable cited facts from institutional sources.",
+                )
+            raise ResearchNotFinished(str(exc)) from exc
+        uncovered = uncovered_layer_asks(written.layers, inputs.brief.live())
+        if written.unmet_requests or uncovered:
+            return _failed(
+                request,
+                requirement.id,
+                basis,
+                "; ".join(
+                    [*written.unmet_requests, *(f"No sourced text for {u}" for u in uncovered)]
+                ),
+            )
+        return PreparedResearch(
+            status="ready",
+            requirement_id=requirement.id,
+            topic=request.topic,
+            request_quote=request.request_quote,
+            basis_digest=basis,
+            layers=prepared_layers(written.layers, evidence, slots),
+            retrieved_at=evidence.retrieved_at,
+            search_entry_html=evidence.search_entry_html,
+        )
     try:
         output = run_researched_revision(
             request,
@@ -607,6 +649,12 @@ def preview_lines(prepared: PreparedResearch) -> str:
             + say(en="Source", tr="Kaynak")
             + f": {sources}"
         )
+    for layer in prepared.layers:
+        sources = ", ".join(dict.fromkeys(_source_label(source) for source in layer.sources))
+        lines.append(
+            f"- {_clock(layer.start_s)}–{_clock(layer.end_s)} · {layer.position} · "
+            f"{layer.language} · “{layer.text}” · " + say(en="Source", tr="Kaynak") + f": {sources}"
+        )
     if prepared.limitations:
         lines.append(say(en="Note: ", tr="Not: ") + prepared.limitations)
     return "\n".join(lines)
@@ -624,7 +672,7 @@ def preview_payload(prepared: PreparedResearch) -> dict[str, Any]:
                 "end_s": row.end_s,
                 "sources": [source.model_dump(mode="json") for source in row.sources],
             }
-            for row in prepared.texts
+            for row in [*prepared.texts, *prepared.layers]
         ],
     }
 
@@ -993,6 +1041,7 @@ def with_research(
         turn_id=str(turn_id),
         status=prepared.status,
         explanations=len(prepared.texts),
+        layers=len(prepared.layers),
     )
     return replace(
         planned,

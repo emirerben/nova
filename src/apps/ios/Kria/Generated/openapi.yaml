@@ -846,7 +846,8 @@
           },
           "literal": {
             "default": null,
-            "maxLength": 200,
+            "description": "Exact creator words: at most 200 characters, or 280 for kind text_sequence.",
+            "maxLength": 280,
             "nullable": true,
             "title": "Literal",
             "type": "string"
@@ -3525,6 +3526,7 @@
                 "speakerFrameWindows",
                 "backgroundFocus",
                 "splitScreen",
+                "splitCollapse",
                 "clipTilt",
                 "clipBackdropMedia",
                 "scriptFonts",
@@ -3673,6 +3675,7 @@
                 "speakerFrameWindows",
                 "backgroundFocus",
                 "splitScreen",
+                "splitCollapse",
                 "clipTilt",
                 "clipBackdropMedia",
                 "scriptFonts",
@@ -10497,6 +10500,11 @@
             "title": "Background Color",
             "type": "string"
           },
+          "collapse_empty_panels": {
+            "default": false,
+            "title": "Collapse Empty Panels",
+            "type": "boolean"
+          },
           "end": {
             "exclusiveMinimum": true,
             "maximum": 1800,
@@ -13027,6 +13035,11 @@
             "pattern": "^#[0-9a-fA-F]{6}$",
             "title": "Background Color",
             "type": "string"
+          },
+          "collapse_empty_panels": {
+            "default": false,
+            "title": "Collapse Empty Panels",
+            "type": "boolean"
           },
           "duration_s": {
             "maximum": 1800,

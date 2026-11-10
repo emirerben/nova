@@ -71,8 +71,13 @@ GENERATED_CARD_CONSENT_PROTOCOL = 45
 # KRI-1231: the first build that decodes and edits split-screen sections. TestFlight 1926 is 45.
 SPLIT_SCREEN_PROTOCOL = 46
 
-# KRI-1350: the first build that decodes and draws `color_moments` / `end_fade` (48: 47 is
-# claimed by the open KRI-720 speaker-removed change).
+# KRI-1335: the first build that decodes `collapse_empty_panels` on a split section (the
+# `splitCollapse` capability): ended panels give their height to the panels still playing. An
+# older build would draw the fixed layout and drop the field on its next Save.
+SPLIT_COLLAPSE_PROTOCOL = 47
+
+# KRI-1350: the first build that decodes and draws `color_moments` / `end_fade` (48: after
+# KRI-1335's split collapse at 47).
 COLOR_MOMENTS_PROTOCOL = 48
 
 

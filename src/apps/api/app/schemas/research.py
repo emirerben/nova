@@ -100,6 +100,34 @@ class PreparedResearchText(BaseModel):
     facts: list[ResearchFact] = Field(min_length=1, max_length=5)
 
 
+class ReviewedClip(BaseModel):
+    """One clip under a reviewed layer: which footage, and exactly which cut of it, was pictured."""
+
+    model_config = ConfigDict(extra="forbid")
+    media_id: str = Field(min_length=1, max_length=300)
+    source_start_s: float | None = None
+    source_end_s: float | None = None
+    output_start_s: float
+    output_end_s: float
+
+
+class PreparedResearchLayer(BaseModel):
+    """One reviewed text layer the creator saw before approving: words shown a piece at a time,
+    or a translation shown with them. Replayed at render without search or rewrite."""
+
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=180)
+    language: str = Field(min_length=2, max_length=16)
+    position: Literal["top", "middle", "bottom"]
+    start_s: float = Field(ge=0)
+    end_s: float = Field(gt=0)
+    translation_of: int | None = Field(default=None, ge=0)
+    # The footage cuts under the reviewed window; a render whose cuts differ cannot replay it.
+    clips: list[ReviewedClip] = Field(min_length=1, max_length=50)
+    sources: list[ResearchSource] = Field(min_length=1, max_length=16)
+    facts: list[ResearchFact] = Field(min_length=1, max_length=5)
+
+
 class PreparedResearch(BaseModel):
     """Research done before approval and pinned to it (KRI-881).
 
@@ -122,3 +150,8 @@ class PreparedResearch(BaseModel):
     search_entry_html: str = Field(default="", max_length=100000)
     limitations: str = Field(default="", max_length=1000)
     reason: str = Field(default="", max_length=500)
+    # Reviewed text layers (instead of footage explanations) for a word-sequence or translated
+    # ask. Empty is omitted, so every earlier approved binding keeps its digest.
+    layers: list[PreparedResearchLayer] = Field(
+        default_factory=list, max_length=6, exclude_if=lambda value: not value
+    )

@@ -254,6 +254,8 @@ public struct EditRecipe: Codable, Equatable, Sendable {
     public var effectiveCapabilities: Set<MediaCapability> {
         var result = requiredCapabilities
         if speakerBackground?.subjectClipIDs != nil || !splitScreenSections.isEmpty || tracks.flatMap(\.clips).contains(where: { $0.splitScreen != nil || $0.speakerFrameOverride != nil }) { result.insert(.splitScreen) }
+        // Protocol 47: a build without collapse would keep every panel at its fixed rect.
+        if splitScreenSections.contains(where: \.collapseEmptyPanels) { result.insert(.splitCollapse) }
         let clips = tracks.flatMap(\.clips)
         if !clips.isEmpty { result.formUnion([.basicComposition, .local1080Export]) }
         if !textLayers.isEmpty { result.insert(.positionedText) }
@@ -589,7 +591,7 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          captions, customEffects, mediaCards, carouselEffects, motionPresets, narrationAudio,
          soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, processedAudio, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, singleWordText, freezeFrame,
          behindSubject, speakerBackground, clipTilt, clipBackdropMedia,
-         speakerBackgroundWindows, speakerBackgroundColor, scriptFonts, speakerFrameWindows, backgroundFocus, splitScreen,
+         speakerBackgroundWindows, speakerBackgroundColor, scriptFonts, speakerFrameWindows, backgroundFocus, splitScreen, splitCollapse,
          colorMoments
 }
 

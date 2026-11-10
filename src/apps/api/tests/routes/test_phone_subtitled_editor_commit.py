@@ -729,6 +729,82 @@ def test_talking_head_caption_save_keeps_speaker_and_cutaways(monkeypatch):
     assert new.recipe.duration == pytest.approx(20.0)
 
 
+# --- KRI-720: a Save keeps every take's own cleanup cut ------------------------------
+
+
+def _several_take_job(monkeypatch, *, second_keep):
+    """A phone Talking variant pinned as the worker pins a several-take edit whose takes were
+    each cleaned up: the first take's cut via ``keep_segments``, the second's via
+    ``additional_speaker_keep_segments`` (``None`` = left uncut)."""
+    _enable_subtitled_editor(monkeypatch)
+    monkeypatch.setattr(gj.settings, "phone_sfx_speech_duck_enabled", False)
+    monkeypatch.setattr(
+        gj.settings, "phone_render_verified_features", [*_VERIFIED_FEATURES, "clipTilt"]
+    )
+    first = _binding("take1", duration_s=10.0)
+    second = _binding("take2", duration_s=8.0)
+    recipe = compile_phone_subtitled_plan(
+        (first,),
+        caption_cues=_CUES,
+        keep_segments=[(0.0, 4.0), (5.0, 10.0)],
+        additional_speakers=(second,),
+        **(
+            {"additional_speaker_keep_segments": {"take2": second_keep}}
+            if second_keep is not None
+            else {}
+        ),
+        clip_tilts={"speaker-1": {"rotation_deg": 12.0, "backdrop": {"kind": "blur"}}},
+    )
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        status="awaiting_device",
+        current_phase=None,
+        assembly_plan={
+            # Upload order, not play order.
+            PHONE_SOURCES_FIELD: [b.model_dump(mode="json") for b in (second, first)],
+            "variants": [
+                {
+                    "variant_id": "subtitled",
+                    "resolved_archetype": "subtitled",
+                    "render_destination": "device",
+                    "render_status": "awaiting_device",
+                    "render_generation_id": "first",
+                    "duration_s": recipe.duration,
+                    "caption_cues": _CUES,
+                    "voiceover_caption_style": "sentence",
+                    "phone_talking_multi_clip": True,
+                }
+            ],
+        },
+    )
+    pin_device_request(
+        job,
+        make_device_request(job_id=job.id, variant_id="subtitled", revision=1, recipe=recipe),
+        base_generation="first",
+    )
+    return job, recipe
+
+
+@pytest.mark.parametrize("second_keep", [[(0.5, 3.0), (4.0, 8.0)], None])
+def test_a_save_keeps_every_takes_cleanup_cut_and_tilt(monkeypatch, second_keep):
+    job, old = _several_take_job(monkeypatch, second_keep=second_keep)
+    save(job, sound_effects=[])
+
+    new = device_status(job, "subtitled").request
+    assert new.identity.recipe_revision == 2
+    old_main = next(t for t in old.tracks if t.id == "subtitled")
+    new_main = next(t for t in new.recipe.tracks if t.id == "subtitled")
+    # Same pieces, same source windows, same places, same tilt: nothing re-uncut, no drift.
+    assert new_main.model_dump_json() == old_main.model_dump_json()
+    assert new.recipe.duration == pytest.approx(old.duration)
+    pieces = [c for c in new_main.clips if c.source_asset_id == "take2"]
+    assert [c.id for c in pieces] == (
+        ["speaker-1", "speaker-1-1"] if second_keep else ["speaker-1"]
+    )
+    assert {c.transform.rotation_degrees for c in pieces} == {12.0}
+
+
 # --- KRI-306: the creator's bars/crop choice in the editor -------------------------------
 
 

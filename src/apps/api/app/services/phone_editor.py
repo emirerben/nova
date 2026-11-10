@@ -64,6 +64,7 @@ from app.pipeline.phone_subtitled_lanes import (
 )
 from app.pipeline.phone_subtitled_plan import (
     SFX_DUCK_RECEIPT_FIELD,
+    additional_speaker_keep_segments_from_recipe,
     additional_speakers_from_recipe,
     compile_phone_subtitled_plan,
     cutaways_from_recipe,
@@ -824,20 +825,34 @@ def prepare_phone_editor_commit(
         None,
     )
     require_phone_voiceover_source_audio_client(before_variant)
-    from app.services.phone_rollout import split_screen_client_supported
+    from app.services.client_protocol import SPLIT_COLLAPSE_PROTOCOL
+    from app.services.phone_rollout import (
+        split_collapse_client_supported,
+        split_screen_client_supported,
+    )
 
-    if not split_screen_client_supported():
+    if not split_screen_client_supported() or not split_collapse_client_supported():
         try:
             split_recipe = device_status(job, variant_id).request.recipe
         except KeyError:
             split_recipe = None
-        if split_recipe is not None and "splitScreen" in split_recipe.required_capabilities:
+        capabilities = split_recipe.required_capabilities if split_recipe is not None else set()
+        if "splitScreen" in capabilities and not split_screen_client_supported():
             raise HTTPException(
                 426,
                 detail={
                     "code": "client_update_required",
                     "feature": "split_screen",
                     "minimum_client_protocol": 42,
+                },
+            )
+        if "splitCollapse" in capabilities and not split_collapse_client_supported():
+            raise HTTPException(
+                426,
+                detail={
+                    "code": "client_update_required",
+                    "feature": "split_collapse",
+                    "minimum_client_protocol": SPLIT_COLLAPSE_PROTOCOL,
                 },
             )
     staged = _StagedJob(job)
@@ -1601,6 +1616,8 @@ def _compile_subtitled_editor_commit(
     speaker = bindings[0]
     cutaways: tuple = ()
     additional_speakers: tuple = ()
+    # KRI-720: each extra take's own cleanup cut, so a Save never plays a cut take uncut again.
+    additional_speaker_keep: dict = {}
     inserts: tuple = ()
     if isinstance(previous.recipe, EditRecipeV2):
         speaker = speaker_binding_from_recipe(previous.recipe, bindings)
@@ -1608,6 +1625,10 @@ def _compile_subtitled_editor_commit(
         if not phone_talking_cutaway_sound_supported():
             cutaways = tuple(c.model_copy(update={"sound": False}) for c in cutaways)
         additional_speakers = additional_speakers_from_recipe(previous.recipe, bindings)
+        if additional_speakers:
+            additional_speaker_keep = additional_speaker_keep_segments_from_recipe(
+                previous.recipe, bindings
+            )
         # Parent KRI-1151: a clip the take was paused for comes back where it was, whatever the
         # insert flag says now; the rows below are already on the final timeline.
         inserts = inserts_from_recipe(previous.recipe, bindings)
@@ -1644,6 +1665,8 @@ def _compile_subtitled_editor_commit(
         editor_speaker_framing,
         landscape_canvas_framing,
     )
+    from app.pipeline.phone_talking_closing_card import closing_card_from_recipe  # noqa: PLC0415
+    from app.services.phone_rollout import phone_talking_closing_card_available  # noqa: PLC0415
 
     if landscape_canvas:
         # No face-fill on a wide canvas: the receipt says so (`landscape_canvas`) but keeps its
@@ -1667,6 +1690,11 @@ def _compile_subtitled_editor_commit(
         caption_look=caption_look,
         cutaways=cutaways,
         additional_speakers=additional_speakers,
+        **(
+            {"additional_speaker_keep_segments": additional_speaker_keep}
+            if additional_speaker_keep
+            else {}
+        ),
         **({"inserts": inserts} if inserts else {}),
         landscape_fit=landscape_fit,
         # KRI-467: the staged row's text (already this Save's, when it carries
@@ -1677,6 +1705,15 @@ def _compile_subtitled_editor_commit(
         # Only a landscape canvas names itself: the portrait call stays byte-identical.
         **({"output_orientation": "landscape"} if landscape_canvas else {}),
         **({"clip_tilts": tilts} if (tilts := _previous_clip_tilts(previous.recipe)) else {}),
+        # KRI-1346: the creator's colour card stays at the end on every Save (read back from
+        # the pinned recipe, like the inserts); its words are an ordinary saved text row. With
+        # its switch off the Save drops the card instead of failing the recipe check.
+        **(
+            {"closing_card": card}
+            if phone_talking_closing_card_available()
+            and (card := closing_card_from_recipe(previous.recipe))
+            else {}
+        ),
     )
     recipe = with_drawings(recipe, variant.get("drawings"))
     recipe = with_color_moments(recipe, variant.get("color_moments"))

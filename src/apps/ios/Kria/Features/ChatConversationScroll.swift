@@ -23,7 +23,7 @@ struct ChatConversationScroll<Content: View>: View {
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            LazyVStack(alignment: .leading, spacing: 20) {
+            LazyVStack(alignment: .leading, spacing: ChatConversationSpacing.row) {
                 content()
             }
             .frame(maxWidth: 620, alignment: .leading)
@@ -127,6 +127,13 @@ struct ChatConversationScroll<Content: View>: View {
         transaction.disablesAnimations = true
         withTransaction(transaction) { scrollPosition.scrollTo(edge: .bottom) }
     }
+}
+
+enum ChatConversationSpacing {
+    /// Between two rows of the transcript.
+    static let row: CGFloat = 20
+    /// Between two files of one media strip. Each file is its own row, pulled up to this distance.
+    static let mediaStrip: CGFloat = 8
 }
 
 /// A count kept outside SwiftUI's state on purpose: spending it inside a geometry callback must not redraw the

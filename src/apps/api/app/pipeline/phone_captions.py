@@ -558,10 +558,16 @@ def compile_caption_layers(
     exactly as it always has.
     """
     from app.pipeline.canvas import Canvas as PipelineCanvas
-    from app.services.phone_text_styling import generation_caption_look, remember_caption_bounds
+    from app.services.phone_text_styling import (
+        caption_legibility_pass,
+        generation_caption_look,
+        remember_caption_bounds,
+    )
 
     canvas = PipelineCanvas(width=canvas_width, height=canvas_height)
     look = generation_caption_look(cues, look, canvas=canvas)
+    # KRI-1343/1344: readable on what is behind it; lines clear of a full-screen picture's text.
+    look, cues = caption_legibility_pass(cues, look, canvas=canvas)
     resolved_look = look if look is not None else _DEFAULT_CAPTION_LOOK
     if not resolved_look.captions_enabled:
         return []
@@ -1520,9 +1526,13 @@ def _base_overlay(cue: dict, look: PhoneCaptionLook) -> dict[str, Any]:
 
 def _prepare_cues(cues: list[dict], *, timeline_duration_s: float | None) -> list[dict]:
     """Sort, drop empty/degenerate cues, and clamp overlap (and, optionally,
-    the timeline bound) -- see `compile_caption_layers`'s docstring."""
+    the timeline bound) -- see `compile_caption_layers`'s docstring. A cue's
+    ``hidden_spans`` (KRI-1344) are cut out of its time first
+    (`caption_legibility.visible_cues`); cues without any pass through unchanged."""
+    from app.pipeline.caption_legibility import visible_cues
+
     cleaned: list[dict] = []
-    for cue in cues:
+    for cue in visible_cues(cues):
         text = str(cue.get("text", "")).strip()
         if not text:
             continue

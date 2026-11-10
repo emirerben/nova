@@ -65,7 +65,11 @@ from app.kria.media_sources import OriginalMediaDescriptor
 from app.kria.portable_color_moments import MAX_COLOR_MOMENTS, ColorMoment, EndFade
 from app.kria.portable_speaker_background import SpeakerFrameOverride
 from app.kria.recipes import MediaTransform
-from app.kria.split_screen import SplitScreenSection, layout_split_timeline
+from app.kria.split_screen import (
+    SplitScreenSection,
+    layout_split_timeline,
+    sync_collapsed_section_durations,
+)
 from app.limiter import limiter
 from app.models import (
     AgentRun,
@@ -3593,6 +3597,26 @@ class CaptionCue(BaseModel):
     shadow_enabled: bool | None = Field(None, strict=True)
     # KRI-1007: this line's own animation; absent inherits `caption_animation_phases`.
     animation_phases: TextAnimationPhases | None = None
+    # KRI-1344: parts of this line's time it is not drawn (seconds from the cue's own start,
+    # [start, end] pairs), set by generation where a text-dense full-screen picture is up.
+    # Server-authored and round-tripped untouched (the PATCH replaces the whole cue list, so
+    # anything not listed here would be stripped on the first text edit). Read by
+    # `caption_legibility.visible_cues` (phone compile + cloud burn) and the iPhone editor.
+    hidden_spans: list[list[float]] | None = None
+
+    @field_validator("hidden_spans")
+    @classmethod
+    def _validate_hidden_spans(cls, v: list[list[float]] | None) -> list[list[float]] | None:
+        if v is None:
+            return v
+        from app.pipeline.caption_legibility import MAX_HIDDEN_SPANS  # noqa: PLC0415
+
+        if len(v) > MAX_HIDDEN_SPANS:
+            raise ValueError(f"Too many hidden spans on one caption line (max {MAX_HIDDEN_SPANS}).")
+        for span in v:
+            if len(span) != 2 or not 0 <= span[0] < span[1] <= 1800:
+                raise ValueError("Each hidden span must be a [start, end] pair, 0 <= start < end.")
+        return v
 
     @field_validator("font_family")
     @classmethod
@@ -7718,7 +7742,8 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         **_device_clamped_editor_capabilities(job, variant),
         "drawings": _drawing_capabilities(job, variant),
     }
-    from app.services.phone_rollout import split_screen_supported
+    from app.services.client_protocol import current_client_protocol
+    from app.services.phone_rollout import split_collapse_planned_for, split_screen_supported
 
     if (
         variant.get("render_destination") == "device"
@@ -7726,6 +7751,10 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         and split_screen_supported()
     ):
         capabilities["split_screen"] = True
+        # The sender's stamp, not the request: a worker drafting for a build and the request
+        # re-checking it must offer the same capabilities (KRI-1321).
+        if split_collapse_planned_for(current_client_protocol()):
+            capabilities["split_collapse"] = True
     if (
         variant.get("editor_timeline_mode") == "authored"
         and variant.get("render_destination") == "device"
@@ -8748,6 +8777,18 @@ def _native_timeline_source(
             binding = PhoneSourceBinding.model_validate(matches[0])
         except ValueError:
             return None
+        if binding.pool_source is not None:
+            # KRI-1340: a take adopted from Visuals has no camera-roll binding on any phone;
+            # the editor plays its pinned pool bytes, exactly what the render downloads.
+            from app import storage  # noqa: PLC0415
+
+            try:
+                url = storage.signed_get_url_for_generation(
+                    binding.pool_source.gcs_path, generation=binding.pool_source.generation
+                )
+            except Exception:  # noqa: BLE001 - report an unavailable source, never stale bytes
+                return None
+            return {"media_id": binding.media_id, "source_url": url, "local_required": False}
         return {
             "media_id": binding.media_id,
             "original": binding.original.model_dump(),
@@ -13423,6 +13464,7 @@ def _prepare_editor_commit(
             )
             if split_sections:
                 layout_split_timeline(resolved_slots, split_sections)
+                sync_collapsed_section_durations(resolved_slots, split_sections)
                 updated["user_timeline"]["split_screen_sections"] = split_sections
         if payload.mix is not None:
             if payload.mix.music_level is not None:

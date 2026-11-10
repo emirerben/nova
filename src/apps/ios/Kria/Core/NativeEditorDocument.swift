@@ -50,6 +50,15 @@ enum EditorSection: String, Codable, CaseIterable, Hashable, Sendable {
 }
 
 extension EditorDocument {
+    /// The same slots and removed slots once each is written the way Save writes it. Hydration builds a slot
+    /// with a minimal `raw`, while a merge round trip fills in every wire key, so `==` calls identical slots different.
+    func hasSameTimelineSlots(as other: EditorDocument) -> Bool {
+        func same(_ a: [EditorTimelineSlot], _ b: [EditorTimelineSlot]) -> Bool {
+            a == b || (a.count == b.count && zip(a, b).allSatisfy { encodeSlot($0) == other.encodeSlot($1) })
+        }
+        return same(clips, other.clips) && same(tombstones, other.tombstones)
+    }
+
     /// "9:16" / nil / "portrait" -> "portrait"; "16:9" / "landscape" -> "landscape"; anything else
     /// (e.g. "square") is kept as is.
     static func canonicalOrientation(_ raw: String?) -> String? {

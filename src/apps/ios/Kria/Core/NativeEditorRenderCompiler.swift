@@ -314,6 +314,8 @@ enum NativeEditorRenderError: Error, Equatable {
             // Guided stories apply their authored fit before adding a final-frame hold
             // (`phone_guided_plan`); other formats retain `_fit_eligible` behavior.
             var footageCanvas = canvas
+            // Fit uses the full layout's panel height. A collapse section grows the panel later, so a sideways clip's
+            // bars there are approximate (the compositor still clips to the panel it draws).
             if let sectionID = authoredSlot?.splitSectionID, let panel = authoredSlot?.splitPanelIndex,
                let section = document.splitScreenSections.first(where: { $0.id == sectionID }) {
                 let height = (1 - section.gutter * Double(section.panelCount - 1)) * section.panelWeights[panel] / section.panelWeights.reduce(0, +)
@@ -824,8 +826,22 @@ enum NativeEditorRenderError: Error, Equatable {
                 }
                 if item.start >= total { continue }
                 guard item.end > item.start else { throw RecipeError.invalidTimeline }
-                let cueEnd = min(item.end, clampedCueEnd[cue.id] ?? item.end)
-                if cueEnd <= item.start { continue }
+                let fullCueEnd = min(item.end, clampedCueEnd[cue.id] ?? item.end)
+                if fullCueEnd <= item.start { continue }
+                // KRI-1344: `hidden_spans` (seconds from the cue's own start) are the parts of the line's time it
+                // is not drawn: generation hides a line over a text-dense full-screen picture, and the editor keeps
+                // it hidden there. One layer per visible part; a line without spans is one part, exactly as before.
+                let captionSpans = Self.visibleCaptionSpans(cue.raw["hidden_spans"], cueStart: cue.startS,
+                                                            cueEnd: cue.endS, start: item.start, end: fullCueEnd)
+                let spanCut = captionSpans.count != 1 || captionSpans.first.map { $0.0 != item.start || $0.1 != fullCueEnd } ?? true
+                let cueWordFloor = previousWordEnd
+                for (spanIndex, captionSpan) in captionSpans.enumerated() {
+                // Each visible part times its words from the same floor (the previous line's last word); the
+                // part's own start then holds back the words before it.
+                if spanCut { previousWordEnd = cueWordFloor }
+                let spanStart = captionSpan.0
+                let cueEnd = captionSpan.1
+                let layerID = "caption-" + cue.id + (spanIndex == 0 ? "" : "-\(spanIndex)")
                 let phases = Self.captionPhases(cue.raw["animation_phases"]) ?? defaultCaptionPhases
                 // Qendresa item 12: `caption_meta.shape` is the creator's typed caption shape. A box draws each
                 // 1-2-word cue as one static layer on a rounded box; a karaoke layer would paint the box per word.
@@ -850,20 +866,20 @@ enum NativeEditorRenderError: Error, Equatable {
                     let stored = wordValues.compactMap { $0.objectValue }
                     let matches = stored.map { $0["text"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" } == tokens
                     var windows: [(Double, Double)] = []
-                    let scale = (cueEnd - item.start) / max(0.01, cue.endS - cue.startS)
+                    let scale = (fullCueEnd - item.start) / max(0.01, cue.endS - cue.startS)
                     var synthesizedEnd = 0.0
                     for index in tokens.indices {
                         if matches, let begin = stored[index]["start_s"]?.numberValue, let end = stored[index]["end_s"]?.numberValue {
                             windows.append((item.start + (begin - cue.startS) * scale, item.start + (end - cue.startS) * scale))
                         } else {
-                            let next = max(Double(index + 1) * (cueEnd - item.start) / Double(tokens.count), synthesizedEnd + 0.05)
+                            let next = max(Double(index + 1) * (fullCueEnd - item.start) / Double(tokens.count), synthesizedEnd + 0.05)
                             windows.append((item.start + synthesizedEnd, item.start + next))
                             synthesizedEnd = next
                         }
                     }
                     var starts: [Double] = []
                     for index in windows.indices {
-                        let start = max(0, windows[index].0, previousWordEnd)
+                        let start = max(0, spanCut ? spanStart : 0, windows[index].0, previousWordEnd)
                         let next = index + 1 < windows.count ? windows[index + 1].0 : windows[index].1
                         previousWordEnd = max(start + 0.01, next)
                         starts.append(start)
@@ -876,7 +892,7 @@ enum NativeEditorRenderError: Error, Equatable {
                     if wordStyle, let highlighted = explicitHighlight {
                         let layerEnd = min(total, min(cueEnd, previousWordEnd))
                         if layerEnd > first,
-                           let singles = try AuthoredTextLayout.compileSingleWords(id: "caption-" + cue.id, text: cue.text,
+                           let singles = try AuthoredTextLayout.compileSingleWords(id: layerID, text: cue.text,
                                start: first, end: layerEnd, starts: starts.map { $0 - first },
                                highlight: highlighted ? try ink(meta["highlight_color"], fallback: "#C5F82A") : captionStyle.color,
                                style: captionStyle, fontURL: font, canvas: canvas) {
@@ -886,23 +902,24 @@ enum NativeEditorRenderError: Error, Equatable {
                         }
                         if layerEnd <= first { continue }
                     }
-                    text.append(Self.layer(try AuthoredTextLayout.compileHighlightedWords(id: "caption-" + cue.id, text: cue.text,
-                        start: first, end: min(total, explicitHighlight == nil ? previousWordEnd : min(cueEnd, previousWordEnd)), starts: starts.map { $0 - first },
+                    text.append(Self.layer(try AuthoredTextLayout.compileHighlightedWords(id: layerID, text: cue.text,
+                        start: first, end: min(total, spanCut ? cueEnd : .infinity, explicitHighlight == nil ? previousWordEnd : min(cueEnd, previousWordEnd)), starts: starts.map { $0 - first },
                         highlight: explicitHighlight == false ? captionStyle.color : try ink(meta["highlight_color"], fallback: "#C5F82A"),
                         style: dimmedStyle, fontURL: font, canvas: canvas), phases: phases))
                 } else if let phases {
-                    text.append(try AuthoredTextLayout.compile(id: "caption-" + cue.id, text: cue.text,
-                        start: item.start, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas, phases: phases))
+                    text.append(try AuthoredTextLayout.compile(id: layerID, text: cue.text,
+                        start: spanStart, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas, phases: phases))
                 } else {
                     let captionPhases = try appearance["animation_phases"].map {
                         try JSONDecoder().decode(TextAnimationPhases.self, from: JSONEncoder().encode($0))
                     }
-                    let layout = try AuthoredTextLayout.compile(id: "caption-" + cue.id, text: cue.text,
-                        start: item.start, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas, phases: captionPhases)
+                    let layout = try AuthoredTextLayout.compile(id: layerID, text: cue.text,
+                        start: spanStart, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas, phases: captionPhases)
                     if captionPhases != nil { text.append(layout); continue }
                     text.append(PortableTextLayer(id: layout.id, start: layout.start, end: layout.end,
                         anchorX: layout.anchorX, anchorY: layout.anchorY, rotationDegrees: 0, runs: layout.runs,
                         effect: appearance["position_y_frac"] != nil ? .popIn : talkingCaptionFrame ? .captionPop : .none, background: layout.background))
+                }
                 }
             }
         }
@@ -1084,7 +1101,8 @@ enum NativeEditorRenderError: Error, Equatable {
                   let window = splitProjection.clipWindows.first(where: { $0.sourceIndex == index }) else { return nil }
             let start = window.start - document.clips[index].splitOffsetS
             return SplitScreenSection(id: section.id, start: start, end: start + section.durationS,
-                                      panelWeights: section.panelWeights, gutter: section.gutter, backgroundColor: section.backgroundColor)
+                                      panelWeights: section.panelWeights, gutter: section.gutter, backgroundColor: section.backgroundColor,
+                                      collapseEmptyPanels: section.collapseEmptyPanels)
         }
         // KRI-589: drawings follow the timeline the cuts left them (the projected window), then take the
         // same clamp the server's `compile_drawing_layers` applies; both are pinned by compile_v1.json.
@@ -1356,6 +1374,30 @@ enum NativeEditorRenderError: Error, Equatable {
     static let captionBoxPadYEm = 0.18
     static let captionBoxRadiusEm = 0.35
     static let captionDimFactor = 0.65
+
+    /// KRI-1344: the parts of a caption line's timeline window `[start, end]` outside its `hidden_spans`
+    /// (`[[from, to], ...]`, seconds from the cue's own start, mapped onto the window like its words). Parts
+    /// under 0.2 s are dropped, as the server does (`caption_legibility.trim_cue_out_of`); no spans, or none
+    /// readable, is the whole window.
+    static func visibleCaptionSpans(_ value: JSONValue?, cueStart: Double, cueEnd: Double,
+                                    start: Double, end: Double) -> [(Double, Double)] {
+        guard case .array(let rows) = value, !rows.isEmpty else { return [(start, end)] }
+        let scale = (end - start) / max(0.01, cueEnd - cueStart)
+        var parts = [(start, end)]
+        for row in rows.prefix(8) {
+            guard case .array(let pair) = row, pair.count == 2,
+                  let from = pair[0].numberValue, let to = pair[1].numberValue, from.isFinite, to.isFinite, to > from else { continue }
+            let hideStart = start + from * scale, hideEnd = start + to * scale
+            parts = parts.flatMap { part -> [(Double, Double)] in
+                if hideEnd <= part.0 || part.1 <= hideStart { return [part] }
+                var kept: [(Double, Double)] = []
+                if part.0 < hideStart { kept.append((part.0, hideStart)) }
+                if hideEnd < part.1 { kept.append((hideEnd, part.1)) }
+                return kept
+            }
+        }
+        return parts.filter { $0.1 - $0.0 >= 0.2 }
+    }
 
     private static func layer(_ layer: PortableTextLayer, phases: TextAnimationPhases?) -> PortableTextLayer {
         var layer = layer

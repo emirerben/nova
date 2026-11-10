@@ -2281,7 +2281,11 @@ def plan_unified_montage(
     hour_zone, hour_basis = display_timezone(
         [clip.facts for clip in ordered] if view.per_clip_text_is_time else []
     )
-    pending_sequences = list(view.sequence_literals)
+    # A sentence longer than a clip label (an approved paragraph, KRI-1352) is not a clip's label:
+    # the text pass gives it a whole-video bar of its own (`creation_text_composition`).
+    pending_sequences = [
+        sentence for sentence in view.sequence_literals if len(sentence) <= MAX_CREATOR_LABEL_CHARS
+    ]
     for index, clip in enumerate(ordered):
         chosen: tuple[str, str, str | None, bool] | None = None  # text, provenance, kind, inferred
         group_id: str | None = None

@@ -172,20 +172,26 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     "split_screen_layout": _g(
         "agent_ops",
         "setSplitScreenDuration setSplitScreenPanelCount setSplitScreenPanelWeight "
-        "setSplitScreenGutter setSplitScreenBackgroundColor",
+        "setSplitScreenGutter setSplitScreenBackgroundColor beginSplitDividerDrag "
+        "updateSplitDividerDrag endSplitDividerDrag cancelSplitDividerDrag setSplitCollapse",
         ("update_split_screen",),
-        fields=("duration_s", "panel_count", "panel_weights", "gutter", "background_color"),
+        fields=(
+            "duration_s",
+            "panel_count",
+            "panel_weights",
+            "gutter",
+            "background_color",
+            "collapse_empty_panels",
+        ),
     ),
-    "split_screen_panel_order": _g(
-        "agent_ops", "moveSelectedSplitScreenPanel", ("swap_split_panels",)
-    ),
+    "split_screen_panel_order": _g("agent_ops", "swapSplitPanels", ("swap_split_panels",)),
     "split_screen_clip_order": _g("agent_ops", "moveSelectedSplitScreenClip", ("move_split_clip",)),
     "split_screen_section_order": _g(
         "agent_ops", "moveSelectedSplitScreenSection", ("move_split_screen",)
     ),
     "split_screen_clip_offset": _g(
         "agent_ops",
-        "setSelectedSplitScreenOffset",
+        "setSelectedSplitScreenOffset addSplitPanelClip",
         ("assign_split_panel",),
         fields=("offset_s",),
     ),
@@ -320,6 +326,7 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "not_an_edit",
         "load save reconcileOnOpen reconcilePlaybackState needsReload isBehindActiveJob "
         "loadForEditorOpen setObserversVisible "
+        "openOrWarm claimWarm cancelWarm releaseWarmForMemoryPressure "
         "beginPreviewPresentation endPreviewPresentation previewFrameWasShown "
         "retainAdmittedPreview "
         "adoptLatestJob adoptActiveJobFromThread switchToLatestJob keepEditingCurrentJob "
@@ -345,8 +352,9 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     ),
     "playback_and_selection": _g(
         "not_an_edit",
-        "togglePlayback pausePlayback seek select selectClip cycleSelection selectedObject "
-        "inspectorSelection inspectorRoute previewSelectionBounds timelineTime timelineX "
+        "togglePlayback pausePlayback seek select selectClip selectSplitPanel cycleSelection "
+        "selectedObject inspectorSelection inspectorRoute previewSelectionBounds timelineTime "
+        "timelineX "
         "beginTransaction endTransaction beginEditTransaction endEditTransaction "
         "beginDirectManipulation endDirectManipulation transactDocument markDirty isDirty "
         "cancelTimingGesture setTimelinePinching",
