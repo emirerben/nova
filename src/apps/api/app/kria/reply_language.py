@@ -106,19 +106,22 @@ _EN_WORDS = frozenset(
 # English never use, plus everyday edit-chat words, loose-folded ("über" -> "uber",
 # "größer" -> "grosser"). Words English or Turkish also use as plain words are left out.
 _STRONG_DE_LETTERS = frozenset("äßÄẞ")
-_DE_WORDS = frozenset(
-    """
+_DE_WORDS = (
+    frozenset(
+        """
     und ist nicht das der ein eine einen einem mit bitte mach mache macht zeig zeige ich du
     wir mein meine meinen dein deine kein keine ohne auch noch nur hier jetzt dann aber oder
-    wie was wann warum ja nein danke gut schon schoen schon video videos titel untertitel
+    wie wann warum ja nein danke gut schon schoen titel untertitel
     musik lied foto fotos bild bilder anfang ende kurzer laenger kuerzer langer schneller
     langsamer grosser kleiner andern aendern entfernen losche loesche loschen hinzufugen
-    fuge fuege stumm ton stimme bei auf fur fuer von zum zur im den dem des sie es sich
-    wird werden soll sollen kann konnen moechte mochte will lass lasse lassen sonst alles
+    fuge fuege stumm stimme bei auf fur fuer von zum zur den dem sie es sich
+    wird werden soll sollen kann konnen moechte mochte lass lasse lassen sonst alles
     andere anderen wort worter woerter ueber uber nach vor hab habe hinzugefugt hinzufuegen
     gemacht zeigen sag sage gesagt
     """.split()
-)
+    )
+    - _EN_WORDS
+)  # a word English also uses ("will", "was", "video", "im") is not German evidence
 
 _CLIENT_STOCK_MESSAGES = frozenset(
     {
@@ -478,12 +481,13 @@ def _strict_scores(text: str) -> tuple[int, int, int, int]:
 def _strict_detect(text: str) -> str | None:
     if not text or is_client_stock_message(text):
         return None
+    tr, grammar, en, count = _strict_scores(text)
     if german_enabled():
         words = _WORD.findall(unicodedata.normalize("NFC", text))
-        grammar = sum(1 for word in words if loose_text(word) in _DE_WORDS)
-        if words and grammar >= 2 and grammar / len(words) >= 0.2:
+        german = sum(1 for word in words if loose_text(word) in _DE_WORDS)
+        # German must outweigh the English and Turkish evidence, not just be present.
+        if words and german >= 2 and german >= 2 * max(en, tr) and german / len(words) >= 0.2:
             return "de"
-    tr, grammar, en, count = _strict_scores(text)
     if count == 0:
         return None
     if grammar and tr >= 2 * en and tr / count >= 0.2:

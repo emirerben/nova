@@ -289,6 +289,45 @@ def test_detection_reads_german_only_with_the_switch_on(
     assert resolve_reply_language(text, locale="tr-TR") == "de"
 
 
+# Emir's review of 1291454a9: English sentences with words German also uses ("will", "was",
+# "video", "im") read as German by the agents' detector (`creator_text_language`).
+_ENGLISH_WITH_SHARED_WORDS = (
+    "I will make the video shorter",
+    "This video was great",
+    "Im making a video about my trip, keep it short",
+    "Will you add the music to the video?",
+)
+_GERMAN_AGENT_TEXTS = (
+    "Bitte mach das Video kürzer und ohne Musik",
+    "Ich möchte die Fotos schneller wechseln",
+)
+
+
+@pytest.mark.parametrize("text", _ENGLISH_WITH_SHARED_WORDS)
+def test_english_with_shared_words_stays_english_with_the_switch_on(
+    text: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.config import settings
+    from app.kria.reply_language import creator_text_language, detect_chat_language
+
+    monkeypatch.setattr(settings, "kria_german_replies_enabled", True, raising=False)
+    assert creator_text_language(text) != "de"
+    assert detect_chat_language(text) != "de"
+
+
+@pytest.mark.parametrize("text", _GERMAN_AGENT_TEXTS)
+def test_agents_read_german_creator_text_with_the_switch_on(
+    text: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.config import settings
+    from app.kria.reply_language import creator_text_language
+
+    monkeypatch.setattr(settings, "kria_german_replies_enabled", False, raising=False)
+    assert creator_text_language(text) != "de"
+    monkeypatch.setattr(settings, "kria_german_replies_enabled", True, raising=False)
+    assert creator_text_language(text) == "de"
+
+
 def test_detection_off_is_the_pre_switch_result(monkeypatch: pytest.MonkeyPatch) -> None:
     """Switch off, German text decides exactly as the EN/TR-only detector did (pinned values
     from before the switch existed)."""
