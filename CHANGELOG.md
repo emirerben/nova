@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.156.0] - 2026-11-10
+
+### Fixed
+- fix(kria): de1 German voiceover holds, cues and captions (KRI-1353) (#2266) <!-- release-pr: 2266 -->
+
 ## [0.88.155.0] - 2026-11-10
 
 ### Changed
