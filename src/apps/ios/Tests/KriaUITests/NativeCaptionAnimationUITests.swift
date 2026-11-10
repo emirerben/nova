@@ -61,10 +61,21 @@ final class NativeCaptionAnimationUITests: XCTestCase {
 
         app.buttons["In animation Fade"].tap()
         XCTAssertTrue(selected(app.buttons["In animation Fade"]))
+        // Looping card previews keep the app from idling, so every query waits on them: they play only for the two frames.
+        let previews = app.buttons["native-editor-caption-animation-preview-toggle"]
+        scrollTo(app, previews)
+        previews.tap()
         let card = app.buttons["In animation Pop"]
+        for _ in 0..<4 {
+            if card.isHittable { break }
+            app.scrollViews["native-editor-captions-scroll"].swipeDown()
+        }
         shot(app, "\(prefix)-2-card-frame-a", element: card)
         Thread.sleep(forTimeInterval: 0.35)
         shot(app, "\(prefix)-3-card-frame-b", element: card)
+        scrollTo(app, previews)
+        previews.tap()
+        XCTAssertEqual(previews.label, "Play previews")
 
         pickLine(app, row: row)
         // The playhead sits at the picked line's start: two frames of its default fade-in while it plays.
@@ -97,12 +108,14 @@ final class NativeCaptionAnimationUITests: XCTestCase {
     }
 
     func testCueCaptionsAnimateAllThenOneLine() {
-        let app = launch(["-ui-testing-editor-talking-captions", "-ui-testing-editor-caption-animation", "-ui-testing-editor-live-preview"])
+        let app = launch(["-ui-testing-editor-talking-captions", "-ui-testing-editor-caption-animation", "-ui-testing-editor-live-preview"],
+                         environment: ["UI_TEST_REDUCE_MOTION": "1"])
         exerciseScopes(app, row: "native-editor-caption-row-native-caption-1", line: "Line 2", prefix: "cue")
     }
 
     func testLyricCaptionsAnimateAllThenOneLine() {
-        let app = launch(["-ui-testing-editor-song-captions", "-ui-testing-editor-caption-animation", "-ui-testing-editor-live-preview"])
+        let app = launch(["-ui-testing-editor-song-captions", "-ui-testing-editor-caption-animation", "-ui-testing-editor-live-preview"],
+                         environment: ["UI_TEST_REDUCE_MOTION": "1"])
         exerciseScopes(app, row: "native-editor-caption-row-song-caption-1-1", line: "Line 5", prefix: "lyrics")
     }
 
