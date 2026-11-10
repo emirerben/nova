@@ -1439,6 +1439,8 @@ final class NativeEditorInspectorUITests: XCTestCase {
     func testSourcePreviewTextCreationAndAnimations() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-text"]
+        // Looping Animation-tab card previews keep the app from idling, so every query there waits on them.
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
         app.launch()
         let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
         XCTAssertTrue(preview.waitForExistence(timeout: 8))
