@@ -338,11 +338,6 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "discardPlaybackForNewJobForTesting",
         reason="Loading, saving, rendering, importing and test fixtures change no creative lane.",
     ),
-    "editor_warm_open": _g(
-        "not_an_edit",
-        "openOrWarm claimWarm cancelWarm releaseWarmForMemoryPressure",
-        reason="Loading the editor ahead of the tap (#2261) changes no creative lane.",
-    ),
     "background_tool_navigation": _g(
         "not_an_edit",
         "requestBackgroundTool",
