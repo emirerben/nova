@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.153.0] - 2026-11-10
+
+### Changed
+- test(ios): await the queued first Resume in the two-taps restoration test (KRI-1364) (#2270) <!-- release-pr: 2270 -->
+
 ## [0.88.152.0] - 2026-11-10
 
 ### Changed
