@@ -13699,7 +13699,7 @@ def _check_research(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
         return None
     if prepared.status == "failed":
         return research_preview.blocker_receipt(prepared, req)
-    if not prepared.texts:
+    if not prepared.texts and not prepared.layers:
         return None
     return _receipt(req, "met", None, verification="checked", stage="applied")
 

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.147.0] - 2026-11-10
+
+### Changed
+- feat(phone-talking): corner label for the whole video + colour end card (KRI-1342 item 7, KRI-1346) (#2256) <!-- release-pr: 2256 -->
+
+## [0.88.146.0] - 2026-11-10
+
+### Changed
+- fix(kria): preserve researched bilingual text sequences (KRI-1352) (#2264) <!-- release-pr: 2264 -->
+
 ## [0.88.145.0] - 2026-11-10
 
 ### Changed

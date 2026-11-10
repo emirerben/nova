@@ -323,6 +323,29 @@ or spacing is a named miss, a word never said is "doesn't appear". Guards:
 `tests/pipeline/test_caption_spelling.py`, `tests/pipeline/test_kri961_named_phrase_near_match.py`,
 `tests/tasks/test_kri961_narrated_named_phrase.py`.
 
+### The job's own names (phone Talking + Narrated; KRI-1345, `CAPTION_NAME_VOCABULARY_ENABLED`)
+
+The request-name rule above skips names under 5 letters (a short name fuzzy-matched against every
+caption word turns ordinary words into brands), so yorum3's typed "Vela" stayed "Vila" in the
+captions (whisper-1 and Gemini both heard "Vila"). With the flag on, `app/pipeline/caption_names.py`
+runs right after the creator spellings with a per-job vocabulary: the 4-letter names the creator
+typed (same sentence and "don't" rules) and the names the job's media spell -- on-screen text of
+its clips and Visuals-pool assets (the stored understanding record), the brand labels of its
+photos (never of a video: Gemini can list a talking take's mishearing as a brand), the creator's
+asset notes and file names (camera names dropped). A media name that sounds like a typed name is
+dropped. A heard word is respelled only when the take writes it as a name (a capital not at a
+sentence start, in whisper's captions or in Gemini's hearing of the take), it is not next to an
+unknown capitalised word ("Aston Villa"), it sounds like exactly one name (a 4-letter name: one
+vowel different), and it is not a word the creator typed. One decision per job, applied word for
+word: no timing changes, Turkish endings kept. Phone Narrated also gets the typed request names.
+Deterministic and model-free on purpose: the correction model runs before the spellings, is paid
+and non-deterministic. Trace: `captions/name_vocabulary` (names, sources, respelled, changed lines).
+Guard: `tests/pipeline/test_kri1345_caption_names.py` (yorum3's real hearing through
+`_phone_talking_caption_text`). Default `false`; false is byte-identical. Not covered: the cloud
+writers (`_render_subtitled_variant`, `_render_narrated_variant`, retranscribe), the post-render
+`_check_caption_words` and the reaction-beat trigger match (`find_named_phrase`), which keep the
+5-letter rule.
+
 ### Unclear words (phone Talking; KRI-849)
 
 "If you can't tell what he says, ask me instead of guessing." The Main Creator (v76) and the

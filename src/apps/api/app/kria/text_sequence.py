@@ -43,9 +43,6 @@ MODE_FACT = "mode"
 TextSequenceUnit = Literal["word", "phrase"]
 TextSequenceMode = Literal["replace", "cumulative", "agent_choice"]
 
-# The brief literal is capped at 200 characters; a longer quote cannot be stored verbatim, so
-# it is left to the model's own filing rather than cut.
-_MAX_LITERAL = 200
 _FILED_AS = frozenset({"style", "text"})
 _CAPTION_FACTS = ("captions", "caption_language")
 
@@ -100,12 +97,21 @@ def text_sequence_mode(req: object) -> TextSequenceMode:
     return value if value in {"replace", "cumulative"} else "agent_choice"  # type: ignore[return-value]
 
 
+def _fits_literal(text: str) -> bool:
+    """A sequence literal the brief can store verbatim; a longer quote is never cut."""
+    from app.kria.brief import MAX_SEQUENCE_LITERAL_CHARS  # noqa: PLC0415
+
+    return len(text) <= MAX_SEQUENCE_LITERAL_CHARS
+
+
 def _quoted_literal(message: str) -> str | None:
     """The longest quoted run of at least ``MIN_QUOTE_TOKENS`` words in ``message``."""
+    from app.kria.brief import MAX_SEQUENCE_LITERAL_CHARS  # noqa: PLC0415
+
     runs = [
         _nfc(run)
-        for run in quoted_texts(message)
-        if len(_words(run)) >= MIN_QUOTE_TOKENS and len(_nfc(run)) <= _MAX_LITERAL
+        for run in quoted_texts(message, max_chars=MAX_SEQUENCE_LITERAL_CHARS)
+        if len(_words(run)) >= MIN_QUOTE_TOKENS and _fits_literal(_nfc(run))
     ]
     return max(runs, key=lambda run: len(_words(run))) if runs else None
 
@@ -145,10 +151,10 @@ def refile_text_sequence(
     with the model's own ``captions: word_by_word`` fact; the creator did not name captions
     and the item has no recorded voiceover (``has_voiceover``); the message does not talk about
     words said in the footage (`names_footage_speech`: "when I say", "dediğim yerde"); and the
-    words themselves are known, either quoted in the message (at least two words, 200 characters
-    at most) or ``known_literal`` from earlier in the thread. ``unit`` is ``word`` and ``mode`` is
-    ``agent_choice``: the editor agent reads the wording for the rest. Anything else is returned
-    exactly as the model wrote it.
+    words themselves are known, either quoted in the message (at least two words, at most the
+    brief's sequence literal length) or ``known_literal`` from earlier in the thread. ``unit``
+    is ``word`` and ``mode`` is ``agent_choice``: the editor agent reads the wording for the rest.
+    Anything else is returned exactly as the model wrote it.
     """
     if update.operation == "remove" or update.kind not in _FILED_AS:
         return update
@@ -161,7 +167,7 @@ def refile_text_sequence(
     ):
         return update
     literal = _quoted_literal(creator_message) or (
-        _nfc(known_literal) if known_literal and len(_nfc(known_literal)) <= _MAX_LITERAL else None
+        _nfc(known_literal) if known_literal and _fits_literal(_nfc(known_literal)) else None
     )
     if not literal:
         return update

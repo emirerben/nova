@@ -48,6 +48,7 @@ everything else", the creator's sentence with its quoted line cut out:
 from __future__ import annotations
 
 import asyncio
+import functools
 import re
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
@@ -61,16 +62,25 @@ from app.schemas.clip_intents import ResolvedClipIntent
 
 log = structlog.get_logger()
 
-# A quoted run of words: straight or curly double quotes, guillemets, curly singles, or
-# straight singles that are not an apostrophe ("I'll", "Tigre'de" stay inside the quote).
-_QUOTED_RE = re.compile(
-    r"\"([^\"\n]{2,200})\""
-    r"|“([^”\n]{2,200})”"
-    r"|„([^“”\n]{2,200})[“”]"
-    r"|«([^»\n]{2,200})»"
-    r"|‘([^’\n]{2,200})’"
-    r"|(?<![\w'])'((?:[^'\n]|'(?=[^\W\d_]))+?)'(?!\w)"
-)
+QUOTE_MAX_CHARS = 200
+
+
+@functools.cache
+def _quoted_re(max_chars: int) -> re.Pattern[str]:
+    """A quoted run of words: straight or curly double quotes, guillemets, curly singles, or
+    straight singles that are not an apostrophe ("I'll", "Tigre'de" stay inside the quote)."""
+    run = "{2," + str(max_chars) + "}"
+    return re.compile(
+        rf"\"([^\"\n]{run})\""
+        rf"|“([^”\n]{run})”"
+        rf"|„([^“”\n]{run})[“”]"
+        rf"|«([^»\n]{run})»"
+        rf"|‘([^’\n]{run})’"
+        r"|(?<![\w'])'((?:[^'\n]|'(?=[^\W\d_]))+?)'(?!\w)"
+    )
+
+
+_QUOTED_RE = _quoted_re(QUOTE_MAX_CHARS)
 MIN_QUOTE_TOKENS = 2
 # The quote is something said, not a sign or a caption: "the moment I say '...'",
 # "where Deniz says '...'", "'...' dediğim an". Folded words, and Turkish stems.
@@ -161,12 +171,13 @@ def quoted_phrases(text: str | None) -> list[str]:
     return out
 
 
-def quoted_texts(text: str | None) -> list[str]:
+def quoted_texts(text: str | None, *, max_chars: int = QUOTE_MAX_CHARS) -> list[str]:
     """Every quoted run in ``text`` as written: no word-count floor and no word folding, so
-    it never imports the grounding stack (the Main Creator output parser uses it)."""
+    it never imports the grounding stack (the Main Creator output parser uses it).
+    ``max_chars`` bounds a delimited quote; only words shown a piece at a time ask for more."""
     return [
         next(group for group in match.groups() if group is not None).strip()
-        for match in _QUOTED_RE.finditer(str(text or ""))
+        for match in _quoted_re(max_chars).finditer(str(text or ""))
     ]
 
 

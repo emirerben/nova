@@ -1942,6 +1942,13 @@ class Settings(BaseSettings):
     # that word lowercase mid-sentence. Both default TRUE; false + worker restart = byte-identical.
     caption_request_names_enabled: bool = True
     caption_case_reference_enabled: bool = True
+    # KRI-1345, phone Talking + Narrated captions. CAPTION_NAME_VOCABULARY_ENABLED: the job's own
+    # names respell a mishearing even when the 5+ letter request-name rule above cannot: 4-letter
+    # names the creator typed ("Vela" heard "Vila") and names read off the job's media (photo
+    # text, photo brand labels, file names), each only where the take itself writes the heard
+    # word as a name (`app.pipeline.caption_names`). Narrated also gets the request names above.
+    # Default FALSE; false = byte-identical. Apply: fly secret + restart api+worker.
+    caption_name_vocabulary_enabled: bool = False
 
     # Self-narration for narrated walkthroughs: a NARRATED_EDIT_FORMATS item with NO
     # recorded voiceover may still generate when its footage carries the voice — the
