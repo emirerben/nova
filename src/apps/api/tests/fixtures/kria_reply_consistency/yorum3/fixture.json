@@ -1,0 +1,523 @@
+{
+ "fixture_id": "yorum3",
+ "route": "talking_head",
+ "schema_version": 1,
+ "source": {
+  "kind": "recorded",
+  "what": "Prod Kria thread, approved draft and its render (origin/main 4f6ed3014).",
+  "captured": "2026-11-01 via read-only admin GETs (saved copies, no network now)",
+  "recorded": [
+   "creator messages up to the approved draft (thread events)",
+   "the planner's post-parse strategy and summary (turns plan intents[].arguments)",
+   "the Creative Brief bound to the job (assembly_plan.creator_brief_binding)",
+   "clip analyses, durations, audio (media_snapshot.clip_assignments)",
+   "the draft card prod showed and what the render did (prod_outcome)"
+  ],
+  "reconstructed": [
+   "the approval card is assembled offline from the real pure functions the draft turn calls (scripts/kria/score_route.py approval_card); the DB-bound turn body is not run",
+   "phone source bindings: synthetic proxy paths (score_route.media_rows)",
+   "capability manifest (score_route.manifest)",
+   "prod_outcome.render.phone_lane_receipt / phone_beat_receipt (beat ids, times, display mode, trigger words) and the hold / review reply texts were added from the same capture (KRI-1346/1347); visual ids and labels dropped."
+  ],
+  "redacted": [
+   "user, thread, item, job, turn and draft ids",
+   "storage paths and signed URLs",
+   "library asset ids (now asset-synthetic-NN)",
+   "file names and content hashes",
+   "media ids (now analysis-proxy-talking_head-NN)"
+  ],
+  "see": "tests/fixtures/kria_reply_consistency/yorum3/README.md"
+ },
+ "message": "Yorumla episode 8: Vela's reply to Lumo. Use my talking video and cut the dead air and the sentence I restarted. When I mention the launch, Vela's 2 posts and the billboards, show that picture full screen while my voice keeps going. Captions small, white, lowercase, in the middle of the screen, never on my face. A small \"Yorumla\" label in the top left for the whole video. End on a red screen with yellow text \"follow for more brand and marketing content\". No music.\nMake it without these",
+ "messages": [
+  "Yorumla episode 8: Vela's reply to Lumo. Use my talking video and cut the dead air and the sentence I restarted. When I mention the launch, Vela's 2 posts and the billboards, show that picture full screen while my voice keeps going. Captions small, white, lowercase, in the middle of the screen, never on my face. A small \"Yorumla\" label in the top left for the whole video. End on a red screen with yellow text \"follow for more brand and marketing content\". No music.",
+  "Make it without these"
+ ],
+ "client_protocol": 46,
+ "planner_summary": "I'll plan this without the closing screen. Your talk plays with small, white, lowercase captions in the middle, and pauses and restarts cut. The 'Yorumla' label stays top left, and the launch, posts, and billboard photos pop up full screen when you mention them. \"Yorumla\" shows as the opening title for the first few seconds. Talking edits can't keep text on screen the whole time yet.",
+ "brief": {
+  "version": 2,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "style",
+    "facts": {
+     "pauses": "tight",
+     "cut_restarts": true,
+     "speech_cleanup": true
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "cut the dead air and the sentence I restarted",
+    "source_turn_id": "synthetic-turn"
+   },
+   {
+    "id": "r2",
+    "kind": "style",
+    "facts": {
+     "captions": "on",
+     "caption_case": "lower",
+     "caption_size": "small",
+     "caption_color": "#FFFFFF",
+     "caption_position": "middle"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Captions small, white, lowercase, in the middle of the screen",
+    "source_turn_id": "synthetic-turn"
+   },
+   {
+    "id": "r3",
+    "kind": "style",
+    "facts": {
+     "keep_text_off": [
+      {
+       "kind": "face"
+      }
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "never on my face",
+    "source_turn_id": "synthetic-turn"
+   },
+   {
+    "id": "r4",
+    "kind": "text",
+    "facts": {
+     "position": "top_left"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": "Yorumla",
+    "description": "small label in the top left for the whole video",
+    "source_turn_id": "synthetic-turn"
+   },
+   {
+    "id": "r5",
+    "kind": "text",
+    "facts": {
+     "closing": "follow for more brand and marketing content",
+     "text_color": "#FFFF00",
+     "superseded_by": "server",
+     "background_color": "#FF0000"
+    },
+    "scope": "global",
+    "status": "superseded",
+    "literal": "follow for more brand and marketing content",
+    "description": "End on a red screen with yellow text",
+    "source_turn_id": "synthetic-turn"
+   },
+   {
+    "id": "r6",
+    "kind": "audio",
+    "facts": {
+     "audio_intent": "no_music"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "No music.",
+    "source_turn_id": "synthetic-turn"
+   },
+   {
+    "id": "r7",
+    "kind": "style",
+    "facts": {
+     "display_mode": "fullscreen"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "When I mention the launch, Vela's 2 posts and the billboards, show that picture full screen while my voice keeps going",
+    "source_turn_id": "synthetic-turn"
+   }
+  ]
+ },
+ "strategy": {
+  "pacing": "balanced",
+  "direction": "native",
+  "rationale": "I will proceed without the closing screen. The edit will feature your original talk while tightening the pace by cutting out pauses and the restarted sentence. The requested captions style is preserved, and the photos will pop up full screen right as you name them.",
+  "edit_format": "subtitled",
+  "caption_style": "auto",
+  "opening_title": "Yorumla",
+  "audio_strategy": "original_audio",
+  "reaction_beats": [
+   {
+    "beat_id": "launch",
+    "trigger": "launched",
+    "visual_id": "asset-synthetic-01",
+    "occurrence": "first",
+    "visual_role": "photo",
+    "display_mode": "fullscreen"
+   },
+   {
+    "beat_id": "post1",
+    "trigger": "welcome Lumo",
+    "visual_id": "asset-synthetic-02",
+    "occurrence": "first",
+    "visual_role": "photo",
+    "display_mode": "fullscreen"
+   },
+   {
+    "beat_id": "post2",
+    "trigger": "a hinge",
+    "visual_id": "asset-synthetic-03",
+    "occurrence": "first",
+    "visual_role": "photo",
+    "display_mode": "fullscreen"
+   },
+   {
+    "beat_id": "billboards",
+    "trigger": "billboards",
+    "visual_id": "asset-synthetic-04",
+    "occurrence": "first",
+    "visual_role": "photo",
+    "display_mode": "fullscreen"
+   }
+  ],
+  "render_program": "native",
+  "story_structure": [],
+  "target_duration_s": 35,
+  "selected_media_ids": [
+   "analysis-proxy-talking_head-01"
+  ],
+  "video_reuse_policy": "once",
+  "optional_treatments": [
+   "overlays"
+  ]
+ },
+ "clips": [
+  {
+   "id": "analysis-proxy-talking_head-01",
+   "kind": "video",
+   "duration_s": 40.121678,
+   "has_audio": true,
+   "source_filename": "clip-01.mp4",
+   "analysis": {
+    "width": 320,
+    "aspect": 0.5634,
+    "brands": [],
+    "height": 568,
+    "source": "clip_metadata",
+    "pix_fmt": "yuv420p",
+    "signals": {
+     "audio_quality": {
+      "v": 2,
+      "data": {
+       "noisy": false,
+       "silent": false,
+       "clipped": false,
+       "peak_db": -4.4,
+       "clipping": 0.0,
+       "evidence": [],
+       "wind_score": 0.018,
+       "crowd_score": 0.024,
+       "noise_floor_db": -62.0
+      }
+     },
+     "near_dup_hash": {
+      "v": 2,
+      "data": {
+       "frames": 3,
+       "hashes": [
+        "c0c4b692c0989cfa",
+        "c0c4d292c0889cb8",
+        "c0ccb4b6c48c8cb8"
+       ],
+       "mean_luma": 105.9,
+       "sharpness": 639.0
+      }
+     }
+    },
+    "subject": "woman speaking to camera",
+    "exposure": {
+     "frames": 24,
+     "version": 1,
+     "mean_luma": 106.5,
+     "near_black_share": 0.0
+    },
+    "duration_s": 40.121678,
+    "transcript": "Okay, starting. 10 minutes after Lumo launched its first foldable phone, Vila posted on Instagram in pure TikTok language. First, welcome Lumo. We've been waiting for you for five years. Then, a hinge? We call that an old friend. Rival brand banter is my favorite, like car brands fighting on bill. Sorry, let me start that again. Rival brand banter is my favorite, like car brands fighting on billboards. So, how do I read this as a brand consultant? Vila turned Lumo's big launch into its own moment. Humor that speaks Gen Z beats corporate language. So, whose side are you on? Tell me in the comments.",
+    "description": "explaining brand's Instagram post describing rival brand banter as favorite analyzing brand's humorous response asking for audience engagement",
+    "video_codec": "h264",
+    "best_moments": [
+     {
+      "end_s": 6.84,
+      "energy": 5.0,
+      "start_s": 0.73,
+      "description": "explaining brand's Instagram post"
+     },
+     {
+      "end_s": 20.35,
+      "energy": 6.0,
+      "start_s": 12.8,
+      "description": "describing rival brand banter as favorite"
+     },
+     {
+      "end_s": 37.05,
+      "energy": 7.0,
+      "start_s": 27.8,
+      "description": "analyzing brand's humorous response"
+     },
+     {
+      "end_s": 40.06,
+      "energy": 5.0,
+      "start_s": 37.05,
+      "description": "asking for audience engagement"
+     }
+    ],
+    "display_width": 320,
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "black lavalier microphone"
+     ],
+     "brands": [],
+     "people": {
+      "note": "a woman with dark bob hair and glasses",
+      "count": 1,
+      "speaks_to_camera": true
+     },
+     "speech": {
+      "language": "en",
+      "segments": [
+       {
+        "text": "Okay, starting.",
+        "end_s": 1.26,
+        "start_s": 0.0
+       },
+       {
+        "text": "10 minutes after Lumo launched its first foldable phone, Vila posted on Instagram in pure TikTok language.",
+        "end_s": 8.36,
+        "start_s": 2.16
+       },
+       {
+        "text": "First, welcome Lumo, we've been waiting for you for five years.",
+        "end_s": 12.54,
+        "start_s": 9.08
+       },
+       {
+        "text": "Then, a hinge?",
+        "end_s": 14.22,
+        "start_s": 12.94
+       },
+       {
+        "text": "We call that an old friend.",
+        "end_s": 15.96,
+        "start_s": 14.62
+       },
+       {
+        "text": "Rival brand banter is my favorite, like car brands fighting on bill, sorry, let me start that again.",
+        "end_s": 22.1,
+        "start_s": 16.9
+       },
+       {
+        "text": "Rival brand banter is my favorite, like car brands fighting on billboards.",
+        "end_s": 27.24,
+        "start_s": 22.9
+       },
+       {
+        "text": "So how do I read this as a brand consultant?",
+        "end_s": 30.18,
+        "start_s": 27.78
+       },
+       {
+        "text": "Vila turned Lumo's big launch into its own moment.",
+        "end_s": 33.68,
+        "start_s": 31.08
+       },
+       {
+        "text": "Humor that speaks Gen Z beats corporate language.",
+        "end_s": 37.14,
+        "start_s": 34.26
+       },
+       {
+        "text": "So whose side are you on?",
+        "end_s": 38.88,
+        "start_s": 37.58
+       },
+       {
+        "text": "Tell me in the comments.",
+        "end_s": 39.96,
+        "start_s": 39.12
+       }
+      ],
+      "to_camera": true,
+      "has_speech": true,
+      "transcript": "Okay, starting. 10 minutes after Lumo launched its first foldable phone, Vila posted on Instagram in pure TikTok language. First, welcome Lumo. We've been waiting for you for five years. Then, a hinge? We call that an old friend. Rival brand banter is my favorite, like car brands fighting on bill. Sorry, let me start that again. Rival brand banter is my favorite, like car brands fighting on billboards. So, how do I read this as a brand consultant? Vila turned Lumo's big launch into its own moment. Humor that speaks Gen Z beats corporate language. So, whose side are you on? Tell me in the comments."
+     },
+     "actions": [
+      "holds a lavalier microphone",
+      "gestures with hand"
+     ],
+     "setting": "indoor, solid red-orange wall background",
+     "subject": "woman speaking to camera",
+     "summary": "A woman explains how a brand used humor on Instagram to playfully rival a competitor, discussing the effectiveness of Gen Z-friendly humor in brand communication.",
+     "activity": "explaining a social media brand strategy",
+     "audio_type": "dialogue",
+     "content_type": "talking_head",
+     "on_screen_text": "",
+     "visual_quality": "sharp and steady",
+     "notable_moments": [
+      {
+       "end_s": 6.84,
+       "start_s": 0.73,
+       "description": "explaining brand's Instagram post"
+      },
+      {
+       "end_s": 20.35,
+       "start_s": 12.8,
+       "description": "describing rival brand banter as favorite"
+      },
+      {
+       "end_s": 37.05,
+       "start_s": 27.8,
+       "description": "analyzing brand's humorous response"
+      },
+      {
+       "end_s": 40.06,
+       "start_s": 37.05,
+       "description": "asking for audience engagement"
+      }
+     ]
+    },
+    "display_height": 568,
+    "on_screen_text": "Okay, starting. 10 minutes after Lumo launched its first foldable phone, Vila posted on Instagram in pure TikTok language. First, welcome Lumo. We've been waiting for you for five years. Then, a hinge? We call that an old friend. Rival brand banter is my favorite, like car brands fighting on bill. Sorry, let me start that again. Rival brand banter is my favorite, like car brands fighting on billbo",
+    "analysis_version": 8,
+    "rotation_degrees": 0
+   }
+  }
+ ],
+ "prod_outcome": {
+  "recorded_from": "job assembly_plan.variants[0] and route fields, thread events",
+  "creator_route": "subtitled",
+  "approval_card": {
+   "draft_applied_content": "Here's the simpler version.\n- Will do at render: cut the dead air and the sentence I restarted (Choose Clean up speech when you approve and every pause is cut down to about 0.3 s; Clean up speech also cuts a sentence you restarted if it finds one, and I'll tell you after)\n- Done: Captions small, white, lowercase, in the middle of the screen (Captions are small, white, lowercase and in the middle)\n- Done: No music. (No music, as asked)\n- Done: When I mention the launch, Vela's 2 posts and the billboards, show that picture full screen while my voice keeps going\n- Left out as agreed: End on a red screen with yellow text (\"follow for more brand and marketing content\")\nHave a look at these in the video:\n- never on my face\n- small label in the top left for the whole video (\"Yorumla\")\n\"Yorumla\" shows as the opening title for the first few seconds. Talking edits can't keep text on screen the whole time yet.\nHeads-up for this video:\n- I can't add the treatments (overlays) on this video yet, so they won't be applied",
+   "changes": [
+    "Subtitled format"
+   ],
+   "requirement_receipts": [
+    {
+     "requirement_id": "r1",
+     "status": "partial",
+     "verification": "checked",
+     "reason": "Choose Clean up speech when you approve and every pause is cut down to about 0.3 s; Clean up speech also cuts a sentence you restarted if it finds one, and I'll tell you after"
+    },
+    {
+     "requirement_id": "r2",
+     "status": "met",
+     "verification": "checked",
+     "reason": "Captions are small, white, lowercase and in the middle."
+    },
+    {
+     "requirement_id": "r3",
+     "status": "partial",
+     "verification": "unchecked",
+     "reason": "I can't verify this one automatically yet."
+    },
+    {
+     "requirement_id": "r4",
+     "status": "partial",
+     "verification": "unchecked",
+     "reason": "I can't verify this one automatically yet."
+    },
+    {
+     "requirement_id": "r6",
+     "status": "met",
+     "verification": "checked",
+     "reason": "No music, as asked."
+    },
+    {
+     "requirement_id": "r7",
+     "status": "met",
+     "verification": "checked",
+     "reason": null
+    }
+   ]
+  },
+  "render": {
+   "resolved_archetype": "subtitled",
+   "duration_s": 33.6204902997284,
+   "caption_language": "en",
+   "caption_cue_count": 19,
+   "opening_cut": {
+    "status": null,
+    "reason": null
+   },
+   "end_cut": {
+    "status": null,
+    "reason": null
+   },
+   "speaker_framing": {
+    "mode": null,
+    "eligible": null,
+    "reason": null
+   },
+   "beats_unplaced": [],
+   "overlay_matcher": "agent",
+   "overlays_placed": [],
+   "text_elements": [
+    {
+     "text": "Yorumla",
+     "start_s": 0.0,
+     "end_s": 1.46,
+     "effect": "fade-in"
+    }
+   ],
+   "creator_length_policy": {
+    "owner": "take",
+    "check_mode": "log_only",
+    "requested_duration_s": null
+   },
+   "phone_lane_receipt": {
+    "applied": [
+     "overlays"
+    ],
+    "dropped": []
+   },
+   "phone_beat_receipt": {
+    "placed": [
+     {
+      "beat_id": "launch",
+      "at_s": 3.18,
+      "end_s": 4.68,
+      "display_mode": "fullscreen",
+      "trigger": "launched"
+     },
+     {
+      "beat_id": "post1",
+      "at_s": 9.82,
+      "end_s": 11.32,
+      "display_mode": "fullscreen",
+      "trigger": "welcome Lumo"
+     },
+     {
+      "beat_id": "post2",
+      "at_s": 13.72,
+      "end_s": 15.22,
+      "display_mode": "fullscreen",
+      "trigger": "a hinge"
+     },
+     {
+      "beat_id": "billboards",
+      "at_s": 26.76,
+      "end_s": 28.26,
+      "display_mode": "fullscreen",
+      "trigger": "billboards"
+     }
+    ],
+    "unplaced": [],
+    "closing": {
+     "badge": "none",
+     "status": "none"
+    }
+   }
+  },
+  "hold_reply": "I can't make this yet:\n- End on a red screen with yellow text (\"follow for more brand and marketing content\"): Putting a plain colour behind you isn't available on your iPhone yet.\nI held this first draft back. The simpler version leaves out: End on a red screen with yellow text (\"follow for more brand and marketing content\"). Should I make it without these, or do you want to change your request?",
+  "review_reply": "- Partly: cut the dead air and the sentence I restarted (Speech cleanup cut your pauses tight, but 4 still last longer than 0.35 s (the longest is 0.4 s))\n- Done: Captions small, white, lowercase, in the middle of the screen (Captions are small, white, lowercase and in the middle)\n- Partly: small label in the top left for the whole video (\"Yorumla\") (1 of 1 don't have the requested position)\n- Done: No music. (No music, as asked)\n- Done: When I mention the launch, Vela's 2 posts and the billboards, show that picture full screen while my voice keeps going\n- Left out as agreed: End on a red screen with yellow text (\"follow for more brand and marketing content\")\nHave a look at these in the video:\n- never on my face\n\nSpeech cleanup cut what it heard as 4 pauses and 1 restarted sentence (8.1 s)."
+ }
+}

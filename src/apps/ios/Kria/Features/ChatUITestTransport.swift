@@ -10,7 +10,7 @@ enum ChatUITestTransport {
     /// Uploads in the re-record fixture run through the same offline server, so the PUT lands and the real attach
     /// path (reserve, upload, replace) runs without a network. Nil for every other fixture: the background session stays.
     static func uploadSessionConfiguration() -> URLSessionConfiguration? {
-        guard CreationChatFixture.rerecordMode != nil else { return nil }
+        guard CreationChatFixture.rerecordMode != nil || CreationChatFixture.uploadsLand else { return nil }
         // Every launch starts with no leftover uploads, except a relaunch that is testing recovery.
         if ProcessInfo.processInfo.environment["KRIA_RERECORD_KEEP_UPLOADS"] != "1" {
             for suffix in ["", ".preparing", ".photo-selection", ".editor-source-placements"] {
@@ -155,6 +155,8 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
 /// real account. Enabled only by explicit UI-test environment in Debug builds.
 final class CreationChatFixture: @unchecked Sendable {
     static let shared = CreationChatFixture()
+    /// `KRIA_CHAT_UPLOADS_LAND=1` (KRI-1351): picked footage uploads and attaches instead of failing offline.
+    static var uploadsLand: Bool { ProcessInfo.processInfo.environment["KRIA_CHAT_UPLOADS_LAND"] == "1" }
     private let lock = NSLock()
     private var threads: [String: [String: Any]] = [:]
     private var renders: [String: Int] = [:]
@@ -404,6 +406,7 @@ final class CreationChatFixture: @unchecked Sendable {
             return (reply.0, Data(reply.1.utf8))
         }
         if let reply = rerecordRespond(request, path: path, body: body) { return reply }
+        if Self.uploadsLand, request.url?.host == "fixture.invalid", request.httpMethod == "PUT" { return response([String: Any]()) }
         seedDeviceDeliveryThread()
         mirrorDeviceDelivery()
         if path == "/creation-threads/capabilities" {
@@ -415,7 +418,9 @@ final class CreationChatFixture: @unchecked Sendable {
             // `KRIA_CHAT_LIPSYNC=1`: the server also offers the Lip-sync card (a montage underneath) and `media.song`.
             // Off by default so the position of Voiceover and Talk to camera in the carousel stays what other tests expect.
             let offersLipsync = ProcessInfo.processInfo.environment["KRIA_CHAT_LIPSYNC"] == "1"
-            var formatRows: [(String, String, Int)] = [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", talkingMaxClips), ("slides", "slides", 20)]
+            // `KRIA_CHAT_MONTAGE_MAX_CLIPS`: the montage cap (KRI-1351 replays a 15-clip chat).
+            let montageMaxClips = ProcessInfo.processInfo.environment["KRIA_CHAT_MONTAGE_MAX_CLIPS"].flatMap(Int.init) ?? 10
+            var formatRows: [(String, String, Int)] = [("montage", "montage", montageMaxClips), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", talkingMaxClips), ("slides", "slides", 20)]
             if offersLipsync { formatRows.append(("lipsync", "montage", 10)) }
             var capabilities: [String: Any] = ["formats": formatRows.map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true]
             if offersLipsync { capabilities["media"] = ["song": ["max": 1, "max_file_bytes": 52_428_800, "content_types": ["audio/mpeg", "audio/mp4"]]] }
@@ -738,6 +743,32 @@ final class CreationChatFixture: @unchecked Sendable {
             var event: [String: Any] = ["id": UUID().uuidString, "sequence": events.count, "revision": revision, "role": role, "event_type": type, "content": text ?? "", "payload": payload, "created_at": "2026-09-10T10:00:00Z"]
             if let clientEventID { event["client_event_id"] = clientEventID }
             events.append(event)
+        }
+        // `KRIA_CHAT_UPLOADS_LAND=1` (KRI-1351): footage picked in the chat reserves, uploads and attaches like on the
+        // real server, one `media_added` per file, so the pending rows turn into the media strip.
+        if Self.uploadsLand, parts.count == 3, parts[2] == "upload-urls", request.httpMethod == "POST" {
+            let files = body["files"] as? [[String: Any]] ?? []
+            return response(files.map { file -> [String: Any] in
+                let isProxy = (file["upload_contract"] as? [String: Any])?["purpose"] as? String == "analysis_proxy"
+                let mediaID = (isProxy ? "analysis-proxy-" : "") + UUID().uuidString + ".mp4"
+                return ["media_id": mediaID, "upload_url": "https://fixture.invalid/upload/\(mediaID)",
+                        "gcs_path": "fixture/\(mediaID)", "content_type": file["content_type"] as? String ?? "video/mp4",
+                        "upload_headers": [String: String]()]
+            })
+        }
+        if Self.uploadsLand, parts.count == 3, parts[2] == "media", request.httpMethod == "POST" {
+            let key = body["client_event_id"] as? String
+            if let key, events.contains(where: { $0["client_event_id"] as? String == key }) { return response(thread) }
+            var media = state["media"] as? [[String: Any]] ?? []
+            let incoming = (body["media"] as? [[String: Any]] ?? []).map { item -> [String: Any] in
+                ["media_id": item["media_id"] ?? UUID().uuidString, "kind": item["kind"] ?? "video",
+                 "filename": item["filename"] ?? "clip.mp4", "duration_s": 5.0, "content_type": item["content_type"] ?? "video/mp4"]
+            }
+            media.append(contentsOf: incoming)
+            state["media"] = media
+            append("media_added", role: "user", payload: ["media": incoming, "media_count": media.count], clientEventID: key)
+            thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+            return response(thread)
         }
         // KRI-580: the song's filming range. Mirrors the server: both ends null clears it, otherwise both are set,
         // at least 5 s apart, and an end past the song is clamped to the song (90 s here).

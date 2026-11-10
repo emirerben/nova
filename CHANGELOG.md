@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.155.0] - 2026-11-10
+
+### Changed
+- feat(split-screen): panels collapse when one ends, protocol 47 (KRI-1335) (#2262) <!-- release-pr: 2262 -->
+
+## [0.88.154.0] - 2026-11-10
+
+### Fixed
+- fix(kria): the chat answers in the language the creator writes, not the video's (KRI-1363) (#2268) <!-- release-pr: 2268 -->
+
+## [0.88.153.0] - 2026-11-10
+
+### Changed
+- test(ios): await the queued first Resume in the two-taps restoration test (KRI-1364) (#2270) <!-- release-pr: 2270 -->
+
+## [0.88.152.0] - 2026-11-10
+
+### Changed
+- fix(ios): the chat no longer goes blank after Send with many uploads and the keyboard up (KRI-1351) (#2265) <!-- release-pr: 2265 -->
+
+## [0.88.151.0] - 2026-11-10
+
+### Fixed
+- fix(kria): a word-cued picture starts with the phrase that names it (KRI-1342 item 8) (#2257) <!-- release-pr: 2257 -->
+
+## [0.88.150.0] - 2026-11-10
+
+### Fixed
+- fix(kria): one capability answer for hold / draft / review lines (KRI-1346, KRI-1347) (#2254) <!-- release-pr: 2254 -->
+
 ## [0.88.149.0] - 2026-11-10
 
 ### Changed

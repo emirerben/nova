@@ -48,6 +48,11 @@ raw["tracks"][0]["clips"][0]["split_screen"] = {"section_id": "s", "panel_index"
 recipe = EditRecipeV2.model_validate(raw)
 assert "splitScreen" in recipe.required_capabilities
 status = SimpleNamespace(request=SimpleNamespace(recipe=recipe))
+collapse_raw = copy.deepcopy(raw)
+collapse_raw["split_screen_sections"][0]["collapse_empty_panels"] = True
+collapse_recipe = EditRecipeV2.model_validate(collapse_raw)
+assert {"splitScreen", "splitCollapse"} <= collapse_recipe.required_capabilities
+collapse_status = SimpleNamespace(request=SimpleNamespace(recipe=collapse_recipe))
 job = SimpleNamespace(assembly_plan={})
 record = {}
 before = (
@@ -66,14 +71,42 @@ branches = [
     == "'splitScreen' in recipe.required_capabilities and protocol < 46"
 ]
 assert len(branches) == 1, "Mutation must remove exactly the new floor branch"
-fn.body.remove(branches[0])
-ast.fix_missing_locations(module)
-# Keep the actual original global namespace, including its imported helpers/context readers.
-compiled = compile(module, "<isolated-remove-split-floor>", "exec")
-local = {}
-exec(compiled, device_render._client_update_detail.__globals__, local)
-mutant = local["_client_update_detail"]
-assert device_render._client_update_detail is not mutant
+collapse_branches = [
+    node
+    for node in fn.body
+    if isinstance(node, ast.If)
+    and ast.unparse(node.test)
+    == "'splitCollapse' in recipe.required_capabilities and protocol < SPLIT_COLLAPSE_PROTOCOL"
+]
+assert len(collapse_branches) == 1, "Mutation must remove exactly the collapse floor branch"
+assert client_protocol.SPLIT_COLLAPSE_PROTOCOL == 47
+collapse_module = copy.deepcopy(module)
+
+
+def isolate(tree, removed, label):
+    tree.body[0].body.remove(removed)
+    ast.fix_missing_locations(tree)
+    compiled = compile(tree, label, "exec")
+    namespace = {}
+    # Keep the original global namespace, including its imported helpers/context readers.
+    exec(compiled, device_render._client_update_detail.__globals__, namespace)
+    function = namespace["_client_update_detail"]
+    assert device_render._client_update_detail is not function
+    return function
+
+
+mutant = isolate(module, branches[0], "<isolated-remove-split-floor>")
+collapse_mutant = isolate(
+    collapse_module,
+    next(
+        node
+        for node in collapse_module.body[0].body
+        if isinstance(node, ast.If)
+        and ast.unparse(node.test)
+        == "'splitCollapse' in recipe.required_capabilities and protocol < SPLIT_COLLAPSE_PROTOCOL"
+    ),
+    "<isolated-remove-collapse-floor>",
+)
 expected = {
     "code": "client_update_required",
     "feature": "split_screen",
@@ -81,12 +114,12 @@ expected = {
 }
 
 
-def observe(function):
+def observe(function, subject=None, protocols=(45, 46)):
     results = {}
-    for protocol in (45, 46):
+    for protocol in protocols:
         set_client_protocol(protocol)
         try:
-            results[str(protocol)] = function(job, record, status)
+            results[str(protocol)] = function(job, record, subject or status)
         finally:
             clear_request_context()
     return results
@@ -106,6 +139,22 @@ except AssertionError:
 else:
     raise AssertionError("Mutation survived the identical boundary assertion")
 assert mutated == {"45": None, "46": None}, "Unrelated gate confounds isolated mutation"
+collapse_expected = {
+    "code": "client_update_required",
+    "feature": "split_collapse",
+    "minimum_client_protocol": 47,
+}
+collapse_baseline = observe(
+    device_render._client_update_detail, collapse_status, (45, 46, 47)
+)
+assert collapse_baseline == {"45": expected, "46": collapse_expected, "47": None}, collapse_baseline
+assert observe(device_render._client_update_detail, status, (47,)) == {"47": None}
+collapse_mutated = observe(collapse_mutant, collapse_status, (45, 46, 47))
+assert collapse_mutated == {"45": expected, "46": None, "47": None}, (
+    "Removing the collapse floor must change only the build-46 answer"
+)
+assert collapse_mutated != collapse_baseline, "Collapse mutation survived"
+assert observe(collapse_mutant, status) == baseline, "Collapse branch confounds a plain split"
 assert before == (job.assembly_plan, recipe.model_dump(mode="json"), record), (
     "Pure check mutated input"
 )
@@ -125,6 +174,12 @@ print(
             "baseline": baseline,
             "remove_split_floor_mutant": mutated,
             "mutant_caught": caught,
+            "collapse": {
+                "protocols": [45, 46, 47],
+                "baseline": collapse_baseline,
+                "remove_collapse_floor_mutant": collapse_mutated,
+                "mutant_caught": True,
+            },
             "inputs_unchanged": True,
             "scope": "direct helper return value; no HTTP/lifecycle/persistence proof",
         },

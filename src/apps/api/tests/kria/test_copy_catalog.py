@@ -296,6 +296,8 @@ def _pair_counts(result: Any) -> Counter:
 _ROUTED_PAIRS = _FIXTURES / "copy_routed_pairs.json"
 
 
+# Converts every say() file at the merge base (~30 s locally): above the 30 s default.
+@pytest.mark.timeout(180)
 def test_codemod_kept_every_en_tr_pair() -> None:
     """The (en, tr) pairs at the merge base, f-strings converted by the codemod's own function,
     are all still HEAD's pairs: the template rewrite changed no sentence. HEAD may only add the

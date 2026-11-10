@@ -98,6 +98,11 @@ from app.kria.planner import (
     turn_deadline,
 )
 from app.kria.registry import KRIA_TOOLS
+from app.kria.reply_consistency import (
+    reconcile_disclosures,
+    reconcile_notices,
+    reconcile_review,
+)
 from app.kria.reply_language import (
     bind_reply_language,
     current_reply_language,
@@ -3080,11 +3085,16 @@ def _complete_draft_turn(
                         # checker can judge yet goes under "have a look", never silence.
                         if not editor_turn and not readiness_required and not facts.phone_talking:
                             receipts = [r for r in receipts if r.verification != "unchecked"]
+                        # KRI-1346: an ask the plan changed is one Partly line, not "have a
+                        # look" plus a notice that says it won't happen (switch-gated no-op).
+                        receipts, draft_notices = reconcile_notices(
+                            answered, receipts, planned.policy_notices
+                        )
                         reply_text, receipt_lead_line = reply_and_lead_from_receipts(
                             CreativeBrief(version=brief.version, requirements=answered),
                             receipts,
                             summary=arguments.summary,
-                            notices=planned.policy_notices,
+                            notices=draft_notices,
                             # Outside readiness a route decline follows the planner's
                             # summary instead of replacing it (registry on).
                             declines_after_summary=route_name is not None
@@ -3120,6 +3130,13 @@ def _complete_draft_turn(
                 research_previewed=draft_research is not None and draft_research.ready,
                 # The pinned length plan: whether a story direction's holds fit the length.
                 media=_card_media,
+            )
+            # KRI-1347: no heads-up line a Done / Will-do line contradicts (switch-gated).
+            route_disclosures = reconcile_disclosures(
+                route_disclosures,
+                requirements=brief.live(),
+                receipts=requirement_receipts,
+                strategy=document.strategy,
             )
         route_notice = card_text(route_disclosures) if route_disclosures else None
         if route_notice:
@@ -3459,14 +3476,15 @@ def _complete_draft_turn(
                 )
                 for req in omitted
             )
-            kept = (
-                reply_from_receipts(
-                    brief,
-                    build_receipts(checked, facts, include_unchecked=True, strict_order=True),
-                    notices=planned.policy_notices,
-                )
+            kept_receipts, kept_notices = reconcile_notices(
+                checked,
+                build_receipts(checked, facts, include_unchecked=True, strict_order=True)
                 if checked
-                else ""
+                else [],
+                planned.policy_notices,
+            )
+            kept = (
+                reply_from_receipts(brief, kept_receipts, notices=kept_notices) if checked else ""
             )
             reply_text = "\n".join(
                 part
@@ -8572,6 +8590,8 @@ def _approved_generation_requirements_review(
         )
         for receipt in receipts
     ]
+    # KRI-1347: a "Done" the render receipt contradicts is never shown (switch-gated no-op).
+    receipts = reconcile_review(brief.live(), receipts, variant)
     return _with_left_out(reply_from_receipts(brief, receipts, summary=default_text), left_out), [
         receipt.model_dump(mode="json") for receipt in receipts
     ]

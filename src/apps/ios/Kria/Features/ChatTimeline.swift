@@ -131,23 +131,31 @@ enum ChatTimeline {
     }
 }
 
-/// Adjacent media receipts share a strip for readability. Their individual
-/// server identities remain intact; this is not an upload/submission batch.
-struct ChatTimelineGroup: Identifiable {
-    var entries: [ChatTimelineEntry]
-    var id: String { entries[0].id }
+/// One row of the transcript's lazy stack. A media receipt is one row per file, never one row for a whole run of
+/// files: fifteen clips in a single row are far taller than the chat that is visible with the keyboard up, and
+/// after Send the lazy stack lost its place and drew nothing until the reader dragged it (KRI-1351).
+struct ChatTimelineRow: Identifiable {
+    let id: String
+    let entry: ChatTimelineEntry
+    /// Which file of a media receipt this row draws; nil for every other kind of entry.
+    let mediaIndex: Int?
+    /// Directly under another file's row, so the two read as one strip. Their server identities stay separate;
+    /// this is not an upload or submission batch.
+    let joinsMediaAbove: Bool
 
-    static func group(_ entries: [ChatTimelineEntry]) -> [Self] {
-        var groups: [Self] = []
+    static func rows(_ entries: [ChatTimelineEntry]) -> [Self] {
+        var rows: [Self] = []
         for entry in entries {
-            if case .media = entry.content, let last = groups.last,
-               case .media = last.entries[0].content {
-                groups[groups.count - 1].entries.append(entry)
-            } else {
-                groups.append(Self(entries: [entry]))
+            guard case .media(let event) = entry.content else {
+                rows.append(Self(id: entry.id, entry: entry, mediaIndex: nil, joinsMediaAbove: false))
+                continue
+            }
+            for index in 0..<CreationAttachedMedia.parse(event.payload ?? [:]).count {
+                rows.append(Self(id: index == 0 ? entry.id : "\(entry.id)#\(index)", entry: entry, mediaIndex: index,
+                                 joinsMediaAbove: rows.last?.mediaIndex != nil))
             }
         }
-        return groups
+        return rows
     }
 }
 

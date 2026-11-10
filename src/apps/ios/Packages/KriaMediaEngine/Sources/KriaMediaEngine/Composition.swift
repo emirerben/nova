@@ -61,6 +61,7 @@ public struct PreviewComposition: @unchecked Sendable {
         try KriaBranding.preflight(branding)
         let composition = AVMutableComposition()
         let canvas = CGSize(width: recipe.canvas.width, height: recipe.canvas.height)
+        let canvasRect = CGRect(origin: .zero, size: canvas)
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = canvas
         videoComposition.frameDuration = CMTime(seconds: 1 / recipe.frameRate, preferredTimescale: 60_000)
@@ -116,12 +117,6 @@ public struct PreviewComposition: @unchecked Sendable {
             var reusableVideoTracks: [(track: AVMutableCompositionTrack, end: Double)] = []
             var previousEnd: Double?
             for clip in recipeTrack.clips.sorted(by: { $0.timelineStart < $1.timelineStart }) {
-                let panelViewport = clip.splitScreen.flatMap { membership in
-                    recipe.splitScreenSections.first(where: { $0.id == membership.sectionID })?
-                        .panelRect(index: membership.panelIndex, canvas: CGRect(origin: .zero, size: canvas))
-                }
-                let clipCanvas = panelViewport?.size ?? canvas
-
                 try Task.checkCancellation()
                 guard let url = assetURLs[clip.sourceAssetID] else { throw MediaEngineError.missingAsset(clip.sourceAssetID) }
                 let asset = recipeTrack.kind == .audio ? Self.preciseAudioAsset(url: url) : AVURLAsset(url: url)
@@ -178,6 +173,7 @@ public struct PreviewComposition: @unchecked Sendable {
                     // requires an actual video stream, not only a video timeline track.
                     throw RecipeError.invalidTimeline
                 }
+                let firstLayer = layers.count
                 if let source = videoSource {
                     guard clip.stillLayout == nil else { throw NativePreviewFeatureError("Composition-still-layout") }
                     let track: AVMutableCompositionTrack
@@ -279,7 +275,7 @@ public struct PreviewComposition: @unchecked Sendable {
                         track.scaleTimeRange(CMTimeRange(start: tailStart, duration: tail.duration), toDuration: time(hold))
                         layerEnd = tailStart.seconds + hold
                     }
-                    if panelViewport != nil { layerEnd = min(layerEnd, end) }
+                    if clip.splitScreen != nil { layerEnd = min(layerEnd, end) }
                     let size = try await source.load(.naturalSize)
                     let preferred = Self.coreImagePreferredTransform(try await source.load(.preferredTransform))
                     if clip.look != nil {
@@ -308,18 +304,25 @@ public struct PreviewComposition: @unchecked Sendable {
                             }
                         }
                     }
-                    layers.append(RecipeVideoLayer(trackID: track.trackID, image: nil,
-                        transform: Self.transform(naturalSize: size, preferred: preferred, canvas: clipCanvas, clip: clip),
-                        start: clip.timelineStart, end: layerEnd, fadeIn: fadeIn, transitionKind: clip.transition?.kind ?? .crossfade, look: clip.look, isPrimary: recipeTrack.kind == .video,
-                        clipID: clip.id, naturalSize: size, preferredTransform: preferred,
-                        overlayAboveText: clip.overlayAboveText == true, overlayPopIn: clip.overlayPopIn == true, overlayPreserveAlpha: clip.overlayPreserveAlpha,
-                        overlayCenter: CGPoint(x: clipCanvas.width / 2 + clip.transform.positionX, y: clipCanvas.height / 2 - clip.transform.positionY),
-                        visualPlacement: clip.visualPlacement, visualOrder: overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0)))
-                    layers[layers.count - 1].panelViewport = panelViewport
-                    layers[layers.count - 1].sourceCrop = clip.sourceCrop
-                    layers[layers.count - 1].placementTilt = clip.placementTiltDegrees
-                    layers[layers.count - 1].backdrop = clip.backdrop
-                    layers[layers.count - 1].overlayFade = OverlayFadeWindow(clip: clip, start: clip.timelineStart, end: layerEnd)
+                    // The source clock lives on the composition track, so every placement keeps the clip's time
+                    // mapping; only the panel it draws into and its fit change.
+                    for placement in recipe.panelPlacements(of: clip, start: clip.timelineStart, end: layerEnd, canvas: canvasRect) {
+                        let clipCanvas = placement.viewport?.size ?? canvas
+                        var layer = RecipeVideoLayer(trackID: track.trackID, image: nil,
+                            transform: Self.transform(naturalSize: size, preferred: preferred, canvas: clipCanvas, clip: clip),
+                            start: placement.start, end: placement.end, fadeIn: fadeIn, transitionKind: clip.transition?.kind ?? .crossfade, look: clip.look, isPrimary: recipeTrack.kind == .video,
+                            clipID: clip.id, naturalSize: size, preferredTransform: preferred,
+                            overlayAboveText: clip.overlayAboveText == true, overlayPopIn: clip.overlayPopIn == true, overlayPreserveAlpha: clip.overlayPreserveAlpha,
+                            overlayCenter: CGPoint(x: clipCanvas.width / 2 + clip.transform.positionX, y: clipCanvas.height / 2 - clip.transform.positionY),
+                            visualPlacement: clip.visualPlacement, visualOrder: overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0))
+                        layer.panelViewport = placement.viewport
+                        layer.sourceCrop = clip.sourceCrop
+                        layer.placementTilt = clip.placementTiltDegrees
+                        layer.backdrop = clip.backdrop
+                        layer.overlayFade = OverlayFadeWindow(clip: clip, start: clip.timelineStart, end: layerEnd)
+                        if placement.start != clip.timelineStart { layer.fadeStart = clip.timelineStart }
+                        layers.append(layer)
+                    }
                     if clip.visualPlacement == nil && (recipeTrack.kind == .video || clip.overlayPreserveAlpha == nil) {
                         try await addAudio(asset: asset, clip: clip, gain: recipeTrack.kind == .video ? recipe.audio.originalVolume : 1, originalGain: recipeTrack.kind == .video)
                     }
@@ -333,29 +336,37 @@ public struct PreviewComposition: @unchecked Sendable {
                     // inside a card when asked. Overlay stills keep their alpha.
                     let drawn = recipeTrack.kind == .video ? try StillFrame.flattened(image) : image
                     let oriented = CIImage(cgImage: drawn).oriented(forExifOrientation: orientation)
-                    var normalized = oriented.transformed(by: CGAffineTransform(translationX: -oriented.extent.minX, y: -oriented.extent.minY))
-                    if clip.stillLayout == .supportingCard {
-                        normalized = try StillFrame.supportingCard(normalized, canvas: clipCanvas, rotationDegrees: clip.transform.rotationDegrees)
+                    let normalized = oriented.transformed(by: CGAffineTransform(translationX: -oriented.extent.minX, y: -oriented.extent.minY))
+                    for placement in recipe.panelPlacements(of: clip, start: clip.timelineStart, end: end, canvas: canvasRect) {
+                        let clipCanvas = placement.viewport?.size ?? canvas
+                        // A supporting card is laid out for the panel it sits in, so each panel size gets its own.
+                        let image = clip.stillLayout == .supportingCard
+                            ? try StillFrame.supportingCard(normalized, canvas: clipCanvas, rotationDegrees: clip.transform.rotationDegrees) : normalized
+                        var layer = RecipeVideoLayer(trackID: nil, image: image,
+                            transform: Self.transform(naturalSize: image.extent.size, preferred: .identity, canvas: clipCanvas, clip: clip),
+                            start: placement.start, end: placement.end, fadeIn: fadeIn, transitionKind: clip.transition?.kind ?? .crossfade, isPrimary: recipeTrack.kind == .video,
+                            clipID: clip.id, naturalSize: image.extent.size, overlayAboveText: clip.overlayAboveText == true, overlayPopIn: clip.overlayPopIn == true,
+                            overlayPreserveAlpha: clip.overlayPreserveAlpha,
+                            overlayCenter: CGPoint(x: clipCanvas.width / 2 + clip.transform.positionX, y: clipCanvas.height / 2 - clip.transform.positionY),
+                            visualPlacement: clip.visualPlacement, visualOrder: overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0))
+                        layer.panelViewport = placement.viewport
+                        layer.sourceCrop = clip.sourceCrop
+                        layer.placementTilt = clip.placementTiltDegrees
+                        if clip.stillLayout == nil { layer.backdrop = clip.backdrop }
+                        layer.overlayFade = OverlayFadeWindow(clip: clip, start: clip.timelineStart, end: end)
+                        if placement.start != clip.timelineStart { layer.fadeStart = clip.timelineStart }
+                        layers.append(layer)
                     }
-                    layers.append(RecipeVideoLayer(trackID: nil, image: normalized,
-                        transform: Self.transform(naturalSize: normalized.extent.size, preferred: .identity, canvas: clipCanvas, clip: clip),
-                        start: clip.timelineStart, end: end, fadeIn: fadeIn, transitionKind: clip.transition?.kind ?? .crossfade, isPrimary: recipeTrack.kind == .video,
-                        clipID: clip.id, naturalSize: normalized.extent.size, overlayAboveText: clip.overlayAboveText == true, overlayPopIn: clip.overlayPopIn == true,
-                        overlayPreserveAlpha: clip.overlayPreserveAlpha,
-                        overlayCenter: CGPoint(x: clipCanvas.width / 2 + clip.transform.positionX, y: clipCanvas.height / 2 - clip.transform.positionY),
-                        visualPlacement: clip.visualPlacement, visualOrder: overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0)))
-                    layers[layers.count - 1].panelViewport = panelViewport
-                    layers[layers.count - 1].sourceCrop = clip.sourceCrop
-                    layers[layers.count - 1].placementTilt = clip.placementTiltDegrees
-                    if clip.stillLayout == nil { layers[layers.count - 1].backdrop = clip.backdrop }
-                    layers[layers.count - 1].overlayFade = OverlayFadeWindow(clip: clip, start: clip.timelineStart, end: end)
                 }
-                if let seed = clip.overlayDissolveSeed {
-                    layers[layers.count - 1].overlayDissolve = try NativeDissolveRenderer(width: recipe.canvas.width, height: recipe.canvas.height, seed: seed, maxBitmapBytes: 64 * 1024 * 1024, preset: .media)
+                let dissolve = try clip.overlayDissolveSeed.map { seed in
+                    try NativeDissolveRenderer(width: recipe.canvas.width, height: recipe.canvas.height, seed: seed, maxBitmapBytes: 64 * 1024 * 1024, preset: .media)
                 }
-                if speakerClipIDs.contains(clip.id) {
-                    layers[layers.count - 1].speakerRole = .speaker
-                    layers[layers.count - 1].speakerFrameOverride = clip.speakerFrameOverride
+                for index in firstLayer..<layers.count {
+                    if let dissolve { layers[index].overlayDissolve = dissolve }
+                    if speakerClipIDs.contains(clip.id) {
+                        layers[index].speakerRole = .speaker
+                        layers[index].speakerFrameOverride = clip.speakerFrameOverride
+                    }
                 }
                 if let text = clip.text { textLayers.append(try RecipeTextLayer.make(text, start: clip.timelineStart, end: end, canvas: canvas)) }
             }

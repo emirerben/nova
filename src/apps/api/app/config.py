@@ -352,6 +352,13 @@ class Settings(BaseSettings):
     # PHONE_SUBTITLED_FULLSCREEN_OVERLAYS_ENABLED=false --app nova-video` +
     # `fly machine restart <id>` (api + worker).
     phone_subtitled_fullscreen_overlays_enabled: bool = True
+    # KRI-1342 item 8: a photo/video the planner cued by what the talk is ABOUT (no spoken word
+    # the creator named) starts with the phrase holding its cue word, and a full-screen photo
+    # with no stated length is held for that phrase (never cut off mid-way through the next
+    # sentence). Phone Talking and Voiceover beats (`phone_reaction_grounding.PhraseTiming`).
+    # Default off: windows stay on the cue word, byte-identical. Apply: `fly secrets set
+    # BEAT_PHRASE_TIMING_ENABLED=true -a nova-video`, then restart the worker.
+    beat_phrase_timing_enabled: bool = False
     # KRI-547 kill switch: when the approved brief asks for a vertical / 9:16 /
     # full-screen / "keep my face in frame" video and the phone Talking speaker
     # clip is landscape, `_run_phone_subtitled_job` samples the face across the
@@ -1407,6 +1414,15 @@ class Settings(BaseSettings):
     # ask), and the "<pace> pacing" chip is left off a card whose route ignores pacing. Default
     # TRUE; false + restart (api + worker) = byte-identical to before.
     kria_headsup_asked_only_enabled: bool = True
+    # KRI-1346/1347 (yorum3): every hold / draft / review line comes from one capability
+    # answer: the card's treatments line leaves out a treatment the route's writer applies
+    # (`phone_subtitled_overlays_supported` on phone Talking), a "have a look" ask the plan
+    # already shortened becomes one Partly line, and `app.kria.reply_consistency` drops a
+    # heads-up line a Done/Will-do line contradicts; `contradictions` also flags a "can't" that
+    # names another capability (the closing card's own answer is
+    # `brief_checks._check_closing_card`, KRI-1346 / #2256). Default FALSE; false + restart (api +
+    # worker) = byte-identical replies. Guard: `tests/kria/test_reply_consistency.py`.
+    kria_honest_reply_lines_enabled: bool = False
 
     # Green 5 (2026-11-04): a chat nothing has told its language yet (a "Suggest an edit." tap,
     # media only, "ok") takes the language of the creator's latest message typed in another of
@@ -1418,6 +1434,12 @@ class Settings(BaseSettings):
     # words and the device language, and the models are told to reply in German. Default
     # FALSE until a German speaker has reviewed de.json; false = en/tr only, byte-identical.
     kria_german_replies_enabled: bool = False
+    # KRI-1363: the chat language follows only the words the creator says to Kria. Quoted
+    # text and a typed answer to a wording question are text for the video and never move
+    # the chat to the video's language; an established chat moves only on a message with no
+    # word of its language. Default TRUE; false + restart (api) = the previous detector,
+    # byte-identical.
+    kria_reply_language_own_words_enabled: bool = True
     # KRI-1097 wave 2 (prompt fidelity on every route). ROUTE_REGISTRY_ENABLED: each render
     # route reads its own capability table (`app.kria.route_capabilities`), so voiceover,
     # Talking, Narrated, creator-song, spoken-excerpt and slide drafts get their own honest

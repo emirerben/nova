@@ -12,6 +12,9 @@ struct RecipeVideoLayer: @unchecked Sendable {
     let start: Double
     let end: Double
     var fadeIn: Double
+    /// Set when this layer begins after its clip does: a collapsing split member is one layer per panel layout
+    /// (`EditRecipe.panelPlacements`), and its transition runs on across them from the clip's start.
+    var fadeStart: Double? = nil
     var transitionKind: Transition.Kind = .crossfade
     var look: SourceLook? = nil
     var isPrimary: Bool = true
@@ -40,6 +43,9 @@ struct RecipeVideoLayer: @unchecked Sendable {
     /// Set only when the recipe has a `speakerBackground` (KRI-1116).
     var speakerRole: SpeakerBackgroundRole? = nil
     var speakerFrameOverride: SpeakerFrameOverride? = nil
+    func fadeAlpha(at time: Double) -> Double {
+        fadeIn > 0 ? min(1, max(0, (time - (fadeStart ?? start)) / fadeIn)) : 1
+    }
     func effectiveSpeakerFrame(_ fallback: SpeakerFrame?) -> SpeakerFrame? {
         guard let speakerFrameOverride else { return fallback }
         return speakerFrameOverride.resolved(defaultFrame: fallback)
@@ -495,7 +501,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                     speakerSlice: whole ? .whole : .speakerOnly)
                 let picture = try composeBelowText(backgrounds + [raw], onto: CIImage(color: .clear).cropped(to: bounds),
                     instruction: solo, request: request, time: time)
-                let alpha = layer.fadeIn > 0 ? min(1, max(0, (time - layer.start) / layer.fadeIn)) : 1
+                let alpha = layer.fadeAlpha(at: time)
                 if alpha < 1 && layer.transitionKind != .crossfade {
                     result = try NativeClipTransitionPainter.image(incoming: picture, outgoing: result,
                         kind: layer.transitionKind, progress: alpha, canvas: bounds)
@@ -564,7 +570,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         // Clamped BEFORE the transform, on the decoded frame's whole-pixel extent: clamping after it would
         // repeat the resampled, partly transparent edge column and leave grey bars over the black canvas.
         if layer.extendsEdgesToCanvas { source = source.clampedToExtent() }
-        var alpha = layer.visualPlacement?.alpha(at: time) ?? (layer.fadeIn > 0 ? min(1, max(0, (time - layer.start) / layer.fadeIn)) : 1)
+        var alpha = layer.visualPlacement?.alpha(at: time) ?? layer.fadeAlpha(at: time)
         if layer.visualPlacement == nil, let fade = layer.overlayFade { alpha *= fade.alpha(at: time) }
         var positioned = Self.positionedSource(source, layer: layer, canvas: canvas, time: time)
         if let backdrop = layer.backdrop {
