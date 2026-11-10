@@ -352,6 +352,13 @@ class Settings(BaseSettings):
     # PHONE_SUBTITLED_FULLSCREEN_OVERLAYS_ENABLED=false --app nova-video` +
     # `fly machine restart <id>` (api + worker).
     phone_subtitled_fullscreen_overlays_enabled: bool = True
+    # KRI-1342 item 8: a photo/video the planner cued by what the talk is ABOUT (no spoken word
+    # the creator named) starts with the phrase holding its cue word, and a full-screen photo
+    # with no stated length is held for that phrase (never cut off mid-way through the next
+    # sentence). Phone Talking and Voiceover beats (`phone_reaction_grounding.PhraseTiming`).
+    # Default off: windows stay on the cue word, byte-identical. Apply: `fly secrets set
+    # BEAT_PHRASE_TIMING_ENABLED=true -a nova-video`, then restart the worker.
+    beat_phrase_timing_enabled: bool = False
     # KRI-547 kill switch: when the approved brief asks for a vertical / 9:16 /
     # full-screen / "keep my face in frame" video and the phone Talking speaker
     # clip is landscape, `_run_phone_subtitled_job` samples the face across the
@@ -519,6 +526,26 @@ class Settings(BaseSettings):
     # byte-identical to today. Rollback: `fly secrets set
     # CREATOR_CTA_ENDING_ENABLED=false --app nova-video` + restart api + worker.
     creator_cta_ending_enabled: bool = False
+    # KRI-1342 item 7 (corner text on phone Talking edits): the creator's corner lines
+    # (`strategy.pinned_texts`: 'a small "Yorumla" label top left for the whole video',
+    # "sağ altta @handle") stay on screen for their whole window at the asked corner,
+    # placed off every face the window shows (`app.pipeline.phone_talking_corner_text`).
+    # Needs the KRI-467 text lane (`phone_subtitled_title_supported`); no new recipe field,
+    # so every app build draws it. False: byte-identical to today (one top line becomes the
+    # opening title, anything else is asked about). Rollback: `fly secrets set
+    # PHONE_TALKING_CORNER_TEXT_ENABLED=false --app nova-video` + restart api + worker.
+    phone_talking_corner_text_enabled: bool = False
+    # KRI-1346 (closing card on phone Talking edits): "end on a red screen with yellow text
+    # 'follow for more'" appends a full-screen colour card with the creator's text AFTER the
+    # last word (`app.pipeline.phone_talking_closing_card`): the last frame holds silently
+    # (`freezeFrame`) under a solid visual fill, so no speech is cut. Needs the KRI-467
+    # text lane, "freezeFrame", "visualBlocks" and the device-qualification token
+    # "closingCard" in `phone_render_verified_features` (add it after a physical-iPhone
+    # preview + export check) and an app build stamped >= `freeze_frame_min_client_protocol`;
+    # see `app.services.phone_rollout.phone_talking_closing_card_planned_for`. False:
+    # byte-identical to today. Rollback: `fly secrets set
+    # PHONE_TALKING_CLOSING_CARD_ENABLED=false --app nova-video` + restart api + worker.
+    phone_talking_closing_card_enabled: bool = False
     # KRI-707 (text on a spoken word on phone Talking edits): a brief text ask with
     # its spoken cue ("big 'ATAKAN' when I say 'Atakan'": literal + `facts.triggers`)
     # renders as an editable text row from the moment the take says the word, off the
@@ -1387,6 +1414,15 @@ class Settings(BaseSettings):
     # ask), and the "<pace> pacing" chip is left off a card whose route ignores pacing. Default
     # TRUE; false + restart (api + worker) = byte-identical to before.
     kria_headsup_asked_only_enabled: bool = True
+    # KRI-1346/1347 (yorum3): every hold / draft / review line comes from one capability
+    # answer: the card's treatments line leaves out a treatment the route's writer applies
+    # (`phone_subtitled_overlays_supported` on phone Talking), a "have a look" ask the plan
+    # already shortened becomes one Partly line, and `app.kria.reply_consistency` drops a
+    # heads-up line a Done/Will-do line contradicts; `contradictions` also flags a "can't" that
+    # names another capability (the closing card's own answer is
+    # `brief_checks._check_closing_card`, KRI-1346 / #2256). Default FALSE; false + restart (api +
+    # worker) = byte-identical replies. Guard: `tests/kria/test_reply_consistency.py`.
+    kria_honest_reply_lines_enabled: bool = False
 
     # Green 5 (2026-11-04): a chat nothing has told its language yet (a "Suggest an edit." tap,
     # media only, "ok") takes the language of the creator's latest message typed in another of
@@ -1917,6 +1953,13 @@ class Settings(BaseSettings):
     # that word lowercase mid-sentence. Both default TRUE; false + worker restart = byte-identical.
     caption_request_names_enabled: bool = True
     caption_case_reference_enabled: bool = True
+    # KRI-1345, phone Talking + Narrated captions. CAPTION_NAME_VOCABULARY_ENABLED: the job's own
+    # names respell a mishearing even when the 5+ letter request-name rule above cannot: 4-letter
+    # names the creator typed ("Vela" heard "Vila") and names read off the job's media (photo
+    # text, photo brand labels, file names), each only where the take itself writes the heard
+    # word as a name (`app.pipeline.caption_names`). Narrated also gets the request names above.
+    # Default FALSE; false = byte-identical. Apply: fly secret + restart api+worker.
+    caption_name_vocabulary_enabled: bool = False
 
     # Self-narration for narrated walkthroughs: a NARRATED_EDIT_FORMATS item with NO
     # recorded voiceover may still generate when its footage carries the voice — the

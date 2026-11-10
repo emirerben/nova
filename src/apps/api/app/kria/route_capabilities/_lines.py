@@ -120,6 +120,33 @@ def treatments(value: Any, _s: Mapping[str, Any]) -> str | None:
     )
 
 
+def treatments_unless(applied: Mapping[str, Callable[[], bool]]) -> Builder:
+    """`treatments` without each treatment the route's writer applies right now (KRI-1347).
+
+    ``applied`` maps a treatment to the same predicate the manifest and the worker read (one
+    source of truth), so the card never says "won't be applied" for a lane the render draws.
+    With ``KRIA_HONEST_REPLY_LINES_ENABLED`` off it is `treatments`, byte-identical."""
+
+    def build(value: Any, strategy: Mapping[str, Any]) -> str | None:
+        items = [v for v in (value or []) if str(v or "").strip()]
+        from app.kria.brief_checks import honest_reply_lines  # noqa: PLC0415
+
+        if honest_reply_lines():
+            items = [v for v in items if not _applies(applied.get(str(v)))]
+        return treatments(items, strategy)
+
+    return build
+
+
+def _applies(predicate: Callable[[], bool] | None) -> bool:
+    if predicate is None:
+        return False
+    try:
+        return bool(predicate())
+    except Exception:  # noqa: BLE001 - unknown means the old line stays
+        return False
+
+
 def archetype(value: Any, _s: Mapping[str, Any]) -> str | None:
     if not value:
         return None

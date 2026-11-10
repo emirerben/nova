@@ -81,7 +81,8 @@ from app.kria.portable_speaker_background import (
     SpeakerFrame,
     SpeakerFullScreenWindow,
 )
-from app.kria.portable_visual import AudioMuteWindow, VisualMediaPlacement
+from app.kria.portable_text import TextInk
+from app.kria.portable_visual import AudioMuteWindow, VisualCanvasFill, VisualMediaPlacement
 from app.kria.recipes import (
     AssetFingerprint,
     AudioMixRecipe,
@@ -274,8 +275,16 @@ def compile_phone_subtitled_plan(
     inserts: tuple[PhoneInsert, ...] = (),
     background_focus_open: bool | None = None,
     additional_speaker_keep_segments: Mapping[str, Sequence[tuple[float, float]]] | None = None,
+    closing_card: Mapping[str, Any] | None = None,
 ) -> EditRecipeV2:
     """Compile the subtitled edit format's phone recipe.
+
+    ``closing_card`` (KRI-1346, ``{"duration_s", "background_color"}``) appends the creator's
+    colour card AFTER everything else on the main track (the talk, then any ending clip): the
+    last main clip holds its last frame for ``duration_s`` (silent on the device) under a solid
+    ``closing-card`` fill, and every text row tagged ``closing_card`` is timed to that window.
+    Rows tagged ``whole_video`` (corner text, KRI-1342 item 7) run to the new end. ``None``
+    compiles byte-identically to before.
 
     ``strategy`` / ``requirements`` (KRI-1097 wave 2) are the approved plan and the live asks
     of its brief: the title rows in ``text_elements`` enter the way they ask
@@ -754,6 +763,51 @@ def compile_phone_subtitled_plan(
         timeline_end = speaker_end + ending_duration
         required_capabilities |= {"visualVideos", "audioMix"}
 
+    visual_fills: list[VisualCanvasFill] = []
+    if closing_card is not None and main_clips:
+        from app.pipeline.phone_talking_closing_card import (  # noqa: PLC0415
+            CLOSING_CARD_FILL_ID,
+            CLOSING_CARD_FILL_ORDER,
+            retime_card_rows,
+        )
+
+        card_s = round(float(closing_card["duration_s"]), 3)
+        card_color = str(closing_card["background_color"])
+        last = main_clips[-1]
+        main_clips[-1] = last.model_copy(
+            update={"hold_duration": round((last.hold_duration or 0.0) + card_s, 6)}
+        )
+        card_start = timeline_end
+        timeline_end = round(timeline_end + card_s, 6)
+        visual_fills.append(
+            VisualCanvasFill(
+                id=CLOSING_CARD_FILL_ID,
+                start=round(card_start, 6),
+                end=timeline_end,
+                order=CLOSING_CARD_FILL_ORDER,
+                kind="solid",
+                color=TextInk(
+                    red=int(card_color[1:3], 16) / 255,
+                    green=int(card_color[3:5], 16) / 255,
+                    blue=int(card_color[5:7], 16) / 255,
+                    alpha=1.0,
+                ),
+            )
+        )
+        required_capabilities |= {"freezeFrame", "visualBlocks"}
+        text_elements = retime_card_rows(text_elements, start_s=card_start, end_s=timeline_end)
+    if text_elements and any(
+        (row.get("source_params") or {}).get("whole_video") for row in text_elements
+    ):
+        # KRI-1342 item 7: "for the whole video" ends where the video ends, whatever the
+        # cleanup, the inserts, an ending clip or the card did to its length.
+        text_elements = [
+            {**row, "end_s": round(timeline_end, 3)}
+            if (row.get("source_params") or {}).get("whole_video")
+            else row
+            for row in text_elements
+        ]
+
     if strategy is not None and text_elements:
         from app.pipeline.phone_subtitled_title import talking_title_entrances  # noqa: PLC0415
 
@@ -922,6 +976,8 @@ def compile_phone_subtitled_plan(
             # `None` is omitted from the recipe wire, so a recipe without a background
             # keeps its exact bytes and digest.
             speaker_background=speaker_background,
+            # KRI-1346: empty (omitted from the wire) unless the creator's closing card.
+            visual_fills=visual_fills,
         )
     except ValidationError as exc:
         # A recipe the device refuses is a plan defect, said in words: left as a pydantic error

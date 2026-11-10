@@ -35,7 +35,7 @@ from app.services.spoken_quotes import MIN_QUOTE_TOKENS, quoted_texts
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
-    from app.kria.brief import BriefUpdate
+    from app.kria.brief import BriefUpdate, CreativeBrief
 
 TEXT_SEQUENCE_KIND = "text_sequence"
 UNIT_FACT = "unit"
@@ -200,6 +200,95 @@ def refile_text_sequences(
     ]
 
 
+# How briefs written before the 280-character sequence literal (KRI-1352) filed an approved
+# paragraph over 200 characters: the words moved into the description behind this marker.
+_OVERFLOW_MARKER = " (exceeds literal length limit): "
+# Only a whole-video sequence gets a bar the length of a paragraph; a clip's own text is a label
+# capped far shorter (`unified_montage.MAX_CREATOR_LABEL_CHARS`).
+_WHOLE_VIDEO_SCOPES = frozenset({"title", "global"})
+
+
+def recover_overflowed_literals(
+    prior: CreativeBrief | None, updates: Sequence[BriefUpdate]
+) -> tuple[BriefUpdate, ...]:
+    """``updates`` plus a change that restores each legacy over-length sequence literal.
+
+    The exact paragraph becomes a literal in a new brief version before fresh approval; old
+    bindings remain unchanged. Only open whole-video requirements with a single legacy marker,
+    no leading/trailing whitespace or trailing ellipsis, and 201–280 characters qualify.
+    Descriptions at the storage limit might be truncated and are excluded. This turn's own
+    changes or removals take precedence.
+    """
+    from app.kria.brief import (  # noqa: PLC0415
+        _MAX_DESCRIPTION_CHARS,
+        MAX_LITERAL_CHARS,
+        MAX_SEQUENCE_LITERAL_CHARS,
+        BriefUpdate,
+    )
+
+    batch = tuple(updates)
+    if prior is None:
+        return batch
+    targeted = {update.target_requirement_id for update in batch if update.operation != "add"}
+    recovered = []
+    for req in prior.live():
+        description = req.description or ""
+        if (
+            not is_text_sequence(req)
+            or req.scope not in _WHOLE_VIDEO_SCOPES
+            or req.status != "open"
+            or req.literal is not None
+            or req.id in targeted
+            or description.count(_OVERFLOW_MARKER) != 1
+            or len(description) >= _MAX_DESCRIPTION_CHARS
+        ):
+            continue
+        label, words = description.split(_OVERFLOW_MARKER)
+        if (
+            not label
+            or label != label.strip()
+            or words != words.strip()
+            or not MAX_LITERAL_CHARS < len(words) <= MAX_SEQUENCE_LITERAL_CHARS
+            or words.endswith(("…", "..."))
+        ):
+            continue
+        recovered.append(
+            BriefUpdate(
+                operation="change",
+                target_requirement_id=req.id,
+                expected_version=prior.version,
+                kind=req.kind,
+                scope=req.scope,
+                literal=words,
+                description=label,
+                facts=dict(req.facts),
+            )
+        )
+    return (*batch, *recovered)
+
+
+def recovered_copy_notice(
+    prior: CreativeBrief | None, updates: Sequence[BriefUpdate]
+) -> str | None:
+    """The exact words a turn restored with `recover_overflowed_literals`, for the approval card.
+
+    Re-derived from the brief the turn started from, matching the exact legacy restoration.
+    The creator sees every matching paragraph before approving it.
+    """
+    from app.kria.reply_language import say  # noqa: PLC0415
+
+    restored = recover_overflowed_literals(prior, ())
+    lines = [
+        say(
+            en=f'Review the restored text for {update.description}: "{update.literal}"',
+            tr=f'Geri yüklenen metni gözden geçir ({update.description}): "{update.literal}"',
+        )
+        for update in updates
+        if update in restored
+    ]
+    return " ".join(lines) or None
+
+
 __all__ = [
     "MODE_FACT",
     "TEXT_SEQUENCE_KIND",
@@ -207,6 +296,8 @@ __all__ = [
     "is_text_sequence",
     "last_quoted_literal",
     "names_footage_speech",
+    "recover_overflowed_literals",
+    "recovered_copy_notice",
     "refile_text_sequence",
     "refile_text_sequences",
     "text_sequence_mode",

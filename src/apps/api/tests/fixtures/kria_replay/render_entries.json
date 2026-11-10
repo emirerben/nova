@@ -80,7 +80,8 @@
         "clip_tilts",
         "inserts",
         "background_focus_open",
-        "additional_speaker_keep_segments"
+        "additional_speaker_keep_segments",
+        "closing_card"
       ],
       "recipe": {
         "title_animation": "text_layers[id^=text-].animation_phases.entrance",

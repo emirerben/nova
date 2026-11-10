@@ -4563,10 +4563,15 @@
         "src/apps/api/app/kria/brief_checks.py",
         "src/apps/api/app/kria/brief.py",
         "src/apps/api/app/kria/text_sequence.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
         "src/apps/api/app/pipeline/unified_montage.py"
       ],
       "regression_tests": [
         "tests/kria/test_approved_long_sequence_copy.py",
+        "tests/kria/test_legacy_overflow_literal_recovery.py",
+        "tests/kria/test_legacy_overflow_retry_planner.py",
+        "tests/kria/test_legacy_overflow_retry_postgres.py",
         "tests/evals/request_following/test_research_feeds_text_sequences.py",
         "tests/evals/request_following/test_researched_text.py",
         "tests/evals/request_following/test_kri881_research_before_approval.py",
@@ -4585,7 +4590,8 @@
         "phrase units with multiword pieces and word build-up (cumulative) pass",
         "a pre-approval preview prepares reviewed layers, and the render replays them with no search, writer or reviewer call",
         "an approval that pinned footage explanations before this change fails plainly for an authored word sequence instead of an opaque replay error",
-        "a program without reviewed layers serializes exactly as before"
+        "a program without reviewed layers serializes exactly as before",
+        "a regeneration turn on a brief written before 280-character sequence literals restores the legacy over-length paragraph as a new brief version; question turns, the creator's own change or removal, non-open requirements and malformed markers are left alone"
       ],
       "neighbours_gap": [
         "Live layer writing, translation fidelity and claim review are unverified without a paid run.",
