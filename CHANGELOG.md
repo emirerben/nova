@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.145.0] - 2026-11-10
+
+### Changed
+- fix(kria): cut any off-script opening before the first real sentence, by word role (KRI-1348) (#2252) <!-- release-pr: 2252 -->
+
 ## [0.88.144.0] - 2026-11-10
 
 ### Fixed
