@@ -559,8 +559,12 @@ def _drop_unasked_added_text(
     pinned_ops: list[dict],
     snapshot: EditProposalSnapshot,
     ctx: RunContext | None,
+    shaped_after_pins: bool = False,
 ) -> list[dict]:
     """Drop composer ``add_text`` ops that are not the creator's own words (item 22).
+
+    ``shaped_after_pins``: the program runs ``pinned_ops`` as its first bundle and the composer's
+    ops as ``then`` (seeded approved sequences), so the check replays that same shape.
 
     "Just this text, nothing else" must not render an invented line or a second copy of
     hers, and her line must read exactly as she wrote it (``_exact_covers``): a line that
@@ -605,7 +609,11 @@ def _drop_unasked_added_text(
     digest = _digest(texts, slots)
 
     def replay(ops: list[dict]) -> list[dict]:
-        program = TextCompositionProgram(base_digest=digest, operations=[*pinned_ops, *ops])
+        program = (
+            TextCompositionProgram(base_digest=digest, operations=list(pinned_ops), then=ops)
+            if shaped_after_pins
+            else TextCompositionProgram(base_digest=digest, operations=[*pinned_ops, *ops])
+        )
         return replay_text_composition(plan, program)["text_elements"]
 
     # An add_text never changes a planned bar and no later op can address an added one, so
@@ -741,7 +749,7 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
     if any(op.get("op") not in _TEXT_OPS for op in [*program.operations, *program.then]):
         raise CreationTextCompositionError("Text composition contains a non-text operation")
     writing = sorted({str(op.get("op")) for op in program.then} & _WRITING_OPS)
-    if program.research_layers and writing:
+    if writing and any(shape.source == "research" for shape in program.research_layers):
         raise CreationTextCompositionError(
             "Researched text can only be shaped, not written again: " + ", ".join(writing)
         )
@@ -1299,6 +1307,117 @@ def research_needs_text_layers(requirements: Sequence[BriefRequirement] | None) 
     return any(is_text_sequence(req) for req in authored) or len(positions) > 1
 
 
+def _sequence_literal_asks(
+    requirements: Sequence[BriefRequirement] | None,
+) -> list[BriefRequirement]:
+    """Live title or whole-video word sequences that carry the creator's exact words."""
+    return [
+        req
+        for req in requirements or ()
+        if req.live
+        and is_text_sequence(req)
+        and req.scope in _SEQUENCE_TITLE_SCOPES
+        and req.literal
+    ]
+
+
+def _is_sequence_seed(
+    op: Mapping[str, Any], requirements: Sequence[BriefRequirement] | None
+) -> bool:
+    """The exact bar `_unplaced_sequence_bars` adds for an approved word sequence, nothing more."""
+    patch = op.get("patch") or {}
+    return (
+        op.get("op") == "add_text"
+        and set(op) <= {"op", "text", "start_s", "end_s", "patch"}
+        and set(patch) <= {"position"}
+        and float(op.get("start_s") or 0) == 0.0
+        and any(op.get("text") == req.literal for req in _sequence_literal_asks(requirements))
+    )
+
+
+def _approved_sequence_shapes(
+    lane: list[dict],
+    requirements: Sequence[BriefRequirement] | None,
+    slots: list[dict],
+    *,
+    offset: int,
+) -> list[ResearchLayerShape]:
+    """The approved word sequences a program that seeded one must keep on every replay.
+
+    Each is checked on the bar holding its exact words: its requested place, one word per piece
+    when asked, and, for sequences asked at different places, shown together.
+    """
+    from app.kria.text_sequence import text_sequence_unit  # noqa: PLC0415
+    from app.text_fold import fold_text  # noqa: PLC0415
+
+    total = max((float(row.get("output_end_s") or 0) for row in slots), default=0.0)
+    holders = {fold_text(str(row.get("text") or "")): row for row in lane if not row.get("removed")}
+    shapes: list[ResearchLayerShape] = []
+    for req in _sequence_literal_asks(requirements):
+        row = holders.get(fold_text(req.literal or ""))
+        if row is None:
+            continue
+        position = req.facts.get("position")
+        position = position if position in {"top", "middle", "bottom"} else None
+        first_elsewhere = next(
+            (
+                index
+                for index, shape in enumerate(shapes)
+                if position and shape.position and shape.position != position
+            ),
+            None,
+        )
+        shapes.append(
+            ResearchLayerShape(
+                bar_id=row["id"],
+                position=position,
+                start_s=0.0,
+                end_s=total,
+                unit=text_sequence_unit(req),
+                together_with=None if first_elsewhere is None else offset + first_elsewhere,
+                source="approved",
+            )
+        )
+    return shapes
+
+
+def _unplaced_sequence_bars(
+    texts: list[dict], requirements: Sequence[BriefRequirement] | None, slots: list[dict]
+) -> list[dict]:
+    """A whole-video bar for each live title or global word sequence no bar holds yet.
+
+    The plan seeds the opening title and short sentences as clip labels
+    (`unified_montage.brief_view`). An approved paragraph longer than a label gets no bar, and a
+    composer bundle cannot add a bar and split it (KRI-1352), so its exact words are added here, at
+    the place it asks for, as confirmed copy for the composer to shape.
+    """
+    from app.text_fold import fold_text  # noqa: PLC0415
+
+    total = max((float(row.get("output_end_s") or 0) for row in slots), default=0.0)
+    held = {fold_text(str(row.get("text") or "")) for row in texts if not row.get("removed")}
+    ops = []
+    for req in _sequence_literal_asks(requirements):
+        words = fold_text(req.literal or "")
+        if not words or words in held or total <= 0:
+            continue
+        held.add(words)
+        position = req.facts.get("position")
+        ops.append(
+            {
+                "op": "add_text",
+                "text": req.literal,
+                "start_s": 0.0,
+                "end_s": total,
+                **(
+                    {"patch": {"position": position}}
+                    if position in {"top", "middle", "bottom"}
+                    else {}
+                ),
+            }
+        )
+    return ops
+
+
 def _run_composer(
     composer_input: EditCopilotInput, *, slots: list[dict], bar_count: int, ctx: RunContext | None
 ) -> EditCopilotOutput:
@@ -1484,12 +1603,12 @@ def _layer_shapes(
 
 
 def _check_research_layers(rows: list[dict], program: TextCompositionProgram) -> None:
-    """What review approved is what shows, on every replay of a program that records it.
+    """What review or approval fixed is what shows, on every replay of a program that records it.
 
-    Every piece stays at its layer's position and inside its
-    reviewed window (its citations and pictured clips are that window's); a translation in
-    another place spans the same time as its source; a sequence ask is split in its unit (one
-    word per piece, or one more word per step when the words build up).
+    Every piece stays at its layer's position and inside its window (a researched layer's
+    citations and pictured clips are that window's); a translation in another place, or a layer
+    asked to show together with another, spans the same time; a sequence ask is split in its unit
+    (one word per piece, or one more word per step when the words build up).
     """
     shapes = program.research_layers
     shown = [
@@ -1497,42 +1616,49 @@ def _check_research_layers(rows: list[dict], program: TextCompositionProgram) ->
         for shape in shapes
     ]
     for shape, pieces in zip(shapes, shown, strict=True):
+        name = _layer_name(shape)
         if not pieces:
-            raise CreationTextCompositionError(f"Researched {shape.language} text is missing")
-        if any(piece.get("position") != shape.position for piece in pieces):
+            raise CreationTextCompositionError(f"{name} is missing")
+        if shape.position and any(piece.get("position") != shape.position for piece in pieces):
             raise CreationTextCompositionError(
-                f"Researched {shape.language} text moved off its requested {shape.position} place"
+                f"{name} moved off its requested {shape.position} place"
             )
         if any(
             piece["start_s"] < shape.start_s - _FRAME_S or piece["end_s"] > shape.end_s + _FRAME_S
             for piece in pieces
         ):
+            window = "reviewed" if shape.source == "research" else "approved"
             raise CreationTextCompositionError(
-                f"Researched {shape.language} text was moved outside its reviewed "
+                f"{name} was moved outside its {window} "
                 f"{shape.start_s:.1f}-{shape.end_s:.1f} s window"
             )
-    for shape, pieces in zip(shapes, shown, strict=True):
-        source = shapes[shape.translation_of] if shape.translation_of is not None else None
-        if source is not None and source.position != shape.position:
-            theirs = shown[shape.translation_of]
-            span, source_span = (
-                (pieces[0]["start_s"], pieces[-1]["end_s"]),
-                (
-                    theirs[0]["start_s"],
-                    theirs[-1]["end_s"],
-                ),
-            )
-            if any(abs(a - b) > _FRAME_S for a, b in zip(span, source_span)):
+    for index, (shape, pieces) in enumerate(zip(shapes, shown, strict=True)):
+        partner = shape.together_with
+        if (
+            partner is None
+            and shape.translation_of is not None
+            and shapes[shape.translation_of].position != shape.position
+        ):
+            partner = shape.translation_of
+        if partner is not None and partner != index:
+            theirs = shown[partner]
+            span = (pieces[0]["start_s"], pieces[-1]["end_s"])
+            other = (theirs[0]["start_s"], theirs[-1]["end_s"])
+            if any(abs(a - b) > _FRAME_S for a, b in zip(span, other)):
+                what = (
+                    f"The {shape.language} translation"
+                    if shape.translation_of is not None
+                    else _layer_name(shape)
+                )
                 raise CreationTextCompositionError(
-                    f"The {shape.language} translation is not on screen together with "
-                    f"the {source.language} text"
+                    f"{what} is not on screen together with {_layer_name(shapes[partner]).lower()}"
                 )
         if shape.unit is None:
             continue
+        lead = _layer_name(shape, lead=False)
         if len(pieces) < 2:
             raise CreationTextCompositionError(
-                f"Text composition is incomplete: the {shape.language} text is not shown "
-                "a piece at a time"
+                f"Text composition is incomplete: {lead} is not shown a piece at a time"
             )
         if shape.unit == "word":
             counts = [len(piece["text"].split()) for piece in pieces]
@@ -1542,9 +1668,15 @@ def _check_research_layers(rows: list[dict], program: TextCompositionProgram) ->
             )
             if counts != (list(range(1, len(pieces) + 1)) if builds_up else [1] * len(pieces)):
                 raise CreationTextCompositionError(
-                    f"Text composition is incomplete: the {shape.language} text is not shown "
-                    "one word at a time"
+                    f"Text composition is incomplete: {lead} is not shown one word at a time"
                 )
+
+
+def _layer_name(shape: ResearchLayerShape, *, lead: bool = True) -> str:
+    if shape.source == "research":
+        return f"Researched {shape.language} text" if lead else f"the {shape.language} text"
+    where = f" {shape.position}" if shape.position else ""
+    return f"The approved{where} text" if lead else f"the approved{where} text"
 
 
 _FRAME_S = 1 / 30
@@ -1587,7 +1719,10 @@ def _compose_creation_text(
         )
     if snapshot.text_composition is not None:
         program = snapshot.text_composition
-        _check_added_text([*program.operations, *program.then], text_requirements)
+        seeds_kept_out = [
+            op for op in program.operations if not _is_sequence_seed(op, text_requirements)
+        ]
+        _check_added_text([*seeds_kept_out, *program.then], text_requirements)
         plan = compile_proposal_execution_plan(snapshot)
         _check_editorial_text(snapshot, plan)
         constraints = dict(copy_constraints or {})
@@ -1712,6 +1847,25 @@ def _compose_creation_text(
     else:
         pinned_ops = []
         texts_for_model = texts
+    seeded = (
+        _unplaced_sequence_bars(texts_for_model, text_requirements, slots)
+        if approved_layers is None
+        else []
+    )
+    if seeded:
+        seeded_lane = replay_text_composition(
+            plan,
+            TextCompositionProgram(
+                base_digest=_digest(texts, slots), operations=[*pinned_ops, *seeded]
+            ),
+        )["text_elements"]
+        held = {row.get("id") for row in texts_for_model}
+        constraints = {
+            **constraints,
+            **{row["id"]: row["text"] for row in seeded_lane if row.get("id") not in held},
+        }
+        pinned_ops = [*pinned_ops, *seeded]
+        texts_for_model = seeded_lane
     model_snapshot = creation_model_snapshot(
         snapshot,
         texts=texts_for_model,
@@ -1807,9 +1961,21 @@ def _compose_creation_text(
             pinned_ops=pinned_ops,
             snapshot=snapshot,
             ctx=ctx,
+            shaped_after_pins=bool(seeded) and not full_lane_ops,
         )
-    # The composer addressed the lane with the approved research already in place.
-    operations = [*pinned_ops, *operations]
+    if seeded and not full_lane_ops:
+        # The composer shaped bars the first bundle adds; a later bundle's selectors bind them.
+        then, operations = operations, list(pinned_ops)
+    else:
+        # The composer addressed the lane with the approved research already in place.
+        operations = [*pinned_ops, *operations]
+    if seeded:
+        shapes = [
+            *shapes,
+            *_approved_sequence_shapes(
+                texts_for_model, text_requirements, slots, offset=len(shapes)
+            ),
+        ]
     program = TextCompositionProgram(
         base_digest=_digest(texts, slots),
         operations=operations,

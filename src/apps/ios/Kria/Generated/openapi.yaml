@@ -846,7 +846,8 @@
           },
           "literal": {
             "default": null,
-            "maxLength": 200,
+            "description": "Exact creator words: at most 200 characters, or 280 for kind text_sequence.",
+            "maxLength": 280,
             "nullable": true,
             "title": "Literal",
             "type": "string"

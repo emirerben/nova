@@ -4560,9 +4560,13 @@
         "src/apps/api/app/schemas/text_composition.py",
         "src/apps/api/app/schemas/research.py",
         "src/apps/api/app/kria/research_preview.py",
-        "src/apps/api/app/kria/brief_checks.py"
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/kria/brief.py",
+        "src/apps/api/app/kria/text_sequence.py",
+        "src/apps/api/app/pipeline/unified_montage.py"
       ],
       "regression_tests": [
+        "tests/kria/test_approved_long_sequence_copy.py",
         "tests/evals/request_following/test_research_feeds_text_sequences.py",
         "tests/evals/request_following/test_researched_text.py",
         "tests/evals/request_following/test_kri881_research_before_approval.py",
