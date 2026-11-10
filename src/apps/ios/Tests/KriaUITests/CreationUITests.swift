@@ -776,6 +776,8 @@ final class CreationUITests: XCTestCase {
         let picks = 15
         app.launchEnvironment["KRIA_SEED_PHOTO_VIDEO_COUNT"] = "\(picks)"
         app.launchEnvironment["KRIA_CHAT_MONTAGE_MAX_CLIPS"] = "20"
+        // The turn's answer takes a few seconds, as on a real network, so the moment right after Send can be checked.
+        app.launchEnvironment["KRIA_CHAT_SEND_DELAY"] = "4"
         app.launch()
         createFreshChat(in: app)
         let card = app.buttons["format-montage"]
@@ -822,9 +824,29 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(eventually(timeout: 60) { pending.count == 0 }, "uploads still pending: \(pending.count)")
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'couldn\u{2019}t be read'")).firstMatch.exists,
                        "the picks were read and uploaded")
+
+        // All fifteen landed, not just some: a failed upload never blocks Send, so fewer receipts would quietly
+        // shrink this below the case that blanked. The rows are lazy, so read them while scrolling up to the
+        // footage card, which states the server's count.
         let clips = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'chat-media-'"))
-        XCTAssertTrue(eventually(timeout: 5) { clips.allElementsBoundByIndex.contains { $0.isHittable } },
-                      "the newest clips are on screen\n\(app.debugDescription)")
+        let readyCount = app.descendants(matching: .any)["footage-ready-count"]
+        var receipts = Set<String>()
+        func collectReceipts() { receipts.formUnion(clips.allElementsBoundByIndex.map(\.identifier)) }
+        collectReceipts()
+        for _ in 0..<14 where !readyCount.exists || !readyCount.isHittable {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
+                .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)))
+            collectReceipts()
+        }
+        XCTAssertTrue(readyCount.exists, "the footage card is reachable above the clips\n\(app.debugDescription)")
+        XCTAssertEqual(readyCount.label, "\(picks) clips ready")
+        XCTAssertEqual(receipts.count, picks, "one receipt per uploaded file: \(receipts.sorted())")
+        // Back to the end, where the reader was: the newest clips sit above the composer again.
+        let latest = app.buttons["chat-jump-to-latest"]
+        XCTAssertTrue(latest.waitForExistence(timeout: 5), "scrolled away from the end, the Latest pill is offered")
+        latest.tap()
+        XCTAssertTrue(eventually(timeout: 5) { clips.allElementsBoundByIndex.contains { $0.isHittable } && !latest.exists },
+                      "the newest clips are on screen again\n\(app.debugDescription)")
 
         // The prompt is typed and sent with the keyboard up, as on the phone.
         let prompt = "I want a text that explains the importance of 10 November in Turkey. It should not sound formal but should be respectful. I want one large text in the middle, word by word of the text block. In the bottom of the screen, I want the same but for the english translation"
@@ -835,21 +857,34 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "the software keyboard is up: it is what leaves so little of the chat visible")
         composer.typeText(prompt)
         snapshot("1-prompt-typed")
+        // The strip of chat between the header and the composer, in screen points.
+        func visibleTranscript() -> CGRect {
+            let top = app.buttons["workspace-menu-toggle"].frame.maxY
+            let bottom = min(plus.frame.minY, composer.frame.minY)
+            return CGRect(x: 0, y: top, width: app.frame.width, height: max(bottom - top, 0))
+        }
+        func isInView(_ element: XCUIElement) -> Bool {
+            element.exists && element.frame.intersection(visibleTranscript()).height >= 16
+        }
         let send = app.buttons["chat-send-message"]
         XCTAssertTrue(eventually(timeout: 10) { send.isEnabled })
         send.tap()
 
+        // While the turn is still on its way (the fixture answers four seconds late), the sent prompt is drawn
+        // inside the visible chat.
         let sent = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "word by word")).firstMatch
-        XCTAssertTrue(sent.waitForExistence(timeout: 10), "the sent prompt is drawn\n\(app.debugDescription)")
-        // Still there once the reply has landed and the transcript has settled, with the keyboard still up.
-        RunLoop.current.run(until: Date().addingTimeInterval(5))
+        XCTAssertTrue(eventually(timeout: 3) { isInView(sent) },
+                      "the sent prompt is in the visible chat: \(sent.exists ? "\(sent.frame)" : "not drawn") vs \(visibleTranscript())\n\(app.debugDescription)")
         snapshot("2-after-send")
+        // And once Kria's reply has landed, the chat is still drawn, with the keyboard still up.
+        let reply = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'direction I'")).firstMatch
+        XCTAssertTrue(reply.waitForExistence(timeout: 30), "Kria's reply arrived\n\(app.debugDescription)")
+        // The chat follows the reply's end, so its opening line may have scrolled up: any of the transcript's text counts.
+        let transcriptText = app.otherElements["Conversation history"].descendants(matching: .staticText)
+        XCTAssertTrue(eventually(timeout: 5) { transcriptText.allElementsBoundByIndex.contains(where: isInView) },
+                      "the transcript is drawn in the visible chat \(visibleTranscript())\n\(app.debugDescription)")
         XCTAssertTrue(app.keyboards.firstMatch.exists)
-        let transcript = app.descendants(matching: .any).matching(
-            NSPredicate(format: "identifier BEGINSWITH 'chat-media-' OR identifier BEGINSWITH 'chat-message-'"))
-        XCTAssertTrue(sent.exists, "the sent prompt is still drawn\n\(app.debugDescription)")
-        XCTAssertTrue(transcript.allElementsBoundByIndex.contains { $0.isHittable },
-                      "the transcript is on screen, not blank\n\(app.debugDescription)")
+        snapshot("3-after-reply")
     }
 
     /// Full-access Photos returns to the attachment flow on Done. A selected

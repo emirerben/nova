@@ -20,9 +20,11 @@ Server side (admin events for the thread, read-only): fifteen `media_added` even
 
 `ChatTimelineGroup` drew every run of adjacent media receipts as one row of the transcript's `LazyVStack`
 (since #1141). Fifteen clips make that single row about 1,560 pt tall. With the software keyboard up and a
-multi-line prompt, about 380 pt of the chat is visible. On Send the stack is asked to scroll to its end while
-rows are added under that one very tall row; it loses its place and realises no rows at all (accessibility
-tree: scroll content 1,761-1,834 pt tall, zero children) until the reader drags it.
+multi-line prompt, about 380 pt of the chat is visible. After Send the stack is asked to scroll to its end while
+rows are added and swapped under that one very tall row; it loses its place and realises no rows at all
+(accessibility tree: scroll content 1,761-1,834 pt tall, zero children) until the reader drags it. With the
+turn's answer held back four seconds, the sent bubble is still drawn right after the tap and the transcript
+blanks when the answer lands; with an instant answer the two are one frame apart.
 
 It needs several clips and the keyboard up at Send, so it looked random. Simulator runs without the software
 keyboard never showed it.
@@ -37,6 +39,13 @@ pulled up to the strip distance (`ChatConversationSpacing`), so the strip looks 
 `CreationUITests/testSendingALongPromptWithTheKeyboardUpAfterFifteenUploadsKeepsTheChatOnScreen`: 15 seeded
 videos picked through +, uploads land (`KRIA_CHAT_UPLOADS_LAND=1`: the fixture reserves, accepts the PUT and
 attaches one `media_added` per file), the reported prompt typed with the software keyboard up, Send.
+
+After review (PR #2265) the test also: counts fifteen distinct receipts while scrolling up to the footage card and
+reads its "15 clips ready"; returns with the Latest pill; checks the sent prompt's frame overlaps the strip between
+the header and the composer while the turn is on its way (`KRIA_CHAT_SEND_DELAY=4`); waits for Kria's reply
+instead of a fixed pause, then checks transcript text overlaps that strip. On the pre-fix code (fix files at
+ca6c5b884) this version fails at "Kria's reply arrived" and "the transcript is drawn in the visible chat"; with
+the fix it passes.
 
 | Code | Result |
 | --- | --- |
