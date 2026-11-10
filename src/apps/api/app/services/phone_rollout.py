@@ -2308,6 +2308,23 @@ def phone_talking_multi_speaker_beats_supported() -> bool:
     )
 
 
+def phone_talking_multi_take_cleanup_supported() -> bool:
+    """Single source of truth for "may a several-take Talking edit get speech cleanup"
+    (KRI-720). Consulted by the narration resolver's request builder
+    (`plan_item_media.active_narration_request`), the dispatch gate
+    (`content_plan_build._speech_cleanup_dispatch_snapshot`), the draft check
+    (`brief_checks`) and the worker (`generative_build._run_phone_subtitled_job`), so a
+    draft never offers a cleanup the render then refuses.
+
+    True iff ALL of: `talking_multi_take_cleanup_enabled` and several-clip Talking
+    (`phone_talking_multi_clip_supported`).
+    """
+    return bool(
+        getattr(settings, "talking_multi_take_cleanup_enabled", False)
+        and phone_talking_multi_clip_supported()
+    )
+
+
 def phone_talking_multi_clip_supported() -> bool:
     """Single source of truth for "may a declared Talking-to-camera
     (`subtitled`) item carry 2+ clips right now" (KRI-719).

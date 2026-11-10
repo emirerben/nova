@@ -80,6 +80,7 @@
         "clip_tilts",
         "inserts",
         "background_focus_open",
+        "additional_speaker_keep_segments",
         "closing_card"
       ],
       "recipe": {

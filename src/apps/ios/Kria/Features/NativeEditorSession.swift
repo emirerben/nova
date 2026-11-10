@@ -4227,6 +4227,7 @@ enum EditorOpenIntent { case warm, open }
             var phoneTalkingIndices: [Int]?
             var phoneTalkingCutaways: [NativePhoneTalkingSource.Cutaway] = []
             var phoneTalkingInserts: [NativePhoneTalkingSource.Insert] = []
+            var phoneTalkingSpeakerRemoved: [Int: [(start: Double, end: Double)]] = [:]
             var phoneNarratedSeeds: [NativePhoneNarratedSource.Seed] = []
             if let base = NativeEditorBaseSource(variant: previewVariant, document: document) {
                 #if DEBUG
@@ -4266,6 +4267,13 @@ enum EditorOpenIntent { case warm, open }
                     } else {
                         phoneTalkingIndices = nil
                     }
+                    // Each take cut on its own (KRI-720): a take the preview can't cut like the recipe would put every
+                    // later caption on the wrong words.
+                    if let spans = NativePhoneTalkingSource.speakerRemovedSpans(variant: previewVariant, pool: pool, speakerIndices: speakers) {
+                        phoneTalkingSpeakerRemoved = spans
+                    } else {
+                        phoneTalkingIndices = nil
+                    }
                 }
                 if NativePhoneNarratedSource.applies(variant: previewVariant, document: document) {
                     phoneNarratedSeeds = await loadPhoneNarratedSeeds(pool: pool, generation: generation, sequence: sequence)
@@ -4293,13 +4301,17 @@ enum EditorOpenIntent { case warm, open }
                     return (insert: insert, sourceDuration: duration) as NativePhoneTalkingSource.PlacedInsert
                 }
                 #if DEBUG
-                NativePreviewDiagnostics.record("phone-talking-source", fields: ["index": phoneTalkingIndices.map(String.init).joined(separator: ","), "duration": speakers.map { String($0.duration) }.joined(separator: ","), "removed": String(removed.count), "inserts": String(inserts.count)])
+                NativePreviewDiagnostics.record("phone-talking-source", fields: ["index": phoneTalkingIndices.map(String.init).joined(separator: ","), "duration": speakers.map { String($0.duration) }.joined(separator: ","), "removed": String(removed.count), "speakerRemoved": String(phoneTalkingSpeakerRemoved.count), "inserts": String(inserts.count)])
                 #endif
-                document = try NativePhoneTalkingSource.hydrate(document, speakers: speakers, removed: removed, inserts: inserts)
-                cleanDocument = try NativePhoneTalkingSource.hydrate(cleanDocument, speakers: speakers, removed: removed, inserts: inserts)
-                chatStagedDocument = try chatStagedDocument.map { try NativePhoneTalkingSource.hydrate($0, speakers: speakers, removed: removed, inserts: inserts) }
-                undoStack = try undoStack.map { try NativePhoneTalkingSource.hydrate($0, speakers: speakers, removed: removed, inserts: inserts) }
-                redoStack = try redoStack.map { try NativePhoneTalkingSource.hydrate($0, speakers: speakers, removed: removed, inserts: inserts) }
+                let speakerRemoved = phoneTalkingSpeakerRemoved
+                func hydrateTalking(_ doc: EditorDocument) throws -> EditorDocument {
+                    try NativePhoneTalkingSource.hydrate(doc, speakers: speakers, removed: removed, speakerRemoved: speakerRemoved, inserts: inserts)
+                }
+                document = try hydrateTalking(document)
+                cleanDocument = try hydrateTalking(cleanDocument)
+                chatStagedDocument = try chatStagedDocument.map(hydrateTalking)
+                undoStack = try undoStack.map(hydrateTalking)
+                redoStack = try redoStack.map(hydrateTalking)
                 refreshDuration()
             }
             if !phoneNarratedSeeds.isEmpty {

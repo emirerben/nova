@@ -93,6 +93,37 @@ class ActiveNarrationRequest:
     voiceover: RegisteredNarrationMedia | None = None
     pinned_spine_media_id: str | None = None
     target_duration_s: float | None = None
+    # KRI-720: a several-take Talking (`subtitled`) item resolves to every clip with sound as
+    # its own take instead of `ambiguous_embedded_source`. False (the default) is today's
+    # resolution, byte-identical; `plan_item_media.active_narration_request` sets it from
+    # `phone_talking_multi_take_cleanup_supported()`.
+    multi_take: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class NarrationTake:
+    """KRI-720: one clip of a several-take Talking source, analysed on its own."""
+
+    media_id: str
+    storage_path: str
+    generation: str
+    manifest_identity: str | None
+    window_start_s: float
+    window_end_s: float
+
+    @property
+    def window_duration_s(self) -> float:
+        return self.window_end_s - self.window_start_s
+
+    def to_private_dict(self) -> dict[str, object]:
+        return {
+            "media_id": self.media_id,
+            "storage_path": self.storage_path,
+            "generation": self.generation,
+            "manifest_identity": self.manifest_identity,
+            "window_start_s": self.window_start_s,
+            "window_end_s": self.window_end_s,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,14 +143,29 @@ class ActiveNarrationSource:
     resolved_renderer: NarrationRenderer
     detector_policy: str
     source_policy_fingerprint: str
+    # KRI-720: every take of a several-take Talking source, in clip order (the first is the
+    # take the scalar fields above describe). Empty for every single source: byte-identical.
+    takes: tuple[NarrationTake, ...] = ()
 
     @property
     def window_duration_s(self) -> float:
         return self.window_end_s - self.window_start_s
 
+    @property
+    def multi_take(self) -> bool:
+        return bool(self.takes)
+
     def to_private_dict(self) -> dict[str, object]:
         """Return the exact private source snapshot; never expose it publicly."""
 
+        if self.takes:
+            return {
+                **self._scalar_private_dict(),
+                "takes": [take.to_private_dict() for take in self.takes],
+            }
+        return self._scalar_private_dict()
+
+    def _scalar_private_dict(self) -> dict[str, object]:
         return {
             "source_kind": self.source_kind,
             "media_id": self.media_id,
@@ -213,6 +259,101 @@ def _fingerprint(
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _multi_take_fingerprint(
+    *,
+    request: ActiveNarrationRequest,
+    takes: tuple[NarrationTake, ...],
+) -> str:
+    """KRI-720: one identity over every take, in clip order. Adding, removing, replacing or
+    reordering a take changes it, so a consent can never outlive the takes it was given for.
+    Its own schema token: never equal to any single-source (`active-narration-v1`) hash."""
+
+    payload = {
+        "schema": "active-narration-multi-take-v1",
+        "source_kind": "embedded_spine",
+        "takes": [
+            {
+                "media_id": take.media_id,
+                "storage_path": take.storage_path,
+                "generation": take.generation,
+                "manifest_identity": take.manifest_identity,
+                "window": [take.window_start_s, take.window_end_s],
+            }
+            for take in takes
+        ],
+        "edit_format": request.edit_format,
+        "audio_mode": request.audio_mode,
+        "resolved_renderer": "subtitled",
+        "detector_policy": request.detector_policy,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _build_multi_take_source(
+    request: ActiveNarrationRequest,
+    embedded: tuple[RegisteredNarrationMedia, ...],
+    *,
+    video_present: bool,
+) -> ActiveNarrationResolution:
+    """KRI-720: every clip with sound of a several-take Talking item is a take of its own.
+
+    Which takes talk and which are footage is the render's call (Whisper word density,
+    `phone_talking_cutaways.classify_talking_clips`); the analysis records the same evidence
+    per take, so analysing every clip with sound means the render always finds the plan of
+    the take it plays. One unusable take makes the whole source unavailable: a consent must
+    cover every take the render may cut.
+    """
+
+    takes: list[NarrationTake] = []
+    for media in embedded:
+        if (
+            not media.media_id.strip()
+            or not media.storage_path.strip()
+            or not media.generation.strip()
+        ):
+            return _unavailable("unverified_generation", video_present=video_present)
+        window = _normalized_media_window(
+            media,
+            renderer="subtitled",
+            target_duration_s=request.target_duration_s,
+        )
+        if window is None:
+            return _unavailable("no_audio", video_present=video_present)
+        takes.append(
+            NarrationTake(
+                media_id=media.media_id,
+                storage_path=media.storage_path,
+                generation=media.generation,
+                manifest_identity=media.manifest_identity,
+                window_start_s=window[0],
+                window_end_s=window[1],
+            )
+        )
+    if len({take.media_id for take in takes}) != len(takes) or len(
+        {take.storage_path for take in takes}
+    ) != len(takes):
+        return _unavailable("ambiguous_embedded_source", video_present=video_present)
+    first, first_take = embedded[0], takes[0]
+    source = ActiveNarrationSource(
+        source_kind="embedded_spine",
+        media_id=first_take.media_id,
+        storage_path=first_take.storage_path,
+        generation=first_take.generation,
+        media_kind=first.media_kind,
+        manifest_identity=first_take.manifest_identity,
+        window_start_s=first_take.window_start_s,
+        window_end_s=first_take.window_end_s,
+        edit_format=request.edit_format,
+        audio_mode=request.audio_mode,
+        resolved_renderer="subtitled",
+        detector_policy=request.detector_policy,
+        source_policy_fingerprint=_multi_take_fingerprint(request=request, takes=tuple(takes)),
+        takes=tuple(takes),
+    )
+    return ActiveNarrationResolution(source=source, reason=None, video_present=video_present)
+
+
 def _unavailable(
     reason: NarrationUnavailableReason,
     *,
@@ -286,6 +427,7 @@ def resolve_active_narration_source(
         voiceover=request.voiceover,
         pinned_spine_media_id=request.pinned_spine_media_id,
         target_duration_s=request.target_duration_s,
+        multi_take=request.multi_take,
     )
     video_present = any(media.media_kind == "video" for media in normalized.clips)
     if edit_format not in SUPPORTED_EDIT_FORMATS or not detector_policy:
@@ -339,6 +481,8 @@ def resolve_active_narration_source(
 
     if edit_format == "subtitled":
         if len(embedded) != 1:
+            if normalized.multi_take:
+                return _build_multi_take_source(normalized, embedded, video_present=video_present)
             return _unavailable("ambiguous_embedded_source", video_present=video_present)
         return _build_source(
             normalized,
