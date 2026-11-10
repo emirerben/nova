@@ -1927,3 +1927,14 @@ These English keys have different Turkish wordings in different places (`conflic
 | Your iPhone app is too old to end on a full-screen colour with your text; update it first | Deine iPhone-App ist zu alt für ein Ende mit Farbbild und Text; aktualisier sie zuerst | iPhone uygulaman videoyu yazılı tam ekran bir renkle bitirmek için çok eski; önce güncelle | |
 | Your text colour wouldn't be readable on that background, so the text is black. | Deine Textfarbe wäre auf diesem Hintergrund nicht lesbar, deshalb ist der Text schwarz. | Yazı rengin o arka planda okunmazdı, o yüzden yazı siyah. | |
 | Your text colour wouldn't be readable on that background, so the text is white. | Deine Textfarbe wäre auf diesem Hintergrund nicht lesbar, deshalb ist der Text weiß. | Yazı rengin o arka planda okunmazdı, o yüzden yazı beyaz. | |
+
+## Added after merging main (2026-11-11, from #2266)
+
+| English | German | Turkish | OK? |
+| --- | --- | --- | --- |
+| I'll show it when I hear those words in your voiceover | Ich zeige es, sobald ich diese Worte in deinem Voiceover höre | Seslendirmende o sözleri duyduğumda gösteririm | |
+| No title, as asked. | Kein Titel, wie gewünscht. | İstediğin gibi başlık yok. | |
+| This draft has a title, but you asked for none. | Dieser Entwurf hat einen Titel, aber du wolltest keinen. | Bu taslakta başlık var, ama başlık istemedin. | |
+| Your clips follow your voice, so once the video is made I'll check what's on screen when you say those words | Deine Clips folgen deiner Stimme. Sobald das Video fertig ist, prüfe ich, was auf dem Bildschirm zu sehen ist, wenn du diese Worte sagst | Klipler sesini takip ediyor, video hazır olunca o sözleri söylediğinde ekranda ne olduğunu kontrol edeceğim | |
+| When you say {v1}, clip {v2} of {len_steps} is on screen ({step_start_s:.1f}–{step_end_s:.1f} s) | Wenn du {v1} sagst, ist Clip {v2} von {len_steps} im Bild ({step_start_s:.1f}–{step_end_s:.1f} s) | {v1} dediğinde ekranda {len_steps} klipten {v2}. klip var ({step_start_s:.1f}–{step_end_s:.1f} sn) | |
+| I couldn't tell which clip is on screen when you say {v1} | Ich konnte nicht erkennen, welcher Clip im Bild ist, wenn du {v1} sagst | {v1} dediğinde ekranda hangi klibin olduğunu anlayamadım | |

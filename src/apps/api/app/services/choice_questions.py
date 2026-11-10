@@ -726,6 +726,68 @@ def simpler_version_accepted(events: Events, dropped_fields: Iterable[str]) -> b
     return bool(dropping) and dropping <= offered
 
 
+def simpler_version_carried(events: Events, dropped_fields: Iterable[str]) -> bool:
+    """An EARLIER "simpler version" tap on a policy refusal still covers this turn (KRI-1354).
+
+    de1 (Leverkusen N3): the creator tapped the simpler version on the policy refusal's card,
+    the draft was then held by approval readiness, and the tap on THAT card re-planned into the
+    same refusal, which no longer counted the first tap: the same question came back. The
+    KRI-1323 rule of the readiness consent (`_simpler_version_consent`), for the policy side.
+
+    True only when, walking back from this turn's message, every creator turn is a choice tap
+    (a typed message is a new request and ends it), none is a "Change my request" tap, no draft
+    was applied, and the newest simpler tap on a policy refusal's card (one that records
+    ``dropped_fields``) offered to leave out every field the policy drops now. A tap on a card
+    that records no fields (readiness / receipts) is walked past, never taken as this consent.
+    """
+    dropping = set(dropped_fields)
+    if not dropping:
+        return False
+    rows = [(role, payload) for role, payload in events if isinstance(payload, dict)]
+    for index in range(len(rows) - 1, -1, -1):
+        role, payload = rows[index]
+        if role == "assistant":
+            if payload.get(EVENT_TYPE_KEY) in {"draft_applied", "draft_undone"}:
+                return False
+            continue
+        if role != "user":
+            continue
+        selection = payload.get("choice_selection")
+        if not isinstance(selection, dict):
+            return False  # a typed message is a new request
+        key = selection.get("option_key")
+        if key in _CHANGE_REQUEST_KEYS:
+            return False
+        if key != "simpler_version":
+            continue  # a tap that answers another question
+        # The card it answered must have been the open simpler-version question then.
+        question = _simpler_question_answered(rows[: index + 1], {"simpler_version"})
+        if question is None:
+            continue
+        offered = {str(name) for name in question.get("dropped_fields") or ()}
+        if not offered:
+            continue  # a readiness / receipts card: not a policy refusal's consent
+        return dropping <= offered
+    return False
+
+
+def follows_change_request(events: Events) -> bool:
+    """This turn's message is the typed answer to a "Change my request" tap (KRI-1360).
+
+    True only when the current (last) creator turn is a typed message, not a tap, and the creator
+    turn just before it tapped "Change my request" on the simpler-version question that was open
+    then. Any later message is an ordinary turn again.
+    """
+    rows = [(role, payload) for role, payload in events if isinstance(payload, dict)]
+    users = [index for index, (role, _payload) in enumerate(rows) if role == "user"]
+    if len(users) < 2:
+        return False
+    current, previous = users[-1], users[-2]
+    if any(isinstance(rows[current][1].get(key), dict) for key in _ANSWER_PAYLOAD_KEYS):
+        return False
+    return change_request_selected(rows[: previous + 1]) is not None
+
+
 def simpler_version_answer(events: Events) -> dict[str, Any] | None:
     """The simpler-version question THIS turn answers with "Make it without these", else
     ``None`` (KRI-1236).
@@ -1775,13 +1837,17 @@ def _title_text(
 
     if cap.creator_id is None:
         return None
-    from app.kria.brief_checks import defers_to_unified_montage  # noqa: PLC0415
+    from app.kria.brief_checks import defers_to_unified_montage, title_off  # noqa: PLC0415
     from app.pipeline.unified_montage import title_source_exists  # noqa: PLC0415
 
     wanted = [
         req
         for req in _live(brief)
-        if req.kind == "text" and req.scope == "title" and not str(req.literal or "").strip()
+        if req.kind == "text"
+        and req.scope == "title"
+        and not str(req.literal or "").strip()
+        # KRI-1355: "Kein Titel" asks for no title; there are no words to ask for.
+        and not title_off(req)
     ]
     if not wanted:
         return None
@@ -5779,8 +5845,10 @@ __all__ = [
     "STRATEGY_REFUSAL_KIND",
     "TAKE_LINE_KINDS",
     "change_request_selected",
+    "follows_change_request",
     "simpler_version_accepted",
     "simpler_version_answer",
+    "simpler_version_carried",
     "simpler_version_ask",
     "simpler_version_question",
     "without_length_answer_echo",

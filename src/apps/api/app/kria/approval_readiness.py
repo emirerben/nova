@@ -27,6 +27,7 @@ from app.kria.brief_checks import (
     build_receipts,
     defers_caption_words_to_phone_render,
     defers_text_to_phone,
+    defers_to_narrated_render,
     plan_facts_from_editor_payload,
     plan_facts_from_strategy,
     speaker_background_waits_for_render,
@@ -578,6 +579,19 @@ def assess_readiness(
         audio_strategy=strategy.get("audio_strategy"),
         clip_paths=media.get("clip_paths") or (),
     )
+    # KRI-1358: the draft turn marks a phone Voiceover draft (`phone_narrated`, kria_runtime) so
+    # one clip's own sound under the voice is judged against what that compiler plays. Readiness
+    # read the default False and refused the same ask as "only works in a voiceover edit made on
+    # your iPhone" for a creator on the iPhone.
+    narrated_writer = bool(
+        settings.narrated_readiness_phone_facts_enabled
+        and defers_to_narrated_render(
+            creator_id=creator_id,
+            edit_format=talking_edit_format,
+            audio_strategy=strategy.get("audio_strategy"),
+            clip_paths=media.get("clip_paths") or (),
+        )
+    )
     facts = (
         plan_facts_from_editor_payload(editor_payload, editor_text_diff)
         if editor_payload is not None
@@ -597,8 +611,10 @@ def assess_readiness(
             # KRI-980/981: the draft turn judges a Talking edit's length and clip sound against
             # which clips can speak; readiness reads the same clips or it disagrees with it.
             media_snapshot=media
-            if talking_writer and talking_edit_format in {"subtitled", "talking_head"}
+            if (talking_writer and talking_edit_format in {"subtitled", "talking_head"})
+            or narrated_writer
             else None,
+            phone_narrated=narrated_writer,
         )
     )
     if editor_payload is None and facts.ordering_basis is None:

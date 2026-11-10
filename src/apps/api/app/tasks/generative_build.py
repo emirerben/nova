@@ -15967,17 +15967,195 @@ def _narrated_caption_transcript(
     return requested, ensured.language
 
 
-def _beat_phrase_timing_kwargs(base: Any, requirements: Sequence[Any]) -> dict[str, Any]:
+_SPOKEN_CUE_MAX_WORDS = 600  # the resolver's input cap (`SpokenCueResolverInput.words`)
+_SPOKEN_CUE_EDGES = " \t\n,.;:!?\"'“”‘’«»()[]"
+
+
+def _resolve_unheard_beat_cues(
+    job_id: str, *, beats: list, words: list[dict], language: str | None
+) -> tuple[list, dict[str, dict[str, str]]]:
+    """KRI-1356: ``beats`` with each never-heard cue replaced by the words the voice said it in.
+
+    The phrase matcher hears "Null zu null" only when the transcript writes those words; the
+    voice said it and whisper wrote "0 zu 0". Every beat ``trigger`` / ``after`` the matcher
+    does not hear (`trigger_is_heard`) goes to ONE `SpokenCueResolverAgent` call, which names
+    the word span it is said in, by meaning, or null. A resolved span becomes the copy's cue
+    text (the transcript words), so the unchanged matcher places it -- but only when that text
+    is first heard exactly where the model pointed (never another moment). Returns
+    ``(beats for grounding, {beat_id: {field: heard words}})``; the caller puts the creator's
+    own cue back on the receipt. Any failure keeps ``beats`` as they are (today's
+    never_heard), and nothing here raises.
+    """
+    if not settings.spoken_cue_resolver_enabled or not beats or not words:
+        return beats, {}
+    import app.services.phone_reaction_grounding as grounding  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    # (beat index, field) -> the creator's phrase, for every cue the matcher never hears.
+    misses: dict[tuple[int, str], str] = {}
+    try:
+        for index, beat in enumerate(beats):
+            if not isinstance(beat, dict):
+                continue
+            for field_name, plural in (("trigger", True), ("after", False)):
+                phrase = " ".join(str(beat.get(field_name) or "").split())
+                if phrase and not grounding.trigger_is_heard(words, phrase, plural=plural):
+                    misses[(index, field_name)] = phrase
+    except Exception as exc:  # noqa: BLE001 - the resolver never fails the job
+        log.warning("spoken_cue_resolver.precheck_failed", job_id=job_id, error=str(exc)[:200])
+        return beats, {}
+    if not misses:
+        return beats, {}
+    phrases = list(dict.fromkeys(misses.values()))
+    cue_id_of = {phrase: f"c{n}" for n, phrase in enumerate(phrases, start=1)}
+    event: dict[str, Any] = {"cues": len(phrases), "words": len(words)}
+    if len(words) > _SPOKEN_CUE_MAX_WORDS:
+        record_pipeline_event("narrated", "spoken_cue_resolver", {**event, "status": "skipped"})
+        return beats, {}
+    # The same rows the alignment agent reads (`_narrated_word_rows`), from timed dicts.
+    rows = [
+        {
+            "word_id": f"w{index:06d}",
+            "text": str(word.get("text") or ""),
+            "start_s": float(word.get("start_s") or 0.0),
+            "end_s": float(word.get("end_s") or 0.0),
+        }
+        for index, word in enumerate(words)
+    ]
+    try:
+        from app.agents._model_client import default_client  # noqa: PLC0415
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.agents.spoken_cue_resolver import (  # noqa: PLC0415
+            SpokenCue,
+            SpokenCueResolverAgent,
+            SpokenCueResolverInput,
+        )
+
+        output = SpokenCueResolverAgent(default_client()).run(
+            SpokenCueResolverInput(
+                words=rows,
+                cues=[SpokenCue(cue_id=cue_id_of[p], trigger=p[:160]) for p in phrases],
+                language=str(language or "")[:20],
+            ),
+            ctx=RunContext(job_id=job_id),
+        )
+        event["prompt_version"] = SpokenCueResolverAgent.spec.prompt_version
+    except Exception as exc:  # noqa: BLE001 - failure/timeout keeps never_heard
+        log.warning("spoken_cue_resolver.failed", job_id=job_id, error=str(exc)[:200])
+        record_pipeline_event(
+            "narrated",
+            "spoken_cue_resolver",
+            {**event, "status": "failed", "error": str(exc)[:200]},
+        )
+        return beats, {}
+
+    index_of = {row["word_id"]: i for i, row in enumerate(rows)}
+    heard_by_phrase: dict[str, str] = {}
+    rejected = 0
+    for phrase in phrases:
+        span = output.span_for(cue_id_of[phrase])
+        if span is None or span.start_word_id is None or span.end_word_id is None:
+            continue
+        first, last = index_of[span.start_word_id], index_of[str(span.end_word_id)]
+        heard = " ".join(rows[i]["text"] for i in range(first, last + 1)).strip(_SPOKEN_CUE_EDGES)
+        # Only a span the unchanged matcher first hears exactly there: never another moment.
+        at_s = grounding.first_heard_start_s(words, heard) if heard else None
+        if at_s is None or abs(at_s - rows[first]["start_s"]) > 1e-6:
+            rejected += 1
+            continue
+        heard_by_phrase[phrase] = heard
+    record_pipeline_event(
+        "narrated",
+        "spoken_cue_resolver",
+        {**event, "status": "resolved", "heard": len(heard_by_phrase), "rejected": rejected},
+    )
+    if not heard_by_phrase:
+        return beats, {}
+    out = list(beats)
+    heard_as: dict[str, dict[str, str]] = {}
+    for (index, field_name), phrase in misses.items():
+        heard = heard_by_phrase.get(phrase)
+        if heard is None:
+            continue
+        beat = out[index]
+        out[index] = {**beat, field_name: heard}
+        beat_id = str(beat.get("beat_id") or f"beat-{index}")
+        heard_as.setdefault(beat_id, {})[field_name] = heard
+    return out, heard_as
+
+
+def _restore_beat_cues(receipt: dict, beats: list, heard_as: dict[str, dict[str, str]]) -> dict:
+    """KRI-1356: the receipt quotes the creator's own cue (by beat id), plus ``heard_as``.
+
+    The review compares the creator's words with the receipt's ``trigger``; the words the
+    voice said them in ride along as ``heard_as``, like a KRI-961 near hearing."""
+    if not heard_as:
+        return receipt
+    original = {
+        str(beat.get("beat_id") or f"beat-{index}"): str(beat.get("trigger") or "")
+        for index, beat in enumerate(beats)
+        if isinstance(beat, dict)
+    }
+
+    def _fix(entry: object) -> object:
+        if not isinstance(entry, dict) or str(entry.get("beat_id")) not in heard_as:
+            return entry
+        beat_id = str(entry["beat_id"])
+        fixed = {**entry, "trigger": original.get(beat_id, entry.get("trigger"))}
+        heard = heard_as[beat_id].get("trigger")
+        if heard and not fixed.get("heard_as"):
+            fixed["heard_as"] = heard
+        return fixed
+
+    return {
+        **receipt,
+        "placed": [_fix(entry) for entry in receipt.get("placed") or []],
+        "unplaced": [_fix(entry) for entry in receipt.get("unplaced") or []],
+    }
+
+
+def _beat_phrase_timing_kwargs(
+    base: Any, requirements: Sequence[Any], *, heard_as: Mapping[str, str] | None = None
+) -> dict[str, Any]:
     """KRI-1342: ``{"phrase_timing": ...}`` for the beat grounding while
     ``BEAT_PHRASE_TIMING_ENABLED`` is on, carrying the spoken words the creator named (those
-    beats keep their exact word timing). ``{}`` when off, so the call is byte-identical."""
+    beats keep their exact word timing). ``{}`` when off, so the call is byte-identical.
+
+    ``heard_as`` maps a cue the creator wrote to the transcript words the KRI-1356 resolver
+    put in its place ("Null zu null" -> "0 zu 0"): a named cue's exemption follows it to
+    those words, so the resolved beat still starts on the word. An alias of a cue the
+    creator never named gets nothing."""
     if not settings.beat_phrase_timing_enabled:
         return {}
     from dataclasses import replace as dc_replace  # noqa: PLC0415
 
-    from app.services.phone_reaction_grounding import creator_named_cues  # noqa: PLC0415
+    from app.services.phone_reaction_grounding import (  # noqa: PLC0415
+        creator_named_cues,
+        fold_tokens,
+    )
 
-    return {"phrase_timing": dc_replace(base, word_cued=creator_named_cues(requirements))}
+    named = creator_named_cues(requirements)
+    aliases = {
+        folded
+        for written, heard in (heard_as or {}).items()
+        if " ".join(fold_tokens(written)) in named
+        for folded in (" ".join(fold_tokens(heard)),)
+        if folded
+    }
+    return {"phrase_timing": dc_replace(base, word_cued=named | aliases)}
+
+
+def _resolved_cue_aliases(beats: list, heard_as: dict[str, dict[str, str]]) -> dict[str, str]:
+    """KRI-1356 x KRI-1342: ``{creator's trigger: heard words}`` for every resolved trigger."""
+    out: dict[str, str] = {}
+    for index, beat in enumerate(beats):
+        if not isinstance(beat, dict):
+            continue
+        heard = heard_as.get(str(beat.get("beat_id") or f"beat-{index}"), {}).get("trigger")
+        written = " ".join(str(beat.get("trigger") or "").split())
+        if heard and written:
+            out[written] = heard
+    return out
 
 
 def _phone_narrated_reaction_lanes(
@@ -15987,6 +16165,7 @@ def _phone_narrated_reaction_lanes(
     closing: dict | None,
     words: list[dict],
     duration_s: float,
+    language: str | None = None,
     requirements: Sequence[Any] = (),
 ) -> tuple[Any, tuple, dict]:
     """KRI-519: ground a phone Voiceover edit's reaction beats against the
@@ -16000,23 +16179,31 @@ def _phone_narrated_reaction_lanes(
     words are already on the rendered timeline (a cleaned voiceover's words
     come pre-cut), so nothing is remapped afterwards. A beat never fails the
     job: every failure lands on the receipt instead.
+
+    KRI-1356: a cue the matcher never hears is first looked up by meaning
+    (`_resolve_unheard_beat_cues`, ``language`` = the voiceover's spoken language).
     """
     import app.services.phone_reaction_grounding as phone_reaction_grounding_mod  # noqa: PLC0415
     from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes  # noqa: PLC0415
     from app.services.phone_visuals import bind_phone_visual_assets  # noqa: PLC0415
 
+    grounding_beats, heard_as = _resolve_unheard_beat_cues(
+        job_id, beats=beats, words=words, language=language
+    )
     try:
         grounded = phone_reaction_grounding_mod.ground_phone_reaction_beats(
             _sync_session,
             job_id=job_id,
-            beats=beats,
+            beats=grounding_beats,
             closing=closing,
             words=words,
             duration_s=duration_s,
             clip_path=None,
             allow_fullscreen=bool(settings.phone_subtitled_fullscreen_overlays_enabled),
             **_beat_phrase_timing_kwargs(
-                phone_reaction_grounding_mod.VOICEOVER_PHRASE_TIMING, requirements
+                phone_reaction_grounding_mod.VOICEOVER_PHRASE_TIMING,
+                requirements,
+                heard_as=_resolved_cue_aliases(beats, heard_as),
             ),
         )
     except OperationalError:
@@ -16037,7 +16224,7 @@ def _phone_narrated_reaction_lanes(
             },
         )
 
-    receipt = grounded.receipt
+    receipt = _restore_beat_cues(grounded.receipt, beats, heard_as)
     cards = list(grounded.cards)
     visuals: tuple = ()
     if cards:
@@ -16260,6 +16447,49 @@ def _record_clip_sound_event(event: str, error: Exception | None, plan: Any) -> 
         )
     except Exception:  # noqa: BLE001 - observability only
         pass
+
+
+def _narrated_caption_spelling_hints(
+    job_id: str, clip_metas: Sequence[Any], *, cues: Sequence[Mapping[str, Any]]
+) -> Any:
+    """KRI-1361: names the creator's own Visuals and footage spell (brands verbatim, name-like
+    on-screen text), handed to the caption proofreader so "Bayern Arena" can read "BayArena".
+
+    Returns a ``caption_correct.SpellingHints``. Empty -- with no pool query -- when the flag
+    (``caption_media_spelling_hints_enabled``) is off or caption correction will not run
+    (correction off, no cue text); then the correction request is byte-identical to the
+    pre-hint one. A transient DB error re-raises for the Celery retry, like the other pool
+    loads here; any other failure means no hints, never a failed job.
+    """
+    from app.pipeline.agents.gemini_analyzer import ClipMeta  # noqa: PLC0415
+    from app.pipeline.caption_correct import SpellingHints, media_spelling_hints  # noqa: PLC0415
+
+    if (
+        not settings.caption_media_spelling_hints_enabled
+        or not settings.subtitled_caption_correction_enabled
+        or not any(str(cue.get("text") or "").strip() for cue in cues)
+    ):
+        return SpellingHints()
+    from app.services.clip_understanding import clip_record  # noqa: PLC0415
+    from app.services.phone_overlay_grounding import _load_ready_pool_assets  # noqa: PLC0415
+
+    brands: list[str] = []
+    texts: list[str] = []
+    try:
+        for row in _load_ready_pool_assets(_sync_session, job_id=job_id):
+            record = clip_record(row.get("analysis"), kind=str(row.get("kind") or "image"))
+            brands.extend(record.brands)
+            texts.append(record.on_screen_text)
+        for meta in clip_metas:
+            # Wired on purpose (KRI-127 guard): only an analysed ClipMeta carries brands.
+            if isinstance(meta, ClipMeta):
+                brands.extend(str(brand) for brand in (meta.clip_brands or []))
+        return media_spelling_hints(brands, texts)
+    except OperationalError:
+        raise  # transient DB -> Celery autoretry
+    except Exception as exc:  # noqa: BLE001 - hints are optional, never a job failure
+        log.warning("narrated_caption_hints_failed", job_id=job_id, error=str(exc)[:200])
+        return SpellingHints()
 
 
 @phone_text_generation
@@ -16772,6 +17002,10 @@ def _run_phone_narrated_job(
                     model=settings.caption_correction_model,
                     enabled=settings.subtitled_caption_correction_enabled,
                     trusted_aliases=None,
+                    # KRI-1361: names the project's own Visuals/footage spell.
+                    spelling_hints=_narrated_caption_spelling_hints(
+                        job_id, list(ingest.get("clip_metas") or []), cues=cues
+                    ),
                 )
                 cues = resplit_cues_into_sentences(cues)
                 # KRI-961: the creator's spellings (quoted asks + the approved brief's list),
@@ -16978,6 +17212,7 @@ def _run_phone_narrated_job(
                         for word in transcript.words
                     ],
                     duration_s=voiceover_duration_s,
+                    language=spoken_lang,
                     requirements=_phone_brief_live_requirements(snapshot),
                 )
             # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED): grounded on the

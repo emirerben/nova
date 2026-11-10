@@ -740,11 +740,15 @@
     {
       "id": "kri-961-named-phrase-near-match",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_kri961_named_phrase_near_match.py tests/tasks/test_kri961_narrated_named_phrase.py tests/tasks/test_kri842_narrated_clip_sound.py tests/tasks/test_phone_subtitled_narrated_dispatch.py",
+      "api_tests": "tests/pipeline/test_kri961_named_phrase_near_match.py tests/tasks/test_kri961_narrated_named_phrase.py tests/tasks/test_kri842_narrated_clip_sound.py tests/tasks/test_phone_subtitled_narrated_dispatch.py tests/kria/test_de1_narrated_holds.py tests/evals/test_spoken_cue_resolver_evals.py",
       "paths": [
         "src/apps/api/tests/fixtures/kri961_don_julio_n1_narrated.json",
         "src/apps/api/tests/pipeline/test_kri961_named_phrase_near_match.py",
-        "src/apps/api/tests/tasks/test_kri961_narrated_named_phrase.py"
+        "src/apps/api/tests/tasks/test_kri961_narrated_named_phrase.py",
+        "src/apps/api/app/agents/spoken_cue_resolver.py",
+        "src/apps/api/prompts/spoken_cue_resolver.txt",
+        "src/apps/api/tests/fixtures/agent_evals/spoken_cue_resolver/",
+        "src/apps/api/tests/evals/test_spoken_cue_resolver_evals.py"
       ]
     },
     {
@@ -3650,6 +3654,20 @@
         "src/apps/api/app/kria/copy/de.json",
         "src/apps/api/app/kria/copy/tr.json",
         "src/apps/api/app/kria/copy_catalog.py"
+      ]
+    },
+    {
+      "id": "kri-1353-de1-german-voiceover",
+      "needs_native": false,
+      "api_tests": [
+        "src/apps/api/tests/kria/test_de1_narrated_holds.py",
+        "src/apps/api/tests/evals/test_brief_extractor_evals.py",
+        "src/apps/api/tests/evals/test_clip_request_resolver_evals.py"
+      ],
+      "paths": [
+        "src/apps/api/tests/fixtures/agent_evals/brief_extractor/kri1355_kein_titel_de.json",
+        "src/apps/api/tests/fixtures/agent_evals/brief_extractor/kri1360_change_request_keeps_restrictions_de.json",
+        "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri1359_german_lineup_sheet.json"
       ]
     }
   ]
