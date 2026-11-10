@@ -1021,7 +1021,8 @@ def test_flag_off_the_brief_sections_are_the_bytes_they_were_before_the_opening(
     # ending); the flag-off section was 14ad8c6e… before it. Re-frozen again for #2164 (the
     # keep-the-take-whole line also records speech_cleanup false), and for KRI-1292 (`hold_s`
     # for a text at a spoken word), and for KRI-1327 (`subject_outline`, a line around a person),
-    # and for KRI-1355 (the typed no-title ask, `title: "off"`).
+    # and for KRI-1355 (the typed no-title ask, `title: "off"`). The extractor prompt digests were
+    # re-frozen for KRI-1365 (shorter/faster asks and "revert to the old version" are edits).
     assert brief_prompt_section() is _BRIEF_PROMPT_SECTION
     assert digest(brief_prompt_section()) == (
         "c0151ced250653122f3510792a6ff85204f097703fd55f500e9bccedfafc3379"
@@ -1037,8 +1038,8 @@ def test_flag_off_the_brief_sections_are_the_bytes_they_were_before_the_opening(
     )
     # and the whole extractor prompt, byte for byte (captured from that same tree)
     for insert_open, expected in (
-        (False, "308d9697d6d4d6920938017218e037b111954e5d75c2da76025bf65e5f35982f"),
-        (True, "ffdc6f718b1532b2a5e92c4072f49af8cb2b35853d23874dfb8b976e17d46d25"),
+        (False, "85abd22964f0f8312e2e6e89864e534a99c47b9a19ff92789a3322316e3d65ae"),
+        (True, "9f6aebcb471fc165a3c534e7697d6587f9007f220e5075384dd210cb1121261a"),
     ):
         rendered = BriefExtractorAgent(None).render_prompt(
             BriefExtractionInput(

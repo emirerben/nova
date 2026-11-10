@@ -219,6 +219,7 @@ from app.services.creative_copy_decisions import (
     question_message,
     wording_question,
 )
+from app.services.creative_copy_gate import OPEN_COPY_STATES
 from app.services.creator_capabilities import insert_clip_candidates
 from app.services.creator_model_comparison import configure_creator_agent
 from app.services.creator_sessions import (
@@ -2142,6 +2143,9 @@ class _EditorTarget:
     # the dev harness (`app.cli.kria_ask`) reads it, to dry-run the compiler.
     variant: dict | None = None
     recovery_basis: EditorDraftBasis | None = None
+    # Set when the current job failed outright and the target is the earlier ready video
+    # (``_last_ready_render``): {"job_id", "variant_id", "failed_job_id"}.
+    last_ready: dict | None = None
 
 
 async def _copilot_clip_context(
@@ -2353,7 +2357,7 @@ _FAILED_JOB_STATUSES = frozenset(
 )
 
 
-def _job_never_rendered(job: Any) -> bool:
+def job_never_rendered(job: Any) -> bool:
     """The item's current job FAILED and never produced (or started) a variant.
 
     There is nothing to edit in place and nothing in flight, so a follow-up is a
@@ -2368,6 +2372,49 @@ def _job_never_rendered(job: Any) -> bool:
         and (row.get("render_status") == "ready" or row.get("render_status") in _IN_FLIGHT_STATUSES)
         for row in variants
     )
+
+
+async def _last_ready_render(
+    db: AsyncSession, *, thread_id: uuid.UUID, item: PlanItem, job: Any
+) -> tuple[Job, dict] | None:
+    """The ready video the creator still has when the item's current job failed outright.
+
+    A re-plan points the item at its new job before rendering it; when that render fails
+    without producing anything, the session's ``last_good`` names the earlier ready variant on
+    the same item. ``draft.apply_editor_ops`` moves the item back to it under the commit locks.
+    """
+    if job is None or not job_never_rendered(job):
+        return None
+    thread = await db.get(CreationThread, thread_id)
+    if thread is None or thread.active_creator_agent_session_id is None:
+        return None
+    session = await db.get(CreatorAgentSession, thread.active_creator_agent_session_id)
+    last = getattr(session, "last_good", None)
+    if (
+        not isinstance(last, dict)
+        or session.target_job_id != job.id
+        or session.plan_item_id != item.id
+        or session.creator_id != thread.creator_id
+    ):
+        return None
+    try:
+        ready_id = uuid.UUID(str(last.get("job_id")))
+    except ValueError:
+        return None
+    ready = await db.get(Job, ready_id) if ready_id != job.id else None
+    if ready is None or ready.content_plan_item_id != item.id or ready.user_id != thread.creator_id:
+        return None
+    variant = next(
+        (
+            row
+            for row in (ready.assembly_plan or {}).get("variants") or []
+            if isinstance(row, dict)
+            and row.get("variant_id") == last.get("variant_id")
+            and row.get("render_status") == "ready"
+        ),
+        None,
+    )
+    return (ready, variant) if variant is not None else None
 
 
 # KRI-1111: the brief's first / last clips this turn's clip inventory left out instead of
@@ -2530,7 +2577,24 @@ async def _load_editor_target(
             render_status=target_row.get("render_status"),
         )
         return None
-    if variant is None and _job_never_rendered(job):
+    last_ready = (
+        await _last_ready_render(db, thread_id=thread_id, item=item, job=job)
+        if variant is None
+        else None
+    )
+    if last_ready is not None:
+        job, variant = last_ready
+        head = (
+            await db.execute(
+                select(CreatorEditDraft).where(
+                    CreatorEditDraft.item_id == item_id,
+                    CreatorEditDraft.variant_key == variant.get("variant_id"),
+                    CreatorEditDraft.base_job_id == job.id,
+                    CreatorEditDraft.is_head.is_(True),
+                )
+            )
+        ).scalar_one_or_none()
+    if variant is None and job_never_rendered(job):
         # Not in _GUARDED_MISSES: nothing exists to edit, so the follow-up re-plans.
         _miss("no_render", session_id=str(session.id), job_status=job.status)
         return None
@@ -2608,6 +2672,15 @@ async def _load_editor_target(
         conversation=conversation,
         variant=variant,
         recovery_basis=recovery_basis,
+        last_ready=(
+            {
+                "job_id": str(job.id),
+                "variant_id": last_ready[1].get("variant_id"),
+                "failed_job_id": str(job_id),
+            }
+            if last_ready is not None
+            else None
+        ),
     )
 
 
@@ -2738,7 +2811,7 @@ async def _plan_editor_revision(
                 }
             )
     if response.ops:
-        return adapt_editor_action(
+        plan = adapt_editor_action(
             reply=_phone_editor_reply(response.reply),
             ops=response.ops,
             # This portable operation invokes server speech processing; ordinary
@@ -2746,6 +2819,13 @@ async def _plan_editor_revision(
             request_render=any(op.get("op") == "apply_speech_cut_candidate" for op in response.ops),
             unmet_requests=getattr(response, "unmet_requests", None) or (),
             notes=getattr(response, "reply_notes", None) or None,
+        )
+        if target.last_ready is None:
+            return plan
+        return plan.model_copy(
+            update={
+                "diagnostics": {**(plan.diagnostics or {}), "editor_last_ready": target.last_ready}
+            }
         )
     if response.outcome in {"unsupported", "no_effect"} and is_overlay_display_ask(user_message):
         # KRI-297: a display-mode change (full-screen overlays) is not an in-place
@@ -7329,9 +7409,12 @@ async def _plan_live_turn(
         await _load_thread_events(db, thread_id, release=False),
         dependency_digest=media_digest(snapshot_media(item)),
     )
-    # A copy-bearing edit stays on the planner path, including revisions: editor
-    # text rewrites cannot silently replace separately approved words.
-    creative_copy_pending = bool(creative_copy_states)
+    # Only a wording question still being answered keeps the turn on the planner path. Settled
+    # words stay protected at draft commit, which refuses an editor draft that changes them
+    # (`creative_copy_problem(editor_text=...)`).
+    creative_copy_pending = any(
+        state.status in OPEN_COPY_STATES for state in creative_copy_states.values()
+    )
     brief_on = settings.creative_brief_for(creator_id)
     binding_on = settings.brief_binding_for(creator_id)
     latest_job_failed = False
@@ -7339,6 +7422,12 @@ async def _plan_live_turn(
     if item.current_job_id is not None:
         latest_job = await db.get(Job, item.current_job_id)
         latest_job_failed = str(getattr(latest_job, "status", "") or "").endswith("failed")
+    # A re-plan whose render failed leaves the video the creator still has on an earlier job.
+    last_ready = (
+        await _last_ready_render(db, thread_id=thread_id, item=item, job=latest_job)
+        if latest_job_failed
+        else None
+    )
     latest_variants = [
         row
         for row in (getattr(latest_job, "assembly_plan", None) or {}).get("variants") or []
@@ -7408,7 +7497,7 @@ async def _plan_live_turn(
     extract_first = (
         brief_on
         and item.current_job_id is not None
-        and (not latest_job_failed or failed_editor_correction)
+        and (not latest_job_failed or failed_editor_correction or last_ready is not None)
         and not creative_copy_pending
         and manifest.capabilities["dispatch_render"].available
     )
