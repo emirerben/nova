@@ -109,15 +109,15 @@ final class SplitScreenMediaParityTests: XCTestCase {
         }
     }
 
-    private func artifacts() throws -> URL {
+    func artifacts() throws -> URL {
         let root = ProcessInfo.processInfo.environment["KRIA_SPLIT_SCREEN_ARTIFACTS"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.temporaryDirectory
         let directory = root.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         print("Split-screen expanded artifacts: \(directory.path)")
         return directory
     }
-    private func color(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> CGColor { CGColor(red: r, green: g, blue: b, alpha: 1) }
-    private func makeRecipe(_ urls: [String: URL], _ clips: [[TimelineClip]], end: Double) throws -> EditRecipe {
+    func color(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> CGColor { CGColor(red: r, green: g, blue: b, alpha: 1) }
+    func makeRecipe(_ urls: [String: URL], _ clips: [[TimelineClip]], end: Double) throws -> EditRecipe {
         let assets = try urls.map { MediaAsset(id: $0.key, relativePath: $0.key, fingerprint: try SHA256Fingerprinter().fingerprint(file: $0.value)) }
         return EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: Canvas(width: 96, height: 160), assets: assets,
             tracks: clips.enumerated().map { TimelineTrack(id: "panel-\($0.offset)", kind: .video, clips: $0.element) },
@@ -125,28 +125,28 @@ final class SplitScreenMediaParityTests: XCTestCase {
                 RenderAssetReference(id: $0.id, fingerprint: try RenderFingerprint($0.fingerprint!), source: .original(mediaID: $0.id))
             }), splitScreenSections: [.init(id: "s", start: 0, end: end, panelWeights: [1, 1, 1])])
     }
-    @MainActor private func export(_ recipe: EditRecipe, _ urls: [String: URL], _ directory: URL, _ name: String) async throws -> URL {
+    @MainActor func export(_ recipe: EditRecipe, _ urls: [String: URL], _ directory: URL, _ name: String) async throws -> URL {
         let output = directory.appendingPathComponent("\(name).mp4")
         _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none).export(recipe: recipe, assetURLs: urls, outputURL: output)
         return output
     }
-    private func generator(_ preview: PreviewComposition) -> AVAssetImageGenerator {
+    func generator(_ preview: PreviewComposition) -> AVAssetImageGenerator {
         let result = AVAssetImageGenerator(asset: preview.playerItem.asset)
         result.videoComposition = preview.playerItem.videoComposition
         return result
     }
-    @MainActor private func pixel(_ generator: AVAssetImageGenerator, time: Double, x: Int, y: Int) async throws -> [UInt8] {
+    @MainActor func pixel(_ generator: AVAssetImageGenerator, time: Double, x: Int, y: Int) async throws -> [UInt8] {
         generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
         let image = try await generator.image(at: CMTime(seconds: time, preferredTimescale: 600)).image
         var bytes = [UInt8](repeating: 0, count: 4)
         CIContext().render(CIImage(cgImage: image), toBitmap: &bytes, rowBytes: 4, bounds: CGRect(x: x, y: y, width: 1, height: 1), format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
         return bytes
     }
-    @MainActor private func assertPixel(_ generator: AVAssetImageGenerator, time: Double, x: Int = 48, y: Int, expected: [Int]) async throws {
+    @MainActor func assertPixel(_ generator: AVAssetImageGenerator, time: Double, x: Int = 48, y: Int, expected: [Int]) async throws {
         let value = try await pixel(generator, time: time, x: x, y: y)
         for channel in 0..<3 { XCTAssertEqual(Int(value[channel]), expected[channel], accuracy: 55, "time \(time), point \(x),\(y)") }
     }
-    private func amplitude(_ pcm: [Float], _ time: Double, _ frequency: Double, channel: Int = 0) throws -> Double {
+    func amplitude(_ pcm: [Float], _ time: Double, _ frequency: Double, channel: Int = 0) throws -> Double {
         let start = Int(time * 48_000) * 2, count = 7_200
         guard channel >= 0, channel < 2, start >= 0, start + count * 2 <= pcm.count else { throw MediaEngineError.exportFailed }
         var cosine = 0.0, sine = 0.0
@@ -158,7 +158,7 @@ final class SplitScreenMediaParityTests: XCTestCase {
         return 2 * hypot(cosine, sine) / Double(count)
     }
 
-    @MainActor private func decode(_ asset: AVAsset, _ mix: AVAudioMix?) async throws -> [Float] {
+    @MainActor func decode(_ asset: AVAsset, _ mix: AVAudioMix?) async throws -> [Float] {
         let reader = try AVAssetReader(asset: asset), tracks = try await asset.loadTracks(withMediaType: .audio)
         let output = AVAssetReaderAudioMixOutput(audioTracks: tracks, audioSettings: [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 48_000, AVNumberOfChannelsKey: 2, AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true, AVLinearPCMIsNonInterleaved: false]); output.audioMix = mix; reader.add(output); XCTAssertTrue(reader.startReading())
         var pcm = [Float](repeating: 0, count: 4 * 48_000 * 2)

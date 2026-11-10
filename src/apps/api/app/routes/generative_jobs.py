@@ -63,7 +63,11 @@ from app.kria.draft_schemas import DraftSnapshotOut
 from app.kria.media_sources import OriginalMediaDescriptor
 from app.kria.portable_speaker_background import SpeakerFrameOverride
 from app.kria.recipes import MediaTransform
-from app.kria.split_screen import SplitScreenSection, layout_split_timeline
+from app.kria.split_screen import (
+    SplitScreenSection,
+    layout_split_timeline,
+    sync_collapsed_section_durations,
+)
 from app.limiter import limiter
 from app.models import (
     AgentRun,
@@ -7720,7 +7724,8 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         **_device_clamped_editor_capabilities(job, variant),
         "drawings": _drawing_capabilities(job, variant),
     }
-    from app.services.phone_rollout import split_screen_supported
+    from app.services.client_protocol import current_client_protocol
+    from app.services.phone_rollout import split_collapse_planned_for, split_screen_supported
 
     if (
         variant.get("render_destination") == "device"
@@ -7728,6 +7733,10 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         and split_screen_supported()
     ):
         capabilities["split_screen"] = True
+        # The sender's stamp, not the request: a worker drafting for a build and the request
+        # re-checking it must offer the same capabilities (KRI-1321).
+        if split_collapse_planned_for(current_client_protocol()):
+            capabilities["split_collapse"] = True
     if (
         variant.get("editor_timeline_mode") == "authored"
         and variant.get("render_destination") == "device"
@@ -13375,6 +13384,7 @@ def _prepare_editor_commit(
             )
             if split_sections:
                 layout_split_timeline(resolved_slots, split_sections)
+                sync_collapsed_section_durations(resolved_slots, split_sections)
                 updated["user_timeline"]["split_screen_sections"] = split_sections
         if payload.mix is not None:
             if payload.mix.music_level is not None:

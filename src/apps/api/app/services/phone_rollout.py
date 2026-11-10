@@ -298,6 +298,12 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         raise PhoneCapabilityUnavailable(
             "Split screen awaits native qualification", capability="splitScreen"
         )
+    if "splitCollapse" in recipe.required_capabilities and not split_collapse_supported(
+        require_client=False
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Collapsing split panels await native qualification", capability="splitCollapse"
+        )
     placements = [
         clip.visual_placement
         for track in recipe.tracks
@@ -2468,3 +2474,41 @@ def split_screen_supported(*, require_client: bool | None = None) -> bool:
     return "splitScreen" in set(
         settings.phone_render_verified_features
     ) and split_screen_client_supported(require_client=require_client)
+
+
+def split_collapse_planned_for(client_protocol: int | None) -> bool:
+    """May an edit for the app build ``client_protocol`` carry `collapse_empty_panels`?
+
+    Reads the sender's stamp and never the request context, so the draft turn (a worker) and
+    the approve request agree for the same build (KRI-1321). No stamp is an old build.
+    """
+    from app.services.client_protocol import SPLIT_COLLAPSE_PROTOCOL  # noqa: PLC0415
+
+    verified = set(settings.phone_render_verified_features)
+    return (
+        {"splitScreen", "splitCollapse"} <= verified
+        and client_protocol is not None
+        and client_protocol >= SPLIT_COLLAPSE_PROTOCOL
+    )
+
+
+def split_collapse_client_supported(*, require_client: bool | None = None) -> bool:
+    from app.services.client_protocol import (  # noqa: PLC0415
+        SPLIT_COLLAPSE_PROTOCOL,
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    protocol = current_client_protocol()
+    return not require_client or (protocol is not None and protocol >= SPLIT_COLLAPSE_PROTOCOL)
+
+
+def split_collapse_supported(*, require_client: bool | None = None) -> bool:
+    """Collapse rides on split screen: both tokens must be verified."""
+    return (
+        split_screen_supported(require_client=require_client)
+        and "splitCollapse" in set(settings.phone_render_verified_features)
+        and split_collapse_client_supported(require_client=require_client)
+    )

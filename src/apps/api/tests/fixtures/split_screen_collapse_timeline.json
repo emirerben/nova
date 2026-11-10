@@ -1,0 +1,613 @@
+{
+  "schema_version": 1,
+  "contract": "docs/reviews/editable-split-screen/contract.md#collapse-mode",
+  "canvas_y_origin": "top",
+  "cases": [
+    {
+      "name": "two_panels_top_ends_first",
+      "note": "The bottom panel takes the whole canvas once the top panel ends; the section lasts until the bottom ends.",
+      "slots": [
+        {
+          "slot_id": "top",
+          "clip_index": 0,
+          "in_s": 0,
+          "duration_s": 2,
+          "split_section_id": "duo",
+          "split_panel_index": 0,
+          "split_offset_s": 0
+        },
+        {
+          "slot_id": "bottom",
+          "clip_index": 1,
+          "in_s": 0,
+          "duration_s": 4,
+          "split_section_id": "duo",
+          "split_panel_index": 1,
+          "split_offset_s": 0
+        }
+      ],
+      "split_screen_sections": [
+        {
+          "id": "duo",
+          "duration_s": 4,
+          "panel_count": 2,
+          "panel_weights": [
+            1,
+            1
+          ],
+          "gutter": 0,
+          "background_color": "#000000",
+          "collapse_empty_panels": true
+        }
+      ],
+      "expected_duration_s": 4,
+      "expected_windows": [
+        {
+          "slot_id": "top",
+          "start_s": 0,
+          "end_s": 2
+        },
+        {
+          "slot_id": "bottom",
+          "start_s": 0,
+          "end_s": 4
+        }
+      ],
+      "expected_recipe_sections": [
+        {
+          "id": "duo",
+          "start": 0,
+          "end": 4
+        }
+      ],
+      "canvas_samples": [
+        {
+          "section_time_s": 1,
+          "active_panels": [
+            0,
+            1
+          ],
+          "rects": [
+            {
+              "panel_index": 0,
+              "y": 0,
+              "height": 0.5
+            },
+            {
+              "panel_index": 1,
+              "y": 0.5,
+              "height": 0.5
+            }
+          ]
+        },
+        {
+          "section_time_s": 2,
+          "active_panels": [
+            1
+          ],
+          "rects": [
+            {
+              "panel_index": 1,
+              "y": 0,
+              "height": 1.0
+            }
+          ]
+        },
+        {
+          "section_time_s": 3,
+          "active_panels": [
+            1
+          ],
+          "rects": [
+            {
+              "panel_index": 1,
+              "y": 0,
+              "height": 1.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "three_panels_stagger_with_gutter",
+      "note": "Gutters sit only between active panels; weights renormalise over the active set. Half-open windows: at t=2 the middle panel has ended.",
+      "slots": [
+        {
+          "slot_id": "p0",
+          "clip_index": 0,
+          "in_s": 0,
+          "duration_s": 4,
+          "split_section_id": "trio",
+          "split_panel_index": 0,
+          "split_offset_s": 0
+        },
+        {
+          "slot_id": "p1",
+          "clip_index": 1,
+          "in_s": 0,
+          "duration_s": 2,
+          "split_section_id": "trio",
+          "split_panel_index": 1,
+          "split_offset_s": 0
+        },
+        {
+          "slot_id": "p2",
+          "clip_index": 2,
+          "in_s": 0,
+          "duration_s": 3,
+          "split_section_id": "trio",
+          "split_panel_index": 2,
+          "split_offset_s": 1
+        }
+      ],
+      "split_screen_sections": [
+        {
+          "id": "trio",
+          "duration_s": 4,
+          "panel_count": 3,
+          "panel_weights": [
+            1,
+            2,
+            1
+          ],
+          "gutter": 0.02,
+          "background_color": "#112233",
+          "collapse_empty_panels": true
+        }
+      ],
+      "expected_duration_s": 4,
+      "expected_windows": [
+        {
+          "slot_id": "p0",
+          "start_s": 0,
+          "end_s": 4
+        },
+        {
+          "slot_id": "p1",
+          "start_s": 0,
+          "end_s": 2
+        },
+        {
+          "slot_id": "p2",
+          "start_s": 1,
+          "end_s": 4
+        }
+      ],
+      "expected_recipe_sections": [
+        {
+          "id": "trio",
+          "start": 0,
+          "end": 4
+        }
+      ],
+      "canvas_samples": [
+        {
+          "section_time_s": 0.5,
+          "active_panels": [
+            0,
+            1
+          ],
+          "rects": [
+            {
+              "panel_index": 0,
+              "y": 0,
+              "height": 0.326667
+            },
+            {
+              "panel_index": 1,
+              "y": 0.346667,
+              "height": 0.653333
+            }
+          ]
+        },
+        {
+          "section_time_s": 1.5,
+          "active_panels": [
+            0,
+            1,
+            2
+          ],
+          "rects": [
+            {
+              "panel_index": 0,
+              "y": 0,
+              "height": 0.24
+            },
+            {
+              "panel_index": 1,
+              "y": 0.26,
+              "height": 0.48
+            },
+            {
+              "panel_index": 2,
+              "y": 0.76,
+              "height": 0.24
+            }
+          ]
+        },
+        {
+          "section_time_s": 2,
+          "active_panels": [
+            0,
+            2
+          ],
+          "rects": [
+            {
+              "panel_index": 0,
+              "y": 0,
+              "height": 0.49
+            },
+            {
+              "panel_index": 2,
+              "y": 0.51,
+              "height": 0.49
+            }
+          ]
+        },
+        {
+          "section_time_s": 3,
+          "active_panels": [
+            0,
+            2
+          ],
+          "rects": [
+            {
+              "panel_index": 0,
+              "y": 0,
+              "height": 0.49
+            },
+            {
+              "panel_index": 2,
+              "y": 0.51,
+              "height": 0.49
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "section_follows_longest_member_between_fullscreen_clips",
+      "note": "Later serial clips start when the longest member ends; stored duration_s equals that end.",
+      "slots": [
+        {
+          "slot_id": "before",
+          "clip_index": 0,
+          "in_s": 0,
+          "duration_s": 2
+        },
+        {
+          "slot_id": "short",
+          "clip_index": 1,
+          "in_s": 0,
+          "duration_s": 1,
+          "split_section_id": "duo",
+          "split_panel_index": 0,
+          "split_offset_s": 0
+        },
+        {
+          "slot_id": "long",
+          "clip_index": 2,
+          "in_s": 0,
+          "duration_s": 3,
+          "split_section_id": "duo",
+          "split_panel_index": 1,
+          "split_offset_s": 0
+        },
+        {
+          "slot_id": "after",
+          "clip_index": 0,
+          "in_s": 5,
+          "duration_s": 1
+        }
+      ],
+      "split_screen_sections": [
+        {
+          "id": "duo",
+          "duration_s": 3,
+          "panel_count": 2,
+          "panel_weights": [
+            1,
+            1
+          ],
+          "gutter": 0,
+          "background_color": "#000000",
+          "collapse_empty_panels": true
+        }
+      ],
+      "expected_duration_s": 6,
+      "expected_windows": [
+        {
+          "slot_id": "before",
+          "start_s": 0,
+          "end_s": 2
+        },
+        {
+          "slot_id": "short",
+          "start_s": 2,
+          "end_s": 3
+        },
+        {
+          "slot_id": "long",
+          "start_s": 2,
+          "end_s": 5
+        },
+        {
+          "slot_id": "after",
+          "start_s": 5,
+          "end_s": 6
+        }
+      ],
+      "expected_recipe_sections": [
+        {
+          "id": "duo",
+          "start": 2,
+          "end": 5
+        }
+      ],
+      "canvas_samples": [
+        {
+          "section_time_s": 0.5,
+          "active_panels": [
+            0,
+            1
+          ],
+          "rects": [
+            {
+              "panel_index": 0,
+              "y": 0,
+              "height": 0.5
+            },
+            {
+              "panel_index": 1,
+              "y": 0.5,
+              "height": 0.5
+            }
+          ]
+        },
+        {
+          "section_time_s": 1.5,
+          "active_panels": [
+            1
+          ],
+          "rects": [
+            {
+              "panel_index": 1,
+              "y": 0,
+              "height": 1.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "panel_gap_collapses_then_returns",
+      "note": "A panel with a gap between two clips yields its height for the gap and takes it back on the next clip's first frame.",
+      "slots": [
+        {
+          "slot_id": "a",
+          "clip_index": 0,
+          "in_s": 0,
+          "duration_s": 3,
+          "split_section_id": "duo",
+          "split_panel_index": 0,
+          "split_offset_s": 0
+        },
+        {
+          "slot_id": "b1",
+          "clip_index": 1,
+          "in_s": 0,
+          "duration_s": 1,
+          "split_section_id": "duo",
+          "split_panel_index": 1,
+          "split_offset_s": 0
+        },
+        {
+          "slot_id": "b2",
+          "clip_index": 1,
+          "in_s": 3,
+          "duration_s": 1,
+          "split_section_id": "duo",
+          "split_panel_index": 1,
+          "split_offset_s": 2
+        }
+      ],
+      "split_screen_sections": [
+        {
+          "id": "duo",
+          "duration_s": 3,
+          "panel_count": 2,
+          "panel_weights": [
+            1,
+            1
+          ],
+          "gutter": 0,
+          "background_color": "#000000",
+          "collapse_empty_panels": true
+        }
+      ],
+      "expected_duration_s": 3,
+      "expected_windows": [
+        {
+          "slot_id": "a",
+          "start_s": 0,
+          "end_s": 3
+        },
+        {
+          "slot_id": "b1",
+          "start_s": 0,
+          "end_s": 1
+        },
+        {
+          "slot_id": "b2",
+          "start_s": 2,
+          "end_s": 3
+        }
+      ],
+      "expected_recipe_sections": [
+        {
+          "id": "duo",
+          "start": 0,
+          "end": 3
+        }
+      ],
+      "canvas_samples": [
+        {
+          "section_time_s": 0.5,
+          "active_panels": [
+            0,
+            1
+          ],
+          "rects": [
+            {
+              "panel_index": 0,
+              "y": 0,
+              "height": 0.5
+            },
+            {
+              "panel_index": 1,
+              "y": 0.5,
+              "height": 0.5
+            }
+          ]
+        },
+        {
+          "section_time_s": 1,
+          "active_panels": [
+            0
+          ],
+          "rects": [
+            {
+              "panel_index": 0,
+              "y": 0,
+              "height": 1.0
+            }
+          ]
+        },
+        {
+          "section_time_s": 1.5,
+          "active_panels": [
+            0
+          ],
+          "rects": [
+            {
+              "panel_index": 0,
+              "y": 0,
+              "height": 1.0
+            }
+          ]
+        },
+        {
+          "section_time_s": 2,
+          "active_panels": [
+            0,
+            1
+          ],
+          "rects": [
+            {
+              "panel_index": 0,
+              "y": 0,
+              "height": 0.5
+            },
+            {
+              "panel_index": 1,
+              "y": 0.5,
+              "height": 0.5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "stored_duration_longer_than_members_is_ignored",
+      "note": "A stored duration_s past the last member end is not a trailing empty tail: the section lasts until its longest member ends.",
+      "slots": [
+        {
+          "slot_id": "a",
+          "clip_index": 0,
+          "in_s": 0,
+          "duration_s": 3,
+          "split_section_id": "duo",
+          "split_panel_index": 0,
+          "split_offset_s": 0
+        },
+        {
+          "slot_id": "b",
+          "clip_index": 1,
+          "in_s": 0,
+          "duration_s": 2,
+          "split_section_id": "duo",
+          "split_panel_index": 1,
+          "split_offset_s": 0
+        }
+      ],
+      "split_screen_sections": [
+        {
+          "id": "duo",
+          "duration_s": 9,
+          "panel_count": 2,
+          "panel_weights": [
+            1,
+            1
+          ],
+          "gutter": 0,
+          "background_color": "#000000",
+          "collapse_empty_panels": true
+        }
+      ],
+      "expected_duration_s": 3,
+      "expected_windows": [
+        {
+          "slot_id": "a",
+          "start_s": 0,
+          "end_s": 3
+        },
+        {
+          "slot_id": "b",
+          "start_s": 0,
+          "end_s": 2
+        }
+      ],
+      "expected_recipe_sections": [
+        {
+          "id": "duo",
+          "start": 0,
+          "end": 3
+        }
+      ],
+      "canvas_samples": [
+        {
+          "section_time_s": 1,
+          "active_panels": [
+            0,
+            1
+          ],
+          "rects": [
+            {
+              "panel_index": 0,
+              "y": 0,
+              "height": 0.5
+            },
+            {
+              "panel_index": 1,
+              "y": 0.5,
+              "height": 0.5
+            }
+          ]
+        },
+        {
+          "section_time_s": 2.5,
+          "active_panels": [
+            0
+          ],
+          "rects": [
+            {
+              "panel_index": 0,
+              "y": 0,
+              "height": 1.0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

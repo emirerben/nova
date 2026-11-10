@@ -3597,6 +3597,7 @@
         "src/apps/api/prompts/edit_copilot_ops/split_screen.txt",
         "src/apps/api/prompts/main_creator_split_screen.txt",
         "src/apps/api/tests/fixtures/split_screen_timeline.json",
+        "src/apps/api/tests/fixtures/split_screen_collapse_timeline.json",
         "src/apps/api/tests/kria/test_split_screen.py",
         "src/apps/api/tests/kria/test_clip_source_clock.py",
         "src/apps/api/tests/kria/test_split_screen_persistence_postgres.py",

@@ -11,6 +11,8 @@ struct NativeSplitPanelPick: Equatable {
 
 /// Preview controls for the split section under the playhead. The preview is the control surface: a Sky tint on the
 /// selected panel, a white line between panels that drags to resize, and a round swap button on that line.
+/// Everything is laid out from the panels drawn at the playhead (`NativeSplitContext.activePanels`), so a collapse
+/// section's controls follow the picture when a panel ends.
 /// The tint and panel elements never take touches. Only the divider bands do, and this view sits above the canvas
 /// gesture surface so the canvas move gesture and its empty tap (fullscreen) never see a touch that starts on a band.
 struct NativeSplitPreviewOverlay: View {
@@ -32,11 +34,12 @@ struct NativeSplitPreviewOverlay: View {
 
     private func content(context: NativeSplitContext, size: CGSize) -> some View {
         let section = context.section
-        let rects = NativeSplitPanelLayout.panelRects(weights: section.panelWeights, gutter: section.gutter)
-        let ys = NativeSplitPanelLayout.dividerYs(weights: section.panelWeights, gutter: section.gutter)
+        let shown = NativeSplitPanelLayout.normalizedActive(context.activePanels, count: section.panelCount)
+        let rects = NativeSplitPanelLayout.panelRects(weights: section.panelWeights, gutter: section.gutter, active: shown)
+        let ys = NativeSplitPanelLayout.dividerYs(weights: section.panelWeights, gutter: section.gutter, active: shown)
         let selected = Self.selectedPanel(session: session, context: context, pick: pick)
         return ZStack(alignment: .topLeading) {
-            ForEach(Array(rects.enumerated()), id: \.offset) { index, unit in
+            ForEach(Array(zip(shown, rects)), id: \.0) { index, unit in
                 let rect = Self.pixelRect(unit, in: size)
                 ZStack {
                     Rectangle().fill(KriaColor.sky.opacity(selected == index ? 0.42 : 0))
@@ -46,15 +49,16 @@ struct NativeSplitPreviewOverlay: View {
                 .offset(x: rect.minX, y: rect.minY)
                 .allowsHitTesting(false)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(NativeSplitScreenRows.panelTitle(index: index, count: rects.count)) panel")
+                .accessibilityLabel("\(NativeSplitScreenRows.panelTitle(index: index, count: section.panelCount)) panel")
                 .accessibilityAddTraits(selected == index ? [.isButton, .isSelected] : .isButton)
                 .accessibilityAction { Self.choose(panel: index, context: context, session: session, pick: $pick) }
                 .accessibilityIdentifier("native-editor-split-panel-\(index)")
             }
             if session.canEditSplitScreen {
-                ForEach(Array(ys.enumerated()), id: \.offset) { boundary, fraction in
+                ForEach(Array(ys.enumerated()), id: \.offset) { position, fraction in
                     NativeSplitDividerHandle(session: session, pick: $pick, section: section, sectionID: context.sectionID,
-                                             boundary: boundary, y: CGFloat(fraction) * size.height, canvas: size)
+                                             upper: shown[position], lower: shown[position + 1],
+                                             y: CGFloat(fraction) * size.height, canvas: size)
                 }
             }
         }
@@ -66,10 +70,12 @@ struct NativeSplitPreviewOverlay: View {
                width: unit.width * size.width, height: unit.height * size.height)
     }
 
-    /// The panel under a canvas point, or nil in a gutter or outside the canvas.
-    static func panel(at point: CGPoint, in size: CGSize, section: EditorSplitScreenSection) -> Int? {
-        NativeSplitPanelLayout.panelRects(weights: section.panelWeights, gutter: section.gutter)
-            .firstIndex { pixelRect($0, in: size).contains(point) }
+    /// The drawn panel under a canvas point, or nil in a gutter, a panel that has ended, or outside the canvas.
+    static func panel(at point: CGPoint, in size: CGSize, context: NativeSplitContext) -> Int? {
+        let section = context.section
+        let shown = NativeSplitPanelLayout.normalizedActive(context.activePanels, count: section.panelCount)
+        let rects = NativeSplitPanelLayout.panelRects(weights: section.panelWeights, gutter: section.gutter, active: shown)
+        return zip(shown, rects).first { pixelRect($0.1, in: size).contains(point) }?.0
     }
 
     static func selectedPanel(session: NativeEditorSession, context: NativeSplitContext, pick: NativeSplitPanelPick?) -> Int? {
@@ -95,7 +101,9 @@ private struct NativeSplitDividerHandle: View {
     @Binding var pick: NativeSplitPanelPick?
     let section: EditorSplitScreenSection
     let sectionID: String
-    let boundary: Int
+    /// The two drawn panels this line sits between. In a collapse section they need not be consecutive indexes.
+    let upper: Int
+    let lower: Int
     let y: CGFloat
     let canvas: CGSize
 
@@ -111,8 +119,8 @@ private struct NativeSplitDividerHandle: View {
     private let tapSlop: CGFloat = 10
 
     private var weights: (above: Double, below: Double)? {
-        guard section.panelWeights.indices.contains(boundary + 1) else { return nil }
-        return (section.panelWeights[boundary], section.panelWeights[boundary + 1])
+        guard section.panelWeights.indices.contains(upper), section.panelWeights.indices.contains(lower) else { return nil }
+        return (section.panelWeights[upper], section.panelWeights[lower])
     }
 
     private var ratioText: String {
@@ -127,7 +135,7 @@ private struct NativeSplitDividerHandle: View {
     }
 
     private var upperTitle: String {
-        NativeSplitScreenRows.panelTitle(index: boundary, count: section.panelCount).lowercased()
+        NativeSplitScreenRows.panelTitle(index: upper, count: section.panelCount).lowercased()
     }
 
     var body: some View {
@@ -145,7 +153,7 @@ private struct NativeSplitDividerHandle: View {
                 .accessibilityLabel("Swap panels")
                 .accessibilityAddTraits(.isButton)
                 .accessibilityAction { swap() }
-                .accessibilityIdentifier("native-editor-split-swap-\(boundary)")
+                .accessibilityIdentifier("native-editor-split-swap-\(upper)")
         }
         .frame(width: canvas.width, height: band)
         .overlay(alignment: .top) {
@@ -167,7 +175,7 @@ private struct NativeSplitDividerHandle: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Panel divider")
         .accessibilityValue(ratioText)
-        .accessibilityIdentifier("native-editor-split-divider-\(boundary)")
+        .accessibilityIdentifier("native-editor-split-divider-\(upper)")
         .accessibilityAction(named: "Make \(upperTitle) panel taller") { nudge(0.05) }
         .accessibilityAction(named: "Make \(upperTitle) panel shorter") { nudge(-0.05) }
         .onChange(of: touching) { _, now in
@@ -184,7 +192,7 @@ private struct NativeSplitDividerHandle: View {
                     dragging = true
                     wasEqual = isEqual
                     haptic.prepare()
-                    session.beginSplitDividerDrag(sectionID: sectionID, boundary: boundary)
+                    session.beginSplitDividerDrag(sectionID: sectionID, between: upper, and: lower)
                 }
                 session.updateSplitDividerDrag(deltaFraction: Double(value.translation.height / max(canvas.height, 1)))
                 let equal = isEqual
@@ -208,18 +216,18 @@ private struct NativeSplitDividerHandle: View {
     }
 
     private func nudge(_ delta: Double) {
-        session.beginSplitDividerDrag(sectionID: sectionID, boundary: boundary)
+        session.beginSplitDividerDrag(sectionID: sectionID, between: upper, and: lower)
         session.updateSplitDividerDrag(deltaFraction: delta)
         session.endSplitDividerDrag()
     }
 
     private func swap() {
-        session.swapSplitPanels(sectionID: sectionID, boundary, boundary + 1)
+        session.swapSplitPanels(sectionID: sectionID, upper, lower)
         if let current = pick, current.sectionID == sectionID {
-            if current.panel == boundary {
-                pick = NativeSplitPanelPick(sectionID: sectionID, panel: boundary + 1, selection: session.selection)
-            } else if current.panel == boundary + 1 {
-                pick = NativeSplitPanelPick(sectionID: sectionID, panel: boundary, selection: session.selection)
+            if current.panel == upper {
+                pick = NativeSplitPanelPick(sectionID: sectionID, panel: lower, selection: session.selection)
+            } else if current.panel == lower {
+                pick = NativeSplitPanelPick(sectionID: sectionID, panel: upper, selection: session.selection)
             }
         }
     }

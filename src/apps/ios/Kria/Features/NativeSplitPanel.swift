@@ -144,6 +144,21 @@ struct NativeSplitPanel: View {
             .pickerStyle(.segmented)
             .accessibilityIdentifier("native-editor-split-count")
 
+            if session.canCollapseSplitPanels || context.section.collapseEmptyPanels {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("When a panel ends").kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                    Picker("When a panel ends", selection: Binding(
+                        get: { session.splitContextAtPlayhead?.section.collapseEmptyPanels ?? context.section.collapseEmptyPanels },
+                        set: { session.setSplitCollapse(sectionID: context.sectionID, $0) }
+                    )) {
+                        Text("Others fill the screen").tag(true)
+                        Text("Leave it empty").tag(false)
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("native-editor-split-collapse")
+                }
+            }
+
             ForEach(context.emptyPanels, id: \.self) { panel in
                 Button {
                     skipped.removeAll()

@@ -815,20 +815,34 @@ def prepare_phone_editor_commit(
         None,
     )
     require_phone_voiceover_source_audio_client(before_variant)
-    from app.services.phone_rollout import split_screen_client_supported
+    from app.services.client_protocol import SPLIT_COLLAPSE_PROTOCOL
+    from app.services.phone_rollout import (
+        split_collapse_client_supported,
+        split_screen_client_supported,
+    )
 
-    if not split_screen_client_supported():
+    if not split_screen_client_supported() or not split_collapse_client_supported():
         try:
             split_recipe = device_status(job, variant_id).request.recipe
         except KeyError:
             split_recipe = None
-        if split_recipe is not None and "splitScreen" in split_recipe.required_capabilities:
+        capabilities = split_recipe.required_capabilities if split_recipe is not None else set()
+        if "splitScreen" in capabilities and not split_screen_client_supported():
             raise HTTPException(
                 426,
                 detail={
                     "code": "client_update_required",
                     "feature": "split_screen",
                     "minimum_client_protocol": 42,
+                },
+            )
+        if "splitCollapse" in capabilities and not split_collapse_client_supported():
+            raise HTTPException(
+                426,
+                detail={
+                    "code": "client_update_required",
+                    "feature": "split_collapse",
+                    "minimum_client_protocol": SPLIT_COLLAPSE_PROTOCOL,
                 },
             )
     staged = _StagedJob(job)
