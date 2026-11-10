@@ -180,9 +180,11 @@ from app.services.choice_questions import (
     choice_question_text,
     detect_order_vs_group,
     fold_choice_answers,
+    follows_change_request,
     length_inputs_waiting,
     resolve_choices,
     simpler_version_accepted,
+    simpler_version_carried,
     simpler_version_question,
     tag_event,
     without_length_answer_echo,
@@ -2998,10 +3000,12 @@ async def _load_creator_inputs(
     from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
 
     creative_copy_digest = media_digest(snapshot_media(item))
-    decision_states = fold_creative_copy(
-        await _load_thread_events(db, thread_id, release=False),
-        dependency_digest=creative_copy_digest,
-    )
+    thread_events = await _load_thread_events(db, thread_id, release=False)
+    decision_states = fold_creative_copy(thread_events, dependency_digest=creative_copy_digest)
+    if brief_on and _change_request_context(thread_events):
+        # KRI-1360: the brief model reads this message as the new request after "Change my
+        # request" and removes the earlier asks it no longer includes. Unset: input unchanged.
+        extra["changes_request"] = True
     compact_copy_state = [
         {
             "target": target,
@@ -3165,6 +3169,8 @@ async def _call_brief_extractor(
         current_brief=prior_brief,
         require_request_scope=True,
         insert_clips_open=_insert_clips_open(inputs),
+        # KRI-1360: the same "Change my request" marker the Main Creator input carries.
+        changes_request=getattr(inputs.agent_input, "changes_request", False),
     )
 
     def _run_agent(request_id: str):  # noqa: ANN202 - inferred BriefExtractionOutput
@@ -4074,7 +4080,23 @@ async def _simpler_version_accepted(
         return False
     if not isinstance(db, AsyncSession):
         return False  # no live session (a planner harness), so no thread to read an answer from
-    return simpler_version_accepted(await _load_thread_events(db, thread_id), fields)
+    return _simpler_version_consented(await _load_thread_events(db, thread_id), fields)
+
+
+def _simpler_version_consented(events: Sequence[tuple[str, Any]], fields: Sequence[str]) -> bool:
+    """This turn's tap, or (KRI-1354) an earlier tap on a policy refusal's card that only
+    choice taps have followed, with no draft since (`simpler_version_carried`)."""
+    if simpler_version_accepted(events, fields):
+        return True
+    return settings.narrated_simpler_consent_fixes_enabled and simpler_version_carried(
+        events, fields
+    )
+
+
+def _change_request_context(events: Sequence[tuple[str, Any]]) -> bool:
+    """KRI-1360: this message answers a "Change my request" tap, so the brief model reads it
+    as the creator's new request (it decides which earlier asks it drops, never the server)."""
+    return settings.change_request_fresh_brief_enabled and follows_change_request(events)
 
 
 async def _plan_turn_clip_intents(

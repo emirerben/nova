@@ -1020,24 +1020,25 @@ def test_flag_off_the_brief_sections_are_the_bytes_they_were_before_the_opening(
     # one captions requirement / "all my pauses" / unnamed mistakes / one-moment holds / typed
     # ending); the flag-off section was 14ad8c6e… before it. Re-frozen again for #2164 (the
     # keep-the-take-whole line also records speech_cleanup false), and for KRI-1292 (`hold_s`
-    # for a text at a spoken word), and for KRI-1327 (`subject_outline`, a line around a person).
+    # for a text at a spoken word), and for KRI-1327 (`subject_outline`, a line around a person),
+    # and for KRI-1355 (the typed no-title ask, `title: "off"`).
     assert brief_prompt_section() is _BRIEF_PROMPT_SECTION
     assert digest(brief_prompt_section()) == (
-        "50c7c030fd9d8b53eeaca8c186bced335bd356466bcbc7a4d564329c11d1bacb"
+        "c0151ced250653122f3510792a6ff85204f097703fd55f500e9bccedfafc3379"
     )
     assert digest(brief_prompt_section(True)) == (
-        "fc26f5110ab6b4845774f62228ae520fdb303f785ee29cfaa1f3fedebff8042d"
+        "a49e1033ccb62fb079006cc403e1a9e58e74b7aefd7d9e556deaddf5e9675948"
     )
     assert digest(_narrow_brief_section(False)) == (
-        "415c3f3d2b13444feeabccb552caa61e03426cd9fd3d81c55347d3bcd98fa21f"
+        "0cdcbd1c0a89df7ac461c85cdbb71abf10328c89a56cb912a4cd87d7c72e22fe"
     )
     assert digest(_narrow_brief_section(True)) == (
-        "cec86bdac935d451292dc906c3afad89553d87b7a5d6437b180e344aaed4373e"
+        "7510aa78cb918a0b7e42156c67a233bd66439ea5e1e75ee96eb36a04a1af0e74"
     )
     # and the whole extractor prompt, byte for byte (captured from that same tree)
     for insert_open, expected in (
-        (False, "f2512e6951e699f3cd0961aa58a27dee13a59671bd8257167f836811b76bfcb3"),
-        (True, "73a65445cb14bfab53908d9448283994a76bf2d8a6f755a8d3826daace58b621"),
+        (False, "308d9697d6d4d6920938017218e037b111954e5d75c2da76025bf65e5f35982f"),
+        (True, "ffdc6f718b1532b2a5e92c4072f49af8cb2b35853d23874dfb8b976e17d46d25"),
     ):
         rendered = BriefExtractorAgent(None).render_prompt(
             BriefExtractionInput(

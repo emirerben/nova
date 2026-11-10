@@ -419,6 +419,25 @@ def _joined_spelling_windows(stream: list[_Token], tokens: list[str]) -> list[_H
     return out
 
 
+def trigger_is_heard(words: list[dict], trigger: object, *, plural: bool = True) -> bool:
+    """KRI-1356: True when the reaction-beat matcher hears ``trigger`` in ``words`` at all.
+
+    The same lookup `ground_phone_reaction_beats` runs for a beat (exact after folding, the
+    plural / named-phrase fallbacks), so a False here is exactly a beat that would come back
+    ``never_heard``. A blank trigger is "heard" (there is nothing to look for). An ``after``
+    phrase is looked up as the matcher looks it up: ``plural=False``."""
+    phrase = str(trigger or "").strip()
+    if not fold_tokens(phrase):
+        return True
+    return bool(_phrase_windows(_token_stream(words), words, phrase, plural=plural))
+
+
+def first_heard_start_s(words: list[dict], phrase: object, *, plural: bool = True) -> float | None:
+    """KRI-1356: where the matcher first hears ``phrase`` (its start, seconds), else None."""
+    hits = _phrase_windows(_token_stream(words), words, str(phrase or "").strip(), plural=plural)
+    return hits[0][0] if hits else None
+
+
 @dataclass(frozen=True)
 class _MatchResult:
     windows: list[tuple[float, float]] = field(default_factory=list)
