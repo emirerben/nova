@@ -1,0 +1,14 @@
+{
+  "_note": "Expected openings for KRI-1348, copied from the Çiğdem kit scripts (written 2026-10-31, before any Kria run; CUT = Kria should remove it) and the yorum3 / Green 3 prod runs. Media stays outside git.",
+  "preroll": [
+    {"take": "Çiğdem S1 IMG_7212.MOV (also yorum3 job 7eba9903)", "source": "kria-cigdem-test/S1_rival_banter_short/SCRIPT.txt", "cut": "Okay... starting.", "first_kept": "Ten minutes after Lumo launched its first foldable phone"},
+    {"take": "Çiğdem S2 IMG_7231.MOV (also Green 3 job 9bad2d75, ss2b job f4f81c07)", "source": "kria-cigdem-test/S2_brand_collab_greenscreen_short/SCRIPT.txt", "cut": "Okay, we're recording.", "first_kept": "Kervan celebrated its tenth year"},
+    {"take": "Çiğdem S3 take A IMG_7244.MOV", "source": "kria-cigdem-test/S3_food_marketing_short/SCRIPT.txt", "cut": "Wait, the light... okay.", "first_kept": "Why do brands do food marketing?"}
+  ],
+  "no_preroll": [
+    {"take": "Çiğdem S3 takes B/C IMG_7245.MOV, IMG_7252.MOV", "source": "kria-cigdem-test/S3_food_marketing_short/SCRIPT.txt", "first_kept": "And food is the most shared culture. / One of the best examples is luxury brands opening cafés."},
+    {"take": "Çiğdem S4 IMG_8120.MP4 (Turkish)", "source": "kria-cigdem-test/S4_fenerbahce_greenscreen_tr/answer_key.json", "first_kept": "Fenerbahçe'yi Kadıköy'den göndermek sadece bir stat hakkında değil."},
+    {"take": "Don Julio julio3 raw take", "source": "kria-julio345-test/_src/answer_key.md", "first_kept": "Hey, just a sec. Yes, I'm ready. What is this, sir? (a conversation with the waiter, kept)"},
+    {"take": "every other speech take in the kria-*-test kits", "source": "hand-read openings, 2026-11-09", "first_kept": "the take's first word"}
+  ]
+}
