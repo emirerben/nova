@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.138.0] - 2026-11-10
+
+### Changed
+- test(ios): stop caption animation tests playing card previews mid-query (#2260) <!-- release-pr: 2260 -->
+
 ## [0.88.137.0] - 2026-11-10
 
 ### Changed
