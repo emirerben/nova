@@ -440,14 +440,15 @@ def _hinted_replace(
     on-screen name); two heard words written as one (or one as two) may write a run of
     one ("Bayern Arena" -> "BayArena"). Other shapes are never hinted. A hint fixes
     spelling or spacing only, never which product is named: the numbers must stay the
-    same, in order ("PS4" never becomes "PS5", "iPhone 13" never "iPhone15").
+    same, in order and in shape ("PS4" never becomes "PS5", "iPhone 13" never "iPhone15",
+    "Model1.5" never "Model15").
     """
 
     if hints is None or not written:
         return False
     heard = " ".join(str(word["text"]) for word in spoken)
     run = " ".join(written)
-    if _numeric_sequence(heard) != _numeric_sequence(run):
+    if _numeric_tokens(heard) != _numeric_tokens(run):
         return False
     if len(spoken) == len(written):
         allowed = hints.whole
@@ -487,25 +488,45 @@ def _hinted_prefix(
 _INSERTED_NUMBER = re.compile(r"\d+\.?")
 
 
-def _numeric_sequence(text: str) -> tuple[str, ...]:
-    """The numerals of ``text`` in order, compatibility forms folded ("㎟" -> "2"), so a
-    hinted edit can prove it kept them. The one numeric probe in this module."""
+# A separator that sits between two numerals belongs to the number: "1.5", "1,5", "4:0",
+# "1/2", "2024-05-01". A trailing period ("1.") does not.
+_NUMBER_JOINERS = frozenset(".,:/'\u2019-\u2013\u2044\u066b\u066c")
 
-    out: list[str] = []
+
+def _numeric_tokens(text: str) -> tuple[str, ...]:
+    """The numbers of ``text`` in order, each with its internal separators, compatibility
+    forms folded ("㎟" -> "2"), so a hinted edit can prove it kept them: "1.5" and "15" are
+    different numbers even though their digits match. The one numeric probe in this module."""
+
+    stream: list[str] = []
     for ch in text:
         decomposed = unicodedata.normalize("NFKD", ch)  # single-fold: numeric probe
-        folded = [c for c in decomposed if c.isnumeric()]
-        if folded:
-            out.extend(folded)
-        elif ch.isnumeric():
-            out.append(ch)
+        if any(c.isnumeric() for c in decomposed):
+            stream.extend(decomposed)
+        else:
+            stream.append(ch)
+    out: list[str] = []
+    token: list[str] = []
+    for index, ch in enumerate(stream):
+        if ch.isnumeric():
+            token.append(ch)
+            continue
+        following = stream[index + 1] if index + 1 < len(stream) else ""
+        if token and ch in _NUMBER_JOINERS and following.isnumeric():
+            token.append(ch)
+            continue
+        if token:
+            out.append("".join(token))
+            token = []
+    if token:
+        out.append("".join(token))
     return tuple(out)
 
 
 def _has_numeric_content(text: str) -> bool:
     """Include fractions/numerals and compatibility forms such as ㎟ -> mm2."""
 
-    return bool(_numeric_sequence(text))
+    return bool(_numeric_tokens(text))
 
 
 def _word_key(text: str) -> str:

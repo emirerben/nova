@@ -52,6 +52,14 @@ Ways this can fail, written before the code, and the test that catches each:
   F21 fixing F19/F20 breaks the de1 repairs ("Bayern Arena" -> "BayArena", "den FC
       Nürnberg" -> "den 1. FC Nürnberg"), or a no-hint run behaves differently
                                     -> test_de1_repairs_survive_the_number_rules
+  Review round 3 (KRI-1361), numbers are compared by STRUCTURE, not digit order:
+  F22 a hint changes a decimal/version number by dropping its separator ("Model1.5" ->
+      "Model15" under "Model15", "GPT-4.1" -> "GPT-41" under "GPT-41", "1,5" -> "15")
+                                    -> test_hinted_replace_keeps_number_structure
+  F23 fixing F22 breaks the spacing-only fix or the de1 repairs ("PS 5" -> "PS5",
+      "Bayern Arena" -> "BayArena", "den FC Nürnberg" -> "den 1. FC Nürnberg")
+                                    -> test_hinted_replace_keeps_numbers,
+                                       test_de1_repairs_survive_the_number_rules
 Not covered here: whether the live model actually proposes the hinted spellings (paid call).
 """
 
@@ -435,6 +443,33 @@ def test_hinted_replace_keeps_numbers(monkeypatch) -> None:
     assert _run(monkeypatch, "my PS 5 is broken", "my PS5 is broken", ps5)["text"] == (
         "my PS5 is broken"
     )
+
+
+@pytest.mark.parametrize(
+    ("text", "proposal", "hint"),
+    [
+        ("Model1.5 is broken", "Model15 is broken", "Model15"),
+        ("Model1,5 is broken", "Model15 is broken", "Model15"),
+        ("GPT-4.1 is broken", "GPT-41 is broken", "GPT-41"),
+        ("das GPT 4.1 Modell", "das GPT-41 Modell", "GPT-41"),
+    ],
+)
+def test_hinted_replace_keeps_number_structure(
+    monkeypatch, text: str, proposal: str, hint: str
+) -> None:
+    # The reviewer's probes: same digits in the same order, but "1.5" is not "15".
+    assert _run(monkeypatch, text, proposal, [])["text"] == text
+    assert _run(monkeypatch, text, proposal, cc.SpellingHints(brands=(hint,)))["text"] == text
+
+
+def test_number_shape_probe() -> None:
+    # The probe the hinted replace compares: separators between numerals are part of the
+    # number, a trailing period and the spacing around a number are not.
+    assert cc._numeric_tokens("1,5") != cc._numeric_tokens("15")
+    assert cc._numeric_tokens("1.5") != cc._numeric_tokens("15")
+    assert cc._numeric_tokens("GPT-4.1") == ("4.1",)
+    assert cc._numeric_tokens("1. FC Nürnberg") == ("1",)
+    assert cc._numeric_tokens("PS 5") == cc._numeric_tokens("PS5") == ("5",)
 
 
 def test_hinted_prefix_inserts_numbers_only(monkeypatch) -> None:
