@@ -33,11 +33,14 @@ Phone protocol 46 (main took 44 and 45 first) and feature `splitScreen` protect 
 
 Native model and mutation work owns these methods for UI integration:
 
-- `createSplitScreen(panelCount: Int)` converts the selected ordinary clip to a section and duplicates it into independently editable panels. Each new slot has a new identity. The original section duration remains unchanged. Replacement uses the existing available source pool.
+- `createSplitScreen(panelCount: Int, scope: NativeSplitScope)` creates a section. `.selectedClip` converts the selected ordinary clip into panel 0 and leaves the other panels empty. `.wholeVideo` turns every ordinary clip into panel 0 members of one section, keeping identities, windows and transitions. The section duration is unchanged. Empty panels display the section background and are filled by `addSplitPanelClip`.
 - `selectedSplitScreenSectionID: String?` resolves from the selected clip membership.
 - `setSplitScreenPanelCount(_ count: Int)` preserves existing panels and creates or removes the third panel in one undo transaction.
 - `setSplitScreenDuration(_ duration: Double)` changes section boundaries and clamps member coverage without silently speeding media.
-- `moveSelectedSplitScreenPanel(to index: Int)` swaps complete panel memberships, keeping clip properties and offsets.
+- `swapSplitPanels(sectionID:_:_:)` swaps complete panel memberships in one undo step, keeping clip properties, offsets and panel sizes.
+- `beginSplitDividerDrag` / `updateSplitDividerDrag(deltaFraction:)` / `endSplitDividerDrag` resize two adjacent panels live with one undo step, snapping to equal.
+- `addSplitPanelClip(sectionID:panel:fileURL:)` and `(…sourceClipIndex:)` add a clip to a panel's gap or end without lengthening the section.
+- `selectSplitPanel(sectionID:panel:)` selects the panel's clip at the playhead.
 - `setSelectedSplitScreenOffset(_ offset: Double)` changes only the selected clip's placement within the section.
 - `splitSelectedClip()` cuts the selected member at the playhead, preserving source clock and appearance.
 - `duplicateSelectedClip()` adds an independent occurrence within the same panel when space exists.

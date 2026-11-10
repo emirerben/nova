@@ -279,6 +279,7 @@ def bars_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
                     sequence_source_id if isinstance(sequence_source_id, str) else None
                 ),
                 "clip_id": clip if isinstance(clip, str) and clip else None,
+                "recorded": row.get("recorded") is True,
                 "removed": bool(row.get("removed")),
                 "start_s": _number(row.get("start_s")),
                 "caption": row.get("caption_cue") is True,
@@ -311,6 +312,7 @@ def bars_from_variant(job: Any, variant: dict[str, Any]) -> list[dict[str, Any]]
                         sequence_source_id if isinstance(sequence_source_id, str) else None
                     ),
                     "clip_id": (links.get(row_id) or {}).get("clip_id"),
+                    "recorded": (links.get(row_id) or {}).get("recorded") is True,
                     "removed": bool(row.get("removed")),
                     "start_s": _number(row.get("start_s")),
                     "caption": is_caption_text_bar(row),
@@ -1167,24 +1169,43 @@ def _slot_window(slot: dict[str, Any]) -> tuple[float, float] | None:
     return (start, end) if end > start else None
 
 
+def _slot_windows(slots: list[dict[str, Any]]) -> list[tuple[dict[str, Any], float, float]]:
+    live = [slot for slot in slots if not slot.get("removed")]
+    windows = [(slot, _slot_window(slot)) for slot in live]
+    if all(window is not None for _, window in windows):
+        return [(slot, *window) for slot, window in windows if window is not None]
+    # An authored phone timeline stores no output times: lay it out on its compiler's clock.
+    from app.services.authored_text_fit import _segments  # noqa: PLC0415
+
+    by_index = {
+        segment["segment_id"]: segment
+        for segment in _segments([{**slot, "slot_id": f"#{i}"} for i, slot in enumerate(live)])
+    }
+    return [
+        (slot, segment["output_start_s"], segment["output_end_s"])
+        for i, slot in enumerate(live)
+        if (segment := by_index.get(f"#{i}")) is not None
+    ]
+
+
 def plan_label_realign(
     labels: list[dict[str, Any]], slots: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Which clip-bound label bars sit off their clip's CURRENT output window.
 
-    ``labels``: ``{id, media_id, segment_id?, start_s, end_s}``. ``slots``: live
-    (not removed) slot rows with an output window. A label is matched to its slot
-    by ``segment_id`` (== the slot's ``slot_id``), else by media (the slot of
-    that clip it overlaps most). Returns ``{id, start_s, end_s, segment_id}`` for
-    every label more than ``LABEL_ALIGN_TOLERANCE_S`` off, flushed to the window.
-    Pure and shared by the parser (snapshot) and the compiler (live variant).
+    ``labels``: ``{id, media_id, segment_id?, runs_on?, start_s, end_s}``. ``slots``:
+    the slot rows (output windows are laid out when they carry none). A label is
+    matched to its slot by ``segment_id`` (== the slot's ``slot_id``), else by media
+    (the slot of that clip it overlaps most). A label fills its clip's window; a
+    ``runs_on`` text (a title that starts at its clip, KRI-1332) starts there and
+    keeps its length, never onto the next label's clip or past the video. Returns
+    ``{id, start_s, end_s, segment_id}`` for every one more than
+    ``LABEL_ALIGN_TOLERANCE_S`` off. Pure and shared by the parser (snapshot) and
+    the compiler (live variant).
     """
-    windows: list[tuple[dict[str, Any], float, float]] = []
-    for slot in slots:
-        window = _slot_window(slot)
-        if window is not None and not slot.get("removed"):
-            windows.append((slot, window[0], window[1]))
-    plan: list[dict[str, Any]] = []
+    windows = _slot_windows(slots)
+    total = max((window[2] for window in windows), default=0.0)
+    matched: list[tuple[dict[str, Any], float, float, tuple[dict[str, Any], float, float]]] = []
     for label in labels:
         start, end = _number(label.get("start_s")), _number(label.get("end_s"))
         if start is None or end is None:
@@ -1197,21 +1218,27 @@ def plan_label_realign(
             candidates = [w for w in windows if w[0].get("media_id") == label["media_id"]]
             if candidates:
                 match = max(candidates, key=lambda w: max(0.0, min(end, w[2]) - max(start, w[1])))
-        if match is None:
-            continue
-        slot, w_start, w_end = match
+        if match is not None:
+            matched.append((label, start, end, match))
+    starts = sorted({match[1] for *_, match in matched})
+    plan: list[dict[str, Any]] = []
+    for label, start, end, (slot, w_start, w_end) in matched:
         if w_end - w_start < _MIN_LABEL_BAR_S:
             continue
+        target = w_end
+        if label.get("runs_on"):
+            limit = next((s for s in starts if s > w_start + LABEL_ALIGN_TOLERANCE_S), total)
+            target = min(w_start + end - start, limit, total)
         if (
             abs(start - w_start) <= LABEL_ALIGN_TOLERANCE_S
-            and abs(end - w_end) <= LABEL_ALIGN_TOLERANCE_S
+            and abs(end - target) <= LABEL_ALIGN_TOLERANCE_S
         ):
             continue
         plan.append(
             {
                 "id": label["id"],
                 "start_s": round(w_start, 6),
-                "end_s": round(w_end, 6),
+                "end_s": round(target, 6),
                 "segment_id": slot.get("slot_id"),
             }
         )
@@ -1251,7 +1278,8 @@ def op_realign_labels(state: _DraftState, op: dict[str, Any]) -> None:
             or is_caption_text_bar(row)
         ):
             continue
-        media = (links.get(row_id) or {}).get("clip_id") or by_bar[row_id]["clip_id"]
+        link = links.get(row_id) or {}
+        media = link.get("clip_id") or by_bar[row_id]["clip_id"]
         if not media:
             continue
         rows[row_id] = row
@@ -1259,7 +1287,8 @@ def op_realign_labels(state: _DraftState, op: dict[str, Any]) -> None:
             {
                 "id": row_id,
                 "media_id": media,
-                "segment_id": row.get("segment_id"),
+                "segment_id": link.get("segment_id") or row.get("segment_id"),
+                "runs_on": bool(link.get("runs_on")),
                 "start_s": row.get("start_s"),
                 "end_s": row.get("end_s"),
             }
