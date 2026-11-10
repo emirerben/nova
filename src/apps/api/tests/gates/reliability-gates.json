@@ -4546,6 +4546,84 @@
         "Phone re-send of the Emir Olympics request and its edits after deploy"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1352-researched-text-layers",
+      "tickets": ["KRI-1352"],
+      "symptom": "A montage request for an explanation of a public date shown word by word in the middle, with an English translation word by word at the bottom, failed as phone_plan_failed. The text composer asked for research, and research replaced its work with footage-window captions ('Label: fact') that can be neither a word sequence nor a second layer; every caption answer listed the bilingual ask as unmet, and the last one ran one character over its reading budget.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1352",
+      "paths": [
+        "src/apps/api/app/services/creation_text_composition.py",
+        "src/apps/api/app/services/researched_text.py",
+        "src/apps/api/app/schemas/text_composition.py",
+        "src/apps/api/app/schemas/research.py",
+        "src/apps/api/app/kria/research_preview.py",
+        "src/apps/api/app/kria/brief_checks.py"
+      ],
+      "regression_tests": [
+        "tests/evals/request_following/test_research_feeds_text_sequences.py",
+        "tests/evals/request_following/test_researched_text.py",
+        "tests/evals/request_following/test_kri881_research_before_approval.py",
+        "tests/evals/request_following/test_creation_composition.py"
+      ],
+      "harness": "mocked_provider",
+      "evidence": {
+        "offline_replay": "Synthetic founder-day fixture through the real composer parse, op coercion, text replay and plan compile, with provider answers stubbed: the incident shape (research decided at render, no approved research) writes reviewed layers, splits them into two concurrent cited word sequences and keeps the footage-window path for plain explanations. Wrong-facts, invented-date, uncited-fact, unlabelled-identity, changed-number and mistranslation answers fail; shaping that writes, rewords, moves, retimes or mis-splits reviewed text fails at compose and on saved replay; approved layers on re-cut footage fail without a new search.",
+        "live_model": "Pending: one approved text-only replay capped at USD 3 (harness prepared, not run). Stubbed reviewer approvals prove orchestration only, not translation or factual accuracy.",
+        "native_output": "Not run on a device: the checks read the compiled text lane, not an exported video.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "a translation listed before its original layer",
+        "a literal title shown word by word next to a researched explanation keeps footage-window research",
+        "phrase units with multiword pieces and word build-up (cumulative) pass",
+        "a pre-approval preview prepares reviewed layers, and the render replays them with no search, writer or reviewer call",
+        "an approval that pinned footage explanations before this change fails plainly for an authored word sequence instead of an opaque replay error",
+        "a program without reviewed layers serializes exactly as before"
+      ],
+      "neighbours_gap": [
+        "Live layer writing, translation fidelity and claim review are unverified without a paid run.",
+        "The pre-approval preview does not run the shaping pass, so an approved layer set can still fail at render when the split cannot fit its window.",
+        "Naming who is pictured still needs the creator's words or a visible label; a real request may be held back by the claim review for that reason.",
+        "The legacy footage-caption replay still binds only clip ids, not source cuts."
+      ],
+      "follow_ups": [
+        "One approved live text-only replay of the incident request (USD 3 cap), then a phone render after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1352-refusal-names-real-limit",
+      "tickets": ["KRI-1352"],
+      "symptom": "Found in the KRI-1352 investigation: after a creator approved a hook for a single talking clip, approval readiness asked 'I can't keep that exact photo and video timing in this edit', though the request named no timing. Every MixedMediaTimingUnavailableError, including phone-format and unverified-source limits, was worded as a photo and video timing problem.",
+      "boundary": "verifier",
+      "status": "open_pr",
+      "owner": "KRI-1352",
+      "paths": [
+        "src/apps/api/app/kria/strategy_policy.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_refusal_names_real_limit.py",
+        "tests/kria/test_strategy_policy.py",
+        "tests/kria/test_turkish_chat_guard.py"
+      ],
+      "harness": "real_contract",
+      "evidence": {
+        "offline_replay": "A synthetic single-clip montage with an unverified phone source through check_strategy_for_runtime_v2: the base code asks the timing question; with the fix it asks the existing 'edit isn't available' question. A real timing contract still gets the timing question.",
+        "live_model": "Not needed: no prompt changed.",
+        "native_output": "Not run on a device.",
+        "production": "Not deployed. Which limit fired in the original turn is not recorded server-side."
+      },
+      "neighbours_covered": [
+        "phone-format limit is not called a timing problem",
+        "a requested photo and video timing contract keeps its timing question"
+      ],
+      "neighbours_gap": [
+        "The replacement question is generic; the exact non-timing cause is not named to the creator and was not established for the original turn."
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }
