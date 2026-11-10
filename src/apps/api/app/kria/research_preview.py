@@ -689,8 +689,9 @@ def blocker_receipt(prepared: PreparedResearch, requirement: BriefRequirement) -
         # a free-text ask), so the reply lists the reason (`brief_checks.is_judged`).
         stage="applied",
         reason=say(
-            en=f"Sources could not be confirmed before approval: {prepared.reason}",
-            tr=f"Kaynaklar onaydan önce doğrulanamadı: {prepared.reason}",
+            en="Sources could not be confirmed before approval: {prepared_reason}",
+            tr="Kaynaklar onaydan önce doğrulanamadı: {prepared_reason}",
+            prepared_reason=prepared.reason,
         )[:500],
     )
 

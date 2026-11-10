@@ -82,9 +82,11 @@ def undrawable_message(text: str, characters: str) -> str:
 
     # The characters lead: a draft's reply line shortens the reason after ~60 characters.
     return say(
-        en=f'No phone font can draw "{characters}". Remove it or change "{text}".',
-        tr=f'"{characters}" hiçbir telefon yazı tipiyle yazılamıyor. '
-        f'Onu çıkar ya da "{text}" metnini değiştir.',
+        en='No phone font can draw "{characters}". Remove it or change "{text}".',
+        tr='"{characters}" hiçbir telefon yazı tipiyle yazılamıyor. '
+        'Onu çıkar ya da "{text}" metnini değiştir.',
+        characters=characters,
+        text=text,
     )
 
 

@@ -138,37 +138,43 @@ def hidden_part_question(intents: Sequence[ResolvedClipIntent], clips: Sequence[
         if intent.part_edge is None:
             return say(
                 en=(
-                    f"I can keep a part out only at the start or the end of a clip. Is "
-                    f"{what} at the start or the end of {name}, and for how many seconds? "
+                    "I can keep a part out only at the start or the end of a clip. Is "
+                    "{what} at the start or the end of {name}, and for how many seconds? "
                     "Or tell me to leave the whole clip out."
                 ),
                 tr=(
-                    f"Bir klipten yalnızca başındaki ya da sonundaki bir bölümü çıkarabiliyorum. "
-                    f"{what} {name} klibinin başında mı sonunda mı, kaç saniye sürüyor? "
+                    "Bir klipten yalnızca başındaki ya da sonundaki bir bölümü çıkarabiliyorum. "
+                    "{what} {name} klibinin başında mı sonunda mı, kaç saniye sürüyor? "
                     "Ya da klibin tamamını çıkarmamı söyle."
                 ),
+                what=what,
+                name=name,
             )
         if intent.part_s is None:
             if intent.part_edge == "start":
                 return say(
                     en=(
-                        f"How many seconds at the start of {name} show {what}? I'll start that "
+                        "How many seconds at the start of {name} show {what}? I'll start that "
                         "clip right after them, or tell me to leave the whole clip out."
                     ),
                     tr=(
-                        f"{name} klibinin başındaki kaç saniyede {what} görünüyor? Klibi hemen "
+                        "{name} klibinin başındaki kaç saniyede {what} görünüyor? Klibi hemen "
                         "sonrasından başlatırım; ya da klibin tamamını çıkarmamı söyle."
                     ),
+                    name=name,
+                    what=what,
                 )
             return say(
                 en=(
-                    f"How many seconds at the end of {name} show {what}? I'll end that clip "
+                    "How many seconds at the end of {name} show {what}? I'll end that clip "
                     "just before them, or tell me to leave the whole clip out."
                 ),
                 tr=(
-                    f"{name} klibinin sonundaki kaç saniyede {what} görünüyor? Klibi hemen "
+                    "{name} klibinin sonundaki kaç saniyede {what} görünüyor? Klibi hemen "
                     "öncesinde bitiririm; ya da klibin tamamını çıkarmamı söyle."
                 ),
+                name=name,
+                what=what,
             )
         for assignment in intent.assignments:
             length = durations.get(assignment.media_id)
@@ -178,15 +184,18 @@ def hidden_part_question(intents: Sequence[ResolvedClipIntent], clips: Sequence[
                 name = _clip_name(assignment.media_id, clips)
                 return say(
                     en=(
-                        f"{name} is only {_seconds(round(length, 1))} seconds long, so leaving "
-                        f"out {_seconds(intent.part_s)} seconds leaves nothing of it to show. "
+                        "{name} is only {seconds_round_length} seconds long, so leaving "
+                        "out {seconds_intent_part_s} seconds leaves nothing of it to show. "
                         "Should I leave the whole clip out?"
                     ),
                     tr=(
-                        f"{name} yalnızca {_seconds(round(length, 1))} saniye; "
-                        f"{_seconds(intent.part_s)} saniyesini çıkarınca gösterecek bir şey "
+                        "{name} yalnızca {seconds_round_length} saniye; "
+                        "{seconds_intent_part_s} saniyesini çıkarınca gösterecek bir şey "
                         "kalmıyor. Klibin tamamını çıkarayım mı?"
                     ),
+                    name=name,
+                    seconds_round_length=_seconds(round(length, 1)),
+                    seconds_intent_part_s=_seconds(intent.part_s),
                 )
     return None
 

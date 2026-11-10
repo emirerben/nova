@@ -17544,25 +17544,22 @@ def _run_phone_narrated_job(
                         with _worker_reply_language(snapshot):
                             repeated = any(row["status"] == "ambiguous" for row in misses)
                             words = ", ".join(str(row["text"]) for row in misses)
-                            message = say(
-                                en=(
-                                    f"I found repeated trigger words for {words}. "
-                                    "Tell me first, last, or which occurrence."
-                                    if repeated
-                                    else (
-                                        f"I couldn't safely place {words} on the recorded words. "
-                                        "Check the phrase or choose a different moment."
-                                    )
-                                ),
-                                tr=(
-                                    f"{words} için beklenen sözler tekrarlanıyor. "
-                                    "İlk, son ya da hangi tekrar olduğunu söyle."
-                                    if repeated
-                                    else (
-                                        f"{words} yazısını kayıttaki sözlere yerleştiremedim. "
-                                        "Sözü kontrol et ya da başka bir an seç."
-                                    )
-                                ),
+                            message = (
+                                say(
+                                    en="I found repeated trigger words for {words}. "
+                                    "Tell me first, last, or which occurrence.",
+                                    tr="{words} için beklenen sözler tekrarlanıyor. "
+                                    "İlk, son ya da hangi tekrar olduğunu söyle.",
+                                    words=words,
+                                )
+                                if repeated
+                                else say(
+                                    en="I couldn't safely place {words} on the recorded words. "
+                                    "Check the phrase or choose a different moment.",
+                                    tr="{words} yazısını kayıttaki sözlere yerleştiremedim. "
+                                    "Sözü kontrol et ya da başka bir an seç.",
+                                    words=words,
+                                )
                             )
                         if not _save_request_recovery(
                             job_id, snapshot, ownership_epoch=ownership_epoch, message=message

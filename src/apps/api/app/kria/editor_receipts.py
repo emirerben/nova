@@ -784,8 +784,9 @@ def _miss_notes(verdict: _Verdict, live: int) -> list[str]:
         phrase = "; ".join(_phrases([entry], live, 1))
         notes.append(
             say(
-                en=f"{phrase}, but that isn't what you asked for",
-                tr=f"{phrase}, ama istediğin bu değil",
+                en="{phrase}, but that isn't what you asked for",
+                tr="{phrase}, ama istediğin bu değil",
+                phrase=phrase,
             )
         )
     for entry in verdict.short:
@@ -793,16 +794,20 @@ def _miss_notes(verdict: _Verdict, live: int) -> list[str]:
         phrase = "; ".join(_phrases([entry], live, 1))
         notes.append(
             say(
-                en=f"Only {len(entry.targets)} of {total} texts changed: {phrase}",
-                tr=f"{total} yazıdan yalnızca {len(entry.targets)} tanesi değişti: {phrase}",
+                en="Only {len_entry_targets} of {total} texts changed: {phrase}",
+                tr="{total} yazıdan yalnızca {len_entry_targets} tanesi değişti: {phrase}",
+                len_entry_targets=len(entry.targets),
+                total=total,
+                phrase=phrase,
             )
         )
     if not (verdict.wrong or verdict.short) and verdict.off_target:
         phrase = "; ".join(_phrases(verdict.off_target, 0, 1))
         notes.append(
             say(
-                en=f"It changed other things, not the one you named: {phrase}",
-                tr=f"Söylediğini değil, başka şeyleri değiştirdi: {phrase}",
+                en="It changed other things, not the one you named: {phrase}",
+                tr="Söylediğini değil, başka şeyleri değiştirdi: {phrase}",
+                phrase=phrase,
             )
         )
     return notes

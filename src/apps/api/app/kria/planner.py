@@ -211,6 +211,7 @@ from app.services.creative_copy_decisions import (
     CreativeCopyState,
     authorship_question,
     bind_approved_copy,
+    chat_button_language,
     creator_quoted,
     fold_creative_copy,
     localize_question,
@@ -784,8 +785,11 @@ def _moment_count_notice(
     else:
         return None
     return say(
-        en=f"I could fit {planned} {'moment' if planned == 1 else 'moments'}, not {count}.",
-        tr=f"{count} değil, {planned} an sığdırabildim.",
+        en="I could fit {planned} {v1}, not {count}.",
+        tr="{count} değil, {planned} an sığdırabildim.",
+        planned=planned,
+        v1="moment" if planned == 1 else "moments",
+        count=count,
     )
 
 
@@ -1321,13 +1325,15 @@ def adapt_creator_action(
         # KRI-458: the draft must not claim an order the footage cannot back.
         summary = say(
             en=(
-                f"{summary} I found no clips of {', '.join(unplaced)}, "
+                "{summary} I found no clips of {join_unplaced}, "
                 "so I can't place them where you asked."
             ),
             tr=(
-                f"{summary} {', '.join(unplaced)} ile ilgili klip bulamadım, "
+                "{summary} {join_unplaced} ile ilgili klip bulamadım, "
                 "bu yüzden onları istediğin yere yerleştiremiyorum."
             ),
+            summary=summary,
+            join_unplaced=", ".join(unplaced),
         )
     requested_intents = (
         server_clip_intents
@@ -1357,8 +1363,9 @@ def adapt_creator_action(
         reconciled_story = [] if unresolved else list(result.rows)
         omitted = ", ".join(selection.intent.attribute for selection in server_rejected_selections)
         summary = say(
-            en=f"I left out {omitted} based on your clip answer.",
-            tr=f"Klip yanıtına göre {omitted} bölümünü çıkardım.",
+            en="I left out {omitted} based on your clip answer.",
+            tr="Klip yanıtına göre {omitted} bölümünü çıkardım.",
+            omitted=omitted,
         )
         if unresolved:
             summary += " " + say(
@@ -1506,15 +1513,16 @@ def _labels_need_voiceover_reply() -> str:
 def _clips_still_checking_reply(count: int) -> str:
     return say(
         en=(
-            f"I'm still checking {count} of your clips. "
+            "I'm still checking {count} of your clips. "
             "Your request and completed answers are saved. "
             "Ask me to continue once those clips are ready."
         ),
         tr=(
-            f"Kliplerinden {count} tanesini hâlâ kontrol ediyorum. "
+            "Kliplerinden {count} tanesini hâlâ kontrol ediyorum. "
             "İsteğin ve tamamlanan yanıtlar kaydedildi. "
             "Bu klipler hazır olunca devam etmemi iste."
         ),
+        count=count,
     )
 
 
@@ -4055,8 +4063,9 @@ async def _change_request_turn(db: AsyncSession, thread_id: uuid.UUID) -> Planne
     )
     response = (
         say(
-            en=f"Nothing is made yet. Tell me what to do differently for: {listed}.",
-            tr=f"Henüz bir şey yapılmadı. Şunlar için neyi farklı yapmamı istersin: {listed}.",
+            en="Nothing is made yet. Tell me what to do differently for: {listed}.",
+            tr="Henüz bir şey yapılmadı. Şunlar için neyi farklı yapmamı istersin: {listed}.",
+            listed=listed,
         )
         if listed
         else say(
@@ -5262,8 +5271,9 @@ def _creative_copy_turn(
         )
         candidate = question["candidate"]
         message = response or say(
-            en=f"I’d try “{candidate}”. Does this wording work?",
-            tr=f"Şunu deneyebilirim: “{candidate}”. Bu ifade sana uyar mı?",
+            en="I’d try “{candidate}”. Does this wording work?",
+            tr="Şunu deneyebilirim: “{candidate}”. Bu ifade sana uyar mı?",
+            candidate=candidate,
         )
         if candidate not in message:
             message = f"“{candidate}” — {message}"
@@ -5275,7 +5285,7 @@ def _creative_copy_turn(
         )
     # KRI-520: a Turkish chat gets Turkish option labels whatever language the wording is
     # in (English labels stay as aliases, so typed English answers still match).
-    localize_question(question, "tr" if current_reply_language() == "tr" else decision.language)
+    localize_question(question, chat_button_language() or decision.language)
     return PlannedKriaTurn(
         plan=KriaTurnPlan(
             mode="respond",
@@ -5559,10 +5569,12 @@ def _request_recovery(
             turn_value="question",
             response=say(
                 en=(
-                    f"{detail} Your complete request is saved and your draft is unchanged. "
-                    f"{follow_up}"
+                    "{detail} Your complete request is saved and your draft is unchanged. "
+                    "{follow_up}"
                 ),
-                tr=f"{detail} Tüm isteğin kaydedildi ve taslağın değişmedi. {follow_up}",
+                tr="{detail} Tüm isteğin kaydedildi ve taslağın değişmedi. {follow_up}",
+                detail=detail,
+                follow_up=follow_up,
             ),
         ),
         manifest_hash=manifest.manifest_hash,
@@ -6025,13 +6037,14 @@ async def _gate_unresolved_choices(
                     target=state.target, dependency_digest=media_digest(planned.media_snapshot)
                 )
             )
-            if current_reply_language() == "tr":
+            if (button_language := chat_button_language()) is not None:
                 # KRI-520: English option labels stay as aliases.
-                localize_question(question, "tr")
+                localize_question(question, button_language)
             message = (
                 say(
-                    en=f"“{state.candidate}” — does this wording work?",
-                    tr=f"“{state.candidate}” — bu ifade sana uyar mı?",
+                    en="“{state_candidate}” — does this wording work?",
+                    tr="“{state_candidate}” — bu ifade sana uyar mı?",
+                    state_candidate=state.candidate,
                 )
                 if state.candidate
                 else say(
@@ -6352,8 +6365,8 @@ async def _gate_unresolved_choices(
                 target="opening_title",
                 dependency_digest=media_digest(planned.media_snapshot),
             )
-            if current_reply_language() == "tr":
-                localize_question(title_question, "tr")
+            if (button_language := chat_button_language()) is not None:
+                localize_question(title_question, button_language)
             return replace(
                 planned,
                 plan=KriaTurnPlan(
@@ -6525,13 +6538,17 @@ def _clip_moment_notice(
         lines.append(
             say(
                 en=(
-                    f"I couldn't find {moment.words} in clip {n} on my own, so clip {n} plays "
-                    f"from {start:.1f} s to {end:.1f} s and may not show it."
+                    "I couldn't find {moment_words} in clip {n} on my own, so clip {n} plays "
+                    "from {start:.1f} s to {end:.1f} s and may not show it."
                 ),
                 tr=(
-                    f"{n}. klipte \u201c{moment.words}\u201d kısmını kendim bulamadım; {n}. "
-                    f"klibin {start:.1f}-{end:.1f} sn arası oynuyor ve bunu göstermeyebilir."
+                    "{n}. klipte “{moment_words}” kısmını kendim bulamadım; {n}. "
+                    "klibin {start:.1f}-{end:.1f} sn arası oynuyor ve bunu göstermeyebilir."
                 ),
+                moment_words=moment.words,
+                n=n,
+                start=start,
+                end=end,
             )
         )
     return " ".join(lines[:2]) or None
@@ -6733,8 +6750,9 @@ async def _plan_scoped_turn(
                 )
             )
         reply = say(
-            en=f"Updated {plan_review.scope_phrase(sorted(covered, key=scope.index))}.",
-            tr=f"{plan_review.scope_phrase(sorted(covered, key=scope.index))} güncellendi.",
+            en="Updated {v1}.",
+            tr="{v1} güncellendi.",
+            v1=plan_review.scope_phrase(sorted(covered, key=scope.index)),
         )
 
     dropped: list[dict[str, str]] = []

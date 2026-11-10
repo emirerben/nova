@@ -278,17 +278,22 @@ def _text_timing_conflict_plan(exc: TextTimingConflict) -> KriaTurnPlan:
             turn_value="question",
             response=say(
                 en=(
-                    f"With these clips, the closest supported length is {closest:g}s. "
+                    "With these clips, the closest supported length is {closest:g}s. "
                     "Use that length, or choose different clips? Nothing was changed."
                 ),
                 tr=(
-                    f"Bu kliplerle desteklenen en yakın süre {closest:g} saniye. "
+                    "Bu kliplerle desteklenen en yakın süre {closest:g} saniye. "
                     "Bu süreyi mi kullanayım, yoksa farklı klipler mi seçelim? "
                     "Hiçbir şey değişmedi."
                 ),
+                closest=closest,
             ),
             reply_options=[
-                say(en=f"Retime text to {closest:g}s", tr=f"Yazıları {closest:g} saniyeye yay"),
+                say(
+                    en="Retime text to {closest:g}s",
+                    tr="Yazıları {closest:g} saniyeye yay",
+                    closest=closest,
+                ),
                 say(en="Choose different clips", tr="Farklı klipler seç"),
             ],
         )
@@ -298,16 +303,17 @@ def _text_timing_conflict_plan(exc: TextTimingConflict) -> KriaTurnPlan:
             turn_value="question",
             response=say(
                 en=(
-                    f"These words need at least {exc.minimum_duration_s:g}s of reading time. "
+                    "These words need at least {exc_minimum_duration_s:g}s of reading time. "
                     "May I use a longer video, or would you like to shorten the text? "
                     "Nothing was changed."
                 ),
                 tr=(
-                    f"Bu yazılar en az {exc.minimum_duration_s:g} saniye "
+                    "Bu yazılar en az {exc_minimum_duration_s:g} saniye "
                     "okuma süresi gerektiriyor. "
                     "Daha uzun bir video kullanayım mı, yoksa metni kısaltmak ister misin? "
                     "Hiçbir şey değişmedi."
                 ),
+                exc_minimum_duration_s=exc.minimum_duration_s,
             ),
         )
     return KriaTurnPlan(
@@ -315,25 +321,30 @@ def _text_timing_conflict_plan(exc: TextTimingConflict) -> KriaTurnPlan:
         turn_value="question",
         response=say(
             en=(
-                f"Your text ends at {exc.required_duration_s:g}s, "
-                f"beyond the requested {exc.requested_duration_s:g}s. "
-                f"Keep the video at least {exc.minimum_duration_s:g}s, "
+                "Your text ends at {exc_required_duration_s:g}s, "
+                "beyond the requested {exc_requested_duration_s:g}s. "
+                "Keep the video at least {exc_minimum_duration_s:g}s, "
                 "or allow me to adjust the text timing? Nothing was changed."
             ),
             tr=(
-                f"Yazıların {exc.required_duration_s:g}. saniyede bitiyor. "
-                f"Videoyu en az {exc.minimum_duration_s:g} saniye mi tutayım, "
+                "Yazıların {exc_required_duration_s:g}. saniyede bitiyor. "
+                "Videoyu en az {exc_minimum_duration_s:g} saniye mi tutayım, "
                 "yoksa yazıların zamanlamasını değiştirebilir miyim? Hiçbir şey değişmedi."
             ),
+            exc_required_duration_s=exc.required_duration_s,
+            exc_requested_duration_s=exc.requested_duration_s,
+            exc_minimum_duration_s=exc.minimum_duration_s,
         ),
         reply_options=[
             say(
-                en=f"Keep the video at {exc.minimum_duration_s:g}s",
-                tr=f"Videoyu {exc.minimum_duration_s:g} saniye tut",
+                en="Keep the video at {exc_minimum_duration_s:g}s",
+                tr="Videoyu {exc_minimum_duration_s:g} saniye tut",
+                exc_minimum_duration_s=exc.minimum_duration_s,
             ),
             say(
-                en=f"Retime text to {exc.requested_duration_s:g}s",
-                tr=f"Yazıları {exc.requested_duration_s:g} saniyeye yay",
+                en="Retime text to {exc_requested_duration_s:g}s",
+                tr="Yazıları {exc_requested_duration_s:g} saniyeye yay",
+                exc_requested_duration_s=exc.requested_duration_s,
             ),
         ],
     )
@@ -1110,12 +1121,19 @@ def _strategy_changes(arguments: Any, *, route: str | None = None) -> list[str]:
     pace_shown = route is None or not asked_only() or not route_ignores(route, "pacing")
     values = [
         arguments.summary,
-        say(en=f"{pacing} pacing", tr=f"Tempo: {_PACING_TR.get(strategy.pacing, pacing)}")
+        say(
+            en="{pacing} pacing",
+            tr="Tempo: {v1}",
+            pacing=pacing,
+            v1=_PACING_TR.get(strategy.pacing, pacing),
+        )
         if pace_shown
         else None,
         say(
-            en=f"{edit_format} format",
-            tr=f"Format: {_EDIT_FORMAT_TR.get(strategy.edit_format, edit_format)}",
+            en="{edit_format} format",
+            tr="Format: {v1}",
+            edit_format=edit_format,
+            v1=_EDIT_FORMAT_TR.get(strategy.edit_format, edit_format),
         ),
     ]
     return list(dict.fromkeys(value for value in values if value))[:3]
@@ -1189,18 +1207,22 @@ def _useful_plan(planned: PlannedKriaTurn, *, user_message: str) -> PlannedKriaT
                 count = len(arguments.get("operations") or [])
                 suffix = "s" if count != 1 else ""
                 arguments["summary"] = say(
-                    en=f"I prepared {count} reversible editor change{suffix}.",
-                    tr=f"Editörde {count} geri alınabilir değişiklik hazırladım.",
+                    en="I prepared {count} reversible editor change{suffix}.",
+                    tr="Editörde {count} geri alınabilir değişiklik hazırladım.",
+                    count=count,
+                    suffix=suffix,
                 )
             else:
                 strategy = arguments.get("strategy") or {}
                 pacing = str(strategy.get("pacing") or "focused").replace("_", " ")
                 edit_format = str(strategy.get("edit_format") or "video").replace("_", " ")
                 arguments["summary"] = say(
-                    en=f"I prepared a {pacing} {edit_format} draft around the available footage.",
+                    en="I prepared a {pacing} {edit_format} draft around the available footage.",
                     # The pace and format words are machine values (English), so the
                     # Turkish line leaves them out rather than mixing languages.
                     tr="Elindeki çekimlere göre bir taslak hazırladım.",
+                    pacing=pacing,
+                    edit_format=edit_format,
                 )
             changed = True
         intents.append(intent.model_copy(update={"arguments": arguments}))
@@ -1327,14 +1349,19 @@ def _unresolved_choice_plan(
                     turn_value="recovery",
                     response=say(
                         en=(
-                            f"{conflict.intro} {conflict.reason} I won't guess, so I haven't "
-                            f"made an edit yet. To go ahead, reply {ways}.{unchanged}"
+                            "{conflict_intro} {conflict_reason} I won't guess, so I haven't "
+                            "made an edit yet. To go ahead, reply {ways}.{unchanged}"
                         ),
                         tr=(
-                            f"{conflict.intro} {conflict.reason} Tahmin yürütmeyeceğim, o "
-                            f"yüzden henüz bir düzenleme yapmadım. Devam etmek için {ways_tr}."
-                            f"{unchanged}"
+                            "{conflict_intro} {conflict_reason} Tahmin yürütmeyeceğim, o "
+                            "yüzden henüz bir düzenleme yapmadım. Devam etmek için {ways_tr}."
+                            "{unchanged}"
                         ),
+                        conflict_intro=conflict.intro,
+                        conflict_reason=conflict.reason,
+                        ways=ways,
+                        unchanged=unchanged,
+                        ways_tr=ways_tr,
                     ),
                 ),
                 KEEP_OPEN_REASON,
@@ -1510,15 +1537,18 @@ def _simpler_version_offer(
     kept = {req.id for req in named if req.id in arrow_only_ids}
     listed = "; ".join(_arrow_label(req) if req.id in kept else req.text() for req in named)
     sentence = say(
-        en=f"The simpler version leaves out: {listed}.",
-        tr=f"Daha basit sürümde çıkarılacak: {listed}.",
+        en="The simpler version leaves out: {listed}.",
+        tr="Daha basit sürümde çıkarılacak: {listed}.",
+        listed=listed,
     )
     if len(sentence) > _MAX_LEAVES_OUT_CHARS:
         return "", None
     named_ids = [req.id for req in named]
     for option in question["options"]:
         if option["key"] == "simpler_version":
-            option["description"] = say(en=f"Leaves out: {listed}", tr=f"Çıkarılacak: {listed}")
+            option["description"] = say(
+                en="Leaves out: {listed}", tr="Çıkarılacak: {listed}", listed=listed
+            )
     # An unmet id with no live row has nothing to drop; it is still part of the set the
     # creator answers, so a changed set is offered again.
     question[SIMPLER_OMITTED_IDS_KEY] = [
@@ -1564,12 +1594,14 @@ def _left_out_line(req: BriefRequirement, *, agreed: bool, label: str | None = N
     what = label or req.text()
     if agreed:
         return say(
-            en=f"- Left out as agreed: {what}",
-            tr=f"- Kararlaştırdığımız gibi çıkarıldı: {what}",
+            en="- Left out as agreed: {what}",
+            tr="- Kararlaştırdığımız gibi çıkarıldı: {what}",
+            what=what,
         )
     return say(
-        en=f"- Left out in the simpler version: {what}",
-        tr=f"- Daha basit sürümde çıkarıldı: {what}",
+        en="- Left out in the simpler version: {what}",
+        tr="- Daha basit sürümde çıkarıldı: {what}",
+        what=what,
     )
 
 
@@ -1613,8 +1645,9 @@ def _arrow_only_ids(
 def _arrow_label(req: BriefRequirement) -> str:
     """What the simpler version leaves out of a kept ending (KRI-1236)."""
     return say(
-        en=f'the arrow next to your ending ("{req.literal}")',
-        tr=f'kapanış yazının yanındaki ok ("{req.literal}")',
+        en='the arrow next to your ending ("{req_literal}")',
+        tr='kapanış yazının yanındaki ok ("{req_literal}")',
+        req_literal=req.literal,
     )
 
 
@@ -3432,14 +3465,10 @@ def _complete_draft_turn(
             }
             omissions = "\n".join(
                 say(
-                    en=(
-                        f"- Left out: {omission_labels[req.id]} "
-                        f"({omission_reasons.get(req.id, '')})"
-                    ),
-                    tr=(
-                        f"- Çıkarıldı: {omission_labels[req.id]} "
-                        f"({omission_reasons.get(req.id, '')})"
-                    ),
+                    en=("- Left out: {v1} ({omission_reasons_get_req_id})"),
+                    tr=("- Çıkarıldı: {v1} ({omission_reasons_get_req_id})"),
+                    v1=omission_labels[req.id],
+                    omission_reasons_get_req_id=omission_reasons.get(req.id, ""),
                 )
                 if automatic_omission
                 else _left_out_line(
@@ -5529,13 +5558,14 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                             turn_value="recovery",
                             response=say(
                                 en=(
-                                    f"I can't do that on this edit: "
-                                    f"{str(exc).strip().rstrip('.')}. Nothing was changed."
+                                    "I can't do that on this edit: "
+                                    "{str_exc_strip_rstrip}. Nothing was changed."
                                 ),
                                 tr=(
-                                    f"Bu düzenlemede bunu yapamıyorum: "
-                                    f"{str(exc).strip().rstrip('.')}. Hiçbir şey değişmedi."
+                                    "Bu düzenlemede bunu yapamıyorum: "
+                                    "{str_exc_strip_rstrip}. Hiçbir şey değişmedi."
                                 ),
+                                str_exc_strip_rstrip=str(exc).strip().rstrip("."),
                             ),
                         ),
                     )
@@ -7070,13 +7100,13 @@ def _worker_copy(text: str | None) -> str | None:
     """
     if not text or not text.strip():
         return None
-    if current_reply_language() != "tr":
+    chat = current_reply_language()
+    if chat in (None, "en"):
         return text
     stored = text.strip()
-    turkish = _WORKER_TEXT_TR.get(stored)
-    if turkish is not None:
-        return turkish
-    return stored if detect_chat_language(stored) == "tr" else None
+    if stored in _WORKER_TEXT_TR:
+        return say(en=stored, tr=_WORKER_TEXT_TR.get(stored, stored))
+    return stored if detect_chat_language(stored) == chat else None
 
 
 _LAST_GOOD_STAYS = "Your last good version is still available."
@@ -7106,8 +7136,9 @@ def _device_refusal_copy(
     message = (
         (
             say(
-                en=f"The text {quoted} isn't in that edit.",
-                tr=f"{quoted} yazısı bu düzenlemede yok.",
+                en="The text {quoted} isn't in that edit.",
+                tr="{quoted} yazısı bu düzenlemede yok.",
+                quoted=quoted,
             )
             if quoted
             else None
@@ -7160,13 +7191,14 @@ def _phone_evidence_refusal_copy(decline: dict[str, str]) -> str:
     if quoted:
         return say(
             en=(
-                f"Your video wasn't made: the text {quoted} isn't in the edit. "
+                "Your video wasn't made: the text {quoted} isn't in the edit. "
                 "Want me to add it, or leave it out?"
             ),
             tr=(
-                f"Videon oluşturulmadı: {quoted} yazısı düzenlemede yok. "
+                "Videon oluşturulmadı: {quoted} yazısı düzenlemede yok. "
                 "Ekleyeyim mi, yoksa bu yazı olmadan mı yapayım?"
             ),
+            quoted=quoted,
         )
     return _worker_copy(decline.get("message")) or say(
         en="Your video wasn't made: the edit didn't keep something you asked for.",
@@ -7453,24 +7485,35 @@ _PHONE_GATE_MESSAGES_TR = {
 
 
 def _phone_gate_refusal_copy(reason: str) -> str:
-    from app.tasks.content_plan_build import PHONE_GATE_MESSAGES  # noqa: PLC0415
+    from app.tasks.content_plan_build import (  # noqa: PLC0415
+        PHONE_GATE_MESSAGES,
+        TALKING_MULTI_CLIP_COUNT_MESSAGE,
+    )
 
-    english = PHONE_GATE_MESSAGES.get(reason, (None, None))[1]
-    turkish = _PHONE_GATE_MESSAGES_TR.get(reason)
+    multi_clip = False
     if reason == "subtitled_clip_count_unsupported":
         from app.services.phone_rollout import (  # noqa: PLC0415
             TALKING_MULTI_CLIP_MAX_CLIPS,
             phone_talking_multi_clip_supported,
         )
 
-        if phone_talking_multi_clip_supported():
-            # KRI-719: the reason now means "more than the cap", not "not one".
-            turkish = (
-                "Kameraya konuşma videoları iPhone'unda en fazla "
-                f"{TALKING_MULTI_CLIP_MAX_CLIPS} klipten oluşturulur. Fazla klipleri kaldır "
-                "ve tekrar dene. Yedek bir düzenleme oluşturulmadı."
-            )
-    message = say(en=english or "", tr=turkish or english or "")
+        multi_clip = phone_talking_multi_clip_supported()
+    if multi_clip:
+        # KRI-719: the reason now means "more than the cap", not "not one".
+        message = say(
+            en=TALKING_MULTI_CLIP_COUNT_MESSAGE,
+            tr=(
+                "Kameraya konuşma videoları iPhone'unda en fazla {max_clips} klipten "
+                "oluşturulur. Fazla klipleri kaldır ve tekrar dene. Yedek bir düzenleme "
+                "oluşturulmadı."
+            ),
+            max_clips=TALKING_MULTI_CLIP_MAX_CLIPS,
+        )
+    elif reason in PHONE_GATE_MESSAGES and reason in _PHONE_GATE_MESSAGES_TR:
+        message = say(en=PHONE_GATE_MESSAGES[reason][1], tr=_PHONE_GATE_MESSAGES_TR[reason])
+    else:
+        # A reason with no Turkish twin shows its English line (a test pins the keys equal).
+        message = PHONE_GATE_MESSAGES.get(reason, ("", ""))[1]
     lead = message or say(
         en="That kind of edit isn't available for iPhone renders yet.",
         tr="Bu tür bir düzenleme iPhone'da henüz kullanılamıyor.",
@@ -8176,16 +8219,21 @@ def _user_song_note(job: Job) -> str:
         notes.append(
             say(
                 en=(
-                    f"{count} take{' has' if count == 1 else 's have'} no usable singing or "
-                    f"words, so {'it is' if count == 1 else 'they are'} in as short muted "
-                    f"clip{'' if count == 1 else 's'}. Trim or remove "
-                    f"{'it' if count == 1 else 'them'} in the editor."
+                    "{count} take{v1} no usable singing or "
+                    "words, so {v2} in as short muted "
+                    "clip{v3}. Trim or remove "
+                    "{v4} in the editor."
                 ),
                 tr=(
-                    f"{count} çekimde kullanılabilir şarkı ya da söz yok, bu yüzden kısa ve "
+                    "{count} çekimde kullanılabilir şarkı ya da söz yok, bu yüzden kısa ve "
                     "sessiz klip olarak eklendi. Editörde kısaltabilir veya "
                     "kaldırabilirsin."
                 ),
+                count=count,
+                v1=" has" if count == 1 else "s have",
+                v2="it is" if count == 1 else "they are",
+                v3="" if count == 1 else "s",
+                v4="it" if count == 1 else "them",
             )
         )
     low = receipt.get("low_confidence_ids")
@@ -8194,14 +8242,17 @@ def _user_song_note(job: Job) -> str:
         notes.append(
             say(
                 en=(
-                    f"{count} take{' is' if count == 1 else 's are'} placed by my best guess "
-                    f"and may be slightly off; check {'it' if count == 1 else 'them'} in the "
+                    "{count} take{v1} placed by my best guess "
+                    "and may be slightly off; check {v2} in the "
                     "editor."
                 ),
                 tr=(
-                    f"{count} çekimi tahminime göre yerleştirdim, biraz kayık olabilir; "
+                    "{count} çekimi tahminime göre yerleştirdim, biraz kayık olabilir; "
                     "editörde kontrol et."
                 ),
+                count=count,
+                v1=" is" if count == 1 else "s are",
+                v2="it" if count == 1 else "them",
             )
         )
     outside = receipt.get("placed_outside_ids")
@@ -8209,14 +8260,13 @@ def _user_song_note(job: Job) -> str:
         count = len(outside)
         notes.append(
             say(
-                en=(
-                    f"{count} take{' sits' if count == 1 else 's sit'} later in the song than "
-                    "a 2-minute video can hold."
-                ),
+                en=("{count} take{v1} later in the song than a 2-minute video can hold."),
                 tr=(
-                    f"{count} çekim şarkıda, 2 dakikalık bir videonun sığabileceğinden daha "
+                    "{count} çekim şarkıda, 2 dakikalık bir videonun sığabileceğinden daha "
                     "geride kalıyor."
                 ),
+                count=count,
+                v1=" sits" if count == 1 else "s sit",
             )
         )
     placed = receipt.get("placed")
@@ -8228,8 +8278,10 @@ def _user_song_note(job: Job) -> str:
     if by_lyrics:
         notes.append(
             say(
-                en=f"I matched {by_lyrics} take{'' if by_lyrics == 1 else 's'} by your singing.",
-                tr=f"{by_lyrics} çekimi söylediğin sözlere göre eşleştirdim.",
+                en="I matched {by_lyrics} take{v1} by your singing.",
+                tr="{by_lyrics} çekimi söylediğin sözlere göre eşleştirdim.",
+                by_lyrics=by_lyrics,
+                v1="" if by_lyrics == 1 else "s",
             )
         )
     return " ".join(notes)
@@ -8694,15 +8746,27 @@ def _job_failure_copy(failure_code: str | None, detail: str | None) -> str | Non
     A Turkish chat gets the Turkish line for the code. The job's own ``error_detail`` for
     the creator-facing codes is English-only text, so Turkish prefers the code's line.
     """
-    from app.tasks.content_plan_build import job_failure_message  # noqa: PLC0415
+    from app.tasks.content_plan_build import (  # noqa: PLC0415
+        DEFAULT_JOB_FAILURE_MESSAGE,
+        JOB_FAILURE_MESSAGES,
+        job_failure_message,  # noqa: PLC0415
+    )
 
     english = job_failure_message(failure_code, detail)
     if english is None:
         return None
-    return say(
-        en=english,
-        tr=_JOB_FAILURE_MESSAGES_TR.get(failure_code or "", _JOB_FAILURE_DEFAULT_TR),
-    )
+    code = failure_code or ""
+    # The code's own sentence and the default are catalog keys (KRI-1362); the creator-facing
+    # ``error_detail`` is free English text with no key, so German shows it as written.
+    if (
+        code in JOB_FAILURE_MESSAGES
+        and code in _JOB_FAILURE_MESSAGES_TR
+        and english == JOB_FAILURE_MESSAGES[code]
+    ):
+        return say(en=JOB_FAILURE_MESSAGES[code], tr=_JOB_FAILURE_MESSAGES_TR[code])
+    if code not in _JOB_FAILURE_MESSAGES_TR and english == DEFAULT_JOB_FAILURE_MESSAGE:
+        return say(en=DEFAULT_JOB_FAILURE_MESSAGE, tr=_JOB_FAILURE_DEFAULT_TR)
+    return say(en=english, tr=_JOB_FAILURE_MESSAGES_TR.get(code, _JOB_FAILURE_DEFAULT_TR))
 
 
 # The three variant ids every generative job renders; any other id is left out of the
@@ -8719,15 +8783,17 @@ def _render_ready_review_copy(variant_id: str) -> str:
     name = _VARIANT_NAMES_TR.get(variant_id)
     return say(
         en=(
-            f"The {variant_id.replace('_', ' ')} cut is ready. "
+            "The {variant_id_replace} cut is ready. "
             "The approved render finished; review the opening, pacing, and text, "
             "then tell me what you want changed."
         ),
         tr=(
-            f"{name + ' versiyon' if name else 'Videon'} hazır. "
+            "{v1} hazır. "
             "Onayladığın video tamamlandı; açılışı, temposunu ve yazıları incele, "
             "sonra neyi değiştirmek istediğini söyle."
         ),
+        variant_id_replace=variant_id.replace("_", " "),
+        v1=name + " versiyon" if name else "Videon",
     )
 
 
@@ -8764,7 +8830,7 @@ def _localized_block_recovery(message: str, receipts: list[dict[str, Any]]) -> s
     alignment question (KRI-592, with or without receipts), is rebuilt; anything else
     shows as stored.
     """
-    if current_reply_language() != "tr":
+    if current_reply_language() in (None, "en"):
         return message
     from app.kria.brief_checks import (  # noqa: PLC0415
         NARRATED_ALIGNMENT_RECOVERY,
