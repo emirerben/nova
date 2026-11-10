@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.151.0] - 2026-11-10
+
+### Fixed
+- fix(kria): a word-cued picture starts with the phrase that names it (KRI-1342 item 8) (#2257) <!-- release-pr: 2257 -->
+
 ## [0.88.150.0] - 2026-11-10
 
 ### Fixed
