@@ -110,4 +110,36 @@ final class ColorMomentsEditorPreviewTests: XCTestCase {
         XCTAssertEqual(NativeSpeechTimelineProjection.colorMomentsLane(document.colorMoments, baseSlots: document.colorMomentsBaseSlots, document: document),
                        document.colorMoments)
     }
+
+    /// Move the first window's start, as the Range sheet does, and rebase from the previous edit.
+    private func window(_ document: EditorDocument, inS: Double, duration: Double) -> EditorDocument {
+        var next = document
+        next.clips[0].inS = inS; next.clips[0].durationS = duration
+        NativeSpeechTimelineProjection.rebase(&next, from: document)
+        return next
+    }
+
+    func testTrimmingAMomentAwayAndExtendingBackRestoresTheMomentAndItsSound() throws {
+        let document = try talkingDocument(start: 0.5, end: 3, soundAt: 0.5)
+        // Source 0.5-3 s no longer plays: the moment and its sound go.
+        let away = window(document, inS: 3.5, duration: 0.5)
+        XCTAssertTrue(previewMoments(away).isEmpty)
+        XCTAssertTrue(away.soundEffects.isEmpty)
+        // Extending the window back before Save brings both back where they were.
+        let back = window(away, inS: 0, duration: 4)
+        let moments = previewMoments(back)
+        XCTAssertEqual(moments.count, 1)
+        XCTAssertEqual(moments[0].0, 0.5, accuracy: 1e-9); XCTAssertEqual(moments[0].1, 3, accuracy: 1e-9)
+        XCTAssertEqual(back.soundEffects.map(\.id), ["cmsfx-cm1-enter"])
+        XCTAssertEqual(try XCTUnwrap(back.soundEffects.first?.pointS), 0.5, accuracy: 1e-9)
+    }
+
+    func testASoundTheCreatorDeletedStaysDeletedThroughLaterRangeEdits() throws {
+        var document = try talkingDocument(start: 0.5, end: 3, soundAt: 0.5)
+        document.soundEffects.removeAll()
+        document.deletions.append(EditorDeletion(kind: "sound_effect", id: "cmsfx-cm1-enter"))
+        let back = window(window(document, inS: 3.5, duration: 0.5), inS: 0, duration: 4)
+        XCTAssertEqual(previewMoments(back).count, 1, "the moment is the server's; only the sound was deleted")
+        XCTAssertTrue(back.soundEffects.isEmpty)
+    }
 }

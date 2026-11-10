@@ -292,7 +292,13 @@ enum NativeSpeechTimelineProjection {
         var source = sections(next)
         // KRI-1350: a colour moment's own sound never travels through source time on its own; it is re-pinned to its
         // moment's edge below (the server's `reproject_lanes` + `rebind_color_moment_sounds`).
-        let momentSounds = next.soundEffects.filter { $0.id.hasPrefix(colorMomentSoundPrefix) }
+        // The sounds as they are now, plus any loaded one an earlier trim took away with its moment (never one the
+        // creator deleted), so extending the footage back restores both the moment and its sound.
+        let currentMomentSounds = next.soundEffects.filter { $0.id.hasPrefix(colorMomentSoundPrefix) }
+        let deletedSounds = Set(next.deletions.filter { $0.kind == "sound_effect" }.map(\.id))
+        let momentSounds = currentMomentSounds + next.colorMomentSoundsBase.filter { base in
+            !deletedSounds.contains(base.id) && !currentMomentSounds.contains { $0.id == base.id }
+        }
         if !momentSounds.isEmpty, let lane = source["sound_effects"]?.arrayValue {
             source["sound_effects"] = .array(lane.filter { $0.objectValue?["id"]?.stringValue?.hasPrefix(colorMomentSoundPrefix) != true })
         }

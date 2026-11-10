@@ -3605,7 +3605,9 @@
         "KriaTests/ColorMomentsEditorPreviewTests/testARangeTrimMovesThePreviewMomentAndItsSoundTogether",
         "KriaTests/ColorMomentsEditorPreviewTests/testAMomentWhoseFirstFramesAreTrimmedKeepsItsSoundOnTheNewEdge",
         "KriaTests/ColorMomentsEditorPreviewTests/testAnEditWithoutMomentsKeepsNoBaseAndAnUntouchedTimelineIsUnchanged",
-        "KriaTests/NativeSpeechTimelineTests/testDeleteTrimSlideReorderKeepsWordsAndLanesOnTheirSource"
+        "KriaTests/NativeSpeechTimelineTests/testDeleteTrimSlideReorderKeepsWordsAndLanesOnTheirSource",
+        "KriaTests/ColorMomentsEditorPreviewTests/testTrimmingAMomentAwayAndExtendingBackRestoresTheMomentAndItsSound",
+        "KriaTests/ColorMomentsEditorPreviewTests/testASoundTheCreatorDeletedStaysDeletedThroughLaterRangeEdits"
       ],
       "paths": [
         "src/apps/api/app/kria/portable_color_moments.py",

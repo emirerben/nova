@@ -842,6 +842,9 @@ struct EditorDocument: Equatable, Sendable {
     /// moves the moments from it onto the current Range edit exactly like the server's `reproject_color_moments` does
     /// at Save. Empty whenever the edit has no lane, so every other document is unchanged.
     var colorMomentsBaseSlots: [EditorTimelineSlot] = []
+    /// KRI-1350: the moment-owned sounds (`cmsfx-…`) as loaded, so a sound that disappears while its moment is trimmed
+    /// away returns when a later Range edit brings the moment back. Empty without a lane.
+    var colorMomentSoundsBase: [EditorTimedEffect] = []
     var carouselMoment: [String: JSONValue]?
     var lyrics: [String: JSONValue]?
     var title: String?
@@ -980,6 +983,9 @@ struct EditorDocument: Equatable, Sendable {
         document.speechTimingBasis = object(sections["speech_timing_basis"] ?? snapshot["speech_timing_basis"]) ?? [:]
         document.captionCues = decodeCaptions(array(sections["caption_cues"] ?? snapshot["caption_cues"]) ?? [])
         document.soundEffects = decodeEffects(array(sections["sound_effects"] ?? snapshot["sound_effects"]) ?? [])
+        if document.colorMoments != nil {
+            document.colorMomentSoundsBase = document.soundEffects.filter { $0.id.hasPrefix(NativeSpeechTimelineProjection.colorMomentSoundPrefix) }
+        }
         document.mediaOverlays = decodeEffects(array(sections["media_overlays"] ?? snapshot["media_overlays"]) ?? [])
         document.visualBlocks = decodeVisual(array(sections["visual_blocks"] ?? snapshot["visual_blocks"]) ?? [])
         document.motionScenes = decodeMotion(array(sections["motion_scenes"] ?? snapshot["motion_scenes"]) ?? [])
