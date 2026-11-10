@@ -454,6 +454,9 @@ struct NativeVideoPreview: View {
     }
 
     private func selectPreviewObject(at point: CGPoint, in size: CGSize) {
+        // A drag or pinch can also report a tap where the finger lifts; that is not a selection (it switched a dragged
+        // caption to the drawing it was dropped on).
+        guard Date().timeIntervalSince(dragClock.lastChange) > 0.4 else { return }
         let candidates = NativeEditorInteraction.previewOrder(
             NativeEditorInteraction.visible(objects.map(\.item), at: clock.currentTime)
         ).reversed().filter { item in
@@ -472,8 +475,7 @@ struct NativeVideoPreview: View {
             }
             // A near-miss on the selected object's rotate/scale corner (its 22pt
             // zone extends outside the frame) must not open fullscreen.
-            if !isNearSelectedCorner(point, in: size),
-               Date().timeIntervalSince(dragClock.lastChange) > 0.4 { onEmptyTap?() }
+            if !isNearSelectedCorner(point, in: size) { onEmptyTap?() }
             return
         }
         let ordered = candidates.map(\.selection)
