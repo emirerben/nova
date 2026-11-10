@@ -15,7 +15,7 @@ import re
 import unicodedata
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 import structlog
@@ -1307,6 +1307,14 @@ def research_needs_text_layers(requirements: Sequence[BriefRequirement] | None) 
     return any(is_text_sequence(req) for req in authored) or len(positions) > 1
 
 
+def _asks_needing_research(requirements: Sequence[BriefRequirement] | None) -> bool:
+    """Live text asks with no creator wording: a plain explanation or a sequence to write."""
+    return any(
+        req.live and (req.kind == "text" or is_text_sequence(req)) and not req.literal
+        for req in requirements or ()
+    )
+
+
 def _sequence_literal_asks(
     requirements: Sequence[BriefRequirement] | None,
 ) -> list[BriefRequirement]:
@@ -1416,6 +1424,141 @@ def _unplaced_sequence_bars(
             }
         )
     return ops
+
+
+@dataclass(frozen=True)
+class _ServerTimedSequence:
+    bar_id: str
+    words: list[str]
+    text: str
+    position: str | None
+
+
+# The pace the composer prompt names ("about 0.45 s per word reads well"): the server paces the
+# approved words itself at it, never faster than a piece can be read (`_MIN_PIECE_S`).
+_READ_PIECE_S = 0.45
+
+
+def _server_timed_sequences(
+    lane: list[dict], requirements: Sequence[BriefRequirement] | None
+) -> list[_ServerTimedSequence]:
+    """The approved word-by-word asks the server splits and paces itself, bar by bar.
+
+    The creator's words are fixed and so is the unit, so nothing here needs a model; what the
+    composer got wrong (KRI-1365) was the timing, each paragraph at its own pace, so a pair shown
+    together ended at different times. Phrase units and build-ups ("keep them on screen") are the
+    composer's call, and so is a set of sequences sharing one place (they would draw over each
+    other, so their order is a layout choice), and any set the lane does not hold in full.
+    """
+    from app.kria.text_sequence import text_sequence_mode, text_sequence_unit  # noqa: PLC0415
+    from app.text_fold import fold_text  # noqa: PLC0415
+
+    asks = _sequence_literal_asks(requirements)
+    if not asks or any(
+        text_sequence_unit(req) != "word" or text_sequence_mode(req) == "cumulative" for req in asks
+    ):
+        return []
+    positions = [req.facts.get("position") for req in asks]
+    if len(set(positions)) != len(positions):
+        return []
+    holders = {fold_text(str(row.get("text") or "")): row for row in lane if not row.get("removed")}
+    owned = []
+    for req, position in zip(asks, positions, strict=True):
+        row = holders.get(fold_text(req.literal or ""))
+        if row is None or len(str(row["text"]).split()) < 2:
+            return []
+        owned.append(
+            _ServerTimedSequence(
+                bar_id=row["id"],
+                words=str(row["text"]).split(),
+                text=str(row["text"]),
+                position=position if position in {"top", "middle", "bottom"} else None,
+            )
+        )
+    return owned
+
+
+def _shared_span(owned: list[_ServerTimedSequence], total: float) -> tuple[float, float]:
+    """One span for every server-timed sequence, long enough for the longest at a readable pace.
+
+    Sequences asked at different places are shown together, so they start and end together
+    (`_check_research_layers`); each one's pieces share the span equally. Words that cannot be
+    read one at a time inside the video are reported, never squeezed into flicker.
+    """
+    from app.services.kria_editor_ops_text import _MIN_PIECE_S  # noqa: PLC0415
+
+    longest = max(len(item.words) for item in owned)
+    needed = longest * _MIN_PIECE_S
+    if needed > total + 1e-6:
+        raise CreationTextCompositionError(
+            f"Text composition is incomplete: showing {longest} words one at a time needs at "
+            f"least {needed:.1f} s and the video is {total:.1f} s"
+        )
+    return 0.0, round(min(total, max(needed, longest * _READ_PIECE_S)), 3)
+
+
+def _without_owned_sequences(
+    ops: list[dict], owned_ids: set[str]
+) -> tuple[list[dict], dict[str, dict]]:
+    """The composer's ops minus the timing and split of server-timed bars, and the style it put
+    on their split (an entrance), which the server's split keeps."""
+    kept: list[dict] = []
+    styles: dict[str, dict] = {}
+    for op in ops:
+        ids = op.get("target_ids")
+        if op.get("op") in {"set_texts_timing", "replace_text_sequence"} and isinstance(ids, list):
+            if ids and set(ids) <= owned_ids:
+                if op["op"] == "replace_text_sequence" and isinstance(op.get("patch"), dict):
+                    styles[ids[0]] = op["patch"]
+                continue
+            if set(ids) & owned_ids and set(op.get("selector") or {}) == {"ids"}:
+                rest = [value for value in ids if value not in owned_ids]
+                op = {
+                    **op,
+                    "selector": {"ids": rest},
+                    "target_ids": rest,
+                    "expected_count": len(rest),
+                }
+        kept.append(op)
+    return kept, styles
+
+
+def _server_sequence_ops(
+    owned: list[_ServerTimedSequence], span: tuple[float, float], styles: Mapping[str, dict]
+) -> list[dict]:
+    """Time every server-timed bar to the shared span, then split it one word per piece.
+
+    Timing comes first: a split bar's id is gone afterwards (`replace_text_sequence` binds the
+    lane its bundle started from).
+    """
+
+    def target(item: _ServerTimedSequence) -> dict:
+        return {
+            "selector": {"ids": [item.bar_id]},
+            "target_ids": [item.bar_id],
+            "expected_count": 1,
+        }
+
+    timing = [
+        {"op": "set_texts_timing", **target(item), "start_s": span[0], "end_s": span[1]}
+        for item in owned
+    ]
+    splits = []
+    for item in owned:
+        patch = {
+            **styles.get(item.bar_id, {}),
+            **({"position": item.position} if item.position else {}),
+        }
+        splits.append(
+            {
+                "op": "replace_text_sequence",
+                **target(item),
+                "segments": item.words,
+                "expected_source_text": item.text,
+                **({"patch": patch} if patch else {}),
+            }
+        )
+    return [*timing, *splits]
 
 
 def _run_composer(
@@ -1888,6 +2031,22 @@ def _compose_creation_text(
     full_lane_ops = False
     then: list[dict] = []
     shapes: list[ResearchLayerShape] = []
+    owned = (
+        _server_timed_sequences(texts_for_model, text_requirements)
+        if approved_layers is None
+        else []
+    )
+    if (
+        owned
+        and output.research_request is not None
+        and pinned_research is None
+        and not _asks_needing_research(text_requirements)
+    ):
+        # The creator's words are approved, so there is nothing to research or write. Sending them
+        # to the footage writer (180 characters in a clip's window) failed a 26-word sentence as
+        # a bug (KRI-1365); the server splits and paces them below.
+        log.info("creation_text_research_skipped_for_approved_sequences", count=len(owned))
+        output = output.model_copy(update={"research_request": None})
     if approved_layers is not None or (
         output.research_request is not None
         and pinned_research is None
@@ -1918,18 +2077,24 @@ def _compose_creation_text(
         )
         output = output.model_copy(update={"research_request": None})
     elif output.research_request is not None:
-        from app.services.researched_text import run_researched_revision
-
-        output = run_researched_revision(
-            output.research_request,
-            utterance=creator_request,
-            snapshot=model_snapshot,
-            ctx=ctx,
-            # The creator's "with animations" reaches the explanations that replace the
-            # composer's output (None unless they asked, so the ops stay byte-identical).
-            look=_research_entrance_patch(research_look),
-            handled_elsewhere=("animation",) if research_look else (),
+        from app.services.researched_text import (  # noqa: PLC0415
+            ResearchUnavailable,
+            run_researched_revision,
         )
+
+        try:
+            output = run_researched_revision(
+                output.research_request,
+                utterance=creator_request,
+                snapshot=model_snapshot,
+                ctx=ctx,
+                # The creator's "with animations" reaches the explanations that replace the
+                # composer's output (None unless they asked, so the ops stay byte-identical).
+                look=_research_entrance_patch(research_look),
+                handled_elsewhere=("animation",) if research_look else (),
+            )
+        except ResearchUnavailable as exc:
+            raise CreationTextCompositionError(str(exc)) from exc
     if (
         output.needs_clarification
         or output.unmet_requests
@@ -1963,6 +2128,13 @@ def _compose_creation_text(
             ctx=ctx,
             shaped_after_pins=bool(seeded) and not full_lane_ops,
         )
+    if owned and not full_lane_ops:
+        operations, styles = _without_owned_sequences(operations, {item.bar_id for item in owned})
+        total = max((float(row.get("output_end_s") or 0) for row in slots), default=0.0)
+        operations = [
+            *operations,
+            *_server_sequence_ops(owned, _shared_span(owned, total), styles),
+        ]
     if seeded and not full_lane_ops:
         # The composer shaped bars the first bundle adds; a later bundle's selectors bind them.
         then, operations = operations, list(pinned_ops)

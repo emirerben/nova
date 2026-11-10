@@ -458,6 +458,9 @@ def _enrich_best_parts_snapshot(
         if strategy.get("edit_format") == "montage" and recording is None
         else None
     )
+    from app.kria.text_sequence import sequence_read_floor_s  # noqa: PLC0415
+
+    text_floor_s = sequence_read_floor_s(brief.live()) if brief is not None else None
     held = _held_closing_ids(closing_quote)
     whole_take_ids = _whole_take_ids(
         strategy,
@@ -585,6 +588,7 @@ def _enrich_best_parts_snapshot(
             ),
             story_floor_s=story_floor_s,
             whole_take_ids=whole_take_ids,
+            text_floor_s=text_floor_s,
         )
 
     # KRI-585: the clips' words seat the welcome's line and a quiet ending. "Fast cuts" is

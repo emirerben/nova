@@ -59,7 +59,7 @@ def _brief(length_s: float | None = 12) -> CreativeBrief:
     return CreativeBrief(requirements=reqs)
 
 
-def _plan(brief: CreativeBrief):
+def _plan(brief: CreativeBrief, seconds: list[int] | None = None):
     clips = [
         UnifiedClip(
             media_id=f"archive-{index}",
@@ -68,7 +68,7 @@ def _plan(brief: CreativeBrief):
             duration_s=seconds,
             analysis={"understanding": {"summary": "Archival footage of a crowd"}},
         )
-        for index, seconds in enumerate(CLIP_SECONDS)
+        for index, seconds in enumerate(seconds or CLIP_SECONDS)
     ]
     return plan_unified_montage(clips, brief_view(brief))
 
@@ -120,10 +120,10 @@ def _asks_for_research(agent, input, *, ctx=None):  # noqa: ARG001
     return agent.parse(json.dumps(reply), input)
 
 
-def _compose(monkeypatch, answer, *, length_s: float | None = 12):
+def _compose(monkeypatch, answer, *, length_s: float | None = 12, seconds: list[int] | None = None):
     monkeypatch.setattr(CreationTextComposer, "run", answer)
     brief = _brief(length_s)
-    plan = _plan(brief)
+    plan = _plan(brief, seconds)
     composed = compose_creation_text(
         plan.snapshot,
         creator_request="Explain Founders Day word by word and translate it",
@@ -191,9 +191,9 @@ def test_a_saved_server_timed_program_replays_without_the_composer(monkeypatch) 
 
 
 def test_words_that_cannot_fit_at_the_minimum_piece_time_fail_honestly(monkeypatch) -> None:
-    # 39 English words need at least 9.75 s at 0.25 s a piece; the creator asked for 6 s.
-    with pytest.raises(CreationTextCompositionError, match="Text composition is incomplete"):
-        _compose(monkeypatch, _own_pace(), length_s=6)
+    # 42 English words need at least 10.5 s at 0.25 s a piece; three short clips make 6 s.
+    with pytest.raises(CreationTextCompositionError, match="42 words one at a time needs at least"):
+        _compose(monkeypatch, _own_pace(), length_s=6, seconds=[2, 2, 2])
 
 
 def test_changed_approved_wording_is_still_rejected(monkeypatch) -> None:
@@ -207,7 +207,7 @@ def test_changed_approved_wording_is_still_rejected(monkeypatch) -> None:
         }
         return agent.parse(json.dumps(reply), input)
 
-    with pytest.raises(CreationTextCompositionError, match="confirmed copy"):
+    with pytest.raises(CreationTextCompositionError, match="confirmed copy|Text changed before"):
         _compose(monkeypatch, reword)
 
 
