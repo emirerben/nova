@@ -1407,6 +1407,15 @@ class Settings(BaseSettings):
     # ask), and the "<pace> pacing" chip is left off a card whose route ignores pacing. Default
     # TRUE; false + restart (api + worker) = byte-identical to before.
     kria_headsup_asked_only_enabled: bool = True
+    # KRI-1346/1347 (yorum3): every hold / draft / review line comes from one capability
+    # answer: the card's treatments line leaves out a treatment the route's writer applies
+    # (`phone_subtitled_overlays_supported` on phone Talking), a "have a look" ask the plan
+    # already shortened becomes one Partly line, and `app.kria.reply_consistency` drops a
+    # heads-up line a Done/Will-do line contradicts; `contradictions` also flags a "can't" that
+    # names another capability (the closing card's own answer is
+    # `brief_checks._check_closing_card`, KRI-1346 / #2256). Default FALSE; false + restart (api +
+    # worker) = byte-identical replies. Guard: `tests/kria/test_reply_consistency.py`.
+    kria_honest_reply_lines_enabled: bool = False
 
     # Green 5 (2026-11-04): a chat nothing has told its language yet (a "Suggest an edit." tap,
     # media only, "ok") takes the language of the creator's latest message typed in another of

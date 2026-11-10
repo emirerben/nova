@@ -5222,6 +5222,14 @@ _SB_FORMAT_LIMITS: tuple[str, ...] = (
 )
 
 
+def honest_reply_lines() -> bool:
+    """KRI-1346/1347 switch (``KRIA_HONEST_REPLY_LINES_ENABLED``): one capability answer for
+    every hold / draft / review line. Off: byte-identical to before."""
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(getattr(settings, "kria_honest_reply_lines_enabled", False))
+
+
 def _check_closing_card(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """KRI-1346: "end on a red screen with yellow text '...'".
 
@@ -16170,7 +16178,9 @@ __all__ = [
     "ExplicitSpeechCutFact",
     "EndingClipFact",
     "SpeakerBackgroundFact",
+    "asks_closing_card",
     "asks_speaker_background",
+    "honest_reply_lines",
     "InsertClipFact",
     "NO_TITLE_REASON",
     "NARRATED_ALIGNMENT_RECOVERY",
