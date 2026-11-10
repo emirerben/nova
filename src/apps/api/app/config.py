@@ -1429,6 +1429,12 @@ class Settings(BaseSettings):
     # their chats before the device language (`reply_language.creator_typed_language`). Default
     # TRUE; false + restart (api) = byte-identical (device language, KRI-784).
     kria_reply_language_history_enabled: bool = True
+    # KRI-1363: the chat language follows only the words the creator says to Kria. Quoted
+    # text and a typed answer to a wording question are text for the video and never move
+    # the chat to the video's language; an established chat moves only on a message with no
+    # word of its language. Default TRUE; false + restart (api) = the previous detector,
+    # byte-identical.
+    kria_reply_language_own_words_enabled: bool = True
     # KRI-1097 wave 2 (prompt fidelity on every route). ROUTE_REGISTRY_ENABLED: each render
     # route reads its own capability table (`app.kria.route_capabilities`), so voiceover,
     # Talking, Narrated, creator-song, spoken-excerpt and slide drafts get their own honest
