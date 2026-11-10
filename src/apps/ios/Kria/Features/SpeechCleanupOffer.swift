@@ -229,3 +229,56 @@ enum SpeechCleanupOffer: Equatable {
         }
     }
 }
+
+/// Decides, while the speech check reads `.checking`, when the poll loop must re-read the full
+/// thread and when the card stops promising a result. The analysis task never bumps the thread
+/// revision or appends an event, so `/delta` stays empty and only a full read sees it finish.
+///
+/// `giveUpAfter` is ~6x the 15 s analysis measured in prod, and covers a cold worker start. It is
+/// a card deadline, not a verdict: the watch keeps refetching afterwards so a slow analysis
+/// still resolves the card, and the server's own failure is the only thing that offers Retry.
+struct SpeechCheckWatch: Equatable {
+    static let refetchInterval: TimeInterval = 3
+    static let lateRefetchInterval: TimeInterval = 15
+    static let giveUpAfter: TimeInterval = 90
+    /// Longer gaps between observations (app suspended, poll backed off) are not time the
+    /// creator spent watching a spinner, so they count as this much.
+    static let maxCountedGap: TimeInterval = 5
+
+    private var analysisID: String?
+    private var checkedFor: TimeInterval = 0
+    private var lastObservedAt: Date?
+    private var lastFetchAt: Date?
+
+    init(analysisID: String? = nil, lastObservedAt: Date? = nil, lastFetchAt: Date? = nil) {
+        self.analysisID = analysisID
+        self.lastObservedAt = lastObservedAt
+        self.lastFetchAt = lastFetchAt
+    }
+
+    var hasTimedOut: Bool { checkedFor >= Self.giveUpAfter }
+
+    /// Returns true when the caller should re-read the full thread now. A new analysis, or
+    /// leaving `.checking`, starts the clock over. The read just before checking began is the
+    /// baseline, so the first refetch is one interval away rather than immediate.
+    mutating func observe(_ offer: SpeechCleanupOffer, analysisID: String?, now: Date) -> Bool {
+        guard offer == .checking else {
+            self = SpeechCheckWatch()
+            return false
+        }
+        guard let lastObservedAt, analysisID == self.analysisID, let lastFetchAt else {
+            self = SpeechCheckWatch(analysisID: analysisID, lastObservedAt: now, lastFetchAt: now)
+            return false
+        }
+        checkedFor += min(max(now.timeIntervalSince(lastObservedAt), 0), Self.maxCountedGap)
+        self.lastObservedAt = now
+        let interval = hasTimedOut ? Self.lateRefetchInterval : Self.refetchInterval
+        guard now.timeIntervalSince(lastFetchAt) >= interval else { return false }
+        self.lastFetchAt = now
+        return true
+    }
+}
+
+final class SpeechCheckClock {
+    var watch = SpeechCheckWatch()
+}

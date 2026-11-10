@@ -2350,6 +2350,419 @@ final class NativeEditorSessionTests: XCTestCase {
         return (session, fake)
     }
 
+    // MARK: - Clean reopen of a hydrated project is a no-op
+
+    private enum HydratingProject: String, CaseIterable {
+        /// Cloud speech composite: one locked base clip hydrated from the downloaded base video.
+        case talking
+        /// Phone Talking: the one source clip becomes a locked composite clip.
+        case phoneTalking
+        /// Narrated with server slots: each slot gets its slowed-to-fit source span.
+        case narrated
+        /// Phone Narrated with an empty server timeline: clips are seeded from the pinned device recipe.
+        case phoneNarrated
+        /// Phone Voiceover: same recipe seeding as phone Narrated.
+        case voiceover
+    }
+
+    private static let textRow: JSONValue = .object(["id": .string("note"), "text": .string("from the server"), "start_s": .number(0),
+        "end_s": .number(0.8), "role": .string("generative_intro"), "position": .string("custom"),
+        "x_frac": .number(0.5), "y_frac": .number(0.15), "size_px": .number(120), "size_class": .string("large"),
+        "font_family": .string("Playfair Display"), "alignment": .string("center"), "effect": .string("fade-in")])
+
+    private static func hydratedFixture(_ kind: HydratingProject, legacy: Bool = false) async throws -> (fake: EditorCommitSpy, threadID: UUID, jobID: UUID) {
+        let threadID = UUID(), jobID = UUID()
+        let project = BackgroundUploadCoordinator.projectDirectory(threadID)
+        let montage = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        var variant: [String: JSONValue] = [
+            "variant_id": .string("variant"),
+            "render_generation_id": .string("generation-1"),
+            "render_status": .string("ready"),
+            "output_url": .string("file:///tmp/kria-clean-reopen.mp4"),
+        ]
+        var capabilities: [String: JSONValue] = ["timeline": .bool(false), "text_elements": .bool(true), "mix": .bool(false)]
+        var poolClips: [NativeEditorSourcePool.Clip] = []
+        var device = true
+        switch kind {
+        case .talking:
+            device = false
+            variant["resolved_archetype"] = .string("talking_head")
+            variant["base_video_path"] = .string("base.mp4")
+            variant["base_video_url"] = .string("https://storage.example/base.mp4")
+            let cache = NativePreviewAssetCache(project: project, jobID: jobID)
+            let remote = try XCTUnwrap(URL(string: "https://storage.example/base.mp4"))
+            let download = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+            try FileManager.default.copyItem(at: montage, to: download)
+            var base = try await NativeDownloadedMedia.importAsset(from: download, sourceURL: remote,
+                response: URLResponse(url: remote, mimeType: "video/mp4", expectedContentLength: -1, textEncodingName: nil), project: cache.project)
+            let media = AVURLAsset(url: cache.project.root.appendingPathComponent(base.relativePath))
+            let tracks = try await media.loadTracks(withMediaType: .video)
+            let track = try XCTUnwrap(tracks.first)
+            let size = try await track.load(.naturalSize)
+            base.naturalSize = MediaSize(width: abs(size.width), height: abs(size.height))
+            base.duration = try await media.load(.duration).seconds
+            try cache.store(base, for: "media:generation-1:variant-base-generation-1")
+        case .phoneTalking, .narrated, .phoneNarrated, .voiceover:
+            let input = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+            try FileManager.default.copyItem(at: montage, to: input)
+            defer { try? FileManager.default.removeItem(at: input) }
+            let asset = try await AssetImportCoordinator(project: project).importAsset(from: input)
+            try SourceAssetStore(project: project).bind(mediaID: "source", original: asset)
+            let fingerprint = try XCTUnwrap(asset.fingerprint)
+            poolClips = [.init(clipIndex: 0, nativeSource: .init(mediaID: "source", sourceURL: nil,
+                original: OriginalMediaDescriptor(sha256: fingerprint.hex, byteCount: fingerprint.byteCount, durationS: 1,
+                    width: 1080, height: 1920, orientationDegrees: 0, hasAudio: true), localRequired: true))]
+            switch kind {
+            case .phoneTalking:
+                variant["resolved_archetype"] = .string("subtitled")
+                capabilities = ["timeline": .bool(false), "text_elements": .bool(true), "mix": .bool(false),
+                                "overlays": .bool(true), "sfx": .bool(true)]
+                variant["caption_cues"] = .array([.object(["text": .string("Number three"), "start_s": .number(0.2), "end_s": .number(0.9)])])
+            case .narrated:
+                variant["resolved_archetype"] = .string("narrated")
+                capabilities["timeline"] = .bool(true)
+                variant["user_timeline"] = .object(["slots": .array([.object(["slot_id": .string("s1"), "clip_index": .number(0),
+                    "in_s": .number(0), "duration_s": .number(0.9), "source_duration_s": .number(1), "removed": .bool(false)])])])
+            case .phoneNarrated: variant["resolved_archetype"] = .string("narrated")
+            default: variant["resolved_archetype"] = .string("voiceover")
+            }
+        }
+        if device { variant["render_destination"] = .string("device") }
+        variant["editor_capabilities"] = .object(capabilities)
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
+                snapshotHash: legacy ? "" : "h", etag: legacy ? "" : "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
+                snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: variant
+        )
+        fake.sourcePoolResult = NativeEditorSourcePool(clips: poolClips, baseGeneration: "generation-1")
+        fake.deviceRenderResponse = DeviceRenderStatusResponse(
+            phase: "published", request: deviceRenderRequest(jobID: jobID, revision: 1, digest: "a"), publishedGeneration: "generation-1")
+        return (fake, threadID, jobID)
+    }
+
+    private static func hydratedProject(_ kind: HydratingProject, legacy: Bool = false) async throws -> (NativeEditorSession, EditorCommitSpy) {
+        let (fake, threadID, jobID) = try await hydratedFixture(kind, legacy: legacy)
+        let session: NativeEditorSession
+        if legacy {
+            let summary = ProjectSummary(id: threadID, title: "Legacy", status: .ready, updatedAt: .now, posterURL: nil,
+                outputVariantID: "variant", runtimeVersion: 1, activeJobID: jobID, activePlanItemID: "item")
+            session = NativeEditorSession(project: summary)
+            await session.load(project: summary, api: fake)
+        } else {
+            session = NativeEditorSession()
+            await session.load(api: fake, threadID: threadID)
+        }
+        return (session, fake)
+    }
+
+    /// Everything the creator would notice from a rebuild: the preview leaving `.ready`, a new player,
+    /// playback stopping, and a second trip through `prepareSourcePreview`.
+    private func assertSyncLeavesPreviewUntouched(_ kind: HydratingProject, legacy: Bool = false,
+                                                  file: StaticString = #filePath, line: UInt = #line) async throws {
+        let (session, _) = try await Self.hydratedProject(kind, legacy: legacy)
+        XCTAssertEqual(session.sourcePreviewState, .ready, "\(kind) legacy=\(legacy)", file: file, line: line)
+        let player = try XCTUnwrap(session.player, file: file, line: line)
+        session.togglePlayback()
+        XCTAssertTrue(session.isPlaying, "\(kind) playback started", file: file, line: line)
+        var states: [NativeSourcePreviewState] = []
+        let sink = session.$sourcePreviewState.sink { states.append($0) }
+        defer { sink.cancel() }
+        let builds = session.sourcePreviewBuildCountForTesting
+        let document = session.document
+
+        await session.synchronizePromptRevision()
+        await session.synchronizePromptRevision()
+
+        XCTAssertEqual(session.sourcePreviewBuildCountForTesting - builds, 0, "\(kind) legacy=\(legacy): an unchanged server document must not rebuild", file: file, line: line)
+        XCTAssertTrue(states.allSatisfy { $0 == .ready }, "\(kind) legacy=\(legacy): preview left .ready: \(states)", file: file, line: line)
+        XCTAssertTrue(session.player === player, "\(kind) legacy=\(legacy): player replaced", file: file, line: line)
+        XCTAssertTrue(session.isPlaying, "\(kind) legacy=\(legacy): playback stopped", file: file, line: line)
+        XCTAssertEqual(session.document, document, file: file, line: line)
+        XCTAssertFalse(session.hasUnsavedChanges, file: file, line: line)
+    }
+
+    func testCleanReopenOfEveryHydratedProjectDoesNotRebuildThePreview() async throws {
+        for kind in HydratingProject.allCases { try await assertSyncLeavesPreviewUntouched(kind) }
+    }
+
+    /// A legacy v1 thread has no draft hash (`snapshotHash == ""`), so nothing keyed on it can tell a clean reopen apart.
+    func testCleanReopenOfLegacyHydratedProjectDoesNotRebuildThePreview() async throws {
+        for kind in [HydratingProject.phoneTalking, .narrated, .phoneNarrated] {
+            try await assertSyncLeavesPreviewUntouched(kind, legacy: true)
+        }
+    }
+
+    /// The skip must not hide a real change: the server document differs from the one the preview was built from
+    /// (even when the field is one hydration rewrites), so the preview rebuilds exactly once and shows it.
+    func testRealServerChangeStillRebuildsTheHydratedPreviewOnce() async throws {
+        for kind in HydratingProject.allCases {
+            let (session, fake) = try await Self.hydratedProject(kind)
+            XCTAssertEqual(session.sourcePreviewState, .ready, "\(kind)")
+            let builds = session.sourcePreviewBuildCountForTesting
+            fake.authoritativeVariant?["text_elements"] = .array([Self.textRow])
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.sourcePreviewBuildCountForTesting - builds, 1, "\(kind): a changed server document rebuilds once")
+            XCTAssertEqual(session.document.textElements.map(\.text), ["from the server"], "\(kind)")
+            XCTAssertEqual(session.sourcePreviewState, .ready, "\(kind)")
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.sourcePreviewBuildCountForTesting - builds, 1, "\(kind): the new document is now the clean no-op")
+        }
+    }
+
+    /// Same content but a newer draft revision: the document's revision stamp (what Save sends) would go stale, so it rebuilds.
+    func testNewerDraftRevisionWithIdenticalContentIsNotSkipped() async throws {
+        for kind in [HydratingProject.phoneTalking, .narrated, .voiceover] {
+            let (session, fake) = try await Self.hydratedProject(kind)
+            let builds = session.sourcePreviewBuildCountForTesting
+            let current = fake.draftSnapshot
+            let bumped = DraftSnapshot(draftID: current.draftID, itemID: current.itemID, variantKey: current.variantKey,
+                draftRevision: current.draftRevision + 1, snapshotHash: current.snapshotHash, etag: current.etag,
+                baseJobID: current.baseJobID, baseGenerationID: current.baseGenerationID, snapshot: current.snapshot,
+                canUndo: current.canUndo, createdAt: current.createdAt)
+            fake.draftSnapshot = bumped
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.sourcePreviewBuildCountForTesting - builds, 1, "\(kind)")
+            XCTAssertEqual(session.document.revision.number, bumped.draftRevision, "\(kind)")
+        }
+    }
+
+    /// A save or rebase that rewrites the clean document must retire the skip, with no hook at those sites.
+    func testRewrittenCleanDocumentInvalidatesTheSkip() async throws {
+        for kind in [HydratingProject.phoneTalking, .narrated, .phoneNarrated] {
+            let (session, fake) = try await Self.hydratedProject(kind)
+            var changed = try XCTUnwrap(fake.authoritativeVariant)
+            let original = changed
+            changed["text_elements"] = .array([Self.textRow])
+            XCTAssertTrue(session.rebaseCleanDraft(from: changed), "\(kind)")
+            XCTAssertEqual(session.document.textElements.map(\.text), ["from the server"], "\(kind)")
+            let builds = session.sourcePreviewBuildCountForTesting
+            fake.authoritativeVariant = original
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.sourcePreviewBuildCountForTesting - builds, 1,
+                           "\(kind): the clean document changed since the preview was built, so the old pair must not skip")
+            XCTAssertEqual(session.document.textElements, [], "\(kind): the server's document wins again")
+        }
+    }
+
+    /// A chat edit staged in the draft head still lands as unsaved edits on a hydrated project.
+    func testStagedChatEditStillAppliesOnAHydratedProject() async throws {
+        for kind in [HydratingProject.narrated, .phoneNarrated, .phoneTalking] {
+            let (session, fake) = try await Self.hydratedProject(kind)
+            XCTAssertEqual(session.sourcePreviewState, .ready, "\(kind)")
+            let reopenBuilds = session.sourcePreviewBuildCountForTesting
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.sourcePreviewBuildCountForTesting, reopenBuilds, "\(kind): the clean reopen skip ran before the chat edit arrived")
+            let text: JSONValue = .array([Self.textRow])
+            fake.draftSnapshot = DraftSnapshot(draftID: "d3", itemID: "item", variantKey: "variant", draftRevision: 3,
+                snapshotHash: "h", etag: "e", baseJobID: fake.draftSnapshot.baseJobID, baseGenerationID: "generation-1",
+                snapshot: ["kind": .string("editor"), "schema_version": .number(2), "edit_format": .string("montage"),
+                           "editor_payload": .object(["base_generation": .string("generation-1"), "text_elements": text,
+                                                      "sections": .object(["text_elements": text])])],
+                canUndo: true, createdAt: .now)
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.document.textElements.map(\.text), ["from the server"], "\(kind)")
+            XCTAssertTrue(session.hasUnsavedChanges, "\(kind): a staged chat edit is an unsaved edit")
+            XCTAssertEqual(fake.commitCount, 0, "\(kind)")
+            await session.synchronizePromptRevision()
+            XCTAssertEqual(session.document.textElements.map(\.text), ["from the server"], "\(kind): a repeated sync keeps the staged edit")
+            XCTAssertTrue(session.hasUnsavedChanges, "\(kind)")
+        }
+    }
+
+    // MARK: - Warm editor: the chat prepares the editor while it is on screen
+
+    /// A phone-narrated project (a real preview built from the bundled clip) opened through `openOrWarm`, which is
+    /// what both the chat's warm-up and the editor view call.
+    @MainActor private struct WarmCandidate {
+        let session: NativeEditorSession
+        let fake: EditorCommitSpy
+        let sessions = DeviceRenderSessions(fetch: { _, _ in throw APIError.unsupported }, factory: { _, _ in throw APIError.unsupported })
+        let uploads: BackgroundUploadCoordinator
+        let threadID: UUID
+        let jobID: UUID
+
+        func project(job: UUID? = nil, revision: Int = 5) -> ProjectSummary {
+            ProjectSummary(id: threadID, title: "Warm", status: .ready, updatedAt: .now, posterURL: nil,
+                outputVariantID: "variant", runtimeVersion: 2, serverRevision: revision,
+                activeJobID: job ?? jobID, activePlanItemID: "item")
+        }
+
+        func open(_ intent: EditorOpenIntent, project: ProjectSummary? = nil, api: (any KriaAPIClient)? = nil) async {
+            await session.openOrWarm(project: project ?? self.project(), libraryJobID: nil, api: api ?? fake,
+                                     deviceRenders: sessions, uploads: uploads, intent: intent)
+        }
+    }
+
+    private static func warmCandidate() async throws -> WarmCandidate {
+        let (fake, threadID, jobID) = try await hydratedFixture(.phoneNarrated)
+        let uploads = BackgroundUploadCoordinator(api: fake, defaultsKey: "warm-\(UUID().uuidString)", sessionConfiguration: .ephemeral)
+        let session = NativeEditorSession(project: ProjectSummary(id: threadID, title: "Warm", status: .ready, updatedAt: .now,
+            posterURL: nil, outputVariantID: "variant", runtimeVersion: 2, activeJobID: jobID, activePlanItemID: "item"))
+        return WarmCandidate(session: session, fake: fake, uploads: uploads, threadID: threadID, jobID: jobID)
+    }
+
+    /// What one plain open costs on this fixture, so a test can say "no more than one open's worth".
+    private struct OpenCost: Equatable { let variantReads: Int; let sourcePoolReads: Int; let previewBuilds: Int }
+    private func costOfOneOpen() async throws -> OpenCost {
+        let c = try await Self.warmCandidate()
+        await c.open(.open)
+        XCTAssertEqual(c.session.loadState, .loaded)
+        XCTAssertEqual(c.session.sourcePreviewState, .ready)
+        return OpenCost(variantReads: c.fake.editorVariantCalls, sourcePoolReads: c.fake.sourcePoolCallCount,
+                        previewBuilds: c.session.sourcePreviewBuildCountForTesting)
+    }
+
+    private func startWarm(_ c: WarmCandidate, suspendingVariantRead: Bool = true) async -> Task<Void, Never> {
+        c.fake.suspendNextEditorVariant = suspendingVariantRead
+        let warm = Task { await c.open(.warm) }
+        if suspendingVariantRead {
+            let suspended = await waitUntil(timeout: .seconds(5)) { c.fake.editorVariantIsSuspended }
+            XCTAssertTrue(suspended, "the warm load reached its variant read")
+        }
+        return warm
+    }
+
+    func testTapDuringWarmJoinsTheSingleFlight() async throws {
+        let cost = try await costOfOneOpen()
+        let c = try await Self.warmCandidate()
+        let warm = await startWarm(c)
+        var tapReturned = false
+        let tap = Task { await c.open(.open); tapReturned = true }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertFalse(tapReturned, "the tap joins the load in flight and returns when it is done, not at once")
+        XCTAssertEqual(c.fake.editorVariantCalls, 1, "the tap issued no second variant read")
+        c.fake.resumeEditorVariant()
+        await warm.value; await tap.value
+        XCTAssertEqual(c.session.loadState, .loaded)
+        XCTAssertEqual(c.session.sourcePreviewState, .ready)
+        XCTAssertEqual(OpenCost(variantReads: c.fake.editorVariantCalls, sourcePoolReads: c.fake.sourcePoolCallCount,
+                                previewBuilds: c.session.sourcePreviewBuildCountForTesting), cost,
+                       "warm plus an early tap costs one open, not two")
+    }
+
+    func testDraftLandingDuringWarmIsStagedBeforeTap() async throws {
+        let c = try await Self.warmCandidate()
+        // Hold the load inside its preview build: the draft head was read already, the session is still busy opening.
+        c.fake.suspendNextSourcePool = true
+        let warm = Task { await c.open(.warm) }
+        let building = await waitUntil(timeout: .seconds(5)) { c.fake.sourcePoolIsSuspended }
+        XCTAssertTrue(building, "the warm load reached its preview build")
+        let text: JSONValue = .array([Self.textRow])
+        c.fake.draftSnapshot = DraftSnapshot(draftID: "d3", itemID: "item", variantKey: "variant", draftRevision: 3,
+            snapshotHash: "h", etag: "e", baseJobID: c.jobID.uuidString, baseGenerationID: "generation-1",
+            snapshot: ["kind": .string("editor"), "schema_version": .number(2), "edit_format": .string("montage"),
+                       "editor_payload": .object(["base_generation": .string("generation-1"), "text_elements": text,
+                                                  "sections": .object(["text_elements": text])])],
+            canUndo: true, createdAt: .now)
+        // The chat poll that saw the new draft syncs the editor. The open holds the session, so the sync is dropped.
+        await c.session.synchronizePromptRevision()
+        XCTAssertEqual(c.session.document.textElements.map(\.text), [], "nothing staged yet: the sync could not run")
+        c.fake.resumeSourcePool()
+        await warm.value
+        XCTAssertEqual(c.session.loadState, .loaded)
+        XCTAssertEqual(c.session.document.textElements.map(\.text), ["from the server"],
+                       "the draft that landed mid-warm is staged by the time the warm finishes, with no later sync")
+        XCTAssertTrue(c.session.hasUnsavedChanges)
+        XCTAssertEqual(c.fake.commitCount, 0)
+    }
+
+    func testWarmFailureFallsBackToTheFullLoadOnTap() async throws {
+        let cost = try await costOfOneOpen()
+        let c = try await Self.warmCandidate()
+        c.session.loadRetryDelays = [.milliseconds(20)]
+        c.fake.editorVariantError = .requestFailed(status: 503)
+        await c.open(.warm)
+        XCTAssertEqual(c.session.loadState, .idle, "a failed warm leaves the session as it found it: no error surface, no retry loop")
+        let readsAfterFailure = c.fake.editorVariantCalls
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(c.fake.editorVariantCalls, readsAfterFailure, "nothing keeps retrying behind the closed editor")
+        c.fake.editorVariantError = nil
+        c.fake.editorVariantCalls = 0
+        await c.open(.open)
+        XCTAssertEqual(c.session.loadState, .loaded, "the tap loads from scratch, as it did before warming existed")
+        XCTAssertEqual(c.session.sourcePreviewState, .ready)
+        XCTAssertEqual(c.fake.editorVariantCalls, cost.variantReads)
+    }
+
+    func testTapOnAnotherJobRetiresTheStaleWarmDocument() async throws {
+        let c = try await Self.warmCandidate()
+        let newer = UUID()
+        let warm = await startWarm(c)
+        let tap = Task { await c.open(.open, project: c.project(job: newer, revision: 6)) }
+        try await Task.sleep(for: .milliseconds(300))
+        c.fake.resumeEditorVariant()
+        await warm.value; await tap.value
+        XCTAssertEqual(c.session.loadState, .loaded)
+        XCTAssertEqual(c.session.deviceRenderKey?.jobID, newer, "the stale job's late answer must not win")
+        XCTAssertEqual(c.fake.editorVariantJobIDs.last, newer)
+    }
+
+    func testAccountSwitchDuringWarmDoesNotJoinTheOldAccountsLoad() async throws {
+        let c = try await Self.warmCandidate()
+        c.fake.mediaLibraryOwner = "account-a"
+        let warm = await startWarm(c)
+        c.fake.mediaLibraryOwner = "account-b"
+        let tap = Task { await c.open(.open) }
+        try await Task.sleep(for: .milliseconds(300))
+        c.fake.resumeEditorVariant()
+        await warm.value; await tap.value
+        XCTAssertEqual(c.session.loadState, .loaded)
+        XCTAssertEqual(c.fake.editorVariantCalls, 2, "the second account loaded for itself instead of inheriting the first's")
+    }
+
+    func testLeavingTheChatCancelsAnInFlightWarm() async throws {
+        let c = try await Self.warmCandidate()
+        let warm = await startWarm(c)
+        c.session.cancelWarm()
+        c.fake.resumeEditorVariant()
+        await warm.value
+        XCTAssertEqual(c.session.loadState, .idle, "an abandoned warm leaves no late state behind")
+        XCTAssertNil(c.session.player)
+        XCTAssertEqual(c.session.sourcePreviewState, .idle)
+        XCTAssertEqual(c.session.sourcePreviewBuildCountForTesting, 0, "no preview is built for a chat the creator left")
+        XCTAssertEqual(c.fake.sourcePoolCallCount, 0)
+    }
+
+    func testATapClaimsTheFlightSoLeavingTheChatScreenCannotCancelIt() async throws {
+        let c = try await Self.warmCandidate()
+        let warm = await startWarm(c)
+        let tap = Task { await c.open(.open) }
+        try await Task.sleep(for: .milliseconds(200))
+        c.session.cancelWarm()
+        c.fake.resumeEditorVariant()
+        await warm.value; await tap.value
+        XCTAssertEqual(c.session.loadState, .loaded)
+        XCTAssertEqual(c.session.sourcePreviewState, .ready)
+    }
+
+    func testMemoryWarningReleasesAnUnclaimedWarmSessionAndTheTapReloadsIt() async throws {
+        let cost = try await costOfOneOpen()
+        let c = try await Self.warmCandidate()
+        await c.open(.warm)
+        XCTAssertEqual(c.session.loadState, .loaded)
+        c.session.releaseWarmForMemoryPressure()
+        XCTAssertEqual(c.session.loadState, .idle)
+        XCTAssertNil(c.session.player, "the warm composition and player are released")
+        c.fake.editorVariantCalls = 0
+        await c.open(.open)
+        XCTAssertEqual(c.session.loadState, .loaded, "the tap falls back to the cold path")
+        XCTAssertEqual(c.fake.editorVariantCalls, cost.variantReads)
+    }
+
+    func testRepeatedWarmRequestsOnALoadedSessionMakeNoRequests() async throws {
+        let c = try await Self.warmCandidate()
+        await c.open(.warm)
+        XCTAssertEqual(c.session.sourcePreviewState, .ready)
+        let before = (c.fake.editorVariantCalls, c.fake.draftCallCount, c.fake.sourcePoolCallCount,
+                      c.session.sourcePreviewBuildCountForTesting)
+        for revision in 6...9 { await c.open(.warm, project: c.project(revision: revision)) }
+        XCTAssertEqual(c.fake.editorVariantCalls, before.0, "chat polls that re-ask for a warm editor do not read the variant again")
+        XCTAssertEqual(c.fake.draftCallCount, before.1)
+        XCTAssertEqual(c.fake.sourcePoolCallCount, before.2)
+        XCTAssertEqual(c.session.sourcePreviewBuildCountForTesting, before.3)
+    }
+
     func testDeviceTimelineDurationUsesShorterOriginalAndKeepsEOFMargin() throws {
         XCTAssertEqual(try XCTUnwrap(NativeEditorSession.deviceTimelineDuration(proxyDuration: 2.2, localDuration: 2.0, minimum: 0.1)),
                        1.95, accuracy: 0.0001)

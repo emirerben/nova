@@ -4491,6 +4491,61 @@
         "Phone re-send of the Emir Olympics request after deploy"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1332-titles-follow-clips",
+      "tickets": [
+        "KRI-1332"
+      ],
+      "symptom": "Thread 1894f8d0 (2026-11): after \"make it 60 seconds\" (set_total_duration) and \"make them 0.5 seconds\" (patch_slots on six clips) every event title stayed at its old second while its clip moved; \"match the sports with the videos again\" then deleted all twenty texts (remove_texts group free) because nothing marked them as bound to a clip.",
+      "boundary": "compiler",
+      "status": "open_pr",
+      "owner": "KRI-1332",
+      "fix_prs": [],
+      "journey": "kri-1332-titles-follow-clips",
+      "paths": [
+        "src/apps/api/app/services/kria_editor_ops.py",
+        "src/apps/api/app/services/kria_editor_ops_text.py",
+        "src/apps/api/app/services/kria_editor_timeline.py",
+        "src/apps/api/app/agents/editor_ops_v2/text.py",
+        "src/apps/api/app/agents/edit_copilot.py"
+      ],
+      "regression_tests": [
+        "tests/services/test_kri1332_titles_follow_clips.py",
+        "tests/services/test_kri1332_link_side_effects.py",
+        "tests/services/test_kria_editor_realign_labels.py",
+        "tests/services/test_kria_editor_guided_timeline.py",
+        "tests/services/test_guided_label_rebase_vectors.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The KRI-1331 titles for the prod request (fixture timeline, strategy and composer operations through compile_phone_guided_repaired, so each title carries its source_params clip link), then the incident's chat edits through the copilot parser, compile_editor_ops and project_editor_draft on the authored phone variant. On 85e68a697 every title keeps its old second after both edits, the planner input lists the titles as free text, remove_texts group free targets all four and realign_labels finds no clip labels; with the fix each title starts on its event's first clip after both edits and stays within its event, and realign_labels re-attaches the drifted titles.",
+        "live_model": "Not run; no paid calls. No prompt changed: the planner input now lists each title as selector_group 'labels' with label_for_clip, the case text.txt routes to realign_labels.",
+        "native_output": "Not run on a device: the checks read the compiled editor draft's text windows, not an exported video.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "set_total_duration proportional, then a duration-only patch_slots that shrinks an event's first clips to 0.5 s",
+        "titles that run on past their first clip keep running on within their event; titles that fit their clip follow it like a label",
+        "a creator's own text with no clip link keeps its absolute time on a duration edit",
+        "several titles on one clip (prod's KRI-1330 resolution) all follow it",
+        "realign_labels on an authored phone timeline (no stored output times) and its honest no-op when titles already sit on their clips",
+        "a reorder on a guided story keeps a run-on title from stretching back to the footage it ran on over",
+        "participant labels (PLAYER N) bound by the same link: follow their clip on a duration edit, fill their clip on realign, never withhold visual_media, never absorb the hour from label_each_clip, still allow a label of their own on the clip",
+        "linked event titles are not the clip's fact label: label_each_clip and add_text clip_id treat the clip as unlabelled",
+        "legacy clip-label-* / montage-text-* rows unchanged (guided timeline, realign and iPhone parity vector suites)"
+      ],
+      "neighbours_gap": [
+        "On an authored phone timeline a chat trim, reorder or clip delete still re-times no text at all (kria_editor_ops compiles only duration and speed edits with text there); realign_labels is the recovery.",
+        "The iPhone editor re-times a linked title as free text (GuidedLabelRebase.swift does not read the link): a hand reorder can stretch a run-on title like before.",
+        "A variant rendered before PR #2241 has no clip links, so its titles still behave as free text.",
+        "realign_labels keeps a title's length but does not know its event's member clips: a run-on title is capped at the next clip-bound text, not at its event's last clip."
+      ],
+      "follow_ups": [
+        "Phone re-send of the Emir Olympics request and its edits after deploy"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }
