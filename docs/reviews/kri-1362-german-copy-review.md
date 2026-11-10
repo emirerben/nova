@@ -1910,3 +1910,18 @@ These English keys have different Turkish wordings in different places (`conflic
 | {why_capitalize}. | {why_capitalize}. | {why}. |  |
 | {words} ({spot}) | {words} ({spot}) | {words} ({v1}) |  |
 | “{state_candidate}” — does this wording work? | „{state_candidate}“ – passt dir dieser Wortlaut? | “{state_candidate}” — bu ifade sana uyar mı? |  |
+
+## Added after merging main (2026-11-10)
+
+| English | German | Turkish | OK? |
+| --- | --- | --- | --- |
+| Ending on a full-screen colour with your text isn't available on your iPhone yet | Ein Ende mit einem Vollbild in einer Farbe und deinem Text gibt es auf deinem iPhone noch nicht | Videoyu yazılı tam ekran bir renkle bitirmek iPhone'unda henüz kullanılamıyor | |
+| I'll end the video on that colour screen with your text, after your last word | Ich beende das Video nach deinem letzten Wort mit diesem Farbbild und deinem Text | Son sözünden sonra videoyu o renkli ekranla ve yazınla bitireceğim | |
+| Only a talking-to-camera edit made on your iPhone can end on a full-screen colour with your text | Nur ein Talking-Edit, das auf deinem iPhone erstellt wird, kann mit einem Vollbild in einer Farbe und deinem Text enden | Videoyu yazılı tam ekran bir renkle yalnızca iPhone'unda yapılan kameraya konuşma düzenlemesi bitirebilir | |
+| Review the restored text for {update_description}: "{update_literal}" | Prüf den wiederhergestellten Text für {update_description}: "{update_literal}" | Geri yüklenen metni gözden geçir ({update_description}): "{update_literal}" | |
+| Tell me the colour as a name like red or a code like #FF0000 | Nenn mir die Farbe als Namen wie Rot oder als Code wie #FF0000 | Rengi kırmızı gibi bir adla ya da #FF0000 gibi bir kodla söyle | |
+| The end screen doesn't show all of your words | Das Endbild zeigt nicht deinen ganzen Text | Son ekran yazının tamamını göstermiyor | |
+| The finished video doesn't end on your colour screen | Das fertige Video endet nicht mit deinem Farbbild | Bitmiş video senin renkli ekranınla bitmiyor | |
+| Your end-screen words are too long to fit on one screen; shorten them | Dein Text für das Endbild ist zu lang für ein Bild; kürz ihn bitte | Son ekran yazın tek bir ekrana sığmayacak kadar uzun; kısalt | |
+| Your end-screen words have a character I can't draw on the card | In deinem Text für das Endbild ist ein Zeichen, das ich nicht darstellen kann | Son ekran yazında kartta çizemediğim bir karakter var | |
+| Your iPhone app is too old to end on a full-screen colour with your text; update it first | Deine iPhone-App ist zu alt für ein Ende mit Farbbild und Text; aktualisier sie zuerst | iPhone uygulaman videoyu yazılı tam ekran bir renkle bitirmek için çok eski; önce güncelle | |
