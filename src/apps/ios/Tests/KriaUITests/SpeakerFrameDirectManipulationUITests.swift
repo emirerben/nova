@@ -100,7 +100,8 @@ final class SpeakerFrameDirectManipulationUITests: XCTestCase {
         XCTAssertEqual(top.value as? String, peerValue, "Dragging the lower occurrence must not edit its peer")
         XCTAssertEqual(top.frame, peerFrame)
         let beforeResize = bottom.value as? String
-        canvas(app).pinch(withScale: 1.3, velocity: 1)
+        // On the lower speaker, not the canvas centre: the panel divider band sits there and owns a touch that starts on it.
+        bottom.pinch(withScale: 1.3, velocity: 1)
         XCTAssertNotEqual(bottom.value as? String, beforeResize)
         XCTAssertEqual(top.value as? String, peerValue, "Resizing the lower occurrence must not edit its peer")
         XCTAssertEqual(top.frame, peerFrame)

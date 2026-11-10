@@ -80,6 +80,7 @@
   "KriaUITests/EditorUITests/testCapturedCreationWordsPlayReopenAndExport": 128.9,
   "KriaUITests/EditorUITests/testClipActionsDismissOnOutsideTapAndKeepClipSelectionWorking": 25.3,
   "KriaUITests/EditorUITests/testDeletingFinalClipShowsEmptyCanvasAndUndoRestoresPlayback": 38.5,
+  "KriaUITests/EditorUITests/testEditorIsReadyBeforeTheTap": 25.0,
   "KriaUITests/EditorUITests/testFirstSourcePreviewPlaysBrandOutroAndReplays": 22.8,
   "KriaUITests/EditorUITests/testNativeEditorBackButtonReturnsToPreviousSurface": 11.6,
   "KriaUITests/EditorUITests/testNativeEditorFixturePlaysAndAdvancesTheClock": 12.5,

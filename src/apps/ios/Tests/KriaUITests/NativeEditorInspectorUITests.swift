@@ -49,7 +49,41 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(control.isEnabled)
     }
 
-    private func launchTwoPanelAcceptance(extraArguments: [String] = []) throws -> (XCUIApplication, SplitTimelineSnapshot) {
+    /// The Split tool is the only way in: tool rail, then a layout card. Leaves the Split panel open on its first empty panel.
+    private func createSplit(panels: Int, in app: XCUIApplication) {
+        let tool = app.buttons["native-editor-tool-split"]
+        let rail = app.descendants(matching: .any)["native-editor-tool-rail"].firstMatch
+        for _ in 0..<3 where !tool.isHittable { rail.swipeLeft() }
+        XCTAssertTrue(tool.isHittable, "Split is the last tool on the rail")
+        tool.tap()
+        let card = app.buttons["native-editor-split-create-\(panels)"]
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        card.tap()
+    }
+
+    /// Fills the panel the Split panel is asking for from footage already in the edit (the real pickers need Photos).
+    private func fillEmptyPanel(_ panel: String, withFootage label: String, in app: XCUIApplication) {
+        XCTAssertTrue(app.staticTexts["Add to \(panel)"].waitForExistence(timeout: 10), "The Split panel must ask for the \(panel) panel")
+        let source = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'native-editor-split-source-' AND label == %@", label)).firstMatch
+        XCTAssertTrue(source.waitForExistence(timeout: 10), "The Split panel must offer \(label) for the empty panel")
+        source.tap()
+    }
+
+    /// Replace footage in the Adjust sheet of the selected split member, choosing footage already in the edit.
+    private func replaceFootage(withSource label: String, in app: XCUIApplication) {
+        let replace = app.buttons["native-editor-split-replace"]
+        revealSplitControl(replace, in: app)
+        replace.tap()
+        let source = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'native-editor-split-source-' AND label == %@", label)).firstMatch
+        XCTAssertTrue(source.waitForExistence(timeout: 10), "The Replace footage sheet must offer \(label)")
+        source.tap()
+    }
+
+    /// Creates a two-panel split from clip 1. `fill` adds the second panel's footage (a second use of clip 1);
+    /// without it the section is left with its empty Bottom panel.
+    private func launchTwoPanelAcceptance(extraArguments: [String] = [], fill: Bool = true) throws -> (XCUIApplication, SplitTimelineSnapshot) {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-split-screen",
             "-ui-testing-editor-live-preview", "-ui-testing-editor-document-snapshot"] + extraArguments
@@ -63,18 +97,18 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let first = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
         XCTAssertTrue(first.waitForExistence(timeout: 30))
         first.tap()
-        app.buttons["native-editor-adjust"].tap()
-        let create = app.buttons["native-editor-split-create-2"]
-        revealSplitControl(create, in: app)
-        create.tap()
-        app.buttons["native-editor-inspector-done"].tap()
+        createSplit(panels: 2, in: app)
+        if fill {
+            fillEmptyPanel("Bottom", withFootage: "Clip 1", in: app)
+            app.buttons["native-editor-split-done"].tap()
+        }
         let snapshot = try splitSnapshot(app)
-        XCTAssertEqual(snapshot.rows.count, 3)
+        XCTAssertEqual(snapshot.rows.count, fill ? 3 : 2)
         XCTAssertEqual(snapshot.sections.count, 1)
         XCTAssertEqual(snapshot.mix["original_level"] as? Double, 0.8)
         XCTAssertEqual(snapshot.mix["music_level"] as? Double, 0.3)
         XCTAssertEqual(snapshot.rows[0]["split_panel_index"] as? Int, 0)
-        XCTAssertEqual(snapshot.rows[1]["split_panel_index"] as? Int, 1)
+        if fill { XCTAssertEqual(snapshot.rows[1]["split_panel_index"] as? Int, 1) }
         return (app, snapshot)
     }
 
@@ -194,21 +228,17 @@ final class NativeEditorInspectorUITests: XCTestCase {
         }
     }
 
+    // Fills the empty Bottom panel from the picker's import hook. The panel's footage is a new slot (a fill never
+    // replaces), so the real registration, undo, redo and Save/reopen all act on one added clip.
     func testDelayedPanelImportKeepsCapturedOwnerUndoAndReopen() throws {
         let flags = ["-ui-testing-editor-gameday-add", "-ui-testing-editor-split-import",
                      "-ui-testing-editor-split-persistence", "-ui-testing-editor-split-persistence-reset"]
-        let (app, before) = try launchTwoPanelAcceptance(extraArguments: flags)
-        let targetID = try XCTUnwrap(before.rows[1]["slot_id"] as? String)
-        selectTimelineClip(2, in: app)
-        app.buttons["native-editor-adjust"].tap()
+        let (app, before) = try launchTwoPanelAcceptance(extraArguments: flags, fill: false)
+        let sectionID = try XCTUnwrap(before.sections[0]["id"] as? String)
         let importButton = app.buttons["native-editor-split-import"]
-        revealSplitControl(importButton, in: app)
+        XCTAssertTrue(importButton.waitForExistence(timeout: 10))
         importButton.tap()
-        let upload = app.buttons["native-editor-add-clip-upload"]
-        XCTAssertTrue(upload.waitForExistence(timeout: 5))
-        upload.tap()
-        XCTAssertTrue(upload.waitForNonExistence(timeout: 5))
-        app.buttons["native-editor-inspector-done"].tap()
+        app.buttons["native-editor-split-done"].tap()
         selectTimelineClip(1, in: app)
         let pending = try splitSnapshot(app)
         XCTAssertEqual(NSArray(array: pending.rows), NSArray(array: before.rows), "Selection must change before registration completes")
@@ -224,15 +254,14 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let completed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", "editor_source_placement_id"), object: probe)
         XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 40), .completed)
         let imported = try splitSnapshot(app)
-        XCTAssertEqual(imported.rows.count, before.rows.count, "Panel import must replace rather than append")
-        let target = try imported.row(targetID)
+        XCTAssertEqual(imported.rows.count, before.rows.count + 1, "Filling an empty panel adds exactly one clip")
+        let target = try XCTUnwrap(imported.rows.first { $0["editor_source_placement_id"] != nil })
         XCTAssertEqual(target["clip_index"] as? Int, 4)
+        XCTAssertEqual(target["split_section_id"] as? String, sectionID)
+        XCTAssertEqual(target["split_panel_index"] as? Int, 1, "The import lands in the empty Bottom panel")
         XCTAssertFalse(try XCTUnwrap(target["editor_source_placement_id"] as? String).isEmpty)
-        for key in ["slot_id", "split_section_id", "split_panel_index", "split_offset_s", "duration_s"] {
-            XCTAssertEqual(NSDictionary(dictionary: [key: try XCTUnwrap(target[key])]),
-                           NSDictionary(dictionary: [key: try XCTUnwrap(before.rows[1][key])]))
-        }
-        try assertSplitPeers(before, unchangedIn: imported, excluding: [targetID])
+        let addedID = try XCTUnwrap(target["slot_id"] as? String)
+        try assertSplitPeers(before, unchangedIn: imported, excluding: [addedID])
         app.buttons["native-editor-undo"].tap()
         let undone = try splitSnapshot(app)
         XCTAssertEqual(NSArray(array: undone.rows), NSArray(array: before.rows))
@@ -482,20 +511,12 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let clip = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
         XCTAssertTrue(clip.waitForExistence(timeout: 30))
         clip.tap()
-        app.buttons["native-editor-adjust"].tap()
-        let create = app.buttons["native-editor-split-create-2"]
-        for _ in 0..<5 where !create.isHittable { app.swipeUp() }
-        XCTAssertTrue(create.waitForExistence(timeout: 5))
-        create.tap()
-        app.buttons["native-editor-inspector-done"].tap()
+        createSplit(panels: 2, in: app)
+        fillEmptyPanel("Bottom", withFootage: "Clip 1", in: app)
+        app.buttons["native-editor-split-done"].tap()
         selectTimelineClip(2, in: app)
         app.buttons["native-editor-adjust"].tap()
-        let replace = app.buttons["native-editor-split-replace"]
-        for _ in 0..<8 where !replace.isHittable { app.swipeUp() }
-        XCTAssertTrue(replace.isHittable)
-        replace.tap()
-        XCTAssertTrue(app.buttons["Clip 2"].waitForExistence(timeout: 5))
-        app.buttons["Clip 2"].tap()
+        replaceFootage(withSource: "Clip 2", in: app)
         let photoSpeed = app.staticTexts["Photos do not have playback speed."]
         for _ in 0..<5 where !photoSpeed.isHittable { app.swipeUp() }
         XCTAssertTrue(photoSpeed.waitForExistence(timeout: 10))
@@ -520,58 +541,52 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(duplicate.isHittable)
         XCTAssertTrue(app.buttons["native-editor-split-cut"].exists)
         XCTAssertTrue(app.buttons["native-editor-split-replace"].exists)
+        XCTAssertFalse(app.buttons["native-editor-split-create-2"].exists, "Split lives only in the tool rail, never in Adjust")
+        XCTAssertFalse(app.buttons["native-editor-split-create-3"].exists)
         duplicate.tap()
         app.buttons["native-editor-inspector-done"].tap()
         let timeline = app.descendants(matching: .any)["native-editor-timeline-content"].firstMatch
         XCTAssertTrue((timeline.value as? String)?.contains("of 0:10.0") == true)
     }
 
-    func testSplitScreenCreationKeepsOrdinaryClipControlsAndPanelRows() {
+    func testSplitToolCreatesFillsAndLaysOutThreePanels() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-split-screen"]
         app.launch()
         let clip = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
         XCTAssertTrue(clip.waitForExistence(timeout: 20))
         clip.tap()
+        // Adjust carries no split creation or layout controls; the tool rail is the one way in.
         app.buttons["native-editor-adjust"].tap()
-        let create = app.buttons["native-editor-split-create-2"]
-        for _ in 0..<5 where !create.isHittable { app.swipeUp() }
-        XCTAssertTrue(create.waitForExistence(timeout: 5))
-        create.tap()
+        XCTAssertTrue(app.buttons["native-editor-inspector-done"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["native-editor-split-create-2"].exists)
+        XCTAssertFalse(app.segmentedControls["native-editor-split-count"].exists)
+        XCTAssertFalse(app.sliders["native-editor-split-gutter"].exists)
+        app.buttons["native-editor-inspector-done"].tap()
+        createSplit(panels: 2, in: app)
+        fillEmptyPanel("Bottom", withFootage: "Clip 1", in: app)
         let count = app.segmentedControls["native-editor-split-count"]
         XCTAssertTrue(count.waitForExistence(timeout: 5))
+        XCTAssertTrue(count.buttons["2 panels"].isSelected)
         count.buttons["3 panels"].tap()
+        // The third panel arrives empty and the panel asks for its footage.
+        fillEmptyPanel("Bottom", withFootage: "Clip 1", in: app)
+        XCTAssertTrue(count.waitForExistence(timeout: 5))
         XCTAssertTrue(count.buttons["3 panels"].isSelected)
-        let height = app.sliders["native-editor-split-weight-0"]
-        for _ in 0..<5 where !height.isHittable { app.swipeUp() }
-        XCTAssertTrue(height.isHittable)
-        height.adjust(toNormalizedSliderPosition: 0.7)
+        let layout = app.buttons["native-editor-split-layout-toggle"]
+        layout.tap()
         let gutter = app.sliders["native-editor-split-gutter"]
-        for _ in 0..<5 where !gutter.isHittable { app.swipeUp() }
-        XCTAssertTrue(gutter.isHittable)
+        XCTAssertTrue(gutter.waitForExistence(timeout: 5))
         gutter.adjust(toNormalizedSliderPosition: 0.5)
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-split-background"].firstMatch.exists)
+        XCTAssertTrue(app.buttons["native-editor-split-remove"].exists)
+        app.buttons["native-editor-split-done"].tap()
+        selectTimelineClip(2, in: app)
+        app.buttons["native-editor-adjust"].tap()
         let crop = app.buttons["native-editor-footage-crop"]
         for _ in 0..<5 where !crop.isHittable { app.swipeUp() }
         XCTAssertTrue(crop.isHittable)
-        app.buttons["native-editor-inspector-done"].tap()
-        for title in ["Top", "Middle", "Bottom"] {
-            XCTAssertTrue(app.staticTexts["native-editor-lane-label-split-" + title.lowercased()].waitForExistence(timeout: 5))
-        }
-        selectTimelineClip(2, in: app)
-        app.buttons["native-editor-adjust"].tap()
-        let position = app.segmentedControls["native-editor-split-position"]
-        for _ in 0..<5 where !position.isHittable { app.swipeUp() }
-        XCTAssertTrue(app.segmentedControls["native-editor-split-position"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.segmentedControls["native-editor-split-position"].buttons["Middle"].isSelected)
-        app.segmentedControls["native-editor-split-position"].buttons["Top"].tap()
-        XCTAssertTrue(app.segmentedControls["native-editor-split-position"].buttons["Top"].isSelected)
-        let replace = app.buttons["native-editor-split-replace"]
-        for _ in 0..<8 where !replace.isHittable { app.swipeUp() }
-        XCTAssertTrue(replace.isHittable)
-        replace.tap()
-        XCTAssertTrue(app.buttons["Clip 2"].waitForExistence(timeout: 5))
-        app.buttons["Clip 2"].tap()
+        replaceFootage(withSource: "Clip 2", in: app)
         let source = app.descendants(matching: .any)["native-editor-split-source"].firstMatch
         let replaced = NSPredicate { _, _ in source.label == "Footage, Clip 2" }
         expectation(for: replaced, evaluatedWith: source)
@@ -1424,6 +1439,8 @@ final class NativeEditorInspectorUITests: XCTestCase {
     func testSourcePreviewTextCreationAndAnimations() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-text"]
+        // Looping Animation-tab card previews keep the app from idling, so every query there waits on them.
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
         app.launch()
         let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
         XCTAssertTrue(preview.waitForExistence(timeout: 8))

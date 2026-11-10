@@ -542,6 +542,7 @@ private struct CreationWorkspaceView: View {
     @State private var transcriptIsFresh = true
     @StateObject private var responsePresentation = ChatResponsePresentation()
     @Environment(\.scenePhase) private var scenePhase
+    @ObservedObject private var reachability = NetworkReachability.shared
     @State private var pendingTurnSubmission: ChatTurnSubmissionIdentity?
     @State private var sendReceipt: ChatSendReceipt?
     @State private var approval: ApprovalSnapshot?
@@ -1793,9 +1794,38 @@ private struct CreationWorkspaceView: View {
             isChoosingFormat = false
             return
         }
+        // The flight the chat started while it was idle is the creator's from here on.
+        editorSession.claimWarm()
+        Perf.begin("editor.tap.toFrame")
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) { showsResult = true }
+    }
+
+    /// Whether the chat may prepare its editor now. The value is the `.task(id:)` identity, so the warm-up restarts only
+    /// when the job, the variant or the permission changes, never on a chat poll.
+    private var editorWarmPlan: EditorWarmPlan {
+        var warmable = true
+        #if DEBUG
+        warmable = ProcessInfo.processInfo.environment["KRIA_EDITOR_WARM_DISABLED"] != "1"
+        #endif
+        return EditorWarmPlan(project: currentProject, facts: .init(
+            videoIsReady: currentProject.status == .ready && warmable, formatIsKnown: isFormatKnown,
+            isSlidePost: isSlidePostProject, canOpenVideoEditor: canOpenVideoEditor,
+            sceneIsActive: scenePhase == .active, chatIsIdle: !isSending && !isActing && !isThinking,
+            isOnline: reachability.isOnline, isLowDataMode: reachability.isConstrained))
+    }
+
+    /// Prepares the editor (variant, draft, sources, composition) while the creator reads the chat, so the tap finds it
+    /// loaded. A load that fails leaves the editor as it was: the tap opens it the way it always has.
+    private func warmEditor() async {
+        let plan = editorWarmPlan
+        guard plan.isWarmable, !showsResult else { editorSession.cancelWarm(); return }
+        // Let the chat finish drawing and reading before competing with it; a plan that flips back cancels this sleep.
+        try? await Task.sleep(for: EditorWarmPlan.settleDelay)
+        guard !Task.isCancelled else { return }
+        await editorSession.openOrWarm(project: currentProject, libraryJobID: nil, api: model.api,
+                                       deviceRenders: model.deviceRenders, uploads: model.uploads, intent: .warm)
     }
 
     private func dismissEditor() {
@@ -2042,6 +2072,11 @@ private struct CreationWorkspaceView: View {
             await capabilities
         }
         .task(id: suggestionFetchKey) { await loadSuggestions() }
+        .task(id: editorWarmPlan) { await warmEditor() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+            editorSession.releaseWarmForMemoryPressure()
+        }
+        .onDisappear { editorSession.cancelWarm() }
         // An editor Save changes the Job without a new thread revision, so cards built on the old edit are asked about again.
         .onChange(of: editorSession.saveState) { old, new in
             if case .saving = old, new == .saved || new == .previewPending { suggestionLedger.requestRefresh() }
