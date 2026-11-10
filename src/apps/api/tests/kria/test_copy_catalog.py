@@ -285,12 +285,21 @@ def _sources_at(rev: str) -> dict[str, str]:
 
 
 def _pair_counts(result: Any) -> Counter:
-    return Counter((p.file, p.kind, p.en, p.tr) for p in result.pairs)
+    # Not the kind: a conditional split into one say() per branch is the same sentence pair.
+    return Counter((p.file, p.en, p.tr) for p in result.pairs)
+
+
+# Pairs the branch adds on purpose: copy that picked Turkish outside say() (``language == "tr"``
+# branches, English-keyed ``*_TR`` tables, concatenations, f-strings) now routed through it so a
+# catalog language reaches it (KRI-1362). Byte-identical English/Turkish is pinned per builder in
+# test_copy_routing.py. Once merged, the merge base holds them and this list matches nothing.
+_ROUTED_PAIRS = _FIXTURES / "copy_routed_pairs.json"
 
 
 def test_codemod_kept_every_en_tr_pair() -> None:
     """The (en, tr) pairs at the merge base, f-strings converted by the codemod's own function,
-    are exactly HEAD's pairs: the template rewrite changed no sentence."""
+    are all still HEAD's pairs: the template rewrite changed no sentence. HEAD may only add the
+    pinned routed pairs."""
     codemod = _load_script("say_templates_codemod")
     base = _sources_at(_merge_base())
     converted = {}
@@ -302,8 +311,10 @@ def test_codemod_kept_every_en_tr_pair() -> None:
     before = _pair_counts(build.harvest(converted))
     after = _pair_counts(_harvest())
     assert {k: v for k, v in (before - after).items()} == {}
-    assert {k: v for k, v in (after - before).items()} == {}
-    assert {(en, tr) for _f, _k, en, tr in before} == {(en, tr) for _f, _k, en, tr in after}
+    routed = {tuple(row) for row in _json(_ROUTED_PAIRS)["pairs"]}
+    added = set(after - before)
+    assert added - routed == set(), "new pairs: route copy through say() or pin them"
+    assert {(en, tr) for _f, en, tr in before} <= {(en, tr) for _f, en, tr in after}
 
 
 # ---------------------------------------------------------------- (d) pseudo language

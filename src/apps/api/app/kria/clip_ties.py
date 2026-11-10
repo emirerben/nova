@@ -133,9 +133,10 @@ def _question_text(asked: Sequence[tuple[str, int]]) -> str:
             label=label,
         )
     shown = ", ".join(f'"{label}"' for label, _count in asked[:4])
-    more = say(
-        en=f" and {len(asked) - 4} more" if len(asked) > 4 else "",
-        tr=f" ve {len(asked) - 4} tane daha" if len(asked) > 4 else "",
+    more = (
+        say(en=" and {count} more", tr=" ve {count} tane daha", count=len(asked) - 4)
+        if len(asked) > 4
+        else ""
     )
     return say(
         en=(

@@ -150,7 +150,11 @@ def _dump(node: ast.AST) -> str:
 
 
 def _is_say(node: ast.AST) -> bool:
-    return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "say"
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "say"
+    )
 
 
 def _kw(call: ast.Call, name: str) -> ast.AST | None:
@@ -164,15 +168,21 @@ class Module:
     tree: ast.Module
     assigns: dict[str, list[ast.AST]] = field(default_factory=dict)
     imports: dict[str, tuple[str, str]] = field(default_factory=dict)
-    defs: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = field(default_factory=dict)
+    defs: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = field(
+        default_factory=dict
+    )
     # entries added after a dict is built: ``T[K] = V`` / ``T.update({...})`` at module level;
     # (key node, value node, line), key None when the entry cannot be read
-    added: dict[str, list[tuple[ast.AST | None, ast.AST | None, int]]] = field(default_factory=dict)
+    added: dict[str, list[tuple[ast.AST | None, ast.AST | None, int]]] = field(
+        default_factory=dict
+    )
 
     @classmethod
     def parse(cls, rel: str, text: str) -> Module:
         mod = cls(rel=rel, name=module_name(rel), tree=ast.parse(text))
-        package = mod.name if rel.endswith("__init__.py") else mod.name.rpartition(".")[0]
+        package = (
+            mod.name if rel.endswith("__init__.py") else mod.name.rpartition(".")[0]
+        )
         for node in mod.tree.body:
             if isinstance(node, ast.Assign):
                 for target in node.targets:
@@ -185,7 +195,9 @@ class Module:
                 mod.defs[node.name] = node
             if isinstance(node, ast.Assign):
                 for target in node.targets:
-                    if isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name):
+                    if isinstance(target, ast.Subscript) and isinstance(
+                        target.value, ast.Name
+                    ):
                         rows = mod.added.setdefault(target.value.id, [])
                         rows.append((target.slice, node.value, node.lineno))
             elif (
@@ -197,7 +209,11 @@ class Module:
             ):
                 rows = mod.added.setdefault(node.value.func.value.id, [])
                 args = node.value.args
-                if len(args) == 1 and isinstance(args[0], ast.Dict) and not node.value.keywords:
+                if (
+                    len(args) == 1
+                    and isinstance(args[0], ast.Dict)
+                    and not node.value.keywords
+                ):
                     for key, value in zip(args[0].keys, args[0].values, strict=True):
                         rows.append((key, value, (key or value).lineno))
                 else:
@@ -207,12 +223,16 @@ class Module:
                 source = node.module or ""
                 if node.level:
                     base = package.split(".")
-                    base = base[: len(base) - (node.level - 1)] if node.level > 1 else base
+                    base = (
+                        base[: len(base) - (node.level - 1)] if node.level > 1 else base
+                    )
                     source = ".".join([*base, source] if source else base)
                 if not source.startswith("app"):
                     continue
                 for alias in node.names:
-                    mod.imports.setdefault(alias.asname or alias.name, (source, alias.name))
+                    mod.imports.setdefault(
+                        alias.asname or alias.name, (source, alias.name)
+                    )
         return mod
 
 
@@ -279,6 +299,10 @@ class Index:
             value = values[0]
             if _dict_node(value) is not None:
                 return TableRef(mod.name, name)
+            wrapped = _dict_subclass_arg(mod, value)
+            if wrapped is not None:
+                # ``PHONE_GATE_MESSAGES = _PhoneGateMessages(_STORED)``: the stored table
+                return self.resolve_name(mod, wrapped, depth + 1)
             return self.const(value, mod, depth + 1)
         if name in mod.imports:
             source, original = mod.imports[name]
@@ -294,9 +318,24 @@ class Index:
         if isinstance(node, ast.Constant):
             return node.value
         if isinstance(node, ast.JoinedStr):
-            if all(isinstance(v, ast.Constant) for v in node.values):
-                return "".join(v.value for v in node.values)
-            raise Unresolved("f-string")
+            # ``f"... up to {MAX_CLIPS} of your clips ..."`` with module constants only: the text
+            # is the same on every turn, so it is a key (a spec or conversion is not followed).
+            parts = []
+            for v in node.values:
+                if isinstance(v, ast.Constant):
+                    parts.append(v.value)
+                    continue
+                plain = isinstance(v, ast.FormattedValue) and v.conversion == -1
+                if not (plain and v.format_spec is None):
+                    raise Unresolved("f-string")
+                try:
+                    value = self.const(v.value, mod, depth + 1)
+                except Unresolved:
+                    raise Unresolved("f-string") from None
+                if not isinstance(value, str | int) or isinstance(value, bool):
+                    raise Unresolved("f-string")
+                parts.append(str(value))
+            return "".join(parts)
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
             left = self.const(node.left, mod, depth + 1)
             right = self.const(node.right, mod, depth + 1)
@@ -310,14 +349,30 @@ class Index:
             if isinstance(value, TableRef):
                 raise Unresolved(f"{node.id} is a table")
             return value
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            # ``NOTICES["not_found"]``: one entry of a module table, by a constant key
+            table = self.resolve_name(mod, node.value.id, depth + 1)
+            if not isinstance(table, TableRef):
+                raise Unresolved(f"{node.value.id} is not a table")
+            key = self.const(node.slice, mod, depth + 1)
+            for k, v, _line, problem in self.table_entries(table, depth + 1):
+                if problem is None and k == key:
+                    return v
+            raise Unresolved(f"{node.value.id}[{key!r}] not found")
         raise Unresolved(f"{type(node).__name__} is not a constant")
 
-    def table_entries(self, ref: TableRef) -> list[tuple[object, object, int, str | None]]:
+    def table_entries(
+        self, ref: TableRef, depth: int = 0
+    ) -> list[tuple[object, object, int, str | None]]:
         """(key, value, line, problem) for each entry; problem is None when both resolved."""
+        if depth > MAX_DEPTH:
+            return [(None, None, 0, "table chain too deep")]
         mod = self.modules[ref.module]
         node = self.inline.get(ref) or _dict_node(mod.assigns[ref.name][0])
         assert node is not None
-        rows = [((k or v).lineno, k, v) for k, v in zip(node.keys, node.values, strict=True)]
+        rows = [
+            ((k or v).lineno, k, v) for k, v in zip(node.keys, node.values, strict=True)
+        ]
         if ref not in self.inline:
             rows += [(line, k, v) for k, v, line in mod.added.get(ref.name, [])]
         out = []
@@ -329,17 +384,36 @@ class Index:
                 out.append((None, None, line, "dict unpacking (**) entry"))
                 continue
             try:
-                k = self.const(key, mod)
+                k = self.const(key, mod, depth)
             except Unresolved as exc:
                 out.append((None, None, line, f"key not resolved: {exc}"))
                 continue
             try:
-                v = self.const(value, mod)
+                v = self.const(value, mod, depth)
             except Unresolved as exc:
                 out.append((k, None, line, f"value not resolved: {exc}"))
                 continue
             out.append((k, v, line, None))
         return out
+
+
+def _dict_subclass_arg(mod: Module, node: ast.AST) -> str | None:
+    """``_Table(NAME)`` where ``_Table`` is a ``dict`` subclass defined in ``mod``: ``NAME``."""
+    if not (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and len(node.args) == 1
+        and isinstance(node.args[0], ast.Name)
+        and not node.keywords
+    ):
+        return None
+    for cls in mod.tree.body:
+        if isinstance(cls, ast.ClassDef) and cls.name == node.func.id:
+            for base in cls.bases:
+                base = base.value if isinstance(base, ast.Subscript) else base
+                if isinstance(base, ast.Name) and base.id == "dict":
+                    return node.args[0].id
+    return None
 
 
 def _dict_node(node: ast.AST) -> ast.Dict | None:
@@ -364,7 +438,9 @@ def _dict_node(node: ast.AST) -> ast.Dict | None:
 class Scope:
     """One function's parameters and local bindings, worked out on first use."""
 
-    def __init__(self, func: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda) -> None:
+    def __init__(
+        self, func: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda
+    ) -> None:
         self.func = func
         self._data: tuple | None = None
 
@@ -394,7 +470,9 @@ def _own_nodes(func: ast.AST) -> Iterable[ast.AST]:
     while stack:
         node = stack.pop()
         yield node
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda | ast.ClassDef):
+        if isinstance(
+            node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda | ast.ClassDef
+        ):
             continue
         stack.extend(ast.iter_child_nodes(node))
 
@@ -403,7 +481,13 @@ def _bindings(func: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda) -> tupl
     args = func.args
     params = {
         a.arg
-        for a in (*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg)
+        for a in (
+            *args.posonlyargs,
+            *args.args,
+            *args.kwonlyargs,
+            args.vararg,
+            args.kwarg,
+        )
         if a is not None
     }
     assigns: dict[str, list[tuple[ast.AST, int | None]]] = defaultdict(list)
@@ -570,7 +654,9 @@ def _shape_name(name: str, ctx: Ctx) -> tuple:
             return ("param", scope, name, None)
         inner = Ctx(ctx.index, ctx.mod, ctx.scopes[: pos + 1], ctx.depth + 1)
         found = [
-            shape(value, inner) if unpack is None else _index(shape(value, inner), unpack)
+            shape(value, inner)
+            if unpack is None
+            else _index(shape(value, inner), unpack)
             for value, unpack in assigned
         ]
         if is_param:
@@ -661,7 +747,9 @@ class Harvester:
         ctx = Ctx(self.index, mod, scopes)
         self._pair(mod, call.lineno, shape(en, ctx), shape(tr, ctx), "say", _dump(en))
 
-    def _pair(self, mod: Module, line: int, es: tuple, ts: tuple, via: str, en_dump: str) -> None:
+    def _pair(
+        self, mod: Module, line: int, es: tuple, ts: tuple, via: str, en_dump: str
+    ) -> None:
         # ``say(en=reason, tr=_REASON_TR.get(reason, reason))``: the table is keyed by English
         if ts[0] == "lookup" and ts[4] is None and ts[2] == en_dump:
             self._use_table(ts[1])
@@ -673,7 +761,9 @@ class Harvester:
         if not self._pair_shapes(mod, line, es, ts, via):
             self._unpaired_tables(mod, line, es, ts, en_dump)
 
-    def _pair_shapes(self, mod: Module, line: int, es: tuple, ts: tuple, via: str) -> bool:
+    def _pair_shapes(
+        self, mod: Module, line: int, es: tuple, ts: tuple, via: str
+    ) -> bool:
         """Harvest what pairs up; False (and a skip) when the call does not pair at all."""
         if es[0] == "lit" and ts[0] == "lit":
             self._add_lit(mod, line, es, ts, via)
@@ -742,7 +832,9 @@ class Harvester:
                 self._add_lit(mod, line, en_default, ts[3], via)
         return True
 
-    def _unpaired_tables(self, mod: Module, line: int, es: tuple, ts: tuple, en_dump: str) -> None:
+    def _unpaired_tables(
+        self, mod: Module, line: int, es: tuple, ts: tuple, en_dump: str
+    ) -> None:
         """A table whose Turkish reaches this say() but whose English side does not resolve
         (``tr=turkish or english`` with ``turkish = _X_TR.get(code)`` rebound later)."""
         tr_tables = {lk[1] for lk in _lookups(ts)} - {lk[1] for lk in _lookups(es)}
@@ -787,7 +879,9 @@ class Harvester:
             "pairs": count,
         }
 
-    def _table_parallel(self, en_refs: list[tuple[TableRef, int | None]], tr_ref: TableRef) -> None:
+    def _table_parallel(
+        self, en_refs: list[tuple[TableRef, int | None]], tr_ref: TableRef
+    ) -> None:
         done_key = ("par", tuple(en_refs), tr_ref)
         if done_key in self._tables_done:
             return
@@ -802,7 +896,9 @@ class Harvester:
                     self._skip(en_mod, line, f"table {en_ref.name}: {problem}")
                     continue
                 if en_index is not None:
-                    ok = isinstance(value, tuple) and -len(value) <= en_index < len(value)
+                    ok = isinstance(value, tuple) and -len(value) <= en_index < len(
+                        value
+                    )
                     value = value[en_index] if ok else None
                 en_rows.setdefault(key, (value, en_ref, en_index))
                 en_lines.setdefault(key, (en_mod, line))
@@ -814,7 +910,11 @@ class Harvester:
                 continue
             tr_keys.add(key)
             if key not in en_rows:
-                self._skip(tr_mod, line, f"table {tr_ref.name}: key {key!r} has no English entry")
+                self._skip(
+                    tr_mod,
+                    line,
+                    f"table {tr_ref.name}: key {key!r} has no English entry",
+                )
                 continue
             en_text, en_ref, en_index = en_rows[key]
             if not (isinstance(en_text, str) and isinstance(value, str)):
@@ -833,7 +933,11 @@ class Harvester:
             count += 1
         for key, (en_mod, line) in en_lines.items():
             if key not in tr_keys:
-                self._skip(en_mod, line, f"table {tr_ref.name}: key {key!r} has no Turkish entry")
+                self._skip(
+                    en_mod,
+                    line,
+                    f"table {tr_ref.name}: key {key!r} has no Turkish entry",
+                )
         self.out.tables[f"{tr_ref.module}.{tr_ref.name}"] = {
             "kind": "table_parallel",
             "english_tables": [f"{r.module}.{r.name}" for r, _i in en_refs],
@@ -854,13 +958,24 @@ class Harvester:
             if not ok or not (
                 isinstance(value[en_index], str) and isinstance(value[tr_index], str)
             ):
-                self._skip(mod, line, f"table {ref.name}: value is not an (en, tr) tuple")
+                self._skip(
+                    mod, line, f"table {ref.name}: value is not an (en, tr) tuple"
+                )
                 continue
             if not value[en_index]:
                 self._skip(mod, line, "empty English text")
                 continue
             origin = ("pairs", ref.module, ref.name, key, en_index, tr_index)
-            self._add(Pair(value[en_index], value[tr_index], "table_pairs", mod.rel, line, origin))
+            self._add(
+                Pair(
+                    value[en_index],
+                    value[tr_index],
+                    "table_pairs",
+                    mod.rel,
+                    line,
+                    origin,
+                )
+            )
             count += 1
         self.out.tables[f"{ref.module}.{ref.name}"] = {
             "kind": "table_pairs",
@@ -882,7 +997,12 @@ class Harvester:
                     continue
                 users = sorted(_name_users(mod).get(name, ()))
                 self.out.excluded_tables.append(
-                    {"table": full, "file": mod.rel, "line": values[0].lineno, "used_in": users}
+                    {
+                        "table": full,
+                        "file": mod.rel,
+                        "line": values[0].lineno,
+                        "used_in": users,
+                    }
                 )
 
     # wrappers -------------------------------------------------------
@@ -924,7 +1044,11 @@ class Harvester:
         target: tuple[str, str],
         handled: set[tuple],
     ) -> None:
-        todo = [spec for spec in self._wrapper_keys[target] if (id(call), spec) not in handled]
+        todo = [
+            spec
+            for spec in self._wrapper_keys[target]
+            if (id(call), spec) not in handled
+        ]
         if not todo:
             return
         first = not any(h[0] == id(call) for h in handled)
@@ -932,45 +1056,72 @@ class Harvester:
         func = self.index.modules[target[0]].defs[target[1]]
         positional = [a.arg for a in (*func.args.posonlyargs, *func.args.args)]
         defaults = dict(
-            zip(positional[len(positional) - len(func.args.defaults) :], func.args.defaults)
+            zip(
+                positional[len(positional) - len(func.args.defaults) :],
+                func.args.defaults,
+            )
         )
         defaults.update(
             {
                 a.arg: d
-                for a, d in zip(func.args.kwonlyargs, func.args.kw_defaults, strict=True)
+                for a, d in zip(
+                    func.args.kwonlyargs, func.args.kw_defaults, strict=True
+                )
                 if d is not None
             }
         )
         if first:
             self.out.wrappers[f"{target[0]}.{target[1]}"]["calls"] += 1
-        if any(isinstance(a, ast.Starred) for a in call.args) or any(
+        # ``**values`` beside explicit en/tr arguments is fine (``say_in(lang, en=en, tr=tr,
+        # **values)``); an en/tr that could only come through ``*args``/``**kwargs`` is not.
+        spread = any(isinstance(a, ast.Starred) for a in call.args) or any(
             k.arg is None for k in call.keywords
-        ):
-            self._skip(mod, call.lineno, f"call to wrapper {target[1]}() with *args/**kwargs")
-            return
+        )
 
-        def arg(spec: tuple) -> tuple:
-            param, index = spec
+        def arg_node(spec: tuple) -> tuple[ast.AST | None, Ctx]:
+            param, _index_ = spec
             node = _kw(call, param)
             ctx = Ctx(self.index, mod, scopes)
-            if node is None and param in positional and positional.index(param) < len(call.args):
+            if (
+                node is None
+                and param in positional
+                and positional.index(param) < len(call.args)
+            ):
                 node = call.args[positional.index(param)]
-            if node is None and param in defaults:
-                node, ctx = defaults[param], Ctx(self.index, self.index.modules[target[0]], [])
+            if node is None and param in defaults and not spread:
+                node, ctx = (
+                    defaults[param],
+                    Ctx(self.index, self.index.modules[target[0]], []),
+                )
+            return node, ctx
+
+        def arg(spec: tuple) -> tuple:
+            node, ctx = arg_node(spec)
+            if node is None and spread:
+                return ("unknown", f"call to wrapper {target[1]}() with *args/**kwargs")
             if node is None:
-                return ("unknown", f"no argument for {param}")
+                return ("unknown", f"no argument for {spec[0]}")
             got = shape(node, ctx)
-            return got if index is None else _index(got, index)
+            return got if spec[1] is None else _index(got, spec[1])
 
         for en_spec, tr_spec in todo:
             es, ts = arg(en_spec), arg(tr_spec)
             if es[0] == "unknown" and es[1] == "constant NoneType":
                 continue  # an optional pair left out (``description=None``)
             if es[0] == "param" and ts[0] == "param" and es[1] is ts[1]:
-                self._register_wrapper(mod, es[1], (es[2], es[3]), (ts[2], ts[3]), call.lineno)
+                self._register_wrapper(
+                    mod, es[1], (es[2], es[3]), (ts[2], ts[3]), call.lineno
+                )
+                continue
+            en_node = arg_node(en_spec)[0] if en_spec[1] is None else None
+            en_dump = _dump(en_node) if en_node is not None else ""
+            # ``say_in(lang, en=op, tr=_OP_NAMES_TR[op])``: a table keyed by the English
+            if en_dump and ts[0] == "lookup" and ts[4] is None and ts[2] == en_dump:
+                self._use_table(ts[1])
+                self._table_english_keyed(ts[1])
                 continue
             if not self._pair_shapes(mod, call.lineno, es, ts, "wrapper"):
-                self._unpaired_tables(mod, call.lineno, es, ts, "")
+                self._unpaired_tables(mod, call.lineno, es, ts, en_dump)
 
     # bookkeeping ----------------------------------------------------
 
@@ -1072,7 +1223,9 @@ def _compares_tr(node: ast.Compare) -> bool:
             isinstance(o, ast.Constant) and o.value == "tr" for o in operands
         ):
             return True
-        if isinstance(op, ast.In | ast.NotIn) and isinstance(right, ast.Tuple | ast.List | ast.Set):
+        if isinstance(op, ast.In | ast.NotIn) and isinstance(
+            right, ast.Tuple | ast.List | ast.Set
+        ):
             if any(isinstance(e, ast.Constant) and e.value == "tr" for e in right.elts):
                 return True
     return False
@@ -1130,7 +1283,9 @@ def report(result: Harvest, sources: Mapping[str, str]) -> dict:
         "unpaired_tables": result.unpaired_tables,
         "wrappers": dict(sorted(result.wrappers.items())),
         "turkish_outside_say_count": len(branches),
-        "turkish_outside_say_by_file": dict(Counter(b["file"] for b in branches).most_common()),
+        "turkish_outside_say_by_file": dict(
+            Counter(b["file"] for b in branches).most_common()
+        ),
         "turkish_outside_say": branches,
     }
 
@@ -1139,14 +1294,20 @@ def _reason_family(reason: str) -> str:
     """A reason with its names taken out, for the counts ("table _X: key 'a' ..." -> "table _")."""
     reason = re.sub(r"'[^']*'|\"[^\"]*\"", "_", reason)
     return re.sub(
-        r"\b(name|parameter|table|key|call|wrapper|from|of|into) [^\s:]+", r"\1 _", reason
+        r"\b(name|parameter|table|key|call|wrapper|from|of|into) [^\s:]+",
+        r"\1 _",
+        reason,
     )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--check", action="store_true", help="exit 1 when tr.json is stale")
-    parser.add_argument("--report", type=Path, help="write the harvest report JSON here")
+    parser.add_argument(
+        "--check", action="store_true", help="exit 1 when tr.json is stale"
+    )
+    parser.add_argument(
+        "--report", type=Path, help="write the harvest report JSON here"
+    )
     args = parser.parse_args()
     sources = app_sources()
     result = harvest(sources)
@@ -1155,11 +1316,16 @@ def main() -> int:
     conflicts_text = render_conflicts(conflicts)
     if args.report:
         data = report(result, sources)
-        args.report.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", "utf-8")
+        args.report.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2) + "\n", "utf-8"
+        )
     if args.check:
         stale = [
             path.relative_to(REPO)
-            for path, text in ((TR_JSON, catalog_text), (CONFLICTS_JSON, conflicts_text))
+            for path, text in (
+                (TR_JSON, catalog_text),
+                (CONFLICTS_JSON, conflicts_text),
+            )
             if not path.is_file() or path.read_text(encoding="utf-8") != text
         ]
         if stale:

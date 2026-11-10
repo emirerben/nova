@@ -408,6 +408,18 @@ def say(*, en: str, tr: str, **values: object) -> str:
     return text.format(**values) if values else text
 
 
+def say_in(language: str | None, *, en: str, tr: str, **values: object) -> str:
+    """``say()`` for an explicit language (a stored chat language, a model input's language)
+    instead of the turn's bound one: Turkish for ``"tr"``, a catalog language behind its switch,
+    English otherwise. Unlike binding a turn, the reply-language kill switch is not consulted,
+    because callers already hold a language someone decided."""
+    token = _CURRENT.set(language if language in _supported() else None)
+    try:
+        return say(en=en, tr=tr, **values)
+    finally:
+        _CURRENT.reset(token)
+
+
 def prompt_language_line(language: str | None) -> str:
     """A model instruction naming the reply language; "" for English or unknown.
 

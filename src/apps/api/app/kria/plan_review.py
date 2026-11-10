@@ -300,7 +300,10 @@ def section_label(section: str, *, lang: str = "en") -> str:
 
 def scope_phrase(sections: list[str]) -> str:
     """Localized "captions and music" (language comes from the active reply language)."""
-    names = [say(en=section_label(s), tr=section_label(s, lang="tr")) for s in sections]
+    names = [
+        say(en=_SECTION_LABELS.get(s, (s, s))[0], tr=_SECTION_LABELS.get(s, (s, s))[1])
+        for s in sections
+    ]
     if not names:
         return ""
     if len(names) == 1:

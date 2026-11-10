@@ -225,12 +225,15 @@ def narration_note_parts(
         quote = _quote(seats.lines[seats.opening[0]])
         parts.append(
             say(
-                en=f"The clip where you say {quote} comes right after your opening shot."
-                if leads
-                else f"The clip where you say {quote} opens the video.",
-                tr=f"{quote} dediğin klip açılış çekiminden hemen sonra geliyor."
-                if leads
-                else f"{quote} dediğin klip videoyu açıyor.",
+                en="The clip where you say {quote} comes right after your opening shot.",
+                tr="{quote} dediğin klip açılış çekiminden hemen sonra geliyor.",
+                quote=quote,
+            )
+            if leads
+            else say(
+                en="The clip where you say {quote} opens the video.",
+                tr="{quote} dediğin klip videoyu açıyor.",
+                quote=quote,
             )
         )
     sign_off = next(
@@ -247,12 +250,15 @@ def narration_note_parts(
         quote = _quote(seats.lines[sign_off])
         parts.append(
             say(
-                en=f"The clip where you say {quote} comes right before your last shot."
-                if ends
-                else f"The clip where you say {quote} closes the video.",
-                tr=f"{quote} dediğin klip son çekiminden hemen önce geliyor."
-                if ends
-                else f"{quote} dediğin klip videoyu kapatıyor.",
+                en="The clip where you say {quote} comes right before your last shot.",
+                tr="{quote} dediğin klip son çekiminden hemen önce geliyor.",
+                quote=quote,
+            )
+            if ends
+            else say(
+                en="The clip where you say {quote} closes the video.",
+                tr="{quote} dediğin klip videoyu kapatıyor.",
+                quote=quote,
             )
         )
     closing = seats.order[-1] if seats.order else None

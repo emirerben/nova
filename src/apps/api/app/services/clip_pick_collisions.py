@@ -215,9 +215,10 @@ def _question_text(labels: list[tuple[str, str]]) -> str:
             other=other,
         )
     shown = ", ".join(f'"{asked}"' for asked, _other in labels[:4])
-    more = say(
-        en=f" and {len(labels) - 4} more" if len(labels) > 4 else "",
-        tr=f" ve {len(labels) - 4} tane daha" if len(labels) > 4 else "",
+    more = (
+        say(en=" and {count} more", tr=" ve {count} tane daha", count=len(labels) - 4)
+        if len(labels) > 4
+        else ""
     )
     return say(
         en=(

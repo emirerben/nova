@@ -209,6 +209,7 @@ from app.services.creative_copy_decisions import (
     CreativeCopyState,
     authorship_question,
     bind_approved_copy,
+    chat_button_language,
     creator_quoted,
     fold_creative_copy,
     localize_question,
@@ -5262,7 +5263,7 @@ def _creative_copy_turn(
         )
     # KRI-520: a Turkish chat gets Turkish option labels whatever language the wording is
     # in (English labels stay as aliases, so typed English answers still match).
-    localize_question(question, "tr" if current_reply_language() == "tr" else decision.language)
+    localize_question(question, chat_button_language() or decision.language)
     return PlannedKriaTurn(
         plan=KriaTurnPlan(
             mode="respond",
@@ -6014,9 +6015,9 @@ async def _gate_unresolved_choices(
                     target=state.target, dependency_digest=media_digest(planned.media_snapshot)
                 )
             )
-            if current_reply_language() == "tr":
+            if (button_language := chat_button_language()) is not None:
                 # KRI-520: English option labels stay as aliases.
-                localize_question(question, "tr")
+                localize_question(question, button_language)
             message = (
                 say(
                     en="“{state_candidate}” — does this wording work?",
@@ -6342,8 +6343,8 @@ async def _gate_unresolved_choices(
                 target="opening_title",
                 dependency_digest=media_digest(planned.media_snapshot),
             )
-            if current_reply_language() == "tr":
-                localize_question(title_question, "tr")
+            if (button_language := chat_button_language()) is not None:
+                localize_question(title_question, button_language)
             return replace(
                 planned,
                 plan=KriaTurnPlan(

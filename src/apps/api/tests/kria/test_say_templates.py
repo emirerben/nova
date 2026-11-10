@@ -31,8 +31,12 @@ tests keep (1), (3), (5) and (6) true for every ``say()`` in ``app/`` from now o
 from __future__ import annotations
 
 import ast
+import importlib.util
 import string
+import sys
+from functools import cache
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -41,6 +45,14 @@ from app.kria import copy_catalog
 from app.kria.reply_language import reply_language_for, say
 
 _APP = Path(__file__).resolve().parents[2] / "app"
+_BUILD = _APP.parents[3] / "scripts" / "kria" / "build_copy_catalog.py"
+
+# Calls that pick copy like ``say()``: ``say_in(language, en=..., tr=..., **values)`` for an
+# explicit language, and two module wrappers that forward their en/tr (and values) to it.
+_SAY_FUNCTIONS = frozenset({"say", "say_in"})
+_SAY_WRAPPERS = frozenset(
+    {("agents/clip_intent_planner.py", "_copy"), ("services/song_order.py", "_stand_in")}
+)
 
 # say() calls that still build en/tr with f-strings, by (module, enclosing function). Each one's
 # en or tr is not a plain literal (a conditional, a call) or holds a nested f-string, so the
@@ -74,13 +86,55 @@ def _say_calls() -> list[tuple[str, str, ast.Call]]:
                 if (
                     isinstance(child, ast.Call)
                     and isinstance(child.func, ast.Name)
-                    and child.func.id == "say"
+                    and (child.func.id in _SAY_FUNCTIONS or (rel, child.func.id) in _SAY_WRAPPERS)
+                    and not _forwards(child)
                 ):
                     found.append((rel, name, child))
                 walk(child, name)
 
         walk(ast.parse(text), "<module>")
     return found
+
+
+def _forwards(call: ast.Call) -> bool:
+    """A wrapper's own ``say(en=en, tr=tr, **values)``: en/tr are its parameters (or halves of
+    a pair parameter), not copy, and the values come from its caller."""
+    sides = [k.value for k in call.keywords if k.arg in ("en", "tr")]
+    spread = any(k.arg is None for k in call.keywords)
+    return spread and len(sides) == 2 and not any(isinstance(v, ast.Constant) for v in sides)
+
+
+def _load_build() -> ModuleType:
+    name = "build_copy_catalog"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, _BUILD)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    return sys.modules[name]
+
+
+@cache
+def _index() -> object:
+    build = _load_build()
+    return build, build.Index(build.app_sources())
+
+
+def _text(where: str, node: ast.AST) -> str | None:
+    """A templated en/tr: a string literal, or a module constant (also imported) holding one."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name):
+        build, index = _index()
+        rel = "app/" + where.rsplit(":", 1)[0]
+        mod = index.modules[build.module_name(rel)]
+        try:
+            value = index.resolve_name(mod, node.id)
+        except build.Unresolved:
+            return None
+        return value if isinstance(value, str) else None
+    return None
 
 
 _CALLS = _say_calls()
@@ -133,11 +187,12 @@ def test_template_fields_match_the_values_passed(where: str, call: ast.Call) -> 
     assert None not in values, f"{where}: **kwargs hides which values a template gets"
     used: set[str] = set()
     for lang in ("en", "tr"):
-        node = _kw(call, lang)
-        assert isinstance(node, ast.Constant) and isinstance(node.value, str), (
-            f"{where}: templated {lang} must be a string literal (it is the catalog key)"
+        text = _text(where, _kw(call, lang))
+        assert text is not None, (
+            f"{where}: templated {lang} must be a string literal or a module constant "
+            "(it is the catalog key)"
         )
-        for name, _conv, spec in _fields(node.value):
+        for name, _conv, spec in _fields(text):
             assert name and name.isidentifier(), f"{where}: {lang} field {name!r} not a name"
             assert name in values, f"{where}: {lang} uses {{{name}}} but the call does not pass it"
             assert "{" not in (spec or ""), f"{where}: nested field in a format spec"
@@ -173,7 +228,7 @@ def test_every_template_formats(where: str, call: ast.Call) -> None:
     """(3, 5) str.format never raises KeyError/IndexError on a template say() fills."""
     values = {k.arg for k in call.keywords if k.arg not in ("en", "tr")}
     for lang in ("en", "tr"):
-        _formats(_kw(call, lang).value, values)
+        _formats(_text(where, _kw(call, lang)), values)
 
 
 def _as_fstring(template: str) -> str:
@@ -193,7 +248,7 @@ def test_str_format_gives_the_fstring_text(where: str, call: ast.Call) -> None:
     """(2, 3) Filling a template equals evaluating the f-string it replaced, for each value type."""
     values = {k.arg for k in call.keywords if k.arg not in ("en", "tr")}
     for lang in ("en", "tr"):
-        template = _kw(call, lang).value
+        template = _text(where, _kw(call, lang))
         source = _as_fstring(template)
         for dummy in ("x", 3, 1.5, ["a", "b"], None):
             env = dict.fromkeys(values, dummy)
@@ -263,3 +318,48 @@ def test_german_catalog_miss_falls_back_to_english(
     with reply_language_for("de"):
         assert say(en="Cut {n} clips", tr="{n} klip kesildi", n=3) == "Cut 3 clips"
         assert say(en="Done", tr="Tamam") == "Done"
+
+
+def _option_calls() -> list[tuple[str, ast.Call]]:
+    path = _APP / "services" / "choice_questions.py"
+    found = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_option"
+            and any(k.arg == "values" for k in node.keywords)
+        ):
+            found.append((f"services/choice_questions.py:{node.lineno}", node))
+    return found
+
+
+_OPTION_CALLS = _option_calls()
+
+
+def test_option_calls_with_values_are_scanned() -> None:
+    assert len(_OPTION_CALLS) >= 8
+
+
+@pytest.mark.parametrize(("where", "call"), _OPTION_CALLS, ids=[w for w, _ in _OPTION_CALLS])
+def test_option_templates_match_their_values(where: str, call: ast.Call) -> None:
+    """(1, 5) ``_option(label=(en, tr), description=(en, tr), values={...})``: every field in a
+    literal label/description has a value, and each value is used by some template."""
+    values_node = next(k.value for k in call.keywords if k.arg == "values")
+    assert isinstance(values_node, ast.Dict), f"{where}: values must be a dict literal"
+    names = {k.value for k in values_node.keys if isinstance(k, ast.Constant)}
+    assert len(names) == len(values_node.keys), f"{where}: values keys must be literals"
+    used: set[str] = set()
+    for arg in ("label", "description"):
+        pair = next((k.value for k in call.keywords if k.arg == arg), None)
+        if not isinstance(pair, ast.Tuple):
+            continue
+        for side in pair.elts:
+            if not (isinstance(side, ast.Constant) and isinstance(side.value, str)):
+                continue  # a template picked in a local (``natural_description``)
+            for name, _conv, _spec in _fields(side.value):
+                assert name in names, f"{where}: {{{name}}} has no value"
+                used.add(name)
+            _formats(side.value, names)
+    assert used <= names
+    assert used, f"{where}: values given but no literal template uses them"

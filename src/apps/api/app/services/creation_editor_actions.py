@@ -430,9 +430,10 @@ def _mixes_languages(*texts: str) -> bool:
     Validator messages and op change summaries are still English; a Turkish chat
     gets the generic Turkish sentence rather than a half-English one.
     """
-    if current_reply_language() != "tr":
+    chat = current_reply_language()
+    if chat in (None, "en"):
         return False
-    return any(detect_chat_language(text) != "tr" for text in texts)
+    return any(detect_chat_language(text) != chat for text in texts)
 
 
 def _applied_summary(changes: list[str]) -> str:

@@ -153,19 +153,19 @@ def unconfirmed_order_reason(names: Sequence[str] = ()) -> str:
     from app.kria.reply_language import say  # noqa: PLC0415
 
     quoted = ", ".join(f'"{name}"' for name in dict.fromkeys(_nfc(n) for n in names) if name)
+    if quoted:
+        return say(
+            en="You didn't say what order the clips in {quoted} should play in. "
+            "Tell me the order, or say any order is fine.",
+            tr="{quoted} içindeki kliplerin hangi sırayla oynayacağını söylemedin. "
+            "Sırayı yaz ya da herhangi bir sıranın olur olduğunu söyle.",
+            quoted=quoted,
+        )
     return say(
-        en=(
-            f"You didn't say what order the clips in {quoted} should play in. "
-            if quoted
-            else "You didn't say what order these clips should play in. "
-        )
-        + "Tell me the order, or say any order is fine.",
-        tr=(
-            f"{quoted} içindeki kliplerin hangi sırayla oynayacağını söylemedin. "
-            if quoted
-            else "Bu kliplerin hangi sırayla oynayacağını söylemedin. "
-        )
-        + "Sırayı yaz ya da herhangi bir sıranın olur olduğunu söyle.",
+        en="You didn't say what order these clips should play in. "
+        "Tell me the order, or say any order is fine.",
+        tr="Bu kliplerin hangi sırayla oynayacağını söylemedin. "
+        "Sırayı yaz ya da herhangi bir sıranın olur olduğunu söyle.",
     )
 
 

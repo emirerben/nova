@@ -690,7 +690,9 @@ def fold_moment_orders(events: Iterable[tuple[str, Any]]) -> MomentFold:
 
 def model_echo(language: str | None) -> str:
     """The neutral line models read for a ``moment_order`` answer."""
-    return MOMENT_ORDER_ANSWER_MESSAGE_TR if language == "tr" else MOMENT_ORDER_ANSWER_MESSAGE
+    from app.kria.reply_language import say_in  # noqa: PLC0415 - keeps this module import-light
+
+    return say_in(language, en=MOMENT_ORDER_ANSWER_MESSAGE, tr=MOMENT_ORDER_ANSWER_MESSAGE_TR)
 
 
 # -- the gate's decision -----------------------------------------------------------------------

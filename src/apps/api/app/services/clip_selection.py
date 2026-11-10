@@ -180,7 +180,9 @@ def category_label(intent: ClipIntent, *, creator_words: str | None = None) -> s
     searches by and the key an answer binds to) is never rewritten.
     """
     label = " ".join(intent.attribute.split()) or "these clips"
-    if creator_words and current_reply_language() == "tr" and detect_chat_language(label) == "en":
+    # KRI-1362: any non-English chat (Turkish, German behind its switch), not only Turkish.
+    chat = current_reply_language()
+    if creator_words and chat not in (None, "en") and detect_chat_language(label) == "en":
         return trim_at_word(" ".join(creator_words.split()), _LABEL_MAX) or label
     return label
 
@@ -307,9 +309,10 @@ def clip_question_text(categories: list[dict[str, Any]], *, only_video: bool = F
             labels_0=labels[0],
         )
     shown = ", ".join(f'"{label}"' for label in labels[:4])
-    more = say(
-        en=f" and {len(labels) - 4} more" if len(labels) > 4 else "",
-        tr=f" ve {len(labels) - 4} tane daha" if len(labels) > 4 else "",
+    more = (
+        say(en=" and {count} more", tr=" ve {count} tane daha", count=len(labels) - 4)
+        if len(labels) > 4
+        else ""
     )
     return say(
         en=(
@@ -352,9 +355,10 @@ def _not_in_the_video_text(labels: list[str]) -> str:
             labels_0=labels[0],
         )
     shown = ", ".join(f'"{label}"' for label in labels[:4])
-    more = say(
-        en=f" and {len(labels) - 4} more" if len(labels) > 4 else "",
-        tr=f" ve {len(labels) - 4} tane daha" if len(labels) > 4 else "",
+    more = (
+        say(en=" and {count} more", tr=" ve {count} tane daha", count=len(labels) - 4)
+        if len(labels) > 4
+        else ""
     )
     return say(
         en=(

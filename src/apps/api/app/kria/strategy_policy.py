@@ -25,7 +25,7 @@ something the creator asked for (KRI-594).
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from app.agents._schemas.creator_agent import (
@@ -51,7 +51,7 @@ from app.agents._schemas.creator_policy import (
     native_voiceover_only,
 )
 from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS, NARRATED_EDIT_FORMATS
-from app.kria.reply_language import current_reply_language, say
+from app.kria.reply_language import say
 from app.kria.voiceover_scope import lost_visual_asks, resolve_native_all_scope
 from app.pipeline.narrated_title import TITLE_MAX_CHARS
 from app.schemas.clip_intents import ClipIntent
@@ -333,40 +333,60 @@ _KNOWN_TR: dict[str, str] = {
     ),
 }
 _SHAPE_NAMES_TR = {"Day vlog": "Günlük vlog", "Single-hero": "Tek kahraman"}
-_KNOWN_TR_PATTERNS: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], str]], ...] = (
-    (
-        re.compile(r"Couldn't find \"(.+)\"'s photo/sticker; left it out\."),
-        lambda m: f'"{m.group(1)}" için fotoğraf ya da çıkartma bulamadım; koymadım.',
-    ),
-    (
-        re.compile(  # kri667: matches our own fixed English notice, not creator text
-            r"Full screen isn't available for this edit yet, so \"(.+)\" shows as a small card "
-            r"in the corner instead\."
-        ),
-        lambda m: (
-            f'Bu düzenlemede tam ekran henüz yok; "{m.group(1)}" köşede küçük bir kart olarak '
-            "çıkacak."
-        ),
-    ),
-    (
-        re.compile(r"(Day vlog|Single-hero) shape needs music; kept a regular montage\."),
-        lambda m: (
-            f"{_SHAPE_NAMES_TR[m.group(1)]} kurgusu için müzik gerekiyor; normal bir montaj yaptım."
-        ),
-    ),
-    (
-        re.compile(r"Reading this as a montage in the (day-vlog|single-hero) style\."),
-        lambda m: (
-            "Bunu "
-            + ("günlük vlog" if m.group(1) == "day-vlog" else "tek kahraman")
-            + " tarzında bir montaj olarak okudum."
-        ),
-    ),
-    (
-        re.compile(r"The requested licensed sound effect (.+) is unavailable\."),
-        lambda m: f"İstediğin lisanslı ses efekti ({m.group(1)}) yok.",
-    ),
+# Notices with a value in them, rebuilt as `say()` templates (KRI-1362) so a catalog language
+# finds them by their template; each English template refills to exactly the matched text.
+_PHOTO_STICKER_MISSING = re.compile(r"Couldn't find \"(.+)\"'s photo/sticker; left it out\.")
+_FULL_SCREEN_AS_CARD = re.compile(  # kri667: matches our own fixed English notice, not creator text
+    r"Full screen isn't available for this edit yet, so \"(.+)\" shows as a small card "
+    r"in the corner instead\."
 )
+_SHAPE_NEEDS_MUSIC = re.compile(
+    r"(Day vlog|Single-hero) shape needs music; kept a regular montage\."
+)
+_MONTAGE_STYLE = re.compile(r"Reading this as a montage in the (day-vlog|single-hero) style\.")
+_SFX_UNAVAILABLE = re.compile(r"The requested licensed sound effect (.+) is unavailable\.")
+
+
+def _localize_known_pattern(text: str) -> str | None:
+    if match := _PHOTO_STICKER_MISSING.fullmatch(text):
+        return say(
+            en="Couldn't find \"{name}\"'s photo/sticker; left it out.",
+            tr='"{name}" için fotoğraf ya da çıkartma bulamadım; koymadım.',
+            name=match.group(1),
+        )
+    if match := _FULL_SCREEN_AS_CARD.fullmatch(text):
+        return say(
+            en=(
+                'Full screen isn\'t available for this edit yet, so "{name}" shows as a small '
+                "card in the corner instead."
+            ),
+            tr='Bu düzenlemede tam ekran henüz yok; "{name}" köşede küçük bir kart olarak çıkacak.',
+            name=match.group(1),
+        )
+    if match := _SHAPE_NEEDS_MUSIC.fullmatch(text):
+        shape = match.group(1)
+        return say(
+            en="{shape} shape needs music; kept a regular montage.",
+            tr="{shape} kurgusu için müzik gerekiyor; normal bir montaj yaptım.",
+            shape=say(en=shape, tr=_SHAPE_NAMES_TR.get(shape, shape)),
+        )
+    if match := _MONTAGE_STYLE.fullmatch(text):
+        if match.group(1) == "day-vlog":
+            return say(
+                en="Reading this as a montage in the day-vlog style.",
+                tr="Bunu günlük vlog tarzında bir montaj olarak okudum.",
+            )
+        return say(
+            en="Reading this as a montage in the single-hero style.",
+            tr="Bunu tek kahraman tarzında bir montaj olarak okudum.",
+        )
+    if match := _SFX_UNAVAILABLE.fullmatch(text):
+        return say(
+            en="The requested licensed sound effect {name} is unavailable.",
+            tr="İstediğin lisanslı ses efekti ({name}) yok.",
+            name=match.group(1),
+        )
+    return None
 
 
 def localize_known_message(text: str) -> str:
@@ -374,16 +394,10 @@ def localize_known_message(text: str) -> str:
 
     English chats (and any text this table doesn't know) come back unchanged.
     """
-    if current_reply_language() != "tr":
-        return text
-    known = _KNOWN_TR.get(text)
-    if known is not None:
-        return known
-    for pattern, render in _KNOWN_TR_PATTERNS:
-        match = pattern.fullmatch(text)
-        if match is not None:
-            return render(match)
-    return text
+    if text in _KNOWN_TR:
+        return say(en=text, tr=_KNOWN_TR.get(text, text))
+    localized = _localize_known_pattern(text)
+    return text if localized is None else localized
 
 
 _USER_SONG_REFUSALS = {

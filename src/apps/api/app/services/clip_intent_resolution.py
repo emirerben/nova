@@ -870,9 +870,10 @@ _FOUND_SETTLES_OPS = frozenset({"group", "order", "include", "label", "caption"}
 def _found_rows_text(labels: list[str]) -> str:
     """The question for picker rows that come with the clips already found ticked."""
     shown = ", ".join(f'"{label}"' for label in labels[:4])
-    more = say(
-        en=f" and {len(labels) - 4} more" if len(labels) > 4 else "",
-        tr=f" ve {len(labels) - 4} tane daha" if len(labels) > 4 else "",
+    more = (
+        say(en=" and {count} more", tr=" ve {count} tane daha", count=len(labels) - 4)
+        if len(labels) > 4
+        else ""
     )
     return say(
         en=(
@@ -900,9 +901,10 @@ def _unfound_rows_text(labels: list[str]) -> str:
             tr="{shown} kliplerinde bulamadım. Onu gösteren klibe dokun ya da olmadığını söyle.",
             shown=shown,
         )
-    more = say(
-        en=f" and {len(labels) - 4} more" if len(labels) > 4 else "",
-        tr=f" ve {len(labels) - 4} tane daha" if len(labels) > 4 else "",
+    more = (
+        say(en=" and {count} more", tr=" ve {count} tane daha", count=len(labels) - 4)
+        if len(labels) > 4
+        else ""
     )
     return say(
         en=(
@@ -936,7 +938,8 @@ def _unfound_pin(
         intent.op == "order"
         and intent.position is not None
         and bool(matched)
-        and detect_chat_language(intent.attribute) != "tr"
+        # KRI-1362: only an English (or unclear) ask is judged against the English records.
+        and detect_chat_language(intent.attribute) in (None, "en")
         and pin_subject_unfound(intent.attribute, matched, records)
     )
 

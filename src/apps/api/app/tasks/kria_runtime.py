@@ -7057,13 +7057,13 @@ def _worker_copy(text: str | None) -> str | None:
     """
     if not text or not text.strip():
         return None
-    if current_reply_language() != "tr":
+    chat = current_reply_language()
+    if chat in (None, "en"):
         return text
     stored = text.strip()
-    turkish = _WORKER_TEXT_TR.get(stored)
-    if turkish is not None:
-        return turkish
-    return stored if detect_chat_language(stored) == "tr" else None
+    if stored in _WORKER_TEXT_TR:
+        return say(en=stored, tr=_WORKER_TEXT_TR.get(stored, stored))
+    return stored if detect_chat_language(stored) == chat else None
 
 
 _LAST_GOOD_STAYS = "Your last good version is still available."
@@ -7442,24 +7442,35 @@ _PHONE_GATE_MESSAGES_TR = {
 
 
 def _phone_gate_refusal_copy(reason: str) -> str:
-    from app.tasks.content_plan_build import PHONE_GATE_MESSAGES  # noqa: PLC0415
+    from app.tasks.content_plan_build import (  # noqa: PLC0415
+        PHONE_GATE_MESSAGES,
+        TALKING_MULTI_CLIP_COUNT_MESSAGE,
+    )
 
-    english = PHONE_GATE_MESSAGES.get(reason, (None, None))[1]
-    turkish = _PHONE_GATE_MESSAGES_TR.get(reason)
+    multi_clip = False
     if reason == "subtitled_clip_count_unsupported":
         from app.services.phone_rollout import (  # noqa: PLC0415
             TALKING_MULTI_CLIP_MAX_CLIPS,
             phone_talking_multi_clip_supported,
         )
 
-        if phone_talking_multi_clip_supported():
-            # KRI-719: the reason now means "more than the cap", not "not one".
-            turkish = (
-                "Kameraya konuşma videoları iPhone'unda en fazla "
-                f"{TALKING_MULTI_CLIP_MAX_CLIPS} klipten oluşturulur. Fazla klipleri kaldır "
-                "ve tekrar dene. Yedek bir düzenleme oluşturulmadı."
-            )
-    message = say(en=english or "", tr=turkish or english or "")
+        multi_clip = phone_talking_multi_clip_supported()
+    if multi_clip:
+        # KRI-719: the reason now means "more than the cap", not "not one".
+        message = say(
+            en=TALKING_MULTI_CLIP_COUNT_MESSAGE,
+            tr=(
+                "Kameraya konuşma videoları iPhone'unda en fazla {max_clips} klipten "
+                "oluşturulur. Fazla klipleri kaldır ve tekrar dene. Yedek bir düzenleme "
+                "oluşturulmadı."
+            ),
+            max_clips=TALKING_MULTI_CLIP_MAX_CLIPS,
+        )
+    elif reason in PHONE_GATE_MESSAGES and reason in _PHONE_GATE_MESSAGES_TR:
+        message = say(en=PHONE_GATE_MESSAGES[reason][1], tr=_PHONE_GATE_MESSAGES_TR[reason])
+    else:
+        # A reason with no Turkish twin shows its English line (a test pins the keys equal).
+        message = PHONE_GATE_MESSAGES.get(reason, ("", ""))[1]
     lead = message or say(
         en="That kind of edit isn't available for iPhone renders yet.",
         tr="Bu tür bir düzenleme iPhone'da henüz kullanılamıyor.",
@@ -8677,15 +8688,27 @@ def _job_failure_copy(failure_code: str | None, detail: str | None) -> str | Non
     A Turkish chat gets the Turkish line for the code. The job's own ``error_detail`` for
     the creator-facing codes is English-only text, so Turkish prefers the code's line.
     """
-    from app.tasks.content_plan_build import job_failure_message  # noqa: PLC0415
+    from app.tasks.content_plan_build import (  # noqa: PLC0415
+        DEFAULT_JOB_FAILURE_MESSAGE,
+        JOB_FAILURE_MESSAGES,
+        job_failure_message,  # noqa: PLC0415
+    )
 
     english = job_failure_message(failure_code, detail)
     if english is None:
         return None
-    return say(
-        en=english,
-        tr=_JOB_FAILURE_MESSAGES_TR.get(failure_code or "", _JOB_FAILURE_DEFAULT_TR),
-    )
+    code = failure_code or ""
+    # The code's own sentence and the default are catalog keys (KRI-1362); the creator-facing
+    # ``error_detail`` is free English text with no key, so German shows it as written.
+    if (
+        code in JOB_FAILURE_MESSAGES
+        and code in _JOB_FAILURE_MESSAGES_TR
+        and english == JOB_FAILURE_MESSAGES[code]
+    ):
+        return say(en=JOB_FAILURE_MESSAGES[code], tr=_JOB_FAILURE_MESSAGES_TR[code])
+    if code not in _JOB_FAILURE_MESSAGES_TR and english == DEFAULT_JOB_FAILURE_MESSAGE:
+        return say(en=DEFAULT_JOB_FAILURE_MESSAGE, tr=_JOB_FAILURE_DEFAULT_TR)
+    return say(en=english, tr=_JOB_FAILURE_MESSAGES_TR.get(code, _JOB_FAILURE_DEFAULT_TR))
 
 
 # The three variant ids every generative job renders; any other id is left out of the
@@ -8749,7 +8772,7 @@ def _localized_block_recovery(message: str, receipts: list[dict[str, Any]]) -> s
     alignment question (KRI-592, with or without receipts), is rebuilt; anything else
     shows as stored.
     """
-    if current_reply_language() != "tr":
+    if current_reply_language() in (None, "en"):
         return message
     from app.kria.brief_checks import (  # noqa: PLC0415
         NARRATED_ALIGNMENT_RECOVERY,

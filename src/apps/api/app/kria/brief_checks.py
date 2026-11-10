@@ -5267,7 +5267,7 @@ _FRAME_WORDS = {
 
 def _sb(text: str, suffix: str = ".") -> str:
     """A static background reason in the chat's language (its Turkish twin is in `_REASON_TR`)."""
-    return say(en=text + suffix, tr=_REASON_TR[text] + suffix)
+    return say(en=text, tr=_REASON_TR[text]) + suffix
 
 
 def _background_media_shown(fact: SpeakerBackgroundFact) -> int:
@@ -5740,16 +5740,15 @@ def _unshown_sentence(fact: SpeakerBackgroundFact) -> str | None:
     if named:
         parts.append(
             say(
-                en=(
-                    f"The recording for {named[0]} never shows."
-                    if len(named) == 1
-                    else f"The recordings for {_names_join(named)} never show."
-                ),
-                tr=(
-                    f"{named[0]} kaydı hiç görünmüyor."
-                    if len(named) == 1
-                    else f"{_names_join(named)} kayıtları hiç görünmüyor."
-                ),
+                en="The recording for {name} never shows.",
+                tr="{name} kaydı hiç görünmüyor.",
+                name=named[0],
+            )
+            if len(named) == 1
+            else say(
+                en="The recordings for {names} never show.",
+                tr="{names} kayıtları hiç görünmüyor.",
+                names=_names_join(named),
             )
         )
     if unnamed:
@@ -8160,8 +8159,9 @@ def _placement_reason(placements: Sequence[BeatFact]) -> str | None:
     titled = [b for b in placements if b.anchor == "title"]
     if titled:
         above = say(
-            en=_names_join([f'"{b.trigger}"' for b in titled]) + " shown above your title",
-            tr=_names_join([f'"{b.trigger}"' for b in titled]) + " başlığının üstünde çıkıyor",
+            en="{names} shown above your title",
+            tr="{names} başlığının üstünde çıkıyor",
+            names=_names_join([f'"{b.trigger}"' for b in titled]),
         )
         rest = _placement_reason([b for b in placements if b.anchor != "title"])
         return f"{above}; {rest}" if rest else above
@@ -8288,17 +8288,21 @@ def _timed_card_problem(card: TimedCardFact) -> str:
     reason = card.reason or ""
     if reason == "past_end":
         end = card.timeline_end_s
+        if end is not None:
+            return say(
+                en="{at} is past the end of the video ({end:.1f} s), so the small card of {name} "
+                "isn't shown",
+                tr="{at} videonun sonundan sonra ({end:.1f} sn), o yüzden {name} küçük kartı "
+                "gösterilmiyor",
+                at=at,
+                end=end,
+                name=name,
+            )
         return say(
-            en=(
-                f"{at} is past the end of the video"
-                + (f" ({end:.1f} s)" if end is not None else "")
-                + f", so the small card of {name} isn't shown"
-            ),
-            tr=(
-                f"{at} videonun sonundan sonra"
-                + (f" ({end:.1f} sn)" if end is not None else "")
-                + f", o yüzden {name} küçük kartı gösterilmiyor"
-            ),
+            en="{at} is past the end of the video, so the small card of {name} isn't shown",
+            tr="{at} videonun sonundan sonra, o yüzden {name} küçük kartı gösterilmiyor",
+            at=at,
+            name=name,
         )
     if reason == "face_collision":
         return say(
@@ -9307,16 +9311,19 @@ def speech_cleanup_review_note(
             joined_en += f" and {parts_en[-1]}"
         sentences = [
             say(
-                en=(
-                    f"Speech cleanup cut what it heard as {joined_en}"
-                    + (f" ({seconds:.1f} s)" if seconds is not None else "")
-                    + "."
-                ),
-                tr=(
-                    f"Konuşma temizliği duyduğu şu sesleri kesti: {', '.join(parts_tr)}"
-                    + (f" ({seconds:.1f} sn)".replace(".", ",") if seconds is not None else "")
-                    + "."
-                ),
+                en="Speech cleanup cut what it heard as {joined_en}.",
+                tr="Konuşma temizliği duyduğu şu sesleri kesti: {joined_tr}.",
+                joined_en=joined_en,
+                joined_tr=", ".join(parts_tr),
+            )
+            if seconds is None
+            else say(
+                en="Speech cleanup cut what it heard as {joined_en} ({seconds:.1f} s).",
+                tr="Konuşma temizliği duyduğu şu sesleri kesti: {joined_tr} ({seconds_tr} sn).",
+                joined_en=joined_en,
+                joined_tr=", ".join(parts_tr),
+                seconds=seconds,
+                seconds_tr=f"{seconds:.1f}".replace(".", ","),
             )
         ]
     if (
@@ -9919,11 +9926,13 @@ def _sound_toggle_needs_phone_montage() -> str:
 
 def _talking_cutaway_sound_not_here() -> str:
     """KRI-980: a multi-clip Talking edit's "turn a clip's sound on" while the lane is off."""
-    return say(
-        en="In a Talking edit the clips shown over your voice play without their own sound. "
-        + _sound_toggle_needs_phone_montage(),
-        tr="Konuşmalı düzenlemede sesinin üzerinde gösterilen klipler kendi sesi olmadan "
-        "oynar. " + _sound_toggle_needs_phone_montage(),
+    return (
+        say(
+            en="In a Talking edit the clips shown over your voice play without their own sound. ",
+            tr="Konuşmalı düzenlemede sesinin üzerinde gösterilen klipler kendi sesi olmadan "
+            "oynar. ",
+        )
+        + _sound_toggle_needs_phone_montage()
     )
 
 
@@ -12589,8 +12598,9 @@ def _requested_caption_language(req: BriefRequirement) -> str | None:
 
 
 def _language_name(code: str) -> str:
-    english, turkish = LANGUAGE_NAMES.get(code, (code.upper(), code.upper()))
-    return say(en=english, tr=turkish)
+    if code not in LANGUAGE_NAMES:
+        return code.upper()
+    return say(en=LANGUAGE_NAMES[code][0], tr=LANGUAGE_NAMES[code][1])
 
 
 def _keeps_spoken_languages(req: BriefRequirement) -> bool:
@@ -14126,9 +14136,14 @@ def _clip_numbers(positions: Sequence[int]) -> str:
     """[2, 3] -> "clips 2 and 3" / "2. ve 3. klipler"."""
     shown = [str(p) for p in positions]
     head, tail = shown[:-1], shown[-1]
+    if not head:
+        return say(en="clip {tail}", tr="{tail}. klip", tail=tail)
     return say(
-        en=f"clips {', '.join(head)} and {tail}" if head else f"clip {tail}",
-        tr=(f"{', '.join(f'{p}.' for p in head)} ve {tail}. klipler" if head else f"{tail}. klip"),
+        en="clips {head} and {tail}",
+        tr="{head_tr} ve {tail}. klipler",
+        head=", ".join(head),
+        head_tr=", ".join(f"{p}." for p in head),
+        tail=tail,
     )
 
 
@@ -15077,7 +15092,7 @@ def _unclear_clock(rows: Sequence[Mapping[str, Any]]) -> str:
     times = [
         _clock(float(row["start_s"])) for row in rows if isinstance(row.get("start_s"), int | float)
     ]
-    return say(en=" and ".join(dict.fromkeys(times)), tr=" ve ".join(dict.fromkeys(times)))
+    return say(en=" and ", tr=" ve ").join(dict.fromkeys(times))
 
 
 def _unclear_word_line(state: Mapping[str, Any]) -> str | None:
@@ -15110,12 +15125,17 @@ def _unclear_word_line(state: Mapping[str, Any]) -> str | None:
         # (an opening or speech cut moves the captions).
         parts.append(
             say(
-                en=f"{prefix} at {times} in the video"
-                if finished
-                else f"{prefix} around {times} in your clip",
-                tr=f"{_REASON_TR[prefix]} (videoda {times})"
-                if finished
-                else f"{_REASON_TR[prefix]} (klibinde yaklaşık {times})",
+                en="{prefix} at {times} in the video",
+                tr="{prefix} (videoda {times})",
+                prefix=_loc(prefix),
+                times=times,
+            )
+            if finished
+            else say(
+                en="{prefix} around {times} in your clip",
+                tr="{prefix} (klibinde yaklaşık {times})",
+                prefix=_loc(prefix),
+                times=times,
             )
         )
     for row in written:
@@ -15123,12 +15143,19 @@ def _unclear_word_line(state: Mapping[str, Any]) -> str | None:
         text, times = str(row.get("text") or ""), _unclear_clock([row])
         parts.append(
             say(
-                en=f"{prefix}, \u201c{text}\u201d, at {times} in the video"
-                if finished
-                else f"{prefix}, \u201c{text}\u201d, around {times} in your clip",
-                tr=f"{_REASON_TR[prefix]}: \u201c{text}\u201d (videoda {times})"
-                if finished
-                else f"{_REASON_TR[prefix]}: \u201c{text}\u201d (klibinde yaklaşık {times})",
+                en="{prefix}, \u201c{text}\u201d, at {times} in the video",
+                tr="{prefix}: \u201c{text}\u201d (videoda {times})",
+                prefix=_loc(prefix),
+                text=text,
+                times=times,
+            )
+            if finished
+            else say(
+                en="{prefix}, \u201c{text}\u201d, around {times} in your clip",
+                tr="{prefix}: \u201c{text}\u201d (klibinde yaklaşık {times})",
+                prefix=_loc(prefix),
+                text=text,
+                times=times,
             )
         )
     return "; ".join(parts) or None
@@ -16068,48 +16095,62 @@ _OUTCOME_REASON_TR = {
         "önce gruplamayı seçtin, her grup çektiğin sırada"
     ),
 }
-_OUTCOME_STRETCH_PREFIX_TR = (
-    ("you chose strictly chronological order, so ", "kesin kronolojik sırayı seçtin, o yüzden "),
-    ("clips stay in the order you filmed them, so ", "klipler çektiğin sırada kalıyor, o yüzden "),
-)
+# Keyed by the English prefix (KRI-1362: ``say`` looks a catalog language up by it).
+_OUTCOME_STRETCH_PREFIX_TR = {
+    "you chose strictly chronological order, so ": "kesin kronolojik sırayı seçtin, o yüzden ",
+    "clips stay in the order you filmed them, so ": "klipler çektiğin sırada kalıyor, o yüzden ",
+}
 _OUTCOME_STRETCHES = re.compile(r"^(.+) is in (\d+) stretches$")
 
 
 def _outcome_name(row: Mapping[str, Any]) -> str:
+    """The render's English name of a requested group/label/chapter, in the chat's language.
+
+    Each English template below refills to exactly the name it matched, so English is the
+    name unchanged; anything not matched (the creator's own words) is shown as written.
+    """
     name = str(row["name"])
-    if current_reply_language() != "tr":
-        return name
     op = row.get("op")
     if op == "order":
         position = str(row.get("position") or "")
         if position in _SPOT_TR and name.startswith(f"{position}: "):
-            return f"{_SPOT_TR[position]}: {name[len(position) + 2 :]}"
+            spot = say(en=position, tr=_SPOT_TR.get(position, position))
+            return f"{spot}: {name[len(position) + 2 :]}"
         if name == "the order you described":
-            return "tarif ettiğin sıra"
+            return say(en="the order you described", tr="tarif ettiğin sıra")
     elif op == "group" and name.startswith("group by "):
-        return f"gruplama: {name[len('group by ') :]}"
+        return say(en="group by {what}", tr="gruplama: {what}", what=name[len("group by ") :])
     elif op == "caption" and name.startswith("text for "):
-        return f"{name[len('text for ') :]} için yazı"
+        return say(en="text for {what}", tr="{what} için yazı", what=name[len("text for ") :])
     elif op == "label" and name.startswith("the ") and name.endswith(" name on its clips"):
-        return f"kliplerindeki {name[len('the ') : -len(' name on its clips')]} adı"
+        return say(
+            en="the {what} name on its clips",
+            tr="kliplerindeki {what} adı",
+            what=name[len("the ") : -len(" name on its clips")],
+        )
     return name
 
 
 def _outcome_reason(reason: str) -> str:
-    if current_reply_language() != "tr":
-        return reason
-    known = _OUTCOME_REASON_TR.get(reason)
-    if known is not None:
-        return known
-    for prefix, prefix_tr in _OUTCOME_STRETCH_PREFIX_TR:
+    if reason in _OUTCOME_REASON_TR:
+        return say(en=reason, tr=_OUTCOME_REASON_TR.get(reason, reason))
+    for prefix in _OUTCOME_STRETCH_PREFIX_TR:
         if reason.startswith(prefix):
             parts = []
             for part in reason[len(prefix) :].split("; "):
                 match = _OUTCOME_STRETCHES.match(part)
                 parts.append(
-                    f"{match.group(1)} {match.group(2)} parçaya bölünüyor" if match else part
+                    say(
+                        en="{what} is in {count} stretches",
+                        tr="{what} {count} parçaya bölünüyor",
+                        what=match.group(1),
+                        count=match.group(2),
+                    )
+                    if match
+                    else part
                 )
-            return prefix_tr + "; ".join(parts)
+            lead = say(en=prefix, tr=_OUTCOME_STRETCH_PREFIX_TR.get(prefix, prefix))
+            return lead + "; ".join(parts)
     return _loc(reason)
 
 
