@@ -1962,15 +1962,17 @@ class Settings(BaseSettings):
 
     speech_cleanup_slate_cut_enabled: bool = Field(
         default=False,
-        description="Speech cleanup also cuts a production slate that opens a take: the first "
-        'utterance, when it is only recording / rolling / countdown / mic-check talk ("okay, '
-        'we\'re recording", "tamam, kayıttayız", "three two one"), ends with a full stop, a '
-        "gap or a silence, lasts under 3 s and leaves at least 3 words "
-        "(`app/pipeline/speech_slate.py`; Çiğdem S2, docs/reviews/cigdem-s2-failure-modes.md). "
-        "It is cut like an abandoned take, so it also needs RETAKE_CUT_ENABLED and "
-        "SPEECH_CLEANUP_RETAKES_ENABLED. Default off: no span is added and every plan and "
-        "receipt is byte-identical to before. Kill switch: `fly secrets set "
-        "SPEECH_CLEANUP_SLATE_CUT_ENABLED=false --app nova-video` + api and worker restart.",
+        description="Speech cleanup also cuts off-script pre-roll that opens a take: the first "
+        'utterances, when every word in them is talk about the recording itself ("okay, '
+        'starting", "we\'re recording", "three two one", "testing, one two", "tamam, '
+        'kayıttayız", "başlıyorum"; cue words such as "is this on?" or "let\'s go" only before '
+        "a clear pause). A word with no production role keeps the utterance, so a real first "
+        "sentence is never cut (`app/pipeline/speech_slate.py`; KRI-1326, KRI-1348, "
+        "docs/reviews/kri-1348-preroll-failure-modes.md). It is cut like an abandoned take, so "
+        "it also needs RETAKE_CUT_ENABLED and SPEECH_CLEANUP_RETAKES_ENABLED. Default off: no "
+        "span is added and every plan and receipt is byte-identical to before. Kill switch: "
+        "`fly secrets set SPEECH_CLEANUP_SLATE_CUT_ENABLED=false --app nova-video` + api and "
+        "worker restart (the worker also runs preflight analysis).",
     )
 
     speech_cleanup_long_pauses_enabled: bool = Field(
@@ -2899,6 +2901,15 @@ class Settings(BaseSettings):
     # captions are white with a black outline. Edits without a background are unchanged. Default
     # TRUE; false + worker restart = byte-identical (`phone_text_styling._background_frames`).
     caption_background_contrast_enabled: bool = True
+    # KRI-1343 / KRI-1344 (2026-11-09): captions stay readable on any background. The worst
+    # contrast under the caption (take frames, full-screen photos/videos, B-roll) below 4.5:1 adds
+    # an outline sized to the text in the readable ink, even when the creator chose the colour
+    # (unless they set the outline / shadow themselves); while a full-screen picture is up a line
+    # moves to its nearest calm band, or hides there when the picture is text-dense. Default
+    # FALSE; false = byte-identical (`pipeline/caption_legibility.py`,
+    # `phone_text_styling.caption_legibility_pass`). Apply: fly secret
+    # `CAPTION_LEGIBILITY_ENABLED=true` (api + worker) + restart.
+    caption_legibility_enabled: bool = False
     # Qendresa case 1 (2026-11-06): on a speaker-background edit with the speaker in a corner
     # frame, caption and text placement dodge her face where the phone DRAWS it (the take scaled
     # into the frame), not where it sits in the full-frame take; inside a full-screen window

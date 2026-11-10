@@ -147,6 +147,7 @@ from app.services.phone_text_styling import (
     caption_spot_is_asked,
     current_phone_text_policy,
     generation_caption_cues,
+    generation_persisted_cues,
     generation_style_fields,
     generation_style_rows,
     phone_text_generation,
@@ -12699,7 +12700,8 @@ def _run_phone_subtitled_job(
             "render_finished_at": None,
             "resolved_archetype": "subtitled",
             "duration_s": recipe.duration,
-            "caption_cues": cues,
+            # KRI-1344: lines hidden over a text-dense full-screen picture keep it.
+            "caption_cues": generation_persisted_cues(cues),
             "voiceover_caption_style": caption_style,
             "caption_language": detected_lang,
             "ok": False,
@@ -37925,7 +37927,10 @@ def _burn_persisted_captions_onto_base(
     from app.pipeline.text_overlay import FONTS_DIR  # noqa: PLC0415
 
     archetype = variant.get("resolved_archetype")
-    cues = list(variant.get("caption_cues") or [])
+    # KRI-1344: a line hidden over a text-dense full-screen picture stays hidden on a reburn too.
+    from app.pipeline.caption_legibility import visible_cues  # noqa: PLC0415
+
+    cues = visible_cues(list(variant.get("caption_cues") or []))
     captions_enabled = variant.get("captions_enabled", True) is not False
     if not (captions_enabled and cues):
         # Off (regardless of stored cue count) or genuinely no cues → caption-free.

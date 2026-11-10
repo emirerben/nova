@@ -3582,6 +3582,26 @@ class CaptionCue(BaseModel):
     shadow_enabled: bool | None = Field(None, strict=True)
     # KRI-1007: this line's own animation; absent inherits `caption_animation_phases`.
     animation_phases: TextAnimationPhases | None = None
+    # KRI-1344: parts of this line's time it is not drawn (seconds from the cue's own start,
+    # [start, end] pairs), set by generation where a text-dense full-screen picture is up.
+    # Server-authored and round-tripped untouched (the PATCH replaces the whole cue list, so
+    # anything not listed here would be stripped on the first text edit). Read by
+    # `caption_legibility.visible_cues` (phone compile + cloud burn) and the iPhone editor.
+    hidden_spans: list[list[float]] | None = None
+
+    @field_validator("hidden_spans")
+    @classmethod
+    def _validate_hidden_spans(cls, v: list[list[float]] | None) -> list[list[float]] | None:
+        if v is None:
+            return v
+        from app.pipeline.caption_legibility import MAX_HIDDEN_SPANS  # noqa: PLC0415
+
+        if len(v) > MAX_HIDDEN_SPANS:
+            raise ValueError(f"Too many hidden spans on one caption line (max {MAX_HIDDEN_SPANS}).")
+        for span in v:
+            if len(span) != 2 or not 0 <= span[0] < span[1] <= 1800:
+                raise ValueError("Each hidden span must be a [start, end] pair, 0 <= start < end.")
+        return v
 
     @field_validator("font_family")
     @classmethod

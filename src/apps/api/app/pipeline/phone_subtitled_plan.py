@@ -680,6 +680,7 @@ def compile_phone_subtitled_plan(
     speaker_end = cursor
     from app.services.phone_text_styling import (
         register_generation_background,
+        register_generation_fullscreen,
         register_generation_timeline,
     )
 
@@ -693,6 +694,8 @@ def compile_phone_subtitled_plan(
         else None
     )
     register_generation_background(background_lane, canvas=canvas, focus_for=focus_resolver)
+    # KRI-1343/1344: the full-screen pictures the captions are drawn over, judged before compile.
+    register_generation_fullscreen(lanes.overlays if lanes is not None else (), cutaways)
     register_backdrop_visuals(main_clips, visuals=visuals, assets=assets, manifest=manifest)
 
     try:
