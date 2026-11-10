@@ -23,6 +23,7 @@ from app.kria.portable_color_moments import (
     DEFAULT_EDGE_S,
     END_FADE_RANGE_S,
     MAX_COLOR_MOMENTS,
+    SOUND_ID_PREFIX,
     ColorMoment,
     ColorMomentEdgeStyle,
     ColorMomentTone,
@@ -33,6 +34,10 @@ FAMILY = "color_moments"
 CLOSED_NOTE = (
     "Black-and-white moments, flashes and the end fade are not available here yet.",
     "Siyah beyaz anlar, flaşlar ve sondaki kararma burada henüz yok.",
+)
+REMOVAL_ONLY_NOTE = (
+    "I can only take the colour moments or the end fade off this video right now, "
+    "not add or change them."
 )
 UNASKED_NOTE = "I only change the colours when you ask for it, so I left them as they are."
 # Failure mode 6: a colour change is added only when the creator's own words ask for one. The
@@ -70,9 +75,9 @@ ASK_WORDS = (
     "soluk",
     "solgun",
 )
-# Sound rows this lane owns carry this id prefix, so a later `set_color_moments` replaces them
-# with the moments and never touches a sound the creator placed by hand.
-SOUND_ID_PREFIX = "cmsfx-"
+# Sound rows this lane owns carry `SOUND_ID_PREFIX` (portable_color_moments), so a later
+# `set_color_moments` replaces them with the moments and never touches a sound the creator
+# placed by hand.
 
 
 class _MomentCommand(BaseModel):
@@ -113,6 +118,12 @@ def _coerce(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None
         command = _SetCommand.model_validate(payload)
         if command.moments is None and command.end_fade_s is None:
             raise ValueError("nothing to set")
+        if lane.get("removal_only") and (command.moments or command.end_fade_s):
+            # Gate closed but the edit still carries moments: removing is the only change
+            # (`moments: []`, `end_fade_s: 0`); anything new stays refused (KRI-1350 review).
+            state.reject(op=name, reason="capability_unavailable", detail=REMOVAL_ONLY_NOTE)
+            _note(state, REMOVAL_ONLY_NOTE)
+            return None
         duration = float(lane.get("duration_s") or 0)
         clean: dict[str, Any] = {}
         if command.moments is not None:

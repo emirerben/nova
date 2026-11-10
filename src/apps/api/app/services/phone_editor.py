@@ -884,10 +884,12 @@ def prepare_phone_editor_commit(
     if stored_drawings and not freehand_drawing_client_supported():
         # A recompile would pin a recipe (`drawingLayers`) this app build cannot decode.
         raise HTTPException(426, detail={"code": "client_update_required", "feature": "drawing"})
+    # KRI-1350: the lane this Save leaves behind (staged), so a Save that clears the moments
+    # goes through on any app build; only a recipe that would still carry them needs build 48.
     stored_color_moments = next(
         (
             v.get("color_moments")
-            for v in (job.assembly_plan or {}).get("variants", [])
+            for v in (staged.assembly_plan or {}).get("variants", [])
             if isinstance(v, dict) and v.get("variant_id") == variant_id
         ),
         None,
@@ -1544,9 +1546,20 @@ def _compile_subtitled_editor_commit(
     if range_rows is not None:
         if not isinstance(previous.recipe, EditRecipeV2) or len(bindings) != 1:
             raise ValueError("Range needs a single-clip pinned Talking recipe")
-        range_keep, previous_lanes = _apply_talking_range(
-            range_rows, previous.recipe, bindings[0], previous_lanes
+        range_keep, previous_lanes, moved_moments = _apply_talking_range(
+            range_rows,
+            previous.recipe,
+            bindings[0],
+            previous_lanes,
+            color_moments=variant.get("color_moments"),
         )
+        # KRI-1350: the stored moments follow their footage like the cards do (a lane this
+        # Save also sets is already on the new clock).
+        if "color_moments" not in active_sections and moved_moments is not None:
+            if moved_moments.get("moments") or moved_moments.get("end_fade"):
+                variant["color_moments"] = moved_moments
+            else:
+                variant.pop("color_moments", None)
     lanes = lanes_from_editor_sections(
         previous=previous_lanes,
         sound_effects=prep.get("sfx_override"),
@@ -1555,6 +1568,12 @@ def _compile_subtitled_editor_commit(
         background_touched=bool(prep.get("speaker_background_touched")),
         background=_background_lane(prep.get("speaker_background_override"), visuals),
     )
+    # KRI-1350: a colour moment's own sound always sits on its moment's edge, whatever moved.
+    lanes = rebind_color_moment_sounds(lanes, variant.get("color_moments"))
+    if isinstance(variant.get("sound_effects"), list):
+        variant["sound_effects"] = rebind_color_moment_sound_rows(
+            variant["sound_effects"], variant.get("color_moments")
+        )
 
     _require_card_edits_supported(previous_lanes, lanes)
 
@@ -1769,12 +1788,16 @@ def _apply_talking_range(
     recipe: EditRecipeV2,
     speaker: PhoneSourceBinding,
     previous_lanes: PhoneSubtitledLanes | None,
-) -> tuple[list[tuple[float, float]], PhoneSubtitledLanes | None]:
-    """The new keep segments from the Range rows, and the pinned card/effect lanes moved from
-    the old layout onto it (a lane the Save also carries replaces its moved copy)."""
+    *,
+    color_moments: Any = None,
+) -> tuple[list[tuple[float, float]], PhoneSubtitledLanes | None, Any]:
+    """The new keep segments from the Range rows, and the pinned card/effect lanes and the
+    stored colour moments (KRI-1350) moved from the old layout onto it (a lane the Save also
+    carries replaces its moved copy)."""
     from app.services.phone_talking_range import (  # noqa: PLC0415
         keep_segments_from_rows,
         layout_slots,
+        reproject_color_moments,
         reproject_lanes,
     )
 
@@ -1787,7 +1810,68 @@ def _apply_talking_range(
     tail_s = max(0.0, float(recipe.duration) - speaker_end)
     old_slots = layout_slots(old_keep, ids, tail_s=tail_s)
     new_slots = layout_slots(new_keep, ids, tail_s=tail_s)
-    return new_keep, reproject_lanes(previous_lanes, old_slots, new_slots)
+    return (
+        new_keep,
+        reproject_lanes(previous_lanes, old_slots, new_slots),
+        reproject_color_moments(color_moments, old_slots, new_slots),
+    )
+
+
+def _color_moment_edges(stored: Any) -> dict[str, float]:
+    """Sound id -> edge time for every moment of a stored colour-moments lane (KRI-1350)."""
+    from app.kria.portable_color_moments import SOUND_ID_PREFIX  # noqa: PLC0415
+
+    edges: dict[str, float] = {}
+    if isinstance(stored, dict):
+        for moment in stored.get("moments") or []:
+            if isinstance(moment, dict) and moment.get("id") is not None:
+                edges[f"{SOUND_ID_PREFIX}{moment['id']}-enter"] = round(float(moment["start"]), 3)
+                edges[f"{SOUND_ID_PREFIX}{moment['id']}-exit"] = round(float(moment["end"]), 3)
+    return edges
+
+
+def rebind_color_moment_sounds(lanes: Any, stored: Any) -> Any:
+    """Pin every colour-moment sound in ``lanes`` to its moment's edge; drop one whose moment
+    is gone. Sounds the creator placed themselves are never touched (KRI-1350)."""
+    from app.kria.portable_color_moments import SOUND_ID_PREFIX  # noqa: PLC0415
+
+    if lanes is None or not any(
+        effect.request.id.startswith(SOUND_ID_PREFIX) for effect in lanes.sound_effects
+    ):
+        return lanes
+    edges = _color_moment_edges(stored)
+    effects = []
+    for effect in lanes.sound_effects:
+        if effect.request.id.startswith(SOUND_ID_PREFIX):
+            at = edges.get(effect.request.id)
+            if at is None:
+                continue
+            if effect.request.at_s != at:
+                request = effect.request.model_copy(update={"at_s": at})
+                effect = effect.model_copy(update={"request": request})
+        effects.append(effect)
+    return lanes.model_copy(update={"sound_effects": effects})
+
+
+def rebind_color_moment_sound_rows(rows: list, stored: Any) -> list:
+    """`rebind_color_moment_sounds` for the variant's stored ``sound_effects`` editor rows."""
+    from app.kria.portable_color_moments import SOUND_ID_PREFIX  # noqa: PLC0415
+
+    if not any(
+        isinstance(row, dict) and str(row.get("id") or "").startswith(SOUND_ID_PREFIX)
+        for row in rows
+    ):
+        return rows
+    edges = _color_moment_edges(stored)
+    kept = []
+    for row in rows:
+        if isinstance(row, dict) and str(row.get("id") or "").startswith(SOUND_ID_PREFIX):
+            at = edges.get(str(row["id"]))
+            if at is None:
+                continue
+            row = {**row, "at_s": at}
+        kept.append(row)
+    return kept
 
 
 def _restale_protected_text(

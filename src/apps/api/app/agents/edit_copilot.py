@@ -117,7 +117,8 @@ log = structlog.get_logger()
 # stretches with cut, white-flash, light-leak or dip-to-black edges (a library sound may land on an
 # edge) and the fade to black at the end. Taught in color_moments.txt and printed as COLOR MOMENTS
 # only where the snapshot offers the `color_moments` family (flag + verified token + protocol 48),
-# so every other prompt is byte-identical.
+# or, with that gate closed, on an edit that still carries moments, marked REMOVAL ONLY (only
+# taking them off is accepted), so every other prompt is byte-identical.
 EDIT_COPILOT_PROMPT_VERSION = "2026-11-10-v121"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
@@ -2071,6 +2072,11 @@ def _format_snapshot(snapshot: dict) -> str:
             )
         if not lane.get("moments"):
             lines.append("(none)")
+        if lane.get("removal_only"):
+            lines.append(
+                'REMOVAL ONLY on this edit: you may take moments off ("moments":[]) or the '
+                'end fade off ("end_fade_s":0); never add or change one.'
+            )
 
     if isinstance(snapshot.get("background"), dict):
         background = snapshot["background"]

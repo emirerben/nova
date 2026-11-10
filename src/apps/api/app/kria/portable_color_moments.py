@@ -21,6 +21,9 @@ ColorMomentTone = Literal["mono", "warm", "faded"]
 ColorMomentEdgeStyle = Literal["cut", "flash_white", "light_leak", "dip_black"]
 
 MAX_COLOR_MOMENTS = 6
+# Sound rows a colour moment owns carry this id prefix plus "<moment id>-<enter|exit>"; they sit
+# exactly on that edge and are replaced, moved and removed together with the moments.
+SOUND_ID_PREFIX = "cmsfx-"
 MIN_COLOR_MOMENT_S = 0.5
 DEFAULT_EDGE_S = 1 / 3
 EDGE_RANGE_S = (0.1, 0.6)

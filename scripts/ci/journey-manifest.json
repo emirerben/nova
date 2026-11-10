@@ -3596,7 +3596,7 @@
     {
       "id": "kri-1350-colour-moments",
       "needs_native": true,
-      "api_tests": "tests/kria/test_colour_moments.py tests/evals/test_edit_copilot_evals.py tests/kria/test_plan_review.py tests/routes/test_editor_save_code_catalog.py",
+      "api_tests": "tests/kria/test_colour_moments.py tests/evals/test_edit_copilot_evals.py tests/kria/test_plan_review.py tests/routes/test_editor_save_code_catalog.py tests/routes/test_phone_talking_range_commit.py",
       "xctests": [
         "KriaTests/ColorMomentsEditorPreviewTests/testTheStoredLaneReachesThePreviewRecipe",
         "KriaTests/ColorMomentsEditorPreviewTests/testAShorterCutShortensOrDropsLikeTheServer",
@@ -3617,7 +3617,9 @@
         "src/apps/ios/Tests/KriaTests/ColorMomentsEditorPreviewTests.swift",
         "scripts/verify-colour-moments.py",
         "tests/fixtures/colour-moments/parity-v1.json",
-        "tests/fixtures/colour-moments/cigdem-reel-answer-key.json"
+        "tests/fixtures/colour-moments/cigdem-reel-answer-key.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/color_moments_removal_only_clear.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/color_moments_removal_only_refuses_new.json"
       ]
     }
   ]

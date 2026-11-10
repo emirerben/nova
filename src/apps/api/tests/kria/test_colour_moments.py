@@ -177,12 +177,14 @@ def test_clearing_works_with_the_switch_off_and_setting_does_not(monkeypatch):
     save(job, color_moments=gj.EditorCommitColorMoments(**LANE))
     _open_gate(monkeypatch, enabled=False)
     base = job.assembly_plan["variants"][0]["render_generation_id"]
+    changed = copy.deepcopy(LANE)
+    changed["moments"][0]["tone"] = "warm"
     with pytest.raises(HTTPException) as refused:
         gj.prepare_editor_commit(
             job,
             "subtitled",
             gj.EditorCommitRequest(
-                base_generation=base, color_moments=gj.EditorCommitColorMoments(**LANE)
+                base_generation=base, color_moments=gj.EditorCommitColorMoments(**changed)
             ),
             user_id="owner",
             plan_item_id="item",
@@ -346,3 +348,243 @@ def test_the_commit_request_carries_the_lane_tri_state():
 
     assert editor_payload_dump(request)["color_moments"] is None
     assert "color_moments" not in editor_payload_dump(untouched)
+
+
+# --- Range trims move the moments and their sounds together (review of 8e2a3615e) -----------
+
+
+def _range_job_with_moment(monkeypatch, *, start: float, end: float, sound_at: float):
+    """The Range fixture's 10 s Talking take (kept [0,4) and [5,10), so output 4.0 s = source
+    5.0 s) with one moment and its own enter sound."""
+    from app.kria.device_render import make_device_request
+    from app.services.device_render import pin_device_request
+    from tests.routes import test_phone_talking_range_commit as rng
+
+    job = rng.talking_job(monkeypatch)
+    _open_gate(monkeypatch)
+    status = device_status(job, "subtitled")
+    recipe = status.request.recipe
+    sfx_track = next(t for t in recipe.tracks if t.id == "sfx")
+    clip = sfx_track.clips[0]
+    moved = clip.model_copy(update={"id": "sfx-cmsfx-cm1-enter", "timeline_start": sound_at})
+    tracks = [
+        t.model_copy(update={"clips": [moved]}) if t.id == "sfx" else t for t in recipe.tracks
+    ]
+    recipe = recipe.model_copy(update={"tracks": tracks})
+    variant = job.assembly_plan["variants"][0]
+    variant["color_moments"] = {
+        "moments": [
+            {
+                "id": "cm1",
+                "start": start,
+                "end": end,
+                "tone": "mono",
+                "enter": {"style": "light_leak", "duration": 1 / 3},
+                "exit": {"style": "cut", "duration": 1 / 3},
+            }
+        ],
+        "end_fade": None,
+    }
+    variant["sound_effects"] = [
+        {"id": "cmsfx-cm1-enter", "sound_effect_id": "pop", "at_s": sound_at, "source": "user"}
+    ]
+    from app.pipeline.phone_recipe_shared import with_color_moments as wcm
+
+    pin_device_request(
+        job,
+        make_device_request(
+            job_id=job.id,
+            variant_id="subtitled",
+            revision=2,
+            recipe=wcm(recipe, variant["color_moments"]),
+        ),
+        base_generation="first",
+    )
+    return job, rng
+
+
+def _sound_starts(job) -> list[float]:
+    recipe = device_status(job, "subtitled").request.recipe
+    return [c.timeline_start for t in recipe.tracks if t.id == "sfx" for c in t.clips]
+
+
+def test_a_range_trim_moves_the_moment_and_its_sound_together(monkeypatch):
+    # Moment + sound at output 6.0 s (source 7.0 s); trimming the first second moves both to 5.0.
+    job, rng = _range_job_with_moment(monkeypatch, start=6.0, end=7.5, sound_at=6.0)
+    rng.save(job, [rng._row(rng._SLOT0, 1.0, 3.0), rng._row(rng._SLOT1, 5.0, 5.0)])
+
+    recipe = device_status(job, "subtitled").request.recipe
+    variant = job.assembly_plan["variants"][0]
+    assert [(m.start, m.end) for m in recipe.color_moments] == [pytest.approx((5.0, 6.5))]
+    assert variant["color_moments"]["moments"][0]["start"] == pytest.approx(5.0)
+    assert _sound_starts(job) == [pytest.approx(5.0)]
+    assert [r["at_s"] for r in variant["sound_effects"]] == [pytest.approx(5.0)]
+
+
+def test_a_moment_whose_first_frames_are_trimmed_keeps_its_sound_on_the_new_edge(monkeypatch):
+    # Moment 0.5-3.0 s with its sound at 0.5 s; the trim removes source 0-1, so the moment now
+    # starts at 0.0 and its sound must follow it there instead of vanishing with the footage.
+    job, rng = _range_job_with_moment(monkeypatch, start=0.5, end=3.0, sound_at=0.5)
+    rng.save(job, [rng._row(rng._SLOT0, 1.0, 3.0), rng._row(rng._SLOT1, 5.0, 5.0)])
+
+    recipe = device_status(job, "subtitled").request.recipe
+    assert [(m.start, m.end) for m in recipe.color_moments] == [pytest.approx((0.0, 2.0))]
+    assert _sound_starts(job) == [pytest.approx(0.0)]
+
+
+# --- removal with the gate closed: chat and old builds (review of 8e2a3615e) ----------------
+
+
+def _stored_job(monkeypatch):
+    job = phone_job(monkeypatch)
+    _open_gate(monkeypatch)
+    save(job, color_moments=gj.EditorCommitColorMoments(**LANE))
+    return job
+
+
+def _snapshot(job):
+    from app.services.kria_editor_ops import _color_moments_snapshot, color_moments_removal_only
+
+    variant = job.assembly_plan["variants"][0]
+    return color_moments_removal_only(job, variant), _color_moments_snapshot(
+        variant, removal_only=color_moments_removal_only(job, variant)
+    )
+
+
+def test_a_closed_gate_still_offers_chat_removal_of_stored_moments(monkeypatch):
+    job = _stored_job(monkeypatch)
+    _open_gate(monkeypatch, enabled=False)
+    removal_only, snap = _snapshot(job)
+    assert removal_only and snap["removal_only"] is True
+    # An open gate, or a closed one on an edit with nothing stored, offers no removal-only lane.
+    _open_gate(monkeypatch)
+    assert _snapshot(job)[0] is False and "removal_only" not in _snapshot(job)[1]
+    _open_gate(monkeypatch, enabled=False)
+    empty = phone_job(monkeypatch)
+    from app.services.kria_editor_ops import color_moments_removal_only
+
+    assert color_moments_removal_only(empty, empty.assembly_plan["variants"][0]) is False
+
+
+def _coerce(payload: dict, *, removal_only: bool, utterance="remove the black and white"):
+    snapshot = {
+        "allowed_op_families": ["color_moments"],
+        "color_moments": {
+            "moments": [],
+            "duration_s": 10.0,
+            **({"removal_only": True} if removal_only else {}),
+        },
+    }
+    rejected: list = []
+    state = SimpleNamespace(
+        utterance=utterance,
+        reply_notes=[],
+        reject=lambda **kw: rejected.append(kw),
+        invalid_value=lambda text: rejected.append({"reason": "invalid", "detail": text}),
+    )
+    return lane._coerce("set_color_moments", payload, snapshot, state), rejected
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{"moments": []}, {"end_fade_s": 0}, {"moments": [], "end_fade_s": 0}],
+)
+def test_removal_only_chat_accepts_taking_moments_off(payload):
+    clean, rejected = _coerce(payload, removal_only=True)
+    assert clean is not None and not rejected
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"moments": [{"start_s": 1, "end_s": 3, "tone": "mono"}]},
+        {"end_fade_s": 1.6},
+        {"moments": [], "end_fade_s": 1.0},
+    ],
+)
+def test_removal_only_chat_still_refuses_new_effects(payload):
+    clean, rejected = _coerce(payload, removal_only=True, utterance="add a black and white fade")
+    assert clean is None
+    assert rejected[0]["reason"] == "capability_unavailable"
+    assert rejected[0]["detail"] == lane.REMOVAL_ONLY_NOTE
+
+
+def test_a_chat_removal_saves_with_the_switch_off_and_new_moments_do_not(monkeypatch):
+    job = _stored_job(monkeypatch)
+    _open_gate(monkeypatch, enabled=False)
+    base = job.assembly_plan["variants"][0]["render_generation_id"]
+    stored = job.assembly_plan["variants"][0]["color_moments"]
+    # The chat op's document: moments taken off, the stored end fade kept.
+    gj.prepare_editor_commit(
+        job,
+        "subtitled",
+        gj.EditorCommitRequest(
+            base_generation=base,
+            color_moments=gj.EditorCommitColorMoments(moments=[], end_fade=stored["end_fade"]),
+        ),
+        user_id="owner",
+        plan_item_id="item",
+    )
+    variant = job.assembly_plan["variants"][0]
+    assert variant["color_moments"]["moments"] == []
+    recipe = device_status(job, "subtitled").request.recipe
+    assert not recipe.color_moments and recipe.end_fade is not None
+    # A longer fade is new, so it is still refused with the switch off.
+    with pytest.raises(HTTPException) as refused:
+        gj.prepare_editor_commit(
+            job,
+            "subtitled",
+            gj.EditorCommitRequest(
+                base_generation=variant["render_generation_id"],
+                color_moments=gj.EditorCommitColorMoments(moments=[], end_fade={"duration": 2.0}),
+            ),
+            user_id="owner",
+            plan_item_id="item",
+        )
+    assert refused.value.detail["code"] == "color_moments_disabled"
+
+
+@pytest.mark.parametrize("protocol", [None, 47])
+def test_an_old_build_can_clear_the_moments_but_not_keep_them(monkeypatch, protocol):
+    from app.services.client_protocol import clear_request_context, set_client_protocol
+
+    job = _stored_job(monkeypatch)
+    try:
+        set_client_protocol(protocol)
+        base = job.assembly_plan["variants"][0]["render_generation_id"]
+        # A Save that leaves the moments in place would pin a recipe this build cannot read.
+        with pytest.raises(HTTPException) as refused:
+            gj.prepare_editor_commit(
+                job,
+                "subtitled",
+                gj.EditorCommitRequest(base_generation=base, caption_meta={"enabled": True}),
+                user_id="owner",
+                plan_item_id="item",
+            )
+        assert refused.value.status_code == 426
+        # Clearing them goes through.
+        gj.prepare_editor_commit(
+            job,
+            "subtitled",
+            gj.EditorCommitRequest(base_generation=base, color_moments=None),
+            user_id="owner",
+            plan_item_id="item",
+        )
+    finally:
+        clear_request_context()
+    assert "color_moments" not in job.assembly_plan["variants"][0]
+    recipe = device_status(job, "subtitled").request.recipe
+    assert not recipe.color_moments and recipe.end_fade is None
+
+
+def test_a_closed_gate_replay_takes_the_moment_off():
+    output = _replay("color_moments_removal_only_clear")
+    assert output["ops"] == [{"op": "set_color_moments", "moments": []}]
+    assert output["rejection_reasons"] == []
+
+
+def test_a_closed_gate_replay_still_refuses_a_new_fade():
+    output = _replay("color_moments_removal_only_refuses_new")
+    assert output["ops"] == []
+    assert output["rejection_reasons"][0]["detail"] == lane.REMOVAL_ONLY_NOTE
+    assert "fades slower" not in output["reply"]

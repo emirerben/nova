@@ -948,7 +948,7 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
             families.append("background_windows")
         if background_focus_open(job, variant):
             families.append("background_focus")
-    if color_moments_open(job, variant):
+    if color_moments_open(job, variant) or color_moments_removal_only(job, variant):
         families.append("color_moments")
     return sorted(set(families) & _PORTABLE_FAMILIES)
 
@@ -971,7 +971,18 @@ def color_moments_open(job: Any, variant: dict[str, Any]) -> bool:
         return False
 
 
-def _color_moments_snapshot(variant: dict[str, Any]) -> dict[str, Any]:
+def color_moments_removal_only(job: Any, variant: dict[str, Any]) -> bool:
+    """KRI-1350: the gate is closed (switch, token or app build) but this device edit still
+    carries moments or an end fade, so chat may take them off and nothing else."""
+    if variant.get("render_destination") != "device" or color_moments_open(job, variant):
+        return False
+    stored = variant.get("color_moments")
+    return isinstance(stored, dict) and bool(stored.get("moments") or stored.get("end_fade"))
+
+
+def _color_moments_snapshot(
+    variant: dict[str, Any], *, removal_only: bool = False
+) -> dict[str, Any]:
     """What the copilot sees of the colour-moments lane: current moments (with the sound
     each one's edge carries) and the video's length."""
     from app.agents.editor_ops_v2.color_moments import (  # noqa: PLC0415
@@ -1004,6 +1015,8 @@ def _color_moments_snapshot(variant: dict[str, Any]) -> dict[str, Any]:
         "moments": moments,
         "end_fade_s": (lane["end_fade"] or {}).get("duration"),
         "duration_s": round(float(visual_block_variant_duration(variant) or 0), 3),
+        # Present only on a closed gate, so every open snapshot keeps its bytes.
+        **({"removal_only": True} if removal_only else {}),
     }
 
 
@@ -1781,7 +1794,9 @@ def build_editor_snapshot(
             pool=clip_context.get("generated_overlay_pool"),
         )
     if "color_moments" in snapshot["allowed_op_families"]:
-        snapshot["color_moments"] = _color_moments_snapshot(variant)
+        snapshot["color_moments"] = _color_moments_snapshot(
+            variant, removal_only=color_moments_removal_only(job, variant)
+        )
     background = _background_snapshot(job, variant, clip_context)
     if background is not None:
         # Present only while the lane has something to say, so every other snapshot is

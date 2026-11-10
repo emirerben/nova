@@ -11882,15 +11882,29 @@ def _validate_speaker_background_windows(
             )
 
 
+def _color_moments_only_removes(stored: Any, lane: dict) -> bool:
+    """Does ``lane`` only take things away from the stored colour-moments lane (KRI-1350)?
+
+    Every moment is one already stored, unchanged, and the end fade is the stored one or
+    gone. Removing never needs the switch, the token or a new app build; anything new does.
+    """
+    stored = stored if isinstance(stored, dict) else {}
+    kept = [m for m in stored.get("moments") or [] if isinstance(m, dict)]
+    if any(moment not in kept for moment in lane.get("moments") or []):
+        return False
+    return lane.get("end_fade") in (None, stored.get("end_fade"))
+
+
 def _validate_color_moments_section(
     job: Job, variant: dict, payload: EditorCommitRequest
 ) -> tuple[bool, dict | None]:
     """Save-time gate for the KRI-1350 ``color_moments`` lane: ``(touched, stored value)``.
 
     Absent = untouched. Only a device variant whose archetype recompiles lane-free sections
-    (the drawings shape) takes the lane. Clearing is always allowed so a creator can take the
-    moments off with the switch off; setting needs `color_moments_supported` (kill switch,
-    verified token, app build). Windows must fit the current timeline.
+    (the drawings shape) takes the lane. Clearing, or keeping only some of the stored moments
+    and fade, is always allowed so a creator can take them off with the switch off; anything
+    new needs `color_moments_supported` (kill switch, verified token, app build). Windows must
+    fit the current timeline.
     """
     from app.kria.portable_color_moments import validate_color_moments  # noqa: PLC0415
     from app.services.phone_rollout import color_moments_supported  # noqa: PLC0415
@@ -11905,7 +11919,9 @@ def _validate_color_moments_section(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"code": "color_moments_require_phone_render"},
         )
-    if not color_moments_supported():
+    if not color_moments_supported() and not _color_moments_only_removes(
+        variant.get("color_moments"), lane.model_dump(mode="json")
+    ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"code": "color_moments_disabled"},
