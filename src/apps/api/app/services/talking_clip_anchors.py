@@ -101,8 +101,23 @@ def _by_place(words: str, rows: Sequence[Mapping[str, Any]]) -> set[str] | None:
     return {str(row["media_id"]) for row in rows if _setting(row) & places[0]}
 
 
-def talking_clip(words: str, rows: Sequence[Mapping[str, Any]]) -> str | None:
-    """The one take ``words`` name by length, quoted words and place, else None."""
+# KRI-1340 (S3 Yorum1): "two at home and one in the car" names a GROUP of takes by how many
+# there are. A stated count seats a group only when exactly that many takes match.
+_COUNTS: dict[str, int] = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "bir": 1, "iki": 2, "uc": 3, "dort": 4, "bes": 5,
+    "1": 1, "2": 2, "3": 3, "4": 4, "5": 5,
+}  # fmt: skip
+
+
+def _stated_count(words: str) -> int | None:
+    """The one count word ``words`` state outside quotes ("two at home"), else None."""
+    free = _SECONDS_RE.sub(" ", _unquoted(words))  # "the 5-second clip" states no count
+    counts = {_COUNTS[t] for t in fold_tokens(free) if t in _COUNTS}
+    return next(iter(counts)) if len(counts) == 1 else None
+
+
+def _matched(words: str, rows: Sequence[Mapping[str, Any]]) -> set[str] | None:
     takes = [
         row
         for row in rows
@@ -113,13 +128,35 @@ def talking_clip(words: str, rows: Sequence[Mapping[str, Any]]) -> str | None:
         found = cue(words, takes)
         if found is not None:
             matched = found if matched is None else matched & found
+    return matched
+
+
+def talking_clip(words: str, rows: Sequence[Mapping[str, Any]]) -> str | None:
+    """The one take ``words`` name by length, quoted words and place, else None."""
+    matched = _matched(words, rows)
     return next(iter(matched)) if matched is not None and len(matched) == 1 else None
+
+
+def talking_clips(words: str, rows: Sequence[Mapping[str, Any]]) -> list[str] | None:
+    """The takes ``words`` name: one take (`talking_clip`), or a group whose stated count is
+    exactly how many takes match ("two at home" with two home takes), in row order. None when
+    nothing, or a different number of takes than stated, matches."""
+    matched = _matched(words, rows)
+    if not matched:
+        return None
+    count = _stated_count(words)
+    if len(matched) == 1 and count in (None, 1):
+        return list(matched)
+    if count is None or count != len(matched):
+        return None
+    return [str(row["media_id"]) for row in rows if str(row.get("media_id")) in matched]
 
 
 def talking_anchor_rows(
     anchors: Mapping[str, str], rows: Sequence[Mapping[str, Any]]
 ) -> list[SequenceRow]:
-    """The brief's first / last take seated as sequence rows, each one only when matched.
+    """The brief's first / last take (or counted group, KRI-1340) seated as sequence rows,
+    each one only when matched.
 
     ``rows`` are the edit's clip rows (`creator_render_contract._edit_rows`). Two ends naming
     the same take seat the first end alone: the other stays unplaced, so the contract still
@@ -128,9 +165,9 @@ def talking_anchor_rows(
     taken: set[str] = set()
     for position in ("first", "last"):
         words = anchors.get(position)
-        media_id = talking_clip(words, rows) if words else None
-        if media_id is None or media_id in taken:
+        members = talking_clips(words, rows) if words else None
+        if not members or taken & set(members):
             continue
-        taken.add(media_id)
-        out.append((position, words, [media_id], "resolved"))
+        taken.update(members)
+        out.append((position, words, members, "resolved"))
     return out
