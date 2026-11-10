@@ -10975,6 +10975,18 @@ def _run_phone_subtitled_job(
                     caption_style=caption_style,
                     caption_look=protected_caption_look,
                     avoid_rows=title_rows + spoken_text_rows,
+                    clip_windows=_talking_clip_windows(
+                        speaker_keep_segments,
+                        [
+                            # KRI-720: a cut take plays its kept seconds, as on the timeline.
+                            _take_kept_s(
+                                extra_take_plans.get(extra_id), float(extra.original.duration_s)
+                            )
+                            for extra_id, extra in zip(
+                                extra_speaker_ids, extra_speaker_bindings, strict=True
+                            )
+                        ],
+                    ),
                     **text_canvas,
                 )
 
@@ -14658,6 +14670,22 @@ def _cues_clear_of_cta(cues: Any, rows: list[dict], receipt: dict[str, Any] | No
     return out
 
 
+def _talking_clip_windows(
+    keep_segments: Sequence[tuple[float, float]], extra_durations_s: Sequence[float]
+) -> list[tuple[float, float]]:
+    """The Talking edit's clips in play order on the take timeline (before inserts): the first
+    speaker's cut take, then each further speaker for the seconds it plays (KRI-719, KRI-720),
+    the same sum as ``talking_timeline_s``. A corner line scoped to "clip N" runs over the N-th
+    (review of #2256)."""
+    cursor = sum(max(0.0, end - start) for start, end in keep_segments)
+    windows = [(0.0, round(cursor, 3))]
+    for duration_s in extra_durations_s:
+        end = cursor + float(duration_s)
+        windows.append((round(cursor, 3), round(end, 3)))
+        cursor = end
+    return windows
+
+
 def _closing_card_compile(spec: Any) -> dict[str, Any]:
     """The compiler's ``closing_card`` keyword for a pinned card spec; ``{}`` without one, so a
     render with no card calls the compiler exactly as before (KRI-1346)."""
@@ -14681,6 +14709,7 @@ def _phone_talking_corner_rows(
     caption_style: str = "",
     caption_look: Any = None,
     avoid_rows: Sequence[dict] = (),
+    clip_windows: Sequence[tuple[float, float]] | None = None,
     canvas: Any = None,
 ) -> tuple[list[dict], dict[str, Any]]:
     """KRI-1342 item 7: the creator's corner text on a phone Talking edit, each row placed off
@@ -14692,11 +14721,12 @@ def _phone_talking_corner_rows(
     from app.pipeline.phone_talking_corner_text import (  # noqa: PLC0415
         corner_text_rows,
         place_corner_text,
+        unplaced_pins,
     )
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
     canvas = canvas if canvas is not None else _STORY_CANVAS
-    rows = corner_text_rows(pins, talk_end_s=talk_end_s, canvas=canvas)
+    rows = corner_text_rows(pins, talk_end_s=talk_end_s, canvas=canvas, clip_windows=clip_windows)
     display_width, display_height = display_dims(binding.original)
     others = []
     for row in avoid_rows:
@@ -14733,6 +14763,9 @@ def _phone_talking_corner_rows(
         position_x=position_x,
         caption_boxes=_avoid,
     )
+    missing = unplaced_pins(pins, talk_end_s=talk_end_s, clip_windows=clip_windows)
+    if missing:
+        receipt = {**receipt, "rows": [*receipt.get("rows", []), *missing]}
     try:
         record_pipeline_event("phone", "talking_corner_text_placement", receipt)
     except Exception:  # noqa: BLE001 - observability only

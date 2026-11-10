@@ -193,3 +193,99 @@ def test_l1_closed_lane_turns_the_same_pin_into_the_opening_title(prod_profile, 
     assert isinstance(checked, CheckedStrategy)
     assert checked.strategy.opening_title == "Yorumla"
     assert not checked.strategy.pinned_texts
+
+
+# --- review of #2256: clip-scoped lines and lines on screen together ------------------------
+
+
+def test_review_clip_one_on_a_one_take_edit_runs_over_that_take():
+    from app.pipeline.phone_talking_corner_text import unplaced_pins
+    from app.tasks.generative_build import _talking_clip_windows
+
+    pins = [PinnedText(text="Yorumla", corner="top_left", clip=1)]
+    windows = _talking_clip_windows([(0.0, 10.0), (12.0, 40.0)], [])
+
+    rows = corner_text_rows(pins, talk_end_s=38.0, canvas=_CANVAS, clip_windows=windows)
+
+    assert [(r["start_s"], r["end_s"]) for r in rows] == [(0.0, 38.0)]
+    assert unplaced_pins(pins, talk_end_s=38.0, clip_windows=windows) == []
+
+
+def test_review_clip_two_runs_over_the_second_speaker_for_the_seconds_it_plays():
+    from app.tasks.generative_build import _talking_clip_windows
+
+    windows = _talking_clip_windows([(0.0, 20.0)], [15.0])
+    pins = [PinnedText(text="Bölüm 8", corner="bottom_right", clip=2)]
+
+    rows = corner_text_rows(pins, talk_end_s=35.0, canvas=_CANVAS, clip_windows=windows)
+
+    assert [(r["start_s"], r["end_s"]) for r in rows] == [(20.0, 35.0)]
+    assert rows[0]["source_params"]["whole_video"] is False
+
+
+def test_review_a_clip_the_edit_does_not_have_is_said_not_dropped_silently():
+    from app.pipeline.phone_talking_corner_text import unplaced_pins
+
+    pins = [PinnedText(text="Yorumla", corner="top_left", clip=3)]
+    windows = [(0.0, 20.0), (20.0, 35.0)]
+
+    assert corner_text_rows(pins, talk_end_s=35.0, canvas=_CANVAS, clip_windows=windows) == []
+    assert unplaced_pins(pins, talk_end_s=35.0, clip_windows=windows) == [
+        {"text": "Yorumla", "corner": "top_left", "status": "no_window", "clip": 3}
+    ]
+
+
+def test_review_two_lines_on_screen_together_never_land_on_each_other(monkeypatch):
+    """Emir's probe: two 52 px top-left lines at y .12 / .158 and a face ending at y .20 both
+    slid to ~.24 and overlapped 92.6 %. Now the second keeps clear of the first, under it."""
+    from app.pipeline import phone_subtitled_title as pst
+    from app.pipeline.phone_talking_corner_text import place_corner_text
+
+    face = NormalizedBox(0.0, 0.0, 0.6, 0.20)
+    monkeypatch.setattr(
+        pst, "caption_window_faces", lambda *a, **k: ([face], [], {"faces": "detected"})
+    )
+    monkeypatch.setattr(pst, "_measure_title_box", lambda row, canvas: _measure(row))
+    rows = [
+        {**_row(y_frac=0.12, size_px=52.0), "id": "a", "start_s": 0.0, "end_s": 10.0},
+        {**_row(y_frac=0.158, size_px=52.0), "id": "b", "start_s": 0.0, "end_s": 10.0},
+    ]
+
+    placed, receipt = place_corner_text(
+        rows,
+        clip_path="take.mp4",
+        keep_segments=[(0.0, 10.0)],
+        display_width=1080,
+        display_height=1920,
+        canvas=_CANVAS,
+        scale=1.0,
+    )
+
+    assert [entry["status"] for entry in receipt["rows"]] == ["placed", "placed"]
+    first, second = (_measure(row) for row in placed)
+    assert first.intersection_area(second) == 0
+    assert first.top >= face.bottom and second.top >= first.bottom  # the stack keeps its order
+
+
+def test_review_lines_at_different_times_may_share_a_spot(monkeypatch):
+    from app.pipeline import phone_subtitled_title as pst
+    from app.pipeline.phone_talking_corner_text import place_corner_text
+
+    monkeypatch.setattr(pst, "caption_window_faces", lambda *a, **k: ([], [], {}))
+    monkeypatch.setattr(pst, "_measure_title_box", lambda row, canvas: _measure(row))
+    rows = [
+        {**_row(y_frac=0.12), "id": "a", "start_s": 0.0, "end_s": 4.0},
+        {**_row(y_frac=0.12), "id": "b", "start_s": 4.0, "end_s": 8.0},
+    ]
+
+    placed, _ = place_corner_text(
+        rows,
+        clip_path=None,
+        keep_segments=[(0.0, 8.0)],
+        display_width=1080,
+        display_height=1920,
+        canvas=_CANVAS,
+        scale=1.0,
+    )
+
+    assert [row["y_frac"] for row in placed] == [0.12, 0.12]
