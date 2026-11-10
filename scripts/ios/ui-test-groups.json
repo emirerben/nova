@@ -443,7 +443,7 @@
       "KriaUITests/NativeEditorInspectorUITests/testSplitPanelReplacesVideoWithUnusedPhotoAndKeepsCrop",
       "KriaUITests/NativeEditorInspectorUITests/testSplitPanelSpeedCropAndSourceGainKeepPeersExact",
       "KriaUITests/NativeEditorInspectorUITests/testSplitPanelTrimCutDuplicateAndUndoKeepPeersExact",
-      "KriaUITests/NativeEditorInspectorUITests/testSplitScreenCreationKeepsOrdinaryClipControlsAndPanelRows",
+      "KriaUITests/NativeEditorInspectorUITests/testSplitToolCreatesFillsAndLaysOutThreePanels",
       "KriaUITests/NativeEditorInspectorUITests/testSplitSectionLongPressDragMovesEveryPanelAndUndoesOnce",
       "KriaUITests/SpeakerFrameDirectManipulationUITests/testRepeatedSpeakerPanelsSelectAndDragTheChosenOccurrence",
       "KriaUITests/SpeakerFrameDirectManipulationUITests/testScopedSpeakerSaveReopenAndFullResetThroughClipInspector",
