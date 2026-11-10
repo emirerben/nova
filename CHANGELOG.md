@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.137.0] - 2026-11-10
+
+### Changed
+- fix(ios): a chat edit on a narrated or talking project no longer counts as a timeline change (#2234) <!-- release-pr: 2234 -->
+
 ## [0.88.136.0] - 2026-11-10
 
 ### Changed
