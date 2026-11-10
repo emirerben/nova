@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.142.0] - 2026-11-10
+
+### Changed
+- fix(kria): group the editor warm-up calls as not-an-edit (KRI-1230) (#2263) <!-- release-pr: 2263 -->
+
 ## [0.88.141.0] - 2026-11-10
 
 ### Changed
