@@ -71,12 +71,17 @@ GENERATED_CARD_CONSENT_PROTOCOL = 45
 # KRI-1231: the first build that decodes and edits split-screen sections. TestFlight 1926 is 45.
 SPLIT_SCREEN_PROTOCOL = 46
 
+# KRI-1335: the first build that decodes `collapse_empty_panels` on a split section (the
+# `splitCollapse` capability): ended panels give their height to the panels still playing. An
+# older build would draw the fixed layout and drop the field on its next Save.
+SPLIT_COLLAPSE_PROTOCOL = 47
+
 # KRI-720: the first build whose editor preview cuts every take of a several-take Talking edit from
 # the receipt's `phone_talking_multi_clip.speaker_removed` rows. An older build cuts only the first
 # take and would play the others uncut, so `several_take_preview_gate` serves it the receipt with no
 # `speaker_media_ids`, the shape every build since protocol 11 answers with the finished video.
-# 47 (split panels collapse, #2262) and 48 (colour moments, #2259) are taken by open PRs; protocol
-# numbers are cumulative, so this one lands after both.
+# 47 is split panels collapse (#2262, merged) and 48 is colour moments (#2259, open); protocol
+# numbers are cumulative, so this one lands after #2259.
 SPEAKER_REMOVED_PROTOCOL = 49
 
 

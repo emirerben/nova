@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -130,6 +130,12 @@ def creator_request_names(text: str | None) -> tuple[str, ...]:
     in any case and with any case ending ("Do not use kervan in the captions.", "KERVAN",
     "kervan'ı"), is never one, wherever else they type it: the same clause rule drops a quoted
     ask (KRI-631). The request header line is skipped. In order, unique, at most ``MAX_ASKS``."""
+    return _request_names(text, keep=lambda name: len(name) >= _MIN_TARGET_LEN)
+
+
+def _request_names(text: str | None, *, keep: Callable[[str], bool]) -> tuple[str, ...]:
+    """``creator_request_names``' reading of the request, keeping the names ``keep`` admits
+    (KRI-1345 reads the 4-letter ones with the same clause and sentence rules)."""
     names: list[str] = []
     seen: set[str] = set()
     excluded: list[str] = []
@@ -141,7 +147,7 @@ def creator_request_names(text: str | None) -> tuple[str, ...]:
             name = found.group(1)
             if any(a <= found.start() < b for a, b in dont):
                 continue
-            if len(name) < _MIN_TARGET_LEN or _SENTENCE_END.search(line[: found.start()]):
+            if not keep(name) or _SENTENCE_END.search(line[: found.start()]):
                 continue
             if _fold(name) not in seen:
                 seen.add(_fold(name))

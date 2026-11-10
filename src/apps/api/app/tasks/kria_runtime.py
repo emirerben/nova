@@ -98,6 +98,11 @@ from app.kria.planner import (
     turn_deadline,
 )
 from app.kria.registry import KRIA_TOOLS
+from app.kria.reply_consistency import (
+    reconcile_disclosures,
+    reconcile_notices,
+    reconcile_review,
+)
 from app.kria.reply_language import (
     bind_reply_language,
     current_reply_language,
@@ -3047,11 +3052,16 @@ def _complete_draft_turn(
                         # checker can judge yet goes under "have a look", never silence.
                         if not editor_turn and not readiness_required and not facts.phone_talking:
                             receipts = [r for r in receipts if r.verification != "unchecked"]
+                        # KRI-1346: an ask the plan changed is one Partly line, not "have a
+                        # look" plus a notice that says it won't happen (switch-gated no-op).
+                        receipts, draft_notices = reconcile_notices(
+                            answered, receipts, planned.policy_notices
+                        )
                         reply_text, receipt_lead_line = reply_and_lead_from_receipts(
                             CreativeBrief(version=brief.version, requirements=answered),
                             receipts,
                             summary=arguments.summary,
-                            notices=planned.policy_notices,
+                            notices=draft_notices,
                             # Outside readiness a route decline follows the planner's
                             # summary instead of replacing it (registry on).
                             declines_after_summary=route_name is not None
@@ -3087,6 +3097,13 @@ def _complete_draft_turn(
                 research_previewed=draft_research is not None and draft_research.ready,
                 # The pinned length plan: whether a story direction's holds fit the length.
                 media=_card_media,
+            )
+            # KRI-1347: no heads-up line a Done / Will-do line contradicts (switch-gated).
+            route_disclosures = reconcile_disclosures(
+                route_disclosures,
+                requirements=brief.live(),
+                receipts=requirement_receipts,
+                strategy=document.strategy,
             )
         route_notice = card_text(route_disclosures) if route_disclosures else None
         if route_notice:
@@ -3430,14 +3447,15 @@ def _complete_draft_turn(
                 )
                 for req in omitted
             )
-            kept = (
-                reply_from_receipts(
-                    brief,
-                    build_receipts(checked, facts, include_unchecked=True, strict_order=True),
-                    notices=planned.policy_notices,
-                )
+            kept_receipts, kept_notices = reconcile_notices(
+                checked,
+                build_receipts(checked, facts, include_unchecked=True, strict_order=True)
                 if checked
-                else ""
+                else [],
+                planned.policy_notices,
+            )
+            kept = (
+                reply_from_receipts(brief, kept_receipts, notices=kept_notices) if checked else ""
             )
             reply_text = "\n".join(
                 part
@@ -4020,6 +4038,7 @@ def _complete_draft_turn(
         )
         db.add(render_execution)
         db.flush()
+        copy_notice = _restored_copy_notice(db, thread.id, planned)
         approval = CreatorAgentApproval(
             creator_id=thread.creator_id,
             thread_id=thread.id,
@@ -4034,11 +4053,13 @@ def _complete_draft_turn(
             target_ownership_epoch=int(session.ownership_epoch),
             execution_ids=[str(render_execution.id)],
             # KRI-689: the speed heads-up rides on the card too, unless the KRI-700 reply
-            # (which already ends with it) became the summary.
+            # (which already ends with it) became the summary. KRI-1352: words the server
+            # restored to the brief are shown on the card before anyone approves them.
             consequence_summary=" ".join(
                 part
                 for part in (
                     f"Render this draft: {approval_summary}",
+                    copy_notice,
                     speed_notice if speed_notice and speed_notice not in approval_summary else None,
                     route_notice if route_notice and route_notice not in approval_summary else None,
                 )
@@ -4307,6 +4328,28 @@ async def _plan_with_live_agent(
             await heartbeat
         finally:
             await engine.dispose()
+
+
+def _restored_copy_notice(
+    db,  # noqa: ANN001 - SQLAlchemy Session
+    thread_id: uuid.UUID,
+    planned: PlannedKriaTurn,
+) -> str | None:
+    """The approval card's line for paragraphs this turn restored to the brief (KRI-1352)."""
+    if not planned.brief_updates or planned.brief_expected_version is None:
+        return None
+    from app.kria.brief import load_brief_history_sync  # noqa: PLC0415
+    from app.kria.text_sequence import recovered_copy_notice  # noqa: PLC0415
+
+    prior = next(
+        (
+            brief
+            for brief in load_brief_history_sync(db, thread_id)
+            if brief.version == planned.brief_expected_version
+        ),
+        None,
+    )
+    return recovered_copy_notice(prior, planned.brief_updates)
 
 
 async def _with_approval_readiness(
@@ -8495,6 +8538,8 @@ def _approved_generation_requirements_review(
         )
         for receipt in receipts
     ]
+    # KRI-1347: a "Done" the render receipt contradicts is never shown (switch-gated no-op).
+    receipts = reconcile_review(brief.live(), receipts, variant)
     return _with_left_out(reply_from_receipts(brief, receipts, summary=default_text), left_out), [
         receipt.model_dump(mode="json") for receipt in receipts
     ]

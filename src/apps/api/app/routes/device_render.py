@@ -556,6 +556,8 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
     check them BEFORE it re-pins anything for a build (`_auto_resume_updated`): a build
     newer than the one that declined is not necessarily new enough for the recipe.
     """
+    from app.services.client_protocol import SPLIT_COLLAPSE_PROTOCOL  # noqa: PLC0415
+
     protocol = _caller_protocol()
     recipe = status.request.recipe
     if "splitScreen" in recipe.required_capabilities and protocol < 46:
@@ -563,6 +565,12 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "code": "client_update_required",
             "feature": "split_screen",
             "minimum_client_protocol": 46,
+        }
+    if "splitCollapse" in recipe.required_capabilities and protocol < SPLIT_COLLAPSE_PROTOCOL:
+        return {
+            "code": "client_update_required",
+            "feature": "split_collapse",
+            "minimum_client_protocol": SPLIT_COLLAPSE_PROTOCOL,
         }
     from app.agents._schemas.text_animation_phases import DESIGNED_TEXT_EDGES
 

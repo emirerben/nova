@@ -815,20 +815,34 @@ def prepare_phone_editor_commit(
         None,
     )
     require_phone_voiceover_source_audio_client(before_variant)
-    from app.services.phone_rollout import split_screen_client_supported
+    from app.services.client_protocol import SPLIT_COLLAPSE_PROTOCOL
+    from app.services.phone_rollout import (
+        split_collapse_client_supported,
+        split_screen_client_supported,
+    )
 
-    if not split_screen_client_supported():
+    if not split_screen_client_supported() or not split_collapse_client_supported():
         try:
             split_recipe = device_status(job, variant_id).request.recipe
         except KeyError:
             split_recipe = None
-        if split_recipe is not None and "splitScreen" in split_recipe.required_capabilities:
+        capabilities = split_recipe.required_capabilities if split_recipe is not None else set()
+        if "splitScreen" in capabilities and not split_screen_client_supported():
             raise HTTPException(
                 426,
                 detail={
                     "code": "client_update_required",
                     "feature": "split_screen",
                     "minimum_client_protocol": 42,
+                },
+            )
+        if "splitCollapse" in capabilities and not split_collapse_client_supported():
+            raise HTTPException(
+                426,
+                detail={
+                    "code": "client_update_required",
+                    "feature": "split_collapse",
+                    "minimum_client_protocol": SPLIT_COLLAPSE_PROTOCOL,
                 },
             )
     staged = _StagedJob(job)
@@ -1599,6 +1613,8 @@ def _compile_subtitled_editor_commit(
         editor_speaker_framing,
         landscape_canvas_framing,
     )
+    from app.pipeline.phone_talking_closing_card import closing_card_from_recipe  # noqa: PLC0415
+    from app.services.phone_rollout import phone_talking_closing_card_available  # noqa: PLC0415
 
     if landscape_canvas:
         # No face-fill on a wide canvas: the receipt says so (`landscape_canvas`) but keeps its
@@ -1637,6 +1653,15 @@ def _compile_subtitled_editor_commit(
         # Only a landscape canvas names itself: the portrait call stays byte-identical.
         **({"output_orientation": "landscape"} if landscape_canvas else {}),
         **({"clip_tilts": tilts} if (tilts := _previous_clip_tilts(previous.recipe)) else {}),
+        # KRI-1346: the creator's colour card stays at the end on every Save (read back from
+        # the pinned recipe, like the inserts); its words are an ordinary saved text row. With
+        # its switch off the Save drops the card instead of failing the recipe check.
+        **(
+            {"closing_card": card}
+            if phone_talking_closing_card_available()
+            and (card := closing_card_from_recipe(previous.recipe))
+            else {}
+        ),
     )
     recipe = with_drawings(recipe, variant.get("drawings"))
     # KRI-1142: added pictures are rebuilt from the saved blocks on EVERY Talking Save, not only a

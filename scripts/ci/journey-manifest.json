@@ -526,6 +526,8 @@
         "src/apps/api/app/pipeline/phone_speaker_framing.py",
         "src/apps/api/app/pipeline/phone_subtitled_plan.py",
         "src/apps/api/app/pipeline/phone_subtitled_title.py",
+        "src/apps/api/app/pipeline/phone_talking_closing_card.py",
+        "src/apps/api/app/pipeline/phone_talking_corner_text.py",
         "src/apps/api/app/pipeline/render_geometry.py",
         "src/apps/api/tests/pipeline/test_kri547_face_fill_device_fixture.py",
         "src/apps/api/tests/pipeline/test_phone_speaker_framing.py",
@@ -1172,12 +1174,14 @@
     {
       "id": "kri-1151-talking-show-when-mentioned",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_phone_talking_mentions.py tests/tasks/test_talking_show_when_mentioned.py",
+      "api_tests": "tests/pipeline/test_phone_talking_mentions.py tests/services/test_kri1342_beat_phrase_timing.py tests/tasks/test_talking_show_when_mentioned.py",
       "paths": [
         "src/apps/api/app/kria/cutaway_show_ask.py",
         "src/apps/api/app/pipeline/phone_talking_mentions.py",
+        "src/apps/api/app/pipeline/phrase_window.py",
         "src/apps/api/tests/fixtures/talking_show_when_mentioned_6fa36e51.json",
         "src/apps/api/tests/pipeline/test_phone_talking_mentions.py",
+        "src/apps/api/tests/services/test_kri1342_beat_phrase_timing.py",
         "src/apps/api/tests/tasks/test_talking_show_when_mentioned.py"
       ]
     },
@@ -1340,6 +1344,8 @@
         "src/apps/api/app/pipeline/phone_narrated_plan.py",
         "src/apps/api/app/pipeline/phone_speech_montage_plan.py",
         "src/apps/api/app/pipeline/phone_subtitled_plan.py",
+        "src/apps/api/app/pipeline/phone_talking_closing_card.py",
+        "src/apps/api/app/pipeline/phone_talking_corner_text.py",
         "src/apps/api/app/pipeline/phone_text_background.py",
         "src/apps/api/app/pipeline/phone_text_style.py",
         "src/apps/api/app/pipeline/phone_voiceover_montage_plan.py",
@@ -1536,9 +1542,12 @@
     {
       "id": "kri-721-approval-readiness",
       "needs_native": false,
-      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_kri983_lipsync_song_journey.py tests/kria/test_lev_m1_length_photo_holds_replay.py tests/kria/test_assos_request_to_recipe.py tests/kria/test_route_replays.py tests/kria/test_route_registry_flag_off.py tests/kria/test_route_lines_golden.py tests/kria/test_render_entry_pins.py tests/kria/test_lane_targets_guard.py tests/kria/test_text_animation_ask.py tests/pipeline/test_story_direction.py tests/kria/test_green3_pr1_receipts.py tests/tasks/test_green3_caption_look_worker.py tests/agents/test_green3_brief_prompt.py",
+      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_kri983_lipsync_song_journey.py tests/kria/test_lev_m1_length_photo_holds_replay.py tests/kria/test_assos_request_to_recipe.py tests/kria/test_route_replays.py tests/kria/test_route_registry_flag_off.py tests/kria/test_route_lines_golden.py tests/kria/test_render_entry_pins.py tests/kria/test_lane_targets_guard.py tests/kria/test_text_animation_ask.py tests/pipeline/test_story_direction.py tests/kria/test_green3_pr1_receipts.py tests/tasks/test_green3_caption_look_worker.py tests/agents/test_green3_brief_prompt.py tests/kria/test_reply_consistency.py",
       "paths": [
         "src/apps/api/app/kria/approval_readiness.py",
+        "src/apps/api/app/kria/reply_consistency.py",
+        "src/apps/api/tests/fixtures/kria_reply_consistency/",
+        "src/apps/api/tests/kria/test_reply_consistency.py",
         "src/apps/api/app/kria/caption_look_ask.py",
         "src/apps/api/tests/fixtures/green3_9bad2d75_caption_look_no_music.json",
         "src/apps/api/tests/kria/test_green3_pr1_receipts.py",
@@ -1605,7 +1614,7 @@
     {
       "id": "troya-footage-research",
       "needs_native": true,
-      "api_tests": "tests/evals/request_following/test_troya_context_journey.py tests/evals/request_following/test_researched_text.py tests/evals/request_following/test_kri816_talking_research.py tests/evals/request_following/test_kri816_historical_journey.py tests/evals/request_following/test_kri881_research_before_approval.py tests/services/test_kria_editor_clip_context.py",
+      "api_tests": "tests/evals/request_following/test_troya_context_journey.py tests/evals/request_following/test_researched_text.py tests/evals/request_following/test_kri816_talking_research.py tests/evals/request_following/test_kri816_historical_journey.py tests/evals/request_following/test_kri881_research_before_approval.py tests/services/test_kria_editor_clip_context.py tests/evals/request_following/test_research_feeds_text_sequences.py tests/kria/test_approved_long_sequence_copy.py tests/kria/test_legacy_overflow_literal_recovery.py tests/kria/test_legacy_overflow_retry_planner.py tests/kria/test_legacy_overflow_retry_postgres.py",
       "xctests": [
         "KriaTests/NativeResearchSourcesTests/testSourcesSurviveDocumentSaveAndFlagChangedCopy",
         "KriaTests/NativeResearchSourcesTests/testUnsafeSourceSchemesAndPrivateHostsCannotOpen",
@@ -1619,6 +1628,14 @@
         "src/apps/api/app/services/kria_editor_ops_text.py",
         "src/apps/api/tests/evals/request_following/test_troya_context_journey.py",
         "src/apps/api/tests/evals/request_following/test_researched_text.py",
+        "src/apps/api/tests/evals/request_following/test_research_feeds_text_sequences.py",
+        "src/apps/api/tests/kria/test_approved_long_sequence_copy.py",
+        "src/apps/api/app/kria/text_sequence.py",
+        "src/apps/api/tests/kria/test_legacy_overflow_literal_recovery.py",
+        "src/apps/api/tests/kria/test_legacy_overflow_retry_planner.py",
+        "src/apps/api/tests/kria/test_legacy_overflow_retry_postgres.py",
+        "src/apps/api/tests/fixtures/kria_replay/kri1352_bilingual_research/README.md",
+        "src/apps/api/tests/fixtures/kria_replay/kri1352_bilingual_research/expectation.json",
         "src/apps/api/tests/evals/request_following/test_kri816_talking_research.py",
         "src/apps/api/tests/evals/request_following/test_kri816_historical_journey.py",
         "src/apps/api/tests/fixtures/kri816_troya_historical_journey_turn.json",
@@ -2038,9 +2055,12 @@
     {
       "id": "kri-793-caption-spellings",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri793_caption_spellings.py tests/tasks/test_kri793_talking_caption_spellings.py tests/pipeline/test_caption_spelling.py tests/tasks/test_green45_talking_caption_text.py",
+      "api_tests": "tests/kria/test_kri793_caption_spellings.py tests/tasks/test_kri793_talking_caption_spellings.py tests/pipeline/test_caption_spelling.py tests/tasks/test_green45_talking_caption_text.py tests/pipeline/test_kri1345_caption_names.py",
       "paths": [
         "src/apps/api/app/pipeline/caption_case.py",
+        "src/apps/api/app/pipeline/caption_names.py",
+        "src/apps/api/tests/pipeline/test_kri1345_caption_names.py",
+        "src/apps/api/tests/pipeline/fixtures/kri1345_yorum3_hearing.json",
         "src/apps/api/tests/tasks/green45_caption_text.json",
         "src/apps/api/tests/tasks/test_green45_talking_caption_text.py",
         "src/apps/api/tests/fixtures/kri793_t1_caro/t1_brief_and_speech.json",
@@ -3577,6 +3597,7 @@
         "src/apps/api/prompts/edit_copilot_ops/split_screen.txt",
         "src/apps/api/prompts/main_creator_split_screen.txt",
         "src/apps/api/tests/fixtures/split_screen_timeline.json",
+        "src/apps/api/tests/fixtures/split_screen_collapse_timeline.json",
         "src/apps/api/tests/kria/test_split_screen.py",
         "src/apps/api/tests/kria/test_clip_source_clock.py",
         "src/apps/api/tests/kria/test_split_screen_persistence_postgres.py",

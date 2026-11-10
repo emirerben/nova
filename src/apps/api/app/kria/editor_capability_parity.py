@@ -173,9 +173,16 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "agent_ops",
         "setSplitScreenDuration setSplitScreenPanelCount setSplitScreenPanelWeight "
         "setSplitScreenGutter setSplitScreenBackgroundColor beginSplitDividerDrag "
-        "updateSplitDividerDrag endSplitDividerDrag cancelSplitDividerDrag",
+        "updateSplitDividerDrag endSplitDividerDrag cancelSplitDividerDrag setSplitCollapse",
         ("update_split_screen",),
-        fields=("duration_s", "panel_count", "panel_weights", "gutter", "background_color"),
+        fields=(
+            "duration_s",
+            "panel_count",
+            "panel_weights",
+            "gutter",
+            "background_color",
+            "collapse_empty_panels",
+        ),
     ),
     "split_screen_panel_order": _g("agent_ops", "swapSplitPanels", ("swap_split_panels",)),
     "split_screen_clip_order": _g("agent_ops", "moveSelectedSplitScreenClip", ("move_split_clip",)),

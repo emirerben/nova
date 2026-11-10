@@ -7273,12 +7273,24 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(try DeviceRenderIntentStore(root: intents).load(storageKey)?.state, .stopped)
 
         await first.retryDeviceRender()
+        // The Stop's decline report re-reads the status once the server accepts it. A tap that lands while that
+        // read is out is queued and applied when it finishes (`rereads`), so the release can come after
+        // `retryDeviceRender()` returns. Wait for it: tearing the session down first discarded the queued
+        // Resume, and every later assertion failed with it (CI flake, KRI-1364).
+        let firstTapLanded = await waitUntil(timeout: .seconds(5)) {
+            (try? DeviceRenderIntentStore(root: intents).load(storageKey)?.state) == .released
+                && firstSessions.presentations[key]?.requiresServerRetry == true
+        }
         let afterFirst = await mints.value, exportsAfterFirst = await exports.value
         XCTAssertEqual(afterFirst, 0, "The first tap only releases the persisted Stop")
         XCTAssertEqual(exportsAfterFirst, 0)
+        XCTAssertTrue(firstTapLanded, "The first tap releases the persisted Stop and reads the server's own pause")
         XCTAssertEqual(try DeviceRenderIntentStore(root: intents).load(storageKey)?.state, .released)
         XCTAssertTrue(firstSessions.isPausedByCreator(key), "The server still holds its own pause")
         XCTAssertEqual(firstSessions.presentations[key]?.requiresServerRetry, true, "Now the server's pause is read, so the next tap mints")
+        // Leave the first editor like the screen closing, so its preview poll cannot read the shared status
+        // (or start a render on the stopped sessions) while the rebuilt session runs.
+        first.setObserversVisible(false)
         await firstSessions.stopAll()
 
         let (second, secondSessions) = await launch()
