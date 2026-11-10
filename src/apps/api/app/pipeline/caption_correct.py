@@ -488,12 +488,13 @@ _INSERTED_NUMBER = re.compile(r"\d+\.?")
 
 
 def _numeric_sequence(text: str) -> tuple[str, ...]:
-    """The numerals of ``text`` in order, compatibility forms folded like
-    ``_has_numeric_content`` ("㎟" -> "2"), so a hinted edit can prove it kept them."""
+    """The numerals of ``text`` in order, compatibility forms folded ("㎟" -> "2"), so a
+    hinted edit can prove it kept them. The one numeric probe in this module."""
 
     out: list[str] = []
     for ch in text:
-        folded = [c for c in unicodedata.normalize("NFKD", ch) if c.isnumeric()]
+        decomposed = unicodedata.normalize("NFKD", ch)  # single-fold: numeric probe
+        folded = [c for c in decomposed if c.isnumeric()]
         if folded:
             out.extend(folded)
         elif ch.isnumeric():
@@ -504,10 +505,7 @@ def _numeric_sequence(text: str) -> tuple[str, ...]:
 def _has_numeric_content(text: str) -> bool:
     """Include fractions/numerals and compatibility forms such as ㎟ -> mm2."""
 
-    return any(ch.isnumeric() for ch in text) or any(
-        ch.isnumeric()
-        for ch in unicodedata.normalize("NFKD", text)  # single-fold: numeric probe
-    )
+    return bool(_numeric_sequence(text))
 
 
 def _word_key(text: str) -> str:
