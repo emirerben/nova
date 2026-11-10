@@ -56,6 +56,7 @@ EN_TAKE = _timed(
     "So,@27.24-27.60 how@28.28-28.36 do@28.36-28.46 I@28.46-28.64 read@28.64-28.84 "
     "this?@28.84-29.20"
 )
+BILLBOARDS_CUE = (26.76, 27.10)
 EN_PHRASE_STARTS = {"launch": 2.16, "post1": 9.82, "post2": 13.72, "billboards": 25.06}
 EN_BEATS = [
     {"beat_id": "launch", "trigger": "launched", "visual_id": "p-launch"},
@@ -254,8 +255,11 @@ def test_photo_then_clip_sequence_keeps_its_length(monkeypatch):
     result = _ground(monkeypatch, beats, EN_TAKE, timing=grounding.VOICEOVER_PHRASE_TIMING)
 
     start, end = _windows(result)["seq"]
-    assert abs(start - 25.06) <= 0.1
     assert round(end - start, 3) == 1.5
+    # Too short to reach back to "Like": it still covers the whole cue word, ending as
+    # "billboards." ends (the following clip takes over there), as early as that allows.
+    assert start <= BILLBOARDS_CUE[0] and end >= BILLBOARDS_CUE[1]
+    assert end == BILLBOARDS_CUE[1]
 
 
 def test_a_video_beat_keeps_its_length_rules(monkeypatch):
@@ -268,8 +272,29 @@ def test_a_video_beat_keeps_its_length_rules(monkeypatch):
     )
 
     start, end = _windows(result)["v"]
-    assert abs(start - 25.06) <= 0.1
     assert round(end - start, 3) == 1.2
+    assert start <= BILLBOARDS_CUE[0] and end >= BILLBOARDS_CUE[1]
+    assert end == BILLBOARDS_CUE[1]
+
+
+def test_every_window_is_on_screen_while_its_cue_is_said(monkeypatch):
+    """Emir's review of #2257: an earlier start must never leave a visual ending before its
+    own word. Fixed short lengths (explicit holds, a short video) and phrase-sized ones alike."""
+    beats = [
+        {"beat_id": "short", "trigger": "billboards", "visual_id": "p1", "hold_s": 0.5},
+        {"beat_id": "launch", "trigger": "launched", "visual_id": "p2"},
+        {"beat_id": "post1", "trigger": "welcome Zorb", "visual_id": "p3", "hold_s": 0.6},
+    ]
+    result = _ground(monkeypatch, beats, EN_TAKE)
+    cues = {"short": BILLBOARDS_CUE, "launch": (3.18, 3.58), "post1": (9.82, 10.30)}
+
+    windows = _windows(result)
+    for beat_id, (start, end) in windows.items():
+        cue_start, cue_end = cues[beat_id]
+        # On screen at the cue's first word, and through its last word when long enough.
+        assert start <= cue_start < end, beat_id
+        assert end >= min(cue_end, cue_start + (end - start)), beat_id
+    assert windows["short"] == (26.6, 27.1)  # ends as "billboards." ends
 
 
 def test_a_silent_footage_cutaway_starts_with_its_mention_phrase():

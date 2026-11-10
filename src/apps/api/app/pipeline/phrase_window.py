@@ -153,6 +153,7 @@ def phrase_window(
         return None
     first, last = span
     cue_start = timed[first].start_s
+    cue_end = timed[last].end_s
 
     # --- start: walk back to the clause start ---------------------------------------------
     j = first
@@ -197,9 +198,19 @@ def phrase_window(
 
     limit = duration_s if duration_s is not None else float("inf")
 
+    def _covering_cue(begin: float, finish: float) -> tuple[float, float]:
+        """The same-length window moved later just enough to still be on screen while the cue
+        is said (it ends no earlier than the cue's last word, or starts on the cue when it is
+        shorter than the cue): a short fixed-length visual never ends before its own word."""
+        if finish >= cue_end:
+            return begin, finish
+        length = finish - begin
+        moved = min(cue_start, max(begin, cue_end - length))
+        return moved, min(moved + length, limit)
+
     if not size_to_phrase:
         length = hold_s if hold_s is not None else min_s
-        end = min(start + length, limit)
+        start, end = _covering_cue(start, min(start + length, limit))
         return PhraseWindow(
             start_s=round(start, 3),
             end_s=round(end, 3),
@@ -245,10 +256,10 @@ def phrase_window(
     elif end - start > max_s:
         # Too long: end at the last word end that fits (never under the minimum).
         fits = [
-            _end_at(i) for i in range(first, end_idx + 1) if min_s <= _end_at(i) - start <= max_s
+            _end_at(i) for i in range(last, end_idx + 1) if min_s <= _end_at(i) - start <= max_s
         ]
         end = max(fits) if fits else start + max_s
-    end = min(end, limit)
+    start, end = _covering_cue(start, min(end, limit))
     return PhraseWindow(
         start_s=round(start, 3),
         end_s=round(end, 3),

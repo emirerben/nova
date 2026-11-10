@@ -50,6 +50,10 @@ billboards." — the photo appeared as the phrase ended (output 19.25 s, the cap
 14. Flag off must be byte-identical (receipts too).
 15. Whisper word ends stretched over pauses — punctuation first, pauses second.
 16. Hallucinated mid-phrase commas — start lands later than ideal but never after the trigger.
+17. (Found in review, #2257) A short fixed-length visual (a 1.2 s video, a photo-then-clip,
+    a short `hold_s`) moved back to the phrase start ends before its own word is said. Every
+    window keeps its length but starts late enough to stay on screen through its cue
+    (`phrase_window._covering_cue`); a phrase-sized window clamped to its maximum likewise.
 
 ## Pass metric
 
