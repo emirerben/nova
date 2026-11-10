@@ -5284,22 +5284,21 @@ def _check_closing_card(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         if wanted and shown and _fold(shown) != _fold(wanted):
             return _receipt(req, "partial", _CC_WORDS_DIFFER, stage="checked")
         if card.get("text_color_swapped"):
-            shown = "black" if card.get("text_color") == "#000000" else "white"
-            return _receipt(
-                req,
-                "partial",
+            # One whole sentence per colour, so each is one catalog key (KRI-1362).
+            reason = (
                 say(
-                    en=(
-                        "Your text colour wouldn't be readable on that background, so the "
-                        f"text is {shown}."
-                    ),
-                    tr=(
-                        "Yazı rengin o arka planda okunmazdı, o yüzden yazı "
-                        + ("siyah." if shown == "black" else "beyaz.")
-                    ),
-                ),
-                stage="checked",
+                    en="Your text colour wouldn't be readable on that background, so the "
+                    "text is black.",
+                    tr="Yazı rengin o arka planda okunmazdı, o yüzden yazı siyah.",
+                )
+                if card.get("text_color") == "#000000"
+                else say(
+                    en="Your text colour wouldn't be readable on that background, so the "
+                    "text is white.",
+                    tr="Yazı rengin o arka planda okunmazdı, o yüzden yazı beyaz.",
+                )
             )
+            return _receipt(req, "partial", reason, stage="checked")
         return _receipt(req, "met", None, stage="checked")
     if not facts.phone_talking:
         return _receipt(req, "not_possible", _CC_NOT_TALKING)

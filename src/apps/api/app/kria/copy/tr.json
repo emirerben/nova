@@ -1378,6 +1378,8 @@
     "Your saved request is too large or unavailable for this editor step. Your draft is unchanged. Which clip or part should I work on first?": "Kayıtlı isteğin bu düzenleme adımı için çok büyük ya da şu an ulaşılamıyor. Taslağın değişmedi. Önce hangi klip ya da bölüm üzerinde çalışayım?",
     "Your song": "Şarkın",
     "Your source clips changed after this draft was approved. Your draft is saved; please make a fresh plan before rendering.": "Bu taslak onaylandıktan sonra kaynak kliplerin değişti. Taslağın kayıtlı; videoyu oluşturmadan önce lütfen yeni bir plan hazırlat.",
+    "Your text colour wouldn't be readable on that background, so the text is black.": "Yazı rengin o arka planda okunmazdı, o yüzden yazı siyah.",
+    "Your text colour wouldn't be readable on that background, so the text is white.": "Yazı rengin o arka planda okunmazdı, o yüzden yazı beyaz.",
     "Your text covers your face: I found no spot clear of it": "Yazın yüzünün üstünde kalıyor: yüzünü açıkta bırakan bir yer bulamadım",
     "Your text ends at {exc_required_duration_s:g}s, beyond the requested {exc_requested_duration_s:g}s. Keep the video at least {exc_minimum_duration_s:g}s, or allow me to adjust the text timing? Nothing was changed.": "Yazıların {exc_required_duration_s:g}. saniyede bitiyor. Videoyu en az {exc_minimum_duration_s:g} saniye mi tutayım, yoksa yazıların zamanlamasını değiştirebilir miyim? Hiçbir şey değişmedi.",
     "Your video changed — reopen the editor and try again.": "Videon değişti. Editörü yeniden açıp tekrar dene.",

@@ -3627,6 +3627,24 @@
         "src/apps/ios/Tests/KriaTests/DeviceTalkingCardStyleRenderE2ETests.swift",
         "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/PlacedCardStyleTests.swift"
       ]
+    },
+    {
+      "id": "kri-1362-chat-copy-catalogs",
+      "needs_native": false,
+      "api_tests": [
+        "src/apps/api/tests/kria/test_copy_catalog.py",
+        "src/apps/api/tests/kria/test_copy_completeness.py",
+        "src/apps/api/tests/kria/test_copy_routing.py",
+        "src/apps/api/tests/kria/test_say_templates.py",
+        "src/apps/api/tests/parity/test_decision_parity_de.py",
+        "src/apps/api/tests/kria/test_kri520_reply_language.py"
+      ],
+      "paths": [
+        "src/apps/api/app/kria/copy/conflicts.json",
+        "src/apps/api/app/kria/copy/de.json",
+        "src/apps/api/app/kria/copy/tr.json",
+        "src/apps/api/app/kria/copy_catalog.py"
+      ]
     }
   ]
 }
