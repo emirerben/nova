@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.141.0] - 2026-11-10
+
+### Changed
+- feat(ios): warm the editor while the chat is on screen (#2261) <!-- release-pr: 2261 -->
+
 ## [0.88.140.0] - 2026-11-10
 
 ### Changed
