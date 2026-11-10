@@ -1082,6 +1082,8 @@ def test_every_worker_sentence_the_chat_rewords_still_exists_and_is_covered() ->
         contract._PHONE_REPAIR,
         contract._ASK_PHONE,
         contract._SOUNDTRACK_TWICE.alternative,
+        contract.NO_FOOTAGE_SOUND,
+        contract.USE_MUSIC_INSTEAD,
         contract._VOICE_CONFLICT.alternative,
         cloud._ASK_CHRONOLOGICAL,
         cloud._ASK_CAMERA_AUDIO,

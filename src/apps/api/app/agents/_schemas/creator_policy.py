@@ -732,6 +732,26 @@ def _repair_single_clip_all_scope(
     )
 
 
+def selected_footage_is_silent(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
+) -> bool:
+    """True when the strategy's footage is known to have no sound at all (KRI-1365).
+
+    Judged on the selected videos (every video when the selection is empty or ``all``). One
+    clip whose audio is unknown or audible makes the footage not silent: only a probe's
+    ``has_audio=False`` on every selected video counts.
+    """
+
+    pool = {media.media_id: media for media in manifest.media if media.kind == "video"}
+    chosen = (
+        []
+        if strategy.media_scope == "all" or not strategy.selected_media_ids
+        else [media_id for media_id in strategy.selected_media_ids if media_id in pool]
+    )
+    videos = [pool[media_id] for media_id in chosen] if chosen else list(pool.values())
+    return bool(videos) and all(media.has_audio is False for media in videos)
+
+
 def normalize_creator_strategy_media(
     manifest: ResolvedCreatorManifest,
     strategy: CreativeStrategy,
@@ -744,6 +764,7 @@ def normalize_creator_strategy_media(
         strategy = _repair_single_clip_all_scope(manifest, strategy)
     if strategy.video_reuse_policy in {"distinct_windows", "allow_repeat"}:
         strategy = strategy.model_copy(update={"direction": "fast_montage"})
+    silent_footage = selected_footage_is_silent(manifest, strategy)
     if (
         (
             strategy.montage_cadence is not None
@@ -751,6 +772,7 @@ def normalize_creator_strategy_media(
         )
         and strategy.audio_strategy == "original_audio"
         and strategy.montage_audio is None
+        and not silent_footage
     ):
         strategy = strategy.model_copy(
             update={
@@ -770,6 +792,7 @@ def normalize_creator_strategy_media(
         and guided_edit_applicable(strategy.edit_format, has_voiceover=manifest.has_voiceover)
         and strategy.audio_strategy == "original_audio"
         and strategy.montage_audio is None
+        and not silent_footage
     ):
         strategy = strategy.model_copy(
             update={
@@ -1122,6 +1145,7 @@ __all__ = [
     "native_voiceover_all_scope",
     "native_voiceover_only",
     "normalize_creator_strategy_media",
+    "selected_footage_is_silent",
     "own_video_ids",
     "repair_creator_strategy_shape",
     "states_explicit_media_narrowing_cue",
