@@ -266,3 +266,28 @@ def test_same_sound_other_letters_is_respelled_after_a_turkish_adjective():
         "Kahvesi de Kolombiya'dan. Caro bütün hafta oradaydı.",
     ]
     assert changed == {"karo": "Caro"}
+
+
+# --- review (Emir, on 93e22977e): a two-word name that opens a sentence ----------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Mila Kunis starred. Later Mila returned.",  # the name opens the sentence
+        "Aston Villa scored first. Later Villa won.",  # the other word opens it
+        "Later Mila returned. Mila Kunis starred.",  # the compound comes second
+    ],
+)
+def test_a_two_word_name_at_a_sentence_start_blocks_the_word_everywhere(text):
+    cues = [_cue(text)]
+    names = ("Mela",) if "Mila" in text else ("Vela",)
+    out, changed = apply_name_vocabulary(cues, names)
+    assert out == cues and changed == {}
+
+
+def test_a_plain_sentence_opener_does_not_block_the_name():
+    # "Then" opens the sentence and is an ordinary word, not part of her name.
+    cues = [_cue("Then Vila posted again. Yesterday Vila replied.")]
+    out, _ = apply_name_vocabulary(cues, ("Vela",))
+    assert _texts(out) == ["Then Vela posted again. Yesterday Vela replied."]

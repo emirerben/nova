@@ -29,7 +29,7 @@ exactly one name, and the creator did not type it. Word for word, timings unchan
 | Ecuador N1 TR voiceover, whisper.cpp: "Caro" | 0 of 2 ("Karo") | 2 of 2 |
 | Kervan (6 hearings "Curvan"), Lumo, Pamukkale, Kadıköy | right (5+ letter rule, already on) | unchanged |
 | Words changed that were not a misheard typed name | — | **0** (65 hearings) |
-| Every 4-letter typed name of every prompt × every hearing (1,950 pairs) | — | 0 false changes |
+| Every 4-letter typed name of every prompt × every hearing (1,300 pairs) | — | 0 false changes |
 | 129 capitalised prompt words as "photo text" × every hearing (no typed-word guard) | — | 0 false changes (5 changes, all real mishearings: Vila, Karo, Carolina→Karolina, Trotsard→Trossard) |
 | 234 real kit upload file names as names × every hearing | — | 0 changes |
 | Word / cue timings | — | identical in every run (asserted) |
@@ -39,6 +39,12 @@ Still wrong after the fix (not safely fixable by a sound rule; left as they were
 off), "katakanın" for Atakan'ın (word boundary), "NARS Lipton" for Nar's lip tint (3-letter
 name). Not covered: cloud writers (`_render_subtitled_variant`, `_render_narrated_variant`,
 retranscribe), the post-render caption check and the reaction-beat trigger match (5-letter rule).
+
+Review fix (Emir, on 93e22977e): a two-word name that opens a sentence ("Mila Kunis starred.
+Later Mila returned.", "Aston Villa scored. Later Villa won.") now blocks the heard word in every
+position. A capitalised sentence opener counts as half of a name unless the hearings also write it
+in lower case or it is a common EN/TR opener ("Then", "Yesterday", "Dün"). The corpus results
+above were re-run after this fix and are unchanged.
 
 Guard: `src/apps/api/tests/pipeline/test_kri1345_caption_names.py` (yorum3's real hearing through
 `_phone_talking_caption_text`; flag off reproduces "Vila"). Replay scripts and corpus stay outside

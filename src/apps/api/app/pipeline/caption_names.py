@@ -34,6 +34,7 @@ apostrophe stays ("Vila'nın" -> "Vela'nın"). Pure: no I/O, no model call.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -84,6 +85,21 @@ _NOT_NAMES = frozenset(
     okay nice fans tree good cool wow yeah
     prompt footage visual visuals sheet manifest script voiceover fallback folder folders readme
     notes take takes test
+    """.split()
+)
+
+
+# Ordinary words that often open a sentence (folded, EN + TR): capitalised there, never half of
+# a two-word name ("Yesterday Vila replied", "Dün Vila'nın ..." keep "Vila" a candidate).
+_SENTENCE_OPENERS = frozenset(
+    """
+    yesterday today tomorrow later then now so but and also finally first second third next
+    last after before when while because since anyway well okay yes no maybe actually honestly
+    basically meanwhile still even just here there this that these those it its we you they he
+    she our my your their his her what why how who where which if or the a an in on at for with
+    dun bugun yarin sonra simdi ama ve de da ayrica sonunda once ilk ikinci ucuncu cunku yani
+    peki evet hayir belki aslinda hatta hala bile sadece burada orada bu su o biz siz onlar ben
+    sen bizim benim onun ne neden nasil kim nerede hangi gecen gecenlerde iste hem ya
     """.split()
 )
 
@@ -249,35 +265,78 @@ class _Heard:
     forms: dict[str, str]  # folded heard word -> one heard spelling of it
 
 
-def _read_hearing(texts: Sequence[str], known: frozenset[str], heard: _Heard) -> None:
-    """Walk one hearing word by word: which heard words are written as names (a capital not at
-    a sentence start) and which sit next to a capitalised word that is not a known name."""
+@dataclass(frozen=True)
+class _Word:
+    key: str  # folded, case ending off
+    text: str
+    capital: bool  # written with a capital, wherever it stands
+    as_name: bool  # a capital NOT at a sentence start: the take writes it as a name
+    ending: bool  # a case ending after an apostrophe ("Instagram'da")
+    joined_after: bool  # only a space before the next word
+
+
+def _words(text: str) -> list[_Word]:
+    """One hearing word by word, with where each stands in its sentence."""
+    out: list[_Word] = []
     sentence_start = True
-    previous: tuple[str, bool] | None = None  # (folded word, written as a name)
-    for chunk in re.finditer(r"\S+", " ".join(texts)):
+    for chunk in re.finditer(r"\S+", text):
         token = chunk.group(0)
         word = _TOKEN.search(token)
         if word is None:
             sentence_start = sentence_start or bool(_SENTENCE_END.search(token))
-            previous = None
+            if out:
+                out[-1] = dataclasses.replace(out[-1], joined_after=False)
             continue
-        text = word.group(0)
-        key = _fold(_split_ending(text)[0])
-        heard.forms.setdefault(key, text)
-        as_name = not sentence_start and text[:1].isupper() and _fold(text) not in _ALWAYS_UPPER
-        if as_name:
-            heard.evidence.add(key)
-        if previous is not None:
-            prev_key, prev_name = previous
-            if as_name and prev_name and prev_key not in known and not _adjective(prev_key):
-                heard.blocked.add(key)
-            # A capitalised word AFTER it joins the name only without a case ending: "Villa
-            # Park" does, Turkish "Vila Instagram'da" (the ending closes "Instagram") does not.
-            if prev_name and as_name and key not in known and not _split_ending(text)[1]:
-                heard.blocked.add(prev_key)
-        joined_after = word.end() == len(token)  # no punctuation after the word
-        previous = (key, as_name) if joined_after else None
+        letters = word.group(0)
+        stem, ending = _split_ending(letters)
+        capital = letters[:1].isupper() and _fold(letters) not in _ALWAYS_UPPER
+        out.append(
+            _Word(
+                key=_fold(stem),
+                text=letters,
+                capital=capital,
+                as_name=capital and not sentence_start,
+                ending=bool(ending),
+                joined_after=word.end() == len(token),
+            )
+        )
+        if word.start() != 0 and len(out) > 1:
+            out[-2] = dataclasses.replace(out[-2], joined_after=False)
         sentence_start = bool(_SENTENCE_END.search(token))
+    return out
+
+
+def _read_hearings(
+    hearings: Sequence[Sequence[_Word]], known: frozenset[str], heard: _Heard
+) -> None:
+    """Which heard words the take writes as names (a capital not at a sentence start) and which
+    are ever part of another capitalised name, in ANY position (Emir's review: "Mila Kunis
+    starred. Later Mila returned." -- "Mila" opening the sentence is still half of "Mila Kunis",
+    so neither "Mila" may become "Mela").
+
+    A capitalised word at a sentence start says nothing by its capital, so as the left half of a
+    pair it counts as a name unless the hearings also write it in lower case or it is a common
+    word ("Then Vila posted" keeps "Vila"); "Aston Villa scored" blocks "Villa"."""
+    lower = {w.key for words in hearings for w in words if not w.capital}
+
+    def name_like(w: _Word) -> bool:
+        ordinary = w.key in lower or w.key in _NOT_NAMES or w.key in _SENTENCE_OPENERS
+        return w.as_name or (w.capital and not ordinary)
+
+    for words in hearings:
+        for w in words:
+            heard.forms.setdefault(w.key, w.text)
+            if w.as_name:
+                heard.evidence.add(w.key)
+        for a, b in zip(words, words[1:], strict=False):
+            if not (a.joined_after and a.capital and b.capital):
+                continue
+            # The word after a name joins it unless a case ending closes it ("Vila Instagram'da").
+            if name_like(b) and b.key not in known and not b.ending:
+                heard.blocked.add(a.key)
+            # The word before it joins it unless it is a Turkish "from X" adjective.
+            if name_like(a) and a.key not in known and not _adjective(a.key):
+                heard.blocked.add(b.key)
 
 
 def plan_respellings(
@@ -293,9 +352,8 @@ def plan_respellings(
         return {}
     keep = frozenset({_fold(w) for w in protected} | {_fold(n) for n in names})
     heard = _Heard(evidence=set(), blocked=set(), forms={})
-    _read_hearing(texts, keep, heard)
-    for reference in references:
-        _read_hearing([reference or ""], keep, heard)
+    hearings = [_words(" ".join(texts)), *(_words(r or "") for r in references)]
+    _read_hearings(hearings, keep, heard)
     plan: dict[str, str] = {}
     for key in sorted(heard.evidence - heard.blocked):
         form = heard.forms[key]
