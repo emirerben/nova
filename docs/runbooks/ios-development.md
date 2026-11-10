@@ -1130,6 +1130,37 @@ job, so local edits cannot be replayed onto it.
 Guards: the conflict cases in `NativeEditorSessionTests`,
 `ChatDraftStagingTests`, `TextDeletionTests` and `DeviceRenderSessionTests`.
 
+### Warm editor (opened from the chat)
+
+The chat prepares its editor while the creator reads, so "Open editor" finds it loaded.
+`ChatWorkspaceView` runs `NativeEditorSession.openOrWarm(..., intent: .warm)` from
+`.task(id: EditorWarmPlan)`. The plan is warmable only when the video is ready, the format is
+known, it is not a slide post, the app is active, no turn is sending or thinking, the network is
+up and Low Data Mode is off (`NetworkReachability.isConstrained`). A chat poll does not change
+the plan. The editor view calls the same method with `.open`.
+
+- **One flight.** A call for the same target (thread, job, variant, account) joins the flight in
+  progress and returns when it is done. A different target retires an unfinished flight and
+  fences it with a new load epoch. Asking again for a loaded session makes no request: chat events
+  keep it current through `synchronizePromptRevision` and `adoptLatestJob`.
+- **Failure falls back.** A warm that fails leaves the session idle (no error surface, no retry
+  loop), so the tap runs the cold path it always had.
+- **Cancel and claim.** `cancelWarm()` fences an unclaimed warm that is still fetching (a turn
+  started, the app left the foreground, the chat disappeared). The Open editor tap claims the
+  flight (`claimWarm()`), so nothing from the chat can cancel it under the editor.
+- **Memory.** A memory warning releases a clean, unclaimed warm session; the tap then loads it again.
+- **Drafts mid-warm.** A chat sync that arrives while the open holds the session is remembered and
+  replayed once the open finishes, so the draft is staged before the tap.
+- **Audio.** Warming never activates the audio session; Play does.
+- `KRIA_EDITOR_WARM_DISABLED=1` (Debug) turns warming off for A/B runs.
+
+Proof: `EditorUITests.testEditorIsReadyBeforeTheTap` (no loading, preparing, applying, updating or
+Saving text, a fixed preview frame and no source pool read, download, hash or preview build from
+the tap to five seconds after it), the warm tests in `NativeEditorSessionTests`,
+`EditorWarmPlanTests`, and in `KriaPerfUITests` `testEditorOpenAfterIdle` (`editor.tap.toFrame`) and
+the `testScrollTranscriptWhileTheEditorWarms` / `...WithWarmingOff` pair (hitch gate). Not proven:
+real-device tap-to-frame, memory and battery cost, and the audio session on hardware.
+
 ### Signup screen (KRI-161)
 
 Paper source of truth: https://app.paper.design/file/01M34NT2NRNCP6R49KGW19EY4M

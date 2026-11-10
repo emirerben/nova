@@ -15,7 +15,6 @@ enum AddClipLaunch: Hashable, Identifiable {
 struct NativeEditorAddClipSheet: View {
     @ObservedObject var session: NativeEditorSession
     var launch: AddClipLaunch = .choose
-    var replacingSlotID: String?
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var photoItem: PhotosPickerItem?
@@ -38,10 +37,10 @@ struct NativeEditorAddClipSheet: View {
                     .buttonStyle(.kriaIcon).accessibilityLabel("Close").accessibilityIdentifier("native-editor-add-clip-close")
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text(choosingSource ? "Upload from" : replacingSlotID == nil ? "Add a clip or photo" : "Replace panel footage").kriaType(.heading).foregroundStyle(KriaColor.ink)
+                Text(choosingSource ? "Upload from" : "Add a clip or photo").kriaType(.heading).foregroundStyle(KriaColor.ink)
                     .accessibilityAddTraits(.isHeader)
                 if !choosingSource {
-                    Text(replacingSlotID == nil ? "Adds to the end of your video." : "Replaces the selected clip in this panel.")
+                    Text("Adds to the end of your video.")
                         .kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
                 }
             }
@@ -51,15 +50,6 @@ struct NativeEditorAddClipSheet: View {
                 KriaSourceRow(options: [
                     model.localAccountID == nil ? nil : .record(caption: "Film now", identifier: "native-editor-add-clip-record", isEnabled: !session.isAddingClip) { showsCamera = true },
                     .upload(caption: "Use a photo or video", identifier: "native-editor-add-clip-upload", isEnabled: !session.isAddingClip) {
-                        #if DEBUG
-                        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-import"), let replacingSlotID {
-                            guard let url = Bundle.main.url(forResource: "istanbul", withExtension: "mp4") else { return }
-                            dismiss()
-                            // Substitute only the picker result. Production intake creates the placement.
-                            Task { await session.addClip(fileURL: url, replacingSlotID: replacingSlotID) }
-                            return
-                        }
-                        #endif
                         choosingSource = true
                     }
                 ].compactMap { $0 })
@@ -91,7 +81,7 @@ struct NativeEditorAddClipSheet: View {
                                    admissionMessage: { _ in nil },
                                    intake: { take, url in
                                        // The camera stays open on its "adding" state until the clip is in the timeline.
-                                       await session.addClip(fileURL: url, replacingSlotID: replacingSlotID)
+                                       await session.addClip(fileURL: url)
                                        if let message = session.addClipError { return .failed(message) }
                                        addedByRecording = true
                                        return .attached
@@ -158,7 +148,7 @@ struct NativeEditorAddClipSheet: View {
             await session.addClip(source: {
                 guard let media = try await item.loadTransferable(type: ImportedMedia.self) else { throw AddClipSourceUnreadable() }
                 return media.url
-            }, uploadSource: .photos, replacingSlotID: replacingSlotID)
+            }, uploadSource: .photos)
         }
     }
 
@@ -171,7 +161,7 @@ struct NativeEditorAddClipSheet: View {
         dismissAfterPickerCloses()
         Task { @MainActor in
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            await session.addClip(source: { url }, uploadSource: .files, replacingSlotID: replacingSlotID)
+            await session.addClip(source: { url }, uploadSource: .files)
         }
     }
 }

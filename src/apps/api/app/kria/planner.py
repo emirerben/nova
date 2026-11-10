@@ -342,7 +342,10 @@ async def _snapshot_visual_rows(db: AsyncSession, item: PlanItem) -> list:
         )
         .order_by(PlanItemAsset.created_at, PlanItemAsset.id)
     )
-    return list(rows.scalars())
+    from app.services.visual_talking_takes import without_adopted  # noqa: PLC0415
+
+    # KRI-1340: a Visual adopted as a Talking take is footage now, never also a Visual.
+    return without_adopted(rows.scalars(), item.clip_assignments)
 
 
 def _timing_profile(strategy: Mapping[str, Any]) -> MixedMediaTimingProfile | None:

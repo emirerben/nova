@@ -5127,7 +5127,8 @@ def _coerce_label_each_clip(
     all_bars = [bar for bar in _snapshot_list(snapshot, _TEXT_INDEX_KEYS) if isinstance(bar, dict)]
     bars: dict[str, dict] = {}
     for bar in all_bars:
-        if bar.get("clip_id") and bar.get("id"):
+        # A title or participant label bound by its recorded clip is not the clip's fact label.
+        if bar.get("clip_id") and bar.get("id") and not bar.get("recorded"):
             bars.setdefault(str(bar["clip_id"]), bar)  # first bar per clip
     label_windows = [
         (float(bar["start_s"]), float(bar["end_s"]))

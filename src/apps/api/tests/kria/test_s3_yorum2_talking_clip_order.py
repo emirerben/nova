@@ -15,8 +15,9 @@ Ways this can fail, written before the code (each is pinned below):
 
  F1 the incident: a take named by its length, its opening words or where it was filmed is
     refused by name although exactly one take matches.
- F2 a guess: a description two takes match ("the 7-second clip": B is 7.0 s, C 7.15 s; "two at
-    home") is seated instead of asked about.
+ F2 a guess: a description two takes match ("the 7-second clip": B is 7.0 s, C 7.15 s; "the
+    home clip") is seated instead of asked about. KRI-1340: a stated count ("two at home") is no
+    guess when exactly that many takes match; any other count is still asked about.
  F3 first and last name the same take, and both are seated (one take cannot be both).
  F4 a montage (which has the clip-intent resolver) changes: only Talking edits read the takes.
  F5 the order refusal is copied onto every requirement, hiding their own verdicts (Bug F).
@@ -99,12 +100,24 @@ def test_f1_the_second_take_by_its_opening_words_leads() -> None:
     assert contract.order_ids == (B, A, C)
 
 
-@pytest.mark.parametrize("first", ["the 7-second clip", "two at home", "the blue one"])
+@pytest.mark.parametrize(
+    "first", ["the 7-second clip", "the home clip", "three at home", "the blue one"]
+)
 def test_f2_a_description_two_takes_or_none_match_is_still_asked_by_name(first: str) -> None:
     contract = _contract(_brief(first))
 
     assert contract.unresolved == (_pin_not_found(first),)
     assert contract.order_ids == ()
+
+
+def test_f2_a_counted_group_seats_exactly_the_takes_it_counts() -> None:
+    """KRI-1340 (S3 Yorum1's own words): "two at home and one in the car" names the two home
+    takes as the opening group, by their count, and the car take last. Filming order decides
+    inside the group, as the brief's basis says."""
+    contract = _contract(_brief("two at home", "one in the car"))
+
+    assert contract.unresolved == ()
+    assert contract.order_ids == (A, B, C)
 
 
 def test_f3_one_take_is_never_seated_first_and_last() -> None:

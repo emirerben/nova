@@ -396,6 +396,15 @@ class Settings(BaseSettings):
     # Apply: `fly secrets set PHONE_TALKING_MULTI_SPEAKER_BEATS_ENABLED=true --app nova-video`
     # + restart api + worker.
     phone_talking_multi_speaker_beats_enabled: bool = False
+    # KRI-1340 (Çiğdem S3 Yorum1): a talk-to-camera video attached through Visuals in a Talking
+    # item becomes one of its talking takes, exactly as if it had been attached as footage. When
+    # its analysis lands (`speech.to_camera`), the server makes the analysis proxy the phone would
+    # have made and appends a normal clip row whose `pool_source` lets the phone download the
+    # take's bytes from the Visuals pool (`app.services.visual_talking_takes`). Needs multi-clip
+    # Talking (`phone_talking_multi_clip_supported`). False (default): byte-identical, the video
+    # stays a Visual. Apply: `fly secrets set VISUAL_TALKING_TAKES_ENABLED=true --app nova-video`
+    # + restart api + worker.
+    visual_talking_takes_enabled: bool = False
     # Re-record a take: `POST /creation-threads/{id}/media/replace` swaps one attached
     # speaker clip for a new upload in a single transaction, and `upload-urls` accepts
     # `replaces_media_id` for the clip cap. False (default): the route and the field
