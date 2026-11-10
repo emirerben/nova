@@ -14161,13 +14161,9 @@ def _phone_protected_plan(
     # The clips after the first play each right after the one before it, on the same clock the
     # caption cues were shifted onto (`extra_offset_s`): in full, or (KRI-720) their kept
     # segments when cleanup cut that take (``extra_keep_segments``, by media id).
-    first_s = 0.0
-    if extra_speakers:
-        first_s = (
-            sum(b - a for a, b in kept)
-            if extra_keep_segments
-            else float(binding.original.duration_s)
-        )
+    # The first take plays its kept seconds whether or not a later take was cut (an uncut
+    # first take's `kept` is its whole length, so this equals the old value then).
+    first_s = sum(b - a for a, b in kept) if extra_speakers else 0.0
     offset_s = first_s
     speakers: list[tuple[Any, str | None, Any, float, float, list]] = []
     for extra_binding, extra_path in extra_speakers:
