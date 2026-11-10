@@ -396,6 +396,15 @@ class Settings(BaseSettings):
     # Apply: `fly secrets set PHONE_TALKING_MULTI_SPEAKER_BEATS_ENABLED=true --app nova-video`
     # + restart api + worker.
     phone_talking_multi_speaker_beats_enabled: bool = False
+    # KRI-720: speech cleanup (pauses, fillers) for a Talking edit made of several takes. The
+    # preflight analyses every clip with sound as its own take (one analysis row, one payload
+    # per take), the creator consents once, and the phone render cuts each talking take with
+    # its own plan before joining them. False (default): byte-identical, several takes stay
+    # `ambiguous_embedded_source` and the draft says cleanup couldn't run. Needs several-clip
+    # Talking (`phone_talking_multi_clip_supported`). See
+    # `phone_rollout.phone_talking_multi_take_cleanup_supported`. Apply: `fly secrets set
+    # TALKING_MULTI_TAKE_CLEANUP_ENABLED=true --app nova-video` + restart api + worker.
+    talking_multi_take_cleanup_enabled: bool = False
     # KRI-1340 (Çiğdem S3 Yorum1): a talk-to-camera video attached through Visuals in a Talking
     # item becomes one of its talking takes, exactly as if it had been attached as footage. When
     # its analysis lands (`speech.to_camera`), the server makes the analysis proxy the phone would
@@ -1958,15 +1967,17 @@ class Settings(BaseSettings):
 
     speech_cleanup_slate_cut_enabled: bool = Field(
         default=False,
-        description="Speech cleanup also cuts a production slate that opens a take: the first "
-        'utterance, when it is only recording / rolling / countdown / mic-check talk ("okay, '
-        'we\'re recording", "tamam, kayıttayız", "three two one"), ends with a full stop, a '
-        "gap or a silence, lasts under 3 s and leaves at least 3 words "
-        "(`app/pipeline/speech_slate.py`; Çiğdem S2, docs/reviews/cigdem-s2-failure-modes.md). "
-        "It is cut like an abandoned take, so it also needs RETAKE_CUT_ENABLED and "
-        "SPEECH_CLEANUP_RETAKES_ENABLED. Default off: no span is added and every plan and "
-        "receipt is byte-identical to before. Kill switch: `fly secrets set "
-        "SPEECH_CLEANUP_SLATE_CUT_ENABLED=false --app nova-video` + api and worker restart.",
+        description="Speech cleanup also cuts off-script pre-roll that opens a take: the first "
+        'utterances, when every word in them is talk about the recording itself ("okay, '
+        'starting", "we\'re recording", "three two one", "testing, one two", "tamam, '
+        'kayıttayız", "başlıyorum"; cue words such as "is this on?" or "let\'s go" only before '
+        "a clear pause). A word with no production role keeps the utterance, so a real first "
+        "sentence is never cut (`app/pipeline/speech_slate.py`; KRI-1326, KRI-1348, "
+        "docs/reviews/kri-1348-preroll-failure-modes.md). It is cut like an abandoned take, so "
+        "it also needs RETAKE_CUT_ENABLED and SPEECH_CLEANUP_RETAKES_ENABLED. Default off: no "
+        "span is added and every plan and receipt is byte-identical to before. Kill switch: "
+        "`fly secrets set SPEECH_CLEANUP_SLATE_CUT_ENABLED=false --app nova-video` + api and "
+        "worker restart (the worker also runs preflight analysis).",
     )
 
     speech_cleanup_long_pauses_enabled: bool = Field(
@@ -2895,6 +2906,15 @@ class Settings(BaseSettings):
     # captions are white with a black outline. Edits without a background are unchanged. Default
     # TRUE; false + worker restart = byte-identical (`phone_text_styling._background_frames`).
     caption_background_contrast_enabled: bool = True
+    # KRI-1343 / KRI-1344 (2026-11-09): captions stay readable on any background. The worst
+    # contrast under the caption (take frames, full-screen photos/videos, B-roll) below 4.5:1 adds
+    # an outline sized to the text in the readable ink, even when the creator chose the colour
+    # (unless they set the outline / shadow themselves); while a full-screen picture is up a line
+    # moves to its nearest calm band, or hides there when the picture is text-dense. Default
+    # FALSE; false = byte-identical (`pipeline/caption_legibility.py`,
+    # `phone_text_styling.caption_legibility_pass`). Apply: fly secret
+    # `CAPTION_LEGIBILITY_ENABLED=true` (api + worker) + restart.
+    caption_legibility_enabled: bool = False
     # Qendresa case 1 (2026-11-06): on a speaker-background edit with the speaker in a corner
     # frame, caption and text placement dodge her face where the phone DRAWS it (the take scaled
     # into the frame), not where it sits in the full-frame take; inside a full-screen window

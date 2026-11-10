@@ -512,6 +512,39 @@ resurrect the occlusion the omission prevented). `media_overlays_applied_ids`
 separately records the subset that actually reached the burned video. Guard:
 `test_media_overlay_persistence_keeps_failed_cards_drops_omitted`.
 
+## Caption legibility on any background (KRI-1343 / KRI-1344)
+
+`CAPTION_LEGIBILITY_ENABLED` (default `false`; api + worker; `false` is byte-identical).
+Phone generations only (`phone_text_styling.caption_legibility_pass`, called from
+`phone_captions.compile_caption_layers`; rules in `app/pipeline/caption_legibility.py`):
+
+- **Treatment.** The worst WCAG contrast (p10/p90 luminance) between the caption fill and the
+  pixels under the caption block -- take frames, full-screen photo/video cards and B-roll
+  cutaways (`register_generation_fullscreen`) -- below 4.5:1 adds an outline of ~7.5% of the
+  size (2-6 px) in black or white, whichever reads on the fill. The fill is never changed, also
+  when the creator chose it ("small, white" is size and colour). A creator/account outline keeps
+  hers and gets a firm shadow instead; outline and shadow both set = nothing (receipt
+  `declined`). A caption box needs nothing.
+- **Full-screen pictures.** While a full-screen card is up, a line whose block touches edges of
+  the picture (gradient on a 270x480 grey cover-fit) moves to the nearest calm band
+  (`caption_editor_style.line_overrides[cue_id].position_y_frac`, honoured by the server compile
+  and the iPhone editor; cue ids `native-caption-<n>` are made explicit on generation). A picture
+  with no calm band whose least busy band is still text-dense hides the line for that window.
+  The part of a line over the take keeps off her face.
+- Persisted: `caption_stroke_width`, `caption_editor_style.{stroke_color,shadow_color,
+  shadow_opacity,line_overrides}` and the receipt `variant.caption_legibility`. The cloud burn
+  (`_caption_style_overrides` -> ASS) reads the same outline/shadow fields; it composites
+  full-screen cards above captions, so per-line moves do not apply there.
+- A hidden line is persisted on the cue as `hidden_spans` (`[[from, to], ...]`, seconds from the
+  cue's own start; `generation_persisted_cues`), kept by the caption whitelist (`CaptionCue`) on
+  every editor Save / PATCH, and honoured by one rule: `caption_legibility.visible_cues` in the
+  phone compile (`phone_captions._prepare_cues`) and the cloud burn
+  (`_burn_persisted_captions_onto_base`); the iPhone editor's compiler mirrors it
+  (`NativeEditorRenderCompiler.visibleCaptionSpans`). An iPhone build without that change draws
+  the line over the picture again after an editor edit (no crash): turn the switch on only once
+  the build carrying it is out.
+- Guard: `tests/pipeline/test_caption_legibility.py`.
+
 ## Guards (entry points)
 
 - `tests/smart_edit/test_v2_render_contract.py` — caption policy, shared

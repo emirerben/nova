@@ -24,6 +24,10 @@ log = structlog.get_logger()
 
 SPEECH_CLEANUP_ENGINE_VERSION = "preflight-v1-2026-09-05"
 SPEECH_CLEANUP_PAYLOAD_VERSION = "1"
+# KRI-720: a several-take Talking row stores one single-source payload per take
+# (`SpeechCleanupMultiTakeResult`). Mirrors `speech_cleanup_analysis.MULTI_TAKE_PAYLOAD_VERSION`.
+SPEECH_CLEANUP_MULTI_TAKE_PAYLOAD_VERSION = "2"
+
 SPEECH_CLEANUP_TASK_SOFT_LIMIT_S = 840
 SPEECH_CLEANUP_TASK_HARD_LIMIT_S = 900
 SPEECH_CLEANUP_LEASE_S = 960
@@ -142,6 +146,12 @@ def preflight_enabled_for_source(
     return rollout_percent >= 100 or stable_preflight_cohort(fingerprint) < rollout_percent
 
 
+def _payload_version_for(source: ActiveNarrationSource) -> str:
+    if getattr(source, "takes", ()):
+        return SPEECH_CLEANUP_MULTI_TAKE_PAYLOAD_VERSION
+    return SPEECH_CLEANUP_PAYLOAD_VERSION
+
+
 def _new_analysis(
     plan_item_id: uuid.UUID,
     source: ActiveNarrationSource,
@@ -160,7 +170,7 @@ def _new_analysis(
         source_policy_fingerprint=source.source_policy_fingerprint,
         engine_version=SPEECH_CLEANUP_ENGINE_VERSION,
         detector_version=DETECTOR_VERSION,
-        analysis_payload_version=SPEECH_CLEANUP_PAYLOAD_VERSION,
+        analysis_payload_version=_payload_version_for(source),
         status="queued",
         next_dispatch_at=current_time,
     )
@@ -248,7 +258,7 @@ def _source_snapshot_matches(
         and row.source_policy_fingerprint == source.source_policy_fingerprint
         and row.engine_version == SPEECH_CLEANUP_ENGINE_VERSION
         and row.detector_version == DETECTOR_VERSION
-        and row.analysis_payload_version == SPEECH_CLEANUP_PAYLOAD_VERSION
+        and row.analysis_payload_version == _payload_version_for(source)
     )
 
 
@@ -282,6 +292,8 @@ def _terminal_result_is_reusable(
     # halves still agree. Re-validating here is intentionally rare (only an
     # A -> B -> A source transition) and prevents corrupt old JSON from being
     # promoted back into the decision card.
+    if getattr(source, "takes", ()):
+        return _multi_take_result_is_reusable(row, source)
     try:
         from app.pipeline.speech_cleanup_analysis import SpeechCleanupAnalysisResult
 
@@ -314,6 +326,42 @@ def _terminal_result_is_reusable(
     )
 
 
+def _multi_take_result_is_reusable(
+    row: SpeechCleanupAnalysis,
+    source: ActiveNarrationSource,
+) -> bool:
+    """KRI-720: the several-take twin of the single-source re-validation above: every take
+    of the payload must be exactly the take the source resolves now, in the same order."""
+
+    try:
+        from app.pipeline.speech_cleanup_analysis import SpeechCleanupMultiTakeResult
+
+        result = SpeechCleanupMultiTakeResult.from_payload(row.analysis_payload)
+    except (ImportError, TypeError, ValueError):
+        return False
+    if len(result.takes) != len(source.takes) or not all(
+        stored.media_id == take.media_id
+        and stored.storage_path == take.storage_path
+        and stored.generation == take.generation
+        and math.isclose(stored.window_start_s, take.window_start_s, rel_tol=0, abs_tol=1e-6)
+        and math.isclose(stored.window_end_s, take.window_end_s, rel_tol=0, abs_tol=1e-6)
+        for stored, take in zip(result.takes, source.takes, strict=True)
+    ):
+        return False
+    receipt = result.public_receipt
+    expected_status = "ready" if receipt.candidate_count > 0 else "no_findings"
+    return bool(
+        row.status == expected_status
+        and row.failure_code is None
+        and row.failure_retryable is None
+        and result.source_fingerprint == source.source_policy_fingerprint
+        and result.detector_version == DETECTOR_VERSION
+        and row.candidate_count == receipt.candidate_count
+        and row.category_counts == receipt.category_counts.model_dump()
+        and row.estimated_removed_ms == receipt.estimated_removed_ms
+    )
+
+
 def _clear_item_cleanup_choice(item: PlanItem) -> None:
     # False is only the compatibility mirror. A source reactivation is a new
     # consent epoch even when its exact analysis evidence can be reused.
@@ -338,7 +386,7 @@ def _reset_analysis_for_dispatch(
     row.source_policy_fingerprint = source.source_policy_fingerprint
     row.engine_version = SPEECH_CLEANUP_ENGINE_VERSION
     row.detector_version = DETECTOR_VERSION
-    row.analysis_payload_version = SPEECH_CLEANUP_PAYLOAD_VERSION
+    row.analysis_payload_version = _payload_version_for(source)
     row.status = "queued"
     row.attempt_token = None
     row.attempt_count = 0
@@ -407,6 +455,10 @@ def _redo_for_misheard_language(
         return False
     payload = row.analysis_payload
     if not isinstance(payload, dict):
+        return False
+    if payload.get("schema_version") == 2:
+        # KRI-720: a several-take payload has no single language; each take's own analysis
+        # already ran its language cross-check with its own clip's reference at claim time.
         return False
     diagnostics = payload.get("diagnostics")
     if isinstance(diagnostics, dict) and "language_crosscheck" in diagnostics:
@@ -1099,7 +1151,9 @@ def analysis_snapshot(row: SpeechCleanupAnalysis) -> dict[str, Any]:
     if row.status not in {"ready", "no_findings"} or not isinstance(row.analysis_payload, dict):
         raise ValueError("speech cleanup analysis is not snapshot-ready")
     return {
-        "schema_version": 1,
+        # KRI-720: a several-take row's snapshot is schema 2 (its ``analysis`` is the
+        # several-take payload); the ``source`` block is the row's first take either way.
+        "schema_version": (2 if row.analysis_payload.get("schema_version") == 2 else 1),
         "analysis_id": str(row.id),
         "engine_version": row.engine_version,
         "detector_version": row.detector_version,
@@ -1143,6 +1197,15 @@ def _public_window_duration_ms(row: SpeechCleanupAnalysis) -> int | None:
     analysis, so returning None there is the truthful projection.
     """
 
+    if getattr(row, "analysis_payload_version", None) == SPEECH_CLEANUP_MULTI_TAKE_PAYLOAD_VERSION:
+        # KRI-720: the row's window is its first take only; the talking takes' total is in
+        # the payload's derived receipt (None until the analysis lands).
+        payload = getattr(row, "analysis_payload", None)
+        receipt = payload.get("public_receipt") if isinstance(payload, dict) else None
+        total = receipt.get("source_duration_ms") if isinstance(receipt, dict) else None
+        if isinstance(total, bool) or not isinstance(total, int):
+            return None
+        return max(0, total)
     start = getattr(row, "window_start_s", None)
     end = getattr(row, "window_end_s", None)
     if start is None or end is None:
