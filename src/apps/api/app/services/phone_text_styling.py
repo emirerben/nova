@@ -782,6 +782,7 @@ def caption_legibility_pass(cues: list[dict], look, *, canvas) -> tuple[object, 
         for p in pictures
     ]
     # 1. Lines over a full-screen picture: moved to its calm band, or hidden there.
+    policy["_caption_hidden"] = {}
     overrides = dict(base.line_overrides or {})
     moved, hidden = [], []
     out_cues = []
@@ -833,18 +834,19 @@ def caption_legibility_pass(cues: list[dict], look, *, canvas) -> tuple[object, 
             moved.append({"cue": cue_id, "y_frac": placement.y_frac})
             out_cues.append(cue)
         elif placement.action == "hide":
-            pieces = legibility.trim_cue_out_of(cue, windows)
-            hidden.append({"cue": cue_id, "windows": [list(w) for w in windows]})
-            out_cues.extend(
-                {**piece, "id": cue_id if n == 0 else f"{cue_id}-{n}"}
-                for n, piece in enumerate(pieces)
-            )
+            # Recorded ON the cue (relative spans), so generation persists it
+            # (`generation_persisted_cues`) and every renderer honours the same data:
+            # `visible_cues` here and in the cloud burn, the iPhone editor's compiler.
+            spans = legibility.hidden_spans_for(cue, windows)
+            hidden.append({"cue": cue_id, "hidden_spans": spans})
+            policy.setdefault("_caption_hidden", {})[cue_id] = spans
+            out_cues.append({**cue, "hidden_spans": spans})
         else:
             out_cues.append(cue)
     # 2. Every drawn line, where it is finally drawn, against what is behind it while it is up.
     contrast: float | None = None
     measured = 0
-    for index, cue in enumerate(out_cues):
+    for index, cue in enumerate(legibility.visible_cues(out_cues)):
         if not str(cue.get("text") or "").strip():
             continue
         start, end = float(cue.get("start_s", 0)), float(cue.get("end_s", 0))
@@ -1095,6 +1097,23 @@ def _caption_over_face(row: dict, rows: list[dict], faces: list, canvas) -> bool
         and (not isinstance(face, dict) or any(_same_window(face, r) for r in rows))
         for face in faces
     )
+
+
+def generation_persisted_cues(cues: list[dict]) -> list[dict]:
+    """KRI-1344: ``cues`` as generation persists them, each line the legibility pass hid over a
+    text-dense full-screen picture carrying its ``hidden_spans`` (keyed by cue id), so the
+    editor, a Save/reopen and every export keep it hidden there. Nothing hidden (no policy, the
+    switch off, no dense picture): ``cues`` itself, unchanged."""
+    policy = _POLICY.get() or {}
+    hidden = policy.get("_caption_hidden") or {}
+    if not hidden:
+        return cues
+    return [
+        {**cue, "hidden_spans": hidden[cue["id"]]}
+        if isinstance(cue, dict) and isinstance(cue.get("id"), str) and cue["id"] in hidden
+        else cue
+        for cue in cues
+    ]
 
 
 def generation_caption_cues(cues: list[dict], *, language: str | None = None) -> list[dict]:

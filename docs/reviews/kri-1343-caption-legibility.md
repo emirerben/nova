@@ -73,8 +73,14 @@ Follow-up candidate: a backing box for those lines (needs `captionShape`, protoc
 ## Known gaps
 
 - Native phone export not inspected (evidence level: offline replay).
-- A hidden line is cut only in the compiled recipe; the iPhone editor redraws the persisted cue
-  after an edit (needs a per-cue hide field + protocol gate).
+- Hidden lines (review on #2258): persisted as `hidden_spans` on the cue and honoured through
+  generation -> editor Save/reopen -> phone recipe -> cloud burn
+  (`test_a_hidden_line_stays_hidden_through_editor_save_reopen_and_export`; red controls: the
+  whitelist without the field, and renderers ignoring it, both fail it). The iPhone editor's own
+  compiler is covered by `NativeEditorRenderCompilerTests.testHiddenSpans*` (CI iPhone unit leg).
+  An older iPhone build ignores the field after an editor edit (the line shows over the picture,
+  no crash): switch on only after the build with this change ships. Web editor not covered
+  (iPhone-only scope).
 - Five older flag-off tests pin "white with no outline" and must be updated when the switch is
   turned on (`test_green45_caption_contrast.py` x3, `test_caption_corner_face.py` x1,
   `test_speaker_full_opening_caption_contrast.py` x1).

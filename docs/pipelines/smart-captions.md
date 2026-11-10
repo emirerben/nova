@@ -512,8 +512,14 @@ Phone generations only (`phone_text_styling.caption_legibility_pass`, called fro
   shadow_opacity,line_overrides}` and the receipt `variant.caption_legibility`. The cloud burn
   (`_caption_style_overrides` -> ASS) reads the same outline/shadow fields; it composites
   full-screen cards above captions, so per-line moves do not apply there.
-- Known gap: a hidden line is cut only in the compiled recipe; the iPhone editor redraws the
-  persisted cue after an edit (follow-up: a per-cue hide field + protocol gate).
+- A hidden line is persisted on the cue as `hidden_spans` (`[[from, to], ...]`, seconds from the
+  cue's own start; `generation_persisted_cues`), kept by the caption whitelist (`CaptionCue`) on
+  every editor Save / PATCH, and honoured by one rule: `caption_legibility.visible_cues` in the
+  phone compile (`phone_captions._prepare_cues`) and the cloud burn
+  (`_burn_persisted_captions_onto_base`); the iPhone editor's compiler mirrors it
+  (`NativeEditorRenderCompiler.visibleCaptionSpans`). An iPhone build without that change draws
+  the line over the picture again after an editor edit (no crash): turn the switch on only once
+  the build carrying it is out.
 - Guard: `tests/pipeline/test_caption_legibility.py`.
 
 ## Guards (entry points)

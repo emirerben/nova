@@ -1526,9 +1526,13 @@ def _base_overlay(cue: dict, look: PhoneCaptionLook) -> dict[str, Any]:
 
 def _prepare_cues(cues: list[dict], *, timeline_duration_s: float | None) -> list[dict]:
     """Sort, drop empty/degenerate cues, and clamp overlap (and, optionally,
-    the timeline bound) -- see `compile_caption_layers`'s docstring."""
+    the timeline bound) -- see `compile_caption_layers`'s docstring. A cue's
+    ``hidden_spans`` (KRI-1344) are cut out of its time first
+    (`caption_legibility.visible_cues`); cues without any pass through unchanged."""
+    from app.pipeline.caption_legibility import visible_cues
+
     cleaned: list[dict] = []
-    for cue in cues:
+    for cue in visible_cues(cues):
         text = str(cue.get("text", "")).strip()
         if not text:
             continue

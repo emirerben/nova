@@ -334,3 +334,50 @@ def trim_cue_out_of(cue: dict, windows: Sequence[tuple[float, float]]) -> list[d
                 piece.pop("words", None)
         out.append(piece)
     return out
+
+
+# Most hidden spans one caption line may carry (a line rarely spans more than two cards).
+MAX_HIDDEN_SPANS = 8
+
+
+def hidden_spans_for(cue: dict, windows: Sequence[tuple[float, float]]) -> list[list[float]]:
+    """``windows`` (timeline seconds) as the cue's ``hidden_spans``: offsets from the cue's own
+    start, clipped to the cue, rounded to the millisecond. Relative, so a line the editor shifts
+    in time (a cut before it, a retime) stays hidden over the same part of itself."""
+    start, end = float(cue["start_s"]), float(cue["end_s"])
+    spans = []
+    for w_start, w_end in windows:
+        lo, hi = max(start, float(w_start)), min(end, float(w_end))
+        if hi - lo > 0.001:
+            spans.append([round(lo - start, 3), round(hi - start, 3)])
+    return sorted(spans)[:MAX_HIDDEN_SPANS]
+
+
+def visible_cues(cues: Sequence[dict]) -> list[dict]:
+    """``cues`` as drawn: a cue carrying ``hidden_spans`` (KRI-1344, persisted by generation and
+    kept by the editor's caption whitelist) becomes the parts of its time outside those spans,
+    each keeping the cue's text and id (`trim_cue_out_of`). Every other cue passes through as the
+    same object, so a cue list without hidden spans is unchanged (byte-identical renders). The
+    one rule the phone compile and the cloud burn both apply; the iPhone editor's compiler
+    mirrors it (`NativeEditorRenderCompiler`, `hidden_spans`)."""
+    out: list[dict] = []
+    for cue in cues:
+        spans = cue.get("hidden_spans") if isinstance(cue, dict) else None
+        if not spans or not isinstance(spans, list):
+            out.append(cue)
+            continue
+        try:
+            start = float(cue["start_s"])
+            windows = [
+                (start + float(span[0]), start + float(span[1]))
+                for span in spans[:MAX_HIDDEN_SPANS]
+                if isinstance(span, (list, tuple)) and len(span) == 2
+            ]
+        except (KeyError, TypeError, ValueError):
+            out.append(cue)
+            continue
+        out.extend(
+            {k: v for k, v in piece.items() if k != "hidden_spans"}
+            for piece in trim_cue_out_of(cue, windows)
+        )
+    return out

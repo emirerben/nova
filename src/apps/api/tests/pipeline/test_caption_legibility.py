@@ -367,3 +367,92 @@ def test_switch_off_is_byte_identical(media, monkeypatch):
     monkeypatch.setattr(settings, "caption_legibility_enabled", True)
     on_recipe, _ = _compile(cards)
     assert off_recipe.model_dump() != on_recipe.model_dump()
+
+
+def test_a_hidden_line_stays_hidden_through_editor_save_reopen_and_export(
+    media, monkeypatch, tmp_path
+):
+    """KRI-1344 review (Emir, #2258): the hide over a page of text is persisted on the cue
+    (`hidden_spans`) and honoured on every later path: the editor's Save (the whole cue list
+    comes back through the caption whitelist, one line's text edited), the phone recipe the
+    Save rebuilds, and the cloud caption burn. Failure modes: the whitelist strips the field on
+    the first text edit; generation persists the cues without it; the Save compile ignores it;
+    the cloud burn ignores it."""
+    import app.pipeline.captions as captions_mod
+    import app.pipeline.narrated_assembler as assembler
+    from app.pipeline.caption_legibility import visible_cues
+    from app.services.device_render import device_status
+    from app.tasks import generative_build as gb
+    from tests.routes.test_phone_subtitled_editor_commit import phone_job, save
+
+    cards = (_card(PAGE, 5.0, 9.0),)
+    policy = {
+        "version": 1,
+        "preferences": {"all_text": {}},
+        "requested": {},
+        "caption_ask": WHITE_SMALL_MIDDLE,
+        "_source_bindings": [_binding().model_dump(mode="json")],
+    }
+    with styling.phone_text_policy_scope(policy):
+        cues = styling.generation_caption_cues([dict(c) for c in CUES])
+        compile_phone_subtitled_plan(
+            (_binding(),),
+            caption_cues=cues,
+            visuals=tuple(_visual(c.media_id) for c in cards),
+            lanes=PhoneSubtitledLanes(overlays=list(cards)),
+        )
+        fields = styling.generation_style_fields()
+        persisted = styling.generation_persisted_cues(cues)
+    hidden = {c["id"]: c["hidden_spans"] for c in persisted if c.get("hidden_spans")}
+    assert hidden, "generation must persist the hide on the cue"
+    assert fields["caption_legibility"]["hidden"]
+
+    # The editor (the switch is irrelevant from here on: the data carries the decision).
+    monkeypatch.setattr(settings, "caption_legibility_enabled", False)
+    job = phone_job(monkeypatch)
+    job.assembly_plan["variants"][0].update({**fields, "caption_cues": persisted})
+    edited = [dict(c) for c in persisted]
+    edited[0]["text"] = "okay, here we go."
+    save(job, caption_cues=edited)
+    variant = job.assembly_plan["variants"][0]
+    assert {
+        c["id"]: c["hidden_spans"] for c in variant["caption_cues"] if c.get("hidden_spans")
+    } == (hidden)
+    recipe = device_status(job, "subtitled").request.recipe
+    captions = _captions(recipe)
+    assert captions
+    for layer in captions:
+        assert layer.end <= 5.0 + 1e-6 or layer.start >= 9.0 - 1e-6, (layer.id, layer.start)
+
+    # Reopen + Save again with no edit: still hidden (nothing drops the field on a re-save).
+    import app.routes.generative_jobs as gj
+
+    reopened = job.assembly_plan["variants"][0]
+    gj.prepare_editor_commit(
+        job,
+        "subtitled",
+        gj.EditorCommitRequest(
+            base_generation=reopened["render_generation_id"],
+            caption_cues=[dict(c) for c in reopened["caption_cues"]],
+        ),
+        user_id="owner",
+        plan_item_id="item",
+    )
+    for layer in _captions(device_status(job, "subtitled").request.recipe):
+        assert layer.end <= 5.0 + 1e-6 or layer.start >= 9.0 - 1e-6, (layer.id, layer.start)
+
+    # The cloud burn of the same variant draws the same visible parts.
+    burned: list[list[dict]] = []
+
+    def capture(cues, path, **kwargs):  # noqa: ARG001
+        burned.append(list(cues))
+        Path(path).write_text("")
+
+    monkeypatch.setattr(captions_mod, "generate_ass_from_cues", capture)
+    monkeypatch.setattr(assembler, "burn_captions_on_video", lambda *a, **k: None)
+    gb._burn_persisted_captions_onto_base(
+        str(tmp_path / "base.mp4"), str(tmp_path / "out.mp4"), variant, str(tmp_path)
+    )
+    assert burned and burned[0] == visible_cues(variant["caption_cues"])
+    for cue in burned[0]:
+        assert float(cue["end_s"]) <= 5.0 + 1e-6 or float(cue["start_s"]) >= 9.0 - 1e-6, cue
