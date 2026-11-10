@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-11-10-v121",
+  "prompt_version": "2026-11-11-v122",
   "input": {
     "utterance": "make 0:16 to 0:22 black and white like the old photos, and come back to colour with a warm light leak flash and a whoosh",
     "prior_turns": [],

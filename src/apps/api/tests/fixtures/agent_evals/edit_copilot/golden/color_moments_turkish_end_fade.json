@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-11-10-v121",
+  "prompt_version": "2026-11-11-v122",
   "input": {
     "utterance": "40 ile 55 arası siyah beyaz olsun, beyaz flaşla girsin, videonun sonunda da kararsın",
     "prior_turns": [],

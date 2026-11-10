@@ -113,13 +113,16 @@ log = structlog.get_logger()
 # v120 (KRI-1253): PICTURE CARDS teaches add_overlay for an ASSET POOL row (the generated image the
 # creator accepted, listed by its title); with no row the lane still says a new picture can't be
 # added from chat.
-# v121 (KRI-1350): set_color_moments {moments?, end_fade_s?} sets black-and-white / warm / faded
+# v121 (KRI-1365): a vague "make the video shorter" acts at once (about 70%, proportional) instead
+# of asking; "make the text faster" / "show each text shorter" retimes every word sequence, a
+# paired one (a text and its translation) over the same window.
+# v122 (KRI-1350): set_color_moments {moments?, end_fade_s?} sets black-and-white / warm / faded
 # stretches with cut, white-flash, light-leak or dip-to-black edges (a library sound may land on an
 # edge) and the fade to black at the end. Taught in color_moments.txt and printed as COLOR MOMENTS
 # only where the snapshot offers the `color_moments` family (flag + verified token + protocol 48),
 # or, with that gate closed, on an edit that still carries moments, marked REMOVAL ONLY (only
 # taking them off is accepted), so every other prompt is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-10-v121"
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-11-v122"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).

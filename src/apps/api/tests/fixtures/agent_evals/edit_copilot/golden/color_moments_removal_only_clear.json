@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-11-10-v121",
+  "prompt_version": "2026-11-11-v122",
   "input": {
     "utterance": "remove the black and white part",
     "prior_turns": [],

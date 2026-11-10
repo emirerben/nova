@@ -965,6 +965,7 @@
     "That render didn't finish. Your confirmed plan is saved.": "Bu video tamamlanamadı. Onayladığın plan kayıtlı.",
     "That render has settled. I’ve refreshed the project status for you.": "O video işlemi sona erdi. Projenin durumunu senin için güncelledim.",
     "That sequence cannot be safely edited in this version.": "Bu sürümde bu dizi güvenle düzenlenemiyor.",
+    "That would change the wording you approved, so I left it as it is.": "Bu, onayladığın yazıyı değiştirirdi; o yüzden olduğu gibi bıraktım.",
     "That would change which clips keep their sound in the edit you approved; approve the change and I'll rebuild it": "Bu, onayladığın düzenlemede hangi kliplerin sesini koruduğunu değiştirirdi; değişikliği onaylarsan yeniden hazırlarım",
     "That would change {phrase}, which you did not flag. Flag it and try again.": "Bu, işaretlemediğin {phrase} bölümünü değiştirirdi. Onu da işaretleyip tekrar dene.",
     "That {source} cannot make a {asked_s}-second edit without changing the source timing.": "kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam.",
