@@ -3616,6 +3616,20 @@
         "src/apps/ios/Tests/KriaTests/DeviceTalkingCardStyleRenderE2ETests.swift",
         "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/PlacedCardStyleTests.swift"
       ]
+    },
+    {
+      "id": "kri-1353-de1-german-voiceover",
+      "needs_native": false,
+      "api_tests": [
+        "src/apps/api/tests/kria/test_de1_narrated_holds.py",
+        "src/apps/api/tests/evals/test_brief_extractor_evals.py",
+        "src/apps/api/tests/evals/test_clip_request_resolver_evals.py"
+      ],
+      "paths": [
+        "src/apps/api/tests/fixtures/agent_evals/brief_extractor/kri1355_kein_titel_de.json",
+        "src/apps/api/tests/fixtures/agent_evals/brief_extractor/kri1360_change_request_keeps_restrictions_de.json",
+        "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri1359_german_lineup_sheet.json"
+      ]
     }
   ]
 }
