@@ -191,7 +191,7 @@ def test_the_text_pass_cannot_reword_the_approved_translation(monkeypatch) -> No
     monkeypatch.setattr(CreationTextComposer, "run", reword)
     brief = _brief()
 
-    with pytest.raises(CreationTextCompositionError, match="confirmed copy"):
+    with pytest.raises(CreationTextCompositionError, match="confirmed copy|Text changed before"):
         compose_creation_text(
             _plan(brief).snapshot,
             creator_request="Use this wording",
@@ -270,6 +270,30 @@ def test_other_quote_readers_keep_their_200_character_bound() -> None:
 
 
 @pytest.mark.parametrize(
+    "shape",
+    [
+        {"pieces": _two_chunks},
+        {"places": {LOCAL: "top", ENGLISH: "top"}},
+        {"windows": {LOCAL: (0, 12), ENGLISH: (12, 24)}},
+    ],
+)
+def test_the_server_corrects_a_composer_that_shapes_approved_words_wrongly(
+    monkeypatch, shape
+) -> None:
+    """Unit, place and 'together' of approved word sequences are the server's (KRI-1365)."""
+    _, composed = _compose(monkeypatch, _shaper(**shape))
+
+    rows = compile_proposal_execution_plan(composed)["text_elements"]
+    local, english = _pieces(rows, LOCAL), _pieces(rows, ENGLISH)
+    assert [row["text"] for row in local] == LOCAL.split()
+    assert [row["text"] for row in english] == ENGLISH.split()
+    assert {row["position"] for row in local} == {"middle"}
+    assert {row["position"] for row in english} == {"bottom"}
+    assert abs(local[0]["start_s"] - english[0]["start_s"]) <= 1 / 30
+    assert abs(local[-1]["end_s"] - english[-1]["end_s"]) <= 1 / 30
+
+
+@pytest.mark.parametrize(
     ("shape", "reason"),
     [
         ({"pieces": _two_chunks}, "one word at a time"),
@@ -277,12 +301,9 @@ def test_other_quote_readers_keep_their_200_character_bound() -> None:
         ({"windows": {LOCAL: (0, 12), ENGLISH: (12, 24)}}, "not on screen together"),
     ],
 )
-def test_approved_paragraphs_keep_their_unit_place_and_timing(monkeypatch, shape, reason) -> None:
-    with pytest.raises(CreationTextCompositionError, match=reason):
-        _compose(monkeypatch, _shaper(**shape))
-
-
-def test_a_saved_program_edited_into_multiword_pieces_fails_on_replay(monkeypatch) -> None:
+def test_a_saved_program_edited_after_composition_fails_on_replay(
+    monkeypatch, shape, reason
+) -> None:
     from app.agents._model_client import default_client
     from app.schemas.edit_proposal import EditProposalSnapshot
 
@@ -293,11 +314,9 @@ def test_a_saved_program_edited_into_multiword_pieces_fails_on_replay(monkeypatc
         return _split_both(agent, input, ctx=ctx)
 
     _, composed = _compose(monkeypatch, remember)
-    tampered = _shaper(pieces=_two_chunks)(
-        CreationTextComposer(default_client()), captured["input"]
-    )
+    tampered = _shaper(**shape)(CreationTextComposer(default_client()), captured["input"])
     data = json.loads(composed.model_dump_json())
     data["text_composition"]["then"] = tampered.ops
 
-    with pytest.raises(CreationTextCompositionError, match="one word at a time"):
+    with pytest.raises(CreationTextCompositionError, match=reason):
         compile_proposal_execution_plan(EditProposalSnapshot.model_validate(data))
