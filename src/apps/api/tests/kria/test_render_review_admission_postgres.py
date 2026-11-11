@@ -901,8 +901,9 @@ async def test_authority_digest_ignores_read_side_effects_but_not_authority(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("crowded", [False, True], ids=["one-leftover", "fifty-older-leftovers"])
 async def test_review_sweep_is_time_boxed_and_never_runs_inside_the_chat_reconciler(
-    approved_publication, monkeypatch
+    approved_publication, monkeypatch, crowded
 ):
     from unittest.mock import Mock
 
@@ -935,16 +936,27 @@ async def test_review_sweep_is_time_boxed_and_never_runs_inside_the_chat_reconci
     # Another module's queued turn (its broker was stubbed there, and its 35 s lease runs out while
     # a slow run is still going) is dispatchable when this test sweeps. A real publish would need
     # Redis, which the free regression workflow does not run: the sweep is under test, not delivery.
-    stray_user, stray_thread, _ = _seed_runtime_project()
-    await _submit(stray_user, stray_thread, "A turn some other test left queued")
-    with sync_session() as db:
-        db.execute(
-            text(
-                "UPDATE creator_agent_turns SET lease_expires_at = NULL WHERE thread_id = :thread"
-            ),
-            {"thread": stray_thread},
-        )
-        db.commit()
+    # The sweep takes the oldest 50 eligible turns, so a crowded database must not hide the turn
+    # this test asserts on.
+    async def leftover_turn(*, oldest: bool = False) -> str:
+        user, thread, _ = _seed_runtime_project()
+        await _submit(user, thread, "A turn some other test left queued")
+        with sync_session() as db:
+            db.execute(
+                text(
+                    "UPDATE creator_agent_turns SET lease_expires_at = NULL, "
+                    "created_at = CASE WHEN :oldest THEN TIMESTAMPTZ '2000-01-01 00:00:00+00' "
+                    "ELSE created_at END WHERE thread_id = :thread"
+                ),
+                {"thread": thread, "oldest": oldest},
+            )
+            db.commit()
+        return thread
+
+    for _ in range(50 if crowded else 0):
+        await leftover_turn()
+    # The asserted turn is the oldest eligible one, so the sweep's oldest-50 window always holds it.
+    stray_thread = await leftover_turn(oldest=True)
 
     delivered = Mock()
     monkeypatch.setattr(kria_runtime.run_kria_turn, "apply_async", delivered)
