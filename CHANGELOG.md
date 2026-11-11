@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.161.0] - 2026-11-11
+
+### Changed
+- feat(kria): colour moments — black-and-white / warm / faded stretches with flash, light-leak or dip edges, a sound on the edge and an end fade, chat-set on the phone, dark (KRI-1350) (#2259) <!-- release-pr: 2259 -->
+
 ## [0.88.160.0] - 2026-11-11
 
 ### Fixed
