@@ -249,13 +249,13 @@
     {
       "id": "community-ownership-decision-corpus-16",
       "factor": "Give your community a real stake in a product or creative decision — frame it as 'the fate is yours' and let them feel they influenced the outcome",
-      "why": "Shared ownership compels engagement and investment; people comment and share when the outcome depends on their response, not just their opinion",
+      "why": "Hypothesis from the post's caption wording, not a measured effect: letting people decide the outcome may invite replies, but comment and share counts were not separated in the fetched data",
       "applies_to": [
         "plan",
         "persona"
       ],
       "provenance": "corpus",
-      "evidence": "In our Nov 2026 fetched founder set, a 'fate of [product] is in your hands' community-decision post indexed ~3.7x the account median at 3.4% engagement — stronger than the same account's typical product-reveal posts",
+      "evidence": "In our Nov 2026 fetched founder set, one 'fate of [product] is in your hands' post indexed ~3.7x the account median views at 3.4% aggregate engagement. Single post; comments and shares were not isolated, so no causal effect is established",
       "source": "tiktok market research 2026-11-08 (founder account)"
     }
   ]
