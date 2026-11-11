@@ -49,6 +49,7 @@ from app.agents._schemas.creator_policy import (
     PhoneMediaUnavailableError,
     latest_scope_counts_own_clips,
     native_voiceover_only,
+    selected_footage_is_silent,
 )
 from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS, NARRATED_EDIT_FORMATS
 from app.kria.reply_language import say
@@ -1196,6 +1197,73 @@ def _omission_notice(field: str, strategy: CreativeStrategy) -> str:
     )
 
 
+SILENT_FOOTAGE_SOUND_CODE = "silent_footage_camera_audio"
+
+
+def _needs_camera_audio(strategy: CreativeStrategy) -> bool:
+    if strategy.audio_strategy not in {"original_audio", "licensed_music"}:
+        return False
+    return strategy.audio_strategy == "original_audio" or bool(
+        strategy.montage_audio is not None and strategy.montage_audio.preserve_source_audio
+    )
+
+
+def _silent_footage_repair(
+    manifest: ResolvedCreatorManifest,
+    strategy: CreativeStrategy,
+    *,
+    draft_audio_strategy: str | None,
+    creator_asked_camera_sound: bool,
+) -> tuple[CreativeStrategy, str | None] | RefusedStrategy:
+    """Camera audio on footage with no sound can never render (KRI-1365): fix it before approval.
+
+    The sound the draft already had wins, else music; both are what the creator would hear
+    from an edit that never tried to keep camera audio. A creator who asked for the camera
+    sound is told instead, never handed another sound silently.
+    """
+
+    if (
+        strategy.edit_format not in GUIDED_EDIT_FORMATS
+        or not _needs_camera_audio(strategy)
+        or not selected_footage_is_silent(manifest, strategy)
+    ):
+        return strategy, None
+    if creator_asked_camera_sound:
+        return RefusedStrategy(
+            question=say(
+                en=(
+                    "None of your clips has sound, so I can't keep the camera audio. "
+                    "Want me to use music instead?"
+                ),
+                tr=(
+                    "Kliplerinin hiçbirinde ses yok, o yüzden kamera sesini koruyamam. "
+                    "Onun yerine müzik kullanayım mı?"
+                ),
+            ),
+            code=SILENT_FOOTAGE_SOUND_CODE,
+        )
+    kept = (
+        draft_audio_strategy
+        if draft_audio_strategy == "licensed_music"
+        or (draft_audio_strategy == "voiceover" and manifest.has_voiceover)
+        or (draft_audio_strategy == "user_song" and manifest.has_user_song)
+        else "licensed_music"
+    )
+    repaired = strategy.model_copy(
+        update={
+            "audio_strategy": kept
+            if strategy.audio_strategy == "original_audio"
+            else strategy.audio_strategy,
+            "montage_audio": None,
+        }
+    )
+    notice = say(
+        en="None of your clips has sound, so this edit doesn't use camera audio.",
+        tr="Kliplerinin hiçbirinde ses yok, o yüzden bu düzenleme kamera sesini kullanmıyor.",
+    )
+    return repaired, notice
+
+
 def check_strategy_for_runtime_v2(
     manifest: ResolvedCreatorManifest,
     strategy: CreativeStrategy,
@@ -1205,8 +1273,14 @@ def check_strategy_for_runtime_v2(
     simplify_unsupported: bool = False,
     creator_text: str = "",
     requested_media: Mapping[str, str] | None = None,
+    draft_audio_strategy: str | None = None,
+    creator_asked_camera_sound: bool = False,
 ) -> CheckedStrategy | RefusedStrategy:
     """Run v1's plan compile over a v2 strategy; never raises a policy error.
+
+    ``draft_audio_strategy`` (the draft's sound route) and ``creator_asked_camera_sound`` (a
+    live brief ask to keep the camera sound) only matter on footage with no sound at all
+    (KRI-1365).
 
     Both keywords serve a guided-voiceover downgrade (KRI-594): ``creator_text`` is the
     creator's own words (it tells an "all 7 clips" ask apart from "all my photos and
@@ -1217,6 +1291,18 @@ def check_strategy_for_runtime_v2(
     """
 
     notices: list[str] = []
+    silent_repair = _silent_footage_repair(
+        manifest,
+        strategy,
+        draft_audio_strategy=draft_audio_strategy,
+        creator_asked_camera_sound=creator_asked_camera_sound,
+    )
+    if isinstance(silent_repair, RefusedStrategy):
+        return silent_repair
+    # Before the baseline is taken: the creator never asked for what was swapped out.
+    strategy, silent_notice = silent_repair
+    if silent_notice:
+        notices.append(silent_notice)
     kept_intents = renderable_clip_intents(manifest, strategy.clip_intents or [])
     if kept_intents is not None:
         # KRI-691: a narration label the Main Creator wrote. Left out before the baseline
@@ -1372,6 +1458,7 @@ __all__ = [
     "VOICEOVER_MEDIA_TIMING_NOTICE",
     "CheckedStrategy",
     "RefusedStrategy",
+    "SILENT_FOOTAGE_SOUND_CODE",
     "SONG_CAPTIONS_NEED_SONG_CODE",
     "check_strategy_for_runtime_v2",
     "renderable_clip_intents",

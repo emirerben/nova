@@ -2276,6 +2276,27 @@ def _audio_decline(requirement: str, message: str) -> CreatorRenderContractError
     )
 
 
+NO_FOOTAGE_SOUND = "None of your clips has sound."
+USE_MUSIC_INSTEAD = "Want me to use music instead?"
+
+
+def _no_footage_sound_decline(requirement: str) -> CreatorRenderContractError:
+    """The camera sound was required but every source file is silent (KRI-1365).
+
+    No rebuild of the same edit can ever pass, so the repair offer of the ordinary refusal is
+    replaced by the one thing that can: music. Still an ``AudioChoiceError``, so a manual
+    editor Save keeps clearing the stale requirement.
+    """
+
+    return AudioChoiceError(
+        NO_FOOTAGE_SOUND,
+        field=requirement,
+        decline_reason="capability_unavailable",
+        field_path=REQUIREMENT_FIELD_PATHS[requirement],
+        alternative=USE_MUSIC_INSTEAD,
+    )
+
+
 # KRI-794: the unresolved lines an order-basis answer settles ("Use the order you added the
 # clips" / "Continue without a fixed order"). A refusal over one of these names the order
 # choice (``field_path``), so the next reply offers that choice again instead of drafting
@@ -2938,6 +2959,15 @@ def verify_phone_recipe(
         raise _phone_decline(
             "audio_source_ids" if contract.audio_source_ids else "original_audio",
             "I couldn't verify audio in the approved source files.",
+        )
+    if (
+        (contract.original_audio == "require" or contract.audio_source_ids)
+        and not original_ids
+        and source_audio
+        and not any(source_audio.values())
+    ):
+        raise _no_footage_sound_decline(
+            "audio_source_ids" if contract.audio_source_ids else "original_audio"
         )
     if contract.original_audio == "require" and not original_ids:
         raise _audio_decline("original_audio", "This edit needs audible camera audio.")

@@ -7017,6 +7017,8 @@ _WORKER_TEXT_TR: dict[str, str] = {
     "Tell me which option you want and I'll continue.": (
         "Hangi seçeneği istediğini söyle, devam edeyim."
     ),
+    "None of your clips has sound.": "Kliplerinin hiçbirinde ses yok.",
+    "Want me to use music instead?": "Onun yerine müzik kullanayım mı?",
     "I can rebuild the edit so it shows this, or you can relax the requirement.": (
         "Düzenlemeyi bunu gösterecek şekilde yeniden kurabilirim ya da bu isteği esnetebilirsin."
     ),

@@ -145,8 +145,10 @@ def test_required_camera_audio_rejects_a_source_known_to_have_no_audio() -> None
     contract = CreatorRenderContract(generation_id="approved").rebind(
         original_audio="require", audio_source_ids=("talk",)
     )
-    with pytest.raises(CreatorRenderContractError, match="camera audio"):
+    # Every source silent: a rebuild can never pass, so it declines as unavailable (KRI-1365).
+    with pytest.raises(CreatorRenderContractError, match="has sound") as refused:
         verify_phone_recipe(contract, recipe, source_audio={"talk": False})
+    assert refused.value.decline_reason == "capability_unavailable"
 
 
 def test_recipe_digest_is_stable_across_worker_hash_seeds() -> None:

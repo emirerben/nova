@@ -127,6 +127,23 @@ _PROMISE_TEXTS = frozenset(
 )
 
 
+def _selected_clip_audible(strategy: Mapping[str, Any], media: Mapping[str, Any]) -> bool:
+    """False only when every selected video is known to have no sound (KRI-1365).
+
+    Reads the media snapshot's ``has_audio`` (the upload probe); an empty selection is every
+    clip. Unknown audio counts as audible, so a snapshot without the field proves what it did.
+    """
+    rows = [
+        row
+        for row in media.get("clip_assignments") or []
+        if isinstance(row, Mapping) and row.get("kind", "video") == "video"
+    ]
+    chosen = {str(media_id) for media_id in strategy.get("selected_media_ids") or []}
+    if chosen and strategy.get("media_scope") != "all":
+        rows = [row for row in rows if str(row.get("media_id")) in chosen]
+    return not rows or any(row.get("has_audio") is not False for row in rows)
+
+
 def _promised_at_render(req: BriefRequirement, receipt: RequirementReceipt, facts: Any) -> bool:
     """KRI-1235: an ask whose only shortfall is what the render (or approval) does, then says.
 
@@ -726,6 +743,7 @@ def assess_readiness(
             and contract.original_audio == "require"
             and strategy.get("audio_strategy") == "original_audio"
             and not strategy.get("licensed_music")
+            and _selected_clip_audible(strategy, media)
         ):
             proven, owner = True, FIELD_MATRIX["audio_strategy"].owner
         checked = receipt is not None and receipt.verification == "checked"
