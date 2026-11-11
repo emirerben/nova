@@ -17,6 +17,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.kria.portable_color_moments import SOUND_ID_PREFIX as COLOR_MOMENT_SOUND_ID_PREFIX
 from app.pipeline.phone_talking_inserts import PHONE_INSERT_CLIPS_FIELD
 from app.pipeline.speech_cut_state import reproject_authored_speech_records
 from app.schemas.editor_window import (
@@ -338,6 +339,11 @@ def reproject_lanes(lanes: Any, old_slots: list[dict], new_slots: list[dict]) ->
             )
     effects = []
     for effect in lanes.sound_effects:
+        if effect.request.id.startswith(COLOR_MOMENT_SOUND_ID_PREFIX):
+            # KRI-1350: a colour moment's own sound is re-pinned to its moment's edge by the
+            # caller (`rebind_color_moment_sounds`), never moved through source time on its own.
+            effects.append(effect)
+            continue
         parts = reproject_between_layouts(
             [{"id": effect.request.id, "at_s": effect.request.at_s}], old_slots, new_slots
         )
@@ -345,3 +351,37 @@ def reproject_lanes(lanes: Any, old_slots: list[dict], new_slots: list[dict]) ->
             request = effect.request.model_copy(update={"at_s": parts[0]["at_s"]})
             effects.append(effect.model_copy(update={"request": request}))
     return lanes.model_copy(update={"overlays": cards, "sound_effects": effects})
+
+
+def reproject_color_moments(
+    stored: Any, old_slots: list[dict], new_slots: list[dict]
+) -> dict | None:
+    """The variant's stored colour-moments lane (KRI-1350) on the new output clock.
+
+    Each moment keeps the span its footage still plays, exactly like a card; a moment whose
+    footage is gone, or that is now shorter than the minimum, is dropped, and a moment that
+    would overlap the one before it is dropped too. The end fade has no window and stays.
+    ``None`` / a lane without moments comes back unchanged."""
+    from app.kria.portable_color_moments import MIN_COLOR_MOMENT_S  # noqa: PLC0415
+
+    if not isinstance(stored, dict) or not stored.get("moments"):
+        return stored
+    moments: list[dict] = []
+    for moment in stored["moments"]:
+        if not isinstance(moment, dict):
+            continue
+        parts = reproject_between_layouts(
+            [{"id": moment.get("id"), "start_s": moment["start"], "end_s": moment["end"]}],
+            old_slots,
+            new_slots,
+        )
+        if not parts:
+            continue
+        start = round(min(p["start_s"] for p in parts), 3)
+        end = round(max(p["end_s"] for p in parts), 3)
+        if end - start < MIN_COLOR_MOMENT_S - 1e-6:
+            continue
+        if moments and start < moments[-1]["end"] - 1e-6:
+            continue
+        moments.append({**moment, "start": start, "end": end})
+    return {**stored, "moments": moments}

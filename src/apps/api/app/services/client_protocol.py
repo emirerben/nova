@@ -76,12 +76,15 @@ SPLIT_SCREEN_PROTOCOL = 46
 # older build would draw the fixed layout and drop the field on its next Save.
 SPLIT_COLLAPSE_PROTOCOL = 47
 
+# KRI-1350: the first build that decodes and draws `color_moments` / `end_fade` (48: after
+# KRI-1335's split collapse at 47).
+COLOR_MOMENTS_PROTOCOL = 48
+
 # KRI-720: the first build whose editor preview cuts every take of a several-take Talking edit from
 # the receipt's `phone_talking_multi_clip.speaker_removed` rows. An older build cuts only the first
 # take and would play the others uncut, so `several_take_preview_gate` serves it the receipt with no
 # `speaker_media_ids`, the shape every build since protocol 11 answers with the finished video.
-# 47 is split panels collapse (#2262, merged) and 48 is colour moments (#2259, open); protocol
-# numbers are cumulative, so this one lands after #2259.
+# 47 (split panels collapse) and 48 (colour moments) come first; protocol numbers are cumulative.
 SPEAKER_REMOVED_PROTOCOL = 49
 
 

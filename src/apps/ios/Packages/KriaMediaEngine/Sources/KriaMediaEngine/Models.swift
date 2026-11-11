@@ -24,12 +24,15 @@ public struct EditRecipe: Codable, Equatable, Sendable {
     public var visualFills: [VisualCanvasFill]
     public var splitScreenSections: [SplitScreenSection]
     public var speakerBackground: SpeakerBackgroundLayer?
+    /// KRI-1350: whole-frame tone windows with flash / light-leak / dip edges, and the end fade to black.
+    public var colorMoments: [ColorMoment]
+    public var endFade: EndFade?
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, rendererVersion, canvas, frameRate, assets, tracks, audio, requiredCapabilities, assetManifest, textLayers, cameraPulses, motionScenes, visualFills, drawingLayers, speakerBackground, splitScreenSections
+        case schemaVersion, rendererVersion, canvas, frameRate, assets, tracks, audio, requiredCapabilities, assetManifest, textLayers, cameraPulses, motionScenes, visualFills, drawingLayers, speakerBackground, splitScreenSections, colorMoments, endFade
     }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["schemaVersion", "rendererVersion", "canvas", "frameRate", "assets", "tracks", "audio", "requiredCapabilities", "assetManifest", "textLayers", "cameraPulses", "motionScenes", "visualFills", "drawingLayers", "speakerBackground", "splitScreenSections"])
+        try rejectUnknownAssetFields(decoder, allowed: ["schemaVersion", "rendererVersion", "canvas", "frameRate", "assets", "tracks", "audio", "requiredCapabilities", "assetManifest", "textLayers", "cameraPulses", "motionScenes", "visualFills", "drawingLayers", "speakerBackground", "splitScreenSections", "colorMoments", "endFade"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
         rendererVersion = try c.decode(String.self, forKey: .rendererVersion)
@@ -54,6 +57,8 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if schemaVersion == 1 && c.contains(.splitScreenSections) { throw RecipeError.invalidTimeline }
         speakerBackground = try c.decodeIfPresent(SpeakerBackgroundLayer.self, forKey: .speakerBackground)
         if schemaVersion == 1 && c.contains(.speakerBackground) { throw RecipeError.invalidTimeline }
+        colorMoments = try c.decodeIfPresent([ColorMoment].self, forKey: .colorMoments) ?? []
+        endFade = try c.decodeIfPresent(EndFade.self, forKey: .endFade)
     }
 
     public init(schemaVersion: Int = 1,
@@ -62,11 +67,12 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                 frameRate: Double = 30,
                 assets: [MediaAsset] = [], tracks: [TimelineTrack] = [],
                 audio: AudioMixRecipe = .default, requiredCapabilities: Set<MediaCapability> = [],
-                assetManifest: RenderAssetManifest? = nil, textLayers: [PortableTextLayer] = [], cameraPulses: [CameraPulse] = [], motionScenes: MotionSceneProgram? = nil, visualFills: [VisualCanvasFill] = [], drawingLayers: [PortableDrawingLayer] = [], speakerBackground: SpeakerBackgroundLayer? = nil, splitScreenSections: [SplitScreenSection] = []) {
+                assetManifest: RenderAssetManifest? = nil, textLayers: [PortableTextLayer] = [], cameraPulses: [CameraPulse] = [], motionScenes: MotionSceneProgram? = nil, visualFills: [VisualCanvasFill] = [], drawingLayers: [PortableDrawingLayer] = [], speakerBackground: SpeakerBackgroundLayer? = nil, splitScreenSections: [SplitScreenSection] = [], colorMoments: [ColorMoment] = [], endFade: EndFade? = nil) {
         self.schemaVersion = schemaVersion; self.rendererVersion = rendererVersion
         self.canvas = canvas; self.frameRate = frameRate; self.assets = assets
         self.tracks = tracks; self.audio = audio; self.requiredCapabilities = requiredCapabilities
         self.assetManifest = assetManifest; self.textLayers = textLayers; self.cameraPulses = cameraPulses; self.motionScenes = motionScenes; self.visualFills = visualFills; self.drawingLayers = drawingLayers; self.speakerBackground = speakerBackground; self.splitScreenSections = splitScreenSections
+        self.colorMoments = colorMoments; self.endFade = endFade
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -83,6 +89,9 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if !drawingLayers.isEmpty { try c.encode(drawingLayers, forKey: .drawingLayers) }
         if !splitScreenSections.isEmpty { try c.encode(splitScreenSections, forKey: .splitScreenSections) }
         try c.encodeIfPresent(speakerBackground, forKey: .speakerBackground)
+        // Omitted when unset so every existing recipe keeps its bytes and digest (failure mode 3).
+        if !colorMoments.isEmpty { try c.encode(colorMoments, forKey: .colorMoments) }
+        try c.encodeIfPresent(endFade, forKey: .endFade)
     }
 
     public func validate() throws {
@@ -124,6 +133,11 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                     if case .visual(_, _, let kind) = $0.source { $0.id == window.assetID && kind == window.mediaKind } else { false }
                 }) == true else { throw RecipeError.missingAssetReference }
             }
+        }
+        if !colorMoments.isEmpty || endFade != nil {
+            let total = TimelineMath.totalDuration(of: self)
+            try colorMoments.validateMoments(duration: total)
+            try endFade?.validate(duration: total)
         }
         guard textLayers.count <= Self.maxTextLayers, Set(textLayers.map(\.id)).count == textLayers.count else { throw RecipeError.invalidTimeline }
         for layer in textLayers { try layer.validate(duration: TimelineMath.totalDuration(of: self), manifest: assetManifest) }
@@ -295,6 +309,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if clips.contains(where: { $0.look != nil }) { result.insert(.goldenHourLook) }
         if clips.contains(where: { $0.sourceCrop != nil }) { result.insert(.sourceCrop) }
         if clips.contains(where: { $0.transform.rotationDegrees != 0 || $0.backdrop != nil }) { result.insert(.clipTilt) }
+        if !colorMoments.isEmpty || endFade != nil { result.insert(.colorMoments) }
         if clips.contains(where: { if case .media? = $0.backdrop { true } else { false } }) { result.insert(.clipBackdropMedia) }
         if tracks.contains(where: { $0.kind == .overlay && !$0.clips.isEmpty }) { result.insert(.alphaOverlay) }
         if audio != .default || tracks.contains(where: { $0.kind == .audio && !$0.clips.isEmpty }) || clips.contains(where: { $0.volume != 1 }) {
@@ -576,7 +591,8 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          captions, customEffects, mediaCards, carouselEffects, motionPresets, narrationAudio,
          soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, processedAudio, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, singleWordText, freezeFrame,
          behindSubject, speakerBackground, clipTilt, clipBackdropMedia,
-         speakerBackgroundWindows, speakerBackgroundColor, scriptFonts, speakerFrameWindows, backgroundFocus, splitScreen, splitCollapse
+         speakerBackgroundWindows, speakerBackgroundColor, scriptFonts, speakerFrameWindows, backgroundFocus, splitScreen, splitCollapse,
+         colorMoments
 }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }

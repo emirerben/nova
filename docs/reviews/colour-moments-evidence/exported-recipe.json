@@ -1,0 +1,94 @@
+{
+  "tracks": [
+    {
+      "id": "video",
+      "kind": "video",
+      "clips": [
+        {
+          "transform": {
+            "rotation_degrees": 0,
+            "scale": 1,
+            "position_y": 0,
+            "position_x": 0
+          },
+          "timeline_start": 0,
+          "source_duration": 4,
+          "volume": 0,
+          "source_asset_id": "wall",
+          "source_start": 0,
+          "id": "wall",
+          "rate": 1
+        }
+      ]
+    },
+    {
+      "id": "sfx",
+      "kind": "audio",
+      "clips": [
+        {
+          "transform": {
+            "rotation_degrees": 0,
+            "scale": 1,
+            "position_y": 0,
+            "position_x": 0
+          },
+          "timeline_start": 2.5,
+          "source_duration": 0.5,
+          "volume": 1,
+          "source_asset_id": "hit",
+          "source_start": 0,
+          "id": "sfx-cm1-exit",
+          "rate": 1
+        }
+      ]
+    }
+  ],
+  "end_fade": {
+    "duration": 1
+  },
+  "assets": [
+    {
+      "relative_path": "wall",
+      "id": "wall",
+      "orientation_degrees": 0,
+      "is_proxy_available": false
+    },
+    {
+      "relative_path": "hit",
+      "id": "hit",
+      "orientation_degrees": 0,
+      "is_proxy_available": false
+    }
+  ],
+  "audio": {
+    "fade_out": 0,
+    "music_volume": 1,
+    "original_volume": 1,
+    "fade_in": 0,
+    "duck_original_during_music": false
+  },
+  "color_moments": [
+    {
+      "id": "cm1",
+      "end": 2.5,
+      "start": 1,
+      "enter": {
+        "duration": 0.3333333333333333,
+        "style": "light_leak"
+      },
+      "exit": {
+        "duration": 0.3333333333333333,
+        "style": "dip_black"
+      },
+      "tone": "mono"
+    }
+  ],
+  "schema_version": 1,
+  "canvas": {
+    "width": 180,
+    "height": 320
+  },
+  "renderer_version": "kria-ios-1",
+  "frame_rate": 30,
+  "required_capabilities": []
+}

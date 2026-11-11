@@ -1,0 +1,76 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-11-11-v122",
+  "input": {
+    "utterance": "remove the black and white part",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "color_moments",
+        "sfx"
+      ],
+      "editor_ops_version": 2,
+      "render_destination": "device",
+      "slots": [],
+      "text_bars": [],
+      "total_duration_s": 60.0,
+      "sfx": {
+        "placements": [],
+        "catalog": [
+          {
+            "id": "whoosh-fast",
+            "label": "Whoosh fast",
+            "category": "transition",
+            "duration_s": 0.6
+          },
+          {
+            "id": "cinematic-hit",
+            "label": "Cinematic hit",
+            "category": "impact",
+            "duration_s": 1.2
+          }
+        ]
+      },
+      "color_moments": {
+        "moments": [
+          {
+            "start_s": 16.0,
+            "end_s": 22.0,
+            "tone": "mono",
+            "enter": "cut",
+            "exit": "light_leak"
+          }
+        ],
+        "end_fade_s": 1.6,
+        "duration_s": 60.0,
+        "removal_only": true
+      }
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"set_color_moments\", \"moments\": []}], \"confidence\": 0.93, \"reply\": \"Done, the black and white part is gone.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "set_color_moments",
+        "moments": []
+      }
+    ],
+    "confidence": 0.93,
+    "reply": "Done, the black and white part is gone.",
+    "suggestions": [],
+    "needs_clarification": false,
+    "outcome": "proposed",
+    "rejection_reasons": [],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": [],
+    "reply_notes": "",
+    "claimed_ops": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "closed gate on an edit that still has a moment: the snapshot marks the lane REMOVAL ONLY and taking the moment off survives as one op",
+    "lane": "color_moments"
+  }
+}

@@ -1,0 +1,14 @@
+COLOUR MOMENTS (Kria editor, iPhone edits)
+
+COLOR_MOMENTS lists the stretches of the finished video drawn in another tone ("moments": start_s-end_s, tone, enter/exit edge, and the "sound" an edge carries), "end_fade_s" (the fade to black at the very end, null = none) and "duration_s" (the video's length). Use these only when the creator asks for a colour change, a flash, a black-and-white part or a fade to black. Never add them because a video "could look more cinematic", and never with another request they did not tie to it.
+- One op sets the whole lane: {"op":"set_color_moments","moments":[...],"end_fade_s":<seconds>}. "moments" REPLACES every current moment, so copy the ones the creator keeps (with their "sound" and "sound_at") exactly. Leave "moments" out to change only the end fade; leave "end_fade_s" out to keep it.
+- A moment: {"start_s":5,"end_s":12,"tone":"mono","enter":"light_leak","exit":"light_leak"}. tone: "mono" (black and white, siyah beyaz), "warm" (warm / golden, sıcak), "faded" (faded / old film, soluk). enter/exit: "cut" (instant), "flash_white" (a white flash, beyaz flaş), "light_leak" (a warm orange flash, like a film light leak), "dip_black" (dips to black for a moment, kararıp açılsın). Without a stated edge use "cut"; "with a flash" without a colour is "light_leak".
+- At least 0.5 s each, at most 6, never overlapping, inside 0..duration_s. Times are the finished video's seconds; take them from the words or text bars the creator points at ("when I talk about history" = the span of those lines).
+- A sound on an edge only when asked ("with a whoosh when it comes back"): add "sound":"<catalog id from SFX catalog>","sound_at":"enter" or "exit" to that moment; it plays exactly on the flash. Copy the id exactly; if SFX is not offered, say the moment will be silent.
+- "fade to black at the end" -> "end_fade_s":1.6 unless they say how long (0.3-4 s). "no fade at the end" -> "end_fade_s":0.
+- "remove the black and white", "back to normal colours" -> {"op":"set_color_moments","moments":[]} (add "end_fade_s":0 only if they also want the fade gone).
+
+Examples:
+"make 0:16 to 0:22 black and white and come back to colour with a flash" -> {"op":"set_color_moments","moments":[{"start_s":16,"end_s":22,"tone":"mono","enter":"cut","exit":"light_leak"}]}
+"eski fotoğrafların olduğu kısım siyah beyaz olsun, dönüşte whoosh" -> {"op":"set_color_moments","moments":[{"start_s":<start>,"end_s":<end>,"tone":"mono","enter":"cut","exit":"light_leak","sound":"<whoosh id>","sound_at":"exit"}]}
+"fade to black at the end" -> {"op":"set_color_moments","end_fade_s":1.6}

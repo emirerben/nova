@@ -1204,6 +1204,95 @@
           "title": "ClipSelectionIn",
           "type": "object"
         },
+        "ColorMoment": {
+          "additionalProperties": false,
+          "properties": {
+            "end": {
+              "exclusiveMinimum": 0,
+              "maximum": 1800,
+              "title": "End",
+              "type": "number"
+            },
+            "enter": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ColorMomentEdge"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "exit": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ColorMomentEdge"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "id": {
+              "maxLength": 160,
+              "minLength": 1,
+              "title": "Id",
+              "type": "string"
+            },
+            "start": {
+              "maximum": 1800,
+              "minimum": 0,
+              "title": "Start",
+              "type": "number"
+            },
+            "tone": {
+              "enum": [
+                "mono",
+                "warm",
+                "faded"
+              ],
+              "title": "Tone",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "start",
+            "end",
+            "tone"
+          ],
+          "title": "ColorMoment",
+          "type": "object"
+        },
+        "ColorMomentEdge": {
+          "additionalProperties": false,
+          "properties": {
+            "duration": {
+              "default": 0.3333333333333333,
+              "maximum": 0.6,
+              "minimum": 0.1,
+              "title": "Duration",
+              "type": "number"
+            },
+            "style": {
+              "enum": [
+                "cut",
+                "flash_white",
+                "light_leak",
+                "dip_black"
+              ],
+              "title": "Style",
+              "type": "string"
+            }
+          },
+          "required": [
+            "style"
+          ],
+          "title": "ColorMomentEdge",
+          "type": "object"
+        },
         "Crop": {
           "properties": {
             "scale": {
@@ -1673,6 +1762,33 @@
             }
           },
           "title": "EditorCommitCaptionMeta",
+          "type": "object"
+        },
+        "EditorCommitColorMoments": {
+          "additionalProperties": false,
+          "description": "KRI-1350: the whole colour-moments lane of a phone edit (written by the Kria chat op).\n\nOutput-timeline windows drawn black-and-white / warm / faded with flash, light-leak or\ndip edges, and an optional end fade to black. Compiled onto the pinned recipe by\n`with_color_moments` on every phone Save.",
+          "properties": {
+            "end_fade": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EndFade"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "moments": {
+              "items": {
+                "$ref": "#/$defs/ColorMoment"
+              },
+              "maxItems": 6,
+              "title": "Moments",
+              "type": "array"
+            }
+          },
+          "title": "EditorCommitColorMoments",
           "type": "object"
         },
         "EditorCommitMix": {
@@ -2173,6 +2289,17 @@
               "anyOf": [
                 {
                   "$ref": "#/$defs/CarouselMomentEditRequest"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "color_moments": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EditorCommitColorMoments"
                 },
                 {
                   "type": "null"
@@ -2934,6 +3061,22 @@
             "in_s"
           ],
           "title": "EditorStateTimelineSlot",
+          "type": "object"
+        },
+        "EndFade": {
+          "additionalProperties": false,
+          "properties": {
+            "duration": {
+              "maximum": 4.0,
+              "minimum": 0.3,
+              "title": "Duration",
+              "type": "number"
+            }
+          },
+          "required": [
+            "duration"
+          ],
+          "title": "EndFade",
           "type": "object"
         },
         "GradientBackground": {

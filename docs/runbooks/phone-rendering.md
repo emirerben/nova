@@ -4652,6 +4652,42 @@ one writer dropping it (same test); zoom 1.0 changing bytes (`test_a_zoom_of_one
 (`test_clip_tilt_zoom_ai.py`); Reset leaving the zoom (`testZoomIsStoredOnTheRowResetClearsIt...`, `NativeTiltUITests`);
 Python/Swift drift (`tests/fixtures/clip-tilt-row/v1.json`, valid, invalid and compose cases read by both).
 
+## Colour moments (KRI-1350)
+
+Kria can draw stretches of a finished phone video in another tone and mark the switch with a
+flash, as in Çiğdem's 10 Kasım reel: the history parts go black-and-white and the colour comes
+back with a 0.33 s warm light leak; the video ends with a 1.6 s fade to black.
+
+- **Wire** (V2 recipe root, omitted when unset): `color_moments[]`
+  `{id, start, end, tone: mono|warm|faded, enter?/exit?: {style: flash_white|light_leak|dip_black, duration 0.1-0.6}}`
+  (a `cut` edge is never written), at most 6, sorted, non-overlapping, at least 0.5 s each; and
+  `end_fade {duration 0.3-4}`. Capability `colorMoments`. Parity: `tests/fixtures/colour-moments/parity-v1.json`.
+- **Timing contract**: an edge at `t` lasting `d` is drawn over `[t - d/2, t + d/2]`; the flash
+  peaks / the dip bottoms out on the frame at `t` and the tone switches there, under it. The end
+  fade is linear and reaches black on the edit's last frame; the Kria outro after it is untouched.
+- **Drawing**: `ColorMomentPainter` runs on the whole composed picture (speaker, background,
+  cards) before motion and text, so a green-screen speaker and the photo behind them change
+  together and captions keep their colour; the end fade also covers text.
+- **Sound on an edge**: an ordinary `sfx` row (id prefix `cmsfx-`) starting on the edge, written
+  by the chat op with the moments and replaced with them; a hand-placed sound is never touched.
+- **Storage**: `variant["color_moments"] = {moments, end_fade}`, written only by the Save section
+  `color_moments` (tri-state; the chat op `set_color_moments` sends it, the phone editor never
+  does) and compiled onto every phone Save by `with_color_moments` (clamped to the current
+  length, like drawings).
+- **Gates**: `COLOR_MOMENTS_ENABLED` (default off) for setting; `colorMoments` in
+  `PHONE_RENDER_VERIFIED_FEATURES` to serve; protocol ≥ 48 (`color_moments_min_client_protocol`),
+  older builds get 426 `client_update_required` (`color_moments`). Clearing works with the switch off.
+- **Known gap**: the in-app editor preview does not draw colour moments yet (the finished
+  video does); moments are pinned to output seconds, so a later trim keeps them at the same
+  times (clamped to the new length).
+- **Verify**: `swift test --filter ColorMomentsCompositionTests` (set
+  `KRIA_COLOR_MOMENTS_EVIDENCE_DIR` to keep the MP4 + recipe), then
+  `scripts/verify-colour-moments.py check <mp4> --expect <(scripts/verify-colour-moments.py expect-from-recipe <recipe>)`
+  — pass = flash peak, dip, sound onset and end fade within ±1 frame.
+- **Apply**: physical-iPhone check of one moment in preview and export, then fly secrets
+  `COLOR_MOMENTS_ENABLED=true` and `colorMoments` added to `PHONE_RENDER_VERIFIED_FEATURES`
+  (api + worker), restart. Rollback: the flag false + restart; never a code revert.
+
 ## Range on phone Talking edits
 
 The editor's Range sheet (`KriaSourceWindowEditor`, KRI-717) chooses which part of a clip plays. On a
