@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.167.0] - 2026-11-11
+
+### Changed
+- fix(kria): keep simpler-choice labels out of render instructions (KRI-1294) (#2189) <!-- release-pr: 2189 -->
+
 ## [0.88.166.0] - 2026-11-11
 
 ### Changed
