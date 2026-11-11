@@ -59,6 +59,7 @@ from app.schemas.clip_intents import ClipIntent
 from app.schemas.edit_proposal import (
     MAX_CREATOR_PINNED_TEXTS,
     PINNED_TEXT_MAX_CHARS,
+    MontageAudioPlan,
     binds_mixed_media_timing,
 )
 from app.services.creator_capabilities import (
@@ -1203,9 +1204,11 @@ SILENT_FOOTAGE_SOUND_CODE = "silent_footage_camera_audio"
 def _needs_camera_audio(strategy: CreativeStrategy) -> bool:
     if strategy.audio_strategy not in {"original_audio", "licensed_music"}:
         return False
-    return strategy.audio_strategy == "original_audio" or bool(
-        strategy.montage_audio is not None and strategy.montage_audio.preserve_source_audio
-    )
+    if strategy.audio_strategy == "original_audio":
+        # A plan that says the sources are muted (KRI-1294: a creator who asked for no music on
+        # silent footage) needs no camera audio, and re-checking it must not swap music back in.
+        return strategy.montage_audio is None or strategy.montage_audio.preserve_source_audio
+    return bool(strategy.montage_audio is not None and strategy.montage_audio.preserve_source_audio)
 
 
 def _silent_footage_repair(
@@ -1214,12 +1217,15 @@ def _silent_footage_repair(
     *,
     draft_audio_strategy: str | None,
     creator_asked_camera_sound: bool,
+    creator_asked_no_music: bool = False,
 ) -> tuple[CreativeStrategy, str | None] | RefusedStrategy:
     """Camera audio on footage with no sound can never render (KRI-1365): fix it before approval.
 
     The sound the draft already had wins, else music; both are what the creator would hear
     from an edit that never tried to keep camera audio. A creator who asked for the camera
-    sound is told instead, never handed another sound silently.
+    sound is told instead, never handed another sound silently. A creator who asked for no
+    music already has what they asked for on silent footage, a silent edit: swapping music in
+    would drop that stated ask (KRI-1294 Q3, "I'll add a song on TikTok").
     """
 
     if (
@@ -1242,6 +1248,12 @@ def _silent_footage_repair(
             ),
             code=SILENT_FOOTAGE_SOUND_CODE,
         )
+    if creator_asked_no_music and strategy.audio_strategy == "original_audio":
+        # No camera sound is needed (the footage has none) and no music was wanted: keep the
+        # route and drop only the camera-audio plan, so the render stays silent as asked.
+        return strategy.model_copy(
+            update={"montage_audio": MontageAudioPlan(preserve_source_audio=False)}
+        ), None
     kept = (
         draft_audio_strategy
         if draft_audio_strategy == "licensed_music"
@@ -1275,6 +1287,7 @@ def check_strategy_for_runtime_v2(
     requested_media: Mapping[str, str] | None = None,
     draft_audio_strategy: str | None = None,
     creator_asked_camera_sound: bool = False,
+    creator_asked_no_music: bool = False,
 ) -> CheckedStrategy | RefusedStrategy:
     """Run v1's plan compile over a v2 strategy; never raises a policy error.
 
@@ -1296,6 +1309,7 @@ def check_strategy_for_runtime_v2(
         strategy,
         draft_audio_strategy=draft_audio_strategy,
         creator_asked_camera_sound=creator_asked_camera_sound,
+        creator_asked_no_music=creator_asked_no_music,
     )
     if isinstance(silent_repair, RefusedStrategy):
         return silent_repair

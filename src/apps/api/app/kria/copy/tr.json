@@ -264,6 +264,7 @@
     "How many seconds at the end of {name} show {what}? I'll end that clip just before them, or tell me to leave the whole clip out.": "{name} klibinin sonundaki kaç saniyede {what} görünüyor? Klibi hemen öncesinde bitiririm; ya da klibin tamamını çıkarmamı söyle.",
     "How many seconds at the start of {name} show {what}? I'll start that clip right after them, or tell me to leave the whole clip out.": "{name} klibinin başındaki kaç saniyede {what} görünüyor? Klibi hemen sonrasından başlatırım; ya da klibin tamamını çıkarmamı söyle.",
     "How short should the {v1} be?": "{v2} ne kadar kısa olsun?",
+    "I accepted the omissions listed on your simpler-version card.": "Daha basit sürüm kartında belirtilen çıkarmaları onayladım.",
     "I added it on only {placed} of the {heard} times you said \"{trigger}\"": "\"{trigger}\" dediğin {heard} yerden yalnızca {placed} tanesine ekleyebildim",
     "I applied that to the captions you added in chat (free texts, not clip labels).": "Bunu sohbette eklediğin yazılara uyguladım (klip etiketlerine değil, serbest yazılara).",
     "I can apply at most {max_intents} clip instructions at a time, so {overflow} more weren't included": "Bir seferde en fazla {max_intents} klip talimatı uygulayabiliyorum, bu yüzden {overflow} talimat daha eklenmedi",

@@ -1,0 +1,35 @@
+{
+  "checks": {
+    "duration_matches_approved_4_5s": true,
+    "portrait_1080x1920": true,
+    "silent_source_stays_silent": true,
+    "text_visible_throughout": true,
+    "middle_placement": true,
+    "missing_text_negative_control_detected": true
+  },
+  "audio_rms": 0.0,
+  "duration_s": 4.5,
+  "samples": [
+    {
+      "t": 0.1,
+      "mean_frame_diff": 1.9746846064814816,
+      "white_pixels": 8200,
+      "center_y": 0.49947916666666664
+    },
+    {
+      "t": 2.25,
+      "mean_frame_diff": 1.0027261766975308,
+      "white_pixels": 8137,
+      "center_y": 0.49947916666666664
+    },
+    {
+      "t": 4.4,
+      "mean_frame_diff": 1.0025022505144032,
+      "white_pixels": 8208,
+      "center_y": 0.49947916666666664
+    }
+  ],
+  "recipe_sha256": "2fa396dae302bf5ef56893a3db89d4be90b79c4a06af3fb7847c0cb90267c49f",
+  "mp4_sha256": "d02b33665097cd0e87f47d9abbe177f2d222bdaa67920d5734a72aba46f7abc3",
+  "evidence": "Synthetic original bytes; authored provider responses; real approval/source bindings, text composer, compiler, macOS AVFoundation exporter. Not original-footage/live-model/production proof."
+}

@@ -858,6 +858,11 @@
   ],
   [
    "app/services/song_order.py",
+   "I accepted the omissions listed on your simpler-version card.",
+   "Daha basit sürüm kartında belirtilen çıkarmaları onayladım."
+  ],
+  [
+   "app/services/song_order.py",
    "I confirmed where my clips go on the song timeline.",
    "Kliplerimin şarkıda nereye geleceğini onayladım."
   ],
