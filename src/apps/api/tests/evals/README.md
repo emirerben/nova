@@ -53,6 +53,7 @@ pytest tests/evals/test_narrated_storyboard_evals.py -v --with-judge
 | `nova.compose.sfx_placement` | ✓ | `rubrics/sfx_placement.md` | hand-authored golden (visual moments) | — |
 | `nova.compose.narrated_storyboard` | ✓ | `rubrics/narrated_storyboard.md` | hand-authored sports, non-sports, and adversarial golden fixtures | `Job.assembly_plan.variants[].narrated_storyboard` |
 | `nova.compose.narrated_clip_alignment` | ✓ | `rubrics/narrated_clip_alignment.md` | live-captured goldens (cacio e pepe, locked + free order; Cappadocia pinned-last, re-sorted from prod 38caaebd) | — |
+| `nova.compose.spoken_cue_resolver` | ✓ | — | hand-authored replay golden (de1 "Null zu null" → "0 zu 0", "1. FC Nürnberg" → "FC Nürnberg", a cue never said → null); no live capture yet (KRI-1356) | — |
 
 ## Layer-2 text-overlay pipeline eval
 
@@ -364,11 +365,23 @@ Reading the numbers:
   `ready_cards_per_pick` is stricter: picks that became a proven v2 card in a finished edit. Hook
   picks still drop as `no_action` (stub builder), which pulls that second number down by design.
 
-Recorded runs (fill from `report.json`; none recorded yet):
+Recorded runs (fill from `report.json`):
 
 | Date | Run id | Model | Prompt | Cost / run (mean, max) | p50 / p95 latency | witness_pass_share | ready_cards_per_pick |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| | | | | | | | |
+| 2026-11-08 | `suggestion-agent-2026-11-08` | `gpt-6.1-sol` | `2026-11-04.1` | $0.0084, $0.0114 ($0.0842 for the 10 runs; preflight worst case $0.313) | 10.3 s / 22.0 s | 1.00 (26 of 26 picks) | 0.75 |
+
+The 10 runs all finished `ok` (no fallback, 0 contract problems). The p95 of 10 runs is the slowest
+one (`t09_hafta_sonu_titled_ready_tr`, 22.0 s; every other run is 5.8 to 14.1 s), so read it as a
+ceiling for this sample, not a tail estimate. The only drop reason is `no_action`
+(20 picks, the stub builder described above). The run used a scratch local Postgres as its development
+ledger (`createdb` plus `alembic upgrade head`; the repo `.env` role `postgres` does not exist on a
+dev machine, which shows up as a `budget` fallback with no spend).
+
+Budget read: mean cost x 30 x 2 headroom = $0.51 per (runs per day), so a $10 sub-budget covers
+about 20 agent runs a day with headroom (about 40 with none). Past that the agent fails closed to
+the deterministic set (`fallback_reason=budget`), never an error. No production run count has been
+measured yet (the KRI-1249 funnel read of prod is pending), so revisit the number when it is.
 
 ### Telemetry (contract section 8), asserted with `structlog.testing.capture_logs`
 
@@ -398,9 +411,8 @@ flag-on cohort, not a tap rate.
    preference, founder agrees on 10. UNMEASURED.
 4. **Agent-picked vs deterministic order A/B** by `wording` in real taps (needs the flag on for a
    cohort).
-5. **Live replay of `nova.chat.suggestion_agent`** (KRI-1254). The code is in: see
-   "Live run of the suggestion agent" below. The paid run itself is an Ops step and its numbers go
-   in that section.
+5. **Live replay of `nova.chat.suggestion_agent`** (KRI-1254). Run 2026-11-08, numbers in
+   "Live run of the suggestion agent" above.
 6. **`opener_clip` cassette** proving filename-to-hero resolution through the planner; only then
    may `CLIP_ORDINAL_PROVEN` flip.
 

@@ -654,7 +654,12 @@ def update_summary_text(changed: list[str]) -> str:
     sections = [s for s in SECTION_ORDER if s in changed and s in _SECTION_WORDS]
     en = _join([_SECTION_WORDS[s][0] for s in sections], "and")
     tr = _join([_SECTION_WORDS[s][1] for s in sections], "ve")
-    return say(en=f"Updated {en}.", tr=f"{capitalize(tr, 'tr')} güncelledim.")[:400]
+    return say(
+        en="Updated {v1}.",
+        tr="{capitalize_tr} güncelledim.",
+        v1=en,
+        capitalize_tr=capitalize(tr, "tr"),
+    )[:400]
 
 
 def _emit_update_summary(job_id: str) -> None:

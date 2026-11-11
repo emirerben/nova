@@ -29,6 +29,7 @@ from app.db_locks import CONTENT_PLAN_LOCK
 from app.main import app
 from app.models import ContentPlan, Persona, PlanItem
 from app.pipeline.narrated_assembler import is_valid_caption_font
+from app.pipeline.text_overlay import _FONT_REGISTRY
 
 REGEN = "app.tasks.generative_build.regenerate_generative_variant"
 REBURN_NARRATED = "app.tasks.generative_build.reburn_narrated_captions"
@@ -69,7 +70,12 @@ def test_ios_picker_fixture_matches_editor_commit_models() -> None:
         TextElement.model_validate({**_VALID_ELEMENT, "effect": effect})
     for alignment in contract["music_alignments"]:
         gj.EditorCommitMusicWindow(start_s=0, alignment=alignment)
-    assert all(is_valid_caption_font(font) for font in contract["caption_fonts"])
+    # The picker offers every live registry font, so the server must accept each one. Read from
+    # the registry itself, not a copy, so adding a font never needs a second edit here.
+    registry = _FONT_REGISTRY["fonts"]
+    live_fonts = [name for name, entry in registry.items() if entry.get("deprecated") is not True]
+    assert live_fonts
+    assert all(is_valid_caption_font(font) for font in live_fonts)
     for size_px in contract["caption_size_px"].values():
         gj.EditorCommitCaptionMeta(size_px=size_px)
     for y_frac in contract["caption_y_frac"].values():

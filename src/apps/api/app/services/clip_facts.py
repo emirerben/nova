@@ -390,8 +390,9 @@ def timezone_note(zone: str, basis: str) -> str:
             ),
         )
     return say(
-        en=f"Times are shown in {zone.replace('_', ' ')} time.",
-        tr=f"Saatler şu saat diliminde gösteriliyor: {zone.replace('_', ' ')}.",
+        en="Times are shown in {zone_replace} time.",
+        tr="Saatler şu saat diliminde gösteriliyor: {zone_replace}.",
+        zone_replace=zone.replace("_", " "),
     )
 
 

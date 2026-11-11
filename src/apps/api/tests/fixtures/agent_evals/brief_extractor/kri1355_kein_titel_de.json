@@ -1,0 +1,29 @@
+{
+  "agent": "nova.creator.brief_extractor",
+  "prompt_version": "fingerprint (KRI-1355)",
+  "input": {
+    "creator_request": "Creative brief v1 (everything the creator has asked for, still in force):\n- [r1] [style/global] Deutsche Untertitel, Wort für Wort\n- [r4] [style/global] das Aufstellungsblatt bei 'Aufstellung'",
+    "user_message": "Kein Titel.",
+    "conversation": [
+      {
+        "role": "user",
+        "content": "Deutsche Untertitel, Wort für Wort. Zeig das Aufstellungsblatt bei \"Aufstellung\"."
+      },
+      {
+        "role": "assistant",
+        "content": "Your video is ready."
+      },
+      {
+        "role": "user",
+        "content": "Kein Titel."
+      }
+    ],
+    "require_request_scope": true
+  },
+  "raw_text": "{\"brief_updates\": [{\"kind\": \"text\", \"scope\": \"title\", \"literal\": null, \"description\": \"Kein Titel.\", \"facts\": {\"title\": \"off\"}}], \"request_scope\": \"edit\"}",
+  "output": null,
+  "meta": {
+    "source": "hand_authored_golden",
+    "note": "KRI-1355 (de1 Leverkusen N3): an explicit no-title ask in German is typed facts {\"title\": \"off\"}. Hand-authored golden answer: replay re-parses this recorded answer and proves its shape only; it does not prove the live model writes it (a paid live run measures that)."
+  }
+}

@@ -43,15 +43,19 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
     private let viewRemovalGrace: Duration
     private var pendingViewRemoval: Task<Void, Never>?
     /// Opens on the camera: a script is optional now, and a saved take reopens on its review instead.
-    @Published var stage: Stage = .camera
+    @Published var stage: Stage = .camera { didSet { reconcileBake() } }
     /// The script is shown and scrolled only when the creator chose it (Paper S3.08, off by default).
     @Published var useScript = false
     @Published var showsScriptSheet = false
     @Published var error: String?
     @Published var countdown = 3
-    @Published var selectedTake: TeleprompterTakeManifest?
+    @Published var selectedTake: TeleprompterTakeManifest? { didSet { reconcileBake() } }
     @Published var pendingTake: TeleprompterTakeManifest?
     @Published var usingTake = false
+    /// Use take was pressed before the take's Cinematic bake finished, and is waiting for it.
+    @Published private(set) var waitingForBake = false
+    /// How far the running bake is, in steps of 5%. Nil when none is running for the take on screen.
+    @Published private(set) var bakeProgress: Double?
     @Published var queueAccepted = false
     @Published var attachmentFinished = false
     /// A non-blocking note when the raw take could not be copied to Photos (KRI-653).
@@ -87,6 +91,11 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
     private let photoSaver: PhotoLibrarySaving
     /// Photos copies the file during `performChanges`, so a take's movie must outlive its save.
     private var photoSaves: [UUID: Task<Bool, Never>] = [:]
+    private let baker: any CinematicBaking
+    private let bakes = CinematicBakeTasks()
+    /// Bakes run only while the app is in the foreground: Metal refuses GPU work from the background.
+    private var sceneActive = true
+    static let bakePausedMessage = "Your Cinematic look paused while Kria was in the background. It continues now. Tap Use take when it’s ready."
 
     init(accountID: String, projectID: UUID, root: URL? = nil,
          script: TeleprompterScript = TeleprompterScript(),
@@ -98,6 +107,7 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
          backgroundStatement: BackgroundStatement? = nil,
          makeBackgroundProvider: @escaping BackgroundProviderFactory = TeleprompterRecordingFlow.liveBackgroundProvider,
          cinematicAvailability: TeleprompterCinematic.Availability? = nil,
+         baker: (any CinematicBaking)? = nil,
          defaults: UserDefaults = .standard,
          reportDiagnostic: @escaping (RecorderDiagnosticReport) -> Void = { _ in }) {
         self.speakerBackgroundEnabled = speakerBackgroundEnabled
@@ -109,6 +119,12 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         self.script = script
         self.viewRemovalGrace = viewRemovalGrace
         self.photoSaver = photoSaver
+        #if DEBUG
+        let fixtureBaker: (any CinematicBaking)? = FixtureCinematicBaker.current
+        #else
+        let fixtureBaker: (any CinematicBaking)? = nil
+        #endif
+        self.baker = baker ?? fixtureBaker ?? LiveCinematicBaker()
         var availability = cinematicAvailability ?? TeleprompterCinematic.availability()
         #if DEBUG
         if cinematicAvailability == nil, TeleprompterCamera.cinematicUITestFixture != nil { availability = .available }
@@ -130,6 +146,7 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
 
     func load() async {
         guard !loaded else { return }; loaded = true
+        Task.detached(priority: .utility) { CinematicStaging.shared.sweepAbandoned() }
         do {
             #if DEBUG
             try await TeleprompterReviewFixture.seedIfRequested(store: store)
@@ -143,15 +160,20 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
             let recovery = try store.loadManifestsRecoveringCorruption()
             if let warning = recovery.recoveryWarning { self.error = warning }
             var takes = recovery.manifests.filter { $0.status != .accepted }
-            for index in takes.indices where takes[index].status == .capturing {
+            for index in takes.indices {
+                // Nobody is baking after a relaunch, whatever the manifest last said.
+                let reread = takes[index].cinematic?.applying(.interrupted)
+                if reread != takes[index].cinematic {
+                    takes[index].cinematic = reread
+                    try? store.save(manifest: takes[index])
+                }
+                guard takes[index].status == .capturing else { continue }
                 let valid = await Self.playable(store.fileURL(for: takes[index]))
                 takes[index].status = valid ? .review : .invalid
                 takes[index].interrupted = true
-                // KRI-1160: a take cut off before its Cinematic look was baked is baked now, so no raw Cinematic movie
-                // (depth tracks, no blur outside Apple's apps) ever reaches playback or upload.
-                if valid, let cinematic = await CinematicTakeFinisher.finish(movieAt: store.fileURL(for: takes[index])) {
-                    takes[index].cinematic = cinematic
-                }
+                // KRI-1160: a take cut off mid-recording that is a raw Cinematic movie owes its bake, which runs once
+                // Review is open. It never reaches upload raw: Use take waits for it.
+                if valid, await baker.needsBake(movieAt: store.fileURL(for: takes[index])) { takes[index].cinematic = .rawReview }
                 if valid { takes[index].audioCheck = await TakeAudioMeasurement.measure(url: store.fileURL(for: takes[index])) }
                 do { try store.save(manifest: takes[index]) }
                 catch {
@@ -277,8 +299,12 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
             if stage == .countdown { cancelCountdown() }
             if !captureBusy { script.pause(); persistDraft() }
         case .background:
+            sceneActive = false
+            reconcileBake()
             leaveCapture(reason: .backgrounded)
         case .active:
+            sceneActive = true
+            reconcileBake()
             camera.sceneBecameActive()
             // Privacy prompts briefly make the scene inactive. They must not
             // cancel the prepare operation whose grant they are requesting.
@@ -331,7 +357,8 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         take.speakerBackground = speakerBackgroundEnabled ? background?.reference : nil
         finalizedTake = take
         #if DEBUG
-        if let url { TalkBench.shared.keepTake(url) }
+        // A take that still owes its bake is kept once baked (`bakeEnded`), so the bench holds the file the creator uses.
+        if let url, take.cinematic?.isSettled ?? true { TalkBench.shared.keepTake(url) }
         #endif
         script.pause(); stage = .review
         error = message
@@ -509,6 +536,92 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         store.pruneBackgrounds(keeping: names)
     }
 
+    // MARK: Cinematic bake (KRI-1160): after Review opens, never before
+
+    /// The one take whose bake should be running now: the take on screen, while Review is open and the app is in the
+    /// foreground. Everything else that owes a bake waits as `rawReview`, so there is never more than one GPU bake and
+    /// never one beside a new recording.
+    private var wantedBake: UUID? {
+        guard stage == .review, sceneActive, let take = selectedTake, take.status == .review,
+              let state = take.cinematic, !state.isSettled else { return nil }
+        return take.id
+    }
+
+    /// Makes the running bakes equal `wantedBake`. Derived from current state each time, so calling it again, or after
+    /// a stop at any point, only ever applies the difference.
+    private func reconcileBake() {
+        let wanted = wantedBake
+        for (id, task) in bakes.tasks where id != wanted { task.cancel() }
+        if wanted == nil { bakeProgress = nil }
+        guard let wanted, bakes.tasks[wanted] == nil, let take = selectedTake else { return }
+        startBake(of: take)
+    }
+
+    private func startBake(of take: TeleprompterTakeManifest) {
+        let id = take.id, url = store.fileURL(for: take), baker = baker
+        Perf.begin("talk.bake.run", id: id.uuidString)
+        bakeProgress = 0
+        let report: @MainActor @Sendable (Double) -> Void = { [weak self] fraction in self?.bakeProgressed(fraction, of: id) }
+        bakes.tasks[id] = Task { [weak self] in
+            var event = CinematicBakeState.Event.interrupted
+            do {
+                let outcome = try await baker.bake(movieAt: url) { fraction in Task { @MainActor in report(fraction) } }
+                event = CinematicBakeState.event(for: outcome)
+            } catch {
+                // Cancelled, or the GPU went away with the foreground: the movie is untouched and the bake starts over.
+            }
+            self?.bakeEnded(id, event)
+        }
+        // After the task is registered: this write re-enters `reconcileBake` through `selectedTake`.
+        updateTake(id) { $0.cinematic = $0.cinematic?.applying(.started) }
+    }
+
+    private func bakeProgressed(_ fraction: Double, of id: UUID) {
+        guard selectedTake?.id == id, bakes.tasks[id] != nil else { return }
+        bakeProgress = min(1, (fraction * 20).rounded(.down) / 20)
+    }
+
+    private func bakeEnded(_ id: UUID, _ event: CinematicBakeState.Event) {
+        bakes.tasks[id] = nil
+        if selectedTake?.id == id { bakeProgress = nil }
+        updateTake(id) { $0.cinematic = $0.cinematic?.applying(event) }
+        let held = [selectedTake, pendingTake].compactMap { $0 }.first { $0.id == id }
+        Perf.end("talk.bake.run", id: id.uuidString, held?.cinematic?.rawValue ?? "discarded")
+        #if DEBUG
+        if let held, held.cinematic?.isSettled == true { TalkBench.shared.keepTake(store.fileURL(for: held)) }
+        #endif
+        // A bake paused while wanted again (the app came back before this task ended) starts over now.
+        reconcileBake()
+    }
+
+    /// Applies a change to the take with this id wherever the flow holds it, and persists it. A take the creator has
+    /// discarded is held nowhere, so a late bake result can never bring its manifest back.
+    private func updateTake(_ id: UUID, _ change: (inout TeleprompterTakeManifest) -> Void) {
+        for candidate in [selectedTake, pendingTake] {
+            guard var take = candidate, take.id == id else { continue }
+            let before = take
+            change(&take)
+            guard take != before, (try? store.save(manifest: take)) != nil else { continue }
+            if selectedTake?.id == id { selectedTake = take }
+            if pendingTake?.id == id { pendingTake = take }
+        }
+    }
+
+    /// Waits until the bake of the take on screen has finished, starting it if it is owed. Nil when the take went away
+    /// or the bake cannot run now (the app left the foreground): the creator is told and the bake continues on return.
+    private func waitForBake(of id: UUID) async -> TeleprompterTakeManifest? {
+        Perf.begin("talk.use.bakeWait", id: id.uuidString)
+        waitingForBake = true
+        defer { waitingForBake = false; Perf.end("talk.use.bakeWait", id: id.uuidString) }
+        while let take = selectedTake, take.id == id, take.status == .review {
+            if take.cinematic?.isSettled ?? true { return take }
+            reconcileBake()
+            guard let task = bakes.tasks[id] else { error = Self.bakePausedMessage; return nil }
+            await task.value
+        }
+        return nil
+    }
+
     // MARK: Photos copy of the raw take (KRI-653)
 
     private func savePhotoCopy(of take: TeleprompterTakeManifest) {
@@ -536,16 +649,27 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         }
     }
 
-    /// Deletes a take's movie, but never while Photos is still reading it.
-    private func deleteMovie(of take: TeleprompterTakeManifest) {
-        let url = store.fileURL(for: take)
-        guard let pending = photoSaves[take.id] else { try? FileManager.default.removeItem(at: url); return }
-        Task { _ = await pending.value; try? FileManager.default.removeItem(at: url) }
+    /// Everything still reading or replacing a take's movie: a Photos save, a bake.
+    private func movieUsers(of id: UUID) -> [Task<Void, Never>] {
+        var users: [Task<Void, Never>] = []
+        if let save = photoSaves[id] { users.append(Task { _ = await save.value }) }
+        if let bake = bakes.tasks[id] { users.append(bake) }
+        return users
     }
 
-    /// `store.remove(manifest:removingFile: true)`, with the movie removal deferred past a pending Photos save.
+    /// Deletes a take's movie, but never while Photos is still reading it or a bake is still replacing it.
+    private func deleteMovie(of take: TeleprompterTakeManifest) {
+        let url = store.fileURL(for: take)
+        bakes.tasks[take.id]?.cancel()
+        let users = movieUsers(of: take.id)
+        guard !users.isEmpty else { try? FileManager.default.removeItem(at: url); return }
+        Task { for user in users { await user.value }; try? FileManager.default.removeItem(at: url) }
+    }
+
+    /// `store.remove(manifest:removingFile: true)`, with the movie removal deferred past a pending Photos save or bake.
     private func removeTake(_ take: TeleprompterTakeManifest) throws {
-        guard photoSaves[take.id] != nil else { try store.remove(manifest: take, removingFile: true); return }
+        bakes.tasks[take.id]?.cancel()
+        guard !movieUsers(of: take.id).isEmpty else { try store.remove(manifest: take, removingFile: true); return }
         try store.remove(manifest: take, removingFile: false)
         deleteMovie(of: take)
     }
@@ -594,8 +718,13 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
     }
 
     func useTake(_ intake: (TeleprompterTakeManifest, URL) async -> TeleprompterIntakeResult) async {
-        guard !usingTake, !queueAccepted, var take = selectedTake, take.status == .review,
+        guard !usingTake, !waitingForBake, !queueAccepted, var take = selectedTake, take.status == .review,
               take.audioCheck?.verdict != .silent else { return }
+        if !(take.cinematic?.isSettled ?? true) {
+            // The creator was reviewing while it baked, so this is usually already over. Upload only ever sees the baked movie.
+            guard let baked = await waitForBake(of: take.id), !usingTake, !queueAccepted else { return }
+            take = baked
+        }
         usingTake = true
         Perf.begin("talk.use.spinner", id: take.id.uuidString)
         defer { usingTake = false; Perf.end("talk.use.spinner", id: take.id.uuidString) }
@@ -649,4 +778,11 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
               let audio = try? await asset.loadTracks(withMediaType: .audio), !audio.isEmpty else { return false }
         return true
     }
+}
+
+/// The running bakes. A class so that dropping the flow cancels them: a bake never outlives the screen that owns it, and
+/// the manifest, still saying the take owes one, is how the next opening finishes it.
+@MainActor final class CinematicBakeTasks {
+    var tasks: [UUID: Task<Void, Never>] = [:]
+    deinit { tasks.values.forEach { $0.cancel() } }
 }

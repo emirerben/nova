@@ -474,6 +474,51 @@ import KriaMediaEngine
         XCTAssertEqual(layers[0].effect, .captionPop)
     }
 
+    // KRI-1344: a line generation hid over a text-dense full-screen picture (`hidden_spans`, seconds from the
+    // cue's own start) stays hidden there in the editor. Ways this could fail: the spans are ignored (the line is
+    // drawn over the picture again); the spans are read as timeline seconds instead of cue-relative; a word-style
+    // line loses its second part (the word clock carried over from the first part); a fully hidden line still
+    // draws; a line without spans changes at all.
+    private func hiddenSpanLayers(style: String, spans: JSONValue?) throws -> [PortableTextLayer] {
+        let (source, clip) = talkingSource(duration: 5)
+        var raw: [String: JSONValue] = [:]
+        if let spans { raw["hidden_spans"] = spans }
+        let document = EditorDocument(editFormat: "subtitled", clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: 5)],
+            captionMeta: ["style": .string(style)],
+            captionCues: [.init(id: "cue", startS: 0.5, endS: 3.5, text: "One more game tonight", raw: raw)])
+        let item = NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue"), start: 0.5, end: 3.5)
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        return try compiler.compile(document: document, clips: [clip], items: [item], sources: [0: source], deviceCaptions: true)
+            .recipe.textLayers.filter { $0.id.hasPrefix("caption-") }
+    }
+
+    func testHiddenSpansKeepTheLineOffItsHiddenPartInSentenceStyle() throws {
+        let layers = try hiddenSpanLayers(style: "sentence", spans: .array([.array([.number(1.0), .number(2.0)])]))
+        XCTAssertEqual(layers.map(\.id), ["caption-cue", "caption-cue-1"])
+        XCTAssertEqual(layers[0].start, 0.5, accuracy: 1e-9)
+        XCTAssertEqual(layers[0].end, 1.5, accuracy: 1e-9)
+        XCTAssertEqual(layers[1].start, 2.5, accuracy: 1e-9)
+        XCTAssertEqual(layers[1].end, 3.5, accuracy: 1e-9)
+    }
+
+    func testHiddenSpansKeepBothVisiblePartsOfAWordStyleLine() throws {
+        let layers = try hiddenSpanLayers(style: "word", spans: .array([.array([.number(1.0), .number(2.0)])]))
+        XCTAssertEqual(layers.count, 2)
+        for layer in layers {
+            XCTAssertFalse(layer.start < 2.5 && layer.end > 1.5, "\(layer.id) is drawn inside the hidden span")
+            XCTAssertGreaterThan(layer.end, layer.start)
+        }
+        XCTAssertEqual(try XCTUnwrap(layers.last).end, 3.5, accuracy: 1e-9)
+    }
+
+    func testAFullyHiddenLineDrawsNothingAndALineWithoutSpansIsUnchanged() throws {
+        XCTAssertTrue(try hiddenSpanLayers(style: "sentence", spans: .array([.array([.number(0), .number(3.0)])])).isEmpty)
+        let plain = try hiddenSpanLayers(style: "sentence", spans: nil)
+        XCTAssertEqual(plain.map(\.id), ["caption-cue"])
+        XCTAssertEqual(plain[0].start, 0.5, accuracy: 1e-9)
+        XCTAssertEqual(plain[0].end, 3.5, accuracy: 1e-9)
+    }
+
     /// Word style with the highlight setting left unset is the legacy full-line sweep, as the server builds it.
     func testWordStyleWithoutAnExplicitHighlightKeepsTheFullLineKaraoke() throws {
         let (source, clip) = talkingSource(duration: 4)

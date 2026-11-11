@@ -596,6 +596,41 @@ def test_kept_line_montage_draws_the_confirmed_title_and_clip_labels(world, monk
     assert all(row["source_params"]["read_only"] for row in rows)
 
 
+def test_a_chapter_title_is_drawn_once_on_the_chapters_first_cut(world, monkeypatch):
+    """KRI-1331: "a title at the beginning of each event" over two clips is one title."""
+    from app.services.creator_render_contract import TextRequirement
+
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [*settings.phone_render_verified_features, "positionedText", "authoredText"],
+    )
+    from app.services.device_render import device_status
+
+    _contract(
+        world,
+        original_audio="require",
+        audio_source_ids=("talk",),
+        exact_texts=(TextRequirement(role="clip", text=BUTCHER, chapter_media_ids=("b1", "b2")),),
+    )
+    assert _run(world, _walk_in_plan()) is True
+    recipe = device_status(world.job, "speech_montage").request.recipe
+    asset_media = {a.id: getattr(a, "media_id", None) for a in recipe.asset_manifest.assets}
+    first = min(
+        (
+            clip
+            for track in recipe.tracks
+            if track.kind == "video"
+            for clip in track.clips
+            if asset_media.get(clip.source_asset_id) in {"b1", "b2"}
+        ),
+        key=lambda clip: clip.timeline_start,
+    )
+    [title] = [layer for layer in recipe.text_layers if _drawn(layer) == BUTCHER]
+    assert title.start == pytest.approx(first.timeline_start, abs=1e-3)
+    assert title.end <= first.timeline_start + first.source_duration / first.rate + 1e-3
+
+
 def test_a_label_for_a_clip_the_edit_never_shows_still_refuses(world):
     from app.services.creator_render_contract import CreatorRenderContractError, TextRequirement
 

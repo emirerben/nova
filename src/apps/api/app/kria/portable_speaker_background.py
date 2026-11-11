@@ -122,6 +122,34 @@ class SpeakerBackgroundFocus(BaseModel):
     zoom: float = Field(ge=MIN_FOCUS_ZOOM, le=MAX_FOCUS_ZOOM)
 
 
+# KRI-1307: how far from the centre an aim must be to count as aimed (the measure rounds x to
+# 3 decimals; a centred 1.0x focus is never written, `_FocusResolver` drops it).
+_AIM_EPS = 1e-3
+
+
+def focus_zooms_onto_text(focus: SpeakerBackgroundFocus | Any) -> bool:
+    """KRI-1307: is this background picture zoomed onto its text?
+
+    Zoomed in past the cover fit (``zoom > 1``), or -- since 88ca72bb7 floors the measured zoom at
+    the cover fit so a 16:9 recording fills the 9:16 frame -- filled to the frame (``zoom >= 1``)
+    AND aimed off-centre at its text column (``x != 0.5``): a 1920x1080 README cover-filled on
+    1080x1920 is ~3.2x a contain fit, its column brought into view. An un-aimed centre 1.0x is
+    today's plain crop (not zoomed); below cover is zoomed OUT (bars), never zoomed. Takes the
+    recipe model or the editor document's plain ``{"x", "y", "zoom"}`` mapping; anything else
+    (no focus) is False."""
+    if isinstance(focus, SpeakerBackgroundFocus):
+        x, zoom = focus.x, focus.zoom
+    elif isinstance(focus, dict):
+        x, zoom = focus.get("x", 0.5), focus.get("zoom")
+    else:
+        x, zoom = getattr(focus, "x", None), getattr(focus, "zoom", None)
+    if not all(isinstance(v, int | float) and not isinstance(v, bool) for v in (x, zoom)):
+        return False
+    if zoom > 1.0:
+        return True
+    return zoom >= 1.0 - 1e-9 and abs(float(x) - 0.5) > _AIM_EPS
+
+
 class SpeakerBackgroundWindow(BaseModel):
     """One timed background: ``asset_id`` shows from ``start`` to ``end`` (output seconds).
     A video plays from ``source_start`` and loops inside the window; a photo is held."""
@@ -268,14 +296,15 @@ class SpeakerBackgroundLayer(BaseModel):
 
     @property
     def all_pictures_zoomed(self) -> bool:
-        """KRI-1307: every picture drawn (a media fill and each window) is zoomed in (> 1x).
+        """KRI-1307: every picture drawn (a media fill and each window) is zoomed onto its text
+        (`focus_zooms_onto_text`: past the cover fit, or filled and aimed at its column).
 
-        Any focus at all is not enough: a recording drawn at 1x, or one window left with no focus,
-        is not zoomed onto its text. A recipe with no picture at all is False.
+        Any focus at all is not enough: a recording drawn at a centred 1x, or one window left with
+        no focus, is not zoomed onto its text. A recipe with no picture at all is False.
         """
         pictures = [] if self.media_kind == "color" else [self.focus]
         pictures += [w.focus for w in self.windows or ()]
-        return bool(pictures) and all(f is not None and f.zoom > 1.0 for f in pictures)
+        return bool(pictures) and all(focus_zooms_onto_text(f) for f in pictures)
 
     @property
     def uses_color(self) -> bool:

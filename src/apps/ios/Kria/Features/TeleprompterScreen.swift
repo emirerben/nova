@@ -56,7 +56,7 @@ struct TeleprompterScreen: View {
         }
         .background(KriaColor.paper)
         .kriaPage()
-        .interactiveDismissDisabled(flow.captureBusy || flow.usingTake)
+        .interactiveDismissDisabled(flow.captureBusy || flow.usingTake || flow.waitingForBake)
         .task {
             await flow.load()
             await flow.prepareCameraIfNeeded()
@@ -287,7 +287,7 @@ struct TeleprompterScreen: View {
         HStack(spacing: 12) {
             Button { flow.persistDraft(); dismiss() } label: { Image(systemName: "xmark").font(.system(size: 17, weight: .semibold)) }
                 .buttonStyle(.kriaIcon).accessibilityLabel("Close, keeping script and take")
-                .accessibilityIdentifier("teleprompter-close").disabled(flow.usingTake)
+                .accessibilityIdentifier("teleprompter-close").disabled(flow.usingTake || flow.waitingForBake)
             Text("Review take").kriaType(.title).foregroundStyle(KriaColor.ink).accessibilityAddTraits(.isHeader)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
@@ -306,7 +306,8 @@ struct TeleprompterScreen: View {
         } else if let take {
             VStack(spacing: 12) {
                 if take.status != .invalid {
-                    ReviewTakePlayer(url: flow.store.fileURL(for: take)).id(take.id)
+                    // The bake replaces the movie in place, so the player reloads once it is final.
+                    ReviewTakePlayer(url: flow.store.fileURL(for: take)).id("\(take.id.uuidString)-\(take.cinematic?.isSettled ?? true)")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     KriaNoticeCard(tone: .failure, title: "This interrupted take couldn’t be played.")
@@ -342,16 +343,19 @@ struct TeleprompterScreen: View {
                     .accessibilityIdentifier("teleprompter-quiet-take")
             }
             if let cinematic = take.cinematic, take.status != .invalid {
-                reviewNote(cinematic.creatorMessage, id: "teleprompter-review-cinematic")
+                reviewNote(cinematicNote(cinematic), id: "teleprompter-review-cinematic")
             }
             if take.speakerBackground != nil {
                 reviewNote("Your background is added with this take.", id: "teleprompter-review-background")
             }
             if let note = flow.backgroundNote { reviewNote(note, id: "teleprompter-background-note") }
             if let note = flow.photosNote { reviewNote(note, id: "teleprompter-photos-note") }
-            if flow.queueAccepted || flow.usingTake {
-                HStack(spacing: 8) { KriaSpinner(size: 16); Text(replacementNotice == nil ? "Adding take to your edit…" : "Swapping in your new take…").kriaType(.label).foregroundStyle(KriaColor.mutedInk) }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            if flow.queueAccepted || flow.usingTake || flow.waitingForBake {
+                HStack(spacing: 8) {
+                    KriaSpinner(size: 16)
+                    Text(progressText).kriaType(.label).foregroundStyle(KriaColor.mutedInk).accessibilityIdentifier("teleprompter-review-progress")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             if let admission, !flow.queueAccepted {
                 KriaNoticeCard(tone: .failure, title: admission).accessibilityIdentifier("teleprompter-admission")
@@ -363,6 +367,18 @@ struct TeleprompterScreen: View {
                 KriaNoticeCard(tone: .failure, title: error).accessibilityIdentifier("teleprompter-review-error")
             }
         }
+    }
+
+    private var progressText: String {
+        if flow.waitingForBake && !flow.usingTake && !flow.queueAccepted {
+            return "Finishing your Cinematic look" + (flow.bakeProgress.map { " (\(Int($0 * 100))%)" } ?? "") + "…"
+        }
+        return replacementNotice == nil ? "Adding take to your edit…" : "Swapping in your new take…"
+    }
+
+    private func cinematicNote(_ state: CinematicBakeState) -> String {
+        guard !state.isSettled, let progress = flow.bakeProgress, progress > 0 else { return state.creatorMessage }
+        return state.creatorMessage + " \(Int(progress * 100))%"
     }
 
     private func reviewNote(_ text: String, id: String) -> some View {
@@ -379,8 +395,8 @@ struct TeleprompterScreen: View {
         return VStack(spacing: 8) {
             if canUse, !blocked {
                 Button(take.audioCheck?.verdict == .quiet ? "Use anyway" : replacementNotice == nil ? "Use take" : "Replace take") { Task { await flow.useTake(intake) } }
-                    .buttonStyle(KriaButtonStyle(role: primary, fullWidth: true, isLoading: flow.usingTake))
-                    .disabled(busy).accessibilityIdentifier("teleprompter-use-take")
+                    .buttonStyle(KriaButtonStyle(role: primary, fullWidth: true, isLoading: flow.usingTake || flow.waitingForBake))
+                    .disabled(busy || flow.waitingForBake).accessibilityIdentifier("teleprompter-use-take")
             } else if canUse, blocked {
                 Button(limitHit ? "Manage clips" : "Close") { flow.persistDraft(); dismiss() }
                     .buttonStyle(KriaButtonStyle(role: primary, fullWidth: true)).accessibilityIdentifier("teleprompter-manage-clips")
@@ -498,14 +514,14 @@ private struct TeleprompterBackgroundMenu: View {
     }
 }
 
-/// "Starting recording…" / "Saving take…", and KRI-1160's longer "Applying Cinematic look…" while a take is baked.
+/// "Starting recording…" / "Saving take…".
 private struct TeleprompterSavingLabel: View {
     @ObservedObject var camera: TeleprompterCamera
     let starting: Bool
     var body: some View {
         HStack(spacing: 10) {
             KriaSpinner()
-            Text(starting ? "Starting recording…" : camera.applyingCinematic ? "Applying Cinematic look…" : "Saving take…")
+            Text(starting ? "Starting recording…" : "Saving take…")
                 .font(KriaFont.body(15).weight(.semibold))
         }.padding(16).kriaGlassPanel(cornerRadius: 24)
     }

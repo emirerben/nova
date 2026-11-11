@@ -9,6 +9,8 @@ enum NativeEditorPanel: Equatable {
     case speaker
     /// KRI-589: a selected drawing's Edit / Animation panel.
     case drawing(String)
+    /// KRI-1335: split screen create / fill / layout.
+    case split
 
     var tool: NativeEditorTool {
         switch self {
@@ -18,6 +20,7 @@ enum NativeEditorPanel: Equatable {
         case .background, .speaker: return .background
         case .sounds: return .sounds
         case .drawing: return .draw
+        case .split: return .split
         }
     }
 }

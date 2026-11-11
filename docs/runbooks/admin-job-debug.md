@@ -130,6 +130,22 @@ python scripts/admin.py --prod GET creation-threads/<thread_id>/events
 python scripts/admin.py --prod GET "creation-threads/<thread_id>/turns?limit=10"
 ```
 
+## Researched text: which route ran
+
+A job's `agent_runs` show how research wrote its text.
+
+- `nova.research.caption_binding` means footage-window captions (`run_researched_revision`).
+- `nova.research.text_layers` with `nova.research.claim_review` means reviewed text layers. This
+  route serves authored word sequences and translated layers (KRI-1352).
+
+Research approved before render sits in `job.assembly_plan.creator_brief_binding.prepared_research`,
+as `texts` (footage explanations) or `layers` (reviewed text layers bound to their source cuts). A
+composed program records its reviewed layers in `text_composition.research_layers`. Every replay
+rechecks them: the place, the reviewed window, the sequence unit, translations shown together, and
+no new words in the shaping bundle (`text_composition.then`). A `phone_plan_failed` job with a
+`ResearchUnavailable` or `CreationTextCompositionError` in `pipeline_trace` names the rule that
+failed.
+
 ## Phone export verification evidence (read-only)
 
 `GET /admin/jobs/{job_id}/export-verification` returns the measured evidence the server

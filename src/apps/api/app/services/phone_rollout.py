@@ -298,13 +298,22 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         raise PhoneCapabilityUnavailable(
             "Split screen awaits native qualification", capability="splitScreen"
         )
+    if "splitCollapse" in recipe.required_capabilities and not split_collapse_supported(
+        require_client=False
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Collapsing split panels await native qualification", capability="splitCollapse"
+        )
     placements = [
         clip.visual_placement
         for track in recipe.tracks
         for clip in track.clips
         if clip.visual_placement is not None
     ]
-    if recipe.visual_fills:
+    if recipe.visual_fills and not (
+        # KRI-1346: the closing card's colour is the one fill a phone recipe may carry.
+        recipe_fills_are_closing_cards(recipe) and phone_talking_closing_card_available()
+    ):
         raise ValueError("Visual blocks await native parity and device qualification")
     if recipe.audio.mute_windows and not phone_clip_sound_windows_supported():
         # KRI-118 L1 item 6: mute windows are a distinct feature from visual
@@ -484,6 +493,13 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         raise PhoneCapabilityUnavailable(
             "A photo or video behind a clip awaits native parity and device qualification",
             capability="clipBackdropMedia",
+        )
+    if recipe_has_color_moments(recipe) and "colorMoments" not in set(
+        settings.phone_render_verified_features
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Black-and-white moments, flashes and the end fade await device qualification",
+            capability="colorMoments",
         )
     missing = recipe.required_capabilities - set(settings.phone_render_verified_features)
     if missing:
@@ -1328,6 +1344,46 @@ def clip_tilt_supported(*, require_client: bool | None = None) -> bool:
     )
 
 
+def recipe_has_color_moments(recipe: Any) -> bool:
+    """Does this recipe carry colour moments or an end fade (KRI-1350)?"""
+    return bool(getattr(recipe, "color_moments", None)) or (
+        getattr(recipe, "end_fade", None) is not None
+    )
+
+
+def color_moments_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode ``color_moments`` / ``end_fade``?
+
+    At least ``color_moments_min_client_protocol`` (48); an older build fails the whole recipe
+    on the unknown keys and token. ``require_client`` follows `clip_tilt_client_supported`
+    (workers have no app build to qualify; the device-render poll answers 426 instead).
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.color_moments_min_client_protocol
+
+
+def color_moments_supported(*, require_client: bool | None = None) -> bool:
+    """Single source of truth for "may Kria add colour moments to a phone edit right now".
+
+    The kill switch (``color_moments_enabled``, default off), ``colorMoments`` in
+    ``phone_render_verified_features`` and the app-build gate.
+    """
+    return bool(
+        settings.color_moments_enabled
+        and "colorMoments" in set(settings.phone_render_verified_features)
+        and color_moments_client_supported(require_client=require_client)
+    )
+
+
 def clip_tilt_zoom_client_supported(*, require_client: bool | None = None) -> bool:
     """Does the requesting app build read and keep a tilt row's ``zoom`` (KRI-1169)?
 
@@ -2067,6 +2123,78 @@ def cta_ending_planned_for(client_protocol: int | None) -> bool:
     )
 
 
+CLOSING_CARD_FEATURE = "closingCard"
+CLOSING_CARD_ENGINE_FEATURES: tuple[str, ...] = (
+    "freezeFrame",
+    "visualBlocks",
+    CLOSING_CARD_FEATURE,
+)
+
+
+def phone_talking_corner_text_supported() -> bool:
+    """Can a phone Talking edit keep the creator's corner text on screen (KRI-1342 item 7)?
+
+    The lines are ordinary positioned text rows on the KRI-467 lane (no new recipe field), so
+    the flag and the title lane are the whole gate. Session-level capability for honest
+    replies: False means a corner line is still turned into the opening title or asked about.
+    """
+
+    return bool(settings.phone_talking_corner_text_enabled and phone_subtitled_title_supported())
+
+
+def phone_talking_closing_card_available() -> bool:
+    """Server-wide: may a phone Talking edit end on a full-screen colour card (KRI-1346)?
+
+    The card is the last frame held (``freezeFrame``) under a solid visual fill
+    (``visualBlocks``) with a text row on it. Visual fills were never device-qualified on
+    their own, so the ``closingCard`` token is added to ``PHONE_RENDER_VERIFIED_FEATURES``
+    only after a physical-iPhone preview + export check of a card."""
+
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        settings.phone_talking_closing_card_enabled
+        and phone_subtitled_title_supported()
+        and all(feature in verified for feature in CLOSING_CARD_ENGINE_FEATURES)
+    )
+
+
+def phone_talking_closing_card_planned_for(client_protocol: int | None) -> bool:
+    """May this creator's phone Talking edit end on a colour card? Read like
+    `freeze_frame_planned_for`: ``client_protocol`` is the app build the creator acted from
+    (the turn's ``client_protocol`` or the Job's ``creator_client_protocol``). The card adds no
+    recipe field, so the build only has to decode a held frame."""
+
+    return bool(
+        phone_talking_closing_card_available()
+        and client_protocol is not None
+        and client_protocol >= settings.freeze_frame_min_client_protocol
+    )
+
+
+def phone_talking_closing_card_planned_reason(client_protocol: int | None) -> str | None:
+    """Why a phone Talking plan may NOT end on a colour card for the build ``client_protocol``,
+    or None when it may (the draft's twin of `phone_talking_closing_card_planned_for`, so the
+    draft never promises a card the render then leaves out). Codes: ``unavailable`` (the switch,
+    the text lane or a verified token is missing), ``app_too_old`` (no stamp, or a build below
+    ``freeze_frame_min_client_protocol``)."""
+
+    if not phone_talking_closing_card_available():
+        return "unavailable"
+    if client_protocol is None or client_protocol < settings.freeze_frame_min_client_protocol:
+        return "app_too_old"
+    return None
+
+
+def recipe_fills_are_closing_cards(recipe: Any) -> bool:
+    """Every visual fill in ``recipe`` is a closing card (the only fill a phone recipe may
+    carry, and only while the card is available)."""
+
+    from app.pipeline.phone_talking_closing_card import CLOSING_CARD_FILL_ID  # noqa: PLC0415
+
+    fills = list(getattr(recipe, "visual_fills", None) or [])
+    return bool(fills) and all(fill.id == CLOSING_CARD_FILL_ID for fill in fills)
+
+
 def phone_subtitled_spoken_text_supported() -> bool:
     """Can a phone-rendered `subtitled` (Talking) edit show a creator's text at
     the word they say (KRI-707)? It is a plain text row on the KRI-467 lane,
@@ -2214,6 +2342,42 @@ def phone_talking_head_supported() -> bool:
 TALKING_MULTI_CLIP_MAX_CLIPS = 10
 
 
+def phone_talking_multi_speaker_beats_supported() -> bool:
+    """Single source of truth for "do full-screen photos pinned to a word still show when
+    several clips talk" (KRI-1327). Consulted by the worker (`_run_phone_subtitled_job`) and
+    the draft check (`brief_checks._multi_take_beat_problem`), so a draft never says "Done"
+    for a photo the render then skips.
+
+    True iff ALL of: `phone_talking_multi_speaker_beats_enabled`, several-clip Talking
+    (`phone_talking_multi_clip_supported`), reaction beats
+    (`phone_subtitled_reaction_beats_supported`) and the full-screen track
+    (`phone_subtitled_fullscreen_overlays_enabled`).
+    """
+    return bool(
+        getattr(settings, "phone_talking_multi_speaker_beats_enabled", False)
+        and getattr(settings, "phone_subtitled_fullscreen_overlays_enabled", True)
+        and phone_talking_multi_clip_supported()
+        and phone_subtitled_reaction_beats_supported()
+    )
+
+
+def phone_talking_multi_take_cleanup_supported() -> bool:
+    """Single source of truth for "may a several-take Talking edit get speech cleanup"
+    (KRI-720). Consulted by the narration resolver's request builder
+    (`plan_item_media.active_narration_request`), the dispatch gate
+    (`content_plan_build._speech_cleanup_dispatch_snapshot`), the draft check
+    (`brief_checks`) and the worker (`generative_build._run_phone_subtitled_job`), so a
+    draft never offers a cleanup the render then refuses.
+
+    True iff ALL of: `talking_multi_take_cleanup_enabled` and several-clip Talking
+    (`phone_talking_multi_clip_supported`).
+    """
+    return bool(
+        getattr(settings, "talking_multi_take_cleanup_enabled", False)
+        and phone_talking_multi_clip_supported()
+    )
+
+
 def phone_talking_multi_clip_supported() -> bool:
     """Single source of truth for "may a declared Talking-to-camera
     (`subtitled`) item carry 2+ clips right now" (KRI-719).
@@ -2357,3 +2521,41 @@ def split_screen_supported(*, require_client: bool | None = None) -> bool:
     return "splitScreen" in set(
         settings.phone_render_verified_features
     ) and split_screen_client_supported(require_client=require_client)
+
+
+def split_collapse_planned_for(client_protocol: int | None) -> bool:
+    """May an edit for the app build ``client_protocol`` carry `collapse_empty_panels`?
+
+    Reads the sender's stamp and never the request context, so the draft turn (a worker) and
+    the approve request agree for the same build (KRI-1321). No stamp is an old build.
+    """
+    from app.services.client_protocol import SPLIT_COLLAPSE_PROTOCOL  # noqa: PLC0415
+
+    verified = set(settings.phone_render_verified_features)
+    return (
+        {"splitScreen", "splitCollapse"} <= verified
+        and client_protocol is not None
+        and client_protocol >= SPLIT_COLLAPSE_PROTOCOL
+    )
+
+
+def split_collapse_client_supported(*, require_client: bool | None = None) -> bool:
+    from app.services.client_protocol import (  # noqa: PLC0415
+        SPLIT_COLLAPSE_PROTOCOL,
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    protocol = current_client_protocol()
+    return not require_client or (protocol is not None and protocol >= SPLIT_COLLAPSE_PROTOCOL)
+
+
+def split_collapse_supported(*, require_client: bool | None = None) -> bool:
+    """Collapse rides on split screen: both tokens must be verified."""
+    return (
+        split_screen_supported(require_client=require_client)
+        and "splitCollapse" in set(settings.phone_render_verified_features)
+        and split_collapse_client_supported(require_client=require_client)
+    )

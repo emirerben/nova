@@ -33,6 +33,7 @@ from app.pipeline.camera_effects import easing_bounds, resolve_easing
 from app.routes.generative_jobs import (
     EditorCommitBackgroundMusic,
     EditorCommitCaptionMeta,
+    EditorCommitColorMoments,
     EditorCommitMix,
     EditorCommitRequest,
     EditorCommitSpeakerBackground,
@@ -68,6 +69,7 @@ _PORTABLE_FAMILIES = {
     "background_windows",
     "caption",
     "clip",
+    "color_moments",
     "effect",
     "music",
     "overlay",
@@ -86,6 +88,16 @@ def split_screen_available(job: Any, variant: dict[str, Any]) -> bool:
         variant.get("render_destination") == "device"
         and _editor_capabilities(job, variant).get("timeline") is True
         and split_screen_supported()
+    )
+
+
+def split_collapse_available(job: Any, variant: dict[str, Any]) -> bool:
+    """May an edit set `collapse_empty_panels`? Reads the sending build, as the request does."""
+    from app.services.client_protocol import current_client_protocol
+    from app.services.phone_rollout import split_collapse_planned_for
+
+    return split_screen_available(job, variant) and split_collapse_planned_for(
+        current_client_protocol()
     )
 
 
@@ -577,10 +589,15 @@ def clip_visible_text_by_media_id(
 
 
 def _clip_label_links(job: Any, variant: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Text-bar id -> {clip_id, inferred} for the per-clip label lane.
+    """Text-bar id -> {clip_id, inferred, edited} for every text bound to a clip.
 
     The unified montage writes ``clip-label-{cut_id}`` bars; a copilot-authored
-    label uses ``clip-label-media-{media_id}``. Approved label provenance
+    label uses ``clip-label-media-{media_id}``. Any other text is bound by the clip
+    it records in ``source_params`` (``source_asset_id`` + ``source_timeline_id``:
+    titles the phone repair placed, KRI-1331, and participant labels); such a link
+    adds ``runs_on`` (the text starts at its clip and may run on past it) and
+    ``segment_id`` (the clip's timeline id), plus ``recorded``, which tells such a text from
+    a label-lane bar. Approved label provenance
     (``inferred`` = a model landmark guess the creator may correct) is kept only
     while the bar still shows the approved text, so a creator's own edit is
     never re-flagged as a guess.
@@ -603,12 +620,15 @@ def _clip_label_links(job: Any, variant: dict[str, Any]) -> dict[str, dict[str, 
     links: dict[str, dict[str, Any]] = {}
     for bar in variant.get("text_elements") or []:
         bar_id = bar.get("id") if isinstance(bar, dict) else None
-        if not isinstance(bar_id, str) or not bar_id.startswith(_CLIP_LABEL_BAR_PREFIX):
+        if not isinstance(bar_id, str):
             continue
+        recorded: dict[str, Any] = {}
         if bar_id.startswith(_CLIP_LABEL_MEDIA_PREFIX):
             media_id = bar_id[len(_CLIP_LABEL_MEDIA_PREFIX) :]
-        else:
+        elif bar_id.startswith(_CLIP_LABEL_BAR_PREFIX):
             media_id = media_by_cut.get(bar_id[len(_CLIP_LABEL_BAR_PREFIX) :])
+        else:
+            media_id, recorded = _recorded_clip(bar)
         if not media_id:
             continue
         label = approved.get(media_id)
@@ -619,8 +639,32 @@ def _clip_label_links(job: Any, variant: dict[str, Any]) -> dict[str, dict[str, 
             # Not the approved AI/fact label any more (the creator changed it, or
             # it was authored in chat): `label_each_clip` must leave it alone.
             "edited": not same_text,
+            **recorded,
         }
     return links
+
+
+def _recorded_clip(bar: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
+    """The clip a text records in ``source_params``, with its link fields.
+
+    A word-by-word piece copies its source's params, so it never counts: each piece
+    keeps its own window inside the sequence.
+    """
+    params = bar.get("source_params")
+    if (
+        not isinstance(params, dict)
+        or bar.get("sequence_source_id")
+        or params.get("sequence_source_id")
+    ):
+        return None, {}
+    media_id, timeline_id = params.get("source_asset_id"), params.get("source_timeline_id")
+    if not isinstance(media_id, str):
+        return None, {}
+    return media_id, {
+        "recorded": True,
+        "runs_on": not params.get("narration_label_kind"),
+        "segment_id": timeline_id if isinstance(timeline_id, str) and timeline_id else None,
+    }
 
 
 def _is_guided_native(job: Any, variant: dict[str, Any]) -> bool:
@@ -642,7 +686,8 @@ def _is_authored_phone_native(job: Any, variant: dict[str, Any]) -> bool:
 
 
 def _has_label_lane(job: Any, variant: dict[str, Any]) -> bool:
-    return bool(_clip_label_links(job, variant))
+    """Per-clip label bars only: a title or participant label bound by its recorded clip is not."""
+    return any(not link.get("recorded") for link in _clip_label_links(job, variant).values())
 
 
 def _bar_clip_link(row: dict[str, Any], links: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -652,6 +697,7 @@ def _bar_clip_link(row: dict[str, Any], links: dict[str, dict[str, Any]]) -> dic
     out = {"clip_id": link["clip_id"], "inferred": link["inferred"]}
     if link["edited"]:
         out["edited"] = True
+    out.update({key: link[key] for key in ("recorded", "runs_on", "segment_id") if link.get(key)})
     return out
 
 
@@ -946,7 +992,76 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
             families.append("background_windows")
         if background_focus_open(job, variant):
             families.append("background_focus")
+    if color_moments_open(job, variant) or color_moments_removal_only(job, variant):
+        families.append("color_moments")
     return sorted(set(families) & _PORTABLE_FAMILIES)
+
+
+def color_moments_open(job: Any, variant: dict[str, Any]) -> bool:
+    """KRI-1350: may chat set colour moments on this edit right now?
+
+    The kill switch, the verified token and the app build (`color_moments_supported`, the
+    worker-side client rule of every phone lane), on a device edit whose Save recompiles
+    lane-free sections (the drawings shape; `_validate_color_moments_section` re-checks).
+    """
+    from app.routes.generative_jobs import _drawing_capabilities  # noqa: PLC0415
+    from app.services.phone_rollout import color_moments_supported  # noqa: PLC0415
+
+    if variant.get("render_destination") != "device" or not color_moments_supported():
+        return False
+    try:
+        return bool(_drawing_capabilities(job, variant)["delete"]["editable"])
+    except Exception:  # noqa: BLE001 - a capability probe never breaks the snapshot
+        return False
+
+
+def color_moments_removal_only(job: Any, variant: dict[str, Any]) -> bool:
+    """KRI-1350: the gate is closed (switch, token or app build) but this device edit still
+    carries moments or an end fade, so chat may take them off and nothing else."""
+    if variant.get("render_destination") != "device" or color_moments_open(job, variant):
+        return False
+    stored = variant.get("color_moments")
+    return isinstance(stored, dict) and bool(stored.get("moments") or stored.get("end_fade"))
+
+
+def _color_moments_snapshot(
+    variant: dict[str, Any], *, removal_only: bool = False
+) -> dict[str, Any]:
+    """What the copilot sees of the colour-moments lane: current moments (with the sound
+    each one's edge carries) and the video's length."""
+    from app.agents.editor_ops_v2.color_moments import (  # noqa: PLC0415
+        SOUND_ID_PREFIX,
+        current_lane,
+    )
+    from app.routes.generative_jobs import visual_block_variant_duration  # noqa: PLC0415
+
+    lane = current_lane(variant)
+    sounds = {
+        str(row.get("id"))[len(SOUND_ID_PREFIX) :]: row.get("sound_effect_id")
+        for row in variant.get("sound_effects") or []
+        if isinstance(row, dict) and str(row.get("id") or "").startswith(SOUND_ID_PREFIX)
+    }
+    moments = []
+    for moment in lane["moments"]:
+        row = {
+            "start_s": moment.get("start"),
+            "end_s": moment.get("end"),
+            "tone": moment.get("tone"),
+            "enter": (moment.get("enter") or {}).get("style", "cut"),
+            "exit": (moment.get("exit") or {}).get("style", "cut"),
+        }
+        for at in ("enter", "exit"):
+            effect = sounds.get(f"{moment.get('id')}-{at}")
+            if effect:
+                row["sound"], row["sound_at"] = effect, at
+        moments.append(row)
+    return {
+        "moments": moments,
+        "end_fade_s": (lane["end_fade"] or {}).get("duration"),
+        "duration_s": round(float(visual_block_variant_duration(variant) or 0), 3),
+        # Present only on a closed gate, so every open snapshot keeps its bytes.
+        **({"removal_only": True} if removal_only else {}),
+    }
 
 
 def _sfx_base_missing(variant: dict[str, Any]) -> bool:
@@ -1011,7 +1126,7 @@ def _overlay_snapshot(
             "fullscreen": sum(1 for c in cards if c["display_mode"] == "fullscreen"),
         },
         "asset_pool": [
-            {key: row[key] for key in ("id", "kind", "label") if key in row}
+            {key: row[key] for key in ("id", "kind", "subject") if key in row}
             for row in pool or []
             if isinstance(row, dict)
         ],
@@ -1722,6 +1837,10 @@ def build_editor_snapshot(
             tilt=caps.get("media_overlay_tilt") is True,
             pool=clip_context.get("generated_overlay_pool"),
         )
+    if "color_moments" in snapshot["allowed_op_families"]:
+        snapshot["color_moments"] = _color_moments_snapshot(
+            variant, removal_only=color_moments_removal_only(job, variant)
+        )
     background = _background_snapshot(job, variant, clip_context)
     if background is not None:
         # Present only while the lane has something to say, so every other snapshot is
@@ -2165,6 +2284,38 @@ def client_state_payload(client_state: Any) -> dict[str, Any]:
     return lanes
 
 
+# Keys a phone state or a chat draft carries that are not edits. `remove_music: false` is
+# a Save default the phone always encodes; only `true` removes the music.
+_NOT_EDIT_KEYS = _STATE_DROP_KEYS | {"base_generation", "editor_state_version", "sections"}
+
+
+def _carries_edits(lanes: dict[str, Any]) -> bool:
+    return any(
+        key not in _NOT_EDIT_KEYS and not (key == "remove_music" and value is False)
+        for key, value in lanes.items()
+    )
+
+
+def _unseen_chat_head(head: Any, variant: dict[str, Any], job: Any, client_state: Any) -> dict:
+    """The head's chat lanes when a clean ``client_state`` never saw them, else ``{}``.
+
+    KRI-1333: an editor whose open-time draft read failed sends a clean state; taken as
+    authoritative it rebuilt the next turn on the published video and dropped every unsaved
+    chat edit. A clean state that names the head's revision is a deliberate discard.
+    """
+    state = _state_dict(client_state)
+    if _carries_edits(state.get("lanes") or {}):
+        return {}
+    seen = state.get("draft_revision")
+    revision = getattr(head, "draft_revision", None)
+    if seen is not None and (revision is None or seen >= revision):
+        return {}
+    fresh = fresh_editor_head_payload(head, variant, job)
+    if str(fresh.get("base_generation") or "") != str(state.get("base_generation") or ""):
+        return {}
+    return fresh if _carries_edits(fresh) else {}
+
+
 def resolve_editor_base(
     job: Any, variant: dict[str, Any], head: Any, client_state: Any = None
 ) -> EditorBase:
@@ -2172,7 +2323,8 @@ def resolve_editor_base(
 
     Precedence:
       1. ``client_state`` whose ``base_generation`` equals the variant's current render
-         baseline -> authoritative, the head is IGNORED (even for empty lanes).
+         baseline -> authoritative, the head is IGNORED, unless the state is clean and
+         never saw the head's chat lanes (``_unseen_chat_head``): then the head.
          A different baseline raises ``EditorStateStaleError`` (never silently rebased).
          Untrusted: a projection failure falls back to 2/3 with ``fallback_reason``.
       2. the head draft when fresh (``fresh_editor_head_payload``).
@@ -2187,6 +2339,14 @@ def resolve_editor_base(
         )
         if str(base or "") != variant_render_baseline(variant):
             raise EditorStateStaleError("editor state is based on an older render")
+        unseen = _unseen_chat_head(head, variant, job, client_state)
+        if unseen:
+            return EditorBase(
+                project_editor_draft(variant, unseen, job),
+                unseen,
+                "head",
+                "client_state_unseen_head",
+            )
         try:
             prior = client_state_payload(client_state)
             return EditorBase(project_editor_draft(variant, prior, job), prior, "client_state")
@@ -2208,6 +2368,8 @@ def editor_payload_dump(payload: EditorCommitRequest) -> dict[str, Any]:
     data = payload.model_dump(mode="json", exclude_none=True)
     if "speaker_background" in payload.model_fields_set and payload.speaker_background is None:
         data["speaker_background"] = None
+    if "color_moments" in payload.model_fields_set and payload.color_moments is None:
+        data["color_moments"] = None
     return data
 
 
@@ -2487,6 +2649,9 @@ class _DraftState:
     # `changed`, so an untouched lane is absent (leave unchanged), never an explicit clear.
     speaker_background: dict[str, Any] | None = None
     drawings: list[dict[str, Any]] = field(default_factory=list)
+    # KRI-1350: the colour-moments lane `set_color_moments` built ({"moments", "end_fade"}).
+    # Reaches the payload only when "color_moments" is in `changed`.
+    color_moments: dict[str, Any] | None = None
 
     def text_bar(self, index: object) -> dict[str, Any]:
         row = self.text_bars[_require_index(self.text_bars, index, "Text")]
@@ -3486,6 +3651,13 @@ def compile_editor_ops(
             if state.speaker_background is not None
             else None
         )
+    if "color_moments" in changed:
+        lane = state.color_moments or {}
+        background_section["color_moments"] = (
+            EditorCommitColorMoments(**lane)
+            if lane.get("moments") or lane.get("end_fade")
+            else None
+        )
     request = EditorCommitRequest(
         guided_revision_number=int(guided["revision_number"]) if guided is not None else None,
         visual_blocks=state.visual_blocks,
@@ -3625,6 +3797,8 @@ def _before_lanes(
         before["drawings"] = copy.deepcopy(variant.get("drawings") or [])
     if "speaker_background" in changed:
         before["speaker_background"] = copy.deepcopy(background_current(state.job, variant))
+    if "color_moments" in changed:
+        before["color_moments"] = copy.deepcopy(variant.get("color_moments"))
     if "mix" in changed:
         mix: dict[str, Any] = {}
         if state.mix_level is not None and variant.get("mix") is not None:

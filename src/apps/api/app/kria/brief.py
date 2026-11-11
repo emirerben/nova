@@ -121,6 +121,26 @@ def brief_batch_chars(updates: Iterable[BriefUpdate]) -> int:
 _SCOPE_RE = re.compile(r"^(title|per_clip|global|clip:[A-Za-z0-9._:-]{1,100})$")
 _MAX_FACTS_BYTES = 2_000
 _MAX_DESCRIPTION_CHARS = 300
+MAX_LITERAL_CHARS = 200
+# Words shown a piece at a time can be a whole approved paragraph (KRI-1352): the opening title
+# that holds the first one takes 280 characters (`EditProposalSnapshot.opening_title`).
+MAX_SEQUENCE_LITERAL_CHARS = 280
+
+
+def _literal_field() -> Any:
+    return Field(
+        default=None,
+        max_length=MAX_SEQUENCE_LITERAL_CHARS,
+        description=(
+            f"Exact creator words: at most {MAX_LITERAL_CHARS} characters, or "
+            f"{MAX_SEQUENCE_LITERAL_CHARS} for kind text_sequence."
+        ),
+    )
+
+
+def _check_literal_length(kind: str | None, literal: str | None) -> None:
+    if literal and kind != "text_sequence" and len(literal) > MAX_LITERAL_CHARS:
+        raise ValueError(f"literal must be at most {MAX_LITERAL_CHARS} characters")
 
 
 def _nfc(value: str) -> str:
@@ -259,7 +279,7 @@ class BriefUpdate(_BriefModel):
     expected_version: int | None = Field(default=None, ge=0)
     kind: RequirementKind | None = None
     scope: str | None = None
-    literal: str | None = Field(default=None, max_length=200)
+    literal: str | None = _literal_field()
     description: str | None = Field(default=None, max_length=_MAX_DESCRIPTION_CHARS)
     facts: dict[str, Any] = Field(default_factory=dict)
 
@@ -305,6 +325,13 @@ class BriefUpdate(_BriefModel):
         return self
 
     @model_validator(mode="after")
+    def _literal_length(self) -> BriefUpdate:
+        # A change without `kind` keeps its target's kind; the merged requirement checks it.
+        if self.kind is not None:
+            _check_literal_length(self.kind, self.literal)
+        return self
+
+    @model_validator(mode="after")
     def _needs_content(self) -> BriefUpdate:
         content = (self.kind, self.scope, self.literal, self.description)
         if self.operation == "remove":
@@ -335,7 +362,7 @@ class BriefRequirement(_BriefModel):
     id: str = Field(min_length=1, max_length=24)
     kind: RequirementKind
     scope: str
-    literal: str | None = Field(default=None, max_length=200)
+    literal: str | None = _literal_field()
     description: str | None = Field(default=None, max_length=_MAX_DESCRIPTION_CHARS)
     facts: dict[str, Any] = Field(default_factory=dict)
     source_turn_id: str | None = None
@@ -360,6 +387,11 @@ class BriefRequirement(_BriefModel):
             or self.id == self.order_replacement.proposal.predecessor_requirement_id
         ):
             raise ValueError("A confirmed replacement belongs to a new global order requirement")
+        return self
+
+    @model_validator(mode="after")
+    def _literal_length(self) -> BriefRequirement:
+        _check_literal_length(self.kind, self.literal)
         return self
 
     @property

@@ -2035,6 +2035,13 @@ def analyze_pool_asset(
             status=persisted_status,
             has_llm_analysis=bool(analysis),
         )
+        if persisted_status == "ready" and not refresh:
+            # KRI-1340: a talk-to-camera video in a Talking item becomes one of its takes.
+            from app.tasks.visual_talking_takes import (  # noqa: PLC0415
+                enqueue_visual_talking_take,
+            )
+
+            enqueue_visual_talking_take(asset_id)
         if timeout_exc is not None:
             raise timeout_exc
 

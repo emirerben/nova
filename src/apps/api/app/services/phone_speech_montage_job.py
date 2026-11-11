@@ -476,7 +476,12 @@ def _confirmed_text(contract: Any) -> tuple[Any, tuple[Any, ...]]:
         (t for t in texts if t.role == "any"), None
     )
     labels = tuple(
-        PhoneClipLabel(text=t.text, media_id=t.media_id, shot_index=t.shot_index)
+        PhoneClipLabel(
+            text=t.text,
+            media_id=t.media_id,
+            shot_index=t.shot_index,
+            chapter_media_ids=t.chapter_media_ids,
+        )
         for t in texts
         if t.role == "clip"
     )

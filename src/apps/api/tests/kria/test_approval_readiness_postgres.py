@@ -72,6 +72,7 @@ async def prepare(
     prompts=None,
     sender_protocol=None,
     extra_phone_features=(),
+    silent=False,
 ):
     user_id, thread_id, _ = seed or _seed_runtime_project()
     with sync_session() as db:
@@ -114,7 +115,7 @@ async def prepare(
                     **row,
                     "manifest_identity": "clip-1",
                     "storage_generation": "1",
-                    "has_audio": True,
+                    "has_audio": not silent,
                     "upload_contract": {
                         "purpose": "analysis_proxy",
                         "proxy": {
@@ -128,7 +129,7 @@ async def prepare(
                                 "duration_s": 8.0,
                                 "width": 640,
                                 "height": 360,
-                                "has_audio": True,
+                                "has_audio": not silent,
                             },
                         },
                     },

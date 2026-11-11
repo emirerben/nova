@@ -27,10 +27,11 @@ reopen or final export. Those require their original recipe and actual media.
 
 The editor UI catalog also selects the `CreationUITests` completing-activity
 captures, rejection recovery, repeated requests/background return, and
-`testImproveAndAIActivityStaySeparateDuringPreviewPreparation`. Improve is
-available for ready suggestions; it intentionally disappears during a pending
-message. The coexistence check delays actual source-pool transport while the
-ready suggestions and expanded preparation control are both visible.
+`testTheEditorHasNoImproveButtonAndItsChatSheetOffersTheSuggestionChips`. The editor has
+no Improve button; ready suggestions are AI chips in the chat and in the editor's chat
+sheet, and a tap adds the chip's prompt to the composer. The check delays actual
+source-pool transport while the ready suggestions and expanded preparation control are
+both visible.
 
 `testChangedEditorPreviewRetainsOldPictureAndBlocksExportThenSupportsManualUndo`
 uses an opt-in same-target generation change. The next generation is still

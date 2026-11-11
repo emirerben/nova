@@ -18,6 +18,7 @@ import UserNotifications
         defer { Perf.end("launch.init") }
         // Every phone render coordinator keeps encoding briefly in the background.
         UIKitDeviceRenderBackgroundExecution.install()
+        SpeakerMaskCacheSwitch.installIfEnabled()
         #if DEBUG
         TalkBench.startIfRequested()
         // First, before anything can touch `URLSession.shared`: AsyncImage loads gallery posters through it.

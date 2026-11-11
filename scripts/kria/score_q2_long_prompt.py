@@ -160,7 +160,11 @@ def _planner_item(fx: dict[str, Any]):  # noqa: ANN202
 
     db = SimpleNamespace(
         get=AsyncMock(side_effect=get),
-        execute=AsyncMock(return_value=SimpleNamespace(all=lambda: [], scalars=lambda: _Rows())),
+        execute=AsyncMock(
+            return_value=SimpleNamespace(
+                all=lambda: [], scalars=lambda: _Rows(), scalar_one_or_none=lambda: None
+            )
+        ),
         rollback=AsyncMock(),
         commit=AsyncMock(),
     )

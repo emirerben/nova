@@ -56,7 +56,7 @@ def _statement(item_id: uuid.UUID, user_id: uuid.UUID):  # noqa: ANN202
             PlanItemAsset.kind == "image",
             PlanItemAsset.deduplicated_to_asset_id.is_(None),
         )
-        .order_by(PlanItemAsset.created_at, PlanItemAsset.id)
+        .order_by(PlanItemAsset.created_at.desc(), PlanItemAsset.id.desc())
         .limit(MAX_POOL_ROWS)
     )
 
@@ -64,13 +64,13 @@ def _statement(item_id: uuid.UUID, user_id: uuid.UUID):  # noqa: ANN202
 def _rows(assets: Any) -> list[dict[str, str]]:
     rows = []
     for asset in assets:
-        label = " ".join(str(asset.source_filename or "").split())[:60]
+        subject = " ".join(str(asset.user_context or "").split())[:60]
         rows.append(
             {
                 "id": str(asset.id),
                 "kind": "image",
                 "gcs_path": asset.gcs_path,
-                **({"label": label} if label else {}),
+                **({"subject": subject} if subject else {}),
             }
         )
     return rows

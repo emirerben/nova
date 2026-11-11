@@ -166,10 +166,10 @@ def clip_names(clips: Sequence[_Clip]) -> dict[str, str]:
     for clip in clips:
         if clip.kind == "image":
             photos += 1
-            fallback = say(en=f"photo {photos}", tr=f"fotoğraf {photos}")
+            fallback = say(en="photo {photos}", tr="fotoğraf {photos}", photos=photos)
         else:
             videos += 1
-            fallback = say(en=f"clip {videos}", tr=f"klip {videos}")
+            fallback = say(en="clip {videos}", tr="klip {videos}", videos=videos)
         names[clip.media_id] = clip.file_name or fallback
     return names
 
@@ -178,7 +178,7 @@ def _listed(items: Sequence[str], *, limit: int, sep: str = ", ") -> str:
     shown = sep.join(items[:limit])
     if len(items) > limit:
         more = len(items) - limit
-        shown += say(en=f" and {more} more", tr=f" ve {more} tane daha")
+        shown += say(en=" and {more} more", tr=" ve {more} tane daha", more=more)
     return shown
 
 
@@ -199,13 +199,14 @@ def found_question(
     found = _listed(parts, limit=4, sep="; ")
     question = say(
         en=(
-            f"I looked inside your clips and found every shot you named: {found}. "
+            "I looked inside your clips and found every shot you named: {found}. "
             "Should I build the edit with them?"
         ),
         tr=(
-            f"Kliplerinin içine baktım ve istediğin her çekimi buldum: {found}. "
+            "Kliplerinin içine baktım ve istediğin her çekimi buldum: {found}. "
             "Videoyu bunlarla oluşturayım mı?"
         ),
+        found=found,
     )
     options = (
         say(en="Yes, build it", tr="Evet, oluştur"),
@@ -220,14 +221,15 @@ def unplaced_reply(clips: Sequence[_Clip]) -> str:
     return say(
         en=(
             "I couldn't place that shot from my notes on your clips, so I haven't ruled them "
-            f"out. If it's in one of them ({names}), tell me which one and about when it "
+            "out. If it's in one of them ({names}), tell me which one and about when it "
             "happens. Or tell me to build the edit without it."
         ),
         tr=(
             "O çekimi kliplerin hakkındaki notlarımdan yerleştiremedim, bu yüzden kliplerini "
-            f"elemedim. Birindeyse ({names}) hangisi olduğunu ve yaklaşık ne zaman geçtiğini "
+            "elemedim. Birindeyse ({names}) hangisi olduğunu ve yaklaşık ne zaman geçtiğini "
             "söyle. Ya da videoyu onsuz oluşturmamı söyle."
         ),
+        names=names,
     )
 
 
