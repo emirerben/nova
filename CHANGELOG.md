@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.159.0] - 2026-11-11
+
+### Fixed
+- fix(kria): silent footage never needs camera audio (KRI-1365) (#2272) <!-- release-pr: 2272 -->
+
 ## [0.88.158.0] - 2026-11-10
 
 ### Fixed
