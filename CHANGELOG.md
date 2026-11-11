@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.160.0] - 2026-11-11
+
+### Fixed
+- fix(kria): server splits and paces approved word-by-word text (KRI-1365) (#2273) <!-- release-pr: 2273 -->
+
+## [0.88.159.0] - 2026-11-11
+
+### Fixed
+- fix(kria): silent footage never needs camera audio (KRI-1365) (#2272) <!-- release-pr: 2272 -->
+
 ## [0.88.158.0] - 2026-11-10
 
 ### Fixed

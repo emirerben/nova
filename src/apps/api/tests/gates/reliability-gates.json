@@ -4672,6 +4672,51 @@
         "a failed render that left failed variants (not none) does not fall back to the last ready video"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1365-word-sequence-text-timing",
+      "tickets": [
+        "KRI-1365"
+      ],
+      "symptom": "A bilingual word-by-word request (about 26 Turkish words in the middle, the English translation at the bottom, over 15 clips, asked for a faster 12 s video) failed twice in the text pass: research for approved literal sequences went to the footage-explanation writer (180 characters in a clip window) and its unwrapped ResearchUnavailable showed as a bug; and the composer paced each paragraph at its own ~0.45 s per word, so the two sequences ended at different times and missed the 'shown together' check. The plan length also ignored how long the sentence needs to be read.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1365",
+      "paths": [
+        "src/apps/api/app/services/creation_text_composition.py",
+        "src/apps/api/app/services/kria_editor_ops_text.py",
+        "src/apps/api/app/services/length_planning.py",
+        "src/apps/api/app/kria/text_sequence.py",
+        "src/apps/api/app/kria/planner.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_word_sequence_server_timing.py",
+        "tests/kria/test_approved_long_sequence_copy.py",
+        "tests/kria/test_paired_sequence_retime.py",
+        "tests/services/test_sequence_reading_floor_length.py"
+      ],
+      "harness": "mocked_provider",
+      "evidence": {
+        "offline_replay": "Synthetic incident shape (26 Turkish and 42 English words, middle and bottom, 15 clips of 2 to 12 s, creator length 12 s) through the real brief, planner, composer parse, replay and compile with provider answers stubbed: a research request for approved sequences never calls the footage writer; a composer that paces each paragraph alone ends on one shared span; a saved program replays with no model call. Controls: changed approved wording is rejected, words that cannot fit at 0.25 s a piece fail with a typed reason, a failing plain research ask is a typed creation_text failure. The plan length is checked through _enrich_best_parts_snapshot.",
+        "live_model": "Not run; no paid calls and no prompt changed.",
+        "native_output": "Not run on a device: the checks read the compiled text lane and the length plan, not an exported video.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "a lone approved word sequence, a pair at two places, and two at one place (left to the composer)",
+        "phrase units and build-ups keep the composer's pacing and set no word floor on the length",
+        "a creator's stated length is never stretched for the text; text that cannot fit is reported",
+        "retiming one of two sequences shown together moves the other; a sequence at another time or place is left alone"
+      ],
+      "neighbours_gap": [
+        "The worker's own free-total plan (unified_montage with no approved length plan) does not apply the reading floor.",
+        "A sequence research writes (no approved wording) has no length to plan for before it is written.",
+        "The typed length planner still asks 'which sequence' when two sequences are present (editor_sequence_timing)."
+      ],
+      "follow_ups": [
+        "Phone re-send of the Atatürk request and a 'make the text faster' edit after deploy"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

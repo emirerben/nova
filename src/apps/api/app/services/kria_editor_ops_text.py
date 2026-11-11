@@ -1036,6 +1036,58 @@ def sequence_source(row: dict[str, Any]) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def _sequence_order(row: dict[str, Any], source: str) -> tuple[int, ...]:
+    suffix = str(row.get("id") or "").removeprefix(source)
+    parts = suffix.split("::sequence-")
+    if parts[0] or len(parts) < 2 or any(not part.isdigit() for part in parts[1:]):
+        raise KriaEditorOpError(
+            "The original word order is unavailable; choose a sequence with intact word identities"
+        )
+    return tuple(int(part) for part in parts[1:])
+
+
+_TOGETHER_S = 1 / 30
+
+
+def _sequences_shown_together(
+    state: _DraftState, siblings: list[dict[str, Any]], source: str
+) -> list[list[dict[str, Any]]]:
+    """Other word sequences on screen with this one: the same span (to a frame), another place.
+
+    A text and its translation are shown together (`creation_text_composition`'s check), so
+    retiming one moves the other with it; a sequence at another time or in the same place is its
+    own.
+    """
+
+    def place(row: dict[str, Any]) -> str:
+        return str(row.get("position") or "middle")
+
+    def span(rows: list[dict[str, Any]]) -> tuple[float, float]:
+        return (
+            min(float(row.get("start_s") or 0.0) for row in rows),
+            max(float(row.get("end_s") or 0.0) for row in rows),
+        )
+
+    mine, places = span(siblings), {place(row) for row in siblings}
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for row in state.text:
+        other = sequence_source(row)
+        if other and other != source and not row.get("removed") and not row.get("caption_cue"):
+            groups.setdefault(other, []).append(row)
+    together = []
+    for other, rows in groups.items():
+        if places & {place(row) for row in rows} or any(
+            abs(a - b) > _TOGETHER_S for a, b in zip(span(rows), mine, strict=True)
+        ):
+            continue
+        try:
+            together.append(sorted(rows, key=lambda row: _sequence_order(row, other)))
+        except KriaEditorOpError:
+            # Without intact word order it cannot be retimed; it keeps its time, as before.
+            continue
+    return together
+
+
 def op_retime_text_sequence(state: _DraftState, op: dict[str, Any]) -> None:
     rows = _targets(state, op)
     sources = {sequence_source(row) for row in rows}
@@ -1048,17 +1100,7 @@ def op_retime_text_sequence(state: _DraftState, op: dict[str, Any]) -> None:
     if {row["id"] for row in siblings} != {row["id"] for row in rows}:
         raise KriaEditorOpError("Choose the complete word sequence, including every word")
 
-    def order(row):
-        suffix = str(row.get("id") or "").removeprefix(source)
-        parts = suffix.split("::sequence-")
-        if parts[0] or len(parts) < 2 or any(not part.isdigit() for part in parts[1:]):
-            raise KriaEditorOpError(
-                "The original word order is unavailable; "
-                "choose a sequence with intact word identities"
-            )
-        return tuple(int(part) for part in parts[1:])
-
-    siblings = sorted(siblings, key=order)
+    siblings = sorted(siblings, key=lambda row: _sequence_order(row, source))
     start, end = _number(op.get("start_s")), _number(op.get("end_s"))
     if (
         start is None
@@ -1071,20 +1113,25 @@ def op_retime_text_sequence(state: _DraftState, op: dict[str, Any]) -> None:
         raise KriaEditorOpError("That sequence needs a valid start and end")
     from app.services.sequence_pacing import SequenceReadabilityError, retime_sequence
 
-    try:
-        updated = retime_sequence(siblings, start, end, gap_policy=op.get("gap_policy", "scale"))
-    except SequenceReadabilityError as exc:
-        raise TextTimingConflict(
-            end,
-            start + exc.minimum_span_s,
-            tuple(row["id"] for row in siblings),
-            constraint="readability",
-        ) from exc
-    except ValueError as exc:
-        raise KriaEditorOpError(str(exc)) from exc
-    by_id = {row["id"]: row for row in updated}
-    for row in siblings:
-        row.update(by_id[row["id"]])
+    partners = _sequences_shown_together(state, siblings, source)
+    retimed = []
+    for group in [siblings, *partners]:
+        try:
+            updated = retime_sequence(group, start, end, gap_policy=op.get("gap_policy", "scale"))
+        except SequenceReadabilityError as exc:
+            raise TextTimingConflict(
+                end,
+                start + exc.minimum_span_s,
+                tuple(row["id"] for row in group),
+                constraint="readability",
+            ) from exc
+        except ValueError as exc:
+            raise KriaEditorOpError(str(exc)) from exc
+        retimed.append((group, {row["id"]: row for row in updated}))
+    for group, by_id in retimed:
+        for row in group:
+            row.update(by_id[row["id"]])
+    state.explicit_text_ids.update(row["id"] for group in partners for row in group)
     state.changed.add("text")
     state.summary = f"Retime {len(rows)} words in sequence"
 

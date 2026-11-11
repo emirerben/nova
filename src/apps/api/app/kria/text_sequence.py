@@ -97,6 +97,28 @@ def text_sequence_mode(req: object) -> TextSequenceMode:
     return value if value in {"replace", "cumulative"} else "agent_choice"  # type: ignore[return-value]
 
 
+def sequence_read_floor_s(requirements: Iterable[Any] | None) -> float | None:
+    """The least time the longest approved word-by-word sentence needs: one readable piece a word.
+
+    A plan shorter than this cannot show the creator's words (KRI-1365). Only wording the creator
+    approved counts; phrase asks and build-ups are paced in the composer's own pieces, and words
+    research has yet to write have no length to plan for.
+    """
+    from app.services.kria_editor_ops_text import _MIN_PIECE_S  # noqa: PLC0415
+
+    words = [
+        len((req.literal or "").split())
+        for req in requirements or ()
+        if getattr(req, "live", False)
+        and is_text_sequence(req)
+        and req.scope in ("title", "global")
+        and req.literal
+        and text_sequence_unit(req) == "word"
+        and text_sequence_mode(req) != "cumulative"
+    ]
+    return round(max(words) * _MIN_PIECE_S, 3) if words and max(words) > 1 else None
+
+
 def _fits_literal(text: str) -> bool:
     """A sequence literal the brief can store verbatim; a longer quote is never cut."""
     from app.kria.brief import MAX_SEQUENCE_LITERAL_CHARS  # noqa: PLC0415

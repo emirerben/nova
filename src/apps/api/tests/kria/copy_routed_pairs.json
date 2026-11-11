@@ -518,6 +518,16 @@
   ],
   [
    "app/kria/strategy_policy.py",
+   "None of your clips has sound, so I can't keep the camera audio. Want me to use music instead?",
+   "Kliplerinin hiçbirinde ses yok, o yüzden kamera sesini koruyamam. Onun yerine müzik kullanayım mı?"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "None of your clips has sound, so this edit doesn't use camera audio.",
+   "Kliplerinin hiçbirinde ses yok, o yüzden bu düzenleme kamera sesini kullanmıyor."
+  ],
+  [
+   "app/kria/strategy_policy.py",
    "Reading this as a montage in the day-vlog style.",
    "Bunu günlük vlog tarzında bir montaj olarak okudum."
   ],
@@ -1078,6 +1088,11 @@
   ],
   [
    "app/tasks/kria_runtime.py",
+   "None of your clips has sound.",
+   "Kliplerinin hiçbirinde ses yok."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
    "One of your clips couldn't be downloaded. Reattach it and try again.",
    "Kliplerinden biri indirilemedi. Yeniden ekle ve tekrar dene."
   ],
@@ -1315,6 +1330,11 @@
    "app/tasks/kria_runtime.py",
    "Use a longer clip of you talking, or ask for a montage.",
    "Konuştuğun daha uzun bir klip kullan ya da bir montaj iste."
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "Want me to use music instead?",
+   "Onun yerine müzik kullanayım mı?"
   ],
   [
    "app/tasks/kria_runtime.py",

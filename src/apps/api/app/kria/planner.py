@@ -458,6 +458,9 @@ def _enrich_best_parts_snapshot(
         if strategy.get("edit_format") == "montage" and recording is None
         else None
     )
+    from app.kria.text_sequence import sequence_read_floor_s  # noqa: PLC0415
+
+    text_floor_s = sequence_read_floor_s(brief.live()) if brief is not None else None
     held = _held_closing_ids(closing_quote)
     whole_take_ids = _whole_take_ids(
         strategy,
@@ -585,6 +588,7 @@ def _enrich_best_parts_snapshot(
             ),
             story_floor_s=story_floor_s,
             whole_take_ids=whole_take_ids,
+            text_floor_s=text_floor_s,
         )
 
     # KRI-585: the clips' words seat the welcome's line and a quiet ending. "Fast cuts" is
@@ -4723,19 +4727,43 @@ async def _plan_creator_action(
                 selected=len(scoped.selected_media_ids),
             )
             action = action.model_copy(update={"strategy": scoped})
+        from app.kria.draft_sound_carry import (  # noqa: PLC0415
+            asks_camera_sound,
+            carry_draft_audio_strategy,
+            carry_draft_sound,
+            has_sound_ask,
+        )
+
+        # Only a camera-audio strategy (or a kept sound route) can need the draft's sound.
+        draft_strategy = (
+            await _load_draft_strategy(db, item_id)
+            if keeps_sound or action.strategy.audio_strategy == "original_audio"
+            else None
+        )
         if keeps_sound:
             # KRI-942: a turn that didn't touch the sound asks keeps the draft's sound choice
             # (the route it picks), like a confirmed label (KRI-766).
-            from app.kria.draft_sound_carry import carry_draft_sound  # noqa: PLC0415
-
-            carried = carry_draft_sound(action.strategy, await _load_draft_strategy(db, item_id))
-            if carried is not action.strategy:
-                log.info("kria_draft_sound_kept", thread_id=str(thread_id))
-                action = action.model_copy(update={"strategy": carried})
+            carried = carry_draft_sound(action.strategy, draft_strategy)
+        elif not has_sound_ask(effective_brief):
+            # KRI-1365: a turn with no sound ask never flips music to camera audio.
+            carried = carry_draft_audio_strategy(action.strategy, draft_strategy)
+        else:
+            carried = action.strategy
+        if carried is not action.strategy:
+            log.info("kria_draft_sound_kept", thread_id=str(thread_id))
+            action = action.model_copy(update={"strategy": carried})
         # KRI-142: the same server compile v1 runs, so a phone render never
         # silently drops what it can't draw while the reply claims it.
         check_kwargs: dict[str, Any] = {
             "simplify_unsupported": True,
+            # KRI-1365: on footage with no sound, a camera-audio strategy falls back to the
+            # draft's sound (or music), unless the creator asked for the camera sound.
+            **(
+                {"draft_audio_strategy": draft_strategy["audio_strategy"]}
+                if draft_strategy and draft_strategy.get("audio_strategy")
+                else {}
+            ),
+            **({"creator_asked_camera_sound": True} if asks_camera_sound(effective_brief) else {}),
             **({"ask_before_simplifying": True} if settings.brief_binding_for(creator_id) else {}),
             # KRI-476: also ask before a repair drops a title hold / full-screen ask the
             # creator stated. Off with the choice-questions flag: identical to before.

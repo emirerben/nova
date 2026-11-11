@@ -526,6 +526,11 @@ async def resolve_item_creator_context(
                 kind=clip_kind,
                 duration_s=duration_s,
                 label=user_note or None,
+                has_audio=(
+                    assignment["has_audio"]
+                    if clip_kind == "video" and isinstance(assignment.get("has_audio"), bool)
+                    else None
+                ),
             )
         )
         clip_entry: dict[str, Any] = {
