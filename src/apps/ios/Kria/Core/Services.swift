@@ -1409,7 +1409,11 @@ enum KriaClientProtocolContract {
     /// light-leak or dip-to-black edges) and `end_fade`, and the `colorMoments` capability. The server serves such a
     /// recipe only to this protocol (`COLOR_MOMENTS_ENABLED` + `colorMoments` verified) and answers 426
     /// `client_update_required` (`color_moments`) to an older build.
-    static let version = 48
+    ///
+    /// 49 (KRI-720): cuts every take of a several-take Talking preview from the receipt's `phone_talking_multi_clip.speaker_removed`
+    /// rows. The server serves a build below 49 that receipt with no `speaker_media_ids`, so it previews the finished video
+    /// instead of later takes uncut.
+    static let version = 49
     static let header = "X-Kria-Client-Protocol"
 }
 

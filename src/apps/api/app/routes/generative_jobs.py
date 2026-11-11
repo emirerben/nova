@@ -2965,6 +2965,13 @@ def _variants_for_response(job: Job) -> list[dict]:
 
         out.append(public_saved_editor_variant(job, v))
     result = project_public_assembly_plan(out)
+    # KRI-720: `result` is a deep copy. A build that cannot cut each take of a several-take
+    # edit gets the finished-video fallback instead of later takes previewed uncut.
+    from app.services.several_take_preview_gate import (  # noqa: PLC0415
+        hide_extra_take_cuts_from_old_builds,
+    )
+
+    hide_extra_take_cuts_from_old_builds(result)
     from app.services.saved_user_song import saved_user_song_for_variant
 
     for variant in result:

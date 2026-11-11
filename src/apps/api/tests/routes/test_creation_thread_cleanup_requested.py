@@ -360,3 +360,57 @@ async def test_thread_read_loads_the_pending_approval_once(monkeypatch, flag):
     out = await _response_with(monkeypatch, flag=flag, snapshot=snapshot)
     assert out.speech_cleanup["recommended_choice"] == "keep_original"
     assert len(loads) == 1
+
+
+# KRI-720 G1: a several-take Talking edit cuts every pause tight for a plain ask too, so the card
+# says so; one take stays tight only on a tight ask. Failure modes: the card keeps the plain copy
+# while the render goes tight (T9), or goes tight where the render cannot (no proxy, other format,
+# several-take cleanup off).
+TWO_TAKES = (PROXY, "users/u/analysis-proxy-two.mp4")
+
+
+@pytest.fixture
+def _several_takes_on(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.phone_rollout.phone_talking_multi_take_cleanup_supported", lambda: True
+    )
+    monkeypatch.setattr(settings, "tight_pause_cut_enabled", True, raising=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_several_takes_on")
+@pytest.mark.parametrize("text", [TIGHT, "cut the pauses"])
+async def test_several_takes_card_is_tight_for_a_plain_ask_too(text):
+    assert await routes._cleanup_ask_projection(
+        _db(_snapshot(text)), _thread(), _item(paths=TWO_TAKES)
+    ) == (True, True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_several_takes_on")
+async def test_one_take_plain_ask_stays_not_tight_with_several_takes_on():
+    assert await routes._cleanup_ask_projection(
+        _db(_snapshot("cut the pauses")), _thread(), _item()
+    ) == (True, False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_several_takes_on")
+@pytest.mark.parametrize(
+    "item",
+    [
+        _item(paths=("users/u/raw.mp4", "users/u/raw-two.mp4")),  # not phone analysis proxies
+        _item(paths=TWO_TAKES, edit_format="montage"),  # not Talking
+    ],
+)
+async def test_several_takes_card_not_tight_where_the_render_cannot_cut_tight(item):
+    snapshot = _snapshot("cut the pauses")
+    snapshot["strategy"]["edit_format"] = item.edit_format
+    assert await routes._cleanup_ask_projection(_db(snapshot), _thread(), item) == (True, False)
+
+
+@pytest.mark.asyncio
+async def test_several_takes_card_not_tight_with_several_take_cleanup_off():
+    assert await routes._cleanup_ask_projection(
+        _db(_snapshot("cut the pauses")), _thread(), _item(paths=TWO_TAKES)
+    ) == (True, False)

@@ -3648,6 +3648,24 @@
       ]
     },
     {
+      "id": "kri-720-multi-take-cleanup",
+      "needs_native": false,
+      "api_tests": "tests/services/test_multi_take_speech_cleanup.py tests/pipeline/test_speech_cleanup_restart_relisten.py tests/tasks/test_phone_multi_take_tight_pauses.py tests/tasks/test_phone_multi_take_named_line.py tests/tasks/test_phone_multi_take_named_line_photos.py tests/kria/test_multi_take_tight_pause_receipts.py tests/routes/test_old_build_several_take_preview.py tests/kria/test_s3_multi_take_cleanup_receipts.py tests/tasks/test_phone_multi_take_review_fixes.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kri720_cigdem_take_a_words.json",
+        "src/apps/api/tests/fixtures/kri720_s3_take_observations.json",
+        "src/apps/api/tests/services/test_multi_take_speech_cleanup.py",
+        "src/apps/api/tests/pipeline/test_speech_cleanup_restart_relisten.py",
+        "src/apps/api/tests/tasks/test_phone_multi_take_tight_pauses.py",
+        "src/apps/api/tests/tasks/test_phone_multi_take_named_line.py",
+        "src/apps/api/tests/tasks/test_phone_multi_take_named_line_photos.py",
+        "src/apps/api/tests/kria/test_multi_take_tight_pause_receipts.py",
+        "src/apps/api/tests/routes/test_old_build_several_take_preview.py",
+        "src/apps/api/app/services/several_take_preview_gate.py",
+        "src/apps/api/tests/tasks/test_phone_multi_take_review_fixes.py"
+      ]
+    },
+    {
       "id": "kri-1350-colour-moments",
       "needs_native": true,
       "api_tests": "tests/kria/test_colour_moments.py tests/evals/test_edit_copilot_evals.py tests/kria/test_plan_review.py tests/routes/test_editor_save_code_catalog.py tests/routes/test_phone_talking_range_commit.py",
