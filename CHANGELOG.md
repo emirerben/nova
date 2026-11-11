@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.170.0] - 2026-11-11
+
+### Changed
+- test(ios): attachment-flow UI tests match current behavior (KRI-1276) (#2216) <!-- release-pr: 2216 -->
+
 ## [0.88.169.0] - 2026-11-11
 
 ### Changed
