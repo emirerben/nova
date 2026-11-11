@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.169.0] - 2026-11-11
+
+### Changed
+- fix(montage): keep one whole clip through approval (KRI-1295) (#2188) <!-- release-pr: 2188 -->
+
 ## [0.88.168.0] - 2026-11-11
 
 ### Changed
