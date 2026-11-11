@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.162.0] - 2026-11-11
+
+### Fixed
+- perf(ios): Cinematic takes reach Review at once; the bake runs after (KRI-1184) (#2217) <!-- release-pr: 2217 -->
+
 ## [0.88.161.0] - 2026-11-11
 
 ### Changed
