@@ -44,6 +44,17 @@ normal GitHub merge checkout. The diff uses NUL delimiters, has no API file-coun
 limit and disables rename detection so both old and new paths are considered.
 No fork tokens or PR-supplied shell interpolation are needed.
 
+Before selecting suites for a PR to `main`, the selector job runs the existing
+release-metadata ownership guard. Manual release version or changelog edits stop
+selection before API or native jobs can queue. The guard fetches the current base
+and compares its merge base with the event's exact PR head, so metadata inherited
+from main remains allowed. Dependency changes remain allowed. The separate
+release-ownership check keeps its existing name and scope.
+
+To recover, restore the automation-owned fields and push the corrected commit.
+If fetching the base fails, retry the failed run after resolving the fetch error.
+PR-body evidence validation and its body-edit workflow are unchanged.
+
 An unavailable or empty diff selects all suites. A broken selector or failing
 selector test blocks the final gates instead of claiming a successful skip.
 The selection and reason appear in the workflow summary.

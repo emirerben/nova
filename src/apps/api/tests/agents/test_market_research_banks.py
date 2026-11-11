@@ -228,8 +228,10 @@ def test_persona_bank_version_couples_to_prompt_version():
     #                  (allexmarielle pop-culture season filter, vi=3.92x).
     # Bump 2026-11-01-research-20: weekly refresh — added personal-product-reviewer-01
     #                  (nermozdemir honest product review lane, vi=4.42x).
-    assert archetypes_version() == "2026-11-01-research-20"
-    assert PERSONA_PROMPT_VERSION == "2026-11-01-research-20"
+    # Bump 2026-11-08-research-21: weekly refresh — version lockstep bump (no new archetypes);
+    #                  content_ideas + success_factors edited this cycle.
+    assert archetypes_version() == "2026-11-08-research-21"
+    assert PERSONA_PROMPT_VERSION == "2026-11-08-research-21"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
@@ -257,8 +259,11 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     # Bump 2026-11-01-research-20: weekly refresh — added return-to-beloved-spot-01,
     #                  unexpected-candid-abroad-01, product-review-hope-it-helps-01,
     #                  desire-one-liner-lifestyle-01.
-    assert content_ideas_version() == "2026-11-01-research-20"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-11-01-research-20"
+    # Bump 2026-11-08-research-21: weekly refresh — added local-cultural-food-identity-01
+    #                  (izzsiomoi pandesal, vi=3.3x, 8.5% er) and
+    #                  community-fate-participation-01 (nermozdemir ceremony set, vi=3.7x).
+    assert content_ideas_version() == "2026-11-08-research-21"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-11-08-research-21"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -283,10 +288,12 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # Bump 2026-11-01-research-20: added honest-review-warm-cta-corpus-14 (vi=4.4x reach,
     #                  low-er "hope it helps" pattern) and ritual-return-beloved-spot-corpus-15
     #                  (vi=3.9x, 0.116 er — ritual vs discovery framing).
-    assert success_factors_version() == "2026-11-01-research-20"
-    assert PERSONA_PROMPT_VERSION == "2026-11-01-research-20"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-11-01-research-20"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-11-01-research-20"
+    # Bump 2026-11-08-research-21: added community-ownership-decision-corpus-16
+    #                  (nermozdemir ceremony set vi=3.7x — "fate in your hands" participation).
+    assert success_factors_version() == "2026-11-08-research-21"
+    assert PERSONA_PROMPT_VERSION == "2026-11-08-research-21"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-11-08-research-21"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-11-08-research-21"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -324,9 +331,10 @@ def test_overlay_bank_version_couples_to_agent_versions():
     #                  (2-word aesthetic verdict form, "kinda chic" pattern).
     # Bump 2026-11-01-research-20: weekly refresh — added product-review-warm-fadein-01
     #                  (warm "hope it helps" product review hook form).
-    assert library_version() == "2026-11-01-research-20"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-11-01-research-20"
-    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-11-01-research-20"
+    # Bump 2026-11-08-research-21: version lockstep bump (no new overlay examples this cycle).
+    assert library_version() == "2026-11-08-research-21"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-11-08-research-21"
+    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-11-08-research-21"
 
 
 @pytest.mark.parametrize(

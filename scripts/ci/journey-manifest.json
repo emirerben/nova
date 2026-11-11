@@ -3717,6 +3717,17 @@
         "src/apps/api/tests/fixtures/agent_evals/brief_extractor/kri1360_change_request_keeps_restrictions_de.json",
         "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri1359_german_lineup_sheet.json"
       ]
+    },
+    {
+      "id": "kri-1294-choice-request",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri1294_choice_request_journey.py tests/kria/test_request_binding_journey.py tests/kria/test_kri694_picker_answer_language.py",
+      "paths": [
+        "src/apps/api/app/services/song_order.py",
+        "src/apps/api/app/kria/request_budget.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/tests/kria/test_kri1294_choice_request_journey.py"
+      ]
     }
   ]
 }

@@ -264,6 +264,7 @@
     "How many seconds at the end of {name} show {what}? I'll end that clip just before them, or tell me to leave the whole clip out.": "Wie viele Sekunden am Ende von {name} zeigen {what}? Dann beende ich den Clip kurz davor, oder sag mir, dass ich den ganzen Clip weglassen soll.",
     "How many seconds at the start of {name} show {what}? I'll start that clip right after them, or tell me to leave the whole clip out.": "Wie viele Sekunden am Anfang von {name} zeigen {what}? Dann starte ich den Clip direkt danach, oder sag mir, dass ich den ganzen Clip weglassen soll.",
     "How short should the {v1} be?": "Wie kurz soll {v1} sein?",
+    "I accepted the omissions listed on your simpler-version card.": "Ich habe die Auslassungen von deiner Karte für die einfachere Version akzeptiert.",
     "I added it on only {placed} of the {heard} times you said \"{trigger}\"": "Ich habe es nur bei {placed} der {heard} Male hinzugefügt, bei denen du \"{trigger}\" gesagt hast",
     "I applied that to the captions you added in chat (free texts, not clip labels).": "Das habe ich auf die Texte angewendet, die du im Chat hinzugefügt hast (freie Texte, keine Clip-Labels).",
     "I can apply at most {max_intents} clip instructions at a time, so {overflow} more weren't included": "Ich kann höchstens {max_intents} Clip-Anweisungen auf einmal umsetzen, deshalb sind {overflow} weitere nicht dabei",

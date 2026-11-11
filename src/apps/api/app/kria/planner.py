@@ -4733,6 +4733,7 @@ async def _plan_creator_action(
             action = action.model_copy(update={"strategy": scoped})
         from app.kria.draft_sound_carry import (  # noqa: PLC0415
             asks_camera_sound,
+            asks_no_music,
             carry_draft_audio_strategy,
             carry_draft_sound,
             has_sound_ask,
@@ -4768,6 +4769,7 @@ async def _plan_creator_action(
                 else {}
             ),
             **({"creator_asked_camera_sound": True} if asks_camera_sound(effective_brief) else {}),
+            **({"creator_asked_no_music": True} if asks_no_music(effective_brief) else {}),
             **({"ask_before_simplifying": True} if settings.brief_binding_for(creator_id) else {}),
             # KRI-476: also ask before a repair drops a title hold / full-screen ask the
             # creator stated. Off with the choice-questions flag: identical to before.

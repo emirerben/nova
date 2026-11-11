@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.88.166.0] - 2026-11-11
+
+### Changed
+- ci: reject release metadata edits before suite selection (#2132) <!-- release-pr: 2132 -->
+
+## [0.88.165.0] - 2026-11-11
+
+### Changed
+- chore(research): weekly TikTok artifact refresh 2026-11-08 (#2227) <!-- release-pr: 2227 -->
+
 ## [0.88.164.0] - 2026-11-11
 
 ### Changed
