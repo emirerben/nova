@@ -2066,7 +2066,7 @@ class Settings(BaseSettings):
     keep_whole_take_plan_enabled: bool = Field(
         default=True,
         description="Case 2: a one-video-clip footage-owned montage whose brief has "
-        "`timing/global {keep_whole_take: true}` and no creator length plays that clip whole "
+        "a global `{keep_whole_take: true}` fact and no creator length plays that clip whole "
         "in the approval-time length plan (the worker plays the approved windows). Off: the "
         "plan keeps the analyser's best moment, as before.",
     )

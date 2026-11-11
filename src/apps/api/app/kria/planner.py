@@ -88,7 +88,13 @@ from app.kria.brief import (
     start_fresh_updates,
     wants_clip_descriptions,
 )
-from app.kria.brief_checks import ask_text, spoken_text_literals, whole_line_quotes
+from app.kria.brief_checks import (
+    _fact_flag,
+    _wants_whole_take,
+    ask_text,
+    spoken_text_literals,
+    whole_line_quotes,
+)
 from app.kria.brief_route import loose_text
 from app.kria.clip_exclusions import (
     carry_forward_exclusions,
@@ -630,20 +636,18 @@ def _enrich_best_parts_snapshot(
 
 
 def keeps_whole_take(brief: CreativeBrief | None) -> bool:
-    """A live ``timing/global {keep_whole_take: true}`` ask with no length of its own (Qendresa
-    case 2). The typed fact only (KRI-667); a duration on the same row is a length ask."""
-    if brief is None:
-        return False
-    for req in brief.live():
-        if req.kind != "timing" or req.scope != "global":
-            continue
-        if req.facts.get("keep_whole_take") is not True:
-            continue
-        duration = req.facts.get("duration_s")
-        if isinstance(duration, (int, float)) and not isinstance(duration, bool) and duration > 0:
-            continue
-        return True
-    return False
+    """A live global typed keep-whole ask, independent of the extractor's kind.
+
+    KRI-1295: the Q3 request was filed as ``style``. Read the same ask the receipt
+    checks, but never infer a planning command from wording alone or a spoken-line cue.
+    """
+    return brief is not None and any(
+        req.scope == "global"
+        and _fact_flag(req, "keep_whole_take") is True
+        and not req.facts.get("triggers")
+        and _wants_whole_take(req)
+        for req in brief.live()
+    )
 
 
 def _whole_take_ids(
